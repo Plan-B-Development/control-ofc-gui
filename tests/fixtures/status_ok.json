@@ -1,0 +1,12 @@
+{
+  "api_version": 1,
+  "daemon_version": "0.7.1",
+  "overall_status": "ok",
+  "subsystems": [
+    {"name": "openfan", "status": "ok", "age_ms": 150, "reason": ""},
+    {"name": "hwmon", "status": "ok", "age_ms": 200, "reason": ""}
+  ],
+  "counters": {
+    "last_error_summary": null
+  }
+}

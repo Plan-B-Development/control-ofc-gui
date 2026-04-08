@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "daemon_unavailable",
+    "message": "daemon not reachable",
+    "retryable": true,
+    "source": "connection"
+  }
+}

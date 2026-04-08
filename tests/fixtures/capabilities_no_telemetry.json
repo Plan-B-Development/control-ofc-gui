@@ -1,0 +1,22 @@
+{
+  "api_version": 1,
+  "daemon_version": "0.7.1",
+  "ipc_transport": "uds/http",
+  "devices": {
+    "openfan": {"present": true, "channels": 6, "rpm_support": true, "write_support": true},
+    "hwmon": {"present": true, "pwm_header_count": 3, "lease_required": true, "write_support": true},
+    "amd_gpu": {"present": false, "display_label": "AMD D-GPU", "fan_control_method": "none", "pmfw_supported": false, "fan_rpm_available": false, "fan_write_supported": false, "is_discrete": false, "overdrive_enabled": false},
+    "aio_hwmon": {"present": false, "status": "unsupported"},
+    "aio_usb": {"present": false, "status": "unsupported"}
+  },
+  "features": {
+    "openfan_write_supported": true,
+    "hwmon_write_supported": true,
+    "lease_required_for_hwmon_writes": true
+  },
+  "limits": {
+    "pwm_percent_min": 0,
+    "pwm_percent_max": 100,
+    "openfan_stop_timeout_s": 8
+  }
+}
