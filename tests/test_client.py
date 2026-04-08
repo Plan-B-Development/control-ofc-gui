@@ -27,4 +27,4 @@ def test_daemon_unavailable_is_daemon_error():
 def test_default_socket_path():
     from control_ofc.constants import DEFAULT_SOCKET_PATH
 
-    assert DEFAULT_SOCKET_PATH == "/run/control_ofc/control_ofc.sock"
+    assert DEFAULT_SOCKET_PATH == "/run/control-ofc/control-ofc.sock"

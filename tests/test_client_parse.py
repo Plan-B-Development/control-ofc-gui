@@ -128,14 +128,14 @@ class TestParseProfileSearchDirs:
     def test_parse_profile_search_dirs(self):
         data = {
             "updated": True,
-            "search_dirs": ["/etc/control_ofc/profiles", "/home/user/.config/control_ofc/profiles"],
+            "search_dirs": ["/etc/control-ofc/profiles", "/home/user/.config/control-ofc/profiles"],
         }
         result = parse_profile_search_dirs(data)
         assert isinstance(result, ProfileSearchDirsResult)
         assert result.updated is True
         assert result.search_dirs == [
-            "/etc/control_ofc/profiles",
-            "/home/user/.config/control_ofc/profiles",
+            "/etc/control-ofc/profiles",
+            "/home/user/.config/control-ofc/profiles",
         ]
 
     def test_parse_profile_search_dirs_defaults(self):

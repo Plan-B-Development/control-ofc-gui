@@ -1,4 +1,4 @@
-"""Control-OFC — Desktop fan control GUI for the Control-OFC daemon."""
+"""Control-OFC — Desktop fan control GUI for the control-ofc-daemon."""
 
 from control_ofc.constants import APP_VERSION
 
