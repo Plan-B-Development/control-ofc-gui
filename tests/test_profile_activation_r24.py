@@ -6,10 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from onlyfans.api.errors import DaemonError
-from onlyfans.api.models import ActiveProfileInfo, ProfileActivateResult
-from onlyfans.services.app_state import AppState
-from onlyfans.ui.pages.controls_page import ControlsPage
+from control_ofc.api.errors import DaemonError
+from control_ofc.api.models import ActiveProfileInfo, ProfileActivateResult
+from control_ofc.services.app_state import AppState
+from control_ofc.ui.pages.controls_page import ControlsPage
 
 
 @pytest.fixture()
@@ -43,12 +43,12 @@ class TestDaemonClientMethods:
     """API client has profile activation methods."""
 
     def test_activate_profile_method_exists(self):
-        from onlyfans.api.client import DaemonClient
+        from control_ofc.api.client import DaemonClient
 
         assert hasattr(DaemonClient, "activate_profile")
 
     def test_active_profile_method_exists(self):
-        from onlyfans.api.client import DaemonClient
+        from control_ofc.api.client import DaemonClient
 
         assert hasattr(DaemonClient, "active_profile")
 
@@ -57,7 +57,7 @@ class TestProfileActivateResult:
     """ProfileActivateResult model parses daemon responses."""
 
     def test_parse_success(self):
-        from onlyfans.api.models import parse_profile_activate
+        from control_ofc.api.models import parse_profile_activate
 
         data = {"activated": True, "profile_id": "quiet", "profile_name": "Quiet"}
         result = parse_profile_activate(data)
@@ -66,7 +66,7 @@ class TestProfileActivateResult:
         assert result.profile_name == "Quiet"
 
     def test_parse_failure(self):
-        from onlyfans.api.models import parse_profile_activate
+        from control_ofc.api.models import parse_profile_activate
 
         data = {"activated": False}
         result = parse_profile_activate(data)
@@ -77,7 +77,7 @@ class TestActiveProfileInfo:
     """ActiveProfileInfo model parses daemon GET /profile/active responses."""
 
     def test_parse_active(self):
-        from onlyfans.api.models import parse_active_profile
+        from control_ofc.api.models import parse_active_profile
 
         data = {"active": True, "profile_id": "quiet", "profile_name": "Quiet"}
         result = parse_active_profile(data)
@@ -86,7 +86,7 @@ class TestActiveProfileInfo:
         assert result.profile_name == "Quiet"
 
     def test_parse_no_active_profile(self):
-        from onlyfans.api.models import parse_active_profile
+        from control_ofc.api.models import parse_active_profile
 
         data = {"active": False}
         result = parse_active_profile(data)

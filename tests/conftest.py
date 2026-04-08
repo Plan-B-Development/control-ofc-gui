@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from onlyfans.api.errors import DaemonUnavailable
-from onlyfans.api.models import (
+from control_ofc.api.errors import DaemonUnavailable
+from control_ofc.api.models import (
     CalibrationResult,
     Capabilities,
     ConnectionState,
@@ -20,9 +20,9 @@ from onlyfans.api.models import (
     SensorHistory,
     SensorReading,
 )
-from onlyfans.services.app_settings_service import AppSettingsService
-from onlyfans.services.app_state import AppState
-from onlyfans.services.profile_service import ProfileService
+from control_ofc.services.app_settings_service import AppSettingsService
+from control_ofc.services.app_state import AppState
+from control_ofc.services.profile_service import ProfileService
 
 # ---------------------------------------------------------------------------
 # Fake daemon client that records calls and returns canned data

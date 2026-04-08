@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
     ConnectionState,
     FanReading,
     OperationMode,
 )
-from onlyfans.services.app_state import AppState
+from control_ofc.services.app_state import AppState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,7 +100,7 @@ class TestFanWizardGpuBranch:
     """Fan wizard stop/restore correctly routes GPU fans."""
 
     def test_stop_gpu_fan_calls_correct_api(self):
-        from onlyfans.ui.widgets.fan_wizard import FanConfigWizard
+        from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
 
         state = _make_state()
         client = MagicMock()
@@ -116,7 +116,7 @@ class TestFanWizardGpuBranch:
         client.set_hwmon_pwm.assert_not_called()
 
     def test_restore_gpu_fan_calls_correct_api(self):
-        from onlyfans.ui.widgets.fan_wizard import FanConfigWizard
+        from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
 
         state = _make_state()
         client = MagicMock()
@@ -133,7 +133,7 @@ class TestFanWizardGpuBranch:
 
     def test_restore_gpu_fan_fallback_30_when_no_prior(self):
         """Without prior_pwm, restore falls back to 30% (R59)."""
-        from onlyfans.ui.widgets.fan_wizard import FanConfigWizard
+        from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
 
         state = _make_state()
         client = MagicMock()
@@ -147,7 +147,7 @@ class TestFanWizardGpuBranch:
         client.set_gpu_fan_speed.assert_called_once_with("0000:03:00.0", 30)
 
     def test_stop_openfan_still_works(self):
-        from onlyfans.ui.widgets.fan_wizard import FanConfigWizard
+        from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
 
         state = _make_state()
         client = MagicMock()
@@ -172,7 +172,7 @@ class TestReadOnlySuffix:
     """GPU fans show '(read-only)' suffix when not writable."""
 
     def test_read_only_gpu_gets_suffix(self, qtbot, profile_service, settings_service):
-        from onlyfans.ui.main_window import MainWindow
+        from control_ofc.ui.main_window import MainWindow
 
         state = _make_state(fan_write=False)
         state.set_fans([_gpu_fan()])
@@ -205,7 +205,7 @@ class TestDashboardGpuRpmZero:
     """GPU fans remain visible with RPM=0."""
 
     def test_gpu_fan_rpm_zero_visible(self, qtbot, profile_service, app_state):
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=app_state, profile_service=profile_service)
         qtbot.addWidget(page)
@@ -214,7 +214,7 @@ class TestDashboardGpuRpmZero:
         assert page._fan_table.rowCount() == 1
 
     def test_gpu_fan_rpm_none_visible(self, qtbot, profile_service, app_state):
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=app_state, profile_service=profile_service)
         qtbot.addWidget(page)
@@ -224,7 +224,7 @@ class TestDashboardGpuRpmZero:
         assert page._fan_table.rowCount() == 1
 
     def test_gpu_fan_uses_display_name_in_table(self, qtbot, profile_service, app_state):
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         app_state.set_capabilities(
             Capabilities(

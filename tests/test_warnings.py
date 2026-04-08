@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from onlyfans.api.models import ConnectionState, FanReading, OperationMode, SensorReading
-from onlyfans.services.app_state import AppState
+from control_ofc.api.models import ConnectionState, FanReading, OperationMode, SensorReading
+from control_ofc.services.app_state import AppState
 
 
 @pytest.fixture()
@@ -113,7 +113,7 @@ class TestClearWarnings:
 
 class TestWarningsDialog:
     def test_dialog_shows_warnings(self, qtbot, warn_state):
-        from onlyfans.ui.widgets.warnings_dialog import WarningsDialog
+        from control_ofc.ui.widgets.warnings_dialog import WarningsDialog
 
         warn_state.set_sensors(
             [
@@ -126,7 +126,7 @@ class TestWarningsDialog:
         assert "stale" in dialog._table.item(0, 3).text().lower()
 
     def test_dialog_empty_state(self, qtbot, warn_state):
-        from onlyfans.ui.widgets.warnings_dialog import WarningsDialog
+        from control_ofc.ui.widgets.warnings_dialog import WarningsDialog
 
         dialog = WarningsDialog(warn_state)
         qtbot.addWidget(dialog)
@@ -135,7 +135,7 @@ class TestWarningsDialog:
         assert not hasattr(dialog, "_table")  # no table when empty
 
     def test_dialog_clear_resets_count(self, qtbot, warn_state):
-        from onlyfans.ui.widgets.warnings_dialog import WarningsDialog
+        from control_ofc.ui.widgets.warnings_dialog import WarningsDialog
 
         warn_state.set_sensors(
             [
@@ -156,7 +156,7 @@ class TestDashboardFanFiltering:
         fans = [FanReading(id="openfan:ch05", source="openfan", rpm=0, age_ms=50)]
         state.set_fans(fans)
 
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
@@ -170,7 +170,7 @@ class TestDashboardFanFiltering:
         fans = [FanReading(id="openfan:ch00", source="openfan", rpm=1200, age_ms=50)]
         state.set_fans(fans)
 
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
@@ -184,7 +184,7 @@ class TestDashboardFanFiltering:
         fans = [FanReading(id="hwmon:test", source="hwmon", rpm=None, age_ms=50)]
         state.set_fans(fans)
 
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
@@ -199,7 +199,7 @@ class TestDashboardFanFiltering:
         fans = [FanReading(id="openfan:ch05", source="openfan", rpm=0, age_ms=50)]
         state.set_fans(fans)
 
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
@@ -215,7 +215,7 @@ class TestDashboardFanFiltering:
         ]
         state.set_fans(fans)
 
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
@@ -235,7 +235,7 @@ class TestDashboardFanFiltering:
         ]
         state.set_fans(fans)
 
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=state)
         qtbot.addWidget(page)

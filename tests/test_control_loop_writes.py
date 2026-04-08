@@ -12,16 +12,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from onlyfans.api.errors import DaemonError
-from onlyfans.api.models import (
+from control_ofc.api.errors import DaemonError
+from control_ofc.api.models import (
     ConnectionState,
     FanReading,
     OperationMode,
     SensorReading,
 )
-from onlyfans.services.app_state import AppState
-from onlyfans.services.control_loop import ControlLoopService
-from onlyfans.services.profile_service import (
+from control_ofc.services.app_state import AppState
+from control_ofc.services.control_loop import ControlLoopService
+from control_ofc.services.profile_service import (
     ControlMember,
     ControlMode,
     CurveConfig,
@@ -531,7 +531,7 @@ class TestDaemonUnavailableHandling:
 
     def test_daemon_unavailable_caught_in_write(self, state, profile_service, fake_client, qtbot):
         """DaemonUnavailable on write → loop continues, targets_skipped incremented."""
-        from onlyfans.api.errors import DaemonUnavailable
+        from control_ofc.api.errors import DaemonUnavailable
 
         fake_client.simulate_error("set_openfan_pwm", DaemonUnavailable())
         profile = _make_profile([(30, 20), (70, 80)])

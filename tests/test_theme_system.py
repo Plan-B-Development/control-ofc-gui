@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from onlyfans.ui.theme import (
+from control_ofc.ui.theme import (
     _migrate_tokens,
     build_stylesheet,
     check_contrast_warnings,
@@ -240,7 +240,7 @@ _HEX_PATTERN = re.compile(r'(?<!")#[0-9a-fA-F]{6,8}(?!")')
 class TestNoHardcodedColors:
     def test_no_hardcoded_hex_in_widget_code(self):
         """Widget and page code must not contain hardcoded hex colours."""
-        src_dir = Path(__file__).parent.parent / "src" / "onlyfans"
+        src_dir = Path(__file__).parent.parent / "src" / "control_ofc"
         violations = []
 
         # Directories to check (widgets, pages, services — NOT theme.py itself)
@@ -285,7 +285,7 @@ class TestColorDialogAppStylesheetCleared:
         """theme_editor.py clears app stylesheet before QColorDialog."""
         import inspect
 
-        from onlyfans.ui.widgets.theme_editor import ColorSwatch
+        from control_ofc.ui.widgets.theme_editor import ColorSwatch
 
         source = inspect.getsource(ColorSwatch._pick_color)
         assert "DontUseNativeDialog" in source
@@ -297,7 +297,7 @@ class TestColorDialogAppStylesheetCleared:
         """sensor_series_panel.py clears app stylesheet before QColorDialog."""
         from pathlib import Path
 
-        src = Path("src/onlyfans/ui/widgets/sensor_series_panel.py").read_text()
+        src = Path("src/control_ofc/ui/widgets/sensor_series_panel.py").read_text()
         assert "DontUseNativeDialog" in src
         assert 'app.setStyleSheet("")' in src or "app.setStyleSheet('')" in src
         assert "saved_stylesheet" in src
@@ -311,12 +311,12 @@ class TestStartupPageNavSync:
         import os
         import tempfile
 
-        from onlyfans.api.models import ConnectionState, OperationMode
-        from onlyfans.constants import PAGE_SETTINGS
-        from onlyfans.services.app_settings_service import AppSettingsService
-        from onlyfans.services.app_state import AppState
-        from onlyfans.services.profile_service import ProfileService
-        from onlyfans.ui.main_window import MainWindow
+        from control_ofc.api.models import ConnectionState, OperationMode
+        from control_ofc.constants import PAGE_SETTINGS
+        from control_ofc.services.app_settings_service import AppSettingsService
+        from control_ofc.services.app_state import AppState
+        from control_ofc.services.profile_service import ProfileService
+        from control_ofc.ui.main_window import MainWindow
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["XDG_CONFIG_HOME"] = tmp

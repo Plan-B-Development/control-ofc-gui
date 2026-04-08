@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import Qt
 
-from onlyfans.services.profile_service import (
+from control_ofc.services.profile_service import (
     ControlMode,
     CurveConfig,
     CurveType,
     LogicalControl,
 )
-from onlyfans.ui.widgets.control_card import ControlCard
+from control_ofc.ui.widgets.control_card import ControlCard
 
 
 @pytest.fixture()
@@ -59,7 +59,7 @@ class TestControlCardContent:
         assert "Balanced" in card._curve_label.text()
 
     def test_set_output_updates_display(self, qtbot, curves):
-        from onlyfans.services.profile_service import ControlMember
+        from control_ofc.services.profile_service import ControlMember
 
         ctrl_with_members = LogicalControl(
             id="with_m",
@@ -74,7 +74,7 @@ class TestControlCardContent:
         assert "CPU" in c._output_label.text()
 
     def test_set_output_sets_applied(self, qtbot, curves):
-        from onlyfans.services.profile_service import ControlMember
+        from control_ofc.services.profile_service import ControlMember
 
         ctrl_with_members = LogicalControl(
             id="with_m2",

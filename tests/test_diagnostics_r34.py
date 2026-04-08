@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QLabel, QPlainTextEdit, QPushButton
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     Capabilities,
     ConnectionState,
     DaemonStatus,
@@ -22,9 +22,9 @@ from onlyfans.api.models import (
     OperationMode,
     SubsystemStatus,
 )
-from onlyfans.services.app_state import AppState
-from onlyfans.services.diagnostics_service import DiagnosticsService
-from onlyfans.ui.pages.diagnostics_page import DiagnosticsPage
+from control_ofc.services.app_state import AppState
+from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -419,7 +419,7 @@ class TestJournalRetrieval:
 
     def test_journal_bounded_line_limit(self):
         """fetch_journal_entries uses --lines to bound output."""
-        from onlyfans.services.diagnostics_service import JOURNAL_LINE_LIMIT
+        from control_ofc.services.diagnostics_service import JOURNAL_LINE_LIMIT
 
         assert JOURNAL_LINE_LIMIT > 0
         assert JOURNAL_LINE_LIMIT <= 500  # sanity upper bound
@@ -430,7 +430,7 @@ class TestJournalRetrieval:
         page, _ = _make_page(qtbot, state=state, diag=diag)
 
         fake_output = "2026-03-28T12:00:00+0000 onlyfans[1234]: Started OK\n" * 5
-        with patch("onlyfans.services.diagnostics_service.subprocess.run") as mock_run:
+        with patch("control_ofc.services.diagnostics_service.subprocess.run") as mock_run:
             mock_run.return_value.stdout = fake_output
             mock_run.return_value.stderr = ""
 
@@ -447,7 +447,7 @@ class TestJournalRetrieval:
         page, _ = _make_page(qtbot, state=state, diag=diag)
 
         with patch(
-            "onlyfans.services.diagnostics_service.subprocess.run",
+            "control_ofc.services.diagnostics_service.subprocess.run",
             side_effect=FileNotFoundError,
         ):
             page._fetch_journal()
@@ -463,7 +463,7 @@ class TestJournalRetrieval:
         page, _ = _make_page(qtbot, state=state, diag=diag)
 
         with patch(
-            "onlyfans.services.diagnostics_service.subprocess.run",
+            "control_ofc.services.diagnostics_service.subprocess.run",
             side_effect=sp.TimeoutExpired(cmd="journalctl", timeout=5),
         ):
             page._fetch_journal()
@@ -476,7 +476,7 @@ class TestJournalRetrieval:
         diag = DiagnosticsService(state)
         page, _ = _make_page(qtbot, state=state, diag=diag)
 
-        with patch("onlyfans.services.diagnostics_service.subprocess.run") as mock_run:
+        with patch("control_ofc.services.diagnostics_service.subprocess.run") as mock_run:
             mock_run.return_value.stdout = ""
             mock_run.return_value.stderr = (
                 "No journal files were opened due to insufficient permissions."
@@ -493,7 +493,7 @@ class TestJournalRetrieval:
         state = _make_state()
         diag = DiagnosticsService(state)
 
-        with patch("onlyfans.services.diagnostics_service.subprocess.run") as mock_run:
+        with patch("control_ofc.services.diagnostics_service.subprocess.run") as mock_run:
             mock_run.return_value.stdout = "some log output"
             mock_run.return_value.stderr = ""
             diag.fetch_journal_entries()
@@ -510,7 +510,7 @@ class TestSupportBundleContents:
         state = _make_state()
         diag = DiagnosticsService(state)
 
-        with patch("onlyfans.services.diagnostics_service.subprocess.run") as mock_run:
+        with patch("control_ofc.services.diagnostics_service.subprocess.run") as mock_run:
             mock_run.return_value.stdout = "daemon log output here"
             mock_run.return_value.stderr = ""
             bundle_path = tmp_path / "bundle.json"
@@ -526,7 +526,7 @@ class TestSupportBundleContents:
         state = _make_state()
         diag = DiagnosticsService(state)
 
-        with patch("onlyfans.services.diagnostics_service.subprocess.run") as mock_run:
+        with patch("control_ofc.services.diagnostics_service.subprocess.run") as mock_run:
             mock_run.return_value.stdout = ""
             mock_run.return_value.stderr = ""
             bundle_path = tmp_path / "bundle.json"
@@ -541,7 +541,7 @@ class TestSupportBundleContents:
     def test_bundle_missing_sections_when_no_daemon(self, tmp_path):
         diag = DiagnosticsService(state=None)
 
-        with patch("onlyfans.services.diagnostics_service.subprocess.run") as mock_run:
+        with patch("control_ofc.services.diagnostics_service.subprocess.run") as mock_run:
             mock_run.return_value.stdout = ""
             mock_run.return_value.stderr = ""
             bundle_path = tmp_path / "bundle.json"
@@ -658,7 +658,7 @@ class TestDiagnosticsServiceFetchJournal:
     def test_successful_fetch(self):
         svc = DiagnosticsService()
         fake_output = "2026-03-28T12:00:00 test line"
-        with patch("onlyfans.services.diagnostics_service.subprocess.run") as mock_run:
+        with patch("control_ofc.services.diagnostics_service.subprocess.run") as mock_run:
             mock_run.return_value.stdout = fake_output
             mock_run.return_value.stderr = ""
             text = svc.fetch_journal_entries()
@@ -668,7 +668,7 @@ class TestDiagnosticsServiceFetchJournal:
     def test_file_not_found(self):
         svc = DiagnosticsService()
         with patch(
-            "onlyfans.services.diagnostics_service.subprocess.run",
+            "control_ofc.services.diagnostics_service.subprocess.run",
             side_effect=FileNotFoundError,
         ):
             text = svc.fetch_journal_entries()
@@ -679,7 +679,7 @@ class TestDiagnosticsServiceFetchJournal:
 
         svc = DiagnosticsService()
         with patch(
-            "onlyfans.services.diagnostics_service.subprocess.run",
+            "control_ofc.services.diagnostics_service.subprocess.run",
             side_effect=sp.TimeoutExpired(cmd="journalctl", timeout=5),
         ):
             text = svc.fetch_journal_entries()
@@ -687,7 +687,7 @@ class TestDiagnosticsServiceFetchJournal:
 
     def test_permission_hint(self):
         svc = DiagnosticsService()
-        with patch("onlyfans.services.diagnostics_service.subprocess.run") as mock_run:
+        with patch("control_ofc.services.diagnostics_service.subprocess.run") as mock_run:
             mock_run.return_value.stdout = ""
             mock_run.return_value.stderr = "insufficient permissions"
             text = svc.fetch_journal_entries()
@@ -695,7 +695,7 @@ class TestDiagnosticsServiceFetchJournal:
 
     def test_empty_no_permission_hint(self):
         svc = DiagnosticsService()
-        with patch("onlyfans.services.diagnostics_service.subprocess.run") as mock_run:
+        with patch("control_ofc.services.diagnostics_service.subprocess.run") as mock_run:
             mock_run.return_value.stdout = ""
             mock_run.return_value.stderr = ""
             text = svc.fetch_journal_entries()
@@ -704,7 +704,7 @@ class TestDiagnosticsServiceFetchJournal:
     def test_os_error(self):
         svc = DiagnosticsService()
         with patch(
-            "onlyfans.services.diagnostics_service.subprocess.run",
+            "control_ofc.services.diagnostics_service.subprocess.run",
             side_effect=OSError("broken pipe"),
         ):
             text = svc.fetch_journal_entries()

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 
-from onlyfans.api.models import ConnectionState, OperationMode
-from onlyfans.services.app_state import AppState
-from onlyfans.services.diagnostics_service import DiagnosticsService
+from control_ofc.api.models import ConnectionState, OperationMode
+from control_ofc.services.app_state import AppState
+from control_ofc.services.diagnostics_service import DiagnosticsService
 
 
 def test_log_event():

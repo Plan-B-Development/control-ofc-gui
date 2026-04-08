@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from onlyfans.services.profile_service import (
+from control_ofc.services.profile_service import (
     ControlMode,
     CurveConfig,
     CurveType,
     LogicalControl,
 )
-from onlyfans.ui.widgets.fan_role_dialog import FanRoleDialog
+from control_ofc.ui.widgets.fan_role_dialog import FanRoleDialog
 
 
 @pytest.fixture()

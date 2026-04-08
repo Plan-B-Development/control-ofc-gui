@@ -6,7 +6,7 @@ Structural invariants validate shape independent of specific count.
 
 from __future__ import annotations
 
-from onlyfans.services.demo_service import DemoService
+from control_ofc.services.demo_service import DemoService
 
 
 def test_demo_capabilities():

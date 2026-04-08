@@ -5,17 +5,17 @@ from __future__ import annotations
 from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QPushButton
 
-from onlyfans.services.profile_service import (
+from control_ofc.services.profile_service import (
     ControlMode,
     CurveConfig,
     CurveType,
     LogicalControl,
     Profile,
 )
-from onlyfans.ui.pages.controls_page import ControlsPage
-from onlyfans.ui.widgets.control_card import ControlCard
-from onlyfans.ui.widgets.draggable_flow import DraggableFlowContainer
-from onlyfans.ui.widgets.flow_layout import FlowLayout
+from control_ofc.ui.pages.controls_page import ControlsPage
+from control_ofc.ui.widgets.control_card import ControlCard
+from control_ofc.ui.widgets.draggable_flow import DraggableFlowContainer
+from control_ofc.ui.widgets.flow_layout import FlowLayout
 
 
 class TestFlowLayoutInvalidation:
@@ -168,7 +168,7 @@ class TestControlCardFixedSize:
         control = LogicalControl(name="Test Role", mode=ControlMode.CURVE)
         card = ControlCard(control, [])
         qtbot.addWidget(card)
-        from onlyfans.ui.widgets.card_metrics import CARD_HEIGHT, CARD_WIDTH
+        from control_ofc.ui.widgets.card_metrics import CARD_HEIGHT, CARD_WIDTH
 
         assert card.maximumSize() == QSize(CARD_WIDTH, CARD_HEIGHT)
         assert card.minimumSize() == QSize(CARD_WIDTH, CARD_HEIGHT)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from onlyfans.paths import (
+from control_ofc.paths import (
     _overrides,
     config_dir,
     export_default_dir,
@@ -12,7 +12,7 @@ from onlyfans.paths import (
     set_path_overrides,
     themes_dir,
 )
-from onlyfans.services.app_settings_service import AppSettings
+from control_ofc.services.app_settings_service import AppSettings
 
 # -- path override tests --
 

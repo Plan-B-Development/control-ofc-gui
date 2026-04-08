@@ -6,15 +6,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     ConnectionState,
     FanReading,
     OperationMode,
     SensorReading,
 )
-from onlyfans.services.app_state import AppState
-from onlyfans.services.control_loop import ControlLoopService
-from onlyfans.services.profile_service import (
+from control_ofc.services.app_state import AppState
+from control_ofc.services.control_loop import ControlLoopService
+from control_ofc.services.profile_service import (
     ControlMember,
     ControlMode,
     CurveConfig,

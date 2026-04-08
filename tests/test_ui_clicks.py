@@ -14,8 +14,8 @@ from PySide6.QtWidgets import (
     QStackedWidget,
 )
 
-from onlyfans.constants import PAGE_CONTROLS
-from onlyfans.ui.main_window import MainWindow
+from control_ofc.constants import PAGE_CONTROLS
+from control_ofc.ui.main_window import MainWindow
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     FanReading,
     Freshness,
     SensorReading,

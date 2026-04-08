@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from onlyfans.services.profile_service import (
+from control_ofc.services.profile_service import (
     ControlMember,
     ControlMode,
     CurveConfig,
@@ -132,7 +132,7 @@ def test_unknown_curve_type_falls_back_to_flat():
 
 
 def test_logical_control_tuning_roundtrip():
-    from onlyfans.services.profile_service import LogicalControl
+    from control_ofc.services.profile_service import LogicalControl
 
     ctrl = LogicalControl(
         name="Test",

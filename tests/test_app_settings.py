@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from onlyfans.services.app_settings_service import AppSettings, AppSettingsService
+from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 
 
 def test_default_settings():

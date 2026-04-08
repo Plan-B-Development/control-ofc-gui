@@ -6,15 +6,15 @@ Each test would FAIL on the pre-fix code and PASS on the fixed code.
 
 from __future__ import annotations
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     ConnectionState,
     OperationMode,
     SensorReading,
     parse_calibration_result,
     parse_sensor_history,
 )
-from onlyfans.services.app_state import AppState
-from onlyfans.services.profile_service import CurveConfig, CurvePoint, CurveType
+from control_ofc.services.app_state import AppState
+from control_ofc.services.profile_service import CurveConfig, CurvePoint, CurveType
 
 # ---------------------------------------------------------------------------
 # P0-01: Hysteresis deadband must anchor, not follow
@@ -30,7 +30,7 @@ class TestHysteresisDeadbandAnchor:
         never holds on a subsequent small drop."""
         from unittest.mock import MagicMock
 
-        from onlyfans.services.control_loop import ControlLoopService
+        from control_ofc.services.control_loop import ControlLoopService
 
         state = AppState()
         state.set_connection(ConnectionState.CONNECTED)
@@ -91,7 +91,7 @@ class TestHysteresisDeadbandAnchor:
         SHOULD update to the new transition temperature."""
         from unittest.mock import MagicMock
 
-        from onlyfans.services.control_loop import ControlLoopService
+        from control_ofc.services.control_loop import ControlLoopService
 
         state = AppState()
         state.set_connection(ConnectionState.CONNECTED)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from onlyfans.api.errors import DaemonError, DaemonUnavailable
+from control_ofc.api.errors import DaemonError, DaemonUnavailable
 
 
 def test_daemon_error_fields():
@@ -25,6 +25,6 @@ def test_daemon_unavailable_is_daemon_error():
 
 
 def test_default_socket_path():
-    from onlyfans.constants import DEFAULT_SOCKET_PATH
+    from control_ofc.constants import DEFAULT_SOCKET_PATH
 
     assert DEFAULT_SOCKET_PATH == "/run/onlyfans/onlyfans.sock"

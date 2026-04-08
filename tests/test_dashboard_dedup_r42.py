@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
     ConnectionState,
@@ -10,10 +10,10 @@ from onlyfans.api.models import (
     OperationMode,
     SensorReading,
 )
-from onlyfans.services.app_state import AppState
-from onlyfans.services.series_selection import SeriesSelectionModel
-from onlyfans.ui.pages.dashboard_page import DashboardPage
-from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+from control_ofc.services.app_state import AppState
+from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.ui.pages.dashboard_page import DashboardPage
+from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
 
 def _make_state(gpu_pci: str = "0000:03:00.0") -> AppState:
@@ -173,8 +173,8 @@ class TestHoverSelection:
     """Hover only considers user-selected visible series."""
 
     def test_hover_iterates_visible_keys_only(self, qtbot):
-        from onlyfans.services.history_store import HistoryStore
-        from onlyfans.ui.widgets.timeline_chart import TimelineChart
+        from control_ofc.services.history_store import HistoryStore
+        from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
         history = HistoryStore()
         selection = SeriesSelectionModel()

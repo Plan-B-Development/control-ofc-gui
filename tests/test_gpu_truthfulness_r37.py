@@ -7,17 +7,17 @@ diagnostics ppfeaturemask guidance.
 
 from __future__ import annotations
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
     ConnectionState,
     FanReading,
     OperationMode,
 )
-from onlyfans.services.app_state import AppState
-from onlyfans.services.diagnostics_service import DiagnosticsService
-from onlyfans.ui.pages.dashboard_page import DashboardPage
-from onlyfans.ui.pages.diagnostics_page import DiagnosticsPage
+from control_ofc.services.app_state import AppState
+from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.ui.pages.dashboard_page import DashboardPage
+from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -124,7 +124,7 @@ class TestOverdriveEnabledField:
         assert cap.overdrive_enabled is False
 
     def test_overdrive_parsed_from_capabilities(self):
-        from onlyfans.api.models import parse_capabilities
+        from control_ofc.api.models import parse_capabilities
 
         data = {
             "api_version": 1,
@@ -145,7 +145,7 @@ class TestOverdriveEnabledField:
         assert caps.amd_gpu.pmfw_supported is True
 
     def test_overdrive_false_when_missing(self):
-        from onlyfans.api.models import parse_capabilities
+        from control_ofc.api.models import parse_capabilities
 
         data = {
             "api_version": 1,

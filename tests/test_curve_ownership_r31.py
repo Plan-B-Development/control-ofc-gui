@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from onlyfans.services.profile_service import (
+from control_ofc.services.profile_service import (
     CurveConfig,
     CurvePoint,
     CurveType,
@@ -164,7 +164,7 @@ class TestEditorSensorIsolation:
 
     def test_set_curve_restores_sensor_selection(self, qtbot):
         """set_curve() must set the sensor combo to match curve.sensor_id."""
-        from onlyfans.ui.widgets.curve_editor import CurveEditor
+        from control_ofc.ui.widgets.curve_editor import CurveEditor
 
         editor = CurveEditor()
         qtbot.addWidget(editor)
@@ -187,7 +187,7 @@ class TestEditorSensorIsolation:
 
     def test_switching_curves_shows_each_own_sensor(self, qtbot):
         """After editing CPU(tctl), opening GPU(edge) must show edge."""
-        from onlyfans.ui.widgets.curve_editor import CurveEditor
+        from control_ofc.ui.widgets.curve_editor import CurveEditor
 
         editor = CurveEditor()
         qtbot.addWidget(editor)
@@ -219,7 +219,7 @@ class TestEditorSensorIsolation:
 
     def test_get_curve_returns_correct_sensor_after_switch(self, qtbot):
         """get_curve().sensor_id must match the loaded curve, not the previous one."""
-        from onlyfans.ui.widgets.curve_editor import CurveEditor
+        from control_ofc.ui.widgets.curve_editor import CurveEditor
 
         editor = CurveEditor()
         qtbot.addWidget(editor)
@@ -255,7 +255,7 @@ class TestControlsPageThemeAdherence:
         """Verify the controls_page.py source has no inline font-size: Xpx."""
         import re
 
-        source = Path("src/onlyfans/ui/pages/controls_page.py").read_text()
+        source = Path("src/control_ofc/ui/pages/controls_page.py").read_text()
         # Should not contain font-size: Npx (hardcoded pixel sizes)
         matches = re.findall(r"font-size:\s*\d+px", source)
         assert matches == [], f"Hardcoded font-size found in controls_page.py: {matches}"

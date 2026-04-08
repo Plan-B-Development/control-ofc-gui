@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     ConnectionState,
     HwmonHeader,
     OperationMode,
     SensorReading,
 )
-from onlyfans.services.app_state import AppState
+from control_ofc.services.app_state import AppState
 
 
 def test_set_connection_emits_signal(qtbot):

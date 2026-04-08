@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from onlyfans.services.profile_service import CurveConfig, CurvePoint, CurveType
-from onlyfans.ui.widgets.curve_card import CurveCard
+from control_ofc.services.profile_service import CurveConfig, CurvePoint, CurveType
+from control_ofc.ui.widgets.curve_card import CurveCard
 
 
 @pytest.fixture()

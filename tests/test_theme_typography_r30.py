@@ -7,7 +7,7 @@ save/load roundtrip for typography fields.
 
 from __future__ import annotations
 
-from onlyfans.ui.theme import (
+from control_ofc.ui.theme import (
     ThemeTokens,
     build_stylesheet,
     default_dark_theme,
@@ -93,7 +93,7 @@ class TestThemeSaveLoadRoundtrip:
     """Typography fields persist through save/load cycle."""
 
     def test_roundtrip_preserves_font_family(self, tmp_path):
-        from onlyfans.ui.theme import load_theme, save_theme
+        from control_ofc.ui.theme import load_theme, save_theme
 
         tokens = ThemeTokens(font_family="Monospace", base_font_size_pt=14)
         path = tmp_path / "test_theme.json"
@@ -108,7 +108,7 @@ class TestThemeSaveLoadRoundtrip:
 
         path = tmp_path / "old_theme.json"
         path.write_text(json.dumps({"name": "Old Theme", "version": 2}))
-        from onlyfans.ui.theme import load_theme
+        from control_ofc.ui.theme import load_theme
 
         loaded = load_theme(path)
         assert loaded.font_family == ""

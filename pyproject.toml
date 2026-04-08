@@ -1,7 +1,7 @@
 [project]
-name = "onlyfans"
+name = "control-ofc-gui"
 version = "0.86.4"
-description = "Desktop fan control GUI for the OnlyFans daemon"
+description = "Desktop fan control GUI for the Control-OFC daemon"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
@@ -21,7 +21,7 @@ dev = [
 ]
 
 [project.scripts]
-onlyfans = "onlyfans.main:main"
+control-ofc-gui = "control_ofc.main:main"
 
 [tool.ruff]
 target-version = "py312"

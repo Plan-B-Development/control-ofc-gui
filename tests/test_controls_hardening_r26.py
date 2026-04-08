@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from onlyfans.api.models import ProfileActivateResult
-from onlyfans.services.profile_service import (
+from control_ofc.api.models import ProfileActivateResult
+from control_ofc.services.profile_service import (
     CurveType,
 )
-from onlyfans.ui.pages.controls_page import ControlsPage
+from control_ofc.ui.pages.controls_page import ControlsPage
 
 # ---------------------------------------------------------------------------
 # Helpers

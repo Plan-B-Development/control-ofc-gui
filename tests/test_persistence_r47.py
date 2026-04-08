@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 
-from onlyfans.api.models import ConnectionState, OperationMode
-from onlyfans.services.app_settings_service import AppSettings, AppSettingsService
-from onlyfans.services.app_state import AppState
-from onlyfans.services.diagnostics_service import DiagnosticsService
-from onlyfans.services.profile_service import ProfileService
+from control_ofc.api.models import ConnectionState, OperationMode
+from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
+from control_ofc.services.app_state import AppState
+from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.services.profile_service import ProfileService
 
 
 class TestSupportBundleCompleteness:
@@ -137,7 +137,7 @@ class TestImportExportR51:
     def test_export_includes_export_version(self, tmp_path, monkeypatch):
         """_build_full_export produces export_version field."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        from onlyfans.ui.pages.settings_page import SettingsPage
+        from control_ofc.ui.pages.settings_page import SettingsPage
 
         svc = AppSettingsService()
         svc.load()
@@ -151,7 +151,7 @@ class TestImportExportR51:
     def test_export_includes_all_custom_themes(self, tmp_path, monkeypatch):
         """All custom themes exported, not just the active one."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        from onlyfans.paths import themes_dir
+        from control_ofc.paths import themes_dir
 
         td = themes_dir()
         td.mkdir(parents=True, exist_ok=True)
@@ -160,7 +160,7 @@ class TestImportExportR51:
         (td / "neon.json").write_text(json.dumps({"bg": "#111"}))
         (td / "ocean.json").write_text(json.dumps({"bg": "#222"}))
 
-        from onlyfans.ui.pages.settings_page import SettingsPage
+        from control_ofc.ui.pages.settings_page import SettingsPage
 
         svc = AppSettingsService()
         svc.load()

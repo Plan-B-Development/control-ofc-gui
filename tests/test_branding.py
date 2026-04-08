@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from onlyfans.ui import microcopy
+from control_ofc.ui import microcopy
 
 # ---------------------------------------------------------------------------
 # Asset existence
@@ -73,7 +73,7 @@ class TestMicrocopy:
 
 class TestSplash:
     def test_splash_status_updates(self, qtbot):
-        from onlyfans.ui.splash import AppSplashScreen
+        from control_ofc.ui.splash import AppSplashScreen
 
         microcopy.set_fun_mode(False)
         splash = AppSplashScreen()
@@ -89,7 +89,7 @@ class TestSplash:
 
 class TestAboutDialog:
     def test_about_dialog_renders(self, qtbot):
-        from onlyfans.ui.about_dialog import AboutDialog
+        from control_ofc.ui.about_dialog import AboutDialog
 
         dlg = AboutDialog()
         qtbot.addWidget(dlg)
@@ -98,7 +98,7 @@ class TestAboutDialog:
     def test_about_has_close_button(self, qtbot):
         from PySide6.QtWidgets import QPushButton
 
-        from onlyfans.ui.about_dialog import AboutDialog
+        from control_ofc.ui.about_dialog import AboutDialog
 
         dlg = AboutDialog()
         qtbot.addWidget(dlg)
@@ -113,21 +113,21 @@ class TestAboutDialog:
 
 class TestBrandingHelpers:
     def test_load_app_icon(self):
-        from onlyfans.ui.branding import load_app_icon
+        from control_ofc.ui.branding import load_app_icon
 
         icon = load_app_icon()
         assert icon is not None
         assert not icon.isNull()
 
     def test_banner_path(self):
-        from onlyfans.ui.branding import banner_image_path
+        from control_ofc.ui.branding import banner_image_path
 
         path = banner_image_path()
         assert path is not None
         assert path.exists()
 
     def test_splash_path(self):
-        from onlyfans.ui.branding import splash_image_path
+        from control_ofc.ui.branding import splash_image_path
 
         path = splash_image_path()
         assert path is not None

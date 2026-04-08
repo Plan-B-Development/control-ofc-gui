@@ -9,16 +9,16 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QLabel
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
     ConnectionState,
     OperationMode,
 )
-from onlyfans.services.app_state import AppState
-from onlyfans.ui.pages.dashboard_page import DashboardPage
-from onlyfans.ui.pages.diagnostics_page import DiagnosticsPage
-from onlyfans.ui.widgets.summary_card import SummaryCard
+from control_ofc.services.app_state import AppState
+from control_ofc.ui.pages.dashboard_page import DashboardPage
+from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
+from control_ofc.ui.widgets.summary_card import SummaryCard
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,7 +95,7 @@ class TestCapabilitiesParsing:
     """Capabilities parsing handles amd_gpu field."""
 
     def test_parse_with_amd_gpu(self):
-        from onlyfans.api.models import parse_capabilities
+        from control_ofc.api.models import parse_capabilities
 
         data = {
             "api_version": 1,
@@ -129,7 +129,7 @@ class TestCapabilitiesParsing:
 
     def test_parse_without_amd_gpu_field(self):
         """Older daemon versions that don't include amd_gpu."""
-        from onlyfans.api.models import parse_capabilities
+        from control_ofc.api.models import parse_capabilities
 
         data = {
             "api_version": 1,
@@ -147,7 +147,7 @@ class TestCapabilitiesParsing:
 
     def test_parse_with_unknown_gpu_fields(self):
         """Forward compat: unknown fields in amd_gpu are ignored."""
-        from onlyfans.api.models import parse_capabilities
+        from control_ofc.api.models import parse_capabilities
 
         data = {
             "api_version": 1,
@@ -272,7 +272,7 @@ class TestSourceLabelHandling:
     """GUI models correctly handle 'amd_gpu' as a source value."""
 
     def test_sensor_reading_amd_gpu_source(self):
-        from onlyfans.api.models import SensorReading
+        from control_ofc.api.models import SensorReading
 
         reading = SensorReading(
             id="hwmon:amdgpu:0000:2d:00.0:edge",
@@ -286,7 +286,7 @@ class TestSourceLabelHandling:
         assert reading.kind == "gpu_temp"
 
     def test_fan_reading_amd_gpu_source(self):
-        from onlyfans.api.models import FanReading
+        from control_ofc.api.models import FanReading
 
         reading = FanReading(
             id="hwmon:amdgpu:0000:2d:00.0:fan1",
@@ -297,7 +297,7 @@ class TestSourceLabelHandling:
         assert reading.source == "amd_gpu"
 
     def test_sensor_freshness_works_with_amd_gpu(self):
-        from onlyfans.api.models import Freshness, SensorReading
+        from control_ofc.api.models import Freshness, SensorReading
 
         reading = SensorReading(source="amd_gpu", age_ms=500)
         assert reading.freshness == Freshness.FRESH

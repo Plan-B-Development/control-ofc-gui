@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
     ConnectionState,
@@ -10,10 +10,10 @@ from onlyfans.api.models import (
     OperationMode,
     SensorReading,
 )
-from onlyfans.services.app_state import AppState
-from onlyfans.services.history_store import HistoryStore
-from onlyfans.services.series_selection import SeriesSelectionModel
-from onlyfans.ui.pages.dashboard_page import DashboardPage
+from control_ofc.services.app_state import AppState
+from control_ofc.services.history_store import HistoryStore
+from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.ui.pages.dashboard_page import DashboardPage
 
 
 def _state_with_dgpu(pci: str = "0000:03:00.0") -> AppState:
@@ -143,7 +143,7 @@ class TestChartableKeysFromSelection:
     def test_chartable_keys_matches_selection(self, qtbot):
         history = HistoryStore()
         selection = SeriesSelectionModel()
-        from onlyfans.ui.widgets.timeline_chart import TimelineChart
+        from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
         chart = TimelineChart(history, selection=selection)
         qtbot.addWidget(chart)

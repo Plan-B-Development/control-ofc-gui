@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import Qt
 
-from onlyfans.services.profile_service import CurveConfig, CurvePoint
-from onlyfans.ui.widgets.curve_editor import PRESETS, CurveEditor
+from control_ofc.services.profile_service import CurveConfig, CurvePoint
+from control_ofc.ui.widgets.curve_editor import PRESETS, CurveEditor
 
 
 @pytest.fixture()

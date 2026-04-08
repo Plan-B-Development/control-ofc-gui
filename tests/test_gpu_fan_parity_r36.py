@@ -10,16 +10,16 @@ from unittest.mock import MagicMock
 
 from PySide6.QtWidgets import QPushButton
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
     ConnectionState,
     FanReading,
     OperationMode,
 )
-from onlyfans.services.app_state import AppState
-from onlyfans.services.diagnostics_service import DiagnosticsService
-from onlyfans.ui.pages.diagnostics_page import DiagnosticsPage
+from control_ofc.services.app_state import AppState
+from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,7 +69,7 @@ class TestControlLoopGpuRouting:
     """Control loop routes amd_gpu fan writes through set_gpu_fan_speed."""
 
     def test_gpu_target_calls_set_gpu_fan_speed(self):
-        from onlyfans.services.control_loop import ControlLoopService
+        from control_ofc.services.control_loop import ControlLoopService
 
         state = _make_state()
         client = MagicMock()
@@ -82,7 +82,7 @@ class TestControlLoopGpuRouting:
         assert result is True
 
     def test_gpu_target_strips_prefix(self):
-        from onlyfans.services.control_loop import ControlLoopService
+        from control_ofc.services.control_loop import ControlLoopService
 
         state = _make_state()
         client = MagicMock()
@@ -94,7 +94,7 @@ class TestControlLoopGpuRouting:
         client.set_gpu_fan_speed.assert_called_once_with("0000:05:00.0", 50)
 
     def test_openfan_still_works(self):
-        from onlyfans.services.control_loop import ControlLoopService
+        from control_ofc.services.control_loop import ControlLoopService
 
         state = _make_state()
         client = MagicMock()
@@ -116,13 +116,13 @@ class TestSensorPanelGpuFanGroup:
     """Sensor series panel groups GPU fans under 'Fans — D-GPU'."""
 
     def test_gpu_fan_group_label_exists(self):
-        from onlyfans.ui.widgets.sensor_series_panel import _GROUP_LABELS
+        from control_ofc.ui.widgets.sensor_series_panel import _GROUP_LABELS
 
         assert "fans_gpu" in _GROUP_LABELS
         assert "D-GPU" in _GROUP_LABELS["fans_gpu"]
 
     def test_gpu_fan_group_in_order(self):
-        from onlyfans.ui.widgets.sensor_series_panel import _GROUP_ORDER
+        from control_ofc.ui.widgets.sensor_series_panel import _GROUP_ORDER
 
         assert "fans_gpu" in _GROUP_ORDER
         # GPU fans should appear before hwmon fans
@@ -251,13 +251,13 @@ class TestFanSourceCompatibility:
     """GPU fan entries work with existing fan infrastructure."""
 
     def test_gpu_fan_reading_freshness(self):
-        from onlyfans.api.models import Freshness
+        from control_ofc.api.models import Freshness
 
         fan = _gpu_fan()
         assert fan.freshness == Freshness.FRESH
 
     def test_gpu_fan_stale(self):
-        from onlyfans.api.models import Freshness
+        from control_ofc.api.models import Freshness
 
         fan = FanReading(
             id="amd_gpu:0000:2d:00.0",

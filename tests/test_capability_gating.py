@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from onlyfans.api.models import Capabilities, FeatureFlags
-from onlyfans.ui.main_window import MainWindow
+from control_ofc.api.models import Capabilities, FeatureFlags
+from control_ofc.ui.main_window import MainWindow
 
 
 @pytest.fixture()

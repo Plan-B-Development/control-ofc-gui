@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import time
 
-from onlyfans.services.history_store import HistoryStore
-from onlyfans.services.series_selection import SeriesSelectionModel
-from onlyfans.ui.widgets.timeline_chart import TimelineChart
+from control_ofc.services.history_store import HistoryStore
+from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 
 class TestChartableKeysFallback:
@@ -63,12 +63,12 @@ class TestSensorPanelStructureStable:
     """Sensor panel structure_changed doesn't oscillate with iGPU filtering."""
 
     def test_filtered_ids_compared_stably(self, qtbot, app_state):
-        from onlyfans.api.models import (
+        from control_ofc.api.models import (
             AmdGpuCapability,
             Capabilities,
             SensorReading,
         )
-        from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         app_state.set_capabilities(
             Capabilities(

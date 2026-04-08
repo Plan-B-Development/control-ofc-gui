@@ -10,10 +10,10 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHeaderView, QSplitter, QTableWidget
 
-from onlyfans.ui.pages.dashboard_page import DashboardPage
-from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
-from onlyfans.ui.widgets.summary_card import SummaryCard
-from onlyfans.ui.widgets.timeline_chart import TimelineChart
+from control_ofc.ui.pages.dashboard_page import DashboardPage
+from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
+from control_ofc.ui.widgets.summary_card import SummaryCard
+from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 
 class TestSplitterHierarchy:

@@ -5,24 +5,24 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QSizePolicy
 
-from onlyfans.services.history_store import HistoryStore
-from onlyfans.services.series_selection import SeriesSelectionModel
-from onlyfans.ui.widgets.summary_card import SummaryCard
-from onlyfans.ui.widgets.timeline_chart import TimelineChart
+from control_ofc.services.history_store import HistoryStore
+from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.ui.widgets.summary_card import SummaryCard
+from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 
 class TestSensorPanelColourSwatch:
     """Sensor panel has 3rd column colour swatch and set_chart wiring."""
 
     def test_panel_has_three_columns(self, qtbot, app_state):
-        from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         panel = SensorSeriesPanel(SeriesSelectionModel(), state=app_state)
         qtbot.addWidget(panel)
         assert panel._tree.columnCount() == 3
 
     def test_set_chart_stores_reference(self, qtbot, app_state):
-        from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         panel = SensorSeriesPanel(SeriesSelectionModel(), state=app_state)
         qtbot.addWidget(panel)
@@ -33,7 +33,7 @@ class TestSensorPanelColourSwatch:
         assert panel._chart is chart
 
     def test_item_clicked_handler_exists(self, qtbot, app_state):
-        from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         panel = SensorSeriesPanel(SeriesSelectionModel(), state=app_state)
         qtbot.addWidget(panel)

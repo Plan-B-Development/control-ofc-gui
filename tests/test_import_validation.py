@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from onlyfans.services.profile_service import Profile
-from onlyfans.ui.theme import ThemeTokens, _migrate_tokens
+from control_ofc.services.profile_service import Profile
+from control_ofc.ui.theme import ThemeTokens, _migrate_tokens
 
 # ---------------------------------------------------------------------------
 # Profile validation (Profile.from_dict)
@@ -115,16 +115,16 @@ class TestSettingsPageImportValidation:
 
     def _make_page(self, tmp_path, qtbot, monkeypatch):
         """Create a minimal SettingsPage wired to tmp_path directories."""
-        from onlyfans.services.app_settings_service import AppSettingsService
-        from onlyfans.ui.pages.settings_page import SettingsPage
+        from control_ofc.services.app_settings_service import AppSettingsService
+        from control_ofc.ui.pages.settings_page import SettingsPage
 
         # Override paths so imports write to tmp_path
         profiles = tmp_path / "profiles"
         profiles.mkdir()
         themes = tmp_path / "themes"
         themes.mkdir()
-        monkeypatch.setattr("onlyfans.paths.profiles_dir", lambda: profiles)
-        monkeypatch.setattr("onlyfans.ui.pages.settings_page.themes_dir", lambda: themes)
+        monkeypatch.setattr("control_ofc.paths.profiles_dir", lambda: profiles)
+        monkeypatch.setattr("control_ofc.ui.pages.settings_page.themes_dir", lambda: themes)
 
         svc = AppSettingsService()
         page = SettingsPage(settings_service=svc)

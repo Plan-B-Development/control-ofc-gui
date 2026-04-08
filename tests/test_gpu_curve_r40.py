@@ -6,8 +6,8 @@ V1 migration correctly tags amd_gpu source, controls page shows popup for GPU fa
 
 from __future__ import annotations
 
-from onlyfans.services.app_settings_service import AppSettings, AppSettingsService
-from onlyfans.services.profile_service import _migrate_v1_profile
+from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
+from control_ofc.services.profile_service import _migrate_v1_profile
 
 # ---------------------------------------------------------------------------
 # V1 migration GPU source detection
@@ -122,7 +122,7 @@ class TestSettingsPageZeroRpmCheckbox:
     def test_checkbox_exists(self, qtbot, app_state, settings_service):
         from PySide6.QtWidgets import QCheckBox
 
-        from onlyfans.ui.pages.settings_page import SettingsPage
+        from control_ofc.ui.pages.settings_page import SettingsPage
 
         page = SettingsPage(state=app_state, settings_service=settings_service)
         qtbot.addWidget(page)
@@ -142,7 +142,7 @@ class TestControlsGpuWarningTrigger:
 
     def test_gpu_fan_detected_as_new_member(self):
         """The set difference correctly identifies new GPU members."""
-        from onlyfans.services.profile_service import ControlMember
+        from control_ofc.services.profile_service import ControlMember
 
         old_members = []
         new_members = [
@@ -158,7 +158,7 @@ class TestControlsGpuWarningTrigger:
 
     def test_existing_gpu_member_not_flagged(self):
         """Re-saving with the same GPU member doesn't trigger."""
-        from onlyfans.services.profile_service import ControlMember
+        from control_ofc.services.profile_service import ControlMember
 
         existing = ControlMember(source="amd_gpu", member_id="amd_gpu:0000:03:00.0")
         old_members = [existing]
@@ -172,7 +172,7 @@ class TestControlsGpuWarningTrigger:
 
     def test_non_gpu_fan_not_flagged(self):
         """Adding an OpenFan fan doesn't trigger GPU warning."""
-        from onlyfans.services.profile_service import ControlMember
+        from control_ofc.services.profile_service import ControlMember
 
         old_members = []
         new_members = [

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from onlyfans.paths import config_dir, ensure_dirs, profiles_dir, state_dir, themes_dir
+from control_ofc.paths import config_dir, ensure_dirs, profiles_dir, state_dir, themes_dir
 
 
 def test_config_dir_ends_with_onlyfans():

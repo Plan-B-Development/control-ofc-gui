@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from onlyfans.api.errors import DaemonError
-from onlyfans.api.models import LeaseReleasedResult, LeaseResult
-from onlyfans.services.lease_service import LeaseService
+from control_ofc.api.errors import DaemonError
+from control_ofc.api.models import LeaseReleasedResult, LeaseResult
+from control_ofc.services.lease_service import LeaseService
 
 
 @pytest.fixture()
@@ -125,7 +125,7 @@ def test_renew_retry_resets_on_success(mock_client, qtbot):
 
 def test_daemon_unavailable_on_renew_retries(mock_client, qtbot):
     """DaemonUnavailable during renewal also retries before dropping lease."""
-    from onlyfans.api.errors import DaemonUnavailable
+    from control_ofc.api.errors import DaemonUnavailable
 
     svc = LeaseService(mock_client)
     svc.acquire()

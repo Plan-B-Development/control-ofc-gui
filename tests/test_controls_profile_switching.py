@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import pytest
 
-from onlyfans.services.app_state import AppState
-from onlyfans.services.profile_service import (
+from control_ofc.services.app_state import AppState
+from control_ofc.services.profile_service import (
     ControlMode,
     CurveConfig,
     CurveType,
     LogicalControl,
     ProfileService,
 )
-from onlyfans.ui.pages.controls_page import ControlsPage
+from control_ofc.ui.pages.controls_page import ControlsPage
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -26,7 +26,7 @@ from onlyfans.ui.pages.controls_page import ControlsPage
 
 @pytest.fixture()
 def app_state():
-    from onlyfans.api.models import ConnectionState, OperationMode
+    from control_ofc.api.models import ConnectionState, OperationMode
 
     state = AppState()
     state.set_connection(ConnectionState.CONNECTED)

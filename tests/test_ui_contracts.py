@@ -12,7 +12,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
-from onlyfans.ui.main_window import MainWindow
+from control_ofc.ui.main_window import MainWindow
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -82,7 +82,7 @@ class TestControlsContracts:
 
     def test_control_card_curve_selection_updates_model(self, qtbot, window, profile_service):
         """Changing curve dropdown on a control card updates the control's curve_id."""
-        from onlyfans.services.profile_service import (
+        from control_ofc.services.profile_service import (
             ControlMode,
             CurveConfig,
             CurveType,
@@ -134,7 +134,7 @@ class TestControlsContracts:
 
     def test_delete_curve_cascades_to_controls(self, qtbot, window, profile_service):
         """Deleting a curve unassigns it from any controls that reference it."""
-        from onlyfans.services.profile_service import (
+        from control_ofc.services.profile_service import (
             ControlMode,
             CurveConfig,
             CurveType,
@@ -197,7 +197,7 @@ class TestSettingsContracts:
 class TestDiagnosticsContracts:
     def test_refresh_repopulates_from_state(self, qtbot, window, app_state):
         """Populate state, click refresh → tables have rows."""
-        from onlyfans.api.models import Capabilities, DaemonStatus, SensorReading
+        from control_ofc.api.models import Capabilities, DaemonStatus, SensorReading
 
         app_state.set_capabilities(Capabilities(daemon_version="0.2.0"))
         app_state.set_status(DaemonStatus(overall_status="ok"))
@@ -219,7 +219,7 @@ class TestDiagnosticsContracts:
         dest = tmp_path / "bundle.json"
 
         with patch(
-            "onlyfans.ui.pages.diagnostics_page.QFileDialog.getSaveFileName",
+            "control_ofc.ui.pages.diagnostics_page.QFileDialog.getSaveFileName",
             return_value=(str(dest), "JSON files (*.json)"),
         ):
             export_btn = window.findChild(QPushButton, "Diagnostics_Btn_export")

@@ -6,8 +6,8 @@ lifecycle: mode transitions, profile preservation, and warning stability.
 
 from __future__ import annotations
 
-from onlyfans.api.models import ConnectionState, OperationMode
-from onlyfans.services.app_state import AppState
+from control_ofc.api.models import ConnectionState, OperationMode
+from control_ofc.services.app_state import AppState
 
 
 class TestDisconnectTransition:

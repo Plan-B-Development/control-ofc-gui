@@ -5,9 +5,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from onlyfans.api.client import DaemonClient
-from onlyfans.api.errors import DaemonError
-from onlyfans.api.models import (
+from control_ofc.api.client import DaemonClient
+from control_ofc.api.errors import DaemonError
+from control_ofc.api.models import (
     ProfileSearchDirsResult,
     StartupDelayResult,
     parse_profile_search_dirs,

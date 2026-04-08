@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from onlyfans.api.models import ConnectionState, FanReading, OperationMode, SensorReading
-from onlyfans.services.app_state import AppState
-from onlyfans.ui.widgets.fan_wizard import (
+from control_ofc.api.models import ConnectionState, FanReading, OperationMode, SensorReading
+from control_ofc.services.app_state import AppState
+from control_ofc.ui.widgets.fan_wizard import (
     DiscoveryPage,
     FanConfigWizard,
     IdentifyFanPage,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from onlyfans.services.series_selection import SeriesGroup, SeriesSelectionModel
+from control_ofc.services.series_selection import SeriesGroup, SeriesSelectionModel
 
 
 def test_new_keys_default_visible():

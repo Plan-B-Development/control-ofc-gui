@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from onlyfans.services.profile_service import CurveConfig, CurveType
-from onlyfans.ui.widgets.curve_edit_dialog import CurveEditDialog
+from control_ofc.services.profile_service import CurveConfig, CurveType
+from control_ofc.ui.widgets.curve_edit_dialog import CurveEditDialog
 
 SENSOR_ITEMS = [
     ("hwmon:k10temp:0:Tctl", "CPU Tctl"),

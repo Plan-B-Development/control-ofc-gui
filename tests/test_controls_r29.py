@@ -9,11 +9,11 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QSplitter
 
-from onlyfans.services.profile_service import ControlMode, CurveConfig, CurveType, LogicalControl
-from onlyfans.ui.pages.controls_page import ControlsPage
-from onlyfans.ui.widgets.card_metrics import CARD_HEIGHT, CARD_WIDTH
-from onlyfans.ui.widgets.control_card import ControlCard
-from onlyfans.ui.widgets.curve_card import CurveCard
+from control_ofc.services.profile_service import ControlMode, CurveConfig, CurveType, LogicalControl
+from control_ofc.ui.pages.controls_page import ControlsPage
+from control_ofc.ui.widgets.card_metrics import CARD_HEIGHT, CARD_WIDTH
+from control_ofc.ui.widgets.control_card import ControlCard
+from control_ofc.ui.widgets.curve_card import CurveCard
 
 
 class TestCurvesEditorSplitter:
@@ -106,13 +106,13 @@ class TestCardMetaTypography:
         assert members_label.property("class") == "CardMeta"
 
     def test_stylesheet_has_card_meta_class(self):
-        from onlyfans.ui.theme import build_stylesheet, default_dark_theme
+        from control_ofc.ui.theme import build_stylesheet, default_dark_theme
 
         css = build_stylesheet(default_dark_theme())
         assert ".CardMeta" in css
 
     def test_stylesheet_has_card_button_padding(self):
-        from onlyfans.ui.theme import build_stylesheet, default_dark_theme
+        from control_ofc.ui.theme import build_stylesheet, default_dark_theme
 
         css = build_stylesheet(default_dark_theme())
         assert ".Card QPushButton" in css

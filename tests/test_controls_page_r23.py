@@ -5,8 +5,8 @@ from __future__ import annotations
 from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QComboBox, QLineEdit, QSplitter
 
-from onlyfans.services.profile_service import CurveConfig, CurveType, Profile
-from onlyfans.ui.pages.controls_page import ControlsPage
+from control_ofc.services.profile_service import CurveConfig, CurveType, Profile
+from control_ofc.ui.pages.controls_page import ControlsPage
 
 
 class TestSplitter:
@@ -45,7 +45,7 @@ class TestFixedSizeCards:
     """D. Curve cards have consistent fixed size."""
 
     def test_card_fixed_max_and_min(self, qtbot):
-        from onlyfans.ui.widgets.curve_card import CurveCard
+        from control_ofc.ui.widgets.curve_card import CurveCard
 
         curve = CurveConfig(id="test", name="Test", type=CurveType.FLAT)
         card = CurveCard(curve)

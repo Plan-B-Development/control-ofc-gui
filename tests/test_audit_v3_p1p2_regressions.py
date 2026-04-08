@@ -7,9 +7,9 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-from onlyfans.api.models import ConnectionState, OperationMode
-from onlyfans.services.app_state import AppState
-from onlyfans.services.profile_service import (
+from control_ofc.api.models import ConnectionState, OperationMode
+from control_ofc.services.app_state import AppState
+from control_ofc.services.profile_service import (
     _migrate_v1_profile,
 )
 
@@ -34,7 +34,7 @@ class TestWriteFailureCounter:
     """Failure counter decrements on success, not deletes."""
 
     def _make_loop(self):
-        from onlyfans.services.control_loop import ControlLoopService
+        from control_ofc.services.control_loop import ControlLoopService
 
         state = _make_state()
         profile_svc = MagicMock()
@@ -115,7 +115,7 @@ class TestPollCountAfterReconnect:
     """After reconnect, poll_count should be 1 (caps already fetched)."""
 
     def test_reconnect_sets_poll_count_to_one(self):
-        from onlyfans.services.polling import _PollWorker
+        from control_ofc.services.polling import _PollWorker
 
         worker = _PollWorker.__new__(_PollWorker)
         worker._consecutive_failures = 3
@@ -132,7 +132,7 @@ class TestPollCountAfterReconnect:
         assert worker._consecutive_failures == 0
 
     def test_normal_increment_when_no_failures(self):
-        from onlyfans.services.polling import _PollWorker
+        from control_ofc.services.polling import _PollWorker
 
         worker = _PollWorker.__new__(_PollWorker)
         worker._consecutive_failures = 0
@@ -227,7 +227,7 @@ class TestAtomicExportSettings:
     """export_settings produces a valid JSON file."""
 
     def test_export_creates_valid_json(self, tmp_path, monkeypatch):
-        from onlyfans.services.app_settings_service import AppSettingsService
+        from control_ofc.services.app_settings_service import AppSettingsService
 
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         svc = AppSettingsService()
@@ -240,7 +240,7 @@ class TestAtomicExportSettings:
         assert isinstance(data, dict)
 
     def test_export_roundtrip(self, tmp_path, monkeypatch):
-        from onlyfans.services.app_settings_service import AppSettingsService
+        from control_ofc.services.app_settings_service import AppSettingsService
 
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         svc = AppSettingsService()

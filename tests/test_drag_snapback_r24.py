@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QPushButton
 
-from onlyfans.ui.widgets.draggable_flow import DraggableFlowContainer
+from control_ofc.ui.widgets.draggable_flow import DraggableFlowContainer
 
 
 def _make_card(text: str) -> QPushButton:

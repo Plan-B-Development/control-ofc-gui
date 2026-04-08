@@ -8,7 +8,7 @@ from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt
 from PySide6.QtGui import QDropEvent
 from PySide6.QtWidgets import QFrame
 
-from onlyfans.ui.widgets.draggable_flow import DraggableFlowContainer, DropIndicator
+from control_ofc.ui.widgets.draggable_flow import DraggableFlowContainer, DropIndicator
 
 
 class TestDropIndicator:

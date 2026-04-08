@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from onlyfans.api.errors import DaemonError
-from onlyfans.api.models import (
+from control_ofc.api.errors import DaemonError
+from control_ofc.api.models import (
     ActiveProfileInfo,
     Capabilities,
     ConnectionState,
@@ -20,8 +20,8 @@ from onlyfans.api.models import (
     OperationMode,
     SensorReading,
 )
-from onlyfans.services.app_state import AppState
-from onlyfans.services.polling import PollingService, _PollWorker
+from control_ofc.services.app_state import AppState
+from control_ofc.services.polling import PollingService, _PollWorker
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import Qt
 
-from onlyfans.services.profile_service import ControlMember
-from onlyfans.ui.widgets.member_editor import MemberEditorDialog
+from control_ofc.services.profile_service import ControlMember
+from control_ofc.ui.widgets.member_editor import MemberEditorDialog
 
 
 @pytest.fixture()

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from onlyfans.services.app_settings_service import AppSettings
-from onlyfans.services.history_store import HistoryStore
-from onlyfans.services.series_selection import SeriesSelectionModel
-from onlyfans.ui.widgets.timeline_chart import TimelineChart
+from control_ofc.services.app_settings_service import AppSettings
+from control_ofc.services.history_store import HistoryStore
+from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 
 class TestYAxisLimits:
@@ -60,7 +60,7 @@ class TestColourPersistence:
     """series_colors setting persists across save/load."""
 
     def test_roundtrip(self, tmp_path, monkeypatch):
-        from onlyfans.services.app_settings_service import AppSettingsService
+        from control_ofc.services.app_settings_service import AppSettingsService
 
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         svc = AppSettingsService()
@@ -107,7 +107,7 @@ class TestFanTableColumns:
     """Fan table has 4 columns (Colour removed in R42)."""
 
     def test_fan_table_column_count(self, qtbot, app_state):
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
@@ -119,7 +119,7 @@ class TestSensorPanelColumns:
     """Sensor panel tree has 3 columns (name, value, colour swatch)."""
 
     def test_tree_column_count(self, qtbot, app_state):
-        from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         selection = SeriesSelectionModel()
         panel = SensorSeriesPanel(selection, state=app_state)

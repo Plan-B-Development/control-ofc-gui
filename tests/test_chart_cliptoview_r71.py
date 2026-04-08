@@ -11,9 +11,9 @@ import time
 
 import pyqtgraph as pg
 
-from onlyfans.services.history_store import HistoryStore
-from onlyfans.services.series_selection import SeriesSelectionModel
-from onlyfans.ui.widgets.timeline_chart import TimelineChart
+from control_ofc.services.history_store import HistoryStore
+from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 
 def _seed_history(history: HistoryStore, key: str, n: int = 5, base: float = 40.0):

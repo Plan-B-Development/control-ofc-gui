@@ -5,8 +5,8 @@ from __future__ import annotations
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
 
-from onlyfans.services.history_store import HistoryStore
-from onlyfans.ui.widgets.timeline_chart import TimelineChart
+from control_ofc.services.history_store import HistoryStore
+from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 
 class TestChartRenderingConfig:
@@ -30,14 +30,14 @@ class TestDashboardVisibilityGating:
     """Chart timer stops when dashboard hidden, throttles when app unfocused."""
 
     def test_chart_timer_running_initially(self, qtbot, app_state):
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         assert page._chart_timer.isActive()
 
     def test_hide_stops_chart_timer(self, qtbot, app_state):
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
@@ -48,7 +48,7 @@ class TestDashboardVisibilityGating:
         assert not page._chart_timer.isActive()
 
     def test_show_restarts_chart_timer(self, qtbot, app_state):
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
@@ -62,7 +62,7 @@ class TestDashboardVisibilityGating:
         assert page._chart_timer.isActive()
 
     def test_app_inactive_throttles_timer(self, qtbot, app_state):
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
@@ -71,7 +71,7 @@ class TestDashboardVisibilityGating:
         assert page._chart_timer.interval() == 5000
 
     def test_app_active_restores_timer(self, qtbot, app_state):
-        from onlyfans.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
 
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)

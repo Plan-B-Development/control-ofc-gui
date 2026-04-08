@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import time
 
-from onlyfans.api.models import FanReading, HistoryPoint, SensorReading
-from onlyfans.services.history_store import HistoryStore
+from control_ofc.api.models import FanReading, HistoryPoint, SensorReading
+from control_ofc.services.history_store import HistoryStore
 
 
 def test_record_sensors():

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from PySide6.QtWidgets import QPushButton
 
-from onlyfans.api.models import (
+from control_ofc.api.models import (
     Capabilities,
     ConnectionState,
     DaemonStatus,
@@ -16,7 +16,7 @@ from onlyfans.api.models import (
     SensorReading,
     SubsystemStatus,
 )
-from onlyfans.ui.main_window import MainWindow
+from control_ofc.ui.main_window import MainWindow
 
 
 @pytest.fixture()
@@ -183,7 +183,7 @@ class TestSensorPickerDialog:
 
     def test_dialog_shows_sensor_values(self, qtbot):
         """Sensor value is displayed next to radio button in the dialog."""
-        from onlyfans.ui.widgets.series_chooser_dialog import SensorPickerDialog
+        from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
 
         sensors = [SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=55.3, age_ms=50)]
         dialog = SensorPickerDialog(category="cpu_temp", sensors=sensors)
@@ -192,7 +192,7 @@ class TestSensorPickerDialog:
 
     def test_dialog_updates_values(self, qtbot):
         """Value labels update when update_values is called."""
-        from onlyfans.ui.widgets.series_chooser_dialog import SensorPickerDialog
+        from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
 
         sensors = [SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=40.0, age_ms=50)]
         dialog = SensorPickerDialog(category="cpu_temp", sensors=sensors)
@@ -205,7 +205,7 @@ class TestSensorPickerDialog:
 
     def test_dialog_shows_fan_rpm(self, qtbot):
         """Fan RPM values displayed in the dialog."""
-        from onlyfans.ui.widgets.series_chooser_dialog import SensorPickerDialog
+        from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
 
         fans = [FanReading(id="openfan:ch00", source="openfan", rpm=1200, age_ms=50)]
         dialog = SensorPickerDialog(category="fans", fans=fans)
@@ -214,8 +214,8 @@ class TestSensorPickerDialog:
 
     def test_dialog_does_not_change_chart_visibility(self, qtbot):
         """R11-001: Selecting a sensor in the dialog must not affect the chart."""
-        from onlyfans.services.series_selection import SeriesSelectionModel
-        from onlyfans.ui.widgets.series_chooser_dialog import SensorPickerDialog
+        from control_ofc.services.series_selection import SeriesSelectionModel
+        from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
 
         selection = SeriesSelectionModel()
         selection.update_known_keys(["sensor:s1", "sensor:s2"])
@@ -256,8 +256,8 @@ class TestSensorSeriesPanel:
 
     def test_panel_shows_grouped_sensors(self, qtbot):
         """Sensors appear under correct group headers."""
-        from onlyfans.services.series_selection import SeriesSelectionModel
-        from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.services.series_selection import SeriesSelectionModel
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         sel = SeriesSelectionModel()
         panel = SensorSeriesPanel(sel)
@@ -276,8 +276,8 @@ class TestSensorSeriesPanel:
 
     def test_panel_shows_live_values(self, qtbot):
         """Values update via update_sensors()."""
-        from onlyfans.services.series_selection import SeriesSelectionModel
-        from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.services.series_selection import SeriesSelectionModel
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         sel = SeriesSelectionModel()
         panel = SensorSeriesPanel(sel)
@@ -294,8 +294,8 @@ class TestSensorSeriesPanel:
 
     def test_panel_shows_fans(self, qtbot):
         """Fan RPM values shown under fan groups."""
-        from onlyfans.services.series_selection import SeriesSelectionModel
-        from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.services.series_selection import SeriesSelectionModel
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         sel = SeriesSelectionModel()
         panel = SensorSeriesPanel(sel)
@@ -308,8 +308,8 @@ class TestSensorSeriesPanel:
 
     def test_panel_no_rebuild_on_same_data(self, qtbot):
         """Values update without item recreation when sensor list unchanged."""
-        from onlyfans.services.series_selection import SeriesSelectionModel
-        from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.services.series_selection import SeriesSelectionModel
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         sel = SeriesSelectionModel()
         panel = SensorSeriesPanel(sel)
@@ -331,8 +331,8 @@ class TestR12SensorPanelNoRebuild:
 
     def test_no_rebuild_when_sensors_unchanged(self, qtbot):
         """update_sensors with same IDs should not destroy/recreate items."""
-        from onlyfans.services.series_selection import SeriesSelectionModel
-        from onlyfans.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.services.series_selection import SeriesSelectionModel
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         sel = SeriesSelectionModel()
         panel = SensorSeriesPanel(sel)
@@ -350,7 +350,7 @@ class TestR12StatusClassGuard:
     """R12-001: unpolish/polish only when class changes."""
 
     def test_summary_card_skips_redundant_repolish(self, qtbot):
-        from onlyfans.ui.widgets.summary_card import SummaryCard
+        from control_ofc.ui.widgets.summary_card import SummaryCard
 
         card = SummaryCard("Test")
         qtbot.addWidget(card)
