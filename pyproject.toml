@@ -1,5 +1,5 @@
 [project]
-name = "control_ofc"
+name = "control-ofc-gui"
 version = "0.86.4"
 description = "Desktop fan control GUI for the Control-OFC daemon"
 requires-python = ">=3.12"
@@ -21,7 +21,7 @@ dev = [
 ]
 
 [project.scripts]
-control_ofc = "control_ofc.main:main"
+control-ofc-gui = "control_ofc.main:main"
 
 [tool.ruff]
 target-version = "py312"
