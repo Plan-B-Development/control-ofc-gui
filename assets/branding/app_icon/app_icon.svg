@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a2744"/>
+      <stop offset="100%" style="stop-color:#0d1b2a"/>
+    </linearGradient>
+    <linearGradient id="fan" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4a90d9"/>
+      <stop offset="100%" style="stop-color:#7ec8e3"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect x="8" y="8" width="240" height="240" rx="48" ry="48" fill="url(#bg)" stroke="#2a4a7f" stroke-width="2"/>
+  <!-- Fan hub (center circle) -->
+  <circle cx="128" cy="128" r="18" fill="#2a4a7f" stroke="#4a90d9" stroke-width="2"/>
+  <circle cx="128" cy="128" r="8" fill="#4a90d9"/>
+  <!-- Fan blades (5 blades, rotated) -->
+  <g fill="url(#fan)" opacity="0.9">
+    <path d="M128,110 Q148,70 128,50 Q108,70 118,100 Q122,108 128,110Z" transform="rotate(0,128,128)"/>
+    <path d="M128,110 Q148,70 128,50 Q108,70 118,100 Q122,108 128,110Z" transform="rotate(72,128,128)"/>
+    <path d="M128,110 Q148,70 128,50 Q108,70 118,100 Q122,108 128,110Z" transform="rotate(144,128,128)"/>
+    <path d="M128,110 Q148,70 128,50 Q108,70 118,100 Q122,108 128,110Z" transform="rotate(216,128,128)"/>
+    <path d="M128,110 Q148,70 128,50 Q108,70 118,100 Q122,108 128,110Z" transform="rotate(288,128,128)"/>
+  </g>
+  <!-- Outer ring -->
+  <circle cx="128" cy="128" r="70" fill="none" stroke="#4a90d9" stroke-width="3" opacity="0.4"/>
+  <!-- Corner screws (subtle) -->
+  <circle cx="48" cy="48" r="5" fill="#2a4a7f" opacity="0.5"/>
+  <circle cx="208" cy="48" r="5" fill="#2a4a7f" opacity="0.5"/>
+  <circle cx="48" cy="208" r="5" fill="#2a4a7f" opacity="0.5"/>
+  <circle cx="208" cy="208" r="5" fill="#2a4a7f" opacity="0.5"/>
+</svg>

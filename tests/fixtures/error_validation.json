@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "validation_error",
+    "message": "pwm_percent must be between 0 and 100",
+    "retryable": false,
+    "source": "validation",
+    "details": {"field": "pwm_percent", "constraint": "range(0, 100)"}
+  }
+}
