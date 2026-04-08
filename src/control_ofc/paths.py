@@ -78,7 +78,7 @@ def assets_dir() -> Path:
     """
     candidates = [
         Path(__file__).parent.parent.parent / "assets" / "branding",
-        Path("/opt/control-ofc/assets/branding"),
+        Path("/usr/share/control-ofc-gui/assets/branding"),
         Path("assets/branding"),
     ]
     for p in candidates:
