@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Control-OFC
+Comment=Desktop fan control GUI for the Control-OFC daemon
+Exec=control-ofc-gui
+Icon=control-ofc
+Terminal=false
+Categories=System;Settings;Monitor;HardwareSettings;
+Keywords=fan;cooling;temperature;hwmon;
+StartupWMClass=control-ofc-gui
