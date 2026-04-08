@@ -147,7 +147,7 @@ The Event Log tab provides three on-demand detail retrieval buttons:
 |--------|--------|---------------|
 | Daemon Status | AppState snapshot | Connection, mode, daemon version, overall status, subsystem details, sensor/fan counts, warnings, active profile |
 | Controller Status | AppState capabilities + status | OpenFan/hwmon presence, channels, write support, subsystem freshness, reason text |
-| System Journal | `journalctl -u onlyfans-daemon` | Last 100 lines of onlyfans-daemon journal entries |
+| System Journal | `journalctl -u control-ofc-daemon` | Last 100 lines of control-ofc-daemon journal entries |
 
 ### Source labeling
 Each detail block is appended to the log view with:

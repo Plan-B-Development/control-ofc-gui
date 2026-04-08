@@ -1,6 +1,6 @@
 # DECISIONS.md
 
-This file records significant architecture, product, and implementation decisions for the OnlyFans GUI repository.
+This file records significant architecture, product, and implementation decisions for the Control-OFC GUI repository.
 
 Use it as a concise change log for decisions that affect how the repo should evolve.
 
@@ -549,7 +549,7 @@ When the user activates a profile, the GUI calls `POST /profile/activate` on the
 
 ### Reason
 - Daemon is the runtime owner of active profile (headless operation)
-- Daemon persists active profile to `/var/lib/onlyfans/daemon_state.json` — survives restart/reboot
+- Daemon persists active profile to `/var/lib/control-ofc/daemon_state.json` — survives restart/reboot
 - GUI must not falsely mark profiles active when daemon rejects them
 
 ### Impact
@@ -688,7 +688,7 @@ All labels inside Card frames on the Diagnostics page use `background: transpare
 **Date:** 2026-03-28
 
 ### Decision
-The Diagnostics Event Log tab provides three category buttons (Daemon Status, Controller Status, System Journal) that fetch and append labeled detail blocks to the log view on demand. Each block is prefixed with a source label and timestamp. Journal access uses `subprocess.run()` with `journalctl -u onlyfans.service --lines=100 --no-pager --output=short-iso` bounded by a 5s timeout.
+The Diagnostics Event Log tab provides three category buttons (Daemon Status, Controller Status, System Journal) that fetch and append labeled detail blocks to the log view on demand. Each block is prefixed with a source label and timestamp. Journal access uses `subprocess.run()` with `journalctl -u control-ofc-daemon.service --lines=100 --no-pager --output=short-iso` bounded by a 5s timeout.
 
 ### Why
 On-demand retrieval with clear source labeling keeps the event log manageable and truthful. Bounded journal access prevents UI freezes. The subprocess approach requires no additional dependencies.
@@ -842,7 +842,7 @@ RDNA3+ GPUs do not support `pwm1_enable=1` (manual mode). Fan write control requ
 **Date:** 2026-03-29
 
 ### Decision
-The daemon's Unix socket at `/run/onlyfans/onlyfans.sock` is chmod'd to 0666 immediately after `UnixListener::bind()`. This allows non-root GUI processes to connect.
+The daemon's Unix socket at `/run/control-ofc/control-ofc.sock` is chmod'd to 0666 immediately after `UnixListener::bind()`. This allows non-root GUI processes to connect.
 
 ### Why
 Unix domain sockets require write permission to connect. The daemon runs as root and creates the socket with root-only write access by default. The GUI runs as a regular user and cannot connect without relaxed permissions. LACT uses the same 0666 pattern.
@@ -1101,10 +1101,10 @@ The profile engine skips GPU fan writes when the GUI was active in the last 30 s
 **Date:** 2026-03-31
 
 ### Decision
-The daemon state directory (`daemon_state.json`) is configurable via `[state] state_dir` in `daemon.toml` (default: `/var/lib/onlyfans`). The systemd service file uses `StateDirectory=onlyfans` to have systemd create and manage the directory. The path is also added to `ReadWritePaths` for belt-and-suspenders protection. The daemon uses `OnceLock<String>` to accept the configured path at startup.
+The daemon state directory (`daemon_state.json`) is configurable via `[state] state_dir` in `daemon.toml` (default: `/var/lib/control-ofc`). The systemd service file uses `StateDirectory=control-ofc` to have systemd create and manage the directory. The path is also added to `ReadWritePaths` for belt-and-suspenders protection. The daemon uses `OnceLock<String>` to accept the configured path at startup.
 
 ### Why
-Under `ProtectSystem=strict`, the daemon's atomic write (tmp + rename) to `/var/lib/onlyfans/daemon_state.json` failed with `EROFS (Read-only file system, os error 30)`. The root cause was a missing `StateDirectory=onlyfans` directive in the systemd service file, and `/var/lib/onlyfans` was not in `ReadWritePaths`. This made profile persistence non-functional: the active profile was lost on every daemon restart.
+Under `ProtectSystem=strict`, the daemon's atomic write (tmp + rename) to `/var/lib/control-ofc/daemon_state.json` failed with `EROFS (Read-only file system, os error 30)`. The root cause was a missing `StateDirectory=control-ofc` directive in the systemd service file, and `/var/lib/control-ofc` was not in `ReadWritePaths`. This made profile persistence non-functional: the active profile was lost on every daemon restart.
 
 ### Alternatives considered
 - **Option A (service file fix only):** Faster but would not support non-standard deployments.
@@ -1276,7 +1276,7 @@ R60's dynamic page approach.
 The daemon's profile search directories are configurable via a `[profiles] search_dirs` array in `daemon.toml`, replacing the hardcoded `HOME`-based logic. Both the incoming profile path and the search directories are canonicalized before comparison (CWE-22 fix).
 
 ### Why
-The daemon runs as root (systemd, no `User=`), so its `HOME` is `/root` — not the GUI user's home. The GUI stores profiles at `~/.config/onlyfans/profiles/` which the daemon rejected with "profile_path must be within a profile search directory." Making search_dirs configurable lets the install script set the correct user path.
+The daemon runs as root (systemd, no `User=`), so its `HOME` is `/root` — not the GUI user's home. The GUI stores profiles at `~/.config/control-ofc/profiles/` which the daemon rejected with "profile_path must be within a profile search directory." Making search_dirs configurable lets the install script set the correct user path.
 
 ### Alternatives considered
 - GUI sends profile content inline (breaks headless restart, major API change)
@@ -1293,7 +1293,7 @@ Daemon.toml.example updated with `[profiles]` section. Install scripts should co
 **Date:** 2026-04-07
 
 ### Decision
-~~When the user changes their profile directory in Settings → Application, the GUI writes the updated `search_dirs` directly to `/etc/onlyfans/daemon.toml`.~~
+~~When the user changes their profile directory in Settings → Application, the GUI writes the updated `search_dirs` directly to `/etc/control-ofc/daemon.toml`.~~
 
 ### Superseded by
 DEC-087 (R64) — GUI now uses daemon API endpoint instead of direct file writes.
@@ -1351,7 +1351,7 @@ DEC-084 (GUI writes daemon.toml directly) crossed the architecture boundary (GUI
 ### Implications
 - `daemon_config_writer.py` removed from GUI
 - Daemon has new `POST /config/profile-search-dirs` endpoint (additive: `{"add": [...]}`)
-- Daemon supports SIGHUP config reload (`systemctl reload onlyfans-daemon`)
+- Daemon supports SIGHUP config reload (`systemctl reload control-ofc-daemon`)
 - `profile_search_dirs` in AppState now uses `RwLock` for runtime mutability
 - Multi-user support: each user can add their dir via the API
 
@@ -1363,7 +1363,7 @@ DEC-084 (GUI writes daemon.toml directly) crossed the architecture boundary (GUI
 **Date:** 2026-04-07
 
 ### Decision
-The daemon handles SIGHUP by re-reading `daemon.toml` and updating `profile_search_dirs` in memory. The systemd service file includes `ExecReload=/bin/kill -HUP $MAINPID` so `systemctl reload onlyfans-daemon` works.
+The daemon handles SIGHUP by re-reading `daemon.toml` and updating `profile_search_dirs` in memory. The systemd service file includes `ExecReload=/bin/kill -HUP $MAINPID` so `systemctl reload control-ofc-daemon` works.
 
 ### Why
 SIGHUP is the standard Unix convention for daemon config reload. Combined with the API endpoint (DEC-087), this provides both programmatic and operational reload paths (Prometheus pattern).

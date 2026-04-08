@@ -1,6 +1,6 @@
-# OnlyFans GUI — Claude Documentation Pack
+# Control-OFC GUI — Claude Documentation Pack
 
-This pack is the **working source of truth** for building the Linux-first desktop GUI for **OnlyFans**, the parody-branded GUI for controlling the **OpenFanController** system through the daemon/API.
+This pack is the **working source of truth** for building the Linux-first desktop GUI for **Control-OFC**, the parody-branded GUI for controlling the **OpenFanController** system through the daemon/API.
 
 ## Read this pack in this order
 1. `01_Product_Overview.md`

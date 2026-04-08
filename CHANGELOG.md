@@ -366,7 +366,7 @@ Both color picker paths fixed: theme editor (`theme_editor.py`) and chart series
 ### R51: Persistence, Import/Export, Diagnostics, Support Bundle
 
 **Diagnostics (P0 fix):**
-- **Journal unit name mismatch:** System Journal button filtered by `onlyfans.service` (doesn't exist) instead of `onlyfans-daemon` (the actual systemd unit). Fixed in code and spec doc. Journal retrieval now returns real daemon logs.
+- **Journal unit name mismatch:** System Journal button filtered by `control-ofc-daemon.service` (doesn't exist) instead of `control-ofc-daemon` (the actual systemd unit). Fixed in code and spec doc. Journal retrieval now returns real daemon logs.
 
 **Support bundle improvements (P1):**
 - **Journal logs included:** Support bundle now calls `fetch_journal_entries()` and includes daemon journal output as a `journal` key.
@@ -379,7 +379,7 @@ Both color picker paths fixed: theme editor (`theme_editor.py`) and chart series
 - **Theme import wiring:** `_import_themes()` method added; import now applies settings, profiles, AND themes from exported bundle.
 
 **Tests (6 new, 715 → 721 total):**
-- `test_journal_uses_correct_unit_name` — regression test verifying `onlyfans-daemon` in journalctl command
+- `test_journal_uses_correct_unit_name` — regression test verifying `control-ofc-daemon` in journalctl command
 - `test_bundle_includes_journal` — bundle has `journal` key with log output
 - `test_bundle_includes_fan_state` — bundle has `fan_state` array
 - `test_bundle_missing_sections_when_no_daemon` — bundle reports omitted sections
@@ -437,9 +437,9 @@ Both color picker paths fixed: theme editor (`theme_editor.py`) and chart series
 ### R50: Daemon Persisted-State Hardening
 
 **Daemon (v0.5.4) fixes:**
-- **Root cause:** `daemon_state.json` writes failed with `EROFS (Read-only file system, os error 30)` because systemd `ProtectSystem=strict` blocked writes to `/var/lib/onlyfans` — the service file was missing `StateDirectory=onlyfans` and the path wasn't in `ReadWritePaths`
-- **Service file:** Added `StateDirectory=onlyfans` (systemd creates/manages the directory) and `/var/lib/onlyfans` to `ReadWritePaths`
-- **Configurable state directory:** New `[state] state_dir` in `daemon.toml` (default: `/var/lib/onlyfans`). Supports custom paths for testing, containers, or non-standard layouts
+- **Root cause:** `daemon_state.json` writes failed with `EROFS (Read-only file system, os error 30)` because systemd `ProtectSystem=strict` blocked writes to `/var/lib/control-ofc` — the service file was missing `StateDirectory=control-ofc` and the path wasn't in `ReadWritePaths`
+- **Service file:** Added `StateDirectory=control-ofc` (systemd creates/manages the directory) and `/var/lib/control-ofc` to `ReadWritePaths`
+- **Configurable state directory:** New `[state] state_dir` in `daemon.toml` (default: `/var/lib/control-ofc`). Supports custom paths for testing, containers, or non-standard layouts
 - **Implementation:** `daemon_state.rs` rewritten to use `OnceLock<String>` for runtime-configurable state path, initialized from config before any load/save operations
 - **Impact:** Profile persistence now works correctly under systemd sandbox — active profile survives daemon restart and reboot
 
@@ -569,7 +569,7 @@ Both color picker paths fixed: theme editor (`theme_editor.py`) and chart series
 - **Lease take always succeeds**: API `POST /hwmon/lease/take` now uses `force_take_lease()` so the GUI always preempts internal holders. Integration test updated (conflict → preempt).
 
 **Packaging:**
-- **udev rule template**: `packaging/99-onlyfans.rules` creates stable `/dev/onlyfans-controller` symlink. Requires user VID/PID from `udevadm info`.
+- **udev rule template**: `packaging/99-control-ofc.rules` creates stable `/dev/control-ofc-controller` symlink. Requires user VID/PID from `udevadm info`.
 
 **Documentation (GUI v0.60.0):**
 - `docs/14_Risks_Gaps_and_Future_Work.md`: Complete rewrite with current feature matrix, status for all 5 items, resolved gaps table, and remaining known limitations.
@@ -768,7 +768,7 @@ Both color picker paths fixed: theme editor (`theme_editor.py`) and chart series
 - **Latency investigation**: Traced `age_ms` through daemon `staleness.rs` → API `/status` → GUI `_on_status()`. The large difference between subsystem ages (e.g., openfan 847ms vs hwmon 112ms) is expected: OpenFan serial I/O takes 100-500ms per cycle while hwmon sysfs reads take ~1ms. No timer changes needed — fixed with truthful labeling.
 - **Overview improvements**: Subsystem reason text now displayed alongside age. Daemon uptime shown when available. Explanatory note clarifies that "age = time since daemon last polled this hardware."
 - **Event log enhancement**: Switched from `QTextEdit` to `QPlainTextEdit` (more efficient for append-heavy text, `setMaximumBlockCount(2000)`). Added three category buttons: Daemon Status, Controller Status, System Journal. Each appends a labeled block with source attribution.
-- **Journal access**: `journalctl -u onlyfans.service --lines=100 --no-pager --output=short-iso` via `subprocess.run()` with 5s timeout. Handles: FileNotFoundError, TimeoutExpired, empty output, permission errors (explains `systemd-journal` group).
+- **Journal access**: `journalctl -u control-ofc-daemon.service --lines=100 --no-pager --output=short-iso` via `subprocess.run()` with 5s timeout. Handles: FileNotFoundError, TimeoutExpired, empty output, permission errors (explains `systemd-journal` group).
 - **Lease explanation**: New explanation card in Lease tab covering what a lease is (exclusive hwmon write access), why it exists (prevent conflicting PWM commands), and practical considerations (60s TTL, auto-acquire/renew, OpenFan doesn't need lease).
 - **Transparent labels**: All labels inside Card frames across Overview, Lease, and Telemetry tabs use `background: transparent`. Replaced hardcoded `font-size: 14px` with theme CSS classes (`.PageSubtitle`, `.CardMeta`).
 - **67 new tests** in `test_diagnostics_r34.py`: transparent labels (Overview/Lease/Telemetry), no inline font-size, subsystem reason display, uptime, lease explanation content, QPlainTextEdit properties, category button existence, daemon/controller/journal detail retrieval, source labeling, journal error handling (not found, timeout, permissions, empty).
@@ -1229,7 +1229,7 @@ All 26 action items from the comprehensive code audit have been resolved.
 - `DaemonClient` plumbed through `MainWindow` → `ControlsPage`, `DashboardPage`, `SettingsPage`
 
 #### C. Daemon profile persistence (already implemented, now used)
-- Daemon persists active profile to `/var/lib/onlyfans/daemon_state.json` on activation
+- Daemon persists active profile to `/var/lib/control-ofc/daemon_state.json` on activation
 - Profile survives daemon restart and reboot
 - Startup precedence: CLI > persisted state > none
 - Closing the GUI does not reset the daemon's active profile
@@ -1273,7 +1273,7 @@ All 26 action items from the comprehensive code audit have been resolved.
 - **Root cause identified**: hardcoded `/dev/ttyACM0` in daemon config + no systemd USB device dependency + no retry logic
 - **Stable by-id path**: daemon should use `/dev/serial/by-id/usb-Karanovic_Research_OpenFan_DE615CB14721492C-if00` (survives USB re-enumeration)
 - **Startup retry loop**: daemon retries serial detection up to 5 times with exponential backoff (1s, 2s, 4s, 8s, 16s) — handles slow USB enumeration after boot
-- **Manual action required**: update `/etc/onlyfans/daemon.toml` port to stable by-id path
+- **Manual action required**: update `/etc/control-ofc/daemon.toml` port to stable by-id path
 
 ## [0.22.0] — 2026-03-24
 
@@ -1399,7 +1399,7 @@ All 26 action items from the comprehensive code audit have been resolved.
 - **Legacy floors removed**: MIN_PWM_PERCENT=20 (serial), per-header 20%/30% (hwmon), floor fields from Capabilities API — all removed
 - **Profile model** (`daemon/src/profile.rs`): loads GUI v3 JSON profiles, evaluates graph/linear/flat curves
 - **Profile engine** (`daemon/src/profile_engine.rs`): 1Hz headless curve evaluation loop (logging-only, see limitations)
-- **State persistence** (`daemon/src/daemon_state.rs`): atomic JSON at `/var/lib/onlyfans/daemon_state.json`
+- **State persistence** (`daemon/src/daemon_state.rs`): atomic JSON at `/var/lib/control-ofc/daemon_state.json`
 - **CLI args**: `--profile <name>`, `--profile-file <path>`, `OPENFAN_PROFILE` env var
 - **API**: `POST /profile/activate` for runtime profile switching
 - **Precedence**: CLI > env > API > persisted state > no profile (imperative mode)
@@ -1437,7 +1437,7 @@ All 26 action items from the comprehensive code audit have been resolved.
   events every 1s containing combined sensor+fan data
 - **Daemon:** `GET /events` route with 5s heartbeat via `KeepAlive`
 - **Daemon:** added `futures-util` and `tokio-stream` dependencies
-- **GUI:** new `src/onlyfans/services/event_stream.py` — `EventStreamService` with Qt signals
+- **GUI:** new `src/control_ofc/services/event_stream.py` — `EventStreamService` with Qt signals
   (`sensors_ready`, `fans_ready`), runs in daemon thread, exponential backoff reconnect
 - **GUI:** added `httpx-sse>=0.4` dependency to `pyproject.toml`
 - **Note:** polling service retained for capabilities, headers, lease, and telemetry
@@ -1564,7 +1564,7 @@ All 26 action items from the comprehensive code audit have been resolved.
   (compact), curves section expanded to 300px. "Used by: Role1, Role2" shown on each CurveCard.
 - **R5-008: Edit Fan Role dialog** — new `FanRoleDialog` with name, mode, curve selector,
   members summary + edit button. Opened via "Edit..." on card. Card stays minimal.
-- **New widget:** `src/onlyfans/ui/widgets/fan_role_dialog.py`
+- **New widget:** `src/control_ofc/ui/widgets/fan_role_dialog.py`
 - 253 tests (251 → 253), all passing
 
 ## [0.13.1] — 2026-03-21
@@ -1579,7 +1579,7 @@ All 26 action items from the comprehensive code audit have been resolved.
 ## [0.13.0] — 2026-03-21
 
 ### Daemon + GUI Improvements — Safety, Performance, Observability
-**Daemon changes (onlyfans-daemon):**
+**Daemon changes (control-ofc-daemon):**
 - **IMP-001: Fan stall detection** — `stall_detected: bool` field added to `/fans` response.
   Daemon flags stall when RPM=0 and last_commanded_pwm > 20% (safety floor).
   Applied to both OpenFan and hwmon fans.
@@ -1722,7 +1722,7 @@ All 9 oversight gaps from test-overview.md resolved:
   `parse_telemetry_config`
 - **P2: V1 migration group target** — tests `target_type="group"` with `target_id="all"`,
   verifies empty members list and "Group: all" name
-- **P2: Hardcoded color lint expanded** — scan now includes `src/onlyfans/ui/` root
+- **P2: Hardcoded color lint expanded** — scan now includes `src/control_ofc/ui/` root
   (sidebar, status_banner, splash, about_dialog, branding)
 - **P2: Step-down rate limiting** — test drops temp from 70°C to 30°C (curve: 80%→20%),
   verifies step_down_pct=10 clamps output to 70% (not 20%)
@@ -1835,8 +1835,8 @@ All 9 oversight gaps from test-overview.md resolved:
   Settings_Btn_applyThemeToApp, Settings_ThemeEditor, About_Btn_close,
   Controls_Btn_renameControl, Controls_Btn_renameCurve, ControlCard_Btn_editMembers
 - **AUD-011:** Centralized asset path resolution — new `paths.assets_dir()` with fallback chain
-  (dev layout, /opt/onlyfans, CWD). All branding consumers (splash, sidebar, about, icon)
-  now use `onlyfans.ui.branding` helpers backed by `paths.assets_dir()`.
+  (dev layout, /opt/control-ofc, CWD). All branding consumers (splash, sidebar, about, icon)
+  now use `control_ofc.ui.branding` helpers backed by `paths.assets_dir()`.
 - **AUD-012:** Added curve selection wiring test (verifies curve dropdown change updates model)
 - 209 tests + 1 skip, all passing
 
@@ -1862,7 +1862,7 @@ All 9 oversight gaps from test-overview.md resolved:
 ### Branding, Splash, Icons, and Parody Look & Feel (GUI-M7)
 - **Asset system** — `assets/branding/` structure with:
   - `splash/splash.png` — cheeky parody splash screen image
-  - `banner.png` — clean "Not Just OnlyFans" logo
+  - `banner.png` — clean "Not Just Control-OFC" logo
   - `app_icon/app_icon.svg` — fan-blade-in-rounded-square SVG icon
 - **Splash screen** — `AppSplashScreen` shown on startup for 3s while connecting:
   - Uses SplashScreen.png as background
@@ -2034,7 +2034,7 @@ All 9 oversight gaps from test-overview.md resolved:
 ### Phase 6 — Settings
 - `AppSettingsService`: GUI preferences with JSON persistence
 - Full settings page with five tabs: Application, Themes, Safety, Telemetry, Import/Export
-- Theme select/import/export from `~/.config/onlyfans/themes/`
+- Theme select/import/export from `~/.config/control-ofc/themes/`
 - Safety floors read-only display from daemon capabilities
 - Telemetry config write-through to daemon via `POST /telemetry/config`
 - GUI settings export/import with file dialogs
@@ -2051,7 +2051,7 @@ All 9 oversight gaps from test-overview.md resolved:
 - 28 new tests (86 total)
 
 ### Phase 4 — Controls
-- `ProfileService`: profile CRUD with JSON persistence under `~/.config/onlyfans/profiles/`
+- `ProfileService`: profile CRUD with JSON persistence under `~/.config/control-ofc/profiles/`
 - `CurveEditor`: interactive pyqtgraph curve editor with synced numeric table
 - `ControlsPage`: profile list, activate/new/duplicate/delete, save/reset, manual override toggle
 - Three default profiles: Quiet, Balanced, Performance (5-point linear curves)

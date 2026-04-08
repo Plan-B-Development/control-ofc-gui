@@ -1,8 +1,8 @@
-# OnlyFans GUI
+# Control-OFC GUI
 
-> PySide6 desktop GUI for the OnlyFans fan control daemon on Linux.
+> PySide6 desktop GUI for the Control-OFC fan control daemon on Linux.
 
-OnlyFans GUI is a dark-theme-first desktop application for monitoring and controlling fans via the [onlyfans-daemon](https://github.com/your-org/onlyfans-daemon) service. It communicates exclusively through the daemon's Unix socket HTTP API — it never accesses hardware directly.
+Control-OFC GUI is a dark-theme-first desktop application for monitoring and controlling fans via the [control-ofc-daemon](https://github.com/your-org/control-ofc-daemon) service. It communicates exclusively through the daemon's Unix socket HTTP API — it never accesses hardware directly.
 
 ## Features
 
@@ -17,7 +17,7 @@ OnlyFans GUI is a dark-theme-first desktop application for monitoring and contro
 - Python >= 3.12 (developed on 3.14)
 - Linux (primary target: CachyOS / Arch Linux, KDE Plasma)
 - PySide6 >= 6.6
-- A running `onlyfans-daemon` instance (or use `--demo` mode)
+- A running `control-ofc-daemon` instance (or use `--demo` mode)
 
 ### System dependencies (Arch-based)
 
@@ -30,7 +30,7 @@ sudo pacman -S python python-pip base-devel
 
 ```bash
 # Clone the repository
-git clone <repo-url> && cd OnlyFans-GUI
+git clone <repo-url> && cd control-ofc-gui
 
 # Create virtual environment
 python3 -m venv .venv
@@ -43,38 +43,38 @@ pip install -e .
 ## Usage
 
 ```bash
-# Normal mode (connects to daemon at /run/onlyfans/onlyfans.sock)
-onlyfans
+# Normal mode (connects to daemon at /run/control-ofc/control-ofc.sock)
+control-ofc
 
 # Demo mode (no daemon required)
-onlyfans --demo
+control-ofc --demo
 ```
 
 Or run as a module:
 ```bash
-python -m onlyfans.main
-python -m onlyfans.main --demo
+python -m control_ofc.main
+python -m control_ofc.main --demo
 ```
 
 ## Daemon setup
 
-The GUI requires the `onlyfans-daemon` to be running. See the [daemon repository](/home/mitch/Development/OnlyFans) for build and installation instructions, or the [Operations Guide](docs/18_Operations_Guide.md) for configuration reference.
+The GUI requires the `control-ofc-daemon` to be running. See the [daemon repository](/home/mitch/Development/control-ofc-daemon) for build and installation instructions, or the [Operations Guide](docs/18_Operations_Guide.md) for configuration reference.
 
 ### Quick daemon check
 
 ```bash
 # Is the daemon running?
-systemctl is-active onlyfans-daemon
+systemctl is-active control-ofc-daemon
 
 # Can we reach it?
-curl --unix-socket /run/onlyfans/onlyfans.sock http://localhost/status
+curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/status
 ```
 
 ## Configuration
 
 ### GUI config
 
-Stored at `~/.config/onlyfans/`:
+Stored at `~/.config/control-ofc/`:
 - `settings.json` — application preferences
 - `profiles/` — fan control profiles
 - `themes/` — custom themes

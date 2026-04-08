@@ -1,7 +1,7 @@
 # 18 — Operations Guide
 
 ## Purpose
-This document covers daemon configuration, startup, permissions, CLI usage, environment variables, profile management, syslog setup, and troubleshooting. It is the canonical operational reference for running OnlyFans in production.
+This document covers daemon configuration, startup, permissions, CLI usage, environment variables, profile management, syslog setup, and troubleshooting. It is the canonical operational reference for running Control-OFC in production.
 
 ---
 
@@ -10,14 +10,14 @@ This document covers daemon configuration, startup, permissions, CLI usage, envi
 ### Build from source
 ```bash
 cd daemon && cargo build --release
-sudo cp target/release/onlyfans-daemon /usr/local/bin/
+sudo cp target/release/control-ofc-daemon /usr/local/bin/
 ```
 
 ### Systemd service
 ```bash
-sudo cp packaging/onlyfans-daemon.service /etc/systemd/system/
+sudo cp packaging/control-ofc-daemon.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now onlyfans-daemon
+sudo systemctl enable --now control-ofc-daemon
 ```
 
 The service runs as root (required for hwmon sysfs writes and serial device access). Security hardening is applied: `ProtectHome=read-only`, `ProtectSystem=strict`, `PrivateTmp=true`, `NoNewPrivileges=true`.
@@ -27,7 +27,7 @@ The service runs as root (required for hwmon sysfs writes and serial device acce
 ## Daemon configuration
 
 ### Config file location
-`/etc/onlyfans/daemon.toml` — loaded at startup. Create manually if needed.
+`/etc/control-ofc/daemon.toml` — loaded at startup. Create manually if needed.
 
 ### Config schema
 ```toml
@@ -40,16 +40,16 @@ timeout_ms = 500
 poll_interval_ms = 1000
 
 [ipc]
-socket_path = "/run/onlyfans/onlyfans.sock"
+socket_path = "/run/control-ofc/control-ofc.sock"
 
 [state]
-state_dir = "/var/lib/onlyfans"  # persistent state directory
+state_dir = "/var/lib/control-ofc"  # persistent state directory
 
 [startup]
 delay_secs = 0  # seconds to wait before device detection after boot (0-30)
 
 [profiles]
-search_dirs = ["/etc/onlyfans/profiles"]  # add user profile dirs via API
+search_dirs = ["/etc/control-ofc/profiles"]  # add user profile dirs via API
 ```
 
 All fields are optional — defaults are shown above.
@@ -71,8 +71,8 @@ ls -la /dev/serial/by-id/
 
 ### Profile search paths
 When using `--profile <name>`, the daemon searches (in order):
-1. `/etc/onlyfans/profiles/<name>.json`
-2. `$XDG_CONFIG_HOME/onlyfans/profiles/<name>.json` (default: `~/.config/onlyfans/profiles/`)
+1. `/etc/control-ofc/profiles/<name>.json`
+2. `$XDG_CONFIG_HOME/control-ofc/profiles/<name>.json` (default: `~/.config/control-ofc/profiles/`)
 
 ---
 
@@ -99,8 +99,8 @@ ls -la /dev/ttyACM0
 ```
 
 ### Runtime directories
-- `/run/onlyfans/` — created by systemd (`RuntimeDirectory=onlyfans`)
-- `/var/lib/onlyfans/` — daemon state persistence (created by systemd via `StateDirectory=onlyfans`, configurable via `[state] state_dir` in daemon.toml)
+- `/run/control-ofc/` — created by systemd (`RuntimeDirectory=control-ofc`)
+- `/var/lib/control-ofc/` — daemon state persistence (created by systemd via `StateDirectory=control-ofc`, configurable via `[state] state_dir` in daemon.toml)
 
 ---
 
@@ -109,14 +109,14 @@ ls -la /dev/ttyACM0
 ### Startup precedence
 1. CLI: `--profile quiet` or `--profile-file /path/to/profile.json`
 2. Environment: `OPENFAN_PROFILE=quiet`
-3. Persisted state: `/var/lib/onlyfans/daemon_state.json` (from previous API activation)
+3. Persisted state: `/var/lib/control-ofc/daemon_state.json` (from previous API activation)
 4. None → imperative mode (GUI drives PWM writes)
 
 ### GUI activation flow
 When the user activates a profile in the GUI:
-1. GUI saves profile to `~/.config/onlyfans/profiles/<id>.json`
-2. GUI calls `POST /profile/activate {"profile_path": "/home/user/.config/onlyfans/profiles/<id>.json"}`
-3. Daemon validates, applies, and persists to `/var/lib/onlyfans/daemon_state.json`
+1. GUI saves profile to `~/.config/control-ofc/profiles/<id>.json`
+2. GUI calls `POST /profile/activate {"profile_path": "/home/user/.config/control-ofc/profiles/<id>.json"}`
+3. Daemon validates, applies, and persists to `/var/lib/control-ofc/daemon_state.json`
 4. Profile survives daemon restart, reboot, and GUI close
 
 ### Deactivating a profile
@@ -126,14 +126,14 @@ Currently no explicit deactivate endpoint. Activating a different profile replac
 
 ## IPC socket
 
-Default: `/run/onlyfans/onlyfans.sock`
+Default: `/run/control-ofc/control-ofc.sock`
 
 The GUI connects via `httpx` with a Unix socket transport. Test manually:
 ```bash
-curl --unix-socket /run/onlyfans/onlyfans.sock http://localhost/status
-curl --unix-socket /run/onlyfans/onlyfans.sock http://localhost/capabilities
-curl --unix-socket /run/onlyfans/onlyfans.sock http://localhost/fans
-curl --unix-socket /run/onlyfans/onlyfans.sock http://localhost/sensors
+curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/status
+curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/capabilities
+curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/fans
+curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/sensors
 ```
 
 ---
@@ -142,8 +142,8 @@ curl --unix-socket /run/onlyfans/onlyfans.sock http://localhost/sensors
 
 ### Daemon won't start
 ```bash
-sudo systemctl status onlyfans-daemon
-sudo journalctl -u onlyfans-daemon -f
+sudo systemctl status control-ofc-daemon
+sudo journalctl -u control-ofc-daemon -f
 ```
 
 ### Serial device not found
@@ -155,21 +155,21 @@ sudo journalctl -u onlyfans-daemon -f
 ### hwmon fans not detected
 - Check sysfs exists: `ls /sys/class/hwmon/`
 - Check PWM files: `find /sys/class/hwmon -name 'pwm[0-9]' 2>/dev/null`
-- Request rescan: `curl -X POST --unix-socket /run/onlyfans/onlyfans.sock http://localhost/hwmon/rescan`
+- Request rescan: `curl -X POST --unix-socket /run/control-ofc/control-ofc.sock http://localhost/hwmon/rescan`
 
 ### GUI shows "Daemon disconnected"
-- Check daemon is running: `systemctl is-active onlyfans-daemon`
-- Check socket exists: `ls -la /run/onlyfans/onlyfans.sock`
+- Check daemon is running: `systemctl is-active control-ofc-daemon`
+- Check socket exists: `ls -la /run/control-ofc/control-ofc.sock`
 - Check socket permissions (GUI user must be able to connect)
 
 ### Syslog not working
 - Verify host/port are set: Check Status button in Settings
 - Verify receiver accepts **TCP** (not UDP-only) on the configured port
-- Check daemon logs: `journalctl -u onlyfans-daemon | grep telemetry`
+- Check daemon logs: `journalctl -u control-ofc-daemon | grep telemetry`
 - Test with `logger`: `logger -n <host> -P <port> --tcp "test message"`
 
 ### Profile not restoring after reboot
-- Check persisted state: `cat /var/lib/onlyfans/daemon_state.json`
+- Check persisted state: `cat /var/lib/control-ofc/daemon_state.json`
 - Check profile file exists at the path stored in state
 - Check daemon logs for profile loading errors on startup
 

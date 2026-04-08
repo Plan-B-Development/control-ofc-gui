@@ -117,7 +117,7 @@ The calibration endpoint runs a long-running sweep (steps × hold_seconds) that 
 
 ### Profile activation
 - `POST /profile/activate` — `{"profile_path": "/path/to/profile.json"}` or `{"profile_id": "quiet"}`
-  - Daemon validates, applies, and persists active profile to `/var/lib/onlyfans/daemon_state.json`
+  - Daemon validates, applies, and persists active profile to `/var/lib/control-ofc/daemon_state.json`
   - Returns `{"activated": true, "profile_id": "...", "profile_name": "..."}`
   - GUI must only update "active" state after daemon confirms success
 - `GET /profile/active` — returns current active profile or `{"active": false}`
@@ -259,7 +259,7 @@ These are operational inputs, not just display data.
 The daemon has a profile engine (`profile_engine.rs`) that evaluates fan curves autonomously when a profile is active. The GUI can:
 - Activate a profile: `POST /profile/activate`
 - Query the active profile: `GET /profile/active`
-- The daemon persists the active profile to `/var/lib/onlyfans/daemon_state.json`
+- The daemon persists the active profile to `/var/lib/control-ofc/daemon_state.json`
 
 Profile *storage* remains GUI-owned — the daemon loads profiles from configured search directories.
 

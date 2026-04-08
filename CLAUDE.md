@@ -1,24 +1,24 @@
-# CLAUDE.md — OnlyFans GUI (Python/Qt)
+# CLAUDE.md — Control-OFC GUI (Python/Qt)
 
 ## What this project is
-A PySide6 (Qt6) desktop GUI for Linux that communicates with the `onlyfans-daemon` Rust service over its Unix socket HTTP API.
+A PySide6 (Qt6) desktop GUI for Linux that communicates with the `control-ofc-daemon` Rust service over its Unix socket HTTP API.
 
 ## Architecture
 - **Dual control model** — the daemon can run in two modes:
   - **Imperative mode** (default, no profile loaded): GUI owns fan curve logic, daemon is purely imperative (set PWM/RPM now)
   - **Profile mode** (headless): daemon loads a GUI-created profile and evaluates curves autonomously. *Note: PWM write support is partial — see docs/14_Risks_Gaps_and_Future_Work.md for R18 limitations.*
 - **Daemon owns thermal safety** — uses hottest CpuTemp sensor (any platform): 105°C → force 100%, hold until 80°C, recover at 60%. Forces 40% if no CPU sensor found for 5 cycles. No per-header PWM floors in daemon (`min_pwm_percent: 0` for all); safety floors are GUI-side profile constraints.
-- **Communication** — HTTP over Unix domain socket at `/run/onlyfans/onlyfans.sock`
+- **Communication** — HTTP over Unix domain socket at `/run/control-ofc/control-ofc.sock`
 - **Discovery** — call `GET /capabilities` on startup to determine what UI to show
-- **Profile selection** — CLI (`--profile name`), env (`OPENFAN_PROFILE=name`), API (`POST /profile/activate`), or persisted state (`/var/lib/onlyfans/daemon_state.json`)
+- **Profile selection** — CLI (`--profile name`), env (`OPENFAN_PROFILE=name`), API (`POST /profile/activate`), or persisted state (`/var/lib/control-ofc/daemon_state.json`)
 
 ## Daemon API reference
-The daemon repo lives at `/home/mitch/Development/OnlyFans` (Rust workspace).
+The daemon repo lives at `/home/mitch/Development/control-ofc-daemon` (Rust workspace).
 
 ### Canonical daemon documentation
-- `/home/mitch/Development/OnlyFans/daemon.md` — daemon architecture overview (module map, data flow, safety model)
-- `/home/mitch/Development/OnlyFans/daemon/README.md` — build, CLI flags, environment variables
-- `/home/mitch/Development/OnlyFans/docs/DEVELOPER_HANDOVER.md` — developer onboarding
+- `/home/mitch/Development/control-ofc-daemon/daemon.md` — daemon architecture overview (module map, data flow, safety model)
+- `/home/mitch/Development/control-ofc-daemon/daemon/README.md` — build, CLI flags, environment variables
+- `/home/mitch/Development/control-ofc-daemon/docs/DEVELOPER_HANDOVER.md` — developer onboarding
 
 ## Source-of-truth hierarchy
 

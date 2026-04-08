@@ -37,7 +37,7 @@ Recommended approach:
 ## Suggested file layout
 
 ```text
-~/.config/onlyfans/
+~/.config/control-ofc/
   app_settings.json
   themes/
     default_dark.json
@@ -50,7 +50,7 @@ Recommended approach:
   aliases.json
   groups.json
 
-~/.local/state/onlyfans/
+~/.local/state/control-ofc/
   gui.log
   last_session.json
   support_bundle_work/

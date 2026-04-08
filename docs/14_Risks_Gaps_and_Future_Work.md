@@ -21,7 +21,7 @@
 | **Serial runtime reconnect** | **IMPLEMENTED (R43)** | After 5 consecutive errors, enters reconnect mode with backoff |
 | hwmon manual rescan | IMPLEMENTED | `POST /hwmon/rescan` endpoint |
 | GUI rescan button | ABSENT | Endpoint exists but not wired in GUI |
-| udev stable symlink | TEMPLATE ONLY | `packaging/99-onlyfans.rules` — requires user VID/PID |
+| udev stable symlink | TEMPLATE ONLY | `packaging/99-control-ofc.rules` — requires user VID/PID |
 | udev hotplug trigger | ABSENT | No automatic device-event service start |
 | Runtime hwmon hotplug | ABSENT | Devices added after startup are invisible |
 
@@ -29,7 +29,7 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| systemd service file | IMPLEMENTED | `packaging/onlyfans-daemon.service` with hardening |
+| systemd service file | IMPLEMENTED | `packaging/control-ofc-daemon.service` with hardening |
 | Auto-restart on crash | IMPLEMENTED | `Restart=on-failure`, 3s delay |
 | Socket permissions | IMPLEMENTED | chmod 0666 after bind (R38) |
 | Boot autostart | IMPLEMENTED | `multi-user.target` |
@@ -62,11 +62,11 @@ Data model supports multiple GPUs. API reports primary only. No UI to select bet
 
 ### 8. polkit helper for offline config editing (deferred)
 
-When the daemon is not running, the GUI cannot use the API to update profile search dirs. Users must manually edit `/etc/onlyfans/daemon.toml`. A polkit privileged helper could provide a GUI dialog for this, but is not needed while the daemon is running (the API endpoint handles it).
+When the daemon is not running, the GUI cannot use the API to update profile search dirs. Users must manually edit `/etc/control-ofc/daemon.toml`. A polkit privileged helper could provide a GUI dialog for this, but is not needed while the daemon is running (the API endpoint handles it).
 
 ### 9. Drop-in directory pattern for profile config (deferred)
 
-A composable drop-in directory (`/etc/onlyfans/profiles.d/*.conf`) could replace the single `search_dirs` array for more flexible multi-user config. The current API-based approach (DEC-087) is sufficient for V1.
+A composable drop-in directory (`/etc/control-ofc/profiles.d/*.conf`) could replace the single `search_dirs` array for more flexible multi-user config. The current API-based approach (DEC-087) is sufficient for V1.
 
 ## Resolved Gaps (previously listed as future work)
 
@@ -87,7 +87,7 @@ A composable drop-in directory (`/etc/onlyfans/profiles.d/*.conf`) could replace
 | Thermal safety override errors silently dropped | Errors logged at ERROR level with THERMAL SAFETY prefix | v0.5.4 (V4 audit P1) |
 | GPU write endpoints missing from API docs | Added to CLAUDE.md, 08_API_Contract, 09_State_Model | v0.69.0 (V4 audit G2) |
 | Dead code: unused signals, client method, fixtures | Removed with full removal log | v0.69.0 (V4 audit G3) |
-| Journal unit name wrong (onlyfans.service → onlyfans-daemon) | Fixed in code and spec | v0.71.0 (R51) |
+| Journal unit name wrong (control-ofc-daemon.service → control-ofc-daemon) | Fixed in code and spec | v0.71.0 (R51) |
 | Support bundle missing journal logs and fan state | Added journal + fan_state + missing_sections | v0.71.0 (R51) |
 | Export only captured active theme (not all custom) | All custom themes now exported and imported | v0.71.0 (R51) |
 | Import didn't validate export version | Version check added, rejects unsupported versions | v0.71.0 (R51) |
@@ -95,7 +95,7 @@ A composable drop-in directory (`/etc/onlyfans/profiles.d/*.conf`) could replace
 | GPU PMFW curve writes rejected with EINVAL | OD_RANGE clamping + failure suppression (R53) | v0.5.4 |
 | Color dialog tiny and non-resizable on Linux | DontUseNativeDialog flag (R54) | v0.73.0 |
 | Startup sidebar shows Dashboard when another page restored | sidebar.select_page() on restore (R54) | v0.73.0 |
-| Daemon config path hardcoded | --config CLI + ONLYFANS_CONFIG env var override | v0.5.4 (release gen) |
+| Daemon config path hardcoded | --config CLI + CONTROL_OFC_CONFIG env var override | v0.5.4 (release gen) |
 | Serial fallback limited to ttyACM only | Added ttyUSB0-9 probing | v0.5.4 (release gen) |
 | Service DeviceAllow hardcoded to ttyACM0-1 | Wildcard char-ttyACM/ttyUSB classes | v0.5.4 (release gen) |
 | Serial group uucp not portable | Both uucp + dialout in SupplementaryGroups | v0.5.4 (release gen) |

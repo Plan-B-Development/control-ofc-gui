@@ -4,7 +4,7 @@ Use the following as the initial build prompt for Claude after placing the pack 
 
 ---
 
-Read the documentation pack in this folder, starting with `00_README_START_HERE.md`, then implement the V1 desktop GUI for **OnlyFans**.
+Read the documentation pack in this folder, starting with `00_README_START_HERE.md`, then implement the V1 desktop GUI for **Control-OFC**.
 
 Rules:
 1. Do not redesign the product fundamentals unless there is a critical technical reason.

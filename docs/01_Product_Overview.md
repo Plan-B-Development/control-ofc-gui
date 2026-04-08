@@ -1,11 +1,11 @@
 # 01 — Product Overview
 
 ## Product name
-**OnlyFans**  
+**Control-OFC**  
 A Linux-first GUI for controlling the OpenFanController ecosystem through the existing daemon/API.
 
 ## Short description
-OnlyFans is a desktop application for observing system cooling state, switching between cooling profiles, editing fan curves, applying manual override, and diagnosing issues, without ever touching hardware directly.
+Control-OFC is a desktop application for observing system cooling state, switching between cooling profiles, editing fan curves, applying manual override, and diagnosing issues, without ever touching hardware directly.
 
 ## Primary user
 The primary user is the project owner.

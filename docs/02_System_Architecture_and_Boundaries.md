@@ -4,7 +4,7 @@
 
 ```text
 +----------------------+
-|   OnlyFans GUI       |
+|   Control-OFC GUI       |
 |  (PySide6 desktop)   |
 +----------+-----------+
            |
@@ -84,7 +84,7 @@ The app needs:
 ## Suggested high-level module layout
 
 ```text
-onlyfans/
+control_ofc/
   app/
     main.py
     application.py
