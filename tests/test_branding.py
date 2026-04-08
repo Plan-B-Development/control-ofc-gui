@@ -93,7 +93,7 @@ class TestAboutDialog:
 
         dlg = AboutDialog()
         qtbot.addWidget(dlg)
-        assert dlg.windowTitle() == "About OnlyFans"
+        assert dlg.windowTitle() == "About Control-OFC"
 
     def test_about_has_close_button(self, qtbot):
         from PySide6.QtWidgets import QPushButton

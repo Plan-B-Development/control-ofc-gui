@@ -10,7 +10,7 @@ import os
 import tempfile
 from pathlib import Path
 
-_APP = "onlyfans"
+_APP = "control-ofc"
 
 # Path overrides set by the user in Settings → Application.
 # Empty string = use XDG default.
@@ -73,12 +73,12 @@ def log_path() -> Path:
 def assets_dir() -> Path:
     """Return the branding assets directory.
 
-    Checks: dev layout (relative to package), installed layout (/opt/onlyfans),
+    Checks: dev layout (relative to package), installed layout (/opt/control-ofc),
     and CWD fallback.
     """
     candidates = [
         Path(__file__).parent.parent.parent / "assets" / "branding",
-        Path("/opt/onlyfans/assets/branding"),
+        Path("/opt/control-ofc/assets/branding"),
         Path("assets/branding"),
     ]
     for p in candidates:

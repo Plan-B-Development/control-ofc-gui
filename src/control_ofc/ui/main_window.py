@@ -41,7 +41,7 @@ class MainWindow(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("OnlyFans — Fan Control")
+        self.setWindowTitle("Control-OFC — Fan Control")
         self.setMinimumSize(1200, 750)
         self.resize(1400, 850)
 

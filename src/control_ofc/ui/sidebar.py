@@ -43,7 +43,7 @@ class Sidebar(QWidget):
             layout.addWidget(brand_label)
             layout.addSpacing(8)
         else:
-            brand_text = QLabel("OnlyFans")
+            brand_text = QLabel("Control-OFC")
             brand_text.setObjectName("Sidebar_Brand_text")
             brand_text.setProperty("class", "PageTitle")
             brand_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -67,7 +67,7 @@ class Sidebar(QWidget):
         # About button
         self._about_btn = QPushButton("About")
         self._about_btn.setObjectName("NavButton_About")
-        self._about_btn.setToolTip("About OnlyFans")
+        self._about_btn.setToolTip("About Control-OFC")
         self._about_btn.clicked.connect(self._show_about)
         layout.addWidget(self._about_btn)
 

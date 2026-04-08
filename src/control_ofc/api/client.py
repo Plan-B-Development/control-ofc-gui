@@ -1,4 +1,4 @@
-"""Synchronous HTTP client for the onlyfans-daemon Unix socket API."""
+"""Synchronous HTTP client for the control-ofc-daemon Unix socket API."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ BASE_URL = "http://localhost"
 
 
 class DaemonClient:
-    """Synchronous client that talks to onlyfans-daemon over a Unix socket.
+    """Synchronous client that talks to control-ofc-daemon over a Unix socket.
 
     Usage::
 

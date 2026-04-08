@@ -64,7 +64,7 @@ def main() -> None:
         splash.show()
         qt_app.processEvents()
 
-    parser = argparse.ArgumentParser(description="OnlyFans desktop fan control GUI")
+    parser = argparse.ArgumentParser(description="Control-OFC desktop fan control GUI")
     parser.add_argument("--socket", default=DEFAULT_SOCKET_PATH, help="Daemon socket path")
     parser.add_argument("--demo", action="store_true", help="Run in demo mode")
     args = parser.parse_args()

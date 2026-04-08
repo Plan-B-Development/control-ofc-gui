@@ -1,11 +1,11 @@
 """Application-wide constants."""
 
-APP_NAME = "OnlyFans"
+APP_NAME = "Control-OFC"
 APP_VERSION = "0.86.0"
-ORG_NAME = "onlyfans"
+ORG_NAME = "control-ofc"
 
 # Daemon IPC
-DEFAULT_SOCKET_PATH = "/run/onlyfans/onlyfans.sock"
+DEFAULT_SOCKET_PATH = "/run/control-ofc/control-ofc.sock"
 API_TIMEOUT_S = 5.0
 
 # Polling

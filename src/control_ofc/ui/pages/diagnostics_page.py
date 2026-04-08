@@ -305,7 +305,7 @@ class DiagnosticsPage(QWidget):
 
         journal_btn = QPushButton("System Journal")
         journal_btn.setObjectName("Diagnostics_Btn_systemJournal")
-        journal_btn.setToolTip("Fetch recent onlyfans.service entries from journalctl")
+        journal_btn.setToolTip("Fetch recent control-ofc-daemon.service entries from journalctl")
         journal_btn.clicked.connect(self._fetch_journal)
         cat_row.addWidget(journal_btn)
 
@@ -585,7 +585,7 @@ class DiagnosticsPage(QWidget):
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Support Bundle",
-            "onlyfans_support_bundle.json",
+            "control_ofc_support_bundle.json",
             "JSON files (*.json)",
         )
         if not path:

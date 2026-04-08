@@ -436,7 +436,7 @@ def test_profile_persistence_roundtrips_all_fields(tmp_path, monkeypatch):
 def test_load_corrupted_json_does_not_crash(tmp_path, monkeypatch):
     """Corrupted JSON on disk → logged warning, defaults created instead."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    profiles_dir = tmp_path / "onlyfans" / "profiles"
+    profiles_dir = tmp_path / "control-ofc" / "profiles"
     profiles_dir.mkdir(parents=True)
     (profiles_dir / "broken.json").write_text("{not valid json!!!")
 

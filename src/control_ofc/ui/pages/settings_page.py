@@ -618,7 +618,7 @@ class SettingsPage(QWidget):
 
     def _export_settings(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export Settings", "onlyfans_settings.json", "JSON files (*.json)"
+            self, "Export Settings", "control_ofc_settings.json", "JSON files (*.json)"
         )
         if not path:
             return

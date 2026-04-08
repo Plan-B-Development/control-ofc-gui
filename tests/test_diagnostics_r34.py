@@ -429,7 +429,7 @@ class TestJournalRetrieval:
         diag = DiagnosticsService(state)
         page, _ = _make_page(qtbot, state=state, diag=diag)
 
-        fake_output = "2026-03-28T12:00:00+0000 onlyfans[1234]: Started OK\n" * 5
+        fake_output = "2026-03-28T12:00:00+0000 control-ofc-daemon[1234]: Started OK\n" * 5
         with patch("control_ofc.services.diagnostics_service.subprocess.run") as mock_run:
             mock_run.return_value.stdout = fake_output
             mock_run.return_value.stderr = ""
@@ -489,7 +489,7 @@ class TestJournalRetrieval:
         assert "systemd-journal" in text
 
     def test_journal_uses_correct_unit_name(self):
-        """journalctl must filter by onlyfans-daemon, not onlyfans.service (R51 fix)."""
+        """journalctl must filter by control-ofc-daemon, not .service (R51 fix)."""
         state = _make_state()
         diag = DiagnosticsService(state)
 
@@ -499,8 +499,8 @@ class TestJournalRetrieval:
             diag.fetch_journal_entries()
 
         args = mock_run.call_args[0][0]  # first positional arg = command list
-        assert "onlyfans-daemon" in args
-        assert "onlyfans.service" not in args
+        assert "control-ofc-daemon" in args
+        assert "control-ofc-daemon.service" not in args
 
 
 class TestSupportBundleContents:

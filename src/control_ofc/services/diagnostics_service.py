@@ -213,7 +213,7 @@ class DiagnosticsService:
         return "\n".join(lines)
 
     def fetch_journal_entries(self) -> str:
-        """Fetch recent onlyfans-daemon journal entries via journalctl subprocess.
+        """Fetch recent control-ofc-daemon journal entries via journalctl subprocess.
 
         Bounded to JOURNAL_LINE_LIMIT lines with a JOURNAL_TIMEOUT_S timeout.
         Returns formatted text or an error/permission message.
@@ -223,7 +223,7 @@ class DiagnosticsService:
                 [
                     "journalctl",
                     "-u",
-                    "onlyfans-daemon",
+                    "control-ofc-daemon",
                     "--no-pager",
                     f"--lines={JOURNAL_LINE_LIMIT}",
                     "--output=short-iso",
@@ -249,7 +249,7 @@ class DiagnosticsService:
         stderr = result.stderr.strip()
 
         if not output:
-            msg = "No journal entries found for onlyfans-daemon."
+            msg = "No journal entries found for control-ofc-daemon."
             if stderr and "permission" in stderr.lower():
                 msg += (
                     "\n\nInsufficient permissions to read system journal.\n"
@@ -266,11 +266,11 @@ class DiagnosticsService:
                 )
             return msg
 
-        lines = [f"Last {JOURNAL_LINE_LIMIT} entries for onlyfans-daemon:"]
+        lines = [f"Last {JOURNAL_LINE_LIMIT} entries for control-ofc-daemon:"]
         lines.append("")
         lines.append(output)
         lines.append("")
-        lines.append(f"Source: journalctl -u onlyfans-daemon (limit {JOURNAL_LINE_LIMIT} lines)")
+        lines.append(f"Source: journalctl -u control-ofc-daemon (limit {JOURNAL_LINE_LIMIT} lines)")
         return "\n".join(lines)
 
     # ─── Support bundle ──────────────────────────────────────────────

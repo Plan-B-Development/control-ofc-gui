@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class AppSettings:
-    """GUI preferences. Persisted at ~/.config/onlyfans/app_settings.json."""
+    """GUI preferences. Persisted at ~/.config/control-ofc/app_settings.json."""
 
     version: int = 1
     default_startup_page: int = 0  # PAGE_DASHBOARD

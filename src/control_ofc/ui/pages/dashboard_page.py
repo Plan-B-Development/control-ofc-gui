@@ -189,7 +189,7 @@ class DashboardPage(QWidget):
         next_layout.addWidget(next_title)
 
         next_msg = QLabel(
-            "1. Check that the daemon is running: systemctl status onlyfans\n"
+            "1. Check that the daemon is running: systemctl status control-ofc-daemon\n"
             "2. Verify hardware permissions (user in 'dialout' group for serial)\n"
             "3. Open Diagnostics for detailed subsystem health"
         )
