@@ -30,7 +30,7 @@ sudo pacman -S python python-pip base-devel
 
 ```bash
 # Clone the repository
-git clone <repo-url> && cd Control-OFC-GUI
+git clone <repo-url> && cd control-ofc-gui
 
 # Create virtual environment
 python3 -m venv .venv
@@ -43,11 +43,11 @@ pip install -e .
 ## Usage
 
 ```bash
-# Normal mode (connects to daemon at /run/control_ofc/control_ofc.sock)
-control_ofc
+# Normal mode (connects to daemon at /run/control-ofc/control-ofc.sock)
+control-ofc
 
 # Demo mode (no daemon required)
-control_ofc --demo
+control-ofc --demo
 ```
 
 Or run as a module:
@@ -58,7 +58,7 @@ python -m control_ofc.main --demo
 
 ## Daemon setup
 
-The GUI requires the `control-ofc-daemon` to be running. See the [daemon repository](/home/mitch/Development/Control-OFC) for build and installation instructions, or the [Operations Guide](docs/18_Operations_Guide.md) for configuration reference.
+The GUI requires the `control-ofc-daemon` to be running. See the [daemon repository](/home/mitch/Development/control-ofc-daemon) for build and installation instructions, or the [Operations Guide](docs/18_Operations_Guide.md) for configuration reference.
 
 ### Quick daemon check
 
@@ -67,14 +67,14 @@ The GUI requires the `control-ofc-daemon` to be running. See the [daemon reposit
 systemctl is-active control-ofc-daemon
 
 # Can we reach it?
-curl --unix-socket /run/control_ofc/control_ofc.sock http://localhost/status
+curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/status
 ```
 
 ## Configuration
 
 ### GUI config
 
-Stored at `~/.config/control_ofc/`:
+Stored at `~/.config/control-ofc/`:
 - `settings.json` — application preferences
 - `profiles/` — fan control profiles
 - `themes/` — custom themes

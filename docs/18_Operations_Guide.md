@@ -27,7 +27,7 @@ The service runs as root (required for hwmon sysfs writes and serial device acce
 ## Daemon configuration
 
 ### Config file location
-`/etc/control_ofc/daemon.toml` — loaded at startup. Create manually if needed.
+`/etc/control-ofc/daemon.toml` — loaded at startup. Create manually if needed.
 
 ### Config schema
 ```toml
@@ -40,16 +40,16 @@ timeout_ms = 500
 poll_interval_ms = 1000
 
 [ipc]
-socket_path = "/run/control_ofc/control_ofc.sock"
+socket_path = "/run/control-ofc/control-ofc.sock"
 
 [state]
-state_dir = "/var/lib/control_ofc"  # persistent state directory
+state_dir = "/var/lib/control-ofc"  # persistent state directory
 
 [startup]
 delay_secs = 0  # seconds to wait before device detection after boot (0-30)
 
 [profiles]
-search_dirs = ["/etc/control_ofc/profiles"]  # add user profile dirs via API
+search_dirs = ["/etc/control-ofc/profiles"]  # add user profile dirs via API
 ```
 
 All fields are optional — defaults are shown above.
@@ -71,8 +71,8 @@ ls -la /dev/serial/by-id/
 
 ### Profile search paths
 When using `--profile <name>`, the daemon searches (in order):
-1. `/etc/control_ofc/profiles/<name>.json`
-2. `$XDG_CONFIG_HOME/control_ofc/profiles/<name>.json` (default: `~/.config/control_ofc/profiles/`)
+1. `/etc/control-ofc/profiles/<name>.json`
+2. `$XDG_CONFIG_HOME/control-ofc/profiles/<name>.json` (default: `~/.config/control-ofc/profiles/`)
 
 ---
 
@@ -99,8 +99,8 @@ ls -la /dev/ttyACM0
 ```
 
 ### Runtime directories
-- `/run/control_ofc/` — created by systemd (`RuntimeDirectory=control_ofc`)
-- `/var/lib/control_ofc/` — daemon state persistence (created by systemd via `StateDirectory=control_ofc`, configurable via `[state] state_dir` in daemon.toml)
+- `/run/control-ofc/` — created by systemd (`RuntimeDirectory=control-ofc`)
+- `/var/lib/control-ofc/` — daemon state persistence (created by systemd via `StateDirectory=control-ofc`, configurable via `[state] state_dir` in daemon.toml)
 
 ---
 
@@ -109,14 +109,14 @@ ls -la /dev/ttyACM0
 ### Startup precedence
 1. CLI: `--profile quiet` or `--profile-file /path/to/profile.json`
 2. Environment: `OPENFAN_PROFILE=quiet`
-3. Persisted state: `/var/lib/control_ofc/daemon_state.json` (from previous API activation)
+3. Persisted state: `/var/lib/control-ofc/daemon_state.json` (from previous API activation)
 4. None → imperative mode (GUI drives PWM writes)
 
 ### GUI activation flow
 When the user activates a profile in the GUI:
-1. GUI saves profile to `~/.config/control_ofc/profiles/<id>.json`
-2. GUI calls `POST /profile/activate {"profile_path": "/home/user/.config/control_ofc/profiles/<id>.json"}`
-3. Daemon validates, applies, and persists to `/var/lib/control_ofc/daemon_state.json`
+1. GUI saves profile to `~/.config/control-ofc/profiles/<id>.json`
+2. GUI calls `POST /profile/activate {"profile_path": "/home/user/.config/control-ofc/profiles/<id>.json"}`
+3. Daemon validates, applies, and persists to `/var/lib/control-ofc/daemon_state.json`
 4. Profile survives daemon restart, reboot, and GUI close
 
 ### Deactivating a profile
@@ -126,14 +126,14 @@ Currently no explicit deactivate endpoint. Activating a different profile replac
 
 ## IPC socket
 
-Default: `/run/control_ofc/control_ofc.sock`
+Default: `/run/control-ofc/control-ofc.sock`
 
 The GUI connects via `httpx` with a Unix socket transport. Test manually:
 ```bash
-curl --unix-socket /run/control_ofc/control_ofc.sock http://localhost/status
-curl --unix-socket /run/control_ofc/control_ofc.sock http://localhost/capabilities
-curl --unix-socket /run/control_ofc/control_ofc.sock http://localhost/fans
-curl --unix-socket /run/control_ofc/control_ofc.sock http://localhost/sensors
+curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/status
+curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/capabilities
+curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/fans
+curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/sensors
 ```
 
 ---
@@ -155,11 +155,11 @@ sudo journalctl -u control-ofc-daemon -f
 ### hwmon fans not detected
 - Check sysfs exists: `ls /sys/class/hwmon/`
 - Check PWM files: `find /sys/class/hwmon -name 'pwm[0-9]' 2>/dev/null`
-- Request rescan: `curl -X POST --unix-socket /run/control_ofc/control_ofc.sock http://localhost/hwmon/rescan`
+- Request rescan: `curl -X POST --unix-socket /run/control-ofc/control-ofc.sock http://localhost/hwmon/rescan`
 
 ### GUI shows "Daemon disconnected"
 - Check daemon is running: `systemctl is-active control-ofc-daemon`
-- Check socket exists: `ls -la /run/control_ofc/control_ofc.sock`
+- Check socket exists: `ls -la /run/control-ofc/control-ofc.sock`
 - Check socket permissions (GUI user must be able to connect)
 
 ### Syslog not working
@@ -169,7 +169,7 @@ sudo journalctl -u control-ofc-daemon -f
 - Test with `logger`: `logger -n <host> -P <port> --tcp "test message"`
 
 ### Profile not restoring after reboot
-- Check persisted state: `cat /var/lib/control_ofc/daemon_state.json`
+- Check persisted state: `cat /var/lib/control-ofc/daemon_state.json`
 - Check profile file exists at the path stored in state
 - Check daemon logs for profile loading errors on startup
 

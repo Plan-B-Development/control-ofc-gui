@@ -81,7 +81,7 @@ Both `FanController` (OpenFan serial) and `HwmonPwmController` (motherboard PWM)
 ### Startup Sequence
 
 ```
-1. Load config from /etc/control_ofc/daemon.toml (defaults if missing)
+1. Load config from /etc/control-ofc/daemon.toml (defaults if missing)
 2. Initialize StateCache (shared in-memory state)
 3. Detect OpenFanController serial device
    └─ Retry loop: 5 retries with exponential backoff (1s, 2s, 4s, 8s, 16s)
@@ -122,7 +122,7 @@ The daemon runs concurrent async tasks on the Tokio multi-threaded runtime:
 
 ### Transport
 - **Protocol:** HTTP/1.1 over Unix domain socket
-- **Socket path:** `/run/control_ofc/control_ofc.sock` (configurable)
+- **Socket path:** `/run/control-ofc/control-ofc.sock` (configurable)
 - **Framework:** Axum 0.8 (server), httpx with UDS transport (client)
 - **Rationale:** HTTP over UDS provides typed request/response, standard error handling, and tool compatibility (curl) while remaining local-only
 
@@ -390,7 +390,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | hwmon PWM writing (headless/profile) | **Not implemented** | Requires daemon auto-lease |
 | Thermal safety evaluation | **Implemented** | Evaluates in profile engine loop |
 | Thermal safety fan writes | **Partially implemented** | Writes to OpenFan only (no hwmon) |
-| Profile persistence across reboot | **Implemented** | `/var/lib/control_ofc/daemon_state.json` |
+| Profile persistence across reboot | **Implemented** | `/var/lib/control-ofc/daemon_state.json` |
 | Profile activation via API | **Implemented** | `POST /profile/activate` |
 | SSE event stream | **Implemented** | `GET /events` |
 | Auto-reconnect on serial disconnect | **Not implemented** | Requires daemon restart |
@@ -421,17 +421,17 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | `serial.timeout_ms` | 500 | ≥50 | ms |
 | `polling.poll_interval_ms` | 1000 | ≥100 | ms |
 | `polling.publish_interval_ms` | 5000 | ≥poll_interval | ms |
-| `ipc.socket_path` | `/run/control_ofc/control_ofc.sock` | — | path |
+| `ipc.socket_path` | `/run/control-ofc/control-ofc.sock` | — | path |
 
 ### Runtime Paths
 
 | Path | Purpose | Owner |
 |------|---------|-------|
-| `/etc/control_ofc/daemon.toml` | Configuration | Admin |
-| `/run/control_ofc/control_ofc.sock` | IPC socket | Daemon (systemd RuntimeDirectory) |
-| `/var/lib/control_ofc/daemon_state.json` | Persistent state (configurable via `[state] state_dir`) | Daemon (systemd StateDirectory) |
-| `/etc/control_ofc/profiles/` | System profiles | Admin |
-| `~/.config/control_ofc/profiles/` | User profiles | GUI |
+| `/etc/control-ofc/daemon.toml` | Configuration | Admin |
+| `/run/control-ofc/control-ofc.sock` | IPC socket | Daemon (systemd RuntimeDirectory) |
+| `/var/lib/control-ofc/daemon_state.json` | Persistent state (configurable via `[state] state_dir`) | Daemon (systemd StateDirectory) |
+| `/etc/control-ofc/profiles/` | System profiles | Admin |
+| `~/.config/control-ofc/profiles/` | User profiles | GUI |
 
 ### Glossary
 
