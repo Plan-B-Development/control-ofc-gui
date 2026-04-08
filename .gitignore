@@ -11,3 +11,9 @@ venv/
 .pytest_cache/
 .mypy_cache/
 *.so
+
+# makepkg build artifacts
+packaging/src/
+packaging/pkg/
+packaging/*.pkg.tar*
+packaging/*.tar.gz
