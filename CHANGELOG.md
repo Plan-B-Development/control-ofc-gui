@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.0.0] — 2026-04-08
+
+### Project Rebrand — OnlyFans → Control-OFC
+
+**BREAKING CHANGE:** Complete project rebrand. All paths, package names, and identifiers have changed.
+
+- **Package name:** `onlyfans` → `control-ofc-gui`
+- **Import path:** `onlyfans.*` → `control_ofc.*`
+- **CLI command:** `onlyfans` → `control-ofc-gui`
+- **Display name:** "OnlyFans" → "Control-OFC"
+- **Socket path:** `/run/onlyfans/onlyfans.sock` → `/run/control-ofc/control-ofc.sock`
+- **Config dir:** `~/.config/onlyfans/` → `~/.config/control-ofc/`
+- **Daemon service name:** `onlyfans-daemon` → `control-ofc-daemon`
+
+**Migration:** Users upgrading from the OnlyFans-named installation must:
+1. Uninstall old package: `pip uninstall onlyfans`
+2. Install new: `pip install -e ".[dev]"` (or from package)
+3. Move user config: `mv ~/.config/onlyfans ~/.config/control-ofc`
+4. Update the daemon to v1.0.0 (new socket path)
+5. Launch with: `control-ofc-gui` (or `control-ofc-gui --demo`)
+
 ## [0.86.4] — 2026-04-08
 
 ### R71 — Fix dashboard timeline chart AttributeError (PlotCurveItem regression)
