@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [1.0.1] — 2026-04-10
 
 ### Fixed
 - **Profile activation on fresh installs.** The GUI now auto-registers its profile directory with the daemon on startup via `POST /config/profile-search-dirs`. Previously, `POST /profile/activate` rejected every profile with `"profile_path must be within a profile search directory"` because the daemon's default search paths (`/etc/control-ofc/profiles`, `/root/.config/control-ofc/profiles`) never matched the GUI's XDG config dir. The call is idempotent (the daemon deduplicates and persists) and failures at startup are logged but non-fatal so offline/demo mode still works. Regression tests in `tests/test_profile_search_dir_registration.py`.
