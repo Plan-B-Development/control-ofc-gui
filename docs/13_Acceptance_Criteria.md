@@ -30,7 +30,7 @@
 - [ ] User can create and manage fan groups
 - [ ] A fan can belong to multiple groups
 - [ ] Manual override exists and has a clear Return to Automatic action
-- [ ] Curve and Fan Role cards use fixed sizing (220×160 / 260×180)
+- [ ] Curve and Fan Role cards use unified fixed sizing (220×160, from `card_metrics.CARD_WIDTH`/`CARD_HEIGHT`)
 - [ ] Cards use FlowLayout with responsive wrapping
 - [ ] Cards support drag-to-reorder with visual drop indicator
 - [ ] New cards append to end of section

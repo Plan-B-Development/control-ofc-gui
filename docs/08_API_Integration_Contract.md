@@ -88,22 +88,30 @@ Returns per-sensor time-series history from the daemon's ring buffer (250 sample
 Used to pre-fill the GUI's `HistoryStore` on first connection so the timeline chart
 shows data immediately instead of starting empty.
 
-### GET /events (SSE)
-Server-Sent Events stream for real-time sensor/fan updates.
+### GET /events (SSE) — daemon-only, not consumed by GUI
+The daemon exposes a Server-Sent Events stream at `GET /events` for other clients
+(custom integrations, future tooling, etc.).
 - Event type: `update` (combined sensors + fans payload)
 - Heartbeat every 5 seconds
-- GUI's `EventStreamService` consumes this for sub-second updates
-- Polling service retained for capabilities, headers, and lease
+
+The V1 GUI does **not** consume this stream. All data flows through the 1 Hz
+`PollingService` using the combined `GET /poll` endpoint. The planned
+`EventStreamService` was never wired up and its `httpx-sse` dependency was
+removed (see DEC-023, DEC-024, CHANGELOG v1.0.0). SSE consumption is tracked as
+deferred work in `docs/14_Risks_Gaps_and_Future_Work.md`.
 
 ## Write endpoints
 
 ### OpenFan writes
 - `POST /fans/openfan/{ch}/pwm`
 - `POST /fans/openfan/pwm`
-- `POST /fans/openfan/{ch}/target_rpm`
 - `POST /fans/openfan/{ch}/calibrate` — PWM-to-RPM calibration sweep
 
-The GUI should use PWM writes for V1 control-loop behaviour unless a specific target-RPM workflow is intentionally implemented.
+The GUI uses PWM writes exclusively for V1 control-loop behaviour.
+
+*Note: the daemon also exposes `POST /fans/openfan/{ch}/target_rpm` for closed-loop
+RPM targeting. The V1 GUI does not use this endpoint — it is not part of the
+current control-loop or UI surface.*
 
 The calibration endpoint runs a long-running sweep (steps × hold_seconds) that sets PWM from 0→100%, reads RPM at each step, and returns a mapping. Safety: aborts on thermal limit (85°C), restores pre-calibration PWM on completion or abort.
 
@@ -204,12 +212,12 @@ The GUI must reflect these constraints honestly.
 5. `GET /hwmon/lease/status`
 
 ### Ongoing cadence
-- **Primary data (sensors/fans/status):** via SSE stream (`GET /events`) when available, with polling fallback
-- **Lease status:** moderate (every poll cycle)
+- **Primary data (sensors/fans/status):** 1 Hz via `GET /poll` (combined batch endpoint)
+- **Lease status:** every poll cycle
 - **Capabilities/headers:** startup + on reconnect only
 
-The polling service handles capabilities, headers, and lease.
-The SSE `EventStreamService` handles real-time sensor/fan updates when the daemon supports it.
+The `PollingService` owns the full read path in V1 (`/poll`, lease, history).
+No SSE stream is consumed — see the `/events` note above and DEC-023/DEC-024.
 
 ## Model normalisation
 Define internal view-model friendly data classes for:

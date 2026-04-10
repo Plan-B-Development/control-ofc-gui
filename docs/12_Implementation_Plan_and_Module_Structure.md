@@ -124,12 +124,6 @@ The app feels coherent and test-ready.
 - 2-hour rolling time-series buffer
 - `prefill_sensor()` for pre-populating from daemon history on connect
 
-### `services/event_stream.py`
-- SSE-based real-time sensor/fan updates from daemon `GET /events`
-- Runs in daemon thread with exponential backoff reconnect
-- Emits Qt signals (`sensors_ready`, `fans_ready`)
-- Complements polling (which handles capabilities, headers, lease, telemetry)
-
 ### `services/profile_service.py`
 - profile CRUD
 - assignment validation

@@ -33,7 +33,14 @@ This boundary protects the design from:
 - architecture drift as the daemon evolves
 
 ## V1 control ownership decision
-The daemon is currently imperative and does not provide a curve/profile engine. Therefore V1 must implement a **GUI-owned control loop**.
+The daemon exposes both an imperative write surface (set PWM/RPM now) and a headless
+profile engine (`profile_engine.rs`) that can evaluate curves autonomously when a
+profile is active. V1 still defaults to a **GUI-owned control loop** when the GUI is
+connected: the GUI evaluates curves every second and writes PWM, and the daemon's
+profile engine defers to the GUI whenever the GUI has been active in the last 30 seconds
+(DEC-071 GPU, DEC-074 OpenFan). The daemon's profile engine becomes the primary writer
+only when the GUI is absent (headless mode). See `docs/14_Risks_Gaps_and_Future_Work.md`
+for the current coverage of the daemon-side engine across backends.
 
 That means the GUI will:
 1. poll sensor data
@@ -95,21 +102,19 @@ control_ofc/
     models.py
     errors.py
   services/
-    polling.py
+    app_settings_service.py
+    app_state.py
     control_loop.py
-    history_store.py
-    profile_service.py
-    theme_service.py
-    diagnostics_service.py
     demo_service.py
+    diagnostics_service.py
+    history_store.py
     lease_service.py
-    export_service.py
-  persistence/
-    config_repo.py
-    profiles_repo.py
-    themes_repo.py
-    aliases_repo.py
-    state_repo.py
+    polling.py
+    profile_service.py
+    series_selection.py
+  # Persistence (JSON repos, XDG paths) lives inside services/ and the
+  # app_settings_service module rather than a separate persistence/ package.
+  # See persistence layout details in docs/11_Persistence_Config_and_File_Layout.md.
   ui/
     main_window.py
     sidebar.py

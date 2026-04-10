@@ -59,6 +59,9 @@ Data model supports multiple GPUs. API reports primary only. No UI to select bet
 ### 7. Some GUI spec features not implemented
 - Background self-checks (deferred)
 - One-click diagnostics redaction (deferred — partial PII scrubbing gives false confidence)
+- **SSE consumption (`GET /events`) — daemon exposes it, GUI does not consume it.** The planned `EventStreamService` (DEC-024) was never wired up. `httpx-sse` was removed in v1.0.0 (commit `55cf44f`, PKGBUILD follow-up `64e3fac`). The GUI polls at 1 Hz via the combined `GET /poll` endpoint and this has been sufficient for V1 responsiveness. Sub-second UI updates would require reintroducing the SSE client and reconciling it with the existing `PollingService`.
+- **Dashboard fan table — group-membership badges and per-fan state chips** (stale/fault/manual). `docs/04_Dashboard_Spec.md` listed these in Row 3; the shipped table shows label/source/RPM/PWM only.
+- **Dashboard sensor panel — per-sensor freshness age and stale/invalid warning marker.** `docs/04_Dashboard_Spec.md` listed these as an optional side panel/lower strip. The current implementation relies on the global staleness state in the top status strip.
 
 ### 8. polkit helper for offline config editing (deferred)
 

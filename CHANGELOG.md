@@ -21,6 +21,9 @@
 4. Update the daemon to v1.0.0 (new socket path)
 5. Launch with: `control-ofc-gui` (or `control-ofc-gui --demo`)
 
+### Removed
+- **`httpx-sse` dependency removed.** The planned `EventStreamService` (DEC-024) was never wired up and the dependency was unused. The GUI continues to use the 1 Hz polling loop for all data. The daemon still exposes `GET /events` for other clients; GUI consumption is tracked as deferred work in `docs/14_Risks_Gaps_and_Future_Work.md`. See DEC-023 and DEC-024 for the updated rationale.
+
 ## [0.86.4] — 2026-04-08
 
 ### R71 — Fix dashboard timeline chart AttributeError (PlotCurveItem regression)
