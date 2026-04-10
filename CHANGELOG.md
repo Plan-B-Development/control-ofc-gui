@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`scripts/release-aur.sh`** — local release script that syncs `packaging/PKGBUILD` to the AUR. Verifies the GitHub tarball sha256 matches the PKGBUILD before clone/push, clones (or ff-pulls) `ssh://aur@aur.archlinux.org/control-ofc-gui.git` into `~/Development/aur/control-ofc-gui/`, regenerates `.SRCINFO` via `makepkg --printsrcinfo`, and commits/pushes with explicit confirmation prompts (`--yes` to skip, `--no-push` to stage only). Run from the repo root as `./scripts/release-aur.sh <version>` after bumping `packaging/PKGBUILD`.
+
 ## [1.0.1] — 2026-04-10
 
 ### Fixed
