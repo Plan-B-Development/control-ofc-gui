@@ -11,8 +11,9 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from control_ofc.api.client import DaemonClient
+from control_ofc.api.errors import DaemonError
 from control_ofc.constants import APP_NAME, APP_VERSION, DEFAULT_SOCKET_PATH
-from control_ofc.paths import ensure_dirs, set_path_overrides
+from control_ofc.paths import ensure_dirs, profiles_dir, set_path_overrides
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.control_loop import ControlLoopService
@@ -28,6 +29,36 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+
+log = logging.getLogger(__name__)
+
+
+def register_profile_search_dir(client: DaemonClient) -> None:
+    """Tell the daemon where this GUI stores its profiles.
+
+    The daemon defaults to `/etc/control-ofc/profiles` and the root user's
+    XDG dir, which never matches where an unprivileged GUI actually writes
+    profile files. Without this call, `POST /profile/activate` rejects every
+    profile with "profile_path must be within a profile search directory".
+    The daemon endpoint is additive, deduplicated, and persisted to
+    daemon.toml — safe to call on every launch.
+    """
+    dir_path = str(profiles_dir())
+    try:
+        client.update_profile_search_dirs(add=[dir_path])
+        log.info("Registered profile search dir with daemon: %s", dir_path)
+    except DaemonError as exc:
+        log.warning(
+            "Could not register profile search dir %s with daemon: %s",
+            dir_path,
+            exc.message,
+        )
+    except Exception as exc:
+        log.warning(
+            "Unexpected error registering profile search dir %s: %s",
+            dir_path,
+            exc,
+        )
 
 
 def main() -> None:
@@ -93,6 +124,7 @@ def main() -> None:
     lease: LeaseService | None = None
     if not demo_mode:
         client = DaemonClient(socket_path=socket_path)
+        register_profile_search_dir(client)
         polling = PollingService(state, socket_path, history=history)
         lease = LeaseService(client)
         control_loop = ControlLoopService(
