@@ -4,7 +4,23 @@
 Translate the provided parody-brand image into practical UI asset direction without overwhelming the working app.
 
 ## Supplied source asset
-- `NotJustOnlyFans.png`
+- `docs/NotJustOnlyFans.png` — the original parody-brand image.
+
+## Where the derived assets actually live
+The working app ships its derived assets from the repo-level `assets/branding/` tree
+(sibling of `src/`, loaded at runtime by `src/control_ofc/ui/branding.py`):
+
+```text
+assets/branding/
+  app_icon/           # application icon set
+  icons/              # in-app iconography
+  splash/             # splash-screen artwork
+  banner.png          # in-app banner (sanitised)
+  banner_original.png # original banner source (reference only)
+```
+
+The PNG in `docs/` is retained as the brand reference; runtime lookups should use
+`src/control_ofc/ui/branding.py`, not the docs copy.
 
 ## Brand character
 The branding should feel:

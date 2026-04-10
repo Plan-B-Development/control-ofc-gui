@@ -46,15 +46,19 @@ A fan list/card grid showing:
 - source
 - current RPM
 - current commanded PWM
-- current group membership badges
-- state chip if stale/fault/manual
+
+*Deferred to a later iteration (see `docs/14_Risks_Gaps_and_Future_Work.md`):*
+*group-membership badges and a per-fan state chip (stale/fault/manual).*
+*The current implementation shows plain row values only.*
 
 #### Optional side panel or lower strip
 Key sensor health list:
 - sensor label
 - current value
-- freshness
-- warning marker if stale/invalid
+
+*Deferred to a later iteration (see `docs/14_Risks_Gaps_and_Future_Work.md`):*
+*per-sensor freshness age and a dedicated stale/invalid warning marker*
+*(the top status strip already covers global staleness).*
 
 ## Time ranges
 The dashboard must support:

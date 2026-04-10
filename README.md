@@ -112,6 +112,17 @@ See [System Architecture](docs/02_System_Architecture_and_Boundaries.md) and the
 
 ## Upgrade notes
 
+### v1.0.0 — OnlyFans → Control-OFC rebrand (BREAKING)
+
+If you previously installed the `onlyfans`-named package, follow these migration steps:
+
+1. Uninstall the old package: `pip uninstall onlyfans`
+2. Move user config: `mv ~/.config/onlyfans ~/.config/control-ofc` (profiles, themes, settings preserved)
+3. Update the daemon to v1.0.0 as well (socket path changes to `/run/control-ofc/control-ofc.sock`)
+4. Install the new package and launch with: `control-ofc-gui` (or `control-ofc-gui --demo`)
+
+Full migration details and the list of renamed paths/identifiers are in [CHANGELOG.md](CHANGELOG.md#100--2026-04-08).
+
 ### v0.86.0+
 
 Settings page now manages daemon config via API (`POST /config/profile-search-dirs`, `POST /config/startup-delay`) instead of direct file writes. No manual migration needed — settings are preserved.
