@@ -223,6 +223,94 @@ class TestManualOverride:
         assert loop.manual_override is False
 
 
+class TestReevaluateNow:
+    """Public reevaluate_now() bypasses the active_profile_changed signal
+    so that re-activating the already-active profile still pushes the
+    latest curve outputs. Regression for profile activation delay where
+    ``state.active_profile_changed`` is suppressed on an unchanged name."""
+
+    def test_reevaluate_resets_hysteresis(self, state, profile_service, qtbot):
+        profile = _make_profile_with_curve([(30, 20), (70, 80)])
+        profile_service._profiles["test"] = profile
+        profile_service.set_active("test")
+
+        loop = ControlLoopService(state, profile_service)
+        loop._running = True
+        loop._cycle()
+        ts = loop._target_states["test_control"]
+        ts.last_transition_temp = 99.0
+        ts.last_commanded_pwm = 99.0
+
+        loop.reevaluate_now()
+        # Hysteresis cleared and cycle re-ran — the stale 99.0 anchors
+        # must have been wiped and replaced with fresh values.
+        new_ts = loop._target_states["test_control"]
+        assert new_ts.last_transition_temp != 99.0
+        assert new_ts.last_commanded_pwm != 99.0
+
+    def test_reevaluate_runs_cycle_when_running(self, state, profile_service, qtbot):
+        profile = _make_profile_with_curve([(30, 20), (70, 80)])
+        profile_service._profiles["test"] = profile
+        profile_service.set_active("test")
+
+        loop = ControlLoopService(state, profile_service)
+        loop._running = True  # simulate start() without the timer
+        loop._target_states.clear()
+
+        loop.reevaluate_now()
+        # _cycle ran — target state for the control must exist
+        assert "test_control" in loop._target_states
+
+    def test_reevaluate_skips_cycle_when_not_running(self, state, profile_service, qtbot):
+        """When the loop is not running, reevaluate clears hysteresis but
+        does not execute a cycle (mirrors the timer-gated _cycle path)."""
+        profile = _make_profile_with_curve([(30, 20), (70, 80)])
+        profile_service._profiles["test"] = profile
+        profile_service.set_active("test")
+
+        loop = ControlLoopService(state, profile_service)
+        loop._cycle()  # prime target_states while "running"
+        assert len(loop._target_states) > 0
+        loop._running = False
+
+        loop.reevaluate_now()
+        # _cycle was not called, so after _reset_hysteresis the dict stays empty
+        assert len(loop._target_states) == 0
+
+    def test_reevaluate_exits_manual_override(self, state, profile_service, qtbot):
+        loop = ControlLoopService(state, profile_service)
+        loop.set_manual_override(True)
+        assert loop.manual_override is True
+
+        loop.reevaluate_now()
+        assert loop.manual_override is False
+
+    def test_reevaluate_writes_new_curve_output(self, state, profile_service, qtbot):
+        """After reevaluate, the control loop must issue a write for the
+        current curve's output even when no profile_changed signal fired."""
+        profile = _make_profile_with_curve([(30, 20), (70, 80)])
+        profile_service._profiles["test"] = profile
+        profile_service.set_active("test")
+
+        # Daemon-reported last_commanded is 40% but curve at 50 deg C → 50%.
+        # _should_write must see the 10% gap and write.
+        state.fans = [
+            FanReading(
+                id="openfan:ch00", source="openfan", rpm=800, last_commanded_pwm=40, age_ms=500
+            ),
+        ]
+
+        mock_client = MagicMock()
+        loop = ControlLoopService(state, profile_service, client=mock_client)
+        loop._running = True
+
+        loop.reevaluate_now()
+        mock_client.set_openfan_pwm.assert_called_once()
+        _args, _ = mock_client.set_openfan_pwm.call_args, None
+        assert mock_client.set_openfan_pwm.call_args[0][0] == 0
+        assert mock_client.set_openfan_pwm.call_args[0][1] == 50
+
+
 class TestPrerequisites:
     def test_disconnected_fails(self, state, profile_service, qtbot):
         state.connection = ConnectionState.DISCONNECTED

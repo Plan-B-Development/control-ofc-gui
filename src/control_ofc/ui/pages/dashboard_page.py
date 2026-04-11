@@ -41,6 +41,7 @@ from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
+    from control_ofc.services.control_loop import ControlLoopService
     from control_ofc.services.profile_service import ProfileService
 
 
@@ -62,6 +63,7 @@ class DashboardPage(QWidget):
         profile_service: ProfileService | None = None,
         settings_service: AppSettingsService | None = None,
         client: DaemonClient | None = None,
+        control_loop: ControlLoopService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -71,6 +73,7 @@ class DashboardPage(QWidget):
         self._profile_service = profile_service
         self._settings_service = settings_service
         self._client = client
+        self._control_loop = control_loop
         self._fan_ids: list[str] = []  # Track fan IDs for table row mapping
         self._displayable_fan_keys: list[str] = []  # Fan series keys for selection
         self._has_data = False
@@ -701,6 +704,10 @@ class DashboardPage(QWidget):
         self._profile_service.set_active(target.id)
         if self._state:
             self._state.set_active_profile(target.name)
+        # Force immediate control loop re-evaluation — active_profile_changed
+        # is suppressed when the name is unchanged, so rely on a direct call.
+        if self._control_loop is not None:
+            self._control_loop.reevaluate_now()
         self._apply_btn.setText("Applied!")
         self._apply_btn.setEnabled(False)
         QTimer.singleShot(1500, self._reset_apply_btn)

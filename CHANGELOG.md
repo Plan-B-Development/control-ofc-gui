@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.2] — 2026-04-11
+
+### Fixed
+- **Profile activation delay (30–60s) — GUI side.** Re-activating the already-active profile after editing its curves (or activating fresh shortly after startup) could leave OpenFan fans running at the previous speed for up to a minute. Root cause was twofold: `AppState.set_active_profile()` suppresses `active_profile_changed` when the name is unchanged, so `ControlLoopService._on_profile_changed` (which resets hysteresis and forces a cycle) never fires; and the daemon's profile engine was deferring writes under `gui_active`, leaving a dead zone where neither writer pushed new values. GUI fix: new public `ControlLoopService.reevaluate_now()` explicitly invoked by `ControlsPage._on_activate()` and `DashboardPage._on_apply_profile()` after `state.set_active_profile()`. It resets the hysteresis anchors, clears any manual override, and immediately runs `_cycle()`, bypassing the suppressed-signal path. `MainWindow` now threads `control_loop` into `DashboardPage` and rewires both pages when demo mode lazily constructs its control loop. Regression tests in `tests/test_control_loop.py::TestReevaluateNow`. The matching daemon fix (activation refreshes `record_gui_write`) is tracked in the daemon CHANGELOG.
 
 ### Added
 - **`.github/workflows/release-aur.yml`** — GitHub Actions workflow that publishes to the AUR automatically when a release tag (`v*.*.*`) is pushed. Uses the same strict verify-and-fail guards as `scripts/release-aur.sh`: refuses to publish if `packaging/PKGBUILD` was not bumped before tagging, or if its `sha256sums` does not match the GitHub release tarball. Delegates the AUR clone/commit/push to [`KSXGitHub/github-actions-deploy-aur@v4.1.2`](https://github.com/KSXGitHub/github-actions-deploy-aur), which runs inside an Arch container and regenerates `.SRCINFO` automatically. Requires a one-time `AUR_SSH_PRIVATE_KEY` repository secret. The existing `scripts/release-aur.sh` remains as a manual fallback. Release flow: bump `packaging/PKGBUILD` → commit → `git tag v1.0.2 && git push origin main v1.0.2`.

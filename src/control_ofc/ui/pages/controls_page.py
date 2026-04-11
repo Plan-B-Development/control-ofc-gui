@@ -341,6 +341,12 @@ class ControlsPage(QWidget):
         self._refresh_all()
         if self._state:
             self._state.set_active_profile(profile.name)
+        # Force immediate control loop re-evaluation. active_profile_changed
+        # does not fire when the name is unchanged (e.g. re-activating after
+        # editing curves on the already-active profile), so we cannot rely
+        # on the signal-driven path to reset hysteresis and push new writes.
+        if self._control_loop is not None:
+            self._control_loop.reevaluate_now()
         self.profile_activated.emit(profile_id)
         self._unsaved_label.setText("Profile activated")
         self._unsaved_label.setProperty("class", "SuccessChip")
