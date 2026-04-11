@@ -11,7 +11,7 @@ depends=('control-ofc-daemon' 'python' 'pyside6' 'python-httpx'
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
 install=control-ofc-gui.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('c1b9bdeb297ee988085dd3ecc1be326ab5c50c21b593ef6e5aa809c01bdada3c')
+sha256sums=('199e5243c4d017ebe3eba9911d6b5da81c21a51688aba5d8d80e070b7c7cc452')
 
 build() {
     cd "$pkgname-$pkgver"
