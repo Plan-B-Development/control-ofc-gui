@@ -82,6 +82,7 @@ class MainWindow(QWidget):
             profile_service=self._profile_service,
             settings_service=self._settings_service,
             client=self._client,
+            control_loop=self._control_loop,
         )
         self.controls_page = ControlsPage(
             state=self._state,
@@ -202,6 +203,11 @@ class MainWindow(QWidget):
         )
         self._control_loop.status_changed.connect(self._on_control_loop_status)
         self._control_loop.start()
+
+        # Pages were constructed before the demo control loop existed —
+        # propagate the new reference so Activate-profile calls can reach it.
+        self.dashboard_page._control_loop = self._control_loop
+        self.controls_page._control_loop = self._control_loop
 
         # Load initial demo data
         self._state.set_capabilities(self._demo_service.capabilities())

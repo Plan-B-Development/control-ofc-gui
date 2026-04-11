@@ -219,6 +219,22 @@ class ControlLoopService(QObject):
             return False
         return self._write_target(target_id, pwm_percent)
 
+    def reevaluate_now(self) -> None:
+        """Force an immediate control loop re-evaluation.
+
+        Resets hysteresis, exits manual override, and runs one cycle against
+        the current active profile. Used after ``/profile/activate`` so the
+        GUI writes the new profile's curve outputs without waiting for the
+        next timer tick, and without relying on ``active_profile_changed``
+        (which is suppressed when the profile name is unchanged).
+        """
+        self._reset_hysteresis()
+        if self._manual_override:
+            self._manual_override = False
+            log.info("Manual override cleared by profile re-evaluate")
+        if self._running:
+            self._cycle()
+
     def shutdown(self) -> None:
         self.stop()
         if self._write_worker:
