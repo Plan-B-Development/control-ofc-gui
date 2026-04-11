@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- **`.github/workflows/release-aur.yml`** — GitHub Actions workflow that publishes to the AUR automatically when a release tag (`v*.*.*`) is pushed. Uses the same strict verify-and-fail guards as `scripts/release-aur.sh`: refuses to publish if `packaging/PKGBUILD` was not bumped before tagging, or if its `sha256sums` does not match the GitHub release tarball. Delegates the AUR clone/commit/push to [`KSXGitHub/github-actions-deploy-aur@v4.1.2`](https://github.com/KSXGitHub/github-actions-deploy-aur), which runs inside an Arch container and regenerates `.SRCINFO` automatically. Requires a one-time `AUR_SSH_PRIVATE_KEY` repository secret. The existing `scripts/release-aur.sh` remains as a manual fallback. Release flow: bump `packaging/PKGBUILD` → commit → `git tag v1.0.2 && git push origin main v1.0.2`.
 - **`scripts/release-aur.sh`** — local release script that syncs `packaging/PKGBUILD` to the AUR. Verifies the GitHub tarball sha256 matches the PKGBUILD before clone/push, clones (or ff-pulls) `ssh://aur@aur.archlinux.org/control-ofc-gui.git` into `~/Development/aur/control-ofc-gui/`, regenerates `.SRCINFO` via `makepkg --printsrcinfo`, and commits/pushes with explicit confirmation prompts (`--yes` to skip, `--no-push` to stage only). Run from the repo root as `./scripts/release-aur.sh <version>` after bumping `packaging/PKGBUILD`.
 
 ## [1.0.1] — 2026-04-10

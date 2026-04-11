@@ -1,0 +1,99 @@
+name: Release to AUR
+
+# Triggered when a release tag is pushed (e.g. `git push origin v1.0.2`).
+# Mirrors `scripts/release-aur.sh` and uses the same strict verify-and-fail
+# guards: the workflow will refuse to publish if `packaging/PKGBUILD` was not
+# bumped before tagging, or if its `sha256sums` does not match the GitHub
+# release tarball byte-for-byte.
+#
+# One-time setup (per repository):
+#   1. Generate an SSH keypair dedicated to this workflow.
+#   2. Add the public key to your AUR account at
+#      https://aur.archlinux.org/account/ (under "SSH Public Key").
+#   3. Add the private key as a repository secret named `AUR_SSH_PRIVATE_KEY`
+#      in GitHub → Settings → Secrets and variables → Actions.
+#
+# Release flow after this workflow is in place:
+#   - bump packaging/PKGBUILD (pkgver, pkgrel=1, sha256sums)
+#   - commit on main
+#   - git tag v1.0.2 && git push origin main v1.0.2
+#   - the tag push fires this workflow, which publishes to AUR.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Sync PKGBUILD to AUR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository at tag
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: ${version}"
+
+      - name: Verify PKGBUILD pkgver matches tag
+        run: |
+          set -euo pipefail
+          pkgbuild_ver="$(grep -E '^pkgver=' packaging/PKGBUILD | cut -d= -f2)"
+          if [[ "$pkgbuild_ver" != "${{ steps.version.outputs.version }}" ]]; then
+            echo "::error file=packaging/PKGBUILD::pkgver is '$pkgbuild_ver' but tag is 'v${{ steps.version.outputs.version }}'. Bump packaging/PKGBUILD before tagging."
+            exit 1
+          fi
+          echo "PKGBUILD pkgver matches tag: $pkgbuild_ver"
+
+      - name: Verify tarball sha256 matches PKGBUILD
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          tarball_url="https://github.com/${{ github.repository }}/archive/v${version}.tar.gz"
+
+          # GitHub may take a moment to make a freshly-pushed tag's tarball
+          # available; retry with a short backoff before giving up.
+          for attempt in 1 2 3 4 5; do
+            if curl -sfL -o tarball.tar.gz "$tarball_url"; then
+              break
+            fi
+            echo "Attempt ${attempt}: tarball not yet available, retrying in 10s..."
+            sleep 10
+          done
+
+          if [[ ! -s tarball.tar.gz ]]; then
+            echo "::error::Could not download ${tarball_url} after 5 attempts."
+            exit 1
+          fi
+
+          actual_sha="$(sha256sum tarball.tar.gz | cut -d' ' -f1)"
+          expected_sha="$(grep -E '^sha256sums=' packaging/PKGBUILD | grep -oE '[a-f0-9]{64}' | head -n1)"
+
+          if [[ -z "$expected_sha" ]]; then
+            echo "::error file=packaging/PKGBUILD::Could not parse sha256sums."
+            exit 1
+          fi
+
+          if [[ "$actual_sha" != "$expected_sha" ]]; then
+            echo "::error file=packaging/PKGBUILD::sha256 mismatch — PKGBUILD has '${expected_sha}' but tarball is '${actual_sha}'. Update packaging/PKGBUILD sha256sums before tagging."
+            exit 1
+          fi
+          echo "sha256 verified: ${actual_sha}"
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
+        with:
+          pkgname: control-ofc-gui
+          pkgbuild: packaging/PKGBUILD
+          commit_username: github-actions[bot]
+          commit_email: 41898282+github-actions[bot]@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ steps.version.outputs.version }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519
