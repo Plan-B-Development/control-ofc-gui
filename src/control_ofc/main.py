@@ -170,16 +170,6 @@ def main() -> None:
     _sigint_timer.timeout.connect(lambda: None)
     _sigint_timer.start(200)
 
-    # Wire control loop status → controls page (live mode)
-    if control_loop:
-        control_loop.status_changed.connect(
-            lambda status: (
-                window.controls_page.update_control_outputs(status.control_outputs)
-                if status.control_outputs
-                else None
-            )
-        )
-
     # Start services after window is visible
     if polling:
         polling.start()

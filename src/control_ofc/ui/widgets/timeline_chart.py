@@ -121,7 +121,7 @@ class TimelineChart(QWidget):
         plot.vb.sigResized.connect(self._sync_rpm_viewbox)
 
         # Crosshair hover: vertical line + text label showing values
-        crosshair_pen = pg.mkPen("#888888", width=1)
+        crosshair_pen = pg.mkPen(t.chart_crosshair, width=1)
         self._crosshair_v = pg.InfiniteLine(angle=90, movable=False, pen=crosshair_pen)
         plot.addItem(self._crosshair_v, ignoreBounds=True)
         self._crosshair_v.hide()
@@ -135,6 +135,12 @@ class TimelineChart(QWidget):
         self._proxy = pg.SignalProxy(
             plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
         )
+
+    def cleanup(self) -> None:
+        """Disconnect the SignalProxy to avoid stale callbacks after teardown."""
+        if self._proxy is not None:
+            self._proxy.disconnect()
+            self._proxy = None
 
     def _sync_rpm_viewbox(self) -> None:
         plot = self._plot_widget.getPlotItem()

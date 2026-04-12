@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
@@ -46,8 +47,6 @@ class WarningsDialog(QDialog):
             self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
             for i, w in enumerate(warnings):
-                import time
-
                 time_str = time.strftime("%H:%M:%S", time.localtime(w["timestamp"]))
                 self._table.setItem(i, 0, QTableWidgetItem(time_str))
                 self._table.setItem(i, 1, QTableWidgetItem(w.get("level", "warning")))

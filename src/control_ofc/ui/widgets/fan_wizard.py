@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.api.models import ConnectionState
+from control_ofc.constants import THERMAL_ABORT_C
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
@@ -38,10 +39,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Test duration in seconds
-TEST_DURATION_S = 5
-# Thermal abort threshold
-THERMAL_ABORT_C = 85.0
+# Fallback spindown duration when the wizard cannot read the controller's actual
+# stop-delay.  Five seconds covers the longest seen in practice.
+_FALLBACK_SPINDOWN_S = 5
 
 _LABEL_PRESETS = [
     "",
@@ -77,7 +77,7 @@ class FanConfigWizard(QWizard):
         client: DaemonClient | None = None,
         control_loop: ControlLoopService | None = None,
         lease_service: LeaseService | None = None,
-        spindown_seconds: int = TEST_DURATION_S,
+        spindown_seconds: int = _FALLBACK_SPINDOWN_S,
         parent=None,
     ) -> None:
         super().__init__(parent)

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 
@@ -38,6 +39,10 @@ from control_ofc.services.profile_service import (
     LogicalControl,
     ProfileService,
 )
+
+if TYPE_CHECKING:
+    from control_ofc.services.demo_service import DemoService
+    from control_ofc.services.profile_service import Profile
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +135,7 @@ class ControlLoopService(QObject):
 
     status_changed = Signal(ControlLoopStatus)
     write_performed = Signal(str, float)  # target_id, pwm_percent
+    _request_write = Signal(str, int, str)  # target_id, pwm_int, lease_id
 
     def __init__(
         self,
@@ -137,7 +143,7 @@ class ControlLoopService(QObject):
         profile_service: ProfileService,
         client: DaemonClient | None = None,
         lease_service: LeaseService | None = None,
-        demo_service: object | None = None,
+        demo_service: DemoService | None = None,
         parent: QObject | None = None,
         socket_path: str | None = None,
     ) -> None:
@@ -162,6 +168,7 @@ class ControlLoopService(QObject):
             self._write_thread = QThread()
             self._write_worker = _WriteWorker(socket_path)
             self._write_worker.moveToThread(self._write_thread)
+            self._request_write.connect(self._write_worker.do_write)
             self._write_worker.write_completed.connect(self._on_write_completed)
             self._write_thread.start()
 
@@ -297,7 +304,7 @@ class ControlLoopService(QObject):
     def _evaluate_control(
         self,
         control: LogicalControl,
-        profile: object,
+        profile: Profile,
         sensors: dict[str, SensorReading],
         fans: dict[str, FanReading],
         status: ControlLoopStatus,
@@ -490,12 +497,14 @@ class ControlLoopService(QObject):
                 log.warning("hwmon write skipped -- no lease for %s", target_id)
                 return False
 
-        # Prefer background worker (production, non-blocking)
+        # Prefer background worker (production, non-blocking).
+        # AutoConnection resolves to QueuedConnection since the worker lives
+        # on a different QThread, so do_write executes on the worker thread.
         if self._write_worker is not None:
-            self._write_worker.do_write(target_id, pwm_int, lease_id)
+            self._request_write.emit(target_id, pwm_int, lease_id)
             return True
 
-        # Synchronous fallback (tests, or when no write thread)
+        # Synchronous fallback (tests only — production writes use _request_write signal)
         if self._client is None:
             return False
         try:

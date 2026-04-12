@@ -156,6 +156,8 @@ class MainWindow(QWidget):
         if demo_mode:
             self._start_demo_mode()
         else:
+            if self._control_loop:
+                self._control_loop.status_changed.connect(self._on_control_loop_status)
             self._state.set_connection(ConnectionState.DISCONNECTED)
             self._state.set_mode(OperationMode.READ_ONLY)
 
@@ -235,10 +237,14 @@ class MainWindow(QWidget):
             self._state.set_fans(self._demo_service.fans())
 
     def closeEvent(self, event) -> None:
-        """Persist window geometry and last page on close."""
+        """Persist window geometry and last page on close, then clean up timers."""
         geo = self.geometry()
         self._settings_service.update(
             last_page_index=self.page_stack.currentIndex(),
             window_geometry=[geo.x(), geo.y(), geo.width(), geo.height()],
         )
+        if hasattr(self, "_demo_timer") and self._demo_timer is not None:
+            self._demo_timer.stop()
+        if hasattr(self, "_control_loop") and self._control_loop is not None:
+            self._control_loop.shutdown()
         super().closeEvent(event)

@@ -1,7 +1,7 @@
 """Application-wide constants."""
 
 APP_NAME = "Control-OFC"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.3"
 ORG_NAME = "control-ofc"
 
 # Daemon IPC
@@ -24,6 +24,9 @@ HISTORY_MAX_SAMPLES = HISTORY_DURATION_S  # ~1 sample/sec
 
 # Curves
 DEFAULT_CURVE_POINTS = 5
+
+# Calibration / fan wizard
+THERMAL_ABORT_C = 85.0
 
 # Pages
 PAGE_DASHBOARD = 0

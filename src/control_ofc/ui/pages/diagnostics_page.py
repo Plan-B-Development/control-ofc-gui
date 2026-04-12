@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -23,9 +23,11 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.models import Capabilities, DaemonStatus, Freshness, LeaseState
 from control_ofc.services.app_state import AppState
-from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.services.diagnostics_service import DiagnosticsService, format_uptime
+from control_ofc.ui.theme import default_dark_theme
 
 _TRANSPARENT = "background: transparent;"
+_THEME = default_dark_theme()
 
 
 def _transparent_label(text: str, object_name: str, *, bold: bool = False) -> QLabel:
@@ -401,14 +403,7 @@ class DiagnosticsPage(QWidget):
         self._daemon_status_label.setText(f"Status: {status.overall_status}")
 
         if status.uptime_seconds is not None:
-            mins, secs = divmod(status.uptime_seconds, 60)
-            hrs, mins = divmod(mins, 60)
-            if hrs:
-                self._daemon_uptime_label.setText(f"Uptime: {hrs}h {mins}m {secs}s")
-            elif mins:
-                self._daemon_uptime_label.setText(f"Uptime: {mins}m {secs}s")
-            else:
-                self._daemon_uptime_label.setText(f"Uptime: {secs}s")
+            self._daemon_uptime_label.setText(f"Uptime: {format_uptime(status.uptime_seconds)}")
         else:
             self._daemon_uptime_label.setText("Uptime: \u2014")
 
@@ -439,11 +434,11 @@ class DiagnosticsPage(QWidget):
             freshness_item = self._sensor_table.item(i, 4)
             freshness_item.setText(s.freshness.value)
             if s.freshness == Freshness.STALE:
-                freshness_item.setForeground(Qt.GlobalColor.yellow)
+                freshness_item.setForeground(QColor(_THEME.status_warn))
             elif s.freshness == Freshness.INVALID:
-                freshness_item.setForeground(Qt.GlobalColor.red)
+                freshness_item.setForeground(QColor(_THEME.status_crit))
             else:
-                freshness_item.setForeground(Qt.GlobalColor.white)
+                freshness_item.setForeground(QColor(_THEME.text_primary))
 
     def _on_fans(self, fans: list) -> None:
         fan_ids = {f.id for f in fans}
@@ -474,11 +469,11 @@ class DiagnosticsPage(QWidget):
             freshness_item = self._fan_table.item(row, 4)
             freshness_item.setText(f.freshness.value)
             if f.freshness == Freshness.STALE:
-                freshness_item.setForeground(Qt.GlobalColor.yellow)
+                freshness_item.setForeground(QColor(_THEME.status_warn))
             elif f.freshness == Freshness.INVALID:
-                freshness_item.setForeground(Qt.GlobalColor.red)
+                freshness_item.setForeground(QColor(_THEME.status_crit))
             else:
-                freshness_item.setForeground(Qt.GlobalColor.white)
+                freshness_item.setForeground(QColor(_THEME.text_primary))
             row += 1
 
         for h in pwm_only:

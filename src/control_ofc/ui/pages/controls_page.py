@@ -8,6 +8,7 @@ Profile bar at top for profile management.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -41,6 +43,11 @@ from control_ofc.ui.widgets.curve_card import CurveCard
 from control_ofc.ui.widgets.curve_editor import CurveEditor
 from control_ofc.ui.widgets.draggable_flow import DraggableFlowContainer
 
+if TYPE_CHECKING:
+    from control_ofc.services.app_settings_service import AppSettingsService
+    from control_ofc.services.control_loop import ControlLoopService
+    from control_ofc.services.lease_service import LeaseService
+
 
 class ControlsPage(QWidget):
     """FanControl-style controls: profile bar, control cards grid, curve cards grid."""
@@ -54,9 +61,9 @@ class ControlsPage(QWidget):
         state: AppState | None = None,
         profile_service: ProfileService | None = None,
         client: DaemonClient | None = None,
-        control_loop: object | None = None,
-        lease_service: object | None = None,
-        settings_service: object | None = None,
+        control_loop: ControlLoopService | None = None,
+        lease_service: LeaseService | None = None,
+        settings_service: AppSettingsService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -399,6 +406,15 @@ class ControlsPage(QWidget):
     def _on_delete_profile(self) -> None:
         profile_id = self._profile_combo.currentData()
         if profile_id:
+            reply = QMessageBox.question(
+                self,
+                "Delete Profile",
+                f"Delete profile '{profile_id}'? This cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
             self._profile_service.delete_profile(profile_id)
             # After deletion, switch to the active profile (or whatever is now first)
             self._refresh_profile_combo(selected_id=self._profile_service.active_id)
@@ -521,16 +537,6 @@ class ControlsPage(QWidget):
 
     def _on_control_selected(self, control_id: str) -> None:
         self._selected_control_id = control_id
-
-    def _on_control_curve_selected(self, control_id: str, curve_id: str) -> None:
-        profile = self._get_current_profile()
-        if not profile:
-            return
-        for ctrl in profile.controls:
-            if ctrl.id == control_id:
-                ctrl.curve_id = curve_id
-                break
-        self._set_unsaved(True)
 
     def _on_edit_members(self, control_id: str) -> None:
         profile = self._get_current_profile()
@@ -832,6 +838,8 @@ class ControlsPage(QWidget):
             card.set_theme(tokens)
 
     def _on_capabilities_updated(self, caps) -> None:
+        if not hasattr(caps, "features") or caps.features is None:
+            return
         can_write = caps.features.openfan_write_supported or caps.features.hwmon_write_supported
         if not can_write:
             for card in self._control_cards.values():
