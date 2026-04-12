@@ -33,6 +33,7 @@ from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.microcopy import get as mc
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
@@ -477,39 +478,11 @@ class DashboardPage(QWidget):
         self._sensor_panel.update_fans(fans)
 
         # Unified displayability rule — applied to ALL fans (OpenFan and hwmon equally).
-        # When hide_unused is disabled, all fans are shown.
         hide_unused = True
         if self._settings_service:
             hide_unused = self._settings_service.settings.hide_unused_fan_headers
-
-        def _is_displayable(fan: FanReading) -> bool:
-            # GPU fans are always displayable — zero-RPM idle is normal behavior (DEC-047)
-            if fan.source == "amd_gpu":
-                return True
-            # When auto-hide is disabled, show all fans
-            if not hide_unused:
-                return True
-            # Real RPM evidence (spinning fan)
-            if fan.rpm is not None and fan.rpm > 0:
-                return True
-            # User explicitly labeled it (they want to see it)
-            if self._state and fan.id in self._state.fan_aliases:
-                return True
-            # Actively being controlled (PWM commanded above 0)
-            return bool(fan.last_commanded_pwm is not None and fan.last_commanded_pwm > 0)
-
-        displayable = [f for f in fans if _is_displayable(f)]
-
-        # De-duplicate: suppress hwmon fans from the same GPU when an amd_gpu
-        # fan truthfully represents that physical device. Identity link: PCI BDF
-        # embedded in the amd_gpu fan ID (e.g. "amd_gpu:0000:03:00.0") also
-        # appears in the hwmon fan ID (e.g. "...amdgpu:0000:03:00.0...").
-        gpu_bdfs = {f.id.removeprefix("amd_gpu:") for f in displayable if f.source == "amd_gpu"}
-        display_fans = [
-            f
-            for f in displayable
-            if f.source != "hwmon" or not any(bdf in f.id for bdf in gpu_bdfs)
-        ]
+        aliases = self._state.fan_aliases if self._state else {}
+        display_fans = filter_displayable_fans(fans, aliases, hide_unused)
 
         self._fans_card.set_value(str(len(display_fans)))
 

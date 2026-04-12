@@ -11,14 +11,30 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from control_ofc.services.app_state import AppState
+
+if TYPE_CHECKING:
+    from control_ofc.services.app_settings_service import AppSettingsService
+    from control_ofc.services.profile_service import ProfileService
 
 log = logging.getLogger(__name__)
 
 MAX_EVENTS = 200
 JOURNAL_LINE_LIMIT = 100
 JOURNAL_TIMEOUT_S = 5
+
+
+def format_uptime(seconds: int) -> str:
+    """Format an uptime duration as a human-readable string."""
+    mins, secs = divmod(seconds, 60)
+    hrs, mins = divmod(mins, 60)
+    if hrs:
+        return f"{hrs}h {mins}m {secs}s"
+    if mins:
+        return f"{mins}m {secs}s"
+    return f"{secs}s"
 
 
 @dataclass
@@ -41,8 +57,8 @@ class DiagnosticsService:
     def __init__(
         self,
         state: AppState | None = None,
-        settings_service: object | None = None,
-        profile_service: object | None = None,
+        settings_service: AppSettingsService | None = None,
+        profile_service: ProfileService | None = None,
     ) -> None:
         self._state = state
         self._settings_service = settings_service
@@ -93,9 +109,7 @@ class DiagnosticsService:
         if status:
             lines.append(f"Overall status: {status.overall_status}")
             if status.uptime_seconds is not None:
-                mins, secs = divmod(status.uptime_seconds, 60)
-                hrs, mins = divmod(mins, 60)
-                lines.append(f"Uptime: {hrs}h {mins}m {secs}s")
+                lines.append(f"Uptime: {format_uptime(status.uptime_seconds)}")
             if status.gui_last_seen_seconds_ago is not None:
                 lines.append(f"GUI last seen: {status.gui_last_seen_seconds_ago}s ago")
             for s in status.subsystems:

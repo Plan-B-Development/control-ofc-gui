@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.models import FanReading, SensorReading
 from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.ui.fan_display import filter_displayable_fans
 
 if TYPE_CHECKING:
     from control_ofc.services.app_state import AppState
@@ -203,24 +204,12 @@ class SensorSeriesPanel(QFrame):
 
     def update_fans(self, fans: list[FanReading]) -> None:
         """Update fan rows. Only shows fans with real evidence of being active."""
-        # Apply same displayability rule as dashboard — filter before building tree
-        displayable = [
-            f
-            for f in fans
-            if f.source == "amd_gpu"  # GPU fans always visible (zero-RPM idle is normal)
-            or (f.rpm is not None and f.rpm > 0)
-            or (self._state and f.id in self._state.fan_aliases)
-            or (f.last_commanded_pwm is not None and f.last_commanded_pwm > 0)
-        ]
-
-        # De-duplicate: suppress hwmon fans already represented by amd_gpu
-        gpu_bdfs = {f.id.removeprefix("amd_gpu:") for f in displayable if f.source == "amd_gpu"}
-        if gpu_bdfs:
-            displayable = [
-                f
-                for f in displayable
-                if f.source != "hwmon" or not any(bdf in f.id for bdf in gpu_bdfs)
-            ]
+        # Apply shared displayability rule (DEC-047) — filter before building tree
+        hide_unused = True
+        if self._settings_service and hasattr(self._settings_service, "settings"):
+            hide_unused = self._settings_service.settings.hide_unused_fan_headers
+        aliases = self._state.fan_aliases if self._state else {}
+        displayable = filter_displayable_fans(fans, aliases, hide_unused)
 
         new_ids = [f.id for f in displayable]
         structure_changed = new_ids != self._known_fan_ids

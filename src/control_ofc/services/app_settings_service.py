@@ -21,7 +21,7 @@ class AppSettings:
     restore_last_page: bool = True
     demo_on_disconnect: bool = False
     remember_last_profile: bool = True
-    chart_default_range_index: int = 4  # 30m in TimelineChart
+    chart_default_range_index: int = 4  # 15m in TimelineChart
     theme_name: str = "Default Dark"
     fun_mode: bool = True
     show_splash: bool = True
@@ -93,7 +93,7 @@ class AppSettingsService:
                 data = json.loads(path.read_text())
                 self._settings = AppSettings.from_dict(data)
                 log.info("Loaded app settings from %s", path)
-            except Exception as e:
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
                 log.warning("Failed to load app settings from %s: %s — using defaults", path, e)
                 self._settings = AppSettings()
         else:

@@ -6,6 +6,7 @@ os.replace). See Dan Luu "Files are hard" and the POSIX rename(2) guarantee.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from pathlib import Path
@@ -116,17 +117,8 @@ def atomic_write(filepath: Path, content: str) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, str(filepath))
+        os.chmod(str(filepath), 0o600)
     except BaseException:
-        with _suppress_os_error():
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp_path)
         raise
-
-
-class _suppress_os_error:
-    """Context manager that suppresses FileNotFoundError (e.g. temp file already gone)."""
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        return exc_type is not None and issubclass(exc_type, FileNotFoundError)

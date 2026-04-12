@@ -80,6 +80,7 @@ class ThemeTokens:
     chart_point: str = "#4a90d9"
     chart_point_selected: str = "#ffffff"
     chart_point_hover: str = "#ffffff"
+    chart_crosshair: str = "#606878"
     chart_series: list[str] = field(
         default_factory=lambda: [
             "#4a90d9",

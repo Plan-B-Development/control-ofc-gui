@@ -168,7 +168,9 @@ class TestPollWorkerActiveProfileFailure:
     def test_active_profile_failure_logs_warning(self, qtbot):
         """If active_profile() raises, poll still completes and connected fires."""
         mock_client = _make_mock_client()
-        mock_client.active_profile.side_effect = Exception("profile endpoint gone")
+        mock_client.active_profile.side_effect = DaemonError(
+            code="not_found", message="profile endpoint gone"
+        )
 
         worker = _make_worker(mock_client)
         connected_spy = _collect_signal(worker.connected)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QObject, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError
@@ -76,7 +76,8 @@ class _PollWorker(QObject):
                 self.headers_ready.emit(client.hwmon_headers())
                 try:
                     self.active_profile_ready.emit(client.active_profile())
-                except Exception:
+                except (DaemonError, ConnectionError, OSError):
+                    # Best-effort: older daemons may not support active_profile endpoint.
                     log.warning("Failed to query daemon active profile — GUI may be out of sync")
 
             # Use batch endpoint to reduce HTTP overhead (3 calls → 1)
@@ -88,6 +89,8 @@ class _PollWorker(QObject):
                 self.sensors_ready.emit(sensors)
                 self.fans_ready.emit(fans)
             except Exception as e:
+                # Broad catch intentional: batch endpoint may not exist on older daemons.
+                # Fall back to individual endpoints on any error.
                 log.debug("Batch poll failed, falling back to individual endpoints: %s", e)
                 self.status_ready.emit(client.status())
                 sensors = client.sensors()
@@ -128,7 +131,8 @@ class _PollWorker(QObject):
                 history = client.sensor_history(s.id)
                 if history.points:
                     self._history.prefill_sensor(s.id, history.points)
-            except Exception:
+            except (DaemonError, ConnectionError, OSError):
+                # Best-effort prefill: missing history is non-fatal.
                 log.debug("Failed to fetch history for %s", s.id)
 
     def _close_client(self) -> None:
@@ -176,7 +180,7 @@ class PollingService(QObject):
         # Timer runs on main thread, triggers worker.poll() on worker thread
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_INTERVAL_MS)
-        self._timer.timeout.connect(self._worker.poll)
+        self._timer.timeout.connect(self._worker.poll, Qt.ConnectionType.QueuedConnection)
 
         self._thread.start()
 

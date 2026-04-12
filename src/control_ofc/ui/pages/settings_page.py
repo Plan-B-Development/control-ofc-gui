@@ -35,7 +35,7 @@ from control_ofc.paths import (
 )
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
-from control_ofc.ui.theme import ThemeTokens, load_theme, save_theme
+from control_ofc.ui.theme import ThemeTokens, default_dark_theme, load_theme, save_theme
 
 log = logging.getLogger(__name__)
 
@@ -92,9 +92,6 @@ class SettingsPage(QWidget):
 
         # Load current values
         self._load_current_settings()
-
-        if self._state:
-            self._state.capabilities_updated.connect(self._on_capabilities_updated)
 
     # ─── Tab builders ────────────────────────────────────────────────
 
@@ -254,7 +251,7 @@ class SettingsPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel(label_text))
         path_label.setMinimumWidth(250)
-        path_label.setStyleSheet("color: #aaa;")
+        path_label.setStyleSheet(f"color: {default_dark_theme().text_muted};")
         row.addWidget(path_label, 1)
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(browse_callback)
@@ -490,6 +487,7 @@ class SettingsPage(QWidget):
 
     def _reset_dir(self, label: QLabel) -> None:
         label.setText("")
+        label.setToolTip("Using default XDG location")
 
     def _handle_dir_change(self, kind: str, label: QLabel, new_path: str, old_dir: Path) -> None:
         """Handle profile/theme directory change: offer to move existing files."""
@@ -817,9 +815,6 @@ class SettingsPage(QWidget):
             self._export_result_label.setProperty("class", css_class)
             self._export_result_label.style().unpolish(self._export_result_label)
             self._export_result_label.style().polish(self._export_result_label)
-
-    def _on_capabilities_updated(self, caps) -> None:
-        pass  # Reserved for future capability-gated settings
 
     def _set_status(self, msg: str) -> None:
         self._status_label.setText(msg)
