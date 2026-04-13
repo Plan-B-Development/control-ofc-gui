@@ -1,8 +1,24 @@
 # Control-OFC GUI
 
-> PySide6 desktop GUI for the Control-OFC fan control daemon on Linux.
+# Control-OFC User Manual
 
-Control-OFC GUI is a dark-theme-first desktop application for monitoring and controlling fans via the [control-ofc-daemon](https://github.com/your-org/control-ofc-daemon) service. It communicates exclusively through the daemon's Unix socket HTTP API — it never accesses hardware directly.
+**Control-OFC** is a desktop fan control application for Linux. It communicates with the `control-ofc-daemon` service to monitor temperatures, manage fan speeds, and apply custom fan curves — all from a graphical interface.
+
+This manual covers every page, setting, and feature of the application.
+
+## Table of Contents
+
+1. [Getting Started](getting-started.md) — Installation, first launch, and connecting to the daemon
+2. [Dashboard](dashboard.md) — Real-time overview of fans, sensors, and system health
+3. [Controls](controls.md) — Profiles, fan roles, curves, and manual override
+4. [Settings](settings.md) — Application preferences, themes, and backup/restore
+5. [Diagnostics](diagnostics.md) — Daemon health, device status, lease info, and logs
+6. [Fan Wizard](fan-wizard.md) — Guided fan identification and labelling
+7. [Profiles and Curves Reference](profiles-and-curves.md) — How profiles, fan roles, and curves work together
+
+## Screenshots
+
+All screenshots in this manual are captured automatically from the application running in demo mode. See the \screenshots directory for images of the application running live. 
 
 ## Features
 
@@ -109,32 +125,6 @@ The daemon owns:
 - Sensor polling and history
 
 See [System Architecture](docs/02_System_Architecture_and_Boundaries.md) and the [API Integration Contract](docs/08_API_Integration_Contract.md) for details.
-
-## Upgrade notes
-
-### v1.0.0 — OnlyFans → Control-OFC rebrand (BREAKING)
-
-If you previously installed the `onlyfans`-named package, follow these migration steps:
-
-1. Uninstall the old package: `pip uninstall onlyfans`
-2. Move user config: `mv ~/.config/onlyfans ~/.config/control-ofc` (profiles, themes, settings preserved)
-3. Update the daemon to v1.0.0 as well (socket path changes to `/run/control-ofc/control-ofc.sock`)
-4. Install the new package and launch with: `control-ofc-gui` (or `control-ofc-gui --demo`)
-
-Full migration details and the list of renamed paths/identifiers are in [CHANGELOG.md](CHANGELOG.md#100--2026-04-08).
-
-### v0.86.0+
-
-Settings page now manages daemon config via API (`POST /config/profile-search-dirs`, `POST /config/startup-delay`) instead of direct file writes. No manual migration needed — settings are preserved.
-
-## Known issues
-
-See [Risks, Gaps, and Future Work](docs/14_Risks_Gaps_and_Future_Work.md) for the full list. Key limitations:
-
-- No runtime hwmon/GPU hotplug detection (restart daemon to pick up new devices)
-- AIO cooler support is placeholder only
-- Multi-GPU: data model supports it, but API reports primary GPU only
-- GPU fan control requires RDNA3+ (RX 7000/9000) with `amdgpu.ppfeaturemask` kernel parameter
 
 ## License
 
