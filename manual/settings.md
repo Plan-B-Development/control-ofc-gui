@@ -106,4 +106,4 @@ This makes it safe to experiment — you can always restore from the auto-backup
 
 ---
 
-Previous: [Controls](controls.md) | Next: [Diagnostics](diagnostics.md)
+Previous: [Controls](/manual/controls.md) | Next: [Diagnostics](/manual/diagnostics.md)

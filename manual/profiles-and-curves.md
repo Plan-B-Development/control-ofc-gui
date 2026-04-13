@@ -148,4 +148,4 @@ This means you can close the GUI and your fans continue to be managed by the dae
 
 ---
 
-Previous: [Fan Wizard](fan-wizard.md) | Back to [Table of Contents](README.md)
+Previous: [Fan Wizard](/manual/fan-wizard.md) | Back to [Table of Contents](/manual/README.md)

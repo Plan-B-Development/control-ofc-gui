@@ -81,4 +81,4 @@ An **About** button at the bottom of the sidebar shows version and credit inform
 
 ---
 
-Next: [Dashboard](dashboard.md)
+Next: [Dashboard](/manual/dashboard.md)
