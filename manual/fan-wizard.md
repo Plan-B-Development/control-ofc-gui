@@ -67,4 +67,4 @@ Labels are stored in `fan_aliases` within your application settings and persist 
 
 ---
 
-Previous: [Diagnostics](diagnostics.md) | Next: [Profiles and Curves Reference](profiles-and-curves.md)
+Previous: [Diagnostics](/manual/diagnostics.md) | Next: [Profiles and Curves Reference](/manual/profiles-and-curves.md)

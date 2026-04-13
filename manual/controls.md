@@ -103,4 +103,4 @@ Switching back to Curve mode or changing profiles exits manual override.
 
 ---
 
-Previous: [Dashboard](dashboard.md) | Next: [Settings](settings.md)
+Previous: [Dashboard](/manual/dashboard.md) | Next: [Settings](/manual/settings.md)
