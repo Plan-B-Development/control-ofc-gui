@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.4] — 2026-04-16
+
+### Fixed
+- **GUI fails to start on clean installs (ModuleNotFoundError: colorama).** pyqtgraph 0.14.0 unconditionally imports `colorama` at module load, but Arch's `python-pyqtgraph` package omits it from its dependencies. On systems where no other package pulls in `python-colorama` (e.g. clean CachyOS), the GUI crashed at import time before Qt was even initialized. Added `python-colorama` to PKGBUILD `depends` and `colorama>=0.4` to `pyproject.toml` `dependencies`.
+
 ## [1.0.2] — 2026-04-11
 
 ### Fixed

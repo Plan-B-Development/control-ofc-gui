@@ -1,6 +1,6 @@
 [project]
 name = "control-ofc-gui"
-version = "1.0.3"
+version = "1.0.4"
 description = "Desktop fan control GUI for the Control-OFC daemon"
 requires-python = ">=3.12"
 license = "MIT"
@@ -9,6 +9,7 @@ dependencies = [
     "httpx>=0.27",
     "pyqtgraph>=0.14",
     "numpy>=1.26",
+    "colorama>=0.4",
 ]
 
 [project.optional-dependencies]
