@@ -1,6 +1,6 @@
 # 14 — Risks, Gaps, and Future Work
 
-**Last updated:** 2026-04-08 (V5 Phase 7 documentation audit)
+**Last updated:** 2026-04-17 (V5 full audit hardening pass)
 
 ## Current Feature Status Matrix
 
@@ -61,7 +61,7 @@ Data model supports multiple GPUs. API reports primary only. No UI to select bet
 - One-click diagnostics redaction (deferred — partial PII scrubbing gives false confidence)
 - **SSE consumption (`GET /events`) — daemon exposes it, GUI does not consume it.** The planned `EventStreamService` (DEC-024) was never wired up. `httpx-sse` was removed in v1.0.0 (commit `55cf44f`, PKGBUILD follow-up `64e3fac`). The GUI polls at 1 Hz via the combined `GET /poll` endpoint and this has been sufficient for V1 responsiveness. Sub-second UI updates would require reintroducing the SSE client and reconciling it with the existing `PollingService`.
 - **Dashboard fan table — group-membership badges and per-fan state chips** (stale/fault/manual). `docs/04_Dashboard_Spec.md` listed these in Row 3; the shipped table shows label/source/RPM/PWM only.
-- **Dashboard sensor panel — per-sensor freshness age and stale/invalid warning marker.** `docs/04_Dashboard_Spec.md` listed these as an optional side panel/lower strip. The current implementation relies on the global staleness state in the top status strip.
+- ~~**Dashboard sensor panel — per-sensor freshness age and stale/invalid warning marker.**~~ PARTIALLY RESOLVED: Sensor summary cards now show per-card freshness indicators (`⏱` stale, `⚠` invalid) with age tooltips. Full side panel/lower strip per the spec is still deferred.
 
 ### 8. polkit helper for offline config editing (deferred)
 
@@ -125,3 +125,7 @@ A composable drop-in directory (`/etc/control-ofc/profiles.d/*.conf`) could repl
 | Copy last errors not implemented | Button added to diagnostics event log tab | v0.74.0 (R55) |
 | Reconnect controller button | Deferred — daemon auto-reconnects with backoff | Intentionally deferred (R55) |
 | One-click diagnostics redaction | Deferred — partial PII scrubbing gives false confidence | Intentionally deferred (R55) |
+| Per-sensor freshness on dashboard | Summary cards show ⏱/⚠ indicators with age tooltips | V5 audit |
+| Daemon panic leaves hardware in manual mode | Panic hook restores GPU curves + hwmon pwm_enable=2 | V5 audit (daemon) |
+| GPU reset_to_auto skips zero-RPM on partial failure | Always re-enable zero-RPM regardless of curve reset outcome | V5 audit (daemon) |
+| blockSignals pairs exception-unsafe (GUI) | block_signals() context manager with try/finally | V5 audit |
