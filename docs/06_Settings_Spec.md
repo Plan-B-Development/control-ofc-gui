@@ -30,10 +30,10 @@ V1 requirements:
 - select from shipped themes
 - show active theme preview
 
-Do not build a full advanced theme editor in V1.
+~~Do not build a full advanced theme editor in V1.~~ Full theme editor implemented (`ThemeEditorWidget`) with per-token color editing, grouped controls, contrast warnings, and live preview.
 
 ### C. Safety display
-Safety floors are daemon-hardcoded (20% chassis, 30% CPU/pump) and **not editable**. The GUI reads them from `GET /capabilities` under `limits` and uses them for:
+Safety is daemon-owned and **not editable by the GUI**. The daemon reports `min_pwm_percent: 0` for all hwmon headers (no per-header floors). Thermal safety is temperature-triggered: 105°C → force 100% PWM, hold until 80°C, recover at 60°C; 40% fallback if no CPU sensor for 5 cycles. The GUI reads safety metadata from `GET /capabilities` under `limits` and uses it for:
 - curve validation (reject curves that violate floors)
 - display in Controls and Diagnostics
 - stale-data timeout thresholds for warning presentation

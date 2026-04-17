@@ -10,6 +10,37 @@ This file defines how the GUI should consume the current daemon/API safely and p
 4. The GUI must handle partial capability availability.
 5. The GUI must gracefully support absent hardware.
 
+## Quick reference — curl examples
+
+All endpoints use HTTP over Unix socket. The `SOCK` variable shortens examples:
+
+```bash
+SOCK="/run/control-ofc/control-ofc.sock"
+
+# Read endpoints
+curl -s --unix-socket $SOCK http://localhost/capabilities | jq .
+curl -s --unix-socket $SOCK http://localhost/status | jq .
+curl -s --unix-socket $SOCK http://localhost/sensors | jq .
+curl -s --unix-socket $SOCK http://localhost/fans | jq .
+curl -s --unix-socket $SOCK http://localhost/poll | jq .
+curl -s --unix-socket $SOCK http://localhost/hwmon/headers | jq .
+curl -s --unix-socket $SOCK http://localhost/hwmon/lease/status | jq .
+curl -s --unix-socket $SOCK 'http://localhost/sensors/history?id=cpu_tctl&last=50' | jq .
+curl -s --unix-socket $SOCK http://localhost/profile/active | jq .
+
+# Write endpoints
+curl -s --unix-socket $SOCK -X POST http://localhost/fans/openfan/0/pwm \
+  -H 'Content-Type: application/json' -d '{"pwm_percent": 50}'
+curl -s --unix-socket $SOCK -X POST http://localhost/profile/activate \
+  -H 'Content-Type: application/json' -d '{"profile_id": "quiet"}'
+curl -s --unix-socket $SOCK -X POST http://localhost/hwmon/lease/take \
+  -H 'Content-Type: application/json' -d '{"owner_hint": "gui"}'
+curl -s --unix-socket $SOCK -X POST http://localhost/hwmon/rescan
+curl -s --unix-socket $SOCK -X POST http://localhost/gpu/0000:2d:00.0/fan/pwm \
+  -H 'Content-Type: application/json' -d '{"speed_pct": 60}'
+curl -s --unix-socket $SOCK -X POST http://localhost/gpu/0000:2d:00.0/fan/reset
+```
+
 ## Read endpoints
 
 ### GET /capabilities
@@ -160,7 +191,7 @@ All errors use a standard nested envelope:
 
 Error codes and HTTP statuses:
 - 400 `validation_error` (source: `"validation"`, retryable: false)
-- 403 `lease_required` (source: `"validation"`, retryable: false)
+- 400/403 `lease_required` (source: `"validation"`, retryable: false) — 400 for invalid/expired lease ID, 403 for missing lease on write
 - 404 `not_found` (source: `"validation"`, retryable: false)
 - 409 `lease_already_held` (source: `"validation"`, retryable: false)
 - 409 `thermal_abort` (source: `"hardware"`, retryable: true) — calibration aborted due to high temperature
@@ -273,5 +304,5 @@ Profile *storage* remains GUI-owned — the daemon loads profiles from configure
 
 ## Config management
 
-- `POST /config/profile-search-dirs` — add directories to the daemon's profile search path (persisted to daemon.toml)
-- `POST /config/startup-delay` — set the daemon startup delay in seconds (persisted to daemon.toml, takes effect on next restart)
+- `POST /config/profile-search-dirs` — add directories to the daemon's profile search path (persisted to `runtime.toml` per ADR-002)
+- `POST /config/startup-delay` — set the daemon startup delay in seconds (persisted to `runtime.toml`, takes effect on next restart)

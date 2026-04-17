@@ -187,7 +187,7 @@ Both Fan Roles and Curves sections use `DraggableFlowContainer`, which provides:
 
 ### Card sizing
 - **Curve cards**: fixed 220×160px — header, sensor, preview, footer
-- **Fan Role cards**: fixed 260×180px — name, members, curve, output, actions
+- **Fan Role cards**: fixed 220×160px (unified sizing) — name, members, curve, output, actions
 
 ### Order model
 - **Source of truth**: `Profile.curves` and `Profile.controls` lists
