@@ -1,130 +1,100 @@
 # Control-OFC GUI
 
-# Control-OFC User Manual
+Desktop fan control interface for Linux. Communicates with the [`control-ofc-daemon`](https://github.com/Plan-B-Development/control-ofc-daemon) service to monitor temperatures, manage fan speeds, and apply custom fan curves.
 
-**Control-OFC** is a desktop fan control application for Linux. It communicates with the `control-ofc-daemon` service to monitor temperatures, manage fan speeds, and apply custom fan curves — all from a graphical interface.
-
-This manual covers every page, setting, and feature of the application.
-
-## Table of Contents
-
-1. [Getting Started](/manual/getting-started.md) — Installation, first launch, and connecting to the daemon
-2. [Dashboard](/manual/dashboard.md) — Real-time overview of fans, sensors, and system health
-3. [Controls](/manual/controls.md) — Profiles, fan roles, curves, and manual override
-4. [Settings](/manual/settings.md) — Application preferences, themes, and backup/restore
-5. [Diagnostics](/manual/diagnostics.md) — Daemon health, device status, lease info, and logs
-6. [Fan Wizard](/manual/fan-wizard.md) — Guided fan identification and labelling
-7. [Profiles and Curves Reference](/manual/profiles-and-curves.md) — How profiles, fan roles, and curves work together
-
-## Screenshots
-
-All screenshots in this manual are captured automatically from the application running in demo mode. See the [screenshots](/screenshots/) directory for images of the application running live. 
+![Dashboard](screenshots/dashboard.png)
 
 ## Features
 
-- **Dashboard** — real-time sensor temperatures, fan RPM, active profile, system health
-- **Controls** — profile switching, curve editing (5-point), fan roles, manual override
-- **Settings** — GUI preferences, daemon runtime config, theme editor, import/export
+- **Dashboard** — real-time sensor temperatures, fan RPM, active profile, system health with per-sensor freshness indicators
+- **Controls** — profile switching, 5-point curve editing, fan roles with drag-and-drop, manual override
+- **Settings** — GUI preferences, daemon runtime config, full theme editor with contrast checking, import/export
 - **Diagnostics** — connection health, subsystem status, lease state, support bundle export
-- **Demo mode** — full UI without hardware, for testing and development
+- **Fan Wizard** — guided fan identification and labelling
+- **Demo mode** — full UI without hardware (`--demo`)
 
-## Requirements
+## Install
 
-- Python >= 3.12 (developed on 3.14)
-- Linux (primary target: CachyOS / Arch Linux, KDE Plasma)
-- PySide6 >= 6.6
-- A running `control-ofc-daemon` instance (or use `--demo` mode)
-
-### System dependencies (Arch-based)
+**AUR (recommended):**
 
 ```bash
-# PySide6 wheels usually bundle Qt, but if building from source:
-sudo pacman -S python python-pip base-devel
+paru -S control-ofc-gui
 ```
 
-## Installation
+**From source:**
 
 ```bash
-# Clone the repository
-git clone <repo-url> && cd control-ofc-gui
-
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install
+git clone https://github.com/Plan-B-Development/control-ofc-gui.git
+cd control-ofc-gui
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-## Usage
+## Quick Start
 
 ```bash
-# Normal mode (connects to daemon at /run/control-ofc/control-ofc.sock)
-control-ofc
-
-# Demo mode (no daemon required)
-control-ofc --demo
-```
-
-Or run as a module:
-```bash
-python -m control_ofc.main
-python -m control_ofc.main --demo
-```
-
-## Daemon setup
-
-The GUI requires the `control-ofc-daemon` to be running. See the [daemon repository](/home/mitch/Development/control-ofc-daemon) for build and installation instructions, or the [Operations Guide](docs/18_Operations_Guide.md) for configuration reference.
-
-### Quick daemon check
-
-```bash
-# Is the daemon running?
+# 1. Ensure daemon is running
 systemctl is-active control-ofc-daemon
 
-# Can we reach it?
-curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/status
+# 2. Launch the GUI
+control-ofc-gui
+
+# 3. Or try demo mode (no daemon required)
+control-ofc-gui --demo
 ```
+
+## CLI
+
+```
+control-ofc-gui [OPTIONS]
+
+Options:
+  --socket <path>   Daemon socket path (default: /run/control-ofc/control-ofc.sock)
+  --demo            Run in demo mode with simulated hardware
+```
+
+## Requirements
+
+- Python >= 3.12
+- Linux (primary target: Arch Linux / CachyOS, KDE Plasma)
+- PySide6 >= 6.6
+- A running `control-ofc-daemon` instance (or use `--demo`)
 
 ## Configuration
 
-### GUI config
+| Location | Contents |
+|----------|----------|
+| `~/.config/control-ofc/settings.json` | GUI preferences |
+| `~/.config/control-ofc/profiles/` | Fan control profiles |
+| `~/.config/control-ofc/themes/` | Custom themes |
 
-Stored at `~/.config/control-ofc/`:
-- `settings.json` — application preferences
-- `profiles/` — fan control profiles
-- `themes/` — custom themes
-
-### Daemon config
-
-See [Operations Guide](docs/18_Operations_Guide.md) for `daemon.toml` reference.
-
-## Development
-
-```bash
-# Install with dev dependencies
-pip install -e ".[dev]"
-
-# Run quality gates
-ruff format --check src/ tests/
-ruff check src/ tests/
-pytest
-```
+Daemon configuration: see the [daemon repo](https://github.com/Plan-B-Development/control-ofc-daemon) and the [Operations Guide](docs/18_Operations_Guide.md).
 
 ## Architecture
 
-The GUI is a **daemon API client only**. All hardware interaction goes through the daemon's HTTP-over-Unix-socket API. The GUI owns:
+The GUI is a **daemon API client only**. All hardware access goes through the daemon's HTTP-over-Unix-socket API.
 
-- Fan curve evaluation (control loop at 1Hz)
-- Profile/theme/settings persistence
-- User-facing presentation
+| Owned by GUI | Owned by daemon |
+|-------------|----------------|
+| Fan curve evaluation (1 Hz control loop) | Hardware access (hwmon, serial, GPU PMFW) |
+| Profile/theme/settings persistence | Thermal safety enforcement |
+| User-facing presentation | Sensor polling and history |
+| Hwmon lease management | Socket permissions and IPC |
 
-The daemon owns:
-- Hardware access (hwmon sysfs, serial, GPU PMFW)
-- Thermal safety enforcement
-- Sensor polling and history
+See the [architecture docs](docs/02_System_Architecture_and_Boundaries.md) and [API contract](docs/08_API_Integration_Contract.md) for details.
 
-See [System Architecture](docs/02_System_Architecture_and_Boundaries.md) and the [API Integration Contract](docs/08_API_Integration_Contract.md) for details.
+## Documentation
+
+- **[User Manual](manual/getting-started.md)** — installation, features, and usage guide
+- **[Architecture](docs/00_README_START_HERE.md)** — design docs and specs
+- **[API Contract](docs/08_API_Integration_Contract.md)** — daemon endpoint reference
+- **[Decisions](DECISIONS.md)** — architecture decision records
+- **[Changelog](CHANGELOG.md)** — version history
+- **[Contributing](CONTRIBUTING.md)** — build, test, and PR guidelines
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, quality gates, and PR guidelines.
 
 ## License
 

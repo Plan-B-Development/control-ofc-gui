@@ -1,0 +1,10 @@
+#compdef control-ofc-gui
+
+_control-ofc-gui() {
+    _arguments \
+        '--socket=[Daemon socket path]:socket path:_files' \
+        '--demo[Run in demo mode with simulated hardware]' \
+        '--help[Show help message]'
+}
+
+_control-ofc-gui "$@"
