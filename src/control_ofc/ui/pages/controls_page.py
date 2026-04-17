@@ -38,6 +38,7 @@ from control_ofc.services.profile_service import (
     ProfileService,
 )
 from control_ofc.ui.microcopy import get as mc
+from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
 from control_ofc.ui.widgets.curve_editor import CurveEditor
@@ -278,26 +279,25 @@ class ControlsPage(QWidget):
             selected_id: Profile ID to select after rebuild. If empty, keeps the
                          current selection (or falls back to the active profile).
         """
-        self._profile_combo.blockSignals(True)
-        # Remember current selection before clearing
-        if not selected_id:
-            selected_id = self._profile_combo.currentData() or ""
-        self._profile_combo.clear()
-        active_id = self._profile_service.active_id
-        select_idx = 0
-        for i, p in enumerate(self._profile_service.profiles):
-            label = f"* {p.name}" if p.id == active_id else p.name
-            self._profile_combo.addItem(label, p.id)
-            if p.id == selected_id:
-                select_idx = i
-        # Fall back to active profile if the requested selection no longer exists
-        if not selected_id or self._profile_combo.itemData(select_idx) != selected_id:
-            for i in range(self._profile_combo.count()):
-                if self._profile_combo.itemData(i) == active_id:
+        with block_signals(self._profile_combo):
+            # Remember current selection before clearing
+            if not selected_id:
+                selected_id = self._profile_combo.currentData() or ""
+            self._profile_combo.clear()
+            active_id = self._profile_service.active_id
+            select_idx = 0
+            for i, p in enumerate(self._profile_service.profiles):
+                label = f"* {p.name}" if p.id == active_id else p.name
+                self._profile_combo.addItem(label, p.id)
+                if p.id == selected_id:
                     select_idx = i
-                    break
-        self._profile_combo.setCurrentIndex(select_idx)
-        self._profile_combo.blockSignals(False)
+            # Fall back to active profile if the requested selection no longer exists
+            if not selected_id or self._profile_combo.itemData(select_idx) != selected_id:
+                for i in range(self._profile_combo.count()):
+                    if self._profile_combo.itemData(i) == active_id:
+                        select_idx = i
+                        break
+            self._profile_combo.setCurrentIndex(select_idx)
 
     def _on_profile_selected(self, index: int) -> None:
         if index < 0:
@@ -319,6 +319,9 @@ class ControlsPage(QWidget):
             return
         self._profile_service.save_profile(profile)
 
+        # Remember previous selection so we can revert on failure
+        prev_active_id = self._profile_service.active_id
+
         # Send activation to daemon API
         profile_path = str(self._profile_service.profile_path(profile_id))
         if self._client:
@@ -330,14 +333,16 @@ class ControlsPage(QWidget):
                     self._unsaved_label.setProperty("class", "CriticalChip")
                     self._unsaved_label.style().unpolish(self._unsaved_label)
                     self._unsaved_label.style().polish(self._unsaved_label)
+                    self._refresh_profile_combo(selected_id=prev_active_id)
                     return
                 self._log.info("Profile activated on daemon: %s", result.profile_name)
             except DaemonError as exc:
                 self._log.error("Profile activation failed: %s", exc)
-                self._unsaved_label.setText(f"Activation failed: {exc.message}")
+                self._unsaved_label.setText(f"Activation failed: {exc.message or 'unknown error'}")
                 self._unsaved_label.setProperty("class", "CriticalChip")
                 self._unsaved_label.style().unpolish(self._unsaved_label)
                 self._unsaved_label.style().polish(self._unsaved_label)
+                self._refresh_profile_combo(selected_id=prev_active_id)
                 return
         else:
             self._log.debug("No daemon client — profile activated locally only")

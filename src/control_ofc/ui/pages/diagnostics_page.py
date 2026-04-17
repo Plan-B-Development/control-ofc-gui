@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtGui import QColor
+
+if TYPE_CHECKING:
+    from control_ofc.services.app_settings_service import AppSettingsService
+    from control_ofc.services.profile_service import ProfileService
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -48,8 +53,8 @@ class DiagnosticsPage(QWidget):
         self,
         state: AppState | None = None,
         diagnostics_service: DiagnosticsService | None = None,
-        settings_service: object | None = None,
-        profile_service: object | None = None,
+        settings_service: AppSettingsService | None = None,
+        profile_service: ProfileService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)

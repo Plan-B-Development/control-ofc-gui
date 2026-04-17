@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.profile_service import CurveConfig, CurvePoint, CurveType
+from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.theme import ThemeTokens, default_dark_theme
 
 # Constraints
@@ -325,12 +326,11 @@ class CurveEditor(QWidget):
 
         # Restore sensor combo from this curve's own saved state
         self._last_sensor_ids = []  # force set_available_sensors to repopulate
-        self._sensor_combo.blockSignals(True)
-        if curve.sensor_id:
-            idx = self._sensor_combo.findData(curve.sensor_id)
-            if idx >= 0:
-                self._sensor_combo.setCurrentIndex(idx)
-        self._sensor_combo.blockSignals(False)
+        with block_signals(self._sensor_combo):
+            if curve.sensor_id:
+                idx = self._sensor_combo.findData(curve.sensor_id)
+                if idx >= 0:
+                    self._sensor_combo.setCurrentIndex(idx)
 
     def get_curve(self) -> CurveConfig | None:
         if self._curve is None:
@@ -345,15 +345,14 @@ class CurveEditor(QWidget):
             return  # no change, skip repopulation
         self._last_sensor_ids = new_ids
 
-        self._sensor_combo.blockSignals(True)
-        self._sensor_combo.clear()
-        for sid, label in sensor_ids:
-            self._sensor_combo.addItem(label, sid)
-        if self._curve and self._curve.sensor_id:
-            idx = self._sensor_combo.findData(self._curve.sensor_id)
-            if idx >= 0:
-                self._sensor_combo.setCurrentIndex(idx)
-        self._sensor_combo.blockSignals(False)
+        with block_signals(self._sensor_combo):
+            self._sensor_combo.clear()
+            for sid, label in sensor_ids:
+                self._sensor_combo.addItem(label, sid)
+            if self._curve and self._curve.sensor_id:
+                idx = self._sensor_combo.findData(self._curve.sensor_id)
+                if idx >= 0:
+                    self._sensor_combo.setCurrentIndex(idx)
 
     def set_current_sensor_value(self, value_c: float | None) -> None:
         """Update the live sensor reading marker on the graph and readout label."""
@@ -535,12 +534,11 @@ class CurveEditor(QWidget):
     def _refresh_table(self) -> None:
         if not self._curve:
             return
-        self._table.blockSignals(True)
-        self._table.setRowCount(len(self._curve.points))
-        for i, p in enumerate(self._curve.points):
-            self._table.setItem(i, 0, QTableWidgetItem(f"{p.temp_c:.1f}"))
-            self._table.setItem(i, 1, QTableWidgetItem(f"{p.output_pct:.1f}"))
-        self._table.blockSignals(False)
+        with block_signals(self._table):
+            self._table.setRowCount(len(self._curve.points))
+            for i, p in enumerate(self._curve.points):
+                self._table.setItem(i, 0, QTableWidgetItem(f"{p.temp_c:.1f}"))
+                self._table.setItem(i, 1, QTableWidgetItem(f"{p.output_pct:.1f}"))
         # Restore selection
         if self._selected_idx is not None and self._selected_idx < self._table.rowCount():
             self._table.selectRow(self._selected_idx)
@@ -756,9 +754,8 @@ class CurveEditor(QWidget):
         self._refresh_table()
         self.curve_changed.emit()
         # Reset combo to placeholder
-        self._preset_combo.blockSignals(True)
-        self._preset_combo.setCurrentIndex(0)
-        self._preset_combo.blockSignals(False)
+        with block_signals(self._preset_combo):
+            self._preset_combo.setCurrentIndex(0)
 
     # ─── Table editing ───────────────────────────────────────────────
 
@@ -803,14 +800,12 @@ class CurveEditor(QWidget):
             (self._lin_end_temp, "end_temp_c"),
             (self._lin_end_output, "end_output_pct"),
         ]:
-            spin.blockSignals(True)
-            spin.setValue(getattr(curve, attr))
-            spin.blockSignals(False)
+            with block_signals(spin):
+                spin.setValue(getattr(curve, attr))
 
     def _load_flat_params(self, curve: CurveConfig) -> None:
-        self._flat_output_spin.blockSignals(True)
-        self._flat_output_spin.setValue(curve.flat_output_pct)
-        self._flat_output_spin.blockSignals(False)
+        with block_signals(self._flat_output_spin):
+            self._flat_output_spin.setValue(curve.flat_output_pct)
 
     def _on_linear_param_changed(self) -> None:
         if not self._curve or self._curve.type != CurveType.LINEAR:

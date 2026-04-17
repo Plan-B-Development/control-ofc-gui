@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.profile_service import ControlMode, CurveConfig, LogicalControl
+from control_ofc.ui.qt_util import block_signals
 
 
 class FanRoleDialog(QDialog):
@@ -151,14 +152,12 @@ class FanRoleDialog(QDialog):
         self._manual_widget.setVisible(is_manual)
 
     def _on_slider_changed(self, value: int) -> None:
-        self._manual_spin.blockSignals(True)
-        self._manual_spin.setValue(value)
-        self._manual_spin.blockSignals(False)
+        with block_signals(self._manual_spin):
+            self._manual_spin.setValue(value)
 
     def _on_spin_changed(self, value: int) -> None:
-        self._manual_slider.blockSignals(True)
-        self._manual_slider.setValue(value)
-        self._manual_slider.blockSignals(False)
+        with block_signals(self._manual_slider):
+            self._manual_slider.setValue(value)
 
     def get_result(self) -> dict:
         return {

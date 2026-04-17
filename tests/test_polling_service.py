@@ -143,7 +143,7 @@ class TestPollWorkerBatchFallback:
     def test_batch_poll_fallback(self, qtbot):
         """If client.poll() raises, individual status/sensors/fans are called."""
         mock_client = _make_mock_client()
-        mock_client.poll.side_effect = Exception("batch not supported")
+        mock_client.poll.side_effect = DaemonError(code="not_found", message="batch not supported")
 
         worker = _make_worker(mock_client)
         status_spy = _collect_signal(worker.status_ready)

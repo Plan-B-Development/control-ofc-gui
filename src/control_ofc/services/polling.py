@@ -6,6 +6,7 @@ the UI. Results are posted back to AppState on the main thread via signals.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
@@ -88,9 +89,7 @@ class _PollWorker(QObject):
                 self.status_ready.emit(status)
                 self.sensors_ready.emit(sensors)
                 self.fans_ready.emit(fans)
-            except Exception as e:
-                # Broad catch intentional: batch endpoint may not exist on older daemons.
-                # Fall back to individual endpoints on any error.
+            except (DaemonError, ConnectionError, OSError, KeyError, ValueError) as e:
                 log.debug("Batch poll failed, falling back to individual endpoints: %s", e)
                 self.status_ready.emit(client.status())
                 sensors = client.sensors()
@@ -137,8 +136,6 @@ class _PollWorker(QObject):
 
     def _close_client(self) -> None:
         if self._client:
-            import contextlib
-
             with contextlib.suppress(Exception):
                 self._client.close()
             self._client = None
@@ -200,7 +197,10 @@ class PollingService(QObject):
         self.stop()
         self._worker.shutdown()
         self._thread.quit()
-        self._thread.wait(2000)
+        if not self._thread.wait(2000):
+            log.warning("Polling thread did not stop within 2s, terminating")
+            self._thread.terminate()
+            self._thread.wait(1000)
 
     def _on_connected(self) -> None:
         if self._state.connection != ConnectionState.CONNECTED:
