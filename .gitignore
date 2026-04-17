@@ -17,3 +17,12 @@ packaging/src/
 packaging/pkg/
 packaging/*.pkg.tar*
 packaging/*.tar.gz
+
+# Local-only project admin files (never push to GitHub)
+CLAUDE.md
+DECISIONS.md
+.claude/
+diag/
+scripts/
+docs/16_User_Decisions_and_API_Notes_Reference.md
+docs/17_Claude_Kickoff_Prompt.md
