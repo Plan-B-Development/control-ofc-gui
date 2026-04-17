@@ -361,6 +361,15 @@ def build_stylesheet(t: ThemeTokens) -> str:
         font-size: {fs["section"]}pt;
     }}
 
+    .SectionTitle {{
+        font-size: {fs["section"]}pt;
+        font-weight: bold;
+    }}
+
+    .SmallLabel {{
+        font-size: {fs["small"]}pt;
+    }}
+
     .CardValue {{
         font-size: {fs["card_value"]}pt;
         font-weight: bold;

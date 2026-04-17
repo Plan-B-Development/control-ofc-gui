@@ -22,9 +22,12 @@ from PySide6.QtWidgets import (
 from control_ofc.api.models import FanReading, SensorReading
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
+from control_ofc.ui.qt_util import block_signals
 
 if TYPE_CHECKING:
+    from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.app_state import AppState
+    from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 # Sensor kind → group key + display label
 _SENSOR_KIND_GROUPS: dict[str, tuple[str, str]] = {
@@ -123,7 +126,9 @@ class SensorSeriesPanel(QFrame):
 
     # ── Colour sync ──────────────────────────────────────────────────
 
-    def set_chart(self, chart: object, settings_service: object = None) -> None:
+    def set_chart(
+        self, chart: TimelineChart, settings_service: AppSettingsService | None = None
+    ) -> None:
         """Set chart reference for colour sync."""
         self._chart = chart
         self._settings_service = settings_service
@@ -224,41 +229,38 @@ class SensorSeriesPanel(QFrame):
 
     def _rebuild_sensor_items(self, sensors: list[SensorReading]) -> None:
         """Full rebuild of sensor tree items (only when sensor list structure changes)."""
-        self._tree.blockSignals(True)
+        with block_signals(self._tree):
+            # Remove old sensor items
+            for item in self._sensor_items.values():
+                parent = item.parent()
+                if parent:
+                    parent.removeChild(item)
+            self._sensor_items.clear()
 
-        # Remove old sensor items
-        for item in self._sensor_items.values():
-            parent = item.parent()
-            if parent:
-                parent.removeChild(item)
-        self._sensor_items.clear()
+            # Add sensors to groups
+            for s in sensors:
+                group_key, group_label = _SENSOR_KIND_GROUPS.get(s.kind, ("other", "Other"))
+                group_item = self._ensure_group(group_key, group_label)
 
-        # Add sensors to groups
-        for s in sensors:
-            group_key, group_label = _SENSOR_KIND_GROUPS.get(s.kind, ("other", "Other"))
-            group_item = self._ensure_group(group_key, group_label)
+                series_key = f"sensor:{s.id}"
+                label = s.label or s.id
+                value = f"{s.value_c:.1f}\u00b0C"
 
-            series_key = f"sensor:{s.id}"
-            label = s.label or s.id
-            value = f"{s.value_c:.1f}\u00b0C"
+                item = QTreeWidgetItem(group_item)
+                item.setText(0, label)
+                item.setText(1, value)
+                item.setToolTip(0, f"ID: {s.id}")
+                item.setData(0, Qt.ItemDataRole.UserRole, series_key)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(
+                    0,
+                    Qt.CheckState.Checked
+                    if self._selection.is_visible(series_key)
+                    else Qt.CheckState.Unchecked,
+                )
 
-            item = QTreeWidgetItem(group_item)
-            item.setText(0, label)
-            item.setText(1, value)
-            item.setToolTip(0, f"ID: {s.id}")
-            item.setData(0, Qt.ItemDataRole.UserRole, series_key)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(
-                0,
-                Qt.CheckState.Checked
-                if self._selection.is_visible(series_key)
-                else Qt.CheckState.Unchecked,
-            )
-
-            self._set_color_swatch(item, series_key)
-            self._sensor_items[s.id] = item
-
-        self._tree.blockSignals(False)
+                self._set_color_swatch(item, series_key)
+                self._sensor_items[s.id] = item
         self._update_group_check_states()
         self._apply_search_filter()
 
@@ -292,46 +294,43 @@ class SensorSeriesPanel(QFrame):
 
     def _rebuild_fan_items(self, fans: list[FanReading]) -> None:
         """Full rebuild of fan tree items."""
-        self._tree.blockSignals(True)
+        with block_signals(self._tree):
+            # Remove old fan items
+            for item in self._fan_items.values():
+                parent = item.parent()
+                if parent:
+                    parent.removeChild(item)
+            self._fan_items.clear()
 
-        # Remove old fan items
-        for item in self._fan_items.values():
-            parent = item.parent()
-            if parent:
-                parent.removeChild(item)
-        self._fan_items.clear()
+            for f in fans:
+                if f.source == "amd_gpu":
+                    group_key = "fans_gpu"
+                elif "hwmon" in f.source:
+                    group_key = "fans_hwmon"
+                else:
+                    group_key = "fans_openfan"
+                group_label = _GROUP_LABELS[group_key]
+                group_item = self._ensure_group(group_key, group_label)
 
-        for f in fans:
-            if f.source == "amd_gpu":
-                group_key = "fans_gpu"
-            elif "hwmon" in f.source:
-                group_key = "fans_hwmon"
-            else:
-                group_key = "fans_openfan"
-            group_label = _GROUP_LABELS[group_key]
-            group_item = self._ensure_group(group_key, group_label)
+                series_key = f"fan:{f.id}:rpm"
+                display_name = self._state.fan_display_name(f.id) if self._state else f.id
+                rpm_text = f"{f.rpm} RPM" if f.rpm is not None else "\u2014"
 
-            series_key = f"fan:{f.id}:rpm"
-            display_name = self._state.fan_display_name(f.id) if self._state else f.id
-            rpm_text = f"{f.rpm} RPM" if f.rpm is not None else "\u2014"
+                item = QTreeWidgetItem(group_item)
+                item.setText(0, display_name)
+                item.setText(1, rpm_text)
+                item.setToolTip(0, f"ID: {f.id}")
+                item.setData(0, Qt.ItemDataRole.UserRole, series_key)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(
+                    0,
+                    Qt.CheckState.Checked
+                    if self._selection.is_visible(series_key)
+                    else Qt.CheckState.Unchecked,
+                )
 
-            item = QTreeWidgetItem(group_item)
-            item.setText(0, display_name)
-            item.setText(1, rpm_text)
-            item.setToolTip(0, f"ID: {f.id}")
-            item.setData(0, Qt.ItemDataRole.UserRole, series_key)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(
-                0,
-                Qt.CheckState.Checked
-                if self._selection.is_visible(series_key)
-                else Qt.CheckState.Unchecked,
-            )
-
-            self._set_color_swatch(item, series_key)
-            self._fan_items[f.id] = item
-
-        self._tree.blockSignals(False)
+                self._set_color_swatch(item, series_key)
+                self._fan_items[f.id] = item
         self._update_group_check_states()
         self._apply_search_filter()
 
@@ -425,20 +424,17 @@ class SensorSeriesPanel(QFrame):
         if self._updating:
             return
         self._updating = True
-        self._tree.blockSignals(True)
-
-        for item in list(self._sensor_items.values()) + list(self._fan_items.values()):
-            series_key = item.data(0, Qt.ItemDataRole.UserRole)
-            if series_key:
-                expected = (
-                    Qt.CheckState.Checked
-                    if self._selection.is_visible(series_key)
-                    else Qt.CheckState.Unchecked
-                )
-                if item.checkState(0) != expected:
-                    item.setCheckState(0, expected)
-
-        self._tree.blockSignals(False)
+        with block_signals(self._tree):
+            for item in list(self._sensor_items.values()) + list(self._fan_items.values()):
+                series_key = item.data(0, Qt.ItemDataRole.UserRole)
+                if series_key:
+                    expected = (
+                        Qt.CheckState.Checked
+                        if self._selection.is_visible(series_key)
+                        else Qt.CheckState.Unchecked
+                    )
+                    if item.checkState(0) != expected:
+                        item.setCheckState(0, expected)
         self._updating = False
 
     def _update_group_check_states(self) -> None:

@@ -7,8 +7,12 @@ import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Signal
+
+if TYPE_CHECKING:
+    from control_ofc.api.client import DaemonClient
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -57,7 +61,7 @@ class SettingsPage(QWidget):
         self,
         state: AppState | None = None,
         settings_service: AppSettingsService | None = None,
-        client: object | None = None,
+        client: DaemonClient | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)

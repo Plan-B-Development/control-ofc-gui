@@ -289,7 +289,8 @@ class ThemeEditorWidget(QWidget):
                 grid.addWidget(swatch, row_idx, 0)
 
                 hex_label = QLabel(value)
-                hex_label.setStyleSheet("font-family: monospace; font-size: 12px;")
+                hex_label.setProperty("class", "SmallLabel")
+                hex_label.setStyleSheet("font-family: monospace;")
                 hex_label.setMinimumWidth(70)
                 self._hex_labels[token_name] = hex_label
                 grid.addWidget(hex_label, row_idx, 1)

@@ -410,7 +410,7 @@ class IdentifyFanPage(QWizardPage):
 
         # Target info
         self._target_label = QLabel("")
-        self._target_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self._target_label.setProperty("class", "SectionTitle")
         layout.addWidget(self._target_label)
 
         self._source_label = QLabel("")

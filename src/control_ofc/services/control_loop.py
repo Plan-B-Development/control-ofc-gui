@@ -10,6 +10,7 @@ The GUI owns fan curve logic. Each cycle:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -90,10 +91,8 @@ class _WriteWorker(QObject):
         except DaemonError as e:
             log.warning("Write failed for %s: %s", target_id, e.message)
             self.write_completed.emit(target_id, False)
-        except Exception:
-            log.exception("Write worker unexpected error for %s", target_id)
-            import contextlib
-
+        except (ConnectionError, OSError) as e:
+            log.warning("Write worker connection error for %s: %s", target_id, e)
             with contextlib.suppress(Exception):
                 if self._client:
                     self._client.close()
@@ -102,8 +101,6 @@ class _WriteWorker(QObject):
 
     def shutdown(self) -> None:
         if self._client:
-            import contextlib
-
             with contextlib.suppress(Exception):
                 self._client.close()
             self._client = None
@@ -248,7 +245,10 @@ class ControlLoopService(QObject):
             self._write_worker.shutdown()
         if self._write_thread:
             self._write_thread.quit()
-            self._write_thread.wait(2000)
+            if not self._write_thread.wait(2000):
+                log.warning("Control loop write thread did not stop within 2s, terminating")
+                self._write_thread.terminate()
+                self._write_thread.wait(1000)
 
     def _on_sensors_updated(self, _sensors: list) -> None:
         """Evaluate immediately when fresh sensor data arrives (P1-G3)."""

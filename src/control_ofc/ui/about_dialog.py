@@ -41,7 +41,7 @@ class AboutDialog(QDialog):
 
         # Title
         title = QLabel(APP_NAME)
-        title.setStyleSheet("font-size: 22px; font-weight: bold;")
+        title.setProperty("class", "PageTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 

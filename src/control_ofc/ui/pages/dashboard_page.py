@@ -26,6 +26,7 @@ from control_ofc.api.models import (
     ConnectionState,
     DaemonStatus,
     FanReading,
+    Freshness,
     OperationMode,
     SensorReading,
 )
@@ -35,6 +36,7 @@ from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.microcopy import get as mc
+from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
 from control_ofc.ui.widgets.summary_card import SummaryCard
@@ -169,7 +171,7 @@ class DashboardPage(QWidget):
         sub_layout = QVBoxLayout(self._subsystem_frame)
 
         sub_title = QLabel("Subsystem Status")
-        sub_title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        sub_title.setProperty("class", "SectionTitle")
         sub_layout.addWidget(sub_title)
 
         self._sub_openfan_label = QLabel("OpenFan: unknown")
@@ -189,7 +191,7 @@ class DashboardPage(QWidget):
         next_layout = QVBoxLayout(next_frame)
 
         next_title = QLabel("What to do next")
-        next_title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        next_title.setProperty("class", "SectionTitle")
         next_layout.addWidget(next_title)
 
         next_msg = QLabel(
@@ -223,7 +225,7 @@ class DashboardPage(QWidget):
         title_row.addWidget(title)
 
         self._mode_badge = QLabel("")
-        self._mode_badge.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self._mode_badge.setProperty("class", "SectionTitle")
         title_row.addWidget(self._mode_badge)
         title_row.addStretch()
         content_layout.addLayout(title_row)
@@ -536,13 +538,24 @@ class DashboardPage(QWidget):
             if matches:
                 sensor = matches[0]
         if sensor:
-            card.set_value(f"{sensor.value_c:.1f}\u00b0C")
-            if crit and sensor.value_c > crit:
+            freshness = sensor.freshness
+            if freshness == Freshness.INVALID:
+                card.set_value(f"{sensor.value_c:.1f}\u00b0C \u26a0")
+                card.setToolTip(f"Stale reading ({sensor.age_ms / 1000:.0f}s old)")
                 card.set_status_class("CriticalChip")
-            elif warn and sensor.value_c > warn:
+            elif freshness == Freshness.STALE:
+                card.set_value(f"{sensor.value_c:.1f}\u00b0C \u23f1")
+                card.setToolTip(f"Aging reading ({sensor.age_ms / 1000:.1f}s old)")
                 card.set_status_class("WarningChip")
             else:
-                card.set_status_class("")
+                card.set_value(f"{sensor.value_c:.1f}\u00b0C")
+                card.setToolTip("")
+                if crit and sensor.value_c > crit:
+                    card.set_status_class("CriticalChip")
+                elif warn and sensor.value_c > warn:
+                    card.set_status_class("WarningChip")
+                else:
+                    card.set_status_class("")
         elif binding:
             card.set_value("\u2014")
             card.setToolTip("Bound sensor not available")
@@ -558,9 +571,8 @@ class DashboardPage(QWidget):
         # Sync combo selection to active profile
         idx = self._profile_combo.findText(name)
         if idx >= 0:
-            self._profile_combo.blockSignals(True)
-            self._profile_combo.setCurrentIndex(idx)
-            self._profile_combo.blockSignals(False)
+            with block_signals(self._profile_combo):
+                self._profile_combo.setCurrentIndex(idx)
 
     def _on_card_clicked(self, category: str) -> None:
         """Open the appropriate dialog for the clicked card."""
@@ -693,16 +705,15 @@ class DashboardPage(QWidget):
         """Fill the profile combo from ProfileService. Call after profiles are loaded."""
         if not self._profile_service:
             return
-        self._profile_combo.blockSignals(True)
-        self._profile_combo.clear()
-        for p in self._profile_service.profiles:
-            self._profile_combo.addItem(p.name)
-        # Select the active one
-        if self._profile_service.active_profile:
-            idx = self._profile_combo.findText(self._profile_service.active_profile.name)
-            if idx >= 0:
-                self._profile_combo.setCurrentIndex(idx)
-        self._profile_combo.blockSignals(False)
+        with block_signals(self._profile_combo):
+            self._profile_combo.clear()
+            for p in self._profile_service.profiles:
+                self._profile_combo.addItem(p.name)
+            # Select the active one
+            if self._profile_service.active_profile:
+                idx = self._profile_combo.findText(self._profile_service.active_profile.name)
+                if idx >= 0:
+                    self._profile_combo.setCurrentIndex(idx)
 
     def _show_content(self) -> None:
         if not self._has_data:
