@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5] — 2026-04-17
+
+### Changed
+- **Streamlined install messages.** `post_install` now includes daemon
+  enable command, sensor module loading hint, and demo mode reference.
+  Cross-references daemon package for users who installed the GUI first.
+
 ## [1.0.4] — 2026-04-16
 
 ### Fixed

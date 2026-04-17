@@ -1,7 +1,7 @@
 """Application-wide constants."""
 
 APP_NAME = "Control-OFC"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 ORG_NAME = "control-ofc"
 
 # Daemon IPC
