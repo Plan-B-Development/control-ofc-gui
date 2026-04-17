@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased]
+
+Code quality and robustness hardening from full audit pass.
+
+### Fixed
+- **Exception-unsafe `blockSignals` pairs.** 14 bare `blockSignals(True)`/
+  `blockSignals(False)` pairs across 6 widget files could leave signals
+  permanently blocked if an exception occurred between them. Replaced with
+  a `block_signals()` context manager (`ui/qt_util.py`) that guarantees
+  restore via `try/finally`.
+- **Overly broad exception catches.** `PollingService` and `ControlLoopService`
+  caught bare `Exception`, masking programming errors. Narrowed to specific
+  types (`DaemonError`, `ConnectionError`, `OSError`, `KeyError`, `ValueError`).
+- **QThread shutdown ignores timeout.** Both `PollingService` and
+  `ControlLoopService` called `thread.wait(2000)` without checking the return
+  value. Now logs a warning and terminates the thread if it does not stop
+  within 2 seconds.
+- **Profile activation shows empty error.** When `POST /profile/activate`
+  failed with a `DaemonError` whose `message` was empty, the error dialog
+  displayed "Activation failed: ". Now falls back to `'unknown error'`.
+- **Profile activation leaves combo in wrong state on error.** The profile
+  combo box snapped to the new selection before the API call succeeded. Now
+  reverts to the previous selection on both API and unexpected errors.
+- **Batch poll fallback test used bare `Exception`.** Updated to use
+  `DaemonError` to match the narrowed except clause.
+
+### Added
+- **Per-sensor freshness indicators on dashboard.** Sensor cards now show
+  `⏱` (stale, 2–10s) or `⚠` (invalid, >10s) suffixes with age tooltips,
+  matching the freshness model in `docs/04_Dashboard_Spec.md`.
+- **Theme CSS property classes.** Added `.SectionTitle` and `.SmallLabel`
+  classes to the theme stylesheet, replacing 5 hardcoded `font-size` inline
+  styles across `about_dialog`, `fan_wizard`, `dashboard_page`, and
+  `theme_editor`.
+
+### Changed
+- **Stronger type annotations.** Replaced `object` type hints with specific
+  types (`DaemonClient`, `AppSettingsService`, `ProfileService`,
+  `TimelineChart`) in `settings_page`, `diagnostics_page`, and
+  `sensor_series_panel` using `TYPE_CHECKING` imports.
+
 ## [1.0.5] — 2026-04-17
 
 ### Changed
