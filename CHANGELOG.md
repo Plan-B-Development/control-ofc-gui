@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.6] — 2026-04-17
 
 Code quality and robustness hardening from full audit pass.
 
@@ -2170,7 +2170,8 @@ All 9 oversight gaps from test-overview.md resolved:
 - Error types for daemon communication
 - `--demo` and `--socket` CLI arguments
 
-[Unreleased]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.3...v1.0.4
 [1.0.2]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.1...v1.0.2
