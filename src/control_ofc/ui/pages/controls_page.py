@@ -37,6 +37,7 @@ from control_ofc.services.profile_service import (
     LogicalControl,
     ProfileService,
 )
+from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 from control_ofc.ui.microcopy import get as mc
 from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.widgets.control_card import ControlCard
@@ -573,11 +574,19 @@ class ControlsPage(QWidget):
                     label = header.label or header.id
                     if not header.is_writable:
                         label = f"{label} (read-only)"
+                    tip_parts = [f"ID: {header.id}"]
+                    if header.chip_name:
+                        tip_parts.append(f"Chip: {header.chip_name}")
+                        g = lookup_chip_guidance(header.chip_name)
+                        if g:
+                            st = "mainline" if g.in_mainline else g.driver_package
+                            tip_parts.append(f"Driver: {g.driver_name} ({st})")
                     available.append(
                         {
                             "id": header.id,
                             "source": "hwmon",
                             "label": label,
+                            "tooltip": "\n".join(tip_parts),
                         }
                     )
 

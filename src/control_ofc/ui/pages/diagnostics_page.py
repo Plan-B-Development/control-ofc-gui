@@ -39,9 +39,11 @@ from control_ofc.api.models import (
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService, format_uptime
 from control_ofc.ui.hwmon_guidance import (
+    detect_module_conflicts,
     format_driver_status,
     lookup_chip_guidance,
     lookup_vendor_quirks,
+    verification_guidance,
 )
 from control_ofc.ui.theme import default_dark_theme
 
@@ -283,6 +285,12 @@ class DiagnosticsPage(QWidget):
         self._acpi_label.setWordWrap(True)
         self._acpi_label.setVisible(False)
         hw_layout.addWidget(self._acpi_label)
+
+        # Module conflicts
+        self._module_conflict_label = _transparent_label("", "Diagnostics_Label_moduleConflicts")
+        self._module_conflict_label.setWordWrap(True)
+        self._module_conflict_label.setVisible(False)
+        hw_layout.addWidget(self._module_conflict_label)
 
         # BIOS interference (revert counts)
         self._revert_label = _transparent_label("", "Diagnostics_Label_revertCounts")
@@ -746,15 +754,26 @@ class DiagnosticsPage(QWidget):
         # ACPI conflicts
         if diag.acpi_conflicts:
             lines = ["ACPI I/O port conflicts detected:"]
+            has_it87 = False
             for c in diag.acpi_conflicts:
                 lines.append(
                     f"  {c.io_range} claimed by '{c.claimed_by}' "
                     f"— conflicts with {c.conflicts_with_driver}"
                 )
-            lines.append(
-                "Tip: add 'acpi_enforce_resources=lax' to kernel parameters, "
-                "or disable ACPI hardware monitoring in BIOS."
-            )
+                if c.conflicts_with_driver == "it87":
+                    has_it87 = True
+            if has_it87:
+                lines.append(
+                    "Tip (ITE chips): prefer driver-local 'ignore_resource_conflict=1' "
+                    "(add 'options it87 ignore_resource_conflict=1' to "
+                    "/etc/modprobe.d/it87.conf) over the system-wide "
+                    "'acpi_enforce_resources=lax' kernel parameter."
+                )
+            else:
+                lines.append(
+                    "Tip: add 'acpi_enforce_resources=lax' to kernel parameters, "
+                    "or disable ACPI hardware monitoring in BIOS."
+                )
             self._acpi_label.setText("\n".join(lines))
             self._acpi_label.setProperty("class", "WarningChip")
             self._acpi_label.style().unpolish(self._acpi_label)
@@ -762,6 +781,21 @@ class DiagnosticsPage(QWidget):
             self._acpi_label.setVisible(True)
         else:
             self._acpi_label.setVisible(False)
+
+        # Module conflicts
+        loaded_names = [m.name for m in diag.kernel_modules if m.loaded]
+        mod_conflicts = detect_module_conflicts(loaded_names)
+        if mod_conflicts:
+            lines = ["Driver module conflicts detected:"]
+            for mc in mod_conflicts:
+                lines.append(f"  {mc.module_a} + {mc.module_b}: {mc.explanation}")
+            self._module_conflict_label.setText("\n".join(lines))
+            self._module_conflict_label.setProperty("class", "CriticalChip")
+            self._module_conflict_label.style().unpolish(self._module_conflict_label)
+            self._module_conflict_label.style().polish(self._module_conflict_label)
+            self._module_conflict_label.setVisible(True)
+        else:
+            self._module_conflict_label.setVisible(False)
 
         # BIOS interference (revert counts)
         reverts = hw.enable_revert_counts
@@ -925,6 +959,30 @@ class DiagnosticsPage(QWidget):
             lines.append(f"RPM: {init.rpm} → {final.rpm}")
         if init.pwm_enable is not None and final.pwm_enable is not None:
             lines.append(f"pwm_enable: {init.pwm_enable} → {final.pwm_enable}")
+
+        # Post-verification guidance based on result + board/chip context
+        board_vendor = ""
+        chip_name = ""
+        if self._state:
+            header = next(
+                (h for h in self._state.hwmon_headers if h.id == result.header_id),
+                None,
+            )
+            if header:
+                chip_name = header.chip_name
+            if self._diag.last_hw_diagnostics:
+                board_vendor = self._diag.last_hw_diagnostics.board.vendor
+
+        daemon_result = result.result
+        if daemon_result == "reverted":
+            daemon_result = "pwm_enable_reverted"
+        elif daemon_result == "clamped":
+            daemon_result = "pwm_value_clamped"
+
+        guidance = verification_guidance(daemon_result, board_vendor, chip_name)
+        if guidance:
+            lines.append("")
+            lines.append(f"Next step: {guidance}")
 
         self._verify_result_label.setText("\n".join(lines))
         self._verify_result_label.setProperty("class", css_class)

@@ -110,6 +110,8 @@ class MemberEditorDialog(QDialog):
                         item.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled
                     )
                     item.setToolTip(f"Already assigned to fan role: {role_name}")
+                elif out.get("tooltip"):
+                    item.setToolTip(out["tooltip"])
                 self._available_list.addItem(item)
 
         for m in current_members:
