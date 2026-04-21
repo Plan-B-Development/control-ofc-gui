@@ -18,6 +18,7 @@ from control_ofc.api.models import (
     HardwareDiagnosticsResult,
     HwmonHeader,
     HwmonSetPwmResult,
+    HwmonVerifyResult,
     LeaseReleasedResult,
     LeaseResult,
     LeaseState,
@@ -37,6 +38,7 @@ from control_ofc.api.models import (
     parse_hardware_diagnostics,
     parse_hwmon_headers,
     parse_hwmon_set_pwm,
+    parse_hwmon_verify_result,
     parse_lease_released,
     parse_lease_result,
     parse_lease_status,
@@ -215,6 +217,11 @@ class DaemonClient:
     def hardware_diagnostics(self) -> HardwareDiagnosticsResult:
         """GET /diagnostics/hardware — hardware readiness and driver diagnostics."""
         return parse_hardware_diagnostics(self._get("/diagnostics/hardware"))
+
+    def verify_hwmon_pwm(self, header_id: str, lease_id: str) -> HwmonVerifyResult:
+        """POST /hwmon/{header_id}/verify — test PWM write effectiveness (~3s)."""
+        data = self._post(f"/hwmon/{header_id}/verify", json={"lease_id": lease_id})
+        return parse_hwmon_verify_result(data)
 
     def active_profile(self) -> ActiveProfileInfo | None:
         """GET /profile/active — query the daemon's currently active profile."""

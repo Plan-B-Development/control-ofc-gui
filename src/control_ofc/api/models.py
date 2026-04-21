@@ -350,6 +350,7 @@ class HwmonDiagnostics:
     chips_detected: list[HwmonChipInfo] = field(default_factory=list)
     total_headers: int = 0
     writable_headers: int = 0
+    enable_revert_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -388,6 +389,32 @@ class AcpiConflictInfo:
 
 
 @dataclass
+class BoardInfo:
+    vendor: str = ""
+    name: str = ""
+    bios_version: str = ""
+
+
+@dataclass
+class HwmonVerifyState:
+    pwm_enable: int | None = None
+    pwm_raw: int | None = None
+    pwm_percent: int | None = None
+    rpm: int | None = None
+
+
+@dataclass
+class HwmonVerifyResult:
+    header_id: str = ""
+    result: str = ""
+    initial_state: HwmonVerifyState = field(default_factory=HwmonVerifyState)
+    final_state: HwmonVerifyState = field(default_factory=HwmonVerifyState)
+    test_pwm_percent: int = 0
+    wait_seconds: int = 0
+    details: str = ""
+
+
+@dataclass
 class HardwareDiagnosticsResult:
     api_version: int = 1
     hwmon: HwmonDiagnostics = field(default_factory=HwmonDiagnostics)
@@ -395,6 +422,7 @@ class HardwareDiagnosticsResult:
     thermal_safety: ThermalSafetyInfo = field(default_factory=ThermalSafetyInfo)
     kernel_modules: list[KernelModuleInfo] = field(default_factory=list)
     acpi_conflicts: list[AcpiConflictInfo] = field(default_factory=list)
+    board: BoardInfo = field(default_factory=BoardInfo)
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +606,7 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         ],
         total_headers=hwmon_raw.get("total_headers", 0),
         writable_headers=hwmon_raw.get("writable_headers", 0),
+        enable_revert_counts=hwmon_raw.get("enable_revert_counts", {}),
     )
 
     gpu_raw = data.get("gpu")
@@ -585,6 +614,9 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
 
     thermal_raw = data.get("thermal_safety", {})
     thermal = ThermalSafetyInfo(**_filter_fields(ThermalSafetyInfo, thermal_raw))
+
+    board_raw = data.get("board", {})
+    board = BoardInfo(**_filter_fields(BoardInfo, board_raw))
 
     return HardwareDiagnosticsResult(
         api_version=data.get("api_version", 1),
@@ -599,4 +631,22 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
             AcpiConflictInfo(**_filter_fields(AcpiConflictInfo, c))
             for c in data.get("acpi_conflicts", [])
         ],
+        board=board,
+    )
+
+
+def parse_hwmon_verify_result(data: dict) -> HwmonVerifyResult:
+    def _parse_state(raw: dict) -> HwmonVerifyState:
+        return HwmonVerifyState(**_filter_fields(HwmonVerifyState, raw))
+
+    initial_raw = data.get("initial_state", {})
+    final_raw = data.get("final_state", {})
+    return HwmonVerifyResult(
+        header_id=data.get("header_id", ""),
+        result=data.get("result", ""),
+        initial_state=_parse_state(initial_raw),
+        final_state=_parse_state(final_raw),
+        test_pwm_percent=data.get("test_pwm_percent", 0),
+        wait_seconds=data.get("wait_seconds", 0),
+        details=data.get("details", ""),
     )

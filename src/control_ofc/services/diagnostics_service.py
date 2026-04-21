@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from control_ofc.services.app_state import AppState
 
 if TYPE_CHECKING:
+    from control_ofc.api.models import HardwareDiagnosticsResult
     from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.profile_service import ProfileService
 
@@ -64,6 +65,7 @@ class DiagnosticsService:
         self._settings_service = settings_service
         self._profile_service = profile_service
         self._events: deque[DiagEvent] = deque(maxlen=MAX_EVENTS)
+        self.last_hw_diagnostics: HardwareDiagnosticsResult | None = None
 
     @property
     def events(self) -> list[DiagEvent]:
@@ -400,6 +402,23 @@ class DiagnosticsService:
                     "pmfw_supported": gpu.pmfw_supported,
                     "overdrive_enabled": gpu.overdrive_enabled,
                 }
+
+        # Hardware diagnostics (if previously fetched)
+        if self.last_hw_diagnostics:
+            hd = self.last_hw_diagnostics
+            bundle["hardware_diagnostics"] = {
+                "board": {
+                    "vendor": hd.board.vendor,
+                    "name": hd.board.name,
+                    "bios_version": hd.board.bios_version,
+                },
+                "hwmon": {
+                    "chips": [c.chip_name for c in hd.hwmon.chips_detected],
+                    "total_headers": hd.hwmon.total_headers,
+                    "writable_headers": hd.hwmon.writable_headers,
+                    "enable_revert_counts": hd.hwmon.enable_revert_counts,
+                },
+            }
 
         # System journal (daemon logs)
         journal_text = self.fetch_journal_entries()
