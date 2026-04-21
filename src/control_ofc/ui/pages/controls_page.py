@@ -570,11 +570,14 @@ class ControlsPage(QWidget):
                 )
             for header in self._state.hwmon_headers:
                 if not any(a["id"] == header.id for a in available):
+                    label = header.label or header.id
+                    if not header.is_writable:
+                        label = f"{label} (read-only)"
                     available.append(
                         {
                             "id": header.id,
                             "source": "hwmon",
-                            "label": header.label or header.id,
+                            "label": label,
                         }
                     )
 

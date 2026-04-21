@@ -27,6 +27,7 @@ curl -s --unix-socket $SOCK http://localhost/hwmon/headers | jq .
 curl -s --unix-socket $SOCK http://localhost/hwmon/lease/status | jq .
 curl -s --unix-socket $SOCK 'http://localhost/sensors/history?id=cpu_tctl&last=50' | jq .
 curl -s --unix-socket $SOCK http://localhost/profile/active | jq .
+curl -s --unix-socket $SOCK http://localhost/diagnostics/hardware | jq .
 
 # Write endpoints
 curl -s --unix-socket $SOCK -X POST http://localhost/fans/openfan/0/pwm \

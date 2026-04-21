@@ -1,6 +1,6 @@
 # 14 — Risks, Gaps, and Future Work
 
-**Last updated:** 2026-04-17 (V5 full audit hardening pass)
+**Last updated:** 2026-04-21 (v1.1.0 hardware readiness feature)
 
 ## Current Feature Status Matrix
 
@@ -81,6 +81,9 @@ A composable drop-in directory (`/etc/control-ofc/profiles.d/*.conf`) could repl
 | Socket permissions | chmod 0666 after bind | v0.4.2 (R38) |
 | GPU fan in /poll | Added to poll_handler | v0.4.3 (R39) |
 | GPU zero-RPM | Auto-disable in set_static_speed | v0.5.0 (R40) |
+| Hardware readiness diagnostics | New daemon endpoint + GUI display | GUI v1.1.0 / daemon v1.2.0 |
+| Chip-family guidance | Knowledge base with BIOS tips and driver info | GUI v1.1.0 |
+| Read-only hwmon labels | Controls page shows "(read-only)" for non-writable headers | GUI v1.1.0 |
 | FanController Arc refactor | Assessed: current design is correct, no refactor needed | R46 |
 | GPU PMFW write churn (gaming stutter) | 5% threshold + dual-writer conflict resolution + sysfs parse fix | v0.5.3 |
 | Daemon state persistence fails under systemd sandbox | StateDirectory + configurable state_dir + ReadWritePaths | v0.5.4 (R50) |

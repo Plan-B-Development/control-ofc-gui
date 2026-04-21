@@ -37,6 +37,7 @@ from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.microcopy import get as mc
 from control_ofc.ui.qt_util import block_signals
+from control_ofc.ui.widgets.error_banner import ErrorBanner
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
 from control_ofc.ui.widgets.summary_card import SummaryCard
@@ -230,6 +231,11 @@ class DashboardPage(QWidget):
         title_row.addStretch()
         content_layout.addLayout(title_row)
 
+        # Hwmon info banner — shown when hwmon is absent or all read-only
+        self._hwmon_banner = ErrorBanner()
+        self._hwmon_banner.setObjectName("Dashboard_Banner_hwmon")
+        content_layout.addWidget(self._hwmon_banner)
+
         # Row 1: Summary cards + profile quick switch
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(12)
@@ -395,6 +401,22 @@ class DashboardPage(QWidget):
         for lbl in (self._sub_openfan_label, self._sub_hwmon_label):
             lbl.style().unpolish(lbl)
             lbl.style().polish(lbl)
+
+        # Hwmon info banner on live page
+        if not hw.present:
+            self._hwmon_banner.show_info(
+                "No motherboard fan headers detected. "
+                "Check Diagnostics \u2192 Fans for driver and BIOS guidance.",
+                auto_dismiss_ms=0,
+            )
+        elif hw.present and not hw.write_support:
+            self._hwmon_banner.show_warning(
+                "Motherboard fan headers detected but all are read-only. "
+                "Check BIOS fan settings or driver status in Diagnostics \u2192 Fans.",
+                auto_dismiss_ms=0,
+            )
+        else:
+            self._hwmon_banner.hide_banner()
 
     def _on_status_updated(self, status: DaemonStatus) -> None:
         for sub in status.subsystems:

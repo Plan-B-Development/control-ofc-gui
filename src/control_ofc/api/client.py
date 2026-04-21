@@ -15,6 +15,7 @@ from control_ofc.api.models import (
     FanReading,
     GpuFanResetResult,
     GpuFanSetResult,
+    HardwareDiagnosticsResult,
     HwmonHeader,
     HwmonSetPwmResult,
     LeaseReleasedResult,
@@ -33,6 +34,7 @@ from control_ofc.api.models import (
     parse_fans,
     parse_gpu_fan_reset,
     parse_gpu_fan_set,
+    parse_hardware_diagnostics,
     parse_hwmon_headers,
     parse_hwmon_set_pwm,
     parse_lease_released,
@@ -209,6 +211,10 @@ class DaemonClient:
         return parse_profile_search_dirs(
             self._post("/config/profile-search-dirs", json={"add": add})
         )
+
+    def hardware_diagnostics(self) -> HardwareDiagnosticsResult:
+        """GET /diagnostics/hardware — hardware readiness and driver diagnostics."""
+        return parse_hardware_diagnostics(self._get("/diagnostics/hardware"))
 
     def active_profile(self) -> ActiveProfileInfo | None:
         """GET /profile/active — query the daemon's currently active profile."""
