@@ -43,6 +43,7 @@ class AppSettings:
     daemon_startup_delay_secs: int = 0  # Daemon startup delay (0-30s, daemon-side)
     hide_igpu_sensors: bool = True  # Auto-hide iGPU sensors when dGPU present
     hide_unused_fan_headers: bool = True  # Auto-hide fan headers with 0 RPM
+    show_hardware_guidance: bool = True  # Show hardware readiness guidance in diagnostics
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -73,6 +74,7 @@ class AppSettings:
             daemon_startup_delay_secs=data.get("daemon_startup_delay_secs", 0),
             hide_igpu_sensors=data.get("hide_igpu_sensors", True),
             hide_unused_fan_headers=data.get("hide_unused_fan_headers", True),
+            show_hardware_guidance=data.get("show_hardware_guidance", True),
         )
 
 

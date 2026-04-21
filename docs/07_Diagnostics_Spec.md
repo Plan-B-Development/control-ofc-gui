@@ -198,6 +198,57 @@ All labels inside Card frames use `background: transparent` inline style. This p
 ### No inline font-size overrides
 All font sizing is inherited from the global theme stylesheet via CSS classes. Changing the theme text size changes Diagnostics page text consistently.
 
+## Implementation: Hardware Readiness (v1.1.0)
+
+### Overview
+The Fans tab includes a "Hardware Readiness" card above the existing fan status
+table. It fetches data from `GET /diagnostics/hardware` (daemon v1.2.0+) and
+presents a unified view of hardware compatibility and driver status.
+
+### Card contents
+1. **Summary line** — total headers, writable count, warnings if all read-only
+   or no chips detected.
+2. **Chip table** (5 columns: Chip, Driver, Status, Mainline, Headers) — one
+   row per detected hwmon chip with driver load status from kernel modules.
+3. **Kernel modules table** (3 columns: Module, Loaded, Mainline) — all known
+   hwmon driver modules and their load state from `/proc/modules`.
+4. **ACPI conflicts** — shown only when the daemon detects ACPI OpRegion
+   claims overlapping known Super I/O I/O port ranges. Includes remediation
+   tip (kernel parameter or BIOS change).
+5. **Thermal safety** — current safety rule state, CPU sensor availability,
+   emergency/release thresholds.
+6. **GPU diagnostics** — shown only when an AMD dGPU is present. PCI BDF,
+   model, fan control method, overdrive status, ppfeaturemask value and bit 14
+   status, zero-RPM availability.
+7. **Chip guidance** — contextual BIOS tips, known issues, and driver
+   documentation links from the chip-family knowledge base
+   (`hwmon_guidance.py`). Shown per unique chip prefix.
+
+### Chip-family knowledge base
+`src/control_ofc/ui/hwmon_guidance.py` maps chip name prefixes to:
+- Driver name and whether it's in mainline kernel
+- Package name for out-of-tree drivers (e.g. `nct6687d-dkms-git (AUR)`)
+- Driver documentation URL
+- BIOS tips specific to manufacturer/chipset combinations
+- Known issues (ACPI conflicts, read-only headers, etc.)
+
+Supported chip families: Nuvoton NCT679x, NCT677x, NCT6683, NCT6687;
+ITE IT8688E, IT8689E, IT8696E, IT8686E, IT8625E, IT87xx (generic);
+Fintek F71882FG, F718xx; SMSC SCH5627, SCH5636.
+
+### Dashboard banner
+An `ErrorBanner` widget on the live dashboard content shows:
+- Info banner when hwmon is not detected (suggests checking Diagnostics → Fans)
+- Warning banner when hwmon is detected but all headers are read-only
+- Hidden when writable headers are available
+
+### Controls page read-only labels
+Non-writable hwmon headers show "(read-only)" suffix in the fan role member
+editor, matching the existing GPU read-only pattern.
+
+### Settings
+- `show_hardware_guidance: bool = True` — persisted in `app_settings.json`
+
 ## Nice-to-have later
 - background self-checks
 - one-click diagnostics redaction

@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.1.0] — 2026-04-21
+
+Hardware readiness and diagnostics feature release. Requires daemon v1.2.0.
+
+### Added
+- **Hardware Readiness section** in Diagnostics → Fans tab. Shows detected
+  hwmon chips, expected drivers, load status, ACPI I/O port conflicts, kernel
+  module state, GPU diagnostics (ppfeaturemask, overdrive, PMFW), and thermal
+  safety rule status. One-click "Refresh Hardware Diagnostics" fetches live
+  data from the new `GET /diagnostics/hardware` daemon endpoint.
+- **Chip-family knowledge base** (`hwmon_guidance.py`). Maps Super I/O chip
+  prefixes (Nuvoton NCT679x/NCT6687, ITE IT8688E/IT8689E/IT8696E, Fintek
+  F718xx, SMSC SCH56xx) to driver info, BIOS tips, known manufacturer quirks,
+  and external documentation links. Guidance is displayed contextually in the
+  Hardware Readiness card.
+- **Dashboard hwmon info banner.** Shows a contextual notification when no
+  motherboard fan headers are detected, or when all detected headers are
+  read-only, with a link to Diagnostics → Fans for guidance.
+- **Read-only hwmon header labels** in Controls page member editor. Non-writable
+  hwmon headers now show "(read-only)" suffix, matching the existing GPU
+  read-only pattern.
+- **`device_id` field** on `HwmonHeader` model — aligns with daemon's per-header
+  device identification.
+- **GPU capability fields** `pci_device_id`, `pci_revision`, `gpu_zero_rpm_available`
+  on `AmdGpuCapability` model — aligns with daemon v1.2.0 capabilities response.
+- **`show_hardware_guidance` setting** — allows users to toggle hardware guidance
+  display (default: enabled).
+- **48 new tests** covering chip guidance lookup, driver status formatting,
+  hardware diagnostics parsing, UI population, dashboard banner behavior,
+  and settings persistence.
+
+### Changed
+- Diagnostics → Fans tab now uses a scroll area with the Hardware Readiness
+  card above the existing fan status table.
+- DiagnosticsPage now accepts an optional `client` parameter for direct
+  daemon API calls (hardware diagnostics endpoint).
+
 ## [1.0.6] — 2026-04-17
 
 Code quality and robustness hardening from full audit pass.

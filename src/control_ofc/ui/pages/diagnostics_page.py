@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtGui import QColor
 
 if TYPE_CHECKING:
+    from control_ofc.api.client import DaemonClient
     from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.profile_service import ProfileService
 from PySide6.QtWidgets import (
@@ -26,9 +27,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.api.models import Capabilities, DaemonStatus, Freshness, LeaseState
+from control_ofc.api.models import (
+    Capabilities,
+    DaemonStatus,
+    Freshness,
+    HardwareDiagnosticsResult,
+    LeaseState,
+)
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService, format_uptime
+from control_ofc.ui.hwmon_guidance import format_driver_status, lookup_chip_guidance
 from control_ofc.ui.theme import default_dark_theme
 
 _TRANSPARENT = "background: transparent;"
@@ -55,10 +63,12 @@ class DiagnosticsPage(QWidget):
         diagnostics_service: DiagnosticsService | None = None,
         settings_service: AppSettingsService | None = None,
         profile_service: ProfileService | None = None,
+        client: DaemonClient | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._state = state
+        self._client = client
         self._diag = diagnostics_service or DiagnosticsService(
             state, settings_service=settings_service, profile_service=profile_service
         )
@@ -204,16 +214,98 @@ class DiagnosticsPage(QWidget):
         return container
 
     def _build_fans_tab(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
         container = QWidget()
         layout = QVBoxLayout(container)
+        layout.setSpacing(12)
+
+        # Hardware Readiness card
+        self._hw_ready_frame = QFrame()
+        self._hw_ready_frame.setProperty("class", "Card")
+        self._hw_ready_frame.setObjectName("Diagnostics_Frame_hwReadiness")
+        hw_layout = QVBoxLayout(self._hw_ready_frame)
+
+        hw_title = _transparent_label(
+            "Hardware Readiness", "Diagnostics_Label_hwReadyTitle", bold=True
+        )
+        hw_title.setProperty("class", "PageSubtitle")
+        hw_layout.addWidget(hw_title)
+
+        self._hw_ready_summary = _transparent_label(
+            "Fetching hardware diagnostics\u2026",
+            "Diagnostics_Label_hwReadySummary",
+        )
+        self._hw_ready_summary.setWordWrap(True)
+        hw_layout.addWidget(self._hw_ready_summary)
+
+        # Chip/driver table
+        self._chip_table = QTableWidget(0, 5)
+        self._chip_table.setObjectName("Diagnostics_Table_chips")
+        self._chip_table.setHorizontalHeaderLabels(
+            ["Chip", "Driver", "Status", "Mainline", "Headers"]
+        )
+        self._chip_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._chip_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._chip_table.setMaximumHeight(160)
+        hw_layout.addWidget(self._chip_table)
+
+        # Kernel modules table
+        self._modules_table = QTableWidget(0, 3)
+        self._modules_table.setObjectName("Diagnostics_Table_kernelModules")
+        self._modules_table.setHorizontalHeaderLabels(["Module", "Loaded", "Mainline"])
+        self._modules_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._modules_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._modules_table.setMaximumHeight(200)
+        hw_layout.addWidget(self._modules_table)
+
+        # ACPI conflicts
+        self._acpi_label = _transparent_label("", "Diagnostics_Label_acpiConflicts")
+        self._acpi_label.setWordWrap(True)
+        self._acpi_label.setVisible(False)
+        hw_layout.addWidget(self._acpi_label)
+
+        # Thermal safety
+        self._thermal_label = _transparent_label("", "Diagnostics_Label_thermalSafety")
+        self._thermal_label.setWordWrap(True)
+        self._thermal_label.setProperty("class", "CardMeta")
+        hw_layout.addWidget(self._thermal_label)
+
+        # GPU diagnostics
+        self._gpu_diag_label = _transparent_label("", "Diagnostics_Label_gpuDiag")
+        self._gpu_diag_label.setWordWrap(True)
+        self._gpu_diag_label.setVisible(False)
+        hw_layout.addWidget(self._gpu_diag_label)
+
+        # Guidance detail
+        self._guidance_label = _transparent_label("", "Diagnostics_Label_guidance")
+        self._guidance_label.setWordWrap(True)
+        self._guidance_label.setProperty("class", "CardMeta")
+        self._guidance_label.setVisible(False)
+        hw_layout.addWidget(self._guidance_label)
+
+        # Fetch button
+        fetch_btn = QPushButton("Refresh Hardware Diagnostics")
+        fetch_btn.setObjectName("Diagnostics_Btn_fetchHwDiag")
+        fetch_btn.clicked.connect(self._fetch_hardware_diagnostics)
+        hw_layout.addWidget(fetch_btn)
+
+        layout.addWidget(self._hw_ready_frame)
+
+        # Fan table (existing)
+        fan_label = _transparent_label("Fan Status", "Diagnostics_Label_fanTableTitle", bold=True)
+        fan_label.setProperty("class", "PageSubtitle")
+        layout.addWidget(fan_label)
 
         self._fan_table = QTableWidget(0, 5)
         self._fan_table.setObjectName("Diagnostics_Table_fans")
         self._fan_table.setHorizontalHeaderLabels(["ID", "Source", "RPM", "PWM (%)", "Freshness"])
         self._fan_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._fan_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        layout.addWidget(self._fan_table)
-        return container
+        layout.addWidget(self._fan_table, 1)
+
+        scroll.setWidget(container)
+        return scroll
 
     def _build_lease_tab(self) -> QWidget:
         scroll = QScrollArea()
@@ -501,6 +593,146 @@ class DiagnosticsPage(QWidget):
         ttl = f"{lease.ttl_seconds_remaining}s" if lease.ttl_seconds_remaining else "\u2014"
         self._lease_ttl_label.setText(f"TTL remaining: {ttl}")
         self._lease_required_label.setText(f"Required: {'Yes' if lease.lease_required else 'No'}")
+
+    # ─── Hardware diagnostics ──────────────────────────────────────────
+
+    def _fetch_hardware_diagnostics(self) -> None:
+        """Fetch hardware diagnostics from daemon and populate the UI."""
+        if not self._client:
+            self._hw_ready_summary.setText("Cannot fetch: no daemon connection")
+            return
+        try:
+            from control_ofc.api.errors import DaemonError, DaemonUnavailable
+
+            result = self._client.hardware_diagnostics()
+            self._populate_hw_diagnostics(result)
+            self._status_label.setText("Hardware diagnostics refreshed")
+        except DaemonUnavailable:
+            self._hw_ready_summary.setText("Daemon unavailable — cannot fetch diagnostics")
+        except DaemonError as e:
+            self._hw_ready_summary.setText(f"Diagnostics error: {e.message}")
+
+    def _populate_hw_diagnostics(self, diag: HardwareDiagnosticsResult) -> None:
+        """Populate hardware readiness UI from a diagnostics result."""
+        hw = diag.hwmon
+        summary_parts = []
+        summary_parts.append(
+            f"{hw.total_headers} PWM header(s) detected, {hw.writable_headers} writable"
+        )
+        if hw.total_headers > 0 and hw.writable_headers == 0:
+            summary_parts.append(
+                "All headers are read-only. Check BIOS fan settings or driver status."
+            )
+        if len(hw.chips_detected) == 0:
+            summary_parts.append(
+                "No hwmon chips detected. Motherboard fan control may require "
+                "a kernel driver — see the modules table below."
+            )
+        self._hw_ready_summary.setText("\n".join(summary_parts))
+
+        # Chip table
+        self._chip_table.setRowCount(len(hw.chips_detected))
+        for i, chip in enumerate(hw.chips_detected):
+            for col in range(5):
+                if self._chip_table.item(i, col) is None:
+                    self._chip_table.setItem(i, col, QTableWidgetItem())
+            self._chip_table.item(i, 0).setText(chip.chip_name)
+            self._chip_table.item(i, 1).setText(chip.expected_driver)
+
+            loaded_modules = {m.name for m in diag.kernel_modules if m.loaded}
+            driver_loaded = chip.expected_driver in loaded_modules
+            status_text = format_driver_status(chip.chip_name, driver_loaded)
+            self._chip_table.item(i, 2).setText(status_text)
+
+            mainline_text = "Yes" if chip.in_mainline_kernel else "No (out-of-tree)"
+            self._chip_table.item(i, 3).setText(mainline_text)
+            self._chip_table.item(i, 4).setText(str(chip.header_count))
+
+        # Kernel modules table
+        modules = diag.kernel_modules
+        self._modules_table.setRowCount(len(modules))
+        for i, mod in enumerate(modules):
+            for col in range(3):
+                if self._modules_table.item(i, col) is None:
+                    self._modules_table.setItem(i, col, QTableWidgetItem())
+            self._modules_table.item(i, 0).setText(mod.name)
+            self._modules_table.item(i, 1).setText("Loaded" if mod.loaded else "Not loaded")
+            self._modules_table.item(i, 2).setText("Yes" if mod.in_mainline else "No")
+
+        # ACPI conflicts
+        if diag.acpi_conflicts:
+            lines = ["ACPI I/O port conflicts detected:"]
+            for c in diag.acpi_conflicts:
+                lines.append(
+                    f"  {c.io_range} claimed by '{c.claimed_by}' "
+                    f"— conflicts with {c.conflicts_with_driver}"
+                )
+            lines.append(
+                "Tip: add 'acpi_enforce_resources=lax' to kernel parameters, "
+                "or disable ACPI hardware monitoring in BIOS."
+            )
+            self._acpi_label.setText("\n".join(lines))
+            self._acpi_label.setProperty("class", "WarningChip")
+            self._acpi_label.style().unpolish(self._acpi_label)
+            self._acpi_label.style().polish(self._acpi_label)
+            self._acpi_label.setVisible(True)
+        else:
+            self._acpi_label.setVisible(False)
+
+        # Thermal safety
+        ts = diag.thermal_safety
+        thermal_text = (
+            f"Thermal safety: {ts.state} | CPU sensor: "
+            f"{'found' if ts.cpu_sensor_found else 'NOT found'} | "
+            f"Emergency: {ts.emergency_threshold_c:.0f}\u00b0C | "
+            f"Release: {ts.release_threshold_c:.0f}\u00b0C"
+        )
+        self._thermal_label.setText(thermal_text)
+
+        # GPU diagnostics
+        if diag.gpu:
+            gpu = diag.gpu
+            lines = [f"GPU: {gpu.model_name or 'AMD D-GPU'} (PCI {gpu.pci_bdf})"]
+            lines.append(f"  Fan control: {gpu.fan_control_method}")
+            lines.append(f"  Overdrive: {'enabled' if gpu.overdrive_enabled else 'disabled'}")
+            if gpu.ppfeaturemask:
+                bit14 = "set" if gpu.ppfeaturemask_bit14_set else "NOT set"
+                lines.append(f"  ppfeaturemask: {gpu.ppfeaturemask} (bit 14: {bit14})")
+                if not gpu.ppfeaturemask_bit14_set:
+                    lines.append(
+                        "  Fan control requires bit 14 — add "
+                        "'amdgpu.ppfeaturemask=0xffffffff' to kernel parameters"
+                    )
+            lines.append(
+                f"  Zero-RPM: {'available' if gpu.zero_rpm_available else 'not available'}"
+            )
+            self._gpu_diag_label.setText("\n".join(lines))
+            self._gpu_diag_label.setVisible(True)
+        else:
+            self._gpu_diag_label.setVisible(False)
+
+        # Guidance from chip knowledge base
+        guidance_lines = []
+        seen_prefixes: set[str] = set()
+        for chip in hw.chips_detected:
+            g = lookup_chip_guidance(chip.chip_name)
+            if g and g.chip_prefix not in seen_prefixes:
+                seen_prefixes.add(g.chip_prefix)
+                if g.bios_tips:
+                    guidance_lines.append(f"{chip.chip_name} — BIOS tips:")
+                    for tip in g.bios_tips:
+                        guidance_lines.append(f"  \u2022 {tip}")
+                if g.known_issues:
+                    guidance_lines.append(f"{chip.chip_name} — Known issues:")
+                    for issue in g.known_issues:
+                        guidance_lines.append(f"  \u2022 {issue}")
+                if g.driver_url:
+                    guidance_lines.append(f"  Driver docs: {g.driver_url}")
+        if guidance_lines:
+            self._guidance_label.setText("\n".join(guidance_lines))
+            self._guidance_label.setVisible(True)
+        else:
+            self._guidance_label.setVisible(False)
 
     # ─── Actions ─────────────────────────────────────────────────────
 

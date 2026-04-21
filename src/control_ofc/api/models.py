@@ -66,6 +66,9 @@ class AmdGpuCapability:
     fan_write_supported: bool = False
     is_discrete: bool = False
     overdrive_enabled: bool = False
+    pci_device_id: int | None = None
+    pci_revision: int | None = None
+    gpu_zero_rpm_available: bool = False
 
 
 @dataclass
@@ -185,6 +188,7 @@ class HwmonHeader:
     id: str = ""
     label: str = ""
     chip_name: str = ""
+    device_id: str = ""
     pwm_index: int = 0
     supports_enable: bool = False
     rpm_available: bool = False
@@ -325,6 +329,72 @@ class SensorHistory:
 
     entity_id: str = ""
     points: list[HistoryPoint] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Hardware diagnostics
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HwmonChipInfo:
+    chip_name: str = ""
+    device_id: str = ""
+    expected_driver: str = ""
+    in_mainline_kernel: bool = False
+    header_count: int = 0
+
+
+@dataclass
+class HwmonDiagnostics:
+    chips_detected: list[HwmonChipInfo] = field(default_factory=list)
+    total_headers: int = 0
+    writable_headers: int = 0
+
+
+@dataclass
+class GpuDiagnosticsInfo:
+    pci_bdf: str = ""
+    pci_device_id: int = 0
+    pci_revision: int = 0
+    model_name: str | None = None
+    fan_control_method: str = "none"
+    overdrive_enabled: bool = False
+    ppfeaturemask: str | None = None
+    ppfeaturemask_bit14_set: bool = False
+    zero_rpm_available: bool = False
+
+
+@dataclass
+class ThermalSafetyInfo:
+    state: str = "normal"
+    cpu_sensor_found: bool = False
+    emergency_threshold_c: float = 105.0
+    release_threshold_c: float = 80.0
+
+
+@dataclass
+class KernelModuleInfo:
+    name: str = ""
+    loaded: bool = False
+    in_mainline: bool = False
+
+
+@dataclass
+class AcpiConflictInfo:
+    io_range: str = ""
+    claimed_by: str = ""
+    conflicts_with_driver: str = ""
+
+
+@dataclass
+class HardwareDiagnosticsResult:
+    api_version: int = 1
+    hwmon: HwmonDiagnostics = field(default_factory=HwmonDiagnostics)
+    gpu: GpuDiagnosticsInfo | None = None
+    thermal_safety: ThermalSafetyInfo = field(default_factory=ThermalSafetyInfo)
+    kernel_modules: list[KernelModuleInfo] = field(default_factory=list)
+    acpi_conflicts: list[AcpiConflictInfo] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -496,4 +566,37 @@ def parse_profile_search_dirs(data: dict) -> ProfileSearchDirsResult:
     return ProfileSearchDirsResult(
         updated=data.get("updated", False),
         search_dirs=data.get("search_dirs", []),
+    )
+
+
+def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
+    hwmon_raw = data.get("hwmon", {})
+    hwmon = HwmonDiagnostics(
+        chips_detected=[
+            HwmonChipInfo(**_filter_fields(HwmonChipInfo, c))
+            for c in hwmon_raw.get("chips_detected", [])
+        ],
+        total_headers=hwmon_raw.get("total_headers", 0),
+        writable_headers=hwmon_raw.get("writable_headers", 0),
+    )
+
+    gpu_raw = data.get("gpu")
+    gpu = GpuDiagnosticsInfo(**_filter_fields(GpuDiagnosticsInfo, gpu_raw)) if gpu_raw else None
+
+    thermal_raw = data.get("thermal_safety", {})
+    thermal = ThermalSafetyInfo(**_filter_fields(ThermalSafetyInfo, thermal_raw))
+
+    return HardwareDiagnosticsResult(
+        api_version=data.get("api_version", 1),
+        hwmon=hwmon,
+        gpu=gpu,
+        thermal_safety=thermal,
+        kernel_modules=[
+            KernelModuleInfo(**_filter_fields(KernelModuleInfo, m))
+            for m in data.get("kernel_modules", [])
+        ],
+        acpi_conflicts=[
+            AcpiConflictInfo(**_filter_fields(AcpiConflictInfo, c))
+            for c in data.get("acpi_conflicts", [])
+        ],
     )
