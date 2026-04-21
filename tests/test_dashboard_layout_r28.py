@@ -76,13 +76,14 @@ class TestFanTableColumns:
         headers = [table.horizontalHeaderItem(i).text() for i in range(4)]
         assert headers == ["Label", "Source", "RPM", "PWM%"]
 
-    def test_all_columns_stretch_evenly(self, qtbot, app_state):
-        """All 4 fan table columns use Stretch for even spacing (R55)."""
+    def test_columns_interactive_resizable(self, qtbot, app_state):
+        """All fan table columns use Interactive mode for user-resizable columns."""
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         header = page._fan_table.horizontalHeader()
         for col in range(4):
-            assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.Stretch
+            assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.Interactive
+        assert header.stretchLastSection() is True
 
     def test_minimum_section_size_set(self, qtbot, app_state):
         page = DashboardPage(state=app_state)

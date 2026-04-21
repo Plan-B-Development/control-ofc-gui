@@ -42,7 +42,8 @@ class WarningsDialog(QDialog):
             self._table = QTableWidget(len(warnings), 4)
             self._table.setObjectName("WarningsDialog_Table_warnings")
             self._table.setHorizontalHeaderLabels(["Time", "Level", "Source", "Message"])
-            self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+            self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+            self._table.horizontalHeader().setStretchLastSection(True)
             self._table.verticalHeader().setVisible(False)
             self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 

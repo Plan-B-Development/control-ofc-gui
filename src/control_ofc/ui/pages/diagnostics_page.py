@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
     from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.profile_service import ProfileService
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -216,17 +218,25 @@ class DiagnosticsPage(QWidget):
         self._sensor_table.setHorizontalHeaderLabels(
             ["Label", "Kind", "Value (\u00b0C)", "Age (ms)", "Freshness"]
         )
-        self._sensor_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._sensor_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive
+        )
+        self._sensor_table.horizontalHeader().setStretchLastSection(True)
         self._sensor_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self._sensor_table)
         return container
 
     def _build_fans_tab(self) -> QWidget:
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setObjectName("Diagnostics_Splitter_fans")
+        splitter.setChildrenCollapsible(False)
+
+        # ─── Top pane: Hardware Readiness (scrollable) ────────────────
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setSpacing(12)
+        hw_container = QWidget()
+        hw_container_layout = QVBoxLayout(hw_container)
+        hw_container_layout.setSpacing(12)
 
         # Hardware Readiness card
         self._hw_ready_frame = QFrame()
@@ -266,18 +276,46 @@ class DiagnosticsPage(QWidget):
         self._chip_table.setHorizontalHeaderLabels(
             ["Chip", "Driver", "Status", "Mainline", "Headers"]
         )
-        self._chip_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._chip_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._chip_table.horizontalHeader().setStretchLastSection(True)
         self._chip_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._chip_table.setMaximumHeight(160)
+
+        _chip_header_tooltips = [
+            "Super I/O or sensor chip model detected by the daemon",
+            "Linux kernel driver expected for this chip",
+            "Whether the driver is loaded and where it comes from",
+            "Whether the driver is included in the mainline Linux kernel",
+            "Number of PWM fan headers exposed by this chip",
+        ]
+        for col, tip in enumerate(_chip_header_tooltips):
+            item = self._chip_table.horizontalHeaderItem(col)
+            if item:
+                item.setToolTip(tip)
+
         hw_layout.addWidget(self._chip_table)
 
         # Kernel modules table
         self._modules_table = QTableWidget(0, 3)
         self._modules_table.setObjectName("Diagnostics_Table_kernelModules")
         self._modules_table.setHorizontalHeaderLabels(["Module", "Loaded", "Mainline"])
-        self._modules_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._modules_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive
+        )
+        self._modules_table.horizontalHeader().setStretchLastSection(True)
         self._modules_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._modules_table.setMaximumHeight(200)
+
+        _mod_header_tooltips = [
+            "Kernel module name (e.g. nct6775, it87)",
+            "Whether the module is currently loaded in the running kernel",
+            "Whether the module ships with the mainline Linux kernel",
+        ]
+        for col, tip in enumerate(_mod_header_tooltips):
+            item = self._modules_table.horizontalHeaderItem(col)
+            if item:
+                item.setToolTip(tip)
+
         hw_layout.addWidget(self._modules_table)
 
         # ACPI conflicts
@@ -310,12 +348,23 @@ class DiagnosticsPage(QWidget):
         self._gpu_diag_label.setVisible(False)
         hw_layout.addWidget(self._gpu_diag_label)
 
-        # Guidance detail
+        # Guidance detail (rich text with clickable driver doc links)
         self._guidance_label = _transparent_label("", "Diagnostics_Label_guidance")
         self._guidance_label.setWordWrap(True)
+        self._guidance_label.setTextFormat(Qt.TextFormat.RichText)
+        self._guidance_label.setOpenExternalLinks(True)
         self._guidance_label.setProperty("class", "CardMeta")
         self._guidance_label.setVisible(False)
         hw_layout.addWidget(self._guidance_label)
+
+        # Documentation reference link
+        self._docs_link_label = _transparent_label("", "Diagnostics_Label_docsLink")
+        self._docs_link_label.setWordWrap(True)
+        self._docs_link_label.setTextFormat(Qt.TextFormat.RichText)
+        self._docs_link_label.setOpenExternalLinks(True)
+        self._docs_link_label.setProperty("class", "CardMeta")
+        self._docs_link_label.setVisible(False)
+        hw_layout.addWidget(self._docs_link_label)
 
         # PWM verify section
         verify_row = QHBoxLayout()
@@ -345,22 +394,46 @@ class DiagnosticsPage(QWidget):
         fetch_btn.clicked.connect(self._fetch_hardware_diagnostics)
         hw_layout.addWidget(fetch_btn)
 
-        layout.addWidget(self._hw_ready_frame)
+        hw_container_layout.addWidget(self._hw_ready_frame)
+        scroll.setWidget(hw_container)
+        splitter.addWidget(scroll)
 
-        # Fan table (existing)
+        # ─── Bottom pane: Fan Status table ────────────────────────────
+        fan_pane = QWidget()
+        fan_pane_layout = QVBoxLayout(fan_pane)
+        fan_pane_layout.setContentsMargins(0, 4, 0, 0)
+
         fan_label = _transparent_label("Fan Status", "Diagnostics_Label_fanTableTitle", bold=True)
         fan_label.setProperty("class", "PageSubtitle")
-        layout.addWidget(fan_label)
+        fan_pane_layout.addWidget(fan_label)
 
         self._fan_table = QTableWidget(0, 5)
         self._fan_table.setObjectName("Diagnostics_Table_fans")
         self._fan_table.setHorizontalHeaderLabels(["ID", "Source", "RPM", "PWM (%)", "Freshness"])
-        self._fan_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._fan_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._fan_table.horizontalHeader().setStretchLastSection(True)
         self._fan_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        layout.addWidget(self._fan_table, 1)
 
-        scroll.setWidget(container)
-        return scroll
+        _fan_header_tooltips = [
+            "Fan identifier — display name or hardware ID",
+            "Hardware backend: openfan, hwmon, amd_gpu, or hwmon (PWM-only)",
+            "Hardware-measured fan speed in RPM.\n'—' means no tachometer or fan stopped.",
+            "Last PWM duty cycle commanded by the daemon (0-100%).\n'—' means no command sent yet.",
+            "Data freshness: ok (<2 s), stale (2-5 s), invalid (>5 s or never updated)",
+        ]
+        for col, tip in enumerate(_fan_header_tooltips):
+            item = self._fan_table.horizontalHeaderItem(col)
+            if item:
+                item.setToolTip(tip)
+
+        fan_pane_layout.addWidget(self._fan_table, 1)
+
+        splitter.addWidget(fan_pane)
+
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 1)
+
+        return splitter
 
     def _build_lease_tab(self) -> QWidget:
         scroll = QScrollArea()
@@ -626,6 +699,10 @@ class DiagnosticsPage(QWidget):
                 freshness_item.setForeground(QColor(_THEME.status_crit))
             else:
                 freshness_item.setForeground(QColor(_THEME.text_primary))
+
+            tooltip = self._fan_row_tooltip(f)
+            for col in range(5):
+                self._fan_table.item(row, col).setToolTip(tooltip)
             row += 1
 
         for h in pwm_only:
@@ -638,7 +715,49 @@ class DiagnosticsPage(QWidget):
             self._fan_table.item(row, 2).setText("\u2014")
             self._fan_table.item(row, 3).setText("\u2014")
             self._fan_table.item(row, 4).setText("N/A")
+
+            pwm_tip = f"ID: {h.id}\nSource: hwmon (PWM output only — no RPM tachometer)"
+            if h.label:
+                pwm_tip += f"\nLabel: {h.label}"
+            if h.chip_name:
+                pwm_tip += f"\nChip: {h.chip_name}"
+            if not h.is_writable:
+                pwm_tip += "\nStatus: read-only"
+            for col in range(5):
+                self._fan_table.item(row, col).setToolTip(pwm_tip)
             row += 1
+
+    def _fan_row_tooltip(self, fan) -> str:
+        """Build a tooltip for a fan row with chip/driver context."""
+        parts = [f"ID: {fan.id}", f"Source: {fan.source}"]
+        if fan.age_ms is not None:
+            parts.append(f"Data age: {fan.age_ms} ms")
+        if self._state:
+            if fan.source == "hwmon":
+                header = next((h for h in self._state.hwmon_headers if h.id == fan.id), None)
+                if header:
+                    if header.chip_name:
+                        parts.append(f"Chip: {header.chip_name}")
+                    g = lookup_chip_guidance(header.chip_name) if header.chip_name else None
+                    if g:
+                        status = "mainline" if g.in_mainline else g.driver_package
+                        parts.append(f"Driver: {g.driver_name} ({status})")
+                    mode = {0: "DC", 1: "PWM"}.get(
+                        header.pwm_mode if header.pwm_mode is not None else -1
+                    )
+                    if mode:
+                        parts.append(f"Control mode: {mode}")
+                    if not header.is_writable:
+                        parts.append("Status: read-only")
+            elif fan.source == "amd_gpu":
+                caps = self._state.capabilities
+                if caps and caps.amd_gpu.present:
+                    gpu = caps.amd_gpu
+                    parts.append(f"GPU: {gpu.display_label}")
+                    parts.append(f"Fan control: {gpu.fan_control_method}")
+                    if gpu.pci_id:
+                        parts.append(f"PCI: {gpu.pci_id}")
+        return "\n".join(parts)
 
     def _on_lease(self, lease: LeaseState) -> None:
         held_text = "Held" if lease.held else "Not held"
@@ -846,28 +965,41 @@ class DiagnosticsPage(QWidget):
         else:
             self._gpu_diag_label.setVisible(False)
 
-        # Guidance from chip knowledge base
-        guidance_lines = []
+        # Guidance from chip knowledge base (HTML with clickable links)
+        guidance_parts: list[str] = []
         seen_prefixes: set[str] = set()
         for chip in hw.chips_detected:
             g = lookup_chip_guidance(chip.chip_name)
             if g and g.chip_prefix not in seen_prefixes:
                 seen_prefixes.add(g.chip_prefix)
                 if g.bios_tips:
-                    guidance_lines.append(f"{chip.chip_name} — BIOS tips:")
+                    guidance_parts.append(f"<b>{chip.chip_name} — BIOS tips:</b>")
                     for tip in g.bios_tips:
-                        guidance_lines.append(f"  \u2022 {tip}")
+                        guidance_parts.append(f"&nbsp;&nbsp;\u2022 {tip}")
                 if g.known_issues:
-                    guidance_lines.append(f"{chip.chip_name} — Known issues:")
+                    guidance_parts.append(f"<b>{chip.chip_name} — Known issues:</b>")
                     for issue in g.known_issues:
-                        guidance_lines.append(f"  \u2022 {issue}")
+                        guidance_parts.append(f"&nbsp;&nbsp;\u2022 {issue}")
                 if g.driver_url:
-                    guidance_lines.append(f"  Driver docs: {g.driver_url}")
-        if guidance_lines:
-            self._guidance_label.setText("\n".join(guidance_lines))
+                    guidance_parts.append(
+                        f'&nbsp;&nbsp;Driver docs: <a href="{g.driver_url}">{g.driver_url}</a>'
+                    )
+        if guidance_parts:
+            self._guidance_label.setText("<br>".join(guidance_parts))
             self._guidance_label.setVisible(True)
         else:
             self._guidance_label.setVisible(False)
+
+        # Show docs link when any hardware chips were detected
+        if hw.chips_detected:
+            self._docs_link_label.setText(
+                "For detailed hardware compatibility information, see the "
+                '<a href="https://github.com/control-ofc/control-ofc-gui/blob/main/'
+                'docs/19_Hardware_Compatibility.md">Hardware Compatibility Guide</a>.'
+            )
+            self._docs_link_label.setVisible(True)
+        else:
+            self._docs_link_label.setVisible(False)
 
         # Populate verify header combo
         self._verify_combo.clear()

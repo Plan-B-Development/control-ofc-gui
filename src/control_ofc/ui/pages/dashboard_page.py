@@ -296,9 +296,8 @@ class DashboardPage(QWidget):
 
         header = self._fan_table.horizontalHeader()
         header.setMinimumSectionSize(50)
-        header.setStretchLastSection(False)
-        for col in range(4):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(True)
         self._v_splitter.addWidget(self._fan_table)
 
         self._v_splitter.setStretchFactor(0, 3)
