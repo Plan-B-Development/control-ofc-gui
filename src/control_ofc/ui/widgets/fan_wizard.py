@@ -373,7 +373,8 @@ class DiscoveryPage(QWizardPage):
         self._table.setObjectName("Wizard_Table_targets")
         from PySide6.QtWidgets import QHeaderView
 
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._table.horizontalHeader().setStretchLastSection(True)
 
         for i, t in enumerate(targets):
             cb = QCheckBox()
@@ -670,7 +671,8 @@ class ReviewPage(QWizardPage):
         self._table.setObjectName("Wizard_Table_review")
         from PySide6.QtWidgets import QHeaderView
 
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self._table, 1)
 
     def initializePage(self) -> None:
