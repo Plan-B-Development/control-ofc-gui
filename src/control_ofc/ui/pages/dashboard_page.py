@@ -599,9 +599,16 @@ class DashboardPage(QWidget):
                     card.set_status_class("WarningChip")
                 else:
                     card.set_status_class("")
+            # Session min/max from GUI-side tracker
+            stats = self._state.session_stats.get(sensor.id) if self._state else None
+            card.set_range(
+                stats.min_c if stats else None,
+                stats.max_c if stats else None,
+            )
         elif binding:
             card.set_value("\u2014")
             card.setToolTip("Bound sensor not available")
+            card.set_range(None, None)
 
     def _on_warnings_changed(self, count: int) -> None:
         self._warnings_card.set_value(str(count))

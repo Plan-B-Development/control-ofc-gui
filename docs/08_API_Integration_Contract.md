@@ -81,6 +81,8 @@ Expected fields:
 - value_c
 - source
 - age_ms
+- chip_name (optional) — hwmon driver name from sysfs (e.g. `k10temp`, `nct6798`, `it8689`). Used for sensor classification and tooltip enrichment. Absent for non-hwmon sources.
+- temp_type (optional, integer) — thermistor type code from `tempN_type` sysfs. Values: 3 = diode, 4 = thermistor, 5 = AMD TSI, 6 = Intel PECI. Absent when the driver does not expose type information.
 
 ### GET /fans
 Use as the primary current fan state source.

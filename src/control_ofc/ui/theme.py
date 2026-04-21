@@ -375,6 +375,11 @@ def build_stylesheet(t: ThemeTokens) -> str:
         font-weight: bold;
     }}
 
+    .CardRange {{
+        color: {t.text_secondary};
+        font-size: {fs["small"]}pt;
+    }}
+
     .CardMeta {{
         color: {t.text_secondary};
         font-size: {fs["small"]}pt;

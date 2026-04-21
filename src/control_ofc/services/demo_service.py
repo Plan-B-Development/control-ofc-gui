@@ -44,17 +44,48 @@ _DEMO_FANS: list[dict] = [
 ]
 
 _DEMO_SENSORS: list[dict] = [
-    {"id": "hwmon:k10temp:Tctl", "kind": "CpuTemp", "label": "CPU Tctl", "source": "hwmon"},
-    {"id": "hwmon:k10temp:Tccd1", "kind": "CpuTemp", "label": "CPU CCD1", "source": "hwmon"},
-    {"id": "hwmon:amdgpu:edge", "kind": "GpuTemp", "label": "GPU Edge", "source": "hwmon"},
     {
-        "id": "hwmon:amdgpu:junction",
-        "kind": "GpuTemp",
-        "label": "GPU Junction",
+        "id": "hwmon:k10temp:0000:00:18.3:Tctl",
+        "kind": "CpuTemp",
+        "label": "Tctl",
         "source": "hwmon",
+        "chip_name": "k10temp",
     },
-    {"id": "hwmon:it8696:temp1", "kind": "MbTemp", "label": "Motherboard", "source": "hwmon"},
-    {"id": "hwmon:nvme0:Composite", "kind": "DiskTemp", "label": "NVMe SSD", "source": "hwmon"},
+    {
+        "id": "hwmon:k10temp:0000:00:18.3:Tccd1",
+        "kind": "CpuTemp",
+        "label": "Tccd1",
+        "source": "hwmon",
+        "chip_name": "k10temp",
+    },
+    {
+        "id": "hwmon:amdgpu:0000:2d:00.0:edge",
+        "kind": "GpuTemp",
+        "label": "edge",
+        "source": "amd_gpu",
+        "chip_name": "amdgpu",
+    },
+    {
+        "id": "hwmon:amdgpu:0000:2d:00.0:junction",
+        "kind": "GpuTemp",
+        "label": "junction",
+        "source": "amd_gpu",
+        "chip_name": "amdgpu",
+    },
+    {
+        "id": "hwmon:it8696:it87.2624:temp1",
+        "kind": "MbTemp",
+        "label": "temp1",
+        "source": "hwmon",
+        "chip_name": "it8696",
+    },
+    {
+        "id": "hwmon:nvme:0000:01:00.0:Composite",
+        "kind": "DiskTemp",
+        "label": "Composite",
+        "source": "hwmon",
+        "chip_name": "nvme",
+    },
 ]
 
 _DEMO_HWMON_HEADERS: list[dict] = [
@@ -180,6 +211,7 @@ class DemoService:
                     value_c=val,
                     source=s["source"],
                     age_ms=random.randint(100, 800),
+                    chip_name=s.get("chip_name", ""),
                 )
             )
         return readings

@@ -23,6 +23,7 @@ from control_ofc.api.models import FanReading, SensorReading
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.qt_util import block_signals
+from control_ofc.ui.sensor_knowledge import classify_sensor, format_sensor_tooltip
 
 if TYPE_CHECKING:
     from control_ofc.services.app_settings_service import AppSettingsService
@@ -249,7 +250,7 @@ class SensorSeriesPanel(QFrame):
                 item = QTreeWidgetItem(group_item)
                 item.setText(0, label)
                 item.setText(1, value)
-                item.setToolTip(0, f"ID: {s.id}")
+                item.setToolTip(0, self._build_sensor_tooltip(s))
                 item.setData(0, Qt.ItemDataRole.UserRole, series_key)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(
@@ -272,6 +273,7 @@ class SensorSeriesPanel(QFrame):
                 value = f"{s.value_c:.1f}\u00b0C"
                 if item.text(1) != value:
                     item.setText(1, value)
+                item.setToolTip(0, self._build_sensor_tooltip(s))
 
     def _update_group_summaries(self, sensors: list[SensorReading]) -> None:
         """Update group header text with count and max value."""
@@ -289,6 +291,30 @@ class SensorSeriesPanel(QFrame):
                 label = _GROUP_LABELS.get(group_key, group_key)
                 group_item.setText(0, f"{label} ({count})")
                 group_item.setText(1, f"max {max_val:.1f}\u00b0C")
+
+    def _build_sensor_tooltip(self, s: SensorReading) -> str:
+        """Build a rich tooltip using the sensor knowledge base."""
+        session_min = None
+        session_max = None
+        if self._state and hasattr(self._state, "session_stats"):
+            stats = self._state.session_stats.get(s.id)
+            if stats:
+                session_min = stats.min_c
+                session_max = stats.max_c
+
+        classification = classify_sensor(
+            chip_name=s.chip_name,
+            label=s.label,
+            temp_type=s.temp_type,
+        )
+        return format_sensor_tooltip(
+            classification,
+            sensor_id=s.id,
+            chip_name=s.chip_name,
+            session_min=session_min,
+            session_max=session_max,
+            rate_c_per_s=s.rate_c_per_s,
+        )
 
     # ── Fan rebuild/update ───────────────────────────────────────────
 

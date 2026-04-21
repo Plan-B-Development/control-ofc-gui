@@ -1,4 +1,4 @@
-"""Summary card widget — a compact card showing a label and value."""
+"""Summary card widget — a compact card showing a label, value, and optional min/max range."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout
 
 
 class SummaryCard(QFrame):
-    """A small card displaying a title and prominent value, used in dashboard row 1.
+    """A small card displaying a title, prominent value, and optional session
+    min/max range.  Used in dashboard row 1.
 
     When ``category`` is set, the card is clickable and emits ``clicked(category)``.
     Height is driven by font metrics (Maximum vertical policy) so the card
@@ -16,7 +17,7 @@ class SummaryCard(QFrame):
 
     clicked = Signal(str)  # emits the card's category string
 
-    def __init__(self, title: str, value: str = "\u2014", category: str = "", parent=None) -> None:
+    def __init__(self, title: str, value: str = "—", category: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setProperty("class", "Card")
         self.setMinimumWidth(140)
@@ -43,11 +44,30 @@ class SummaryCard(QFrame):
         self._value_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self._value_label)
 
+        self._range_label = QLabel("")
+        self._range_label.setProperty("class", "CardRange")
+        self._range_label.setStyleSheet("background: transparent; opacity: 0.7;")
+        self._range_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._range_label.setHidden(True)
+        layout.addWidget(self._range_label)
+
     def set_title(self, title: str) -> None:
         self._title_label.setText(title)
 
     def set_value(self, value: str) -> None:
         self._value_label.setText(value)
+
+    def set_range(self, min_c: float | None, max_c: float | None) -> None:
+        """Show session min/max below the value.  Pass None to hide."""
+        if min_c is not None and max_c is not None:
+            text = f"↓ {min_c:.1f}°  ↑ {max_c:.1f}°"
+            if self._range_label.text() != text:
+                self._range_label.setText(text)
+            if self._range_label.isHidden():
+                self._range_label.setHidden(False)
+        elif not self._range_label.isHidden():
+            self._range_label.setHidden(True)
+            self._range_label.setText("")
 
     def set_status_class(self, css_class: str) -> None:
         """Set a semantic class like WarningChip, CriticalChip, SuccessChip."""
