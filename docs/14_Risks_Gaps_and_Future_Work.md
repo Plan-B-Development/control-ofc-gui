@@ -71,6 +71,35 @@ When the daemon is not running, the GUI cannot use the API to update profile sea
 
 A composable drop-in directory (`/etc/control-ofc/profiles.d/*.conf`) could replace the single `search_dirs` array for more flexible multi-user config. The current API-based approach (DEC-087) is sufficient for V1.
 
+### 10. Full Vendor Hardware Setup Wizard (deferred — DEC-092)
+
+A dedicated wizard page that walks first-time users through the complete hardware setup workflow:
+
+**Proposed workflow:**
+1. **Board detection** — auto-read DMI vendor/model, display detected SIO chips and loaded modules
+2. **Driver assessment** — compare detected chips against the knowledge base, flag missing or wrong drivers, recommend specific AUR packages (e.g. `it87-dkms-git` for Gigabyte, `nct6687d-dkms-git` for MSI)
+3. **DKMS prerequisite check** — verify `dkms` is installed and kernel headers match the running kernel (common pitfall on Arch/CachyOS with multiple kernel flavours)
+4. **Module conflict resolution** — detect and offer to blacklist conflicting drivers (e.g. in-kernel nct6683 vs out-of-tree nct6687d)
+5. **BIOS configuration guidance** — vendor-specific step-by-step BIOS instructions with screenshots or descriptions (Gigabyte SmartFan 5/6 → "Full Speed", MSI → disable "Smart Fan Mode", etc.)
+6. **Per-header verification** — walk through each writable header: write a test PWM, confirm RPM response, classify as effective/read-only/BIOS-overridden
+7. **Summary report** — show what works, what doesn't, recommended next steps, and offer to export as a support bundle
+
+**Why deferred:**
+- The existing Diagnostics → Fans → Hardware Readiness card already covers steps 1-6 in a single scrollable view with auto-populated guidance
+- Most users only need this once during initial setup
+- The knowledge base (17 chip entries, 12 vendor quirks) provides the same information inline
+- A wizard adds a new page, new service, and significant test surface for a one-time workflow
+
+**When to build:**
+- If user feedback shows the diagnostics page is insufficient for first-time setup
+- If we add automated driver installation (e.g. `yay -S` integration), a wizard becomes the natural home
+- If we support more vendors/platforms where the setup matrix grows beyond what inline guidance can cover
+
+**Dependencies:**
+- Would require a `HardwareWizardService` managing a state machine across the detection → install → configure → verify steps
+- DKMS/package manager integration would need careful security review (polkit, sandboxing)
+- BIOS guidance with images would need an asset pipeline and per-board screenshot library
+
 ## Resolved Gaps (previously listed as future work)
 
 | Gap | Resolution | Version |
@@ -83,6 +112,7 @@ A composable drop-in directory (`/etc/control-ofc/profiles.d/*.conf`) could repl
 | GPU zero-RPM | Auto-disable in set_static_speed | v0.5.0 (R40) |
 | Hardware readiness diagnostics | New daemon endpoint + GUI display | GUI v1.1.0 / daemon v1.2.0 |
 | Chip-family guidance | Knowledge base with BIOS tips and driver info | GUI v1.1.0 |
+| Vendor knowledge base gaps (ASRock, ASUS WMI, MSI X870, NCT6686D) | Expanded to 17 chip + 12 vendor quirk entries, module conflict detection, post-verify guidance (DEC-092) | GUI v1.3.0 |
 | Read-only hwmon labels | Controls page shows "(read-only)" for non-writable headers | GUI v1.1.0 |
 | FanController Arc refactor | Assessed: current design is correct, no refactor needed | R46 |
 | GPU PMFW write churn (gaming stutter) | 5% threshold + dual-writer conflict resolution + sysfs parse fix | v0.5.3 |

@@ -1,5 +1,58 @@
 # Changelog
 
+## [1.3.0] — 2026-04-21
+
+Comprehensive vendor/driver knowledge base expansion for AMD motherboard fan
+control. Covers ASUS, MSI, ASRock, and Gigabyte quirks with actionable
+guidance. Requires daemon v1.3.0.
+
+### Added
+- **NCT6686D chip guidance** — ASRock A620/B650/X670 boards with in-kernel
+  nct6683 driver monitoring but incomplete PWM write support. Points users to
+  out-of-tree nct6686d and asrock-nct6683 drivers.
+- **ASUS EC/WMI sensor driver entries** — `asus_ec_sensors` and
+  `asus_wmi_sensors` chip guidance. Clearly marks these as sensor-enrichment
+  drivers (not PWM write paths) and warns about high-frequency WMI polling
+  risks on affected ASUS boards (PRIME X470-PRO specifically called out).
+- **ASUS WMI polling risk vendor quirk** (high severity) — warns that frequent
+  WMI polling can trigger fan stop, fan max, or stuck sensor readings on some
+  ASUS BIOS implementations.
+- **MSI X870/B850 system fan quirk** (high severity) — system fans may not
+  respond to single PWM writes; documents `msi_fan_brute_force=1` module
+  parameter and `/etc/modprobe.d/nct6687.conf` persistence.
+- **ASRock NCT6686D/NCT6683 quirks** (medium severity) — read-vs-write
+  mismatch guidance with board-specific out-of-tree driver recommendations.
+- **Gigabyte ITE `ignore_resource_conflict` quirk** (info) — recommends
+  driver-local conflict resolution over system-wide `acpi_enforce_resources=lax`.
+  Warns against using `force_id` in production.
+- **Module conflict detection** — `detect_module_conflicts()` checks for
+  conflicting driver combinations (e.g. nct6683 + nct6687 both loaded).
+  Displayed with critical styling in diagnostics when detected.
+- **Post-verification guidance** — after running the PWM verification test,
+  the result now includes vendor-specific next-step recommendations based on
+  the board and chip context (e.g. Gigabyte IT8689E Rev 1 no-workaround notice,
+  ASRock out-of-tree driver suggestion, MSI brute-force parameter).
+- **Improved ACPI conflict tip** — for ITE chips, recommends the safer
+  driver-local `ignore_resource_conflict=1` parameter before the system-wide
+  `acpi_enforce_resources=lax` kernel parameter.
+- **hwmon tooltips on dashboard fan table** — hovering a hwmon fan now shows
+  chip name, driver, mainline status, and PWM mode (DC/PWM).
+- **hwmon tooltips on controls member editor** — hwmon headers in the fan role
+  member editor show chip/driver context on hover.
+- **Gigabyte degenerate fan curve values** in IT8689E BIOS tips — specific
+  7-point workaround values (PWM 40/Temp 0-90-90-90-90-90-90, final point
+  PWM 100/Temp 90).
+- Enriched NCT6683 chip entry with MSI/ASRock-specific known issues.
+- 29 new tests covering all new chip entries, vendor quirks, module conflict
+  detection, and verification guidance.
+
+### Changed
+- **Daemon**: `asus_wmi_sensors` added to tracked kernel modules alongside
+  existing `asus_wmi_ec_sensors` (both module name variants now detected).
+- Chip knowledge base expanded from 13 to 17 entries.
+- Vendor quirk database expanded from 6 to 12 entries.
+- MSI NCT6687 vendor quirk test updated for dual-result (medium + high).
+
 ## [1.2.0] — 2026-04-21
 
 PWM interference detection, board identification, and vendor quirk guidance.

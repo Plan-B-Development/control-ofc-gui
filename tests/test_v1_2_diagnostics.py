@@ -87,10 +87,12 @@ class TestVendorQuirkLookup:
         assert len(quirks) == 1
         assert quirks[0].severity == "high"
 
-    def test_msi_nct6687_returns_medium(self):
+    def test_msi_nct6687_returns_medium_and_high(self):
         quirks = lookup_vendor_quirks("Micro-Star International Co., Ltd.", "nct6687")
-        assert len(quirks) == 1
-        assert quirks[0].severity == "medium"
+        assert len(quirks) == 2
+        severities = {q.severity for q in quirks}
+        assert "medium" in severities
+        assert "high" in severities
 
     def test_asus_nct679x_returns_medium(self):
         quirks = lookup_vendor_quirks("ASUSTeK COMPUTER INC.", "nct6798")

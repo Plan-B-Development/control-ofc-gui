@@ -35,6 +35,7 @@ from control_ofc.services.app_state import AppState
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
+from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 from control_ofc.ui.microcopy import get as mc
 from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.widgets.error_banner import ErrorBanner
@@ -534,11 +535,31 @@ class DashboardPage(QWidget):
                 if item is None:
                     item = QTableWidgetItem(text)
                     if col == 0:
-                        item.setToolTip(f"ID: {fan.id}")
+                        item.setToolTip(self._fan_tooltip(fan))
                     self._fan_table.setItem(row, col, item)
                 else:
                     if item.text() != text:
                         item.setText(text)
+
+    def _fan_tooltip(self, fan: FanReading) -> str:
+        """Build a tooltip for a fan row, including hwmon chip/driver context."""
+        parts = [f"ID: {fan.id}"]
+        if self._state and fan.source == "hwmon":
+            header = next((h for h in self._state.hwmon_headers if h.id == fan.id), None)
+            if header and header.chip_name:
+                parts.append(f"Chip: {header.chip_name}")
+                g = lookup_chip_guidance(header.chip_name)
+                if g:
+                    status = "mainline" if g.in_mainline else g.driver_package
+                    parts.append(f"Driver: {g.driver_name} ({status})")
+                mode = {0: "DC", 1: "PWM"}.get(
+                    header.pwm_mode if header.pwm_mode is not None else -1
+                )
+                if mode:
+                    parts.append(f"Mode: {mode}")
+                if not header.is_writable:
+                    parts.append("Status: read-only")
+        return "\n".join(parts)
 
     def _update_card(
         self,
