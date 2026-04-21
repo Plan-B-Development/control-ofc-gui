@@ -150,6 +150,8 @@ class SensorReading:
     rate_c_per_s: float | None = None
     session_min_c: float | None = None
     session_max_c: float | None = None
+    chip_name: str = ""
+    temp_type: int | None = None
 
     @property
     def freshness(self) -> Freshness:

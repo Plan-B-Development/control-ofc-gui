@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.4.0] — 2026-04-21
+
+Sensor interpretation knowledge base and session tracking for dashboard
+temperature categories. Requires daemon v1.4.0.
+
+### Added
+- **Session min/max tracking.** Dashboard summary cards now show session
+  low/high for each temperature category, giving at-a-glance awareness of
+  thermal range since GUI launch.
+- **Sensor interpretation knowledge base** (`sensor_knowledge.py`). Classifies
+  sensors by driver, label, and temp_type with confidence levels (high,
+  medium_high, medium, low). Covers k10temp, coretemp, sbtsi_temp, nct6775
+  family, nct6683/6686/6687, it87 family, asus_ec_sensors, asus_wmi_sensors,
+  gigabyte_wmi, amdgpu, and nvme drivers.
+- **Board-specific sensor override database** for validated sensor placements.
+  Initial entries for ASUS Crosshair VIII, ASUS STRIX X670E, ASRock X670E,
+  and Gigabyte B550.
+- **Rich sensor tooltips** in series panel showing classification, session
+  stats, rate of change, and provenance (driver name, confidence level).
+- **New daemon API fields:** `chip_name` and `temp_type` for sensor metadata
+  enrichment in `/sensors` and `/poll` responses.
+
+### Changed
+- Demo mode sensors now include realistic `chip_name` values and stable IDs.
+- `SummaryCard` widget supports optional session range sub-label.
+- Sensor series panel tooltips enhanced with knowledge base classification.
+
 ## [1.3.0] — 2026-04-21
 
 Comprehensive vendor/driver knowledge base expansion for AMD motherboard fan

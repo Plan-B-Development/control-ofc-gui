@@ -18,6 +18,7 @@ from control_ofc.api.models import (
     OperationMode,
     SensorReading,
 )
+from control_ofc.services.session_stats import SessionStatsTracker
 
 
 class AppState(QObject):
@@ -59,6 +60,9 @@ class AppState(QObject):
         # Fan aliases: fan_id -> display name (GUI-owned)
         self.fan_aliases: dict[str, str] = {}
 
+        # Per-sensor session min/max tracker (resets on reconnect)
+        self.session_stats = SessionStatsTracker()
+
     def set_connection(self, state: ConnectionState) -> None:
         if state != self.connection:
             self.connection = state
@@ -79,8 +83,13 @@ class AppState(QObject):
 
     def set_sensors(self, sensors: list[SensorReading]) -> None:
         self.sensors = sensors
+        self.session_stats.update_batch([(s.id, s.value_c) for s in sensors])
         self.sensors_updated.emit(sensors)
         self._update_warnings()
+
+    def reset_session_stats(self) -> None:
+        """Reset session statistics (call on reconnect)."""
+        self.session_stats.reset()
 
     def set_fans(self, fans: list[FanReading]) -> None:
         self.fans = fans
