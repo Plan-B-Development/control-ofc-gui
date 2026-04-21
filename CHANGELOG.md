@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.2.0] — 2026-04-21
+
+PWM interference detection, board identification, and vendor quirk guidance.
+Requires daemon v1.3.0.
+
+### Added
+- **Board identification** in Hardware Readiness card. Displays motherboard
+  vendor, model, and BIOS version from DMI sysfs, giving immediate context
+  for chip-specific guidance.
+- **Vendor quirk alerts** in Hardware Readiness card. When the detected board
+  vendor + Super I/O chip matches a known problematic combination (Gigabyte
+  SmartFan 5/6 + ITE chips, MSI Smart Fan + NCT6687, ASUS ACPI + NCT679x),
+  a severity-colored alert shows the specific issue and workaround steps.
+- **BIOS interference detection.** Displays per-header `pwm_enable` revert
+  counts from the daemon's watchdog, showing how often the BIOS/EC has
+  reclaimed fan control since the daemon started.
+- **PWM verification test** ("Test PWM Control" button). Writes a test PWM
+  value to a selected header, waits 3 seconds, and reads back to classify
+  the result as effective/reverted/clamped/no_rpm_effect/rpm_unavailable.
+  Requires an active hwmon lease.
+- **Vendor quirk knowledge base** (`hwmon_guidance.py`). Six vendor+chip
+  entries covering Gigabyte IT8689E/IT8696E/IT8688E/IT8686E, MSI NCT6687,
+  and ASUS NCT679x, with severity levels, summaries, and detailed workaround
+  steps.
+- **Support bundle enhancement.** Exports board info and BIOS interference
+  data (revert counts) when hardware diagnostics have been fetched.
+
+### Changed
+- `HwmonDiagnostics` model now includes `enable_revert_counts` field.
+- `HardwareDiagnosticsResult` model now includes `board` (BoardInfo) field.
+- New models: `BoardInfo`, `HwmonVerifyState`, `HwmonVerifyResult`.
+- `DaemonClient.verify_hwmon_pwm()` method for the new
+  `POST /hwmon/{header_id}/verify` endpoint.
+
 ## [1.1.0] — 2026-04-21
 
 Hardware readiness and diagnostics feature release. Requires daemon v1.2.0.

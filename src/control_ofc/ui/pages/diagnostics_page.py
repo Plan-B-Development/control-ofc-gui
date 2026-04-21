@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.profile_service import ProfileService
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -32,11 +33,16 @@ from control_ofc.api.models import (
     DaemonStatus,
     Freshness,
     HardwareDiagnosticsResult,
+    HwmonVerifyResult,
     LeaseState,
 )
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService, format_uptime
-from control_ofc.ui.hwmon_guidance import format_driver_status, lookup_chip_guidance
+from control_ofc.ui.hwmon_guidance import (
+    format_driver_status,
+    lookup_chip_guidance,
+    lookup_vendor_quirks,
+)
 from control_ofc.ui.theme import default_dark_theme
 
 _TRANSPARENT = "background: transparent;"
@@ -239,6 +245,19 @@ class DiagnosticsPage(QWidget):
         self._hw_ready_summary.setWordWrap(True)
         hw_layout.addWidget(self._hw_ready_summary)
 
+        # Board info
+        self._board_info_label = _transparent_label("", "Diagnostics_Label_boardInfo")
+        self._board_info_label.setWordWrap(True)
+        self._board_info_label.setProperty("class", "CardMeta")
+        self._board_info_label.setVisible(False)
+        hw_layout.addWidget(self._board_info_label)
+
+        # Vendor quirk alert
+        self._vendor_quirk_label = _transparent_label("", "Diagnostics_Label_vendorQuirk")
+        self._vendor_quirk_label.setWordWrap(True)
+        self._vendor_quirk_label.setVisible(False)
+        hw_layout.addWidget(self._vendor_quirk_label)
+
         # Chip/driver table
         self._chip_table = QTableWidget(0, 5)
         self._chip_table.setObjectName("Diagnostics_Table_chips")
@@ -265,6 +284,12 @@ class DiagnosticsPage(QWidget):
         self._acpi_label.setVisible(False)
         hw_layout.addWidget(self._acpi_label)
 
+        # BIOS interference (revert counts)
+        self._revert_label = _transparent_label("", "Diagnostics_Label_revertCounts")
+        self._revert_label.setWordWrap(True)
+        self._revert_label.setVisible(False)
+        hw_layout.addWidget(self._revert_label)
+
         # Thermal safety
         self._thermal_label = _transparent_label("", "Diagnostics_Label_thermalSafety")
         self._thermal_label.setWordWrap(True)
@@ -283,6 +308,28 @@ class DiagnosticsPage(QWidget):
         self._guidance_label.setProperty("class", "CardMeta")
         self._guidance_label.setVisible(False)
         hw_layout.addWidget(self._guidance_label)
+
+        # PWM verify section
+        verify_row = QHBoxLayout()
+        self._verify_combo = QComboBox()
+        self._verify_combo.setObjectName("Diagnostics_Combo_verifyHeader")
+        self._verify_combo.setMinimumWidth(200)
+        verify_row.addWidget(self._verify_combo)
+
+        self._verify_btn = QPushButton("Test PWM Control")
+        self._verify_btn.setObjectName("Diagnostics_Btn_verifyPwm")
+        self._verify_btn.setToolTip(
+            "Write a test PWM value and check if the BIOS overrides it (~3s)"
+        )
+        self._verify_btn.clicked.connect(self._run_pwm_verify)
+        verify_row.addWidget(self._verify_btn)
+        verify_row.addStretch()
+        hw_layout.addLayout(verify_row)
+
+        self._verify_result_label = _transparent_label("", "Diagnostics_Label_verifyResult")
+        self._verify_result_label.setWordWrap(True)
+        self._verify_result_label.setVisible(False)
+        hw_layout.addWidget(self._verify_result_label)
 
         # Fetch button
         fetch_btn = QPushButton("Refresh Hardware Diagnostics")
@@ -605,6 +652,7 @@ class DiagnosticsPage(QWidget):
             from control_ofc.api.errors import DaemonError, DaemonUnavailable
 
             result = self._client.hardware_diagnostics()
+            self._diag.last_hw_diagnostics = result
             self._populate_hw_diagnostics(result)
             self._status_label.setText("Hardware diagnostics refreshed")
         except DaemonUnavailable:
@@ -615,6 +663,42 @@ class DiagnosticsPage(QWidget):
     def _populate_hw_diagnostics(self, diag: HardwareDiagnosticsResult) -> None:
         """Populate hardware readiness UI from a diagnostics result."""
         hw = diag.hwmon
+
+        # Board info
+        board = diag.board
+        if board.vendor or board.name:
+            parts = []
+            if board.vendor:
+                parts.append(board.vendor)
+            if board.name:
+                parts.append(board.name)
+            if board.bios_version:
+                parts.append(f"BIOS {board.bios_version}")
+            self._board_info_label.setText("Board: " + " — ".join(parts))
+            self._board_info_label.setVisible(True)
+        else:
+            self._board_info_label.setVisible(False)
+
+        # Vendor quirks
+        all_quirks = []
+        for chip in hw.chips_detected:
+            all_quirks.extend(lookup_vendor_quirks(board.vendor, chip.chip_name))
+        if all_quirks:
+            quirk_lines: list[str] = []
+            for q in all_quirks:
+                quirk_lines.append(f"[{q.severity.upper()}] {q.summary}")
+                for d in q.details:
+                    quirk_lines.append(f"  • {d}")
+            self._vendor_quirk_label.setText("\n".join(quirk_lines))
+            has_critical = any(q.severity == "critical" for q in all_quirks)
+            css = "CriticalChip" if has_critical else "WarningChip"
+            self._vendor_quirk_label.setProperty("class", css)
+            self._vendor_quirk_label.style().unpolish(self._vendor_quirk_label)
+            self._vendor_quirk_label.style().polish(self._vendor_quirk_label)
+            self._vendor_quirk_label.setVisible(True)
+        else:
+            self._vendor_quirk_label.setVisible(False)
+
         summary_parts = []
         summary_parts.append(
             f"{hw.total_headers} PWM header(s) detected, {hw.writable_headers} writable"
@@ -679,6 +763,23 @@ class DiagnosticsPage(QWidget):
         else:
             self._acpi_label.setVisible(False)
 
+        # BIOS interference (revert counts)
+        reverts = hw.enable_revert_counts
+        if reverts:
+            lines = ["BIOS interference detected — the EC/BIOS reclaimed fan control:"]
+            for header_id, count in reverts.items():
+                lines.append(f"  {header_id}: {count} revert(s)")
+            lines.append(
+                "The daemon watchdog automatically re-enables manual mode when this happens."
+            )
+            self._revert_label.setText("\n".join(lines))
+            self._revert_label.setProperty("class", "WarningChip")
+            self._revert_label.style().unpolish(self._revert_label)
+            self._revert_label.style().polish(self._revert_label)
+            self._revert_label.setVisible(True)
+        else:
+            self._revert_label.setVisible(False)
+
         # Thermal safety
         ts = diag.thermal_safety
         thermal_text = (
@@ -733,6 +834,103 @@ class DiagnosticsPage(QWidget):
             self._guidance_label.setVisible(True)
         else:
             self._guidance_label.setVisible(False)
+
+        # Populate verify header combo
+        self._verify_combo.clear()
+        if self._state:
+            for h in self._state.hwmon_headers:
+                if h.is_writable:
+                    label = h.label or h.id
+                    self._verify_combo.addItem(f"{label} ({h.id})", h.id)
+        self._verify_btn.setEnabled(self._verify_combo.count() > 0)
+
+    def _run_pwm_verify(self) -> None:
+        """Run PWM verification test on the selected header."""
+        header_id = self._verify_combo.currentData()
+        if not header_id:
+            self._verify_result_label.setText("No writable header selected")
+            self._verify_result_label.setVisible(True)
+            return
+        if not self._client:
+            self._verify_result_label.setText("Cannot verify: no daemon connection")
+            self._verify_result_label.setVisible(True)
+            return
+        if not self._state or not self._state.lease.held:
+            self._verify_result_label.setText(
+                "Cannot verify: no hwmon lease held. Start fan control or acquire a lease first."
+            )
+            self._verify_result_label.setVisible(True)
+            return
+
+        lease_id = self._state.lease.lease_id
+        if not lease_id:
+            self._verify_result_label.setText("Cannot verify: lease ID unavailable")
+            self._verify_result_label.setVisible(True)
+            return
+
+        self._verify_btn.setEnabled(False)
+        self._verify_btn.setText("Testing...")
+        self._verify_result_label.setVisible(False)
+
+        try:
+            from control_ofc.api.errors import DaemonError, DaemonUnavailable
+
+            result = self._client.verify_hwmon_pwm(header_id, lease_id)
+            self._show_verify_result(result)
+        except DaemonUnavailable:
+            self._verify_result_label.setText("Daemon unavailable during verify")
+            self._verify_result_label.setVisible(True)
+        except DaemonError as e:
+            self._verify_result_label.setText(f"Verify error: {e.message}")
+            self._verify_result_label.setVisible(True)
+        finally:
+            self._verify_btn.setEnabled(True)
+            self._verify_btn.setText("Test PWM Control")
+
+    def _show_verify_result(self, result: HwmonVerifyResult) -> None:
+        """Display the result of a PWM verification test."""
+        status_map = {
+            "effective": (
+                "PWM control is working correctly",
+                "SuccessChip",
+            ),
+            "reverted": (
+                "BIOS/EC reverted pwm_enable — fan control is being overridden",
+                "CriticalChip",
+            ),
+            "clamped": (
+                "PWM value was clamped or ignored by hardware",
+                "WarningChip",
+            ),
+            "no_rpm_effect": (
+                "PWM accepted but RPM did not change (fan may be disconnected or stalled)",
+                "WarningChip",
+            ),
+            "rpm_unavailable": (
+                "PWM write accepted but RPM readback unavailable to confirm",
+                "CardMeta",
+            ),
+        }
+        summary, css_class = status_map.get(
+            result.result, (f"Unknown result: {result.result}", "CardMeta")
+        )
+
+        lines = [f"Result: {summary}"]
+        if result.details:
+            lines.append(result.details)
+        lines.append(f"Test: wrote {result.test_pwm_percent}% PWM, waited {result.wait_seconds}s")
+        init = result.initial_state
+        final = result.final_state
+        if init.rpm is not None and final.rpm is not None:
+            lines.append(f"RPM: {init.rpm} → {final.rpm}")
+        if init.pwm_enable is not None and final.pwm_enable is not None:
+            lines.append(f"pwm_enable: {init.pwm_enable} → {final.pwm_enable}")
+
+        self._verify_result_label.setText("\n".join(lines))
+        self._verify_result_label.setProperty("class", css_class)
+        self._verify_result_label.style().unpolish(self._verify_result_label)
+        self._verify_result_label.style().polish(self._verify_result_label)
+        self._verify_result_label.setVisible(True)
 
     # ─── Actions ─────────────────────────────────────────────────────
 
