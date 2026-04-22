@@ -248,4 +248,5 @@ class MainWindow(QWidget):
             self._demo_timer.stop()
         if hasattr(self, "_control_loop") and self._control_loop is not None:
             self._control_loop.shutdown()
+        self.dashboard_page.cleanup()
         super().closeEvent(event)

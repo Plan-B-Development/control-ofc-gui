@@ -458,10 +458,12 @@ class SettingsPage(QWidget):
 
         # Push startup delay to daemon if connected
         if self._client:
+            from control_ofc.api.errors import DaemonError
+
             try:
                 self._client.set_startup_delay(self._startup_delay_spin.value())
-            except Exception as e:
-                log.warning("Failed to sync startup delay to daemon: %s", e)
+            except DaemonError as e:
+                log.warning("Failed to sync startup delay to daemon: %s", e.message)
                 self._set_status("Application settings saved (startup delay not synced to daemon)")
                 self.settings_changed.emit()
                 return
@@ -517,7 +519,7 @@ class SettingsPage(QWidget):
                         dest = new_dir / f.name
                         shutil.move(str(f), str(dest))
                         moved += 1
-                    except Exception as e:
+                    except OSError as e:
                         log.warning("Failed to move %s: %s", f, e)
                 self._set_status(f"Moved {moved}/{len(existing_files)} files to {new_dir}")
 
@@ -546,7 +548,7 @@ class SettingsPage(QWidget):
                 try:
                     t = load_theme(p)
                     self._theme_combo.addItem(t.name, str(p))
-                except Exception as e:
+                except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
                     log.warning("Skipping invalid theme %s: %s", p, e)
 
     def _apply_selected_theme(self) -> None:
@@ -601,7 +603,7 @@ class SettingsPage(QWidget):
             save_theme(tokens, dest)
             self._refresh_theme_list()
             self._set_status(f"Theme '{tokens.name}' imported")
-        except Exception as e:
+        except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
             self._set_status(f"Import failed: {e}")
 
     def _export_theme(self) -> None:
@@ -615,7 +617,7 @@ class SettingsPage(QWidget):
             current_name = tokens.name
             save_theme(tokens, Path(path))
             self._set_status(f"Theme '{current_name}' exported")
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self._set_status(f"Export failed: {e}")
 
     def _export_settings(self) -> None:
@@ -629,7 +631,7 @@ class SettingsPage(QWidget):
             export_data = self._build_full_export()
             Path(path).write_text(json.dumps(export_data, indent=2) + "\n")
             self._set_export_result("Settings exported successfully", "SuccessChip")
-        except Exception as e:
+        except (OSError, ValueError, TypeError) as e:
             self._set_export_result(f"Export failed: {e}", "CriticalChip")
 
     def _import_settings(self) -> None:
@@ -676,7 +678,7 @@ class SettingsPage(QWidget):
             css = "WarningChip" if skipped else "SuccessChip"
             self._set_export_result(f"Settings imported and applied{backup_msg}{skip_msg}", css)
             self.settings_changed.emit()
-        except Exception as e:
+        except (json.JSONDecodeError, OSError, KeyError, ValueError, TypeError) as e:
             self._set_export_result(f"Import failed: {e}", "CriticalChip")
 
     def _build_full_export(self) -> dict:
@@ -695,8 +697,8 @@ class SettingsPage(QWidget):
             for p in pdir.glob("*.json"):
                 try:
                     profiles[p.stem] = json.loads(p.read_text())
-                except Exception:
-                    log.warning("Skipping unreadable profile: %s", p)
+                except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+                    log.warning("Skipping unreadable profile %s: %s", p, e)
             if profiles:
                 export["profiles"] = profiles
 
@@ -707,8 +709,8 @@ class SettingsPage(QWidget):
             for tf in td.glob("*.json"):
                 try:
                     themes[tf.stem] = json.loads(tf.read_text())
-                except Exception:
-                    log.warning("Skipping unreadable theme: %s", tf)
+                except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+                    log.warning("Skipping unreadable theme %s: %s", tf, e)
             if themes:
                 export["themes"] = themes
 
@@ -748,7 +750,7 @@ class SettingsPage(QWidget):
                 continue
             try:
                 Profile.from_dict(data)
-            except Exception as exc:
+            except (KeyError, TypeError, ValueError) as exc:
                 log.warning("Skipping profile '%s': validation failed: %s", name, exc)
                 skipped.append(name)
                 continue
@@ -800,7 +802,7 @@ class SettingsPage(QWidget):
                 for k, v in migrated.items():
                     if hasattr(tokens, k):
                         setattr(tokens, k, v)
-            except Exception as exc:
+            except (KeyError, TypeError, ValueError) as exc:
                 log.warning("Skipping theme '%s': validation failed: %s", name, exc)
                 skipped.append(name)
                 continue

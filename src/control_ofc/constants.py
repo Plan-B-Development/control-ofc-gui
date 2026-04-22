@@ -1,7 +1,12 @@
 """Application-wide constants."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 APP_NAME = "Control-OFC"
-APP_VERSION = "1.0.5"
+try:
+    APP_VERSION = version("control-ofc-gui")
+except PackageNotFoundError:
+    APP_VERSION = "dev"
 ORG_NAME = "control-ofc"
 
 # Daemon IPC

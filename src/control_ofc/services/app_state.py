@@ -162,7 +162,6 @@ class AppState(QObject):
             self._acknowledged.add(w.get("_key", ""))
         self.active_warnings.clear()
         self._external_warnings.clear()
-        self._warning_first_seen.clear()
         if self.warning_count != 0:
             self.warning_count = 0
             self.warning_count_changed.emit(0)

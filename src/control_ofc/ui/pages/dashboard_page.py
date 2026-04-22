@@ -485,6 +485,11 @@ class DashboardPage(QWidget):
         self._chart_timer.stop()
         super().hideEvent(event)
 
+    def cleanup(self) -> None:
+        """Release chart resources before app shutdown."""
+        self._chart_timer.stop()
+        self._chart.cleanup()
+
     def _on_app_focus_changed(self, state) -> None:
         """Throttle chart when app loses focus (reduces compositor work while gaming)."""
         if state == Qt.ApplicationState.ApplicationActive:

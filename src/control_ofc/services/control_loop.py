@@ -196,6 +196,8 @@ class ControlLoopService(QObject):
         if not self._running:
             self._running = True
             self._timer.start()
+            if self._lease and not self._lease.is_held:
+                self._lease.acquire()
             log.info("Control loop started (interval=%dms)", CONTROL_LOOP_INTERVAL_MS)
 
     def stop(self) -> None:
@@ -491,9 +493,9 @@ class ControlLoopService(QObject):
         if target_id.startswith("hwmon:"):
             if self._lease and self._lease.is_held:
                 lease_id = self._lease.lease_id or ""
+            elif self._lease and self._lease.acquire():
+                lease_id = self._lease.lease_id or ""
             else:
-                if self._lease:
-                    self._lease.acquire()
                 log.warning("hwmon write skipped -- no lease for %s", target_id)
                 return False
 

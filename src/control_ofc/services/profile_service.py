@@ -303,7 +303,7 @@ def _migrate_v1_profile(data: dict) -> Profile:
         members: list[ControlMember] = []
         if target_type == "fan" and target_id:
             if target_id in seen_members:
-                log.warning("V1 migration: skipping duplicate fan %s", target_id)
+                log.info("V1 migration: skipping duplicate fan %s", target_id)
             else:
                 seen_members.add(target_id)
                 if target_id.startswith("openfan"):
