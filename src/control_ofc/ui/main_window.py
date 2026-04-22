@@ -249,4 +249,6 @@ class MainWindow(QWidget):
         if hasattr(self, "_control_loop") and self._control_loop is not None:
             self._control_loop.shutdown()
         self.dashboard_page.cleanup()
+        if hasattr(self, "diagnostics_page") and self.diagnostics_page is not None:
+            self.diagnostics_page.cleanup()
         super().closeEvent(event)

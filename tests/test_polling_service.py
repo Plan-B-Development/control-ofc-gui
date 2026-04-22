@@ -161,6 +161,34 @@ class TestPollWorkerBatchFallback:
         assert len(fans_spy) == 1
         assert len(connected_spy) == 1
 
+    def test_fallback_is_atomic_on_partial_failure(self, qtbot):
+        """Regression: when batch /poll fails and fans() then fails during
+        fallback, NO partial status/sensors signals must be emitted — the
+        cycle should disconnect instead of emitting fresh status paired with
+        stale fans. Audit finding: polling.py emitted status_ready before
+        fetching sensors/fans, so a mid-fallback exception left the UI with
+        a fresh status plus stale fan data."""
+        mock_client = _make_mock_client()
+        mock_client.poll.side_effect = DaemonError(code="not_found", message="batch unsupported")
+        mock_client.fans.side_effect = DaemonError(code="internal_error", message="fans gone")
+
+        worker = _make_worker(mock_client)
+        status_spy = _collect_signal(worker.status_ready)
+        sensors_spy = _collect_signal(worker.sensors_ready)
+        fans_spy = _collect_signal(worker.fans_ready)
+        connected_spy = _collect_signal(worker.connected)
+        disconnected_spy = _collect_signal(worker.disconnected)
+
+        worker.poll()
+
+        # No partial emissions — the cycle should end in disconnect, not
+        # with status emitted + sensors/fans missing.
+        assert len(status_spy) == 0
+        assert len(sensors_spy) == 0
+        assert len(fans_spy) == 0
+        assert len(connected_spy) == 0
+        assert len(disconnected_spy) == 1
+
 
 class TestPollWorkerActiveProfileFailure:
     """active_profile() failure must not abort the rest of the poll."""

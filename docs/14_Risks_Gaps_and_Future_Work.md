@@ -100,6 +100,21 @@ A dedicated wizard page that walks first-time users through the complete hardwar
 - DKMS/package manager integration would need careful security review (polkit, sandboxing)
 - BIOS guidance with images would need an asset pipeline and per-board screenshot library
 
+### 11. GUI surface for `reset_gpu_fan` (deferred)
+
+`DaemonClient.reset_gpu_fan` and its parser are implemented, but no GUI caller
+currently invokes them. During a session the user can set a static GPU speed but
+cannot ask the daemon to restore the GPU to the PMFW default curve without
+restarting the daemon. The daemon still resets GPU fans to automatic on
+shutdown (safety), so this is a convenience/UX gap rather than a correctness
+issue.
+
+**When to build:**
+- When we add a "Restore to automatic" menu action in the fan wizard / fan role
+  editor for GPU fans. This is a small, self-contained feature (wire one API
+  method to a menu entry) and should ship in a minor release rather than a
+  patch audit-remediation release.
+
 ## Resolved Gaps (previously listed as future work)
 
 | Gap | Resolution | Version |

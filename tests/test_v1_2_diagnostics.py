@@ -214,11 +214,13 @@ class TestVerifyResultParsing:
         assert result.test_pwm_percent == 70
 
     def test_parse_reverted(self):
+        """Parse the daemon's pwm_enable_reverted payload (see
+        daemon/src/api/handlers/hwmon_ctl.rs::classify_verify_result)."""
         from control_ofc.api.models import parse_hwmon_verify_result
 
         data = {
             "header_id": "it8696-isa-0a30/pwm1",
-            "result": "reverted",
+            "result": "pwm_enable_reverted",
             "initial_state": {"pwm_enable": 1, "pwm_raw": 128, "rpm": 1200},
             "final_state": {"pwm_enable": 2, "pwm_raw": 128, "rpm": 1200},
             "test_pwm_percent": 70,
@@ -226,7 +228,7 @@ class TestVerifyResultParsing:
             "details": "BIOS reclaimed pwm_enable",
         }
         result = parse_hwmon_verify_result(data)
-        assert result.result == "reverted"
+        assert result.result == "pwm_enable_reverted"
         assert result.initial_state.pwm_enable == 1
         assert result.final_state.pwm_enable == 2
 
@@ -450,10 +452,13 @@ class TestDiagnosticsPageVerifyUI:
         assert label.property("class") == "SuccessChip"
 
     def test_verify_shows_reverted_result(self, qtbot):
+        """Daemon emits 'pwm_enable_reverted' — GUI must surface it as
+        CriticalChip with the 'overridden' message. Regression test for the
+        audit finding where status_map used short keys the daemon never sent."""
         page, _ = _make_page(qtbot)
         result = HwmonVerifyResult(
             header_id="h1",
-            result="reverted",
+            result="pwm_enable_reverted",
             initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
             final_state=HwmonVerifyState(pwm_enable=2, rpm=1200),
             test_pwm_percent=70,
@@ -465,6 +470,112 @@ class TestDiagnosticsPageVerifyUI:
         assert not label.isHidden()
         assert "overridden" in label.text().lower()
         assert label.property("class") == "CriticalChip"
+
+    def test_verify_shows_clamped_result(self, qtbot):
+        """Daemon emits 'pwm_value_clamped' — GUI must surface it as
+        WarningChip with the 'clamped' message."""
+        page, _ = _make_page(qtbot)
+        result = HwmonVerifyResult(
+            header_id="h1",
+            result="pwm_value_clamped",
+            initial_state=HwmonVerifyState(pwm_enable=1, pwm_raw=128, rpm=1200),
+            final_state=HwmonVerifyState(pwm_enable=1, pwm_raw=128, rpm=1200),
+            test_pwm_percent=70,
+            wait_seconds=3,
+            details="PWM register overridden",
+        )
+        page._show_verify_result(result)
+        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
+        assert not label.isHidden()
+        assert "clamped" in label.text().lower()
+        assert label.property("class") == "WarningChip"
+
+
+class TestDiagnosticsPageVerifyWorker:
+    """Verify the 3-second hardware probe runs off the UI thread.
+
+    Regression for the audit finding: verify_hwmon_pwm used to be called
+    synchronously on the main thread, freezing the UI for ~3s during the test.
+    """
+
+    def test_ensure_verify_worker_requires_socket_path(self, qtbot):
+        """No worker is created when the client has no _socket_path."""
+        page, _ = _make_page(qtbot, client=None)
+        assert page._ensure_verify_worker() is False
+        assert page._verify_thread is None
+        assert page._verify_worker is None
+
+    def test_ensure_verify_worker_creates_thread(self, qtbot):
+        """When a client is supplied, the worker + thread are created once."""
+        client = MagicMock()
+        client._socket_path = "/tmp/fake.sock"
+        page, _ = _make_page(qtbot, client=client)
+
+        assert page._ensure_verify_worker() is True
+        assert page._verify_thread is not None
+        assert page._verify_worker is not None
+        assert page._verify_thread.isRunning()
+
+        # Idempotent — second call does not replace the thread.
+        prev_thread = page._verify_thread
+        assert page._ensure_verify_worker() is True
+        assert page._verify_thread is prev_thread
+
+        page.cleanup()
+        assert page._verify_thread is None
+        assert page._verify_worker is None
+
+    def test_on_verify_ok_re_enables_button(self, qtbot):
+        """Successful verify result re-enables the button and updates label."""
+        page, _ = _make_page(qtbot)
+        page._verify_btn.setEnabled(False)
+        page._verify_btn.setText("Testing...")
+
+        result = HwmonVerifyResult(
+            header_id="h1",
+            result="effective",
+            initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
+            final_state=HwmonVerifyState(pwm_enable=1, rpm=900),
+            test_pwm_percent=70,
+            wait_seconds=3,
+            details="PWM control working",
+        )
+        page._on_verify_ok(result)
+
+        assert page._verify_btn.isEnabled()
+        assert page._verify_btn.text() == "Test PWM Control"
+        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
+        assert not label.isHidden()
+
+    def test_on_verify_error_unavailable(self, qtbot):
+        """Daemon-unavailable error surfaces as the unavailable message."""
+        page, _ = _make_page(qtbot)
+        page._verify_btn.setEnabled(False)
+        page._verify_btn.setText("Testing...")
+
+        page._on_verify_error("unavailable", "Daemon unavailable during verify")
+
+        assert page._verify_btn.isEnabled()
+        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
+        assert not label.isHidden()
+        assert "unavailable" in label.text().lower()
+
+    def test_on_verify_error_generic(self, qtbot):
+        """Generic DaemonError surfaces the message with the 'Verify error:' prefix."""
+        page, _ = _make_page(qtbot)
+        page._on_verify_error("error", "lease expired")
+
+        assert page._verify_btn.isEnabled()
+        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
+        assert not label.isHidden()
+        assert "lease expired" in label.text().lower()
+
+    def test_cleanup_is_safe_when_no_worker_created(self, qtbot):
+        """cleanup() must be a no-op when no verify has ever been run."""
+        page, _ = _make_page(qtbot)
+        assert page._verify_thread is None
+        page.cleanup()  # must not raise
+        assert page._verify_thread is None
 
 
 # ---------------------------------------------------------------------------
