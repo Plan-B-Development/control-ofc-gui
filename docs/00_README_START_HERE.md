@@ -18,6 +18,11 @@ This pack is the **working source of truth** for building the Linux-first deskto
 13. `13_Acceptance_Criteria.md`
 14. `14_Risks_Gaps_and_Future_Work.md`
 15. `15_Branding_Art_and_Asset_Direction.md`
+16. `18_Operations_Guide.md`
+17. `19_Hardware_Compatibility.md`
+18. `20_Sensor_Interpretation_Guide.md`
+19. `21_AMD_Motherboard_Fan_Control_Guide.md` — vendor-by-vendor setup, drivers, quirks, troubleshooting
+20. `22_AMD_Sensor_Interpretation_Deep_Dive.md` — what sensor readings actually mean and confidence levels
 
 ## Key decisions already made
 - Linux-first desktop app
