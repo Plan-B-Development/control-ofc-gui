@@ -19,6 +19,7 @@ from control_ofc.api.models import (
     ConnectionState,
     DaemonStatus,
     LeaseState,
+    OperationMode,
 )
 from control_ofc.constants import CAPABILITIES_REFRESH_INTERVAL_S, POLL_INTERVAL_MS
 from control_ofc.services.app_state import AppState
@@ -206,9 +207,6 @@ class PollingService(QObject):
         if self._state.connection != ConnectionState.CONNECTED:
             log.info("Daemon connection established")
         self._state.set_connection(ConnectionState.CONNECTED)
-        # Transition from READ_ONLY to AUTOMATIC when daemon is available
-        from control_ofc.api.models import OperationMode
-
         if self._state.mode == OperationMode.READ_ONLY:
             self._state.set_mode(OperationMode.AUTOMATIC)
             log.info("Mode set to AUTOMATIC (daemon connected)")
@@ -223,7 +221,5 @@ class PollingService(QObject):
 
     def _on_disconnected(self) -> None:
         self._state.set_connection(ConnectionState.DISCONNECTED)
-        from control_ofc.api.models import OperationMode
-
         if self._state.mode == OperationMode.AUTOMATIC:
             self._state.set_mode(OperationMode.READ_ONLY)

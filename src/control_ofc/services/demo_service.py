@@ -11,6 +11,7 @@ import random
 import time
 
 from control_ofc.api.models import (
+    AmdGpuCapability,
     Capabilities,
     DaemonStatus,
     FanReading,
@@ -41,6 +42,7 @@ _DEMO_FANS: list[dict] = [
     {"id": "openfan:ch07", "source": "openfan", "label": "Radiator Push 2"},
     {"id": "hwmon:it8696:pci0:pwm1:CHA_FAN1", "source": "hwmon", "label": "CPU Fan"},
     {"id": "hwmon:it8696:pci0:pwm3:CHA_FAN3", "source": "hwmon", "label": "CPU OPT / Pump"},
+    {"id": "amd_gpu:0000:2d:00.0", "source": "amd_gpu", "label": "RX 7900 XTX Fan"},
 ]
 
 _DEMO_SENSORS: list[dict] = [
@@ -167,6 +169,19 @@ class DemoService:
             ),
             hwmon=HwmonCapability(
                 present=True, pwm_header_count=2, lease_required=True, write_support=True
+            ),
+            amd_gpu=AmdGpuCapability(
+                present=True,
+                model_name="Radeon RX 7900 XTX",
+                display_label="RX 7900 XTX",
+                pci_id="0000:2d:00.0",
+                fan_control_method="pmfw",
+                pmfw_supported=True,
+                fan_rpm_available=True,
+                fan_write_supported=True,
+                is_discrete=True,
+                overdrive_enabled=True,
+                gpu_zero_rpm_available=True,
             ),
             aio_hwmon=UnsupportedCapability(present=False, status="unsupported"),
             aio_usb=UnsupportedCapability(present=False, status="unsupported"),
