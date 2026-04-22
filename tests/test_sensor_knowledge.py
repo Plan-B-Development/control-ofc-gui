@@ -1,10 +1,10 @@
 """Tests for the sensor reading interpretation knowledge base."""
 
 from control_ofc.ui.sensor_knowledge import (
+    SensorClassification,
     classify_sensor,
     format_sensor_tooltip,
     lookup_board_override,
-    SensorClassification,
 )
 
 
@@ -85,9 +85,7 @@ class TestNct6683:
 
 class TestNct6775:
     def test_nct6775_cputin_bogus_on_asus_nct6776(self):
-        c = classify_sensor(
-            "nct6776", "CPUTIN", board_vendor="ASUSTeK COMPUTER INC."
-        )
+        c = classify_sensor("nct6776", "CPUTIN", board_vendor="ASUSTeK COMPUTER INC.")
         assert c.source_class == "bogus"
         assert c.confidence == "low"
         assert any("unreli" in n.lower() or "not connected" in n.lower() for n in c.notes)

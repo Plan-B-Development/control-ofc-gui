@@ -31,9 +31,7 @@ class SessionStatsTracker:
         """Record a new reading for a sensor."""
         existing = self._stats.get(sensor_id)
         if existing is None:
-            self._stats[sensor_id] = SensorSessionStats(
-                min_c=value_c, max_c=value_c, count=1
-            )
+            self._stats[sensor_id] = SensorSessionStats(min_c=value_c, max_c=value_c, count=1)
         else:
             if value_c < existing.min_c:
                 existing.min_c = value_c

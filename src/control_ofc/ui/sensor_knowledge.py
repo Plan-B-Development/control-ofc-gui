@@ -23,7 +23,9 @@ from dataclasses import dataclass, field
 class SensorClassification:
     """Rich interpretation of a sensor reading."""
 
-    source_class: str  # e.g. "cpu_die", "cpu_control", "amd_tsi", "board_thermistor", "vendor_labeled"
+    source_class: (
+        str  # e.g. "cpu_die", "cpu_control", "amd_tsi", "board_thermistor", "vendor_labeled"
+    )
     display_description: str  # Human-readable description for tooltip
     confidence: str  # "high", "medium", "low"
     notes: list[str] = field(default_factory=list)  # Additional context/caveats
@@ -280,7 +282,7 @@ def _classify_asus_wmi(label: str, lower_label: str) -> SensorClassification:
             source_class="external_probe",
             display_description="ASUS T_Sensor header (ASUS WMI)",
             confidence="medium_high",
-            notes=base_notes + ["External temperature probe header"],
+            notes=[*base_notes, "External temperature probe header"],
         )
     if "water" in lower_label:
         return SensorClassification(
@@ -312,18 +314,19 @@ def _classify_nct6775(
 ) -> SensorClassification:
     """Nuvoton nct6775 family -- configurable sources, use label."""
     # Quirk: ASUS + NCT6776F -> CPUTIN is often bogus
-    if chip_name in _ASUS_CPUTIN_BOGUS_CHIPS and "asus" in lower_vendor:
-        if lower_label == "cputin":
-            return SensorClassification(
-                source_class="bogus",
-                display_description="CPUTIN (likely unreliable on this ASUS board)",
-                confidence="low",
-                notes=[
-                    "Kernel docs: on ASUS boards with NCT6776F, CPUTIN is often not connected or connected to a non-standard device",
-                    "May report unreasonably high temperatures or decline when actual temperature rises",
-                    "Prefer PECI 0 or TSI 0 for CPU temperature",
-                ],
-            )
+    if chip_name in _ASUS_CPUTIN_BOGUS_CHIPS and "asus" in lower_vendor and lower_label == "cputin":
+        return SensorClassification(
+            source_class="bogus",
+            display_description="CPUTIN (likely unreliable on this ASUS board)",
+            confidence="low",
+            notes=[
+                "Kernel docs: on ASUS boards with NCT6776F, CPUTIN is often"
+                " not connected or connected to a non-standard device",
+                "May report unreasonably high temperatures"
+                " or decline when actual temperature rises",
+                "Prefer PECI 0 or TSI 0 for CPU temperature",
+            ],
+        )
 
     if "amd tsi" in lower_label or "tsi" in lower_label:
         return SensorClassification(
@@ -569,7 +572,7 @@ def format_sensor_tooltip(
     lines.append(classification.display_description)
 
     if session_min is not None and session_max is not None:
-        lines.append(f"Session: {session_min:.1f}°C – {session_max:.1f}°C")
+        lines.append(f"Session: {session_min:.1f}°C - {session_max:.1f}°C")
 
     if rate_c_per_s is not None and abs(rate_c_per_s) >= 0.1:
         direction = "+" if rate_c_per_s > 0 else ""

@@ -6,6 +6,8 @@ AppState is a QObject so it can emit signals on the main thread.
 
 from __future__ import annotations
 
+import time
+
 from PySide6.QtCore import QObject, Signal
 
 from control_ofc.api.models import (
@@ -13,6 +15,7 @@ from control_ofc.api.models import (
     ConnectionState,
     DaemonStatus,
     FanReading,
+    Freshness,
     HwmonHeader,
     LeaseState,
     OperationMode,
@@ -133,8 +136,6 @@ class AppState(QObject):
 
     def add_warning(self, level: str, source: str, message: str, key: str = "") -> None:
         """Add an ad-hoc warning from a service (e.g., control loop write failure)."""
-        import time
-
         if not key:
             key = f"{source}:{message}"
         if key not in self._acknowledged:
@@ -168,10 +169,6 @@ class AppState(QObject):
         self.warnings_cleared.emit()
 
     def _update_warnings(self) -> None:
-        import time
-
-        from control_ofc.api.models import Freshness
-
         warnings: list[dict] = []
         now = time.time()
 

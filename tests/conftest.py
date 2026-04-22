@@ -8,6 +8,7 @@ import pytest
 
 from control_ofc.api.errors import DaemonUnavailable
 from control_ofc.api.models import (
+    ActiveProfileInfo,
     CalibrationResult,
     Capabilities,
     ConnectionState,
@@ -15,10 +16,15 @@ from control_ofc.api.models import (
     FanReading,
     GpuFanResetResult,
     GpuFanSetResult,
+    HwmonSetPwmResult,
+    LeaseReleasedResult,
+    LeaseResult,
     LeaseState,
     OperationMode,
     SensorHistory,
     SensorReading,
+    SetPwmAllResult,
+    SetPwmResult,
 )
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
@@ -153,35 +159,35 @@ class FakeDaemonClient:
         self._maybe_raise("hwmon_lease_status")
         return LeaseState()
 
-    def set_openfan_pwm(self, channel: int, pwm_percent: int) -> dict:
+    def set_openfan_pwm(self, channel: int, pwm_percent: int) -> SetPwmResult:
         self._record("set_openfan_pwm", channel, pwm_percent)
         self._maybe_raise("set_openfan_pwm")
-        return {"channel": channel, "pwm_percent": pwm_percent}
+        return SetPwmResult(channel=channel, pwm_percent=pwm_percent)
 
-    def set_openfan_all_pwm(self, pwm_percent: int) -> dict:
+    def set_openfan_all_pwm(self, pwm_percent: int) -> SetPwmAllResult:
         self._record("set_openfan_all_pwm", pwm_percent)
         self._maybe_raise("set_openfan_all_pwm")
-        return {"pwm_percent": pwm_percent}
+        return SetPwmAllResult(pwm_percent=pwm_percent)
 
-    def hwmon_lease_take(self, owner_hint: str = "gui") -> dict:
+    def hwmon_lease_take(self, owner_hint: str = "gui") -> LeaseResult:
         self._record("hwmon_lease_take", owner_hint)
         self._maybe_raise("hwmon_lease_take")
-        return {"lease_id": "fake-lease"}
+        return LeaseResult(lease_id="fake-lease", owner_hint=owner_hint)
 
-    def hwmon_lease_release(self, lease_id: str) -> dict:
+    def hwmon_lease_release(self, lease_id: str) -> LeaseReleasedResult:
         self._record("hwmon_lease_release", lease_id)
         self._maybe_raise("hwmon_lease_release")
-        return {"released": True}
+        return LeaseReleasedResult(released=True)
 
-    def hwmon_lease_renew(self, lease_id: str) -> dict:
+    def hwmon_lease_renew(self, lease_id: str) -> LeaseResult:
         self._record("hwmon_lease_renew", lease_id)
         self._maybe_raise("hwmon_lease_renew")
-        return {"lease_id": lease_id}
+        return LeaseResult(lease_id=lease_id)
 
-    def set_hwmon_pwm(self, header_id: str, pwm_percent: int, lease_id: str) -> dict:
+    def set_hwmon_pwm(self, header_id: str, pwm_percent: int, lease_id: str) -> HwmonSetPwmResult:
         self._record("set_hwmon_pwm", header_id, pwm_percent, lease_id)
         self._maybe_raise("set_hwmon_pwm")
-        return {"header_id": header_id, "pwm_percent": pwm_percent}
+        return HwmonSetPwmResult(header_id=header_id, pwm_percent=pwm_percent)
 
     def sensor_history(self, entity_id: str, last: int = 250) -> SensorHistory:
         self._record("sensor_history", entity_id, last)
@@ -194,6 +200,11 @@ class FakeDaemonClient:
         self._record("calibrate_openfan", channel, steps, hold_seconds)
         self._maybe_raise("calibrate_openfan")
         return CalibrationResult(fan_id=f"openfan:ch{channel:02}")
+
+    def active_profile(self) -> ActiveProfileInfo | None:
+        self._record("active_profile")
+        self._maybe_raise("active_profile")
+        return ActiveProfileInfo(active=False)
 
     def set_gpu_fan_speed(self, gpu_id: str, speed_pct: int) -> GpuFanSetResult:
         self._record("set_gpu_fan_speed", gpu_id, speed_pct)

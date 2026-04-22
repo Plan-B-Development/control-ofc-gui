@@ -31,7 +31,7 @@ def _make_state() -> AppState:
 
 
 class TestWriteFailureCounter:
-    """Failure counter decrements on success, not deletes."""
+    """Exercises the real _on_write_completed method for counter behaviour."""
 
     def _make_loop(self):
         from control_ofc.services.control_loop import ControlLoopService
@@ -43,67 +43,53 @@ class TestWriteFailureCounter:
         return svc, state
 
     def test_three_failures_triggers_warning(self):
-        svc, _state = self._make_loop()
+        svc, state = self._make_loop()
         target = "openfan:ch00"
         for _ in range(3):
-            svc._write_failure_counts[target] = svc._write_failure_counts.get(target, 0) + 1
-
-        count = svc._write_failure_counts[target]
-        assert count == 3
+            svc._on_write_completed(target, False)
+        assert svc._write_failure_counts[target] == 3
+        ext = [w for w in state._external_warnings if target in w.get("message", "")]
+        assert len(ext) == 1
 
     def test_success_decrements_not_deletes(self):
         svc, _state = self._make_loop()
         target = "openfan:ch00"
         svc._write_failure_counts[target] = 5
-
-        # Simulate one success — should decrement to 4, not delete
-        count = svc._write_failure_counts.get(target, 0)
-        if count > 0:
-            count -= 1
-            if count == 0:
-                svc._write_failure_counts.pop(target, None)
-            else:
-                svc._write_failure_counts[target] = count
-
+        svc._on_write_completed(target, True)
         assert svc._write_failure_counts.get(target) == 4
 
     def test_sustained_success_reaches_zero(self):
         svc, _state = self._make_loop()
         target = "openfan:ch00"
         svc._write_failure_counts[target] = 3
-
         for _ in range(3):
-            count = svc._write_failure_counts.get(target, 0)
-            if count > 0:
-                count -= 1
-                if count == 0:
-                    svc._write_failure_counts.pop(target, None)
-                else:
-                    svc._write_failure_counts[target] = count
-
+            svc._on_write_completed(target, True)
         assert target not in svc._write_failure_counts
 
     def test_intermittent_pattern_reaches_warning(self):
         """fail, success, fail, fail, fail — counter should reach 3."""
-        svc, _ = self._make_loop()
+        svc, _state = self._make_loop()
         target = "openfan:ch00"
-
-        # fail → 1
-        svc._write_failure_counts[target] = svc._write_failure_counts.get(target, 0) + 1
+        svc._on_write_completed(target, False)
         assert svc._write_failure_counts[target] == 1
-
-        # success → 0 (removed)
-        count = svc._write_failure_counts.get(target, 0) - 1
-        if count <= 0:
-            svc._write_failure_counts.pop(target, None)
-        else:
-            svc._write_failure_counts[target] = count
+        svc._on_write_completed(target, True)
         assert target not in svc._write_failure_counts
-
-        # fail, fail, fail → 3
         for _ in range(3):
-            svc._write_failure_counts[target] = svc._write_failure_counts.get(target, 0) + 1
+            svc._on_write_completed(target, False)
         assert svc._write_failure_counts[target] == 3
+
+    def test_warning_cleared_after_recovery(self):
+        """After 3 failures trigger a warning, successes eventually clear it."""
+        svc, state = self._make_loop()
+        target = "openfan:ch00"
+        for _ in range(3):
+            svc._on_write_completed(target, False)
+        ext = [w for w in state._external_warnings if target in w.get("message", "")]
+        assert len(ext) == 1
+        for _ in range(3):
+            svc._on_write_completed(target, True)
+        ext = [w for w in state._external_warnings if target in w.get("message", "")]
+        assert len(ext) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -112,39 +98,35 @@ class TestWriteFailureCounter:
 
 
 class TestPollCountAfterReconnect:
-    """After reconnect, poll_count should be 1 (caps already fetched)."""
+    """After reconnect, poll() resets _poll_count to 0 so capabilities are re-fetched."""
 
-    def test_reconnect_sets_poll_count_to_one(self):
+    def test_reconnect_resets_poll_count_for_capabilities_refetch(self):
         from control_ofc.services.polling import _PollWorker
+        from tests.conftest import FakeDaemonClient
 
-        worker = _PollWorker.__new__(_PollWorker)
-        worker._consecutive_failures = 3
-        worker._poll_count = 5
+        worker = _PollWorker("/tmp/nonexistent.sock")
+        worker._client = FakeDaemonClient()
+        worker._consecutive_failures = 1
+        worker._poll_count = 2  # 2 % min(8, 2**1) == 0, passes backoff
 
-        # Simulate reconnect logic: if consecutive_failures > 0, set to 1
-        if worker._consecutive_failures > 0:
-            worker._poll_count = 1
-        else:
-            worker._poll_count += 1
-        worker._consecutive_failures = 0
+        worker.poll()
 
-        assert worker._poll_count == 1
+        assert worker._poll_count == 0
         assert worker._consecutive_failures == 0
 
-    def test_normal_increment_when_no_failures(self):
+    def test_normal_poll_increments_count(self):
         from control_ofc.services.polling import _PollWorker
+        from tests.conftest import FakeDaemonClient
 
-        worker = _PollWorker.__new__(_PollWorker)
+        worker = _PollWorker("/tmp/nonexistent.sock")
+        worker._client = FakeDaemonClient()
         worker._consecutive_failures = 0
         worker._poll_count = 5
 
-        if worker._consecutive_failures > 0:
-            worker._poll_count = 1
-        else:
-            worker._poll_count += 1
-        worker._consecutive_failures = 0
+        worker.poll()
 
         assert worker._poll_count == 6
+        assert worker._consecutive_failures == 0
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +243,7 @@ class TestAtomicExportSettings:
 class TestFanAliasWhitespace:
     """Fan alias rejects whitespace-only strings and trims leading/trailing."""
 
-    def test_whitespace_only_clears_alias(self, qtbot):
+    def test_whitespace_only_clears_alias(self):
         state = AppState()
         state.set_fan_alias("openfan:ch00", "Front Intake")
         assert state.fan_aliases["openfan:ch00"] == "Front Intake"
@@ -269,23 +251,23 @@ class TestFanAliasWhitespace:
         state.set_fan_alias("openfan:ch00", "   ")
         assert "openfan:ch00" not in state.fan_aliases
 
-    def test_leading_trailing_trimmed(self, qtbot):
+    def test_leading_trailing_trimmed(self):
         state = AppState()
         state.set_fan_alias("openfan:ch00", "  Front Intake  ")
         assert state.fan_aliases["openfan:ch00"] == "Front Intake"
 
-    def test_valid_alias_stored(self, qtbot):
+    def test_valid_alias_stored(self):
         state = AppState()
         state.set_fan_alias("openfan:ch00", "Top Exhaust")
         assert state.fan_aliases["openfan:ch00"] == "Top Exhaust"
 
-    def test_empty_string_clears(self, qtbot):
+    def test_empty_string_clears(self):
         state = AppState()
         state.set_fan_alias("openfan:ch00", "Something")
         state.set_fan_alias("openfan:ch00", "")
         assert "openfan:ch00" not in state.fan_aliases
 
-    def test_none_alias_clears(self, qtbot):
+    def test_none_alias_clears(self):
         state = AppState()
         state.set_fan_alias("openfan:ch00", "Something")
         state.set_fan_alias("openfan:ch00", None)

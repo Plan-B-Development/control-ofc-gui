@@ -155,6 +155,7 @@ class ControlLoopService(QObject):
         self._write_failure_counts: dict[str, int] = {}
         self._manual_override = False
         self._running = False
+        self._is_shutdown = False
 
         # Background write worker (P0-G1: avoid blocking main thread).
         # Only created when socket_path is explicitly provided (production).
@@ -242,6 +243,9 @@ class ControlLoopService(QObject):
             self._cycle()
 
     def shutdown(self) -> None:
+        if self._is_shutdown:
+            return
+        self._is_shutdown = True
         self.stop()
         if self._write_worker:
             self._write_worker.shutdown()
@@ -253,8 +257,13 @@ class ControlLoopService(QObject):
                 self._write_thread.wait(1000)
 
     def _on_sensors_updated(self, _sensors: list) -> None:
-        """Evaluate immediately when fresh sensor data arrives (P1-G3)."""
+        """Evaluate immediately when fresh sensor data arrives.
+
+        Restarts the timer to prevent a redundant timer-driven cycle within
+        the same interval.
+        """
         if self._running and not self._manual_override:
+            self._timer.start()
             self._cycle()
 
     def _on_profile_changed(self, _name: str) -> None:
@@ -491,9 +500,7 @@ class ControlLoopService(QObject):
         # Determine lease_id for hwmon writes
         lease_id = ""
         if target_id.startswith("hwmon:"):
-            if self._lease and self._lease.is_held:
-                lease_id = self._lease.lease_id or ""
-            elif self._lease and self._lease.acquire():
+            if (self._lease and self._lease.is_held) or (self._lease and self._lease.acquire()):
                 lease_id = self._lease.lease_id or ""
             else:
                 log.warning("hwmon write skipped -- no lease for %s", target_id)
