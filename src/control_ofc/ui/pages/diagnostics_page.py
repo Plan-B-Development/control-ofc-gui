@@ -279,7 +279,7 @@ class DiagnosticsPage(QWidget):
         self._chip_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._chip_table.horizontalHeader().setStretchLastSection(True)
         self._chip_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._chip_table.setMaximumHeight(160)
+        self._chip_table.setMinimumHeight(80)
 
         _chip_header_tooltips = [
             "Super I/O or sensor chip model detected by the daemon",
@@ -293,8 +293,6 @@ class DiagnosticsPage(QWidget):
             if item:
                 item.setToolTip(tip)
 
-        hw_layout.addWidget(self._chip_table)
-
         # Kernel modules table
         self._modules_table = QTableWidget(0, 3)
         self._modules_table.setObjectName("Diagnostics_Table_kernelModules")
@@ -304,7 +302,7 @@ class DiagnosticsPage(QWidget):
         )
         self._modules_table.horizontalHeader().setStretchLastSection(True)
         self._modules_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._modules_table.setMaximumHeight(200)
+        self._modules_table.setMinimumHeight(80)
 
         _mod_header_tooltips = [
             "Kernel module name (e.g. nct6775, it87)",
@@ -316,7 +314,14 @@ class DiagnosticsPage(QWidget):
             if item:
                 item.setToolTip(tip)
 
-        hw_layout.addWidget(self._modules_table)
+        table_splitter = QSplitter(Qt.Orientation.Vertical)
+        table_splitter.setObjectName("Diagnostics_Splitter_hwTables")
+        table_splitter.setChildrenCollapsible(False)
+        table_splitter.addWidget(self._chip_table)
+        table_splitter.addWidget(self._modules_table)
+        table_splitter.setStretchFactor(0, 1)
+        table_splitter.setStretchFactor(1, 2)
+        hw_layout.addWidget(table_splitter)
 
         # ACPI conflicts
         self._acpi_label = _transparent_label("", "Diagnostics_Label_acpiConflicts")
