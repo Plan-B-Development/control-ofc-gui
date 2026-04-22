@@ -87,15 +87,18 @@ class _PollWorker(QObject):
             sensors = []
             try:
                 status, sensors, fans = client.poll()
-                self.status_ready.emit(status)
-                self.sensors_ready.emit(sensors)
-                self.fans_ready.emit(fans)
             except (DaemonError, ConnectionError, OSError, KeyError, ValueError) as e:
                 log.debug("Batch poll failed, falling back to individual endpoints: %s", e)
-                self.status_ready.emit(client.status())
+                # Fetch all three before emitting — a partial fallback must not
+                # leave a fresh status paired with stale fans/sensors. If any
+                # leg raises, the enclosing DaemonError handler marks the cycle
+                # disconnected instead of emitting partial state.
+                status = client.status()
                 sensors = client.sensors()
-                self.sensors_ready.emit(sensors)
-                self.fans_ready.emit(client.fans())
+                fans = client.fans()
+            self.status_ready.emit(status)
+            self.sensors_ready.emit(sensors)
+            self.fans_ready.emit(fans)
 
             # Pre-fill history from daemon on first successful poll
             if self._poll_count == 0 and self._history and sensors:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,7 +13,7 @@ if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
     from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.profile_service import ProfileService
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -52,6 +54,54 @@ from control_ofc.ui.theme import default_dark_theme
 _TRANSPARENT = "background: transparent;"
 _THEME = default_dark_theme()
 
+log = logging.getLogger(__name__)
+
+
+class _VerifyWorker(QObject):
+    """Runs in a QThread — executes the blocking ~3s verify_hwmon_pwm call off
+    the UI thread so the rest of the GUI (polling, splitter, menus) keeps
+    reacting during the hardware probe."""
+
+    verify_ok = Signal(object)  # HwmonVerifyResult
+    verify_error = Signal(str, str)  # category ('unavailable'|'error'), message
+
+    def __init__(self, socket_path: str) -> None:
+        super().__init__()
+        self._socket_path = socket_path
+        self._client: DaemonClient | None = None
+
+    def _ensure_client(self) -> DaemonClient:
+        from control_ofc.api.client import DaemonClient as _DaemonClient
+
+        if self._client is None:
+            self._client = _DaemonClient(socket_path=self._socket_path)
+        return self._client
+
+    @Slot(str, str)
+    def do_verify(self, header_id: str, lease_id: str) -> None:
+        from control_ofc.api.errors import DaemonError, DaemonUnavailable
+
+        try:
+            result = self._ensure_client().verify_hwmon_pwm(header_id, lease_id)
+            self.verify_ok.emit(result)
+        except DaemonUnavailable:
+            self.verify_error.emit("unavailable", "Daemon unavailable during verify")
+        except DaemonError as e:
+            self.verify_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Verify worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.verify_error.emit("unavailable", "Connection lost during verify")
+
+    def shutdown(self) -> None:
+        if self._client is not None:
+            with contextlib.suppress(Exception):
+                self._client.close()
+            self._client = None
+
 
 def _transparent_label(text: str, object_name: str, *, bold: bool = False) -> QLabel:
     """Create a QLabel with transparent background, suitable for use inside Card frames."""
@@ -66,6 +116,10 @@ def _transparent_label(text: str, object_name: str, *, bold: bool = False) -> QL
 
 class DiagnosticsPage(QWidget):
     """System health, device discovery, lease state, logs, and support bundle export."""
+
+    # Main-thread signal that fires a queued connection to the verify worker
+    # (running on its own QThread) so the ~3s hardware probe never blocks the UI.
+    _verify_request = Signal(str, str)
 
     def __init__(
         self,
@@ -82,6 +136,10 @@ class DiagnosticsPage(QWidget):
         self._diag = diagnostics_service or DiagnosticsService(
             state, settings_service=settings_service, profile_service=profile_service
         )
+
+        # Lazy-created verify worker + thread (see _ensure_verify_worker).
+        self._verify_thread: QThread | None = None
+        self._verify_worker: _VerifyWorker | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 16, 24, 16)
@@ -1043,33 +1101,91 @@ class DiagnosticsPage(QWidget):
         self._verify_btn.setText("Testing...")
         self._verify_result_label.setVisible(False)
 
-        try:
-            from control_ofc.api.errors import DaemonError, DaemonUnavailable
-
-            result = self._client.verify_hwmon_pwm(header_id, lease_id)
-            self._show_verify_result(result)
-        except DaemonUnavailable:
-            self._verify_result_label.setText("Daemon unavailable during verify")
-            self._verify_result_label.setVisible(True)
-        except DaemonError as e:
-            self._verify_result_label.setText(f"Verify error: {e.message}")
-            self._verify_result_label.setVisible(True)
-        finally:
+        if not self._ensure_verify_worker():
+            # No socket path available (defensive — _client is not None at this
+            # point, but the helper may fail to extract it in exotic configs).
             self._verify_btn.setEnabled(True)
             self._verify_btn.setText("Test PWM Control")
+            self._verify_result_label.setText("Verify unavailable: no socket path")
+            self._verify_result_label.setVisible(True)
+            return
+
+        # Fire queued signal to worker running on its own thread.
+        self._verify_request.emit(header_id, lease_id)
+
+    def _ensure_verify_worker(self) -> bool:
+        """Create the verify worker + thread on first use. Returns False if no
+        socket path is available to construct the worker."""
+        if self._verify_worker is not None:
+            return True
+        socket_path = getattr(self._client, "_socket_path", None)
+        if not socket_path:
+            return False
+
+        self._verify_thread = QThread(self)
+        self._verify_worker = _VerifyWorker(socket_path)
+        self._verify_worker.moveToThread(self._verify_thread)
+
+        # Main thread → worker thread via queued connection.
+        self._verify_request.connect(
+            self._verify_worker.do_verify, Qt.ConnectionType.QueuedConnection
+        )
+        # Worker thread → main thread via queued connections.
+        self._verify_worker.verify_ok.connect(
+            self._on_verify_ok, Qt.ConnectionType.QueuedConnection
+        )
+        self._verify_worker.verify_error.connect(
+            self._on_verify_error, Qt.ConnectionType.QueuedConnection
+        )
+
+        self._verify_thread.start()
+        return True
+
+    @Slot(object)
+    def _on_verify_ok(self, result: HwmonVerifyResult) -> None:
+        self._show_verify_result(result)
+        self._verify_btn.setEnabled(True)
+        self._verify_btn.setText("Test PWM Control")
+
+    @Slot(str, str)
+    def _on_verify_error(self, category: str, message: str) -> None:
+        if category == "unavailable":
+            self._verify_result_label.setText(message or "Daemon unavailable during verify")
+        else:
+            self._verify_result_label.setText(f"Verify error: {message}")
+        self._verify_result_label.setVisible(True)
+        self._verify_btn.setEnabled(True)
+        self._verify_btn.setText("Test PWM Control")
+
+    def cleanup(self) -> None:
+        """Stop the verify worker thread. Called from main window closeEvent."""
+        if self._verify_worker is not None:
+            self._verify_worker.shutdown()
+        if self._verify_thread is not None:
+            self._verify_thread.quit()
+            if not self._verify_thread.wait(2000):
+                log.warning("Verify thread did not stop within 2s, terminating")
+                self._verify_thread.terminate()
+                self._verify_thread.wait(1000)
+            self._verify_thread = None
+            self._verify_worker = None
 
     def _show_verify_result(self, result: HwmonVerifyResult) -> None:
-        """Display the result of a PWM verification test."""
+        """Display the result of a PWM verification test.
+
+        Keys match the daemon's classify_verify_result return strings exactly
+        (see daemon/src/api/handlers/hwmon_ctl.rs).
+        """
         status_map = {
             "effective": (
                 "PWM control is working correctly",
                 "SuccessChip",
             ),
-            "reverted": (
+            "pwm_enable_reverted": (
                 "BIOS/EC reverted pwm_enable — fan control is being overridden",
                 "CriticalChip",
             ),
-            "clamped": (
+            "pwm_value_clamped": (
                 "PWM value was clamped or ignored by hardware",
                 "WarningChip",
             ),
@@ -1110,13 +1226,7 @@ class DiagnosticsPage(QWidget):
             if self._diag.last_hw_diagnostics:
                 board_vendor = self._diag.last_hw_diagnostics.board.vendor
 
-        daemon_result = result.result
-        if daemon_result == "reverted":
-            daemon_result = "pwm_enable_reverted"
-        elif daemon_result == "clamped":
-            daemon_result = "pwm_value_clamped"
-
-        guidance = verification_guidance(daemon_result, board_vendor, chip_name)
+        guidance = verification_guidance(result.result, board_vendor, chip_name)
         if guidance:
             lines.append("")
             lines.append(f"Next step: {guidance}")

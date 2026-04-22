@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWizardPage,
 )
 
-from control_ofc.api.errors import DaemonError
+from control_ofc.api.errors import DaemonError, DaemonUnavailable
 from control_ofc.api.models import ConnectionState
 from control_ofc.constants import THERMAL_ABORT_C
 
@@ -230,7 +230,7 @@ class FanConfigWizard(QWizard):
                 else:
                     return "hwmon lease not held — cannot stop fan"
             return None
-        except Exception as e:
+        except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
             log.warning("Failed to stop fan %s: %s", fan_id, e)
             return str(e)
 
@@ -252,7 +252,7 @@ class FanConfigWizard(QWizard):
             else:
                 if self._lease_service and self._lease_service.is_held:
                     self._client.set_hwmon_pwm(fan_id, restore_pct, self._lease_service.lease_id)
-        except Exception as e:
+        except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
             log.warning("Failed to restore fan %s: %s", fan_id, e)
 
     def check_thermal_safe(self) -> bool:

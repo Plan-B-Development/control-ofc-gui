@@ -196,10 +196,15 @@ Error codes and HTTP statuses:
 - 400 `validation_error` (source: `"validation"`, retryable: false)
 - 400/403 `lease_required` (source: `"validation"`, retryable: false) — 400 for invalid/expired lease ID, 403 for missing lease on write
 - 404 `not_found` (source: `"validation"`, retryable: false)
-- 409 `lease_already_held` (source: `"validation"`, retryable: false)
+- 409 `lease_already_held` (source: `"validation"`, retryable: false) — surfaced only by hwmon PWM writes when another owner holds the lease; `POST /hwmon/lease/take` unconditionally force-takes and never returns this code
 - 409 `thermal_abort` (source: `"hardware"`, retryable: true) — calibration aborted due to high temperature
 - 500 `internal_error` (source: `"internal"`, retryable: true)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)
+- 503 `persistence_failed` (source: `"internal"`, retryable: true) — returned by `POST /config/*` when the daemon cannot persist the runtime configuration file
+
+## Trust model
+
+The daemon listens on `/run/control-ofc/control-ofc.sock` with mode 0666 so a non-root GUI can connect (DEC-049). There is no authentication on the socket — any local user can issue any API call, including `POST /hwmon/lease/take`, which force-evicts the current holder. This is intentional: the project assumes a trust-the-local-machine model. If the socket is ever proxied to the network, that proxy is responsible for authentication and for rejecting lease-take from untrusted callers.
 
 The API client must normalize this into an internal error object that includes:
 - endpoint

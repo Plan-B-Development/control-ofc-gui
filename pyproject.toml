@@ -1,6 +1,6 @@
 [project]
 name = "control-ofc-gui"
-version = "1.5.1"
+version = "1.5.2"
 description = "Desktop fan control GUI for the Control-OFC daemon"
 requires-python = ">=3.12"
 license = "MIT"
@@ -15,7 +15,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-    "pytest-asyncio>=0.23",
     "pytest-qt>=4.3",
     "ruff>=0.4",
 ]
@@ -33,7 +32,6 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-asyncio_mode = "auto"
 
 [build-system]
 requires = ["setuptools>=68.0"]

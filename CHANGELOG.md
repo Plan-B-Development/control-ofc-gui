@@ -1,5 +1,60 @@
 # Changelog
 
+## [1.5.2] — 2026-04-22
+
+Audit remediation. GUI-side fixes pair with daemon v1.4.2 for the
+contract-level change (P1 verify strings) and the hwmon-phase `gui_active`
+extension (DEC-093). Requires **daemon >= 1.4.0**; the Arch PKGBUILD now pins
+this explicitly.
+
+### Fixed
+- **P1: Verify result strings never matched daemon output.** The diagnostics
+  PWM verify panel's `status_map` used short keys (`"reverted"`, `"clamped"`)
+  that the daemon never emits — every real BIOS/EC override was being
+  displayed as `"Unknown result: pwm_enable_reverted"`. Fixed the keys to the
+  daemon's actual return strings (`pwm_enable_reverted`, `pwm_value_clamped`)
+  and removed the dead pre-lookup remap. Replaced the false-positive test with
+  one that uses the daemon's real payload, and added a missing regression for
+  the clamped case.
+- **P2: Polling fallback could emit partial success.** When the batch `/poll`
+  endpoint failed and individual fallback calls raised mid-way, `status_ready`
+  was emitted before `sensors`/`fans` were fetched — downstream freshness
+  calculations briefly reported a fresh status with stale fans. The fallback
+  now fetches all three before emitting so each cycle is atomic.
+- **P3: Narrow bare excepts in fan wizard.** `FanWizard.stop_fan` and
+  `FanWizard.restore_fan` caught `Exception` broadly; now they catch
+  `(DaemonError, DaemonUnavailable, OSError, ConnectionError)` so unrelated
+  bugs are no longer silently suppressed.
+- **P3: pytest warning on unknown `asyncio_mode`.** Removed the unused
+  `asyncio_mode = "auto"` setting and the corresponding `pytest-asyncio` dev
+  dependency — no tests use asyncio.
+
+### Changed
+- **P2: Move `verify_hwmon_pwm` off the UI thread.** The 3-second hardware
+  probe ran synchronously on the Qt main thread, freezing the rest of the GUI
+  (polling, splitter, menus). It now runs on a dedicated `_VerifyWorker`
+  QThread that emits `verify_ok`/`verify_error` signals back to the main
+  thread. `DiagnosticsPage.cleanup()` stops the thread on window close.
+- **Arch PKGBUILD pins the daemon dep.** `depends=` now lists
+  `control-ofc-daemon>=1.4.0` so installing an older daemon with this GUI
+  version fails at install time instead of degrading silently.
+- **Contract documentation.** `docs/08_API_Integration_Contract.md` and
+  `CLAUDE.md` now list `persistence_failed` (503), annotate
+  `lease_already_held` as hwmon-PWM-write-only, and add an explicit "Trust
+  model" section noting that the 0666 socket relies on a trust-the-local-
+  machine assumption.
+
+### Added
+- **DEC-093 — Profile engine defers hwmon writes when GUI is active.** Also
+  captured in the new daemon `DECISIONS.md`. The hwmon phase now mirrors the
+  OpenFan (DEC-074) and GPU (DEC-071) phases by skipping writes when the GUI
+  has written in the last 30s, closing a narrow startup/lease-lapse race.
+- **Daemon-side unit coverage for `gui_active()`** (three tests) and a
+  missing `/poll` integration test that locks in the top-level response shape
+  the GUI consumes.
+- **Regression tests** for the verify-string fix, the polling fallback
+  atomicity, and the verify worker-thread re-enable paths.
+
 ## [1.5.1] — 2026-04-22
 
 ### Changed
