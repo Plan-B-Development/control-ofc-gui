@@ -9,6 +9,57 @@
   needs it (e.g., 15-row modules list no longer cramped while 2-row chip table
   wastes space).
 
+## [1.5.0] — 2026-04-21
+
+Table UX polish, vendor/sensor documentation, and audit remediation.
+
+### Added
+- **Resizable table columns across the app.** Diagnostics (4 tables),
+  dashboard fan table, warnings dialog, fan wizard (2 tables), and curve
+  editor now use `Interactive` resize mode with `stretchLastSection`, so
+  users can drag column borders.
+- **Diagnostics Fans tab: vertical splitter** between Hardware Readiness and
+  Fan Status, non-collapsible, matching the controls page pattern.
+- **Rich tooltips on diagnostics tables.** Header tooltips on all three
+  tables (chips, modules, fans); per-cell tooltips on fan rows surface
+  chip/driver context for hwmon fans and GPU context for `amd_gpu` fans.
+- **Clickable driver documentation links** in the chip guidance section
+  (rendered as rich text HTML). A Hardware Compatibility Guide link appears
+  when hardware chips are detected.
+- **New user-facing docs:** `docs/21_AMD_Motherboard_Fan_Control_Guide.md`
+  (vendor-by-vendor fan control setup, drivers, quirks, troubleshooting) and
+  `docs/22_Sensor_Interpretation_Deep_Dive.md` (sensor class deep dive,
+  confidence model, hwmon quirks explained). Reading order updated in doc 00.
+- **23 new tests** covering resize modes, splitter properties, header/cell
+  tooltips, rich-text format, and doc link visibility.
+
+### Changed
+- **Doc 19 (ASRock correction)** and **doc 20** updated with NCT6686D notes,
+  MSI 7-point curve, Gigabyte MMIO/force_id/ACPI fix options, nct6683 AMD
+  board list, source label enumeration, SB-TSI address mapping, and
+  sensors-detect issue references.
+
+### Fixed
+- **P0-1: APP_VERSION drift.** Replaced hardcoded version constant with
+  `importlib.metadata` lookup so the GUI version stays in sync with
+  `pyproject.toml` (was stuck at 1.0.5 for 6 releases).
+- **P0-2: Control loop lease acquisition.** Check `acquire()` return value
+  and proceed on success instead of unconditionally skipping the first
+  hwmon write cycle. Lease is now acquired proactively at `start()`.
+- **P1-3 / P1-4 / P2-4: Narrow exception handlers.** Fan wizard restore,
+  settings import, and 9 handlers in the settings page now catch specific
+  exception tuples (`DaemonError`, `OSError`, `JSONDecodeError`,
+  `UnicodeDecodeError`) instead of bare `Exception`, and include error
+  details in log messages.
+- **P2-2: Warning dismissal.** Stop clearing warning first-seen timestamps
+  on dismiss; let the existing pruning in `_update_warnings()` handle stale
+  key removal.
+- **P2-chart: Dashboard cleanup.** Added `dashboard_page.cleanup()` to
+  release the chart `SignalProxy` on app shutdown, wired from
+  `MainWindow.closeEvent`.
+- **P3-4: V1 profile migration log level.** Lowered duplicate-fan log from
+  warning to info.
+
 ## [1.4.0] — 2026-04-21
 
 Sensor interpretation knowledge base and session tracking for dashboard
