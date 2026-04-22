@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWizardPage,
 )
 
+from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import ConnectionState
 from control_ofc.constants import THERMAL_ABORT_C
 
@@ -194,8 +195,8 @@ class FanConfigWizard(QWizard):
         for target in self._targets:
             try:
                 self.restore_fan(target)
-            except Exception:
-                log.warning("Failed to restore fan %s", target["id"])
+            except DaemonError as e:
+                log.warning("Failed to restore fan %s: %s", target["id"], e.message)
 
     @staticmethod
     def _parse_openfan_channel(fan_id: str) -> int | None:
