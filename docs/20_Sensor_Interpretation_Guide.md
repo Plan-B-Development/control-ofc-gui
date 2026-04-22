@@ -1,5 +1,10 @@
 # 20 — Sensor Interpretation Guide
 
+**Last updated:** 2026-04-22
+
+**See also:** `22_AMD_Sensor_Interpretation_Deep_Dive.md` for a comprehensive
+user-facing explanation of sensor classes, confidence levels, and quirks.
+
 ## Purpose
 
 This document defines the sensor classification model used by the GUI to provide
@@ -64,6 +69,13 @@ accessible CPU temperature feed over SMBus. It is a separate data path from
 k10temp and may report different values. The GUI notes that this is "not the
 same source as k10temp Tdie."
 
+The SB-TSI address is normally `98h` for socket 0 and `90h` for socket 1
+(8-bit I2C addresses; 7-bit equivalents are 0x4C and 0x48), but may vary
+with hardware address select pins. On desktop Ryzen boards (single-socket),
+98h is standard. SB-TSI readings often surface through Super I/O chip
+drivers (nct6683, nct6775) as labels like `AMD TSI Addr 98h` rather than
+through a standalone `sbtsi_temp` device.
+
 ### nct6775 family (Nuvoton Super I/O)
 
 Kernel docs: https://docs.kernel.org/hwmon/nct6775.html
@@ -90,6 +102,9 @@ or may not be accurate.
 
 Kernel docs: https://docs.kernel.org/hwmon/nct6683.html
 
+AMD boards confirmed working in kernel documentation: ASRock X570, ASRock X670E,
+ASRock B650 Steel Legend WiFi, MSI B550, MSI X670-P, MSI X870E.
+
 These chips support `temp_type` codes that provide additional classification
 signal beyond the label alone.
 
@@ -108,6 +123,15 @@ Label-based rules (applied when temp_type is absent or unknown):
 | Contains `SMBus` | `smbus_device` | medium |
 | Contains `Virtual` | `virtual` | low |
 | `Local` | `chip_local` | medium |
+
+Full source label enumeration from the kernel source (`nct6683.c`):
+`Local`, `Diode 0-2`, `Thermistor 0-13`, `AMD TSI Addr 90h-9dh`,
+`PECI 0.0-3.1`, `PECI DIMM 0-3`, `SMBus 0-5`, `DIMM 0-3`, `Virtual 0-7`.
+
+The temp_type codes are mapped from source ranges in the kernel:
+0x02-0x07 -> type 3 (diode), 0x08-0x18 -> type 4 (thermistor),
+0x42-0x49 -> type 5 (AMD TSI), 0x20-0x2b -> type 6 (Intel PECI).
+Reference: `drivers/hwmon/nct6683.c`, `get_temp_type()` function.
 
 ### it87 family (ITE Super I/O)
 
@@ -247,6 +271,17 @@ hardware changes to configure ISA-bus Super I/O drivers (nct6775, it87, etc.).
 Until it runs, these drivers may not load and their sensors are invisible.
 The daemon ships `/etc/modules-load.d/control-ofc.conf` to auto-load common
 drivers, but some configurations still require explicit `sensors-detect`.
+
+`sensors-detect` maintains its own chip ID database, updated independently
+of the kernel. New chips may be supported by the kernel driver before
+`sensors-detect` recognises them. For example, lm-sensors issue #521 reports
+`sensors-detect` showing "unknown chip with ID 0xd592" on an MSI PRO Z790-P
+WIFI DDR4, while manually loading `nct6683` works correctly.
+
+References:
+- https://github.com/lm-sensors/lm-sensors/issues/521
+- https://github.com/lm-sensors/lm-sensors/issues/499
+- https://github.com/lm-sensors/lm-sensors/issues/454
 
 ## Board-specific override database
 
