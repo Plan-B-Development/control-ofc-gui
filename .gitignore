@@ -10,6 +10,8 @@ venv/
 .ruff_cache/
 .pytest_cache/
 .mypy_cache/
+.coverage
+htmlcov/
 *.so
 
 # makepkg build artifacts

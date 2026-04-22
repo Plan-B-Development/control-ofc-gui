@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.5.1] — 2026-04-22
+
+### Changed
+- **Diagnostics Fans tab: resizable tables.** The chip table and kernel modules
+  table in the Hardware Readiness section are now separated by a draggable
+  splitter instead of fixed max heights. Gives more space to whichever table
+  needs it (e.g., 15-row modules list no longer cramped while 2-row chip table
+  wastes space).
+
 ## [1.4.0] — 2026-04-21
 
 Sensor interpretation knowledge base and session tracking for dashboard
