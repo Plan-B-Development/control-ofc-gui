@@ -442,11 +442,18 @@ class ProfileService:
     def active_id(self) -> str:
         return self._active_id
 
-    def load(self) -> None:
-        """Load profiles from disk. Create defaults if none exist."""
+    def load(self) -> list[tuple[str, str]]:
+        """Load profiles from disk. Create defaults if none exist.
+
+        Returns a list of ``(path, error_message)`` tuples for every profile
+        file that failed to parse. The caller is expected to surface these
+        via ``AppState.add_warning`` so Diagnostics shows the failure — prior
+        to this, corrupted profiles were silently dropped from the UI.
+        """
         d = profiles_dir()
         d.mkdir(parents=True, exist_ok=True)
         loaded = False
+        errors: list[tuple[str, str]] = []
 
         for path in sorted(d.glob("*.json")):
             try:
@@ -460,6 +467,7 @@ class ProfileService:
                 loaded = True
             except Exception as e:
                 log.warning("Failed to load profile %s: %s", path, e)
+                errors.append((str(path), str(e)))
 
         if not loaded:
             for p in default_profiles():
@@ -468,6 +476,8 @@ class ProfileService:
 
         if not self._active_id and self._profiles:
             self._active_id = next(iter(self._profiles))
+
+        return errors
 
     def save_profile(self, profile: Profile) -> None:
         path = profiles_dir() / f"{profile.id}.json"

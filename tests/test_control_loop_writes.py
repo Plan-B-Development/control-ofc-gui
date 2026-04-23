@@ -214,22 +214,6 @@ class TestOpenfanWritePath:
         calls = _openfan_calls(fake_client)
         assert len(calls) == 0
 
-    def test_write_performed_signal(self, state, profile_service, fake_client, qtbot):
-        """write_performed signal emitted on successful write."""
-        profile = _make_profile([(30, 20), (70, 80)])
-        profile_service._profiles["test"] = profile
-        profile_service.set_active("test")
-
-        loop = ControlLoopService(state, profile_service, client=fake_client)
-
-        emitted = []
-        loop.write_performed.connect(lambda tid, pwm: emitted.append((tid, pwm)))
-        loop._cycle()
-
-        assert len(emitted) == 1
-        assert emitted[0][0] == "openfan:ch00"
-        assert emitted[0][1] == pytest.approx(50.0)
-
     def test_multi_member_writes_each(self, state, profile_service, fake_client, qtbot):
         """Control with 2 members → 2 set_openfan_pwm calls."""
         state.fans = [

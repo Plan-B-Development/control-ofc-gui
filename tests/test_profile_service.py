@@ -448,6 +448,46 @@ def test_load_corrupted_json_does_not_crash(tmp_path, monkeypatch):
     assert svc.active_profile is not None
 
 
+def test_load_returns_per_profile_errors(tmp_path, monkeypatch):
+    """P3-4: corrupted profiles must be reported so the GUI can surface them
+    to the user via a Diagnostics warning, not silently swallowed."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    profiles_dir = tmp_path / "control-ofc" / "profiles"
+    profiles_dir.mkdir(parents=True)
+    (profiles_dir / "broken.json").write_text("{not valid json!!!")
+    # A valid profile alongside the broken one so `loaded` is True and we
+    # avoid the defaults-creation fallback (which would obscure the error).
+    valid = {
+        "version": 3,
+        "id": "ok",
+        "name": "ok",
+        "description": "",
+        "controls": [],
+        "curves": [],
+    }
+    (profiles_dir / "ok.json").write_text(__import__("json").dumps(valid))
+
+    svc = ProfileService()
+    errors = svc.load()
+
+    assert len(errors) == 1
+    path, msg = errors[0]
+    assert "broken.json" in path
+    assert msg  # non-empty
+    # The valid profile is still loaded.
+    assert any(p.id == "ok" for p in svc.profiles)
+
+
+def test_load_returns_empty_list_on_clean_load(tmp_path, monkeypatch):
+    """A clean load with no broken files returns an empty error list."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    svc = ProfileService()
+    errors = svc.load()
+
+    assert errors == []
+
+
 def test_from_dict_empty_dict_uses_defaults():
     """from_dict({}) with no fields → valid profile with defaults."""
     p = Profile.from_dict({})

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 
@@ -11,9 +12,8 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from control_ofc.api.client import DaemonClient
-from control_ofc.api.errors import DaemonError
 from control_ofc.constants import APP_NAME, APP_VERSION, DEFAULT_SOCKET_PATH
-from control_ofc.paths import ensure_dirs, profiles_dir, set_path_overrides
+from control_ofc.paths import ensure_dirs, set_path_overrides
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.control_loop import ControlLoopService
@@ -31,34 +31,6 @@ logging.basicConfig(
 )
 
 log = logging.getLogger(__name__)
-
-
-def register_profile_search_dir(client: DaemonClient) -> None:
-    """Tell the daemon where this GUI stores its profiles.
-
-    The daemon defaults to `/etc/control-ofc/profiles` and the root user's
-    XDG dir, which never matches where an unprivileged GUI actually writes
-    profile files. Without this call, `POST /profile/activate` rejects every
-    profile with "profile_path must be within a profile search directory".
-    The daemon endpoint is additive, deduplicated, and persisted to
-    daemon.toml — safe to call on every launch.
-    """
-    dir_path = str(profiles_dir())
-    try:
-        client.update_profile_search_dirs(add=[dir_path])
-        log.info("Registered profile search dir with daemon: %s", dir_path)
-    except DaemonError as exc:
-        log.warning(
-            "Could not register profile search dir %s with daemon: %s",
-            dir_path,
-            exc.message,
-        )
-    except Exception as exc:
-        log.warning(
-            "Unexpected error registering profile search dir %s: %s",
-            dir_path,
-            exc,
-        )
 
 
 def main() -> None:
@@ -107,7 +79,16 @@ def main() -> None:
     state = AppState()
     history = HistoryStore()
     profile_service = ProfileService()
-    profile_service.load()
+    profile_load_errors = profile_service.load()
+    for path, reason in profile_load_errors:
+        # Surface per-profile load failures to Diagnostics so a corrupted
+        # profile is obviously broken, not silently missing from the UI.
+        state.add_warning(
+            level="warning",
+            source="profile_service",
+            message=f"Failed to load profile '{os.path.basename(path)}': {reason}",
+            key=f"profile_load_fail:{path}",
+        )
 
     if splash:
         splash.set_status("splash_status_connecting")
@@ -125,17 +106,10 @@ def main() -> None:
     if not demo_mode:
         client = DaemonClient(socket_path=socket_path)
         polling = PollingService(state, socket_path, history=history)
-        # Register the GUI's profile directory on every (re)connect. Wiring
-        # this to ``capabilities_updated`` covers three cases with one handler:
-        #   • daemon up at startup  → first poll emits → register once
-        #   • daemon down at startup → no-op until daemon appears → register
-        #     on first successful poll (M5: prevents first /profile/activate
-        #     from failing with "profile_path must be within a profile
-        #     search directory")
-        #   • daemon restarts while GUI runs → poll reconnects → capabilities
-        #     re-fetch on next cycle → register again against fresh daemon
-        # The daemon endpoint is additive and deduplicated.
-        state.capabilities_updated.connect(lambda _caps, c=client: register_profile_search_dir(c))
+        # Profile-search-dir registration runs inside the polling worker
+        # thread on first successful poll and after every reconnect
+        # (see PollingService._PollWorker._register_profile_search_dir).
+        # Kept off the Qt main thread so a slow daemon cannot stall the UI.
         lease = LeaseService(client)
         control_loop = ControlLoopService(
             state=state,
