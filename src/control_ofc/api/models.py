@@ -442,6 +442,26 @@ def _filter_fields(cls: type, data: dict) -> dict:
     return {k: v for k, v in data.items() if k in known}
 
 
+def _coalesce_pci_bdf(raw: dict) -> dict:
+    """Accept both ``pci_id`` and ``pci_bdf`` input keys on the same payload.
+
+    The daemon historically emitted ``pci_id`` in ``/capabilities`` and
+    ``pci_bdf`` in ``/diagnostics/hardware`` despite both fields carrying the
+    same PCI BDF address. Daemon is transitioning to emit both names on both
+    endpoints with the legacy name deprecated (M11). Normalising here lets
+    GUI code use either dataclass field indiscriminately during the
+    transition.
+    """
+    if not isinstance(raw, dict):
+        return raw
+    result = dict(raw)
+    if "pci_bdf" in result and "pci_id" not in result:
+        result["pci_id"] = result["pci_bdf"]
+    elif "pci_id" in result and "pci_bdf" not in result:
+        result["pci_bdf"] = result["pci_id"]
+    return result
+
+
 def parse_capabilities(data: dict) -> Capabilities:
     devices = data.get("devices", {})
     features = data.get("features", {})
@@ -453,7 +473,9 @@ def parse_capabilities(data: dict) -> Capabilities:
         ipc_transport=data.get("ipc_transport", ""),
         openfan=OpenfanCapability(**_filter_fields(OpenfanCapability, devices.get("openfan", {}))),
         hwmon=HwmonCapability(**_filter_fields(HwmonCapability, devices.get("hwmon", {}))),
-        amd_gpu=AmdGpuCapability(**_filter_fields(AmdGpuCapability, devices.get("amd_gpu", {}))),
+        amd_gpu=AmdGpuCapability(
+            **_filter_fields(AmdGpuCapability, _coalesce_pci_bdf(devices.get("amd_gpu", {})))
+        ),
         aio_hwmon=UnsupportedCapability(
             **_filter_fields(UnsupportedCapability, devices.get("aio_hwmon", {}))
         ),
@@ -612,7 +634,11 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
     )
 
     gpu_raw = data.get("gpu")
-    gpu = GpuDiagnosticsInfo(**_filter_fields(GpuDiagnosticsInfo, gpu_raw)) if gpu_raw else None
+    gpu = (
+        GpuDiagnosticsInfo(**_filter_fields(GpuDiagnosticsInfo, _coalesce_pci_bdf(gpu_raw)))
+        if gpu_raw
+        else None
+    )
 
     thermal_raw = data.get("thermal_safety", {})
     thermal = ThermalSafetyInfo(**_filter_fields(ThermalSafetyInfo, thermal_raw))

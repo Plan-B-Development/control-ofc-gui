@@ -1,5 +1,64 @@
 # Changelog
 
+## [1.6.0] — 2026-04-23
+
+Contract-mismatch remediation (15-item cross-stack sweep). Pairs with
+**daemon v1.5.0**; the Arch PKGBUILD bumps the daemon pin to `>=1.5.0`
+because the daemon-side tuning-pipeline port (M1) is the feature that keeps
+headless profile-mode output identical to GUI-driven output. See
+`docs/23_Contract_Mismatch_Backlog.md` for the full investigation trail.
+
+### Added
+- **M8: `DaemonClient.activate_profile` accepts `profile_id`.** The client
+  now takes either a `profile_path` (positional or keyword, canonical for
+  on-disk profiles) or a keyword-only `profile_id` (for daemon-bundled
+  profiles). Exactly one is required — `ValueError` otherwise. Matches the
+  daemon's documented `/profile/activate` contract, which already supported
+  both shapes; the GUI previously only emitted `profile_path`.
+- **M9: GPU fan reset on GUI close when no profile is active.**
+  `MainWindow._maybe_reset_gpu_on_close` calls `client.reset_gpu_fan` when
+  `AppState.gui_wrote_gpu_fan` is set and no profile is active, so the GPU
+  doesn't stay pinned to the last commanded PWM after the GUI exits. Skipped
+  when a profile is active — the daemon's profile engine takes over after
+  the 30s GUI-active heartbeat lapses. Uses cached state to avoid a blocking
+  API call during close; failures are logged, not surfaced.
+- **M11 (GUI half): tolerate `pci_id` and `pci_bdf` on both endpoints.**
+  New `_coalesce_pci_bdf` helper in `api/models.py` accepts either PCI
+  field name from `/capabilities.amd_gpu` and `/diagnostics/hardware.gpu`
+  so GUI code can use whichever dataclass field exists during the daemon's
+  transition window. Paired with the daemon emitting both names.
+- **`docs/23_Contract_Mismatch_Backlog.md`** — investigation working doc
+  tracking all 15 items through to shipped status.
+- **Regression test: `tests/test_gpu_reset_on_close.py`** — covers the
+  M9 reset-on-close policy branches.
+
+### Changed
+- **M4: Lease acquisition gated on `hwmon.present`.**
+  `ControlLoopService._maybe_acquire_lease` no longer asks for a lease on
+  OpenFan-only or GPU-only systems where the daemon would return
+  `503 hardware_unavailable` every cycle. Acquisition retries automatically
+  when hwmon transitions from absent → present (e.g. after
+  `/hwmon/rescan` finds a controller).
+- **M5: Profile search dir re-registers on reconnect.** Registration is
+  now wired to `state.capabilities_updated` so it runs after every
+  successful poll — covering daemon-up-at-startup, daemon-down-at-startup,
+  and daemon-restart-while-GUI-runs. Previously a one-shot at startup
+  could leave the first `/profile/activate` failing with
+  "profile_path must be within a profile search directory".
+- **M10: Demo `min_pwm_percent` 30 → 0.** Demo hwmon headers now match
+  the daemon's real behaviour (`min_pwm_percent: 0` for all; per-profile
+  soft floors are GUI-side).
+- **M14: `test_acquire_failure` uses a reachable error code.** Switched
+  from `lease_already_held` (which `POST /hwmon/lease/take` never returns —
+  it force-takes) to `hardware_unavailable` so the test exercises a real
+  failure path.
+- **Docs refresh (M2/M3/M6/M7/M15).** `docs/08_API_Integration_Contract.md`
+  and `docs/14_Risks_Gaps_and_Future_Work.md` updated: stale PWM-floor
+  claims replaced with "pass-through; safety floors are GUI-side",
+  `stall_detected` documented in `/fans` fields, `chip_name` annotated as
+  always-present (`amdgpu` for GPU sources), `openfan.channels` (=10)
+  added to `/capabilities` notable fields.
+
 ## [1.5.2] — 2026-04-22
 
 Audit remediation. GUI-side fixes pair with daemon v1.4.2 for the

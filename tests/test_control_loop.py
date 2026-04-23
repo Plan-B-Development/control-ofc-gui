@@ -381,6 +381,83 @@ class TestStartStop:
         assert loop.is_running is False
 
 
+class TestLeaseGating:
+    """Lease acquisition is gated on capabilities.hwmon.present (M4)."""
+
+    def _make_caps(self, hwmon_present: bool):
+        from control_ofc.api.models import (
+            Capabilities,
+            FeatureFlags,
+            HwmonCapability,
+            OpenfanCapability,
+            SafetyLimits,
+        )
+
+        return Capabilities(
+            openfan=OpenfanCapability(present=True, channels=10, write_support=True),
+            hwmon=HwmonCapability(present=hwmon_present, write_support=hwmon_present),
+            features=FeatureFlags(),
+            limits=SafetyLimits(),
+        )
+
+    def test_start_skips_lease_when_hwmon_absent(self, state, profile_service, qtbot):
+        """OpenFan-only or GPU-only systems must not try to acquire the lease."""
+        state.capabilities = self._make_caps(hwmon_present=False)
+        lease = MagicMock()
+        lease.is_held = False
+        lease.lease_lost = MagicMock()
+        lease.lease_lost.connect = MagicMock()
+
+        loop = ControlLoopService(state, profile_service, lease_service=lease)
+        loop.start()
+
+        lease.acquire.assert_not_called()
+
+    def test_start_acquires_lease_when_hwmon_present(self, state, profile_service, qtbot):
+        state.capabilities = self._make_caps(hwmon_present=True)
+        lease = MagicMock()
+        lease.is_held = False
+        lease.lease_lost = MagicMock()
+        lease.lease_lost.connect = MagicMock()
+
+        loop = ControlLoopService(state, profile_service, lease_service=lease)
+        loop.start()
+
+        lease.acquire.assert_called_once()
+
+    def test_start_skips_when_capabilities_not_yet_known(self, state, profile_service, qtbot):
+        """If capabilities haven't arrived yet, we must not blindly acquire."""
+        state.capabilities = None
+        lease = MagicMock()
+        lease.is_held = False
+        lease.lease_lost = MagicMock()
+        lease.lease_lost.connect = MagicMock()
+
+        loop = ControlLoopService(state, profile_service, lease_service=lease)
+        loop.start()
+
+        lease.acquire.assert_not_called()
+
+    def test_capabilities_update_acquires_lease_when_hwmon_becomes_present(
+        self, state, profile_service, qtbot
+    ):
+        """If hwmon appears after startup (e.g. rescan), lease is acquired."""
+        state.capabilities = self._make_caps(hwmon_present=False)
+        lease = MagicMock()
+        lease.is_held = False
+        lease.lease_lost = MagicMock()
+        lease.lease_lost.connect = MagicMock()
+
+        loop = ControlLoopService(state, profile_service, lease_service=lease)
+        loop.start()
+        assert lease.acquire.call_count == 0
+
+        # Hwmon becomes available (e.g. after rescan)
+        state.set_capabilities(self._make_caps(hwmon_present=True))
+
+        assert lease.acquire.call_count == 1
+
+
 class TestManualModeControl:
     """Logical control in manual mode applies fixed output."""
 

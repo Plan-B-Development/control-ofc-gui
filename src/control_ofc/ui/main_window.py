@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
 
 from control_ofc.api.client import DaemonClient
+from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import ConnectionState, OperationMode
 from control_ofc.constants import PAGE_DASHBOARD, POLL_INTERVAL_MS
 from control_ofc.services.app_settings_service import AppSettingsService
@@ -23,6 +26,8 @@ from control_ofc.ui.pages.settings_page import SettingsPage
 from control_ofc.ui.sidebar import Sidebar
 from control_ofc.ui.status_banner import StatusBanner
 from control_ofc.ui.widgets.error_banner import ErrorBanner
+
+log = logging.getLogger(__name__)
 
 
 class MainWindow(QWidget):
@@ -248,7 +253,35 @@ class MainWindow(QWidget):
             self._demo_timer.stop()
         if hasattr(self, "_control_loop") and self._control_loop is not None:
             self._control_loop.shutdown()
+        self._maybe_reset_gpu_on_close()
         self.dashboard_page.cleanup()
         if hasattr(self, "diagnostics_page") and self.diagnostics_page is not None:
             self.diagnostics_page.cleanup()
         super().closeEvent(event)
+
+    def _maybe_reset_gpu_on_close(self) -> None:
+        """Reset the GPU fan to automatic when the GUI drove it and no
+        profile is active to keep driving it after we exit (M9).
+
+        When a profile is active, the daemon's profile engine takes over
+        after the GUI's 30s heartbeat lapses, so there's nothing to reset.
+        Uses cached ``active_profile_name`` — a blocking API call here could
+        hang the close. Best-effort: failures are logged, not surfaced.
+        """
+        if self._demo_mode or not self._client:
+            return
+        if not self._state.gui_wrote_gpu_fan:
+            return
+        if self._state.active_profile_name:
+            return
+        caps = self._state.capabilities
+        if not caps or not caps.amd_gpu or not caps.amd_gpu.present:
+            return
+        gpu_id = caps.amd_gpu.pci_id
+        if not gpu_id:
+            return
+        try:
+            self._client.reset_gpu_fan(gpu_id)
+            log.info("GPU fan reset to automatic on GUI close (%s)", gpu_id)
+        except (DaemonError, ConnectionError, OSError) as exc:
+            log.debug("GPU reset on close failed (best-effort): %s", exc)

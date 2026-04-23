@@ -185,6 +185,11 @@ class ControlLoopService(QObject):
         if lease_service is not None:
             lease_service.lease_lost.connect(self._on_lease_lost)
 
+        # Acquire the lease whenever hwmon transitions from absent → present
+        # (e.g. after /hwmon/rescan finds a controller). Initial acquisition
+        # in start() is skipped when hwmon is absent.
+        self._state.capabilities_updated.connect(self._on_capabilities_updated)
+
     @property
     def is_running(self) -> bool:
         return self._running
@@ -197,9 +202,27 @@ class ControlLoopService(QObject):
         if not self._running:
             self._running = True
             self._timer.start()
-            if self._lease and not self._lease.is_held:
-                self._lease.acquire()
+            self._maybe_acquire_lease()
             log.info("Control loop started (interval=%dms)", CONTROL_LOOP_INTERVAL_MS)
+
+    def _maybe_acquire_lease(self) -> None:
+        """Acquire the hwmon lease only when hwmon is actually present.
+
+        Avoids spurious "lease lost" warnings on OpenFan-only or GPU-only
+        systems where the daemon returns 503 hardware_unavailable for every
+        lease call.
+        """
+        if not self._lease or self._lease.is_held:
+            return
+        caps = self._state.capabilities
+        if caps is None or caps.hwmon is None or not caps.hwmon.present:
+            return
+        self._lease.acquire()
+
+    def _on_capabilities_updated(self, _caps) -> None:
+        """Retry lease acquisition if hwmon became present after startup."""
+        if self._running:
+            self._maybe_acquire_lease()
 
     def stop(self) -> None:
         if self._running:
@@ -455,6 +478,11 @@ class ControlLoopService(QObject):
 
     def _on_write_completed(self, target_id: str, success: bool) -> None:
         """Handle write result from background worker (runs on main thread)."""
+        # M9: remember that the GUI drove the GPU this session so closeEvent
+        # can reset the fan when no profile is active (daemon would otherwise
+        # leave the fan pinned to the last commanded PWM).
+        if success and target_id.startswith("amd_gpu:") and self._state is not None:
+            self._state.gui_wrote_gpu_fan = True
         if success:
             count = self._write_failure_counts.get(target_id, 0)
             if count > 0:

@@ -197,10 +197,27 @@ class DaemonClient:
         )
         return parse_calibration_result(data)
 
-    def activate_profile(self, profile_path: str) -> ProfileActivateResult:
-        """POST /profile/activate — send a profile to the daemon for activation."""
-        data = self._post("/profile/activate", json={"profile_path": profile_path})
-        return parse_profile_activate(data)
+    def activate_profile(
+        self,
+        profile_path: str | None = None,
+        *,
+        profile_id: str | None = None,
+    ) -> ProfileActivateResult:
+        """POST /profile/activate — activate a profile by path or id.
+
+        Exactly one of ``profile_path`` or ``profile_id`` must be provided.
+        The GUI normally passes ``profile_path`` (canonical for on-disk
+        profiles); ``profile_id`` is supported for daemon-bundled profiles
+        and for symmetry with the daemon's documented contract (M8).
+        """
+        if (profile_path is None) == (profile_id is None):
+            raise ValueError("activate_profile requires exactly one of profile_path or profile_id")
+        payload = (
+            {"profile_path": profile_path}
+            if profile_path is not None
+            else {"profile_id": profile_id}
+        )
+        return parse_profile_activate(self._post("/profile/activate", json=payload))
 
     def set_startup_delay(self, delay_secs: int) -> StartupDelayResult:
         """POST /config/startup-delay — set daemon startup delay (takes effect on restart)."""

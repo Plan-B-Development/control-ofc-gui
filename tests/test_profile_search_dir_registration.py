@@ -90,3 +90,30 @@ class TestRegisterProfileSearchDir:
             assert kwargs["add"] == [str(custom)]
         finally:
             set_path_overrides()
+
+
+class TestReRegisterOnReconnect:
+    """M5: register fires on every capabilities update (initial poll + reconnect).
+
+    Wired via ``state.capabilities_updated`` so daemons that come up after the
+    GUI, or restart while the GUI is running, still get the search dir
+    registered before the next ``/profile/activate`` call.
+    """
+
+    def test_capabilities_update_triggers_register(self, tmp_profiles_dir):
+        """Connecting the signal and emitting capabilities calls register."""
+        from control_ofc.api.models import Capabilities
+        from control_ofc.services.app_state import AppState
+
+        state = AppState()
+        client = MagicMock()
+        state.capabilities_updated.connect(lambda _caps, c=client: register_profile_search_dir(c))
+
+        # First connect — e.g. initial poll succeeds and capabilities arrive.
+        state.set_capabilities(Capabilities(daemon_version="1.4.2"))
+        assert client.update_profile_search_dirs.call_count == 1
+
+        # Reconnect — e.g. daemon restarts, next successful poll re-emits
+        # capabilities_ready, which hits state.set_capabilities again.
+        state.set_capabilities(Capabilities(daemon_version="1.4.2"))
+        assert client.update_profile_search_dirs.call_count == 2
