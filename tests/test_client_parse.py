@@ -10,6 +10,8 @@ from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import (
     ProfileSearchDirsResult,
     StartupDelayResult,
+    parse_capabilities,
+    parse_hardware_diagnostics,
     parse_profile_search_dirs,
     parse_startup_delay,
 )
@@ -148,3 +150,66 @@ class TestParseProfileSearchDirs:
         result = parse_profile_search_dirs(data)
         assert result.updated is True
         assert result.search_dirs == []
+
+
+# ---------------------------------------------------------------------------
+# M11: pci_id / pci_bdf coalescing — both endpoints accept either name
+# ---------------------------------------------------------------------------
+
+
+class TestPciFieldCoalescing:
+    """Daemon is transitioning to emit both names on both endpoints (M11)."""
+
+    _BDF = "0000:03:00.0"
+
+    def _caps_payload(self, **gpu_overrides) -> dict:
+        gpu: dict = {
+            "present": True,
+            "model_name": "RX 9070 XT",
+            "display_label": "9070XT",
+            "fan_control_method": "pmfw_curve",
+            "fan_write_supported": True,
+        }
+        gpu.update(gpu_overrides)
+        return {
+            "api_version": 1,
+            "devices": {"amd_gpu": gpu},
+        }
+
+    def test_capabilities_accepts_pci_id(self):
+        """Legacy name — what the daemon emits today."""
+        caps = parse_capabilities(self._caps_payload(pci_id=self._BDF))
+        assert caps.amd_gpu.pci_id == self._BDF
+
+    def test_capabilities_accepts_pci_bdf_alias(self):
+        """Forward compatibility: daemon switches to canonical name only."""
+        caps = parse_capabilities(self._caps_payload(pci_bdf=self._BDF))
+        assert caps.amd_gpu.pci_id == self._BDF
+
+    def test_capabilities_prefers_pci_id_when_both_present(self):
+        """During the transition the daemon emits both with the same value."""
+        caps = parse_capabilities(self._caps_payload(pci_id=self._BDF, pci_bdf=self._BDF))
+        assert caps.amd_gpu.pci_id == self._BDF
+
+    def _diag_payload(self, **gpu_overrides) -> dict:
+        gpu: dict = {
+            "pci_device_id": 30032,
+            "pci_revision": 192,
+            "model_name": "RX 9070 XT",
+            "fan_control_method": "pmfw_curve",
+            "overdrive_enabled": True,
+        }
+        gpu.update(gpu_overrides)
+        return {"api_version": 1, "gpu": gpu}
+
+    def test_diagnostics_accepts_pci_bdf(self):
+        """Legacy name — what diagnostics emits today."""
+        result = parse_hardware_diagnostics(self._diag_payload(pci_bdf=self._BDF))
+        assert result.gpu is not None
+        assert result.gpu.pci_bdf == self._BDF
+
+    def test_diagnostics_accepts_pci_id_alias(self):
+        """Forward compatibility when daemon transitions to canonical name."""
+        result = parse_hardware_diagnostics(self._diag_payload(pci_id=self._BDF))
+        assert result.gpu is not None
+        assert result.gpu.pci_bdf == self._BDF

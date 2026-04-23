@@ -98,7 +98,7 @@ _DEMO_HWMON_HEADERS: list[dict] = [
         "pwm_index": 1,
         "supports_enable": True,
         "rpm_available": True,
-        "min_pwm_percent": 30,
+        "min_pwm_percent": 0,
         "max_pwm_percent": 100,
     },
     {
@@ -108,7 +108,7 @@ _DEMO_HWMON_HEADERS: list[dict] = [
         "pwm_index": 3,
         "supports_enable": True,
         "rpm_available": True,
-        "min_pwm_percent": 30,
+        "min_pwm_percent": 0,
         "max_pwm_percent": 100,
     },
 ]

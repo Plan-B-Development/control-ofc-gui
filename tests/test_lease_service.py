@@ -41,8 +41,11 @@ def test_acquire_already_held(mock_client, qtbot):
 
 
 def test_acquire_failure(mock_client, qtbot):
+    # POST /hwmon/lease/take force-takes unconditionally per DEC-049, so the
+    # only realistic failure mode is 503 hardware_unavailable when no hwmon
+    # controller is present (M14).
     mock_client.hwmon_lease_take.side_effect = DaemonError(
-        code="lease_already_held", message="held by other"
+        code="hardware_unavailable", message="no hwmon controller"
     )
     svc = LeaseService(mock_client)
     with qtbot.waitSignal(svc.lease_lost, timeout=1000):

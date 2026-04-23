@@ -55,7 +55,9 @@ def test_demo_hwmon_headers():
     headers = demo.hwmon_headers()
     assert len(headers) >= 1
     assert all(h.id for h in headers)
-    assert headers[0].min_pwm_percent == 30
+    # Daemon sets min_pwm_percent=0 for all headers — safety floors are
+    # GUI-side profile constraints, not per-header hardware limits (M10).
+    assert headers[0].min_pwm_percent == 0
 
 
 def test_demo_status_healthy():

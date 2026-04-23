@@ -59,6 +59,15 @@ This endpoint should drive:
 - settings field validation
 - source-specific labels and messages
 
+Notable fields:
+- `devices.openfan.channels` is always **10** in V1 (OpenFan v1 hardware has
+  10 channels). The field is hardcoded daemon-side — do not assume it can
+  vary per device.
+- `devices.amd_gpu.pci_id` (legacy) and `devices.amd_gpu.pci_bdf` (canonical)
+  both carry the same PCI BDF address during the transition window; GUI
+  parsers accept either name (see `docs/23_Contract_Mismatch_Backlog.md`
+  M11).
+
 ### GET /status
 Use for:
 - top-level health
@@ -81,7 +90,7 @@ Expected fields:
 - value_c
 - source
 - age_ms
-- chip_name (optional) — hwmon driver name from sysfs (e.g. `k10temp`, `nct6798`, `it8689`). Used for sensor classification and tooltip enrichment. Absent for non-hwmon sources.
+- chip_name — hwmon driver name from sysfs (e.g. `k10temp`, `nct6798`, `it8689`). Always present; set to `"amdgpu"` for GPU sources.
 - temp_type (optional, integer) — thermistor type code from `tempN_type` sysfs. Values: 3 = diode, 4 = thermistor, 5 = AMD TSI, 6 = Intel PECI. Absent when the driver does not expose type information.
 
 ### GET /fans
@@ -92,6 +101,7 @@ Expected fields:
 - rpm (optional, omitted when unavailable)
 - last_commanded_pwm (optional, omitted until first write)
 - age_ms
+- stall_detected (optional bool) — daemon-asserted; set when commanded PWM ≥5% but measured RPM is zero for ≥2 cycles. Surfaced by the GUI as an `error`-level warning.
 
 Note: fans do **not** include `label` or `kind` from the daemon. Display names come from: user alias (GUI-owned) > hwmon header label (for hwmon fans) > fan id.
 
@@ -221,12 +231,17 @@ According to the provided daemon notes:
 
 ### OpenFan
 - 0% allowed for max 8s (stop timeout queryable via `GET /capabilities` → `limits.openfan_stop_timeout_s`)
-- 1–19% clamped to 20%
+- PWM 0–100 passed through — no clamping in the daemon. Safety floors are
+  GUI-side profile constraints (see
+  `docs/09_State_Model_Control_Loop_and_Lease_Behaviour.md`).
 - duplicate writes may be coalesced
 
 ### Hwmon
-- chassis: 0% or 20–100% (1–19% clamped to 20%)
-- CPU/pump: 30–100% (0% rejected outright)
+- PWM 0–100 passed through — no per-header floors in the daemon
+  (`min_pwm_percent: 0` on every header). Safety floors are GUI-side profile
+  constraints enforced by `ControlLoopService` and `ThermalSafetyRule`; the
+  daemon only rejects values outside 0–100. See DEC-022 and the
+  "No per-header PWM floors" rule in `CLAUDE.md`.
 - first write per lease auto-sets `pwmN_enable` to manual mode
 - identical writes coalesced at daemon level (DEC-073)
 - lease is required

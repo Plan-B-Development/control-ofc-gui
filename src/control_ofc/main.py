@@ -124,8 +124,18 @@ def main() -> None:
     lease: LeaseService | None = None
     if not demo_mode:
         client = DaemonClient(socket_path=socket_path)
-        register_profile_search_dir(client)
         polling = PollingService(state, socket_path, history=history)
+        # Register the GUI's profile directory on every (re)connect. Wiring
+        # this to ``capabilities_updated`` covers three cases with one handler:
+        #   • daemon up at startup  → first poll emits → register once
+        #   • daemon down at startup → no-op until daemon appears → register
+        #     on first successful poll (M5: prevents first /profile/activate
+        #     from failing with "profile_path must be within a profile
+        #     search directory")
+        #   • daemon restarts while GUI runs → poll reconnects → capabilities
+        #     re-fetch on next cycle → register again against fresh daemon
+        # The daemon endpoint is additive and deduplicated.
+        state.capabilities_updated.connect(lambda _caps, c=client: register_profile_search_dir(c))
         lease = LeaseService(client)
         control_loop = ControlLoopService(
             state=state,
