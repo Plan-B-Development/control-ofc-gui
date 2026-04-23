@@ -23,7 +23,6 @@ This pack is the **working source of truth** for building the Linux-first deskto
 18. `20_Sensor_Interpretation_Guide.md`
 19. `21_AMD_Motherboard_Fan_Control_Guide.md` — vendor-by-vendor setup, drivers, quirks, troubleshooting
 20. `22_AMD_Sensor_Interpretation_Deep_Dive.md` — what sensor readings actually mean and confidence levels
-21. `23_Contract_Mismatch_Backlog.md` — active GUI↔daemon triage backlog from the 2026-04-22 investigation (retire once items ship)
 
 ## Key decisions already made
 - Linux-first desktop app

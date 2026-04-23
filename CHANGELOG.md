@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.6.1] — 2026-04-23
+
+Follow-up audit remediation on v1.6.0. Pairs with **daemon v1.5.1**; daemon
+pin stays `>=1.5.0` because the GPU-error envelope rename is a wire-level
+refinement clients only notice when they route on the envelope code.
+
+### Changed
+- **Profile-search-dir registration runs on the polling worker thread.**
+  Previously wired to `state.capabilities_updated`, which fires on the Qt
+  main thread. On a slow or half-dead daemon the synchronous HTTP call
+  could stall the UI for up to `API_TIMEOUT_S` (10s). The registration
+  now lives inside `PollingService._PollWorker`, running in the same
+  first-poll / reconnect block as `/capabilities`. No user-visible
+  behaviour change other than a responsive UI during daemon hiccups.
+- **Docs: `/sensors/history?last=N` corrected.** Documentation previously
+  described "250 samples max"; the daemon defaults to 250 but caps at
+  1000 server-side. Both values are now documented.
+- **Docs: new and missing error-envelope codes.** `feature_unavailable`
+  (introduced on the daemon side for GPUs without a fan write path) and
+  `too_many_clients` (SSE transport cap) are now documented in
+  `docs/08_API_Integration_Contract.md`.
+
+### Added
+- **Profile load failures surface to Diagnostics.** `ProfileService.load`
+  now returns per-profile `(path, error)` pairs; `main.py` converts each
+  into a `state.add_warning(level="warning", source="profile_service", …)`.
+  A corrupted `~/.local/share/control-ofc-gui/profiles/*.json` is now
+  visibly flagged rather than silently dropped from the UI.
+
+### Removed
+- **`ControlLoopService.write_performed` signal.** Declared, emitted, and
+  tested but never consumed by production UI code. The emission on the
+  async write path was also premature — it fired before the HTTP write
+  actually completed. Deleted along with its test assertion; write
+  success/failure is still tracked via `_on_write_completed` and surfaced
+  as a Diagnostics warning after repeated failures (unchanged).
+
+### Fixed
+- **P1-1 GPU error envelope (paired with daemon 1.5.1).** The daemon now
+  returns HTTP 400 `feature_unavailable` (retryable:false) instead of
+  the contract-violating 400 `hardware_unavailable` (retryable:true) when
+  a GPU exists but has no fan write path. Clients that route on the
+  envelope code must handle the new code as permanent — the condition is
+  non-retryable for that device.
+
 ## [1.6.0] — 2026-04-23
 
 Contract-mismatch remediation (15-item cross-stack sweep). Pairs with

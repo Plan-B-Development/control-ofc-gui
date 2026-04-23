@@ -1,11 +1,6 @@
 # 14 — Risks, Gaps, and Future Work
 
-**Last updated:** 2026-04-21 (v1.1.0 hardware readiness feature)
-
-**Active backlog:** Contract mismatches from the 2026-04-22
-`/investigate-mismatch` sweep are tracked separately in
-[`23_Contract_Mismatch_Backlog.md`](23_Contract_Mismatch_Backlog.md) — items
-there will be moved here once resolved or promoted to permanent limitations.
+**Last updated:** 2026-04-23 (2026-04-22 contract-mismatch sweep folded in)
 
 ## Current Feature Status Matrix
 

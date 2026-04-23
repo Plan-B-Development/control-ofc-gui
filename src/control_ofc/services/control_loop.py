@@ -131,7 +131,6 @@ class ControlLoopService(QObject):
     """Runs the fan control loop on a QTimer."""
 
     status_changed = Signal(ControlLoopStatus)
-    write_performed = Signal(str, float)  # target_id, pwm_percent
     _request_write = Signal(str, int, str)  # target_id, pwm_int, lease_id
 
     def __init__(
@@ -374,7 +373,6 @@ class ControlLoopService(QObject):
             if self._should_write(target_id, desired_pwm):
                 if self._write_target(target_id, desired_pwm):
                     status.targets_active += 1
-                    self.write_performed.emit(target_id, desired_pwm)
                     # Track success (sync path — async path uses _on_write_completed)
                     if self._write_worker is None:
                         self._on_write_completed(target_id, True)

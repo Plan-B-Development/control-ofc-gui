@@ -65,8 +65,8 @@ Notable fields:
   vary per device.
 - `devices.amd_gpu.pci_id` (legacy) and `devices.amd_gpu.pci_bdf` (canonical)
   both carry the same PCI BDF address during the transition window; GUI
-  parsers accept either name (see `docs/23_Contract_Mismatch_Backlog.md`
-  M11).
+  parsers accept either name (see DECISIONS.md DEC-042 and the 2026-04-22
+  contract-mismatch resolution).
 
 ### GET /status
 Use for:
@@ -128,7 +128,8 @@ Reduces per-cycle HTTP overhead from 3 requests to 1.
 GUI falls back to individual endpoints if `/poll` is not available.
 
 ### GET /sensors/history?id=...&last=N
-Returns per-sensor time-series history from the daemon's ring buffer (250 samples max).
+Returns per-sensor time-series history from the daemon's ring buffer.
+`last` defaults to 250 and is capped server-side at 1000 samples per request.
 Used to pre-fill the GUI's `HistoryStore` on first connection so the timeline chart
 shows data immediately instead of starting empty.
 
@@ -204,6 +205,7 @@ All errors use a standard nested envelope:
 
 Error codes and HTTP statuses:
 - 400 `validation_error` (source: `"validation"`, retryable: false)
+- 400 `feature_unavailable` (source: `"validation"`, retryable: false) — the endpoint exists and the addressed device exists, but that device does not support the requested operation. Currently surfaced by GPU fan writes/resets when the GPU has neither a PMFW `fan_curve` nor legacy `pwm1` write path. Distinct from `hardware_unavailable` (transient / retryable) and `validation_error` (malformed request). Permanent for this device — clients must not retry.
 - 400/403 `lease_required` (source: `"validation"`, retryable: false) — 400 for invalid/expired lease ID, 403 for missing lease on write
 - 404 `not_found` (source: `"validation"`, retryable: false)
 - 409 `lease_already_held` (source: `"validation"`, retryable: false) — surfaced only by hwmon PWM writes when another owner holds the lease; `POST /hwmon/lease/take` unconditionally force-takes and never returns this code
@@ -211,6 +213,7 @@ Error codes and HTTP statuses:
 - 500 `internal_error` (source: `"internal"`, retryable: true)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)
 - 503 `persistence_failed` (source: `"internal"`, retryable: true) — returned by `POST /config/*` when the daemon cannot persist the runtime configuration file
+- 503 `too_many_clients` (source: `"internal"`, retryable: true) — `GET /events` SSE stream only; returned when the server-side concurrent-client cap is reached. Not consumed by the V1 GUI, but documented for external clients integrating with SSE.
 
 ## Trust model
 

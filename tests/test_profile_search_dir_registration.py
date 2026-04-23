@@ -7,6 +7,9 @@ to discover on its own. Before this fix, profile activation failed with
 "profile_path must be within a profile search directory" on every fresh
 install. The GUI now calls POST /config/profile-search-dirs during startup
 to teach the daemon where to look.
+
+The registration runs inside the PollingService worker thread (not the Qt
+main thread) so a slow or half-dead daemon cannot stall the UI.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from control_ofc.api.errors import DaemonError, DaemonUnavailable
-from control_ofc.main import register_profile_search_dir
+from control_ofc.services.polling import _PollWorker
 
 
 @pytest.fixture()
@@ -33,9 +36,10 @@ def tmp_profiles_dir(tmp_path, monkeypatch):
 class TestRegisterProfileSearchDir:
     def test_calls_daemon_with_profiles_dir(self, tmp_profiles_dir):
         """On success, the current profiles_dir() is sent to the daemon."""
+        worker = _PollWorker(socket_path="/tmp/nonexistent.sock")
         client = MagicMock()
 
-        register_profile_search_dir(client)
+        worker._register_profile_search_dir(client)
 
         client.update_profile_search_dirs.assert_called_once()
         kwargs = client.update_profile_search_dirs.call_args.kwargs
@@ -43,6 +47,7 @@ class TestRegisterProfileSearchDir:
 
     def test_swallows_daemon_error(self, tmp_profiles_dir, caplog):
         """A DaemonError response must not propagate — startup must continue."""
+        worker = _PollWorker(socket_path="/tmp/nonexistent.sock")
         client = MagicMock()
         client.update_profile_search_dirs.side_effect = DaemonError(
             code="validation_error",
@@ -52,31 +57,31 @@ class TestRegisterProfileSearchDir:
             status=400,
         )
 
-        # Must not raise.
-        register_profile_search_dir(client)
+        worker._register_profile_search_dir(client)
 
         assert "Could not register profile search dir" in caplog.text
 
     def test_swallows_daemon_unavailable(self, tmp_profiles_dir, caplog):
         """Offline daemon at startup is tolerated — polling already handles that."""
+        worker = _PollWorker(socket_path="/tmp/nonexistent.sock")
         client = MagicMock()
         client.update_profile_search_dirs.side_effect = DaemonUnavailable()
 
-        register_profile_search_dir(client)
+        worker._register_profile_search_dir(client)
 
-        # DaemonUnavailable is a subclass of DaemonError, so it hits the same branch.
         assert "Could not register profile search dir" in caplog.text
 
-    def test_swallows_unexpected_exception(self, tmp_profiles_dir, caplog):
-        """Any non-DaemonError exception must also be swallowed with a warning."""
+    def test_swallows_connection_error(self, tmp_profiles_dir, caplog):
+        """Transport-level errors must also be swallowed without propagating."""
+        worker = _PollWorker(socket_path="/tmp/nonexistent.sock")
         client = MagicMock()
-        client.update_profile_search_dirs.side_effect = RuntimeError("boom")
+        client.update_profile_search_dirs.side_effect = ConnectionError("closed")
 
-        register_profile_search_dir(client)
+        worker._register_profile_search_dir(client)
 
-        assert "Unexpected error registering profile search dir" in caplog.text
+        assert "Connection error registering profile search dir" in caplog.text
 
-    def test_respects_path_override(self, tmp_path, monkeypatch):
+    def test_respects_path_override(self, tmp_path):
         """If the user configured a custom profiles dir, that path is registered."""
         from control_ofc.paths import set_path_overrides
 
@@ -84,36 +89,87 @@ class TestRegisterProfileSearchDir:
         custom.mkdir()
         set_path_overrides(profiles_dir=str(custom))
         try:
+            worker = _PollWorker(socket_path="/tmp/nonexistent.sock")
             client = MagicMock()
-            register_profile_search_dir(client)
+            worker._register_profile_search_dir(client)
             kwargs = client.update_profile_search_dirs.call_args.kwargs
             assert kwargs["add"] == [str(custom)]
         finally:
             set_path_overrides()
 
 
-class TestReRegisterOnReconnect:
-    """M5: register fires on every capabilities update (initial poll + reconnect).
-
-    Wired via ``state.capabilities_updated`` so daemons that come up after the
-    GUI, or restart while the GUI is running, still get the search dir
-    registered before the next ``/profile/activate`` call.
+class TestRegistrationRunsInWorkerPollCycle:
+    """P1-3: Registration runs inside the worker's poll() cycle, not on the Qt
+    main thread. Firing on ``_poll_count == 0`` covers both first-poll and
+    reconnect (worker resets _poll_count to 0 when recovering from failure).
     """
 
-    def test_capabilities_update_triggers_register(self, tmp_profiles_dir):
-        """Connecting the signal and emitting capabilities calls register."""
-        from control_ofc.api.models import Capabilities
-        from control_ofc.services.app_state import AppState
+    def test_registration_fires_on_first_successful_poll(self, tmp_profiles_dir, monkeypatch):
+        """Worker.poll() calls update_profile_search_dirs when _poll_count == 0."""
+        from control_ofc.api.models import ActiveProfileInfo, Capabilities, LeaseState
 
-        state = AppState()
+        worker = _PollWorker(socket_path="/tmp/nonexistent.sock")
+
         client = MagicMock()
-        state.capabilities_updated.connect(lambda _caps, c=client: register_profile_search_dir(c))
+        client.capabilities.return_value = Capabilities(daemon_version="1.5.0")
+        client.hwmon_headers.return_value = []
+        client.active_profile.return_value = ActiveProfileInfo(active=False)
+        client.poll.return_value = (MagicMock(), [], [])
+        client.hwmon_lease_status.return_value = LeaseState(held=False)
 
-        # First connect — e.g. initial poll succeeds and capabilities arrive.
-        state.set_capabilities(Capabilities(daemon_version="1.4.2"))
+        monkeypatch.setattr(worker, "_ensure_client", lambda: client)
+
+        worker.poll()
+
+        client.update_profile_search_dirs.assert_called_once()
+        kwargs = client.update_profile_search_dirs.call_args.kwargs
+        assert kwargs["add"] == [str(tmp_profiles_dir)]
+
+    def test_registration_repeats_after_reconnect(self, tmp_profiles_dir, monkeypatch):
+        """On reconnect the worker sets _poll_count=0, triggering a fresh register."""
+        from control_ofc.api.errors import DaemonUnavailable
+        from control_ofc.api.models import ActiveProfileInfo, Capabilities, LeaseState
+
+        worker = _PollWorker(socket_path="/tmp/nonexistent.sock")
+
+        client = MagicMock()
+        client.capabilities.return_value = Capabilities(daemon_version="1.5.0")
+        client.hwmon_headers.return_value = []
+        client.active_profile.return_value = ActiveProfileInfo(active=False)
+        client.poll.return_value = (MagicMock(), [], [])
+        client.hwmon_lease_status.return_value = LeaseState(held=False)
+
+        monkeypatch.setattr(worker, "_ensure_client", lambda: client)
+
+        # First successful poll → registers.
+        worker.poll()
         assert client.update_profile_search_dirs.call_count == 1
 
-        # Reconnect — e.g. daemon restarts, next successful poll re-emits
-        # capabilities_ready, which hits state.set_capabilities again.
-        state.set_capabilities(Capabilities(daemon_version="1.4.2"))
+        # Second poll — still connected — must NOT re-register.
+        worker.poll()
+        assert client.update_profile_search_dirs.call_count == 1
+
+        # Simulate a full disconnect: both the batch and the fallback
+        # individual endpoints raise, so the worker's outer DaemonError
+        # handler fires (mirroring a daemon that stopped listening).
+        client.poll.side_effect = DaemonUnavailable()
+        client.status.side_effect = DaemonUnavailable()
+        client.sensors.side_effect = DaemonUnavailable()
+        client.fans.side_effect = DaemonUnavailable()
+        worker.poll()
+        assert client.update_profile_search_dirs.call_count == 1
+
+        # Clear the error to simulate the daemon coming back.
+        client.poll.side_effect = None
+        client.status.side_effect = None
+        client.sensors.side_effect = None
+        client.fans.side_effect = None
+        client.poll.return_value = (MagicMock(), [], [])
+
+        # Step through enough cycles to cover the exponential backoff skip,
+        # the recovery poll (which resets _poll_count to 0), and the next
+        # cycle where register fires again.
+        for _ in range(5):
+            worker.poll()
+
         assert client.update_profile_search_dirs.call_count == 2

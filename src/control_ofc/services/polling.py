@@ -22,6 +22,7 @@ from control_ofc.api.models import (
     OperationMode,
 )
 from control_ofc.constants import CAPABILITIES_REFRESH_INTERVAL_S, POLL_INTERVAL_MS
+from control_ofc.paths import profiles_dir
 from control_ofc.services.app_state import AppState
 from control_ofc.services.history_store import HistoryStore
 
@@ -81,6 +82,14 @@ class _PollWorker(QObject):
                 except (DaemonError, ConnectionError, OSError):
                     # Best-effort: older daemons may not support active_profile endpoint.
                     log.warning("Failed to query daemon active profile — GUI may be out of sync")
+                # Register the GUI's profile directory with the daemon so
+                # POST /profile/activate accepts GUI-owned profile paths. Runs
+                # on this worker thread to avoid stalling the Qt main loop on
+                # a slow or half-dead daemon (API_TIMEOUT_S default 10s).
+                # Called on every reconnect because the daemon may have
+                # restarted with a stale search-dir list. The endpoint is
+                # additive and deduplicated.
+                self._register_profile_search_dir(client)
 
             # Use batch endpoint to reduce HTTP overhead (3 calls → 1)
             # (sensors list needed for history pre-fill below)
@@ -137,6 +146,25 @@ class _PollWorker(QObject):
             except (DaemonError, ConnectionError, OSError):
                 # Best-effort prefill: missing history is non-fatal.
                 log.debug("Failed to fetch history for %s", s.id)
+
+    def _register_profile_search_dir(self, client: DaemonClient) -> None:
+        """Tell the daemon where this GUI stores its profiles."""
+        dir_path = str(profiles_dir())
+        try:
+            client.update_profile_search_dirs(add=[dir_path])
+            log.info("Registered profile search dir with daemon: %s", dir_path)
+        except DaemonError as exc:
+            log.warning(
+                "Could not register profile search dir %s with daemon: %s",
+                dir_path,
+                exc.message,
+            )
+        except (ConnectionError, OSError) as exc:
+            log.warning(
+                "Connection error registering profile search dir %s: %s",
+                dir_path,
+                exc,
+            )
 
     def _close_client(self) -> None:
         if self._client:
