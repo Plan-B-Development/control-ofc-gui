@@ -12,7 +12,7 @@ makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools
 install=control-ofc-gui.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 # Placeholder — recomputed post-tag-push.
-sha256sums=('ef6a43cc7e2c945dcd5daf7432d02bcbaab52ccd092547928c07bebad554d5e9')
+sha256sums=('0b3a88ce61080bc05701caaf6f0092495c42c6f4268d6c2c2e3c47e3c82cfd27')
 
 build() {
     cd "$pkgname-$pkgver"
