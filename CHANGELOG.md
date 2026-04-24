@@ -2583,7 +2583,17 @@ All 9 oversight gaps from test-overview.md resolved:
 - Error types for daemon communication
 - `--demo` and `--socket` CLI arguments
 
-[Unreleased]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.6.1...v1.7.0
+[1.6.1]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.5.2...v1.6.0
+[1.5.2]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.5.1...v1.5.2
+[1.5.1]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.6...v1.1.0
 [1.0.6]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/Plan-B-Development/control-ofc-gui/compare/v1.0.3...v1.0.4
