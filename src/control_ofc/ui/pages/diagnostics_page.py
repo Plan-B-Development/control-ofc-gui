@@ -35,13 +35,17 @@ from PySide6.QtWidgets import (
 from control_ofc.api.models import (
     Capabilities,
     DaemonStatus,
+    FanReading,
     Freshness,
     HardwareDiagnosticsResult,
+    HwmonCapability,
+    HwmonHeader,
     HwmonVerifyResult,
     LeaseState,
 )
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService, format_uptime
+from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.hwmon_guidance import (
     detect_module_conflicts,
     format_driver_status,
@@ -49,12 +53,129 @@ from control_ofc.ui.hwmon_guidance import (
     lookup_vendor_quirks,
     verification_guidance,
 )
+from control_ofc.ui.sensor_knowledge import classify_sensor, format_sensor_tooltip
 from control_ofc.ui.theme import default_dark_theme
 
 _TRANSPARENT = "background: transparent;"
 _THEME = default_dark_theme()
 
 log = logging.getLogger(__name__)
+
+# Plain-English explanations for the Control method column. Keys are the
+# display strings emitted by ``_fan_control_method`` /
+# ``_pwm_only_control_method`` — every string those helpers can return must
+# have an entry here so a tooltip is guaranteed.
+_CONTROL_METHOD_TOOLTIPS: dict[str, str] = {
+    "OpenFan USB": "OpenFan Controller connected via USB serial. No lease required.",
+    "hwmon PWM (lease)": (
+        "Motherboard fan controlled via hwmon PWM. Requires a hwmon lease before writes."
+    ),
+    "hwmon PWM — no RPM": (
+        "Motherboard PWM output without a tachometer input. Writable but no RPM feedback."
+    ),
+    "hwmon PWM (legacy)": ("Pre-RDNA3 GPU fan controlled via the legacy pwm1 sysfs interface."),
+    "PMFW curve": ("GPU fan controlled via the AMD PMFW fan_curve sysfs interface."),
+    "read-only": (
+        "BIOS/EC owns this fan; PWM writes will be reverted. Run Test PWM Control to confirm."
+    ),
+    "no fan control": "GPU has no writable fan control path exposed to the OS.",
+    "unknown": "Daemon did not report a classification for this fan.",
+}
+
+# Display strings for the sensor Confidence column. Keys come from
+# ``SensorClassification.confidence`` (high / medium_high / medium / low).
+_CONFIDENCE_DISPLAY: dict[str, str] = {
+    "high": "High",
+    "medium_high": "Medium-High",
+    "medium": "Medium",
+    "low": "Low",
+}
+
+
+def _fan_control_method(fan: FanReading, state: AppState | None) -> str:
+    """Return the Control method display string for a fan.
+
+    Derived exclusively from daemon-reported typed data
+    (``HwmonHeader.is_writable``, ``AmdGpuCapability.fan_control_method``).
+    No heuristic inference from source/id strings — returns the literal
+    ``"unknown"`` when the daemon has not classified the fan.
+    """
+    if fan.source == "openfan":
+        return "OpenFan USB"
+    if fan.source == "amd_gpu":
+        if not state or not state.capabilities or not state.capabilities.amd_gpu.present:
+            return "unknown"
+        method = state.capabilities.amd_gpu.fan_control_method
+        return {
+            "pmfw_curve": "PMFW curve",
+            "hwmon_pwm": "hwmon PWM (legacy)",
+            "read_only": "read-only",
+            "none": "no fan control",
+        }.get(method, "unknown")
+    if fan.source == "hwmon":
+        if not state:
+            return "unknown"
+        header = next((h for h in state.hwmon_headers if h.id == fan.id), None)
+        if header is None:
+            return "unknown"
+        return "read-only" if not header.is_writable else "hwmon PWM (lease)"
+    return "unknown"
+
+
+def _pwm_only_control_method(header: HwmonHeader) -> str:
+    """Return the Control method display string for a PWM-only hwmon header
+    (a header that has no ``fan_input`` tachometer)."""
+    return "read-only" if not header.is_writable else "hwmon PWM — no RPM"
+
+
+def _hwmon_overview_text(
+    hwmon_cap: HwmonCapability,
+    writable_headers: int | None,
+) -> tuple[str, bool]:
+    """Render the Overview hwmon line and whether it should be warn-styled.
+
+    ``writable_headers`` is the runtime value from
+    ``HardwareDiagnosticsResult.hwmon.writable_headers`` once hardware
+    diagnostics has been fetched, or ``None`` before then. When
+    ``writable_headers == 0`` but headers exist, the line is rewritten to
+    surface the read-only state rather than the daemon-code-level ``write``
+    capability flag.
+    """
+    if not hwmon_cap.present:
+        return "hwmon: Not present", False
+    count = hwmon_cap.pwm_header_count
+    if count > 0 and writable_headers == 0:
+        return f"hwmon: Present ({count} headers — ALL read-only)", True
+    parts: list[str] = []
+    if hwmon_cap.write_support:
+        parts.append("write")
+    if hwmon_cap.lease_required:
+        parts.append("lease required")
+    suffix = (", " + ", ".join(parts) + ")") if parts else ")"
+    return f"hwmon: Present ({count} headers{suffix}", False
+
+
+def _features_line_text(
+    caps: Capabilities,
+    writable_headers: int | None,
+) -> str:
+    """Render the Overview Features line.
+
+    When ``hwmon_write_supported`` is advertised but the runtime
+    ``writable_headers`` is zero, the line is annotated so the user
+    understands the daemon supports hwmon writes even though the hardware
+    currently has no writable header.
+    """
+    f = caps.features
+    features: list[str] = []
+    if f.openfan_write_supported:
+        features.append("OpenFan writes")
+    if f.hwmon_write_supported:
+        if writable_headers == 0 and caps.hwmon.present and caps.hwmon.pwm_header_count > 0:
+            features.append("hwmon writes (daemon-supported; 0 writable headers on this system)")
+        else:
+            features.append("hwmon writes")
+    return f"Features: {', '.join(features) or 'none'}"
 
 
 class _VerifyWorker(QObject):
@@ -271,16 +392,42 @@ class DiagnosticsPage(QWidget):
         container = QWidget()
         layout = QVBoxLayout(container)
 
-        self._sensor_table = QTableWidget(0, 5)
+        self._sensor_table = QTableWidget(0, 7)
         self._sensor_table.setObjectName("Diagnostics_Table_sensors")
         self._sensor_table.setHorizontalHeaderLabels(
-            ["Label", "Kind", "Value (\u00b0C)", "Age (ms)", "Freshness"]
+            [
+                "Label",
+                "Kind",
+                "Chip",
+                "Value (\u00b0C)",
+                "Age (ms)",
+                "Freshness",
+                "Confidence",
+            ]
         )
         self._sensor_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Interactive
         )
         self._sensor_table.horizontalHeader().setStretchLastSection(True)
         self._sensor_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        _sensor_header_tooltips = [
+            "Sensor label reported by the kernel driver",
+            "Coarse daemon classification (CpuTemp / MbTemp / GpuTemp / DiskTemp)",
+            "Kernel driver / chip providing the reading (k10temp, nct6798, etc.)",
+            "Current temperature in \u00b0C",
+            "Time since the daemon last polled this sensor",
+            "Data freshness: fresh (<2 s), stale (2-10 s), invalid (>10 s)",
+            (
+                "Classification confidence from the sensor knowledge base. "
+                "Hover a cell for source class, description, and driver notes."
+            ),
+        ]
+        for col, tip in enumerate(_sensor_header_tooltips):
+            item = self._sensor_table.horizontalHeaderItem(col)
+            if item:
+                item.setToolTip(tip)
+
         layout.addWidget(self._sensor_table)
         return container
 
@@ -470,9 +617,11 @@ class DiagnosticsPage(QWidget):
         fan_label.setProperty("class", "PageSubtitle")
         fan_pane_layout.addWidget(fan_label)
 
-        self._fan_table = QTableWidget(0, 5)
+        self._fan_table = QTableWidget(0, 6)
         self._fan_table.setObjectName("Diagnostics_Table_fans")
-        self._fan_table.setHorizontalHeaderLabels(["ID", "Source", "RPM", "PWM (%)", "Freshness"])
+        self._fan_table.setHorizontalHeaderLabels(
+            ["ID", "Source", "Control method", "RPM", "PWM (%)", "Freshness"]
+        )
         self._fan_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._fan_table.horizontalHeader().setStretchLastSection(True)
         self._fan_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -480,6 +629,10 @@ class DiagnosticsPage(QWidget):
         _fan_header_tooltips = [
             "Fan identifier — display name or hardware ID",
             "Hardware backend: openfan, hwmon, amd_gpu, or hwmon (PWM-only)",
+            (
+                "How this fan is controlled. Writable methods include hwmon PWM, "
+                "PMFW curve, and OpenFan USB. 'read-only' means BIOS/EC owns the fan."
+            ),
             "Hardware-measured fan speed in RPM.\n'—' means no tachometer or fan stopped.",
             "Last PWM duty cycle commanded by the daemon (0-100%).\n'—' means no command sent yet.",
             "Data freshness: ok (<2 s), stale (2-5 s), invalid (>5 s or never updated)",
@@ -658,16 +811,9 @@ class DiagnosticsPage(QWidget):
             of_status += ", " + "+".join(parts) + ")" if parts else ")"
         self._openfan_label.setText(f"OpenFan: {of_status}")
 
-        hw = caps.hwmon
-        hw_status = f"Present ({hw.pwm_header_count} headers" if hw.present else "Not present"
-        if hw.present:
-            parts = []
-            if hw.write_support:
-                parts.append("write")
-            if hw.lease_required:
-                parts.append("lease required")
-            hw_status += ", " + ", ".join(parts) + ")" if parts else ")"
-        self._hwmon_label.setText(f"hwmon: {hw_status}")
+        # hwmon and Features lines are reconciled against runtime writable_headers
+        # when hardware diagnostics has been fetched — shared helper below.
+        self._refresh_hwmon_and_features(caps)
 
         gpu = caps.amd_gpu
         if gpu.present:
@@ -679,13 +825,32 @@ class DiagnosticsPage(QWidget):
         else:
             self._amd_gpu_label.setText("AMD GPU: Not detected")
 
-        f = caps.features
-        features = []
-        if f.openfan_write_supported:
-            features.append("OpenFan writes")
-        if f.hwmon_write_supported:
-            features.append("hwmon writes")
-        self._features_label.setText(f"Features: {', '.join(features) or 'none'}")
+    def _refresh_hwmon_and_features(self, caps: Capabilities) -> None:
+        """Render the Overview hwmon + Features lines, using runtime
+        ``writable_headers`` when ``HardwareDiagnosticsResult`` is available.
+
+        Called by ``_on_capabilities`` on every capabilities update, and
+        by ``_populate_hw_diagnostics`` once a fresh ``writable_headers``
+        value is available so the overview line reflects runtime reality
+        rather than the daemon-code-level ``write_support`` flag alone.
+        """
+        writable: int | None = None
+        if self._diag.last_hw_diagnostics is not None:
+            writable = self._diag.last_hw_diagnostics.hwmon.writable_headers
+
+        text, warn = _hwmon_overview_text(caps.hwmon, writable)
+        self._hwmon_label.setText(text)
+        self._apply_warn_styling(self._hwmon_label, warn)
+
+        self._features_label.setText(_features_line_text(caps, writable))
+
+    @staticmethod
+    def _apply_warn_styling(label: QLabel, warn: bool) -> None:
+        """Toggle the WarningChip theme class on a label in place."""
+        new_class = "WarningChip" if warn else ""
+        label.setProperty("class", new_class)
+        label.style().unpolish(label)
+        label.style().polish(label)
 
     def _on_status(self, status: DaemonStatus) -> None:
         self._daemon_status_label.setText(f"Status: {status.overall_status}")
@@ -705,21 +870,33 @@ class DiagnosticsPage(QWidget):
         )
 
     def _on_sensors(self, sensors: list) -> None:
-        prev_count = self._sensor_table.rowCount()
-        if len(sensors) != prev_count:
+        col_count = 7
+        if self._sensor_table.rowCount() != len(sensors):
             self._sensor_table.setRowCount(len(sensors))
 
+        board_vendor = ""
+        if self._diag.last_hw_diagnostics is not None:
+            board_vendor = self._diag.last_hw_diagnostics.board.vendor
+
         for i, s in enumerate(sensors):
-            if i >= prev_count:
-                for col in range(5):
+            for col in range(col_count):
+                if self._sensor_table.item(i, col) is None:
                     self._sensor_table.setItem(i, col, QTableWidgetItem())
+
+            classification = classify_sensor(
+                chip_name=s.chip_name,
+                label=s.label,
+                temp_type=s.temp_type,
+                board_vendor=board_vendor,
+            )
 
             self._sensor_table.item(i, 0).setText(s.label or s.id)
             self._sensor_table.item(i, 1).setText(s.kind)
-            self._sensor_table.item(i, 2).setText(f"{s.value_c:.1f}")
-            self._sensor_table.item(i, 3).setText(str(s.age_ms))
+            self._sensor_table.item(i, 2).setText(s.chip_name or "—")
+            self._sensor_table.item(i, 3).setText(f"{s.value_c:.1f}")
+            self._sensor_table.item(i, 4).setText(str(s.age_ms))
 
-            freshness_item = self._sensor_table.item(i, 4)
+            freshness_item = self._sensor_table.item(i, 5)
             freshness_item.setText(s.freshness.value)
             if s.freshness == Freshness.STALE:
                 freshness_item.setForeground(QColor(_THEME.status_warn))
@@ -728,21 +905,45 @@ class DiagnosticsPage(QWidget):
             else:
                 freshness_item.setForeground(QColor(_THEME.text_primary))
 
+            confidence_text = _CONFIDENCE_DISPLAY.get(
+                classification.confidence, classification.confidence
+            )
+            self._sensor_table.item(i, 6).setText(confidence_text)
+
+            tooltip = format_sensor_tooltip(
+                classification,
+                sensor_id=s.id,
+                chip_name=s.chip_name,
+                session_min=s.session_min_c,
+                session_max=s.session_max_c,
+                rate_c_per_s=s.rate_c_per_s,
+            )
+            for col in range(col_count):
+                self._sensor_table.item(i, col).setToolTip(tooltip)
+
     def _on_fans(self, fans: list) -> None:
+        # Build fan_ids from the ORIGINAL fans list so PWM-only calculation
+        # still finds headers that have no matching fan reading at all \u2014 any
+        # display-level dedup below must not change which headers are known.
         fan_ids = {f.id for f in fans}
         pwm_only = []
         if self._state:
             pwm_only = [h for h in self._state.hwmon_headers if h.id not in fan_ids]
 
-        total = len(fans) + len(pwm_only)
-        prev_count = self._fan_table.rowCount()
-        if total != prev_count:
+        # Deduplicate GPU/hwmon overlap for display (DEC-047), mirroring the
+        # dashboard. hide_unused=False because Diagnostics must show every
+        # known fan \u2014 zero-RPM or idle does not disqualify a row here.
+        display_fans = filter_displayable_fans(fans, {}, hide_unused=False)
+
+        col_count = 6
+        total = len(display_fans) + len(pwm_only)
+        if self._fan_table.rowCount() != total:
             self._fan_table.setRowCount(total)
 
         row = 0
-        for f in fans:
-            if row >= prev_count:
-                for col in range(5):
+        for f in display_fans:
+            for col in range(col_count):
+                if self._fan_table.item(row, col) is None:
                     self._fan_table.setItem(row, col, QTableWidgetItem())
 
             display_name = f.id
@@ -750,11 +951,16 @@ class DiagnosticsPage(QWidget):
                 display_name = self._state.fan_display_name(f.id)
             self._fan_table.item(row, 0).setText(display_name)
             self._fan_table.item(row, 1).setText(f.source)
-            self._fan_table.item(row, 2).setText(str(f.rpm) if f.rpm is not None else "\u2014")
-            self._fan_table.item(row, 3).setText(
+
+            control_method = _fan_control_method(f, self._state)
+            self._fan_table.item(row, 2).setText(control_method)
+
+            self._fan_table.item(row, 3).setText(str(f.rpm) if f.rpm is not None else "\u2014")
+            self._fan_table.item(row, 4).setText(
                 str(f.last_commanded_pwm) if f.last_commanded_pwm is not None else "\u2014"
             )
-            freshness_item = self._fan_table.item(row, 4)
+
+            freshness_item = self._fan_table.item(row, 5)
             freshness_item.setText(f.freshness.value)
             if f.freshness == Freshness.STALE:
                 freshness_item.setForeground(QColor(_THEME.status_warn))
@@ -763,36 +969,50 @@ class DiagnosticsPage(QWidget):
             else:
                 freshness_item.setForeground(QColor(_THEME.text_primary))
 
-            tooltip = self._fan_row_tooltip(f)
-            for col in range(5):
-                self._fan_table.item(row, col).setToolTip(tooltip)
+            row_tip = self._fan_row_tooltip(f)
+            method_tip = _CONTROL_METHOD_TOOLTIPS.get(
+                control_method, _CONTROL_METHOD_TOOLTIPS["unknown"]
+            )
+            for col in range(col_count):
+                self._fan_table.item(row, col).setToolTip(method_tip if col == 2 else row_tip)
             row += 1
 
         for h in pwm_only:
-            if row >= prev_count:
-                for col in range(5):
+            for col in range(col_count):
+                if self._fan_table.item(row, col) is None:
                     self._fan_table.setItem(row, col, QTableWidgetItem())
 
             self._fan_table.item(row, 0).setText(h.label or h.id)
             self._fan_table.item(row, 1).setText("hwmon (PWM-only)")
-            self._fan_table.item(row, 2).setText("\u2014")
-            self._fan_table.item(row, 3).setText("\u2014")
-            self._fan_table.item(row, 4).setText("N/A")
 
-            pwm_tip = f"ID: {h.id}\nSource: hwmon (PWM output only — no RPM tachometer)"
+            control_method = _pwm_only_control_method(h)
+            self._fan_table.item(row, 2).setText(control_method)
+
+            self._fan_table.item(row, 3).setText("\u2014")
+            self._fan_table.item(row, 4).setText("\u2014")
+            self._fan_table.item(row, 5).setText("N/A")
+
+            pwm_tip_parts = [
+                f"ID: {h.id}",
+                "Source: hwmon (PWM output only — no RPM tachometer)",
+                f"Control method: {control_method}",
+            ]
             if h.label:
-                pwm_tip += f"\nLabel: {h.label}"
+                pwm_tip_parts.append(f"Label: {h.label}")
             if h.chip_name:
-                pwm_tip += f"\nChip: {h.chip_name}"
-            if not h.is_writable:
-                pwm_tip += "\nStatus: read-only"
-            for col in range(5):
-                self._fan_table.item(row, col).setToolTip(pwm_tip)
+                pwm_tip_parts.append(f"Chip: {h.chip_name}")
+            pwm_tip = "\n".join(pwm_tip_parts)
+            method_tip = _CONTROL_METHOD_TOOLTIPS.get(
+                control_method, _CONTROL_METHOD_TOOLTIPS["unknown"]
+            )
+            for col in range(col_count):
+                self._fan_table.item(row, col).setToolTip(method_tip if col == 2 else pwm_tip)
             row += 1
 
     def _fan_row_tooltip(self, fan) -> str:
-        """Build a tooltip for a fan row with chip/driver context."""
+        """Build a tooltip for a fan row with chip/driver and control-method context."""
         parts = [f"ID: {fan.id}", f"Source: {fan.source}"]
+        parts.append(f"Control method: {_fan_control_method(fan, self._state)}")
         if fan.age_ms is not None:
             parts.append(f"Data age: {fan.age_ms} ms")
         if self._state:
@@ -809,15 +1029,12 @@ class DiagnosticsPage(QWidget):
                         header.pwm_mode if header.pwm_mode is not None else -1
                     )
                     if mode:
-                        parts.append(f"Control mode: {mode}")
-                    if not header.is_writable:
-                        parts.append("Status: read-only")
+                        parts.append(f"PWM mode: {mode}")
             elif fan.source == "amd_gpu":
                 caps = self._state.capabilities
                 if caps and caps.amd_gpu.present:
                     gpu = caps.amd_gpu
                     parts.append(f"GPU: {gpu.display_label}")
-                    parts.append(f"Fan control: {gpu.fan_control_method}")
                     if gpu.pci_id:
                         parts.append(f"PCI: {gpu.pci_id}")
         return "\n".join(parts)
@@ -844,6 +1061,14 @@ class DiagnosticsPage(QWidget):
             result = self._client.hardware_diagnostics()
             self._diag.last_hw_diagnostics = result
             self._populate_hw_diagnostics(result)
+            # writable_headers and board.vendor are now available — refresh the
+            # Overview hwmon+Features lines (runtime reality) and re-render the
+            # Sensors tab so classification picks up board-specific quirks
+            # (e.g. the ASUS NCT6776F CPUTIN caveat).
+            if self._state:
+                if self._state.capabilities:
+                    self._refresh_hwmon_and_features(self._state.capabilities)
+                self._on_sensors(self._state.sensors)
             self._status_label.setText("Hardware diagnostics refreshed")
         except DaemonUnavailable:
             self._hw_ready_summary.setText("Daemon unavailable — cannot fetch diagnostics")

@@ -1,5 +1,43 @@
 # Changelog
 
+## [Unreleased]
+
+Diagnostics enumeration truthfulness pass (Batch A of the remediation
+tracked in `DIAGNOSTICS_REMEDIATION.md`). GUI-only; no daemon changes.
+
+### Changed
+- **Diagnostics → Fans now deduplicates GPU/hwmon overlap (DEC-047).** On
+  systems where `amdgpu` exposes a GPU fan through both `amd_gpu:<BDF>` and
+  `hwmon:...:<BDF>:fan1`, the Diagnostics fans table previously rendered
+  two rows for the same physical fan while the dashboard rendered one.
+  Diagnostics now shares the dashboard's `filter_displayable_fans` rule,
+  so both views agree. Multi-GPU systems (different BDFs) remain as
+  separate rows.
+- **Diagnostics → Fans has a new "Control method" column.** Answers the
+  "which fans are controllable and how" question directly rather than
+  requiring the user to read per-row tooltips. Values are derived from
+  daemon-reported typed data only (`HwmonHeader.is_writable`,
+  `AmdGpuCapability.fan_control_method`) — no heuristic inference, and
+  unclassified fans render literally as `unknown`. Column cell tooltips
+  give a plain-English explanation per method; the read-only tooltip
+  points users at Test PWM Control to verify BIOS/EC interference.
+- **Diagnostics → Overview reconciles hwmon capability with runtime
+  reality.** Once hardware diagnostics is fetched, the Overview hwmon
+  line becomes `Present (N headers — ALL read-only)` with a warn chip
+  when `writable_headers == 0`, matching the dashboard banner behaviour.
+  The Features line annotates `hwmon writes` as
+  `(daemon-supported; 0 writable headers on this system)` in that state
+  so the daemon-code-level flag isn't mistaken for runtime writability.
+- **Diagnostics → Sensors table shows Chip and Confidence columns.** The
+  existing `sensor_knowledge.classify_sensor` infrastructure (already
+  used by the dashboard sensor panel) is now wired into the Diagnostics
+  Sensors tab. Rows expose the driver/chip name and confidence level
+  on-screen; per-row tooltips surface source class, description, and
+  driver quirks (e.g. the ASUS NCT6776F CPUTIN bogus caveat from
+  `docs/20_Sensor_Interpretation_Guide.md`). Board vendor flows from
+  `/diagnostics/hardware` into classification so board-specific quirks
+  light up after the user fetches diagnostics.
+
 ## [1.6.1] — 2026-04-23
 
 Follow-up audit remediation on v1.6.0. Pairs with **daemon v1.5.1**; daemon

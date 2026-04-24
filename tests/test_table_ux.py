@@ -159,7 +159,9 @@ class TestFanTableHeaderTooltips:
     def test_freshness_header_tooltip(self, qtbot):
         page, _ = _make_page(qtbot)
         table = page.findChild(QTableWidget, "Diagnostics_Table_fans")
-        tip = table.horizontalHeaderItem(4).toolTip()
+        # Freshness moved from column 4 to column 5 after the Control method
+        # column was added at index 2 (DIAGNOSTICS_REMEDIATION.md P1.2).
+        tip = table.horizontalHeaderItem(5).toolTip()
         assert "ok" in tip.lower()
         assert "stale" in tip.lower()
 
@@ -198,13 +200,20 @@ class TestFanTableCellTooltips:
         assert "PWM output only" in tip
         assert "read-only" in tip
 
-    def test_all_cells_in_row_share_tooltip(self, qtbot):
+    def test_non_method_cells_in_row_share_row_tooltip(self, qtbot):
+        """Every cell except the Control method column (index 2) carries the
+        same row-level tooltip. The Control method cell intentionally carries
+        a method-specific tooltip — tested separately in
+        tests/test_diagnostics_enumeration.py (P1.2).
+        """
         state = _make_state()
         page, _ = _make_page(qtbot, state=state)
         fans = [FanReading(id="fan1", source="openfan", rpm=1200, age_ms=100)]
         page._on_fans(fans)
         tip0 = page._fan_table.item(0, 0).toolTip()
-        for col in range(1, 5):
+        # Columns 1, 3, 4, 5 all get the row tooltip. Column 2 is skipped —
+        # it carries the Control method tooltip instead.
+        for col in (1, 3, 4, 5):
             assert page._fan_table.item(0, col).toolTip() == tip0
 
 
