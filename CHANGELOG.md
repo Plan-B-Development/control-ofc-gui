@@ -1,9 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## [1.7.0] — 2026-04-24
 
 Diagnostics enumeration truthfulness pass (Batch A of the remediation
-tracked in `DIAGNOSTICS_REMEDIATION.md`). GUI-only; no daemon changes.
+tracked in `DIAGNOSTICS_REMEDIATION.md`). GUI-only; pairs with **daemon
+v1.5.1**; daemon pin stays `>=1.5.0` because Batch A uses daemon fields
+(`HwmonHeader.is_writable`, `AmdGpuCapability.fan_control_method`,
+`HwmonDiagnostics.writable_headers`, `BoardInfo.vendor`,
+`SensorReading.chip_name`/`temp_type`) that already exist in the
+`>=1.5.0` API surface — no new wire contract.
 
 ### Changed
 - **Diagnostics → Fans now deduplicates GPU/hwmon overlap (DEC-047).** On
