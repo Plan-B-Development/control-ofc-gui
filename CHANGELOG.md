@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.7.1] — 2026-04-25
+
+Operator-experience patch: surface BIOS pwm_enable reclaim activity directly
+on the Diagnostics → Hardware tab so AORUS-class users can see the
+EC-vs-Linux contention without reading `journalctl`. Pairs with **daemon
+v1.5.2**, which throttles the matching log line. GUI-only changes; daemon
+pin unchanged.
+
+### Added
+- **Per-header reclaim count surfacing in Diagnostics → Hardware.** The BIOS
+  interference card now renders one row per affected hwmon header with a
+  severity colour ramp tied to the count: 0 = OK (green), 1–9 = WARN (amber),
+  ≥10 = HIGH (red). The card headline takes the highest severity across all
+  headers, so the operator's eye lands on the hot fan first.
+- **Auto-shown vendor guidance for Gigabyte + IT8696E.** The matching
+  `VendorQuirk` card (existing, unchanged text) is surfaced when the daemon
+  reports both `vendor` containing "gigabyte" and a chip prefix of `it8696`
+  in `/diagnostics/hardware`, so the BIOS Smart Fan 6 fix path is one
+  glance away from the live evidence of the contention.
+
+### Changed
+- **Reclaim card layout split into headline + body + footnote.** The single
+  `Diagnostics_Label_revertCounts` was split into
+  `Diagnostics_Label_revertHeadline` (severity-coloured summary),
+  `Diagnostics_Label_revertCounts` (per-row rich-text body), and
+  `Diagnostics_Label_revertFootnote` (the "watchdog auto-recovers" hint).
+  The new node names are stable test rendezvous points.
+- **Forward-compat with pre-1.3 daemons.** GUI now uses `getattr` and
+  defaults `enable_revert_counts` to `{}` on the rendering side as well as
+  on the parsing side, so the new Diagnostics tab does not break on older
+  daemons that omit the field.
+
+### Tests
+- New `tests/test_diagnostics_hardware_render.py` — 30 tests covering the
+  classifier (K∈{0, 1, 5, 9, 10, 50, 10_000}), per-row colour mapping,
+  rich-text rendering, HTML escaping for quirky chip names, the
+  Gigabyte+IT8696 quirk auto-show, and tolerance of daemons that omit
+  `enable_revert_counts` entirely.
+- Updated `tests/test_v1_2_diagnostics.py::TestDiagnosticsPageRevertCounts`
+  to assert the watchdog-explanation footnote on its new dedicated label.
+
 ## [1.7.0] — 2026-04-24
 
 Diagnostics enumeration truthfulness pass (Batch A of the remediation

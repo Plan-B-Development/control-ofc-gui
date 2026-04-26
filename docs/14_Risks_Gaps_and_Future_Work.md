@@ -1,6 +1,6 @@
 # 14 — Risks, Gaps, and Future Work
 
-**Last updated:** 2026-04-23 (2026-04-22 contract-mismatch sweep folded in)
+**Last updated:** 2026-04-25 (AORUS BIOS Smart Fan note added; 2026-04-22 contract-mismatch sweep folded in)
 
 ## Current Feature Status Matrix
 
@@ -99,6 +99,30 @@ A dedicated wizard page that walks first-time users through the complete hardwar
 - Would require a `HardwareWizardService` managing a state machine across the detection → install → configure → verify steps
 - DKMS/package manager integration would need careful security review (polkit, sandboxing)
 - BIOS guidance with images would need an asset pipeline and per-board screenshot library
+
+### 11a. AORUS-class boards: BIOS Smart Fan is the root fix for pwm_enable reclaim
+
+On Gigabyte AORUS-family motherboards using the IT8696E / IT8689E Super-I/O,
+the EC firmware's Smart Fan algorithm continuously rewrites `pwm_enable` from
+manual mode (`1`) back to BIOS-controlled (`2`) at roughly 1 Hz once the OS
+takes manual control. The daemon's pwm_enable watchdog (added in daemon
+v1.3.0) detects this and re-writes manual mode + the PWM value on every
+loop, so fan control remains correct in practice — but **this is the
+operational mitigation, not the root fix**.
+
+The root fix is BIOS-side: in the AORUS BIOS, set Smart Fan 6 (or Smart Fan
+5 on older boards) to **Manual / Full Speed** for every header that the OS
+is meant to control, or configure a degenerate fan curve where every
+temperature point sits at the same value with all duty points at 0% except
+the final point at 100%. Either configuration disables the EC's own curve
+evaluation and stops the reclaim cycle entirely.
+
+The GUI surfaces the live reclaim count per header on Diagnostics →
+Hardware (v1.7.1 onwards) with a severity colour ramp; the daemon throttles
+the matching log line so the journal is not spammed (daemon v1.5.2). The
+Diagnostics page also auto-shows the matching `VendorQuirk` card when the
+board+chip combination is recognised, pointing the operator at this BIOS
+setting.
 
 ### 11. GUI surface for `reset_gpu_fan` (deferred)
 

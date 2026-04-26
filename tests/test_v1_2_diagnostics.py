@@ -348,11 +348,18 @@ class TestDiagnosticsPageRevertCounts:
             revert_counts={"it8696-isa-0a30/pwm1": 7, "it8696-isa-0a30/pwm2": 3}
         )
         page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_revertCounts")
-        assert not label.isHidden()
-        assert "7 revert(s)" in label.text()
-        assert "3 revert(s)" in label.text()
-        assert "watchdog" in label.text().lower()
+        # Per-row body label carries the per-header counts (rich text).
+        body = page.findChild(QLabel, "Diagnostics_Label_revertCounts")
+        assert not body.isHidden()
+        assert "7 revert(s)" in body.text()
+        assert "3 revert(s)" in body.text()
+        # The "watchdog" explanation moved to its own footnote label as part
+        # of the v1.7.1 severity-ramp refactor — assert it on the new home so
+        # the original intent (operator sees the watchdog explanation) holds.
+        footnote = page.findChild(QLabel, "Diagnostics_Label_revertFootnote")
+        assert footnote is not None
+        assert not footnote.isHidden()
+        assert "watchdog" in footnote.text().lower()
 
     def test_revert_counts_hidden_when_empty(self, qtbot):
         page, _ = _make_page(qtbot)
