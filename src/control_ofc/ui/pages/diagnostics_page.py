@@ -178,6 +178,92 @@ def _features_line_text(
     return f"Features: {', '.join(features) or 'none'}"
 
 
+# Severity buckets for the per-header pwm_enable reclaim count surfaced from
+# ``HardwareDiagnosticsResult.hwmon.enable_revert_counts``. Tuned to match the
+# operator's mental model on AORUS-class boards: zero events means the daemon
+# watchdog has nothing to do, occasional reverts mean BIOS interference is
+# recoverable, and ≥10 events on a single header indicates a continuous
+# tug-of-war between Linux and the EC firmware that BIOS configuration should
+# resolve.
+RECLAIM_SEVERITY_OK = "ok"
+RECLAIM_SEVERITY_WARN = "warn"
+RECLAIM_SEVERITY_HIGH = "high"
+
+
+def classify_reclaim_severity(count: int) -> str:
+    """Return the severity bucket for a pwm_enable reclaim count.
+
+    Buckets:
+      - ``"ok"``    → ``count <= 0`` (header is healthy, no BIOS interference).
+      - ``"warn"``  → ``1 <= count < 10`` (occasional reclaim — daemon is
+        recovering but the operator may want to check BIOS Smart Fan settings).
+      - ``"high"``  → ``count >= 10`` (continuous reclaim — BIOS is fighting
+        the daemon; recommend disabling Smart Fan or using a degenerate curve).
+
+    Negative counts are treated as ``ok`` so callers do not have to defend
+    against malformed daemon payloads. The buckets are deliberately coarse so
+    the operator's eye is drawn to the *hot* header, not to small fluctuations.
+    """
+    if count <= 0:
+        return RECLAIM_SEVERITY_OK
+    if count < 10:
+        return RECLAIM_SEVERITY_WARN
+    return RECLAIM_SEVERITY_HIGH
+
+
+def reclaim_severity_color(severity: str) -> str:
+    """Return the theme hex colour for a reclaim severity bucket.
+
+    Mirrors ``SuccessChip`` / ``WarningChip`` / ``CriticalChip`` so the per-row
+    colours line up with the rest of the diagnostics UI even when this widget
+    is rendered in rich-text mode (which doesn't pick up Qt CSS class styling).
+    """
+    if severity == RECLAIM_SEVERITY_OK:
+        return _THEME.status_ok
+    if severity == RECLAIM_SEVERITY_HIGH:
+        return _THEME.status_crit
+    return _THEME.status_warn
+
+
+def render_reclaim_rows(reverts: dict[str, int] | None) -> str | None:
+    """Render the per-header reclaim count card body as rich-text HTML.
+
+    Returns ``None`` when there is nothing to surface (no payload, or every
+    header reports zero reclaims) so the caller can hide the card entirely.
+    Returns a non-empty HTML string otherwise — each header on its own row,
+    coloured by ``classify_reclaim_severity``.
+
+    The ``None``-tolerant signature is deliberate: older daemons (pre-1.3.x)
+    don't include ``enable_revert_counts`` in the diagnostics payload, and the
+    GUI must not crash when the key is absent.
+    """
+    if not reverts:
+        return None
+    # Hide the card if every header is at zero — the daemon won't normally
+    # emit such a payload, but defending against it keeps the UI quiet when
+    # a future daemon decides to surface healthy headers in the same map.
+    if not any(count > 0 for count in reverts.values()):
+        return None
+
+    rows: list[str] = []
+    for header_id in sorted(reverts):
+        count = reverts[header_id]
+        severity = classify_reclaim_severity(count)
+        color = reclaim_severity_color(severity)
+        # ``severity`` is a fixed enum string so it is safe to format raw;
+        # header_id and count come from the daemon JSON and are escaped so
+        # quirky chip names (e.g. "it87.2624") never break the markup.
+        from html import escape
+
+        rows.append(
+            f'<span style="color: {color};">'
+            f"<b>{escape(header_id)}</b>: {count} revert(s) "
+            f"[{severity.upper()}]"
+            "</span>"
+        )
+    return "<br>".join(rows)
+
+
 class _VerifyWorker(QObject):
     """Runs in a QThread — executes the blocking ~3s verify_hwmon_pwm call off
     the UI thread so the rest of the GUI (polling, splitter, menus) keeps
@@ -541,10 +627,27 @@ class DiagnosticsPage(QWidget):
         hw_layout.addWidget(self._module_conflict_label)
 
         # BIOS interference (revert counts)
+        # Headline label keeps a stable Qt class for the highest severity so
+        # automated screenshots and tests can colour-check at a glance; the
+        # detail label renders one row per header in matching colours.
+        self._revert_headline_label = _transparent_label(
+            "", "Diagnostics_Label_revertHeadline", bold=True
+        )
+        self._revert_headline_label.setWordWrap(True)
+        self._revert_headline_label.setVisible(False)
+        hw_layout.addWidget(self._revert_headline_label)
+
         self._revert_label = _transparent_label("", "Diagnostics_Label_revertCounts")
         self._revert_label.setWordWrap(True)
+        self._revert_label.setTextFormat(Qt.TextFormat.RichText)
         self._revert_label.setVisible(False)
         hw_layout.addWidget(self._revert_label)
+
+        self._revert_footnote_label = _transparent_label("", "Diagnostics_Label_revertFootnote")
+        self._revert_footnote_label.setWordWrap(True)
+        self._revert_footnote_label.setProperty("class", "CardMeta")
+        self._revert_footnote_label.setVisible(False)
+        hw_layout.addWidget(self._revert_footnote_label)
 
         # Thermal safety
         self._thermal_label = _transparent_label("", "Diagnostics_Label_thermalSafety")
@@ -1205,21 +1308,44 @@ class DiagnosticsPage(QWidget):
             self._module_conflict_label.setVisible(False)
 
         # BIOS interference (revert counts)
-        reverts = hw.enable_revert_counts
-        if reverts:
-            lines = ["BIOS interference detected — the EC/BIOS reclaimed fan control:"]
-            for header_id, count in reverts.items():
-                lines.append(f"  {header_id}: {count} revert(s)")
-            lines.append(
-                "The daemon watchdog automatically re-enables manual mode when this happens."
-            )
-            self._revert_label.setText("\n".join(lines))
-            self._revert_label.setProperty("class", "WarningChip")
-            self._revert_label.style().unpolish(self._revert_label)
-            self._revert_label.style().polish(self._revert_label)
-            self._revert_label.setVisible(True)
-        else:
+        # Tolerates pre-1.3 daemons that omit ``enable_revert_counts`` — the
+        # parser already defaults to {} (api/models.py:633), and ``getattr``
+        # below guards against any future shape drift on the GUI side too.
+        reverts = getattr(hw, "enable_revert_counts", None) or {}
+        body_html = render_reclaim_rows(reverts)
+        if body_html is None:
+            self._revert_headline_label.setVisible(False)
             self._revert_label.setVisible(False)
+            self._revert_footnote_label.setVisible(False)
+        else:
+            max_count = max(reverts.values())
+            top_severity = classify_reclaim_severity(max_count)
+            severity_class = {
+                RECLAIM_SEVERITY_HIGH: "CriticalChip",
+                RECLAIM_SEVERITY_WARN: "WarningChip",
+                RECLAIM_SEVERITY_OK: "SuccessChip",
+            }[top_severity]
+
+            headline = (
+                "BIOS interference detected — the EC/BIOS reclaimed fan control "
+                f"(highest: {max_count} reverts, {top_severity.upper()})"
+            )
+            self._revert_headline_label.setText(headline)
+            self._revert_headline_label.setProperty("class", severity_class)
+            self._revert_headline_label.style().unpolish(self._revert_headline_label)
+            self._revert_headline_label.style().polish(self._revert_headline_label)
+            self._revert_headline_label.setVisible(True)
+
+            self._revert_label.setText(body_html)
+            self._revert_label.setVisible(True)
+
+            self._revert_footnote_label.setText(
+                "The daemon watchdog automatically re-enables manual mode on every "
+                "reclaim. Persistently HIGH counts indicate ongoing BIOS contention — "
+                "see the matching vendor guidance card above for the BIOS settings to "
+                "change."
+            )
+            self._revert_footnote_label.setVisible(True)
 
         # Thermal safety
         ts = diag.thermal_safety
