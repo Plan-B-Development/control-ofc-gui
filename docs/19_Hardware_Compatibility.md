@@ -1,6 +1,6 @@
 # 19 — Hardware Compatibility Guide
 
-**Last updated:** 2026-04-22 (v1.5.0)
+**Last updated:** 2026-04-28 (v1.8.0 — added IT87952E row)
 
 **See also:** `21_AMD_Motherboard_Fan_Control_Guide.md` for comprehensive
 vendor-by-vendor setup and troubleshooting guidance.
@@ -33,10 +33,19 @@ guidance system (`hwmon_guidance.py`).
 | IT8686E | `it87` | **No** | `it87-dkms-git` (AUR) |
 | IT8688E | `it87` | **No** | `it87-dkms-git` (AUR) |
 | IT8689E | `it87` | **No** | `it87-dkms-git` (AUR) |
-| IT8696E | `it87` | **No** | `it87-dkms-git` (AUR) |
+| IT8696E | `it87` | **No** | `it87-dkms-git` (AUR) — primary on AM5 800-series Gigabyte boards |
+| IT87952E | `it87` | **No** | `it87-dkms-git` (AUR) — secondary chip on dual-IO Gigabyte boards (e.g. X870E AORUS MASTER) |
 
 The out-of-tree `it87` driver is maintained by Frank Crawford:
 https://github.com/frankcrawford/it87
+
+Recent Gigabyte AORUS boards (X870/X870E generation) often pair an
+**IT8696E** primary Super-I/O with an **IT87952E** secondary that
+exposes the additional SYS_FAN4 / FAN5_PUMP / FAN6_PUMP headers. Both
+chips are detected by the same driver via DMI auto-match — no
+modparams needed on current driver versions. See
+`21_AMD_Motherboard_Fan_Control_Guide.md` § Gigabyte → Reported
+examples for the X870E AORUS MASTER worked example.
 
 ### Fintek
 
