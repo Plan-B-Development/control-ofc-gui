@@ -53,6 +53,129 @@ def test_fan_display_name_fallback_to_id():
     assert state.fan_display_name("openfan:ch05") == "openfan:ch05"
 
 
+def test_fan_display_name_uses_label_resolver_when_sysfs_label_empty():
+    """A3: when the daemon's sysfs label is empty, fan_display_name
+    consults the in-repo fallback table (and /etc/sensors.d, but tests
+    inject an empty path list via the resolver's cache instead). On
+    the X870E AORUS MASTER, IT8696E pwm1 should resolve to CPU_FAN."""
+    from control_ofc.api.models import BoardInfo
+    from control_ofc.ui.hwmon_label_resolver import (
+        clear_libsensors_cache,
+        load_libsensors_configs,
+    )
+
+    # Force a deterministic libsensors result — no system files read.
+    clear_libsensors_cache()
+    load_libsensors_configs(paths=[])  # cache is set only when paths is None
+    try:
+        state = AppState()
+        state.board_info = BoardInfo(
+            vendor="Gigabyte Technology Co., Ltd.",
+            name="X870E AORUS MASTER",
+        )
+        state.set_hwmon_headers(
+            [
+                HwmonHeader(
+                    id="hwmon:it8696:it87.2624:pwm1:pwm1",
+                    label="",  # daemon couldn't read sysfs label
+                    chip_name="it8696",
+                    pwm_index=1,
+                ),
+            ]
+        )
+        assert state.fan_display_name("hwmon:it8696:it87.2624:pwm1:pwm1") == "CPU_FAN"
+    finally:
+        clear_libsensors_cache()
+
+
+def test_fan_display_name_unverified_suffix_for_secondary_chip():
+    """X870E AORUS MASTER IT87952E mappings are best-guess and must
+    carry the (unverified) suffix until silkscreen tracing confirms."""
+    from control_ofc.api.models import BoardInfo
+    from control_ofc.ui.hwmon_label_resolver import clear_libsensors_cache
+
+    clear_libsensors_cache()
+    try:
+        state = AppState()
+        state.board_info = BoardInfo(
+            vendor="Gigabyte Technology Co., Ltd.",
+            name="X870E AORUS MASTER",
+        )
+        state.set_hwmon_headers(
+            [
+                HwmonHeader(
+                    id="hwmon:it87952:it87.2656:pwm1:pwm1",
+                    label="",
+                    chip_name="it87952",
+                    pwm_index=1,
+                ),
+            ]
+        )
+        label = state.fan_display_name("hwmon:it87952:it87.2656:pwm1:pwm1")
+        assert label.startswith("SYS_FAN4")
+        assert label.endswith("(unverified)")
+    finally:
+        clear_libsensors_cache()
+
+
+def test_fan_display_name_alias_overrides_resolver():
+    """User aliases take absolute precedence — they win even over a
+    high-confidence resolver match."""
+    from control_ofc.api.models import BoardInfo
+    from control_ofc.ui.hwmon_label_resolver import clear_libsensors_cache
+
+    clear_libsensors_cache()
+    try:
+        state = AppState()
+        state.fan_aliases = {"hwmon:it8696:it87.2624:pwm1:pwm1": "My CPU Cooler"}
+        state.board_info = BoardInfo(
+            vendor="Gigabyte Technology Co., Ltd.",
+            name="X870E AORUS MASTER",
+        )
+        state.set_hwmon_headers(
+            [
+                HwmonHeader(
+                    id="hwmon:it8696:it87.2624:pwm1:pwm1",
+                    label="",
+                    chip_name="it8696",
+                    pwm_index=1,
+                ),
+            ]
+        )
+        # Alias wins — CPU_FAN is what the resolver would return otherwise.
+        assert state.fan_display_name("hwmon:it8696:it87.2624:pwm1:pwm1") == "My CPU Cooler"
+    finally:
+        clear_libsensors_cache()
+
+
+def test_fan_display_name_sysfs_label_wins_over_resolver():
+    """Daemon-supplied sysfs label has priority over the resolver — if
+    the kernel driver exposes a fanN_label, the resolver does not run."""
+    from control_ofc.api.models import BoardInfo
+    from control_ofc.ui.hwmon_label_resolver import clear_libsensors_cache
+
+    clear_libsensors_cache()
+    try:
+        state = AppState()
+        state.board_info = BoardInfo(
+            vendor="Gigabyte Technology Co., Ltd.",
+            name="X870E AORUS MASTER",
+        )
+        state.set_hwmon_headers(
+            [
+                HwmonHeader(
+                    id="hwmon:it8696:it87.2624:pwm1:pwm1",
+                    label="DAEMON_LABEL",
+                    chip_name="it8696",
+                    pwm_index=1,
+                ),
+            ]
+        )
+        assert state.fan_display_name("hwmon:it8696:it87.2624:pwm1:pwm1") == "DAEMON_LABEL"
+    finally:
+        clear_libsensors_cache()
+
+
 def test_warning_count_updates(qtbot):
     state = AppState()
     signals = []

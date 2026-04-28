@@ -46,6 +46,12 @@ from control_ofc.api.models import (
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService, format_uptime
 from control_ofc.ui.fan_display import filter_displayable_fans
+from control_ofc.ui.fan_presence import (
+    PRESENCE_BADGE,
+    PRESENCE_TOOLTIP,
+    FanPresence,
+    classify_fan_presence,
+)
 from control_ofc.ui.hwmon_guidance import (
     detect_module_conflicts,
     format_driver_status,
@@ -328,6 +334,12 @@ class DiagnosticsPage(QWidget):
     # (running on its own QThread) so the ~3s hardware probe never blocks the UI.
     _verify_request = Signal(str, str)
 
+    # Public signals used by main_window to coordinate the GUI control loop —
+    # the loop pauses writes to the header under verify so its 1Hz tick does
+    # not race the daemon's 3-second verify wait (A1).
+    verify_started = Signal(str)  # header_id
+    verify_completed = Signal(str)  # header_id
+
     def __init__(
         self,
         state: AppState | None = None,
@@ -347,6 +359,10 @@ class DiagnosticsPage(QWidget):
         # Lazy-created verify worker + thread (see _ensure_verify_worker).
         self._verify_thread: QThread | None = None
         self._verify_worker: _VerifyWorker | None = None
+        # Header currently under verify — used to emit verify_completed with
+        # the right id from both ok and error paths (the error signal does not
+        # carry the header_id).
+        self._verify_active_header: str | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 16, 24, 16)
@@ -1033,6 +1049,11 @@ class DiagnosticsPage(QWidget):
         if self._state:
             pwm_only = [h for h in self._state.hwmon_headers if h.id not in fan_ids]
 
+        # Lookup map for header context \u2014 used by the FanPresence classifier
+        # to distinguish "controllable, no fan detected" (writable header,
+        # rpm=0) from "uncontrollable" (read-only header) (A2).
+        header_by_id = {h.id: h for h in self._state.hwmon_headers} if self._state else {}
+
         # Deduplicate GPU/hwmon overlap for display (DEC-047), mirroring the
         # dashboard. hide_unused=False because Diagnostics must show every
         # known fan \u2014 zero-RPM or idle does not disqualify a row here.
@@ -1058,7 +1079,9 @@ class DiagnosticsPage(QWidget):
             control_method = _fan_control_method(f, self._state)
             self._fan_table.item(row, 2).setText(control_method)
 
-            self._fan_table.item(row, 3).setText(str(f.rpm) if f.rpm is not None else "\u2014")
+            presence = classify_fan_presence(f, header_by_id.get(f.id))
+            rpm_text = self._format_rpm_cell(f, presence)
+            self._fan_table.item(row, 3).setText(rpm_text)
             self._fan_table.item(row, 4).setText(
                 str(f.last_commanded_pwm) if f.last_commanded_pwm is not None else "\u2014"
             )
@@ -1072,7 +1095,7 @@ class DiagnosticsPage(QWidget):
             else:
                 freshness_item.setForeground(QColor(_THEME.text_primary))
 
-            row_tip = self._fan_row_tooltip(f)
+            row_tip = self._fan_row_tooltip(f, presence)
             method_tip = _CONTROL_METHOD_TOOLTIPS.get(
                 control_method, _CONTROL_METHOD_TOOLTIPS["unknown"]
             )
@@ -1112,10 +1135,13 @@ class DiagnosticsPage(QWidget):
                 self._fan_table.item(row, col).setToolTip(method_tip if col == 2 else pwm_tip)
             row += 1
 
-    def _fan_row_tooltip(self, fan) -> str:
+    def _fan_row_tooltip(self, fan, presence: FanPresence | None = None) -> str:
         """Build a tooltip for a fan row with chip/driver and control-method context."""
         parts = [f"ID: {fan.id}", f"Source: {fan.source}"]
         parts.append(f"Control method: {_fan_control_method(fan, self._state)}")
+        if presence is not None and presence not in (FanPresence.PRESENT, FanPresence.UNKNOWN):
+            parts.append(f"Presence: {PRESENCE_BADGE[presence]}")
+            parts.append(PRESENCE_TOOLTIP[presence])
         if fan.age_ms is not None:
             parts.append(f"Data age: {fan.age_ms} ms")
         if self._state:
@@ -1141,6 +1167,17 @@ class DiagnosticsPage(QWidget):
                     if gpu.pci_id:
                         parts.append(f"PCI: {gpu.pci_id}")
         return "\n".join(parts)
+
+    def _format_rpm_cell(self, fan, presence: FanPresence) -> str:
+        """RPM cell text — augmented with the presence badge when the fan is
+        not in the default PRESENT state, so the user can distinguish
+        "controllable, no fan plugged in" from "fan working" at a glance (A2).
+        """
+        rpm_text = str(fan.rpm) if fan.rpm is not None else "—"
+        badge = PRESENCE_BADGE.get(presence, "")
+        if badge:
+            return f"{rpm_text} — {badge}"
+        return rpm_text
 
     def _on_lease(self, lease: LeaseState) -> None:
         held_text = "Held" if lease.held else "Not held"
@@ -1169,9 +1206,14 @@ class DiagnosticsPage(QWidget):
             # Sensors tab so classification picks up board-specific quirks
             # (e.g. the ASUS NCT6776F CPUTIN caveat).
             if self._state:
+                # Push DMI board info into AppState so AppState.fan_display_name
+                # can apply board-specific hwmon label fallbacks (A3).
+                self._state.board_info = result.board
                 if self._state.capabilities:
                     self._refresh_hwmon_and_features(self._state.capabilities)
                 self._on_sensors(self._state.sensors)
+                # Re-render fans now that resolver has board context.
+                self._on_fans(self._state.fans)
             self._status_label.setText("Hardware diagnostics refreshed")
         except DaemonUnavailable:
             self._hw_ready_summary.setText("Daemon unavailable — cannot fetch diagnostics")
@@ -1461,6 +1503,14 @@ class DiagnosticsPage(QWidget):
             self._verify_result_label.setVisible(True)
             return
 
+        # Pause the GUI control loop's writes to this header so the daemon's
+        # 3-second verify wait does not get stomped on by our own 1Hz tick (A1).
+        # The control loop has its own 5-second safety auto-resume, so a hung
+        # verify cannot pin the header indefinitely even if we never emit
+        # verify_completed.
+        self._verify_active_header = header_id
+        self.verify_started.emit(header_id)
+
         # Fire queued signal to worker running on its own thread.
         self._verify_request.emit(header_id, lease_id)
 
@@ -1497,6 +1547,7 @@ class DiagnosticsPage(QWidget):
         self._show_verify_result(result)
         self._verify_btn.setEnabled(True)
         self._verify_btn.setText("Test PWM Control")
+        self._emit_verify_completed()
 
     @Slot(str, str)
     def _on_verify_error(self, category: str, message: str) -> None:
@@ -1507,6 +1558,16 @@ class DiagnosticsPage(QWidget):
         self._verify_result_label.setVisible(True)
         self._verify_btn.setEnabled(True)
         self._verify_btn.setText("Test PWM Control")
+        self._emit_verify_completed()
+
+    def _emit_verify_completed(self) -> None:
+        """Resume the control loop's writes for the header that was under
+        verify (A1). Both ok and error paths must call this, so it lives in a
+        single helper."""
+        header = self._verify_active_header
+        if header:
+            self.verify_completed.emit(header)
+        self._verify_active_header = None
 
     def cleanup(self) -> None:
         """Stop the verify worker thread. Called from main window closeEvent."""

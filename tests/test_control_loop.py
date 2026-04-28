@@ -332,6 +332,121 @@ class TestPrerequisites:
         assert loop._prerequisites_met() is True
 
 
+class TestVerifyPause:
+    """A1: control loop pauses writes to a header under in-flight verify so
+    its 1Hz tick does not race the daemon's 3-second verify wait."""
+
+    def test_pause_blocks_writes_for_header(self, state, profile_service, qtbot):
+        loop = ControlLoopService(state, profile_service)
+        loop.pause_writes_for_header("hwmon:it8696:it87.2624:pwm1:pwm1")
+        # Direct write attempt is short-circuited and returns False; nothing
+        # should be sent through the demo path even when DEMO mode is set.
+        loop._state.mode = OperationMode.DEMO
+        loop._demo = MagicMock()
+        result = loop._write_target("hwmon:it8696:it87.2624:pwm1:pwm1", 50.0)
+        assert result is False
+        loop._demo.set_fan_pwm.assert_not_called()
+
+    def test_pause_isolated_to_named_header(self, state, profile_service, qtbot):
+        """Pausing one header must not block writes to other headers."""
+        loop = ControlLoopService(state, profile_service)
+        loop.pause_writes_for_header("hwmon:it8696:it87.2624:pwm1:pwm1")
+        loop._state.mode = OperationMode.DEMO
+        loop._demo = MagicMock()
+        result = loop._write_target("hwmon:it8696:it87.2624:pwm2:pwm2", 50.0)
+        assert result is True
+        loop._demo.set_fan_pwm.assert_called_once()
+
+    def test_resume_releases_pause(self, state, profile_service, qtbot):
+        loop = ControlLoopService(state, profile_service)
+        loop.pause_writes_for_header("hwmon:it8696:it87.2624:pwm1:pwm1")
+        assert loop._is_write_paused("hwmon:it8696:it87.2624:pwm1:pwm1") is True
+        loop.resume_writes_for_header("hwmon:it8696:it87.2624:pwm1:pwm1")
+        assert loop._is_write_paused("hwmon:it8696:it87.2624:pwm1:pwm1") is False
+
+    def test_overlapping_pauses_share_state_safely(self, state, profile_service, qtbot):
+        """Calling pause twice for the same header must not break resume —
+        a single resume call ends the pause regardless of how many pauses
+        were issued. (Resume is the verify worker's signal that a verify
+        finished; the safety timer covers the runaway-pause case.)"""
+        loop = ControlLoopService(state, profile_service)
+        loop.pause_writes_for_header("hwmon:foo:bar:pwm1:pwm1")
+        loop.pause_writes_for_header("hwmon:foo:bar:pwm1:pwm1")
+        assert loop._is_write_paused("hwmon:foo:bar:pwm1:pwm1") is True
+        loop.resume_writes_for_header("hwmon:foo:bar:pwm1:pwm1")
+        assert loop._is_write_paused("hwmon:foo:bar:pwm1:pwm1") is False
+
+    def test_safety_resume_with_stale_token_is_noop(self, state, profile_service, qtbot):
+        """A safety callback fired with an outdated token (because a newer
+        pause replaced the entry) must not resume the active pause."""
+        loop = ControlLoopService(state, profile_service)
+        loop.pause_writes_for_header("hwmon:foo:bar:pwm1:pwm1")
+        first_token = loop._paused_headers["hwmon:foo:bar:pwm1:pwm1"]
+
+        # Newer pause bumps the token.
+        loop.pause_writes_for_header("hwmon:foo:bar:pwm1:pwm1")
+        new_token = loop._paused_headers["hwmon:foo:bar:pwm1:pwm1"]
+        assert new_token != first_token
+
+        # Stale safety callback (token = first_token) must be a no-op.
+        loop._safety_resume("hwmon:foo:bar:pwm1:pwm1", first_token)
+        assert loop._is_write_paused("hwmon:foo:bar:pwm1:pwm1") is True
+
+        # Matching safety callback resumes.
+        loop._safety_resume("hwmon:foo:bar:pwm1:pwm1", new_token)
+        assert loop._is_write_paused("hwmon:foo:bar:pwm1:pwm1") is False
+
+    def test_safety_resume_for_unknown_header_is_noop(self, state, profile_service, qtbot):
+        """If the user already called resume_writes_for_header before the
+        safety timer fires, the safety callback must not raise."""
+        loop = ControlLoopService(state, profile_service)
+        # Never paused, never inserted — must not KeyError.
+        loop._safety_resume("hwmon:not:paused:pwm1:pwm1", 1)
+
+    def test_pause_empty_header_id_ignored(self, state, profile_service, qtbot):
+        loop = ControlLoopService(state, profile_service)
+        loop.pause_writes_for_header("")
+        assert loop._paused_headers == {}
+        loop.resume_writes_for_header("")  # must not raise
+
+    def test_paused_header_not_written_during_cycle(self, state, profile_service, qtbot):
+        """End-to-end: a paused hwmon header is skipped by the cycle's write
+        path. Mirrors the actual race the GUI control loop creates against
+        the daemon's verify wait — what A1 prevents."""
+        target_id = "hwmon:it8696:it87.2624:pwm1:pwm1"
+        profile = _make_profile_with_curve([(30, 20), (70, 80)], target_id=target_id)
+        profile_service._profiles["test"] = profile
+        profile_service.set_active("test")
+
+        # Pretend GUI holds a lease (control loop checks this for hwmon writes).
+        lease_mock = MagicMock()
+        lease_mock.is_held = True
+        lease_mock.lease_id = "lease-1"
+
+        mock_client = MagicMock()
+        loop = ControlLoopService(
+            state, profile_service, client=mock_client, lease_service=lease_mock
+        )
+
+        # First cycle without pause — write goes through.
+        loop._cycle()
+        assert mock_client.set_hwmon_pwm.call_count == 1
+
+        # Pause and re-cycle — no second write.
+        mock_client.reset_mock()
+        loop.pause_writes_for_header(target_id)
+        loop._cycle()
+        assert mock_client.set_hwmon_pwm.call_count == 0
+
+        # Resume and re-cycle — temp must change so hysteresis allows a write.
+        state.sensors = [
+            SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=70.0, age_ms=500),
+        ]
+        loop.resume_writes_for_header(target_id)
+        loop._cycle()
+        assert mock_client.set_hwmon_pwm.call_count == 1
+
+
 class TestDemoWrite:
     def test_demo_write(self, state, profile_service, demo_service, qtbot):
         state.mode = OperationMode.DEMO

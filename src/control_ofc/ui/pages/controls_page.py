@@ -37,6 +37,12 @@ from control_ofc.services.profile_service import (
     LogicalControl,
     ProfileService,
 )
+from control_ofc.ui.fan_presence import (
+    PRESENCE_BADGE,
+    PRESENCE_TOOLTIP,
+    FanPresence,
+    classify_fan_presence,
+)
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 from control_ofc.ui.microcopy import get as mc
 from control_ofc.ui.qt_util import block_signals
@@ -558,22 +564,36 @@ class ControlsPage(QWidget):
                 self._state.capabilities is not None
                 and self._state.capabilities.amd_gpu.fan_write_supported
             )
+            header_by_id = {h.id: h for h in self._state.hwmon_headers}
+
             for fan in self._state.fans:
                 label = self._state.fan_display_name(fan.id)
                 if fan.source == "amd_gpu" and not gpu_writable:
                     label = f"{label} (read-only)"
-                available.append(
-                    {
-                        "id": fan.id,
-                        "source": fan.source,
-                        "label": label,
-                    }
-                )
+                # A2: surface "no fan detected" / PWM-only states in the picker
+                # so users don't accidentally assign curves to empty headers.
+                presence = classify_fan_presence(fan, header_by_id.get(fan.id))
+                badge = PRESENCE_BADGE.get(presence, "")
+                if badge and "(read-only)" not in label:
+                    label = f"{label} ({badge})"
+                tip = PRESENCE_TOOLTIP.get(presence, "") if presence != FanPresence.PRESENT else ""
+                entry = {
+                    "id": fan.id,
+                    "source": fan.source,
+                    "label": label,
+                }
+                if tip:
+                    entry["tooltip"] = tip
+                available.append(entry)
+
             for header in self._state.hwmon_headers:
                 if not any(a["id"] == header.id for a in available):
                     label = header.label or header.id
-                    if not header.is_writable:
+                    presence = classify_fan_presence(None, header)
+                    if presence == FanPresence.READ_ONLY:
                         label = f"{label} (read-only)"
+                    elif PRESENCE_BADGE.get(presence):
+                        label = f"{label} ({PRESENCE_BADGE[presence]})"
                     tip_parts = [f"ID: {header.id}"]
                     if header.chip_name:
                         tip_parts.append(f"Chip: {header.chip_name}")
@@ -581,12 +601,14 @@ class ControlsPage(QWidget):
                         if g:
                             st = "mainline" if g.in_mainline else g.driver_package
                             tip_parts.append(f"Driver: {g.driver_name} ({st})")
+                    if presence != FanPresence.PRESENT:
+                        tip_parts.append(PRESENCE_TOOLTIP.get(presence, ""))
                     available.append(
                         {
                             "id": header.id,
                             "source": "hwmon",
                             "label": label,
-                            "tooltip": "\n".join(tip_parts),
+                            "tooltip": "\n".join(p for p in tip_parts if p),
                         }
                     )
 
