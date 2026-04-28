@@ -11,6 +11,7 @@ import time
 from PySide6.QtCore import QObject, Signal
 
 from control_ofc.api.models import (
+    BoardInfo,
     Capabilities,
     ConnectionState,
     DaemonStatus,
@@ -62,6 +63,12 @@ class AppState(QObject):
 
         # Fan aliases: fan_id -> display name (GUI-owned)
         self.fan_aliases: dict[str, str] = {}
+
+        # DMI board info supplied by /diagnostics/hardware. Used by
+        # ``hwmon_label_resolver`` to apply per-board fallback labels
+        # (A3) when the daemon's sysfs label is empty and no
+        # /etc/sensors.d entry matches.
+        self.board_info: BoardInfo = BoardInfo()
 
         # Session flag — set to True when the GUI has successfully written
         # a GPU fan PWM this session. Used by ``MainWindow.closeEvent`` to
@@ -129,7 +136,19 @@ class AppState(QObject):
         self.fan_alias_changed.emit(fan_id, self.fan_display_name(fan_id))
 
     def fan_display_name(self, fan_id: str) -> str:
-        """Return the best display name for a fan: alias > GPU model > hwmon label > id."""
+        """Return the best display name for a fan.
+
+        Priority:
+            1. user alias (``fan_aliases``)
+            2. GPU model name (for ``amd_gpu:`` fans)
+            3. daemon-supplied sysfs ``HwmonHeader.label`` (for hwmon fans)
+            4. ``hwmon_label_resolver`` — ``/etc/sensors.d`` and the
+               in-repo board fallback table (A3)
+            5. raw ``fan_id`` as a last resort
+
+        Steps 4 onward only fire for hwmon fans; OpenFan and GPU fans
+        keep their existing precedence.
+        """
         if fan_id in self.fan_aliases:
             return self.fan_aliases[fan_id]
         if fan_id.startswith("amd_gpu:"):
@@ -138,7 +157,21 @@ class AppState(QObject):
             return "D-GPU Fan"
         for h in self.hwmon_headers:
             if h.id == fan_id:
-                return h.label
+                if h.label:
+                    return h.label
+                # Lazy import — keeps the resolver out of the hot path
+                # for OpenFan-only systems and keeps app_state import-light.
+                from control_ofc.ui.hwmon_label_resolver import (
+                    resolve_hwmon_header_label,
+                )
+
+                return resolve_hwmon_header_label(
+                    sysfs_label="",
+                    chip_name=h.chip_name,
+                    pwm_index=h.pwm_index,
+                    board_vendor=self.board_info.vendor,
+                    board_name=self.board_info.name,
+                )
         return fan_id
 
     def add_warning(self, level: str, source: str, message: str, key: str = "") -> None:

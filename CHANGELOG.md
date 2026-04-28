@@ -1,5 +1,62 @@
 # Changelog
 
+## [1.8.0] — 2026-04-28
+
+Truthfulness pass triggered by an X870E AORUS MASTER report that PWM fan
+control was "not working". The board controls correctly; the user-visible
+problem was three downstream presentation defects in the GUI plus a
+documentation gap. This release fixes the GUI side. See
+`PWM_VERIFY_REMEDIATION.md` for the investigation and the approved plan.
+
+### Fixed
+- **Control loop no longer races the daemon's verify wait (A1).** Clicking
+  *Test PWM Control* on Diagnostics now pauses the GUI's 1 Hz control-loop
+  writes to the header under verify for the duration of the daemon's 3 s
+  test. Previously the control loop's next tick landed during the wait
+  and the daemon classifier mis-attributed the change to "BIOS/EC" (a
+  false `pwm_value_clamped`). A 5 s safety auto-resume guarantees a hung
+  verify cannot pin the header. New `pause_writes_for_header` /
+  `resume_writes_for_header` API on `ControlLoopService`. Wired through
+  Diagnostics' new `verify_started` / `verify_completed` signals in
+  `MainWindow`.
+
+### Added
+- **Fan presence classification across Diagnostics, Controls, and Fan
+  Wizard (A2).** New `FanPresence` enum (`PRESENT` / `EMPTY_HEADER` /
+  `READ_ONLY` / `PWM_ONLY` / `UNKNOWN`) computed purely from
+  daemon-supplied `FanReading` + `HwmonHeader` fields. Diagnostics →
+  Fans now appends "no fan detected" to the RPM cell for writable
+  hwmon headers reading 0 RPM (the dominant X870E AORUS MASTER case
+  where 7 of 8 PWM headers are unpopulated). Controls fan-role member
+  picker decorates the same way so users do not accidentally assign
+  curves to empty headers.
+- **Per-board hwmon header label resolver (A3).** New three-tier
+  resolution: alias > daemon-supplied sysfs label > `/etc/sensors.d`
+  and `/usr/share/sensors/*` chip-block labels > in-repo fallback
+  table. Seeded with the X870E AORUS MASTER's IT8696E (5 verified
+  silkscreen labels: CPU_FAN, SYS_FAN1..3, CPU_OPT) and IT87952E
+  (3 best-guess labels marked `(unverified)` until silkscreen tracing
+  confirms). New minimal libsensors-syntax parser recognises `chip`,
+  `label`, and `ignore` directives — sufficient for every Gigabyte /
+  ASUS / MSI fan-header config in the wild without tracking the full
+  libsensors grammar. `AppState.fan_display_name` now consults the
+  resolver when the daemon's sysfs label is empty.
+
+### Tests
+- `tests/test_control_loop.py::TestVerifyPause` — 8 new tests covering
+  pause / resume / safety auto-resume / overlapping pauses /
+  end-to-end paused-during-cycle.
+- `tests/test_fan_presence.py` — 16 tests covering all four classified
+  states plus presentation-data invariants.
+- `tests/test_fan_presence_integration.py` — Diagnostics fan-table,
+  Controls member picker, and Fan Wizard surface tests.
+- `tests/test_hwmon_label_resolver.py` — 34 tests covering the
+  libsensors parser, fallback table, resolver priority chain, and
+  cache behaviour.
+- `tests/test_app_state.py` — new `fan_display_name` integration tests
+  for the resolver chain (sysfs → libsensors → fallback → alias
+  override).
+
 ## [1.7.1] — 2026-04-25
 
 Operator-experience patch: surface BIOS pwm_enable reclaim activity directly

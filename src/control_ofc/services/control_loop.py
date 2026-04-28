@@ -50,6 +50,11 @@ log = logging.getLogger(__name__)
 # Matches "openfan:chNN" and extracts the channel number.
 _OPENFAN_CH_RE = re.compile(r"^openfan:ch(\d+)$")
 
+# Safety auto-resume for pause_writes_for_header. The daemon's verify endpoint
+# waits ~3s before reading back; 5s leaves headroom for slow IPC and avoids
+# pinning a header indefinitely if the verify caller crashes mid-call.
+VERIFY_PAUSE_SAFETY_MS = 5000
+
 
 class _WriteWorker(QObject):
     """Runs in a QThread — executes blocking HTTP write calls off the main thread."""
@@ -156,6 +161,11 @@ class ControlLoopService(QObject):
         self._running = False
         self._is_shutdown = False
 
+        # Per-header write pause for in-flight verify coordination (A1).
+        # Maps target_id -> generation token. A safety timer auto-resumes after
+        # VERIFY_PAUSE_SAFETY_MS so a hung verify cannot pin a header forever.
+        self._paused_headers: dict[str, int] = {}
+
         # Background write worker (P0-G1: avoid blocking main thread).
         # Only created when socket_path is explicitly provided (production).
         # When None (tests), falls back to synchronous writes via self._client.
@@ -247,6 +257,48 @@ class ControlLoopService(QObject):
         if not self._manual_override:
             return False
         return self._write_target(target_id, pwm_percent)
+
+    def pause_writes_for_header(self, header_id: str) -> None:
+        """Pause writes to ``header_id`` until ``resume_writes_for_header`` is
+        called or the safety timer fires (A1).
+
+        Used by Diagnostics' verify worker to keep the control loop from
+        racing the daemon's 3-second verify wait. A 5-second safety auto-
+        resume guarantees a hung verify cannot pin the header forever.
+        Each pause issues a fresh generation token; only the matching
+        safety callback can auto-resume, so calling pause again before the
+        previous safety timer fires is harmless (the older timer becomes a
+        no-op).
+        """
+        if not header_id:
+            return
+        token = self._paused_headers.get(header_id, 0) + 1
+        self._paused_headers[header_id] = token
+        QTimer.singleShot(
+            VERIFY_PAUSE_SAFETY_MS,
+            lambda h=header_id, t=token: self._safety_resume(h, t),
+        )
+
+    def resume_writes_for_header(self, header_id: str) -> None:
+        """Resume writes to ``header_id`` after a verify completes (A1)."""
+        if not header_id:
+            return
+        self._paused_headers.pop(header_id, None)
+
+    def _safety_resume(self, header_id: str, token: int) -> None:
+        """Force resume after VERIFY_PAUSE_SAFETY_MS if still paused with the
+        matching token. Newer pauses bump the token and make stale safety
+        callbacks no-ops automatically."""
+        if self._paused_headers.get(header_id) == token:
+            log.warning(
+                "Verify-pause safety timeout for %s after %d ms — forcing resume",
+                header_id,
+                VERIFY_PAUSE_SAFETY_MS,
+            )
+            self._paused_headers.pop(header_id, None)
+
+    def _is_write_paused(self, target_id: str) -> bool:
+        return target_id in self._paused_headers
 
     def reevaluate_now(self) -> None:
         """Force an immediate control loop re-evaluation.
@@ -517,6 +569,9 @@ class ControlLoopService(QObject):
 
     def _write_target(self, target_id: str, pwm_percent: float) -> bool:
         """Write PWM — dispatches to background worker or falls back to sync."""
+        if self._is_write_paused(target_id):
+            return False
+
         pwm_int = round(pwm_percent)
 
         if self._state.mode == OperationMode.DEMO and self._demo is not None:

@@ -164,8 +164,20 @@ class MainWindow(QWidget):
         else:
             if self._control_loop:
                 self._control_loop.status_changed.connect(self._on_control_loop_status)
+                self._wire_diagnostics_to_control_loop()
             self._state.set_connection(ConnectionState.DISCONNECTED)
             self._state.set_mode(OperationMode.READ_ONLY)
+
+    def _wire_diagnostics_to_control_loop(self) -> None:
+        """Connect Diagnostics' verify_started/completed signals to the
+        control loop's pause/resume so the 1Hz tick does not race the
+        daemon's 3-second verify wait (A1)."""
+        loop = self._control_loop
+        page = getattr(self, "diagnostics_page", None)
+        if loop is None or page is None:
+            return
+        page.verify_started.connect(loop.pause_writes_for_header)
+        page.verify_completed.connect(loop.resume_writes_for_header)
 
     def _on_page_changed(self, page_id: int) -> None:
         self.page_stack.setCurrentIndex(page_id)
@@ -216,6 +228,7 @@ class MainWindow(QWidget):
         # propagate the new reference so Activate-profile calls can reach it.
         self.dashboard_page._control_loop = self._control_loop
         self.controls_page._control_loop = self._control_loop
+        self._wire_diagnostics_to_control_loop()
 
         # Load initial demo data
         self._state.set_capabilities(self._demo_service.capabilities())
