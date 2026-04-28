@@ -1,6 +1,6 @@
 # 21 — AMD Motherboard Fan Control Guide
 
-**Last updated:** 2026-04-22 (v1.5.0)
+**Last updated:** 2026-04-28 (v1.8.0 — added X870E AORUS MASTER worked example)
 
 ## Purpose
 
@@ -420,9 +420,30 @@ Reference: https://github.com/frankcrawford/it87
 
 #### Reported examples
 
-- **Gigabyte X670E Aorus Master:** PWM writes have no effect on some
-  systems even though Windows tools can control the fans.
+- **Gigabyte X670E Aorus Master (IT8689E rev 1):** PWM writes have no
+  effect on some systems even though Windows tools can control the fans.
+  This is the IT8689E manual-control limitation documented in the
+  upstream `TODOS` — a different chip and different problem from the
+  X870E AORUS MASTER below.
   Reference: https://github.com/frankcrawford/it87/issues/96
+
+- **Gigabyte X870E AORUS MASTER (IT8696E rev 0 + IT87952E):** PWM fan
+  control **works** on `it87-dkms-git` 332.20f2f2f+ and BIOS F13a
+  (2026-03 onwards) with no kernel parameters and no BIOS flat-curve
+  workaround. Distinct from the X670E AORUS MASTER case above — that
+  one is IT8689E rev 1 with a manual-control limitation; this is
+  IT8696E rev 0 (primary) plus IT87952E (secondary), both
+  controllable. The board exposes **8 writable PWM headers total**:
+  5 on IT8696E (CPU_FAN, SYS_FAN1, SYS_FAN2, SYS_FAN3, CPU_OPT) and
+  3 on IT87952E (likely SYS_FAN4, SYS_FAN5_PUMP, SYS_FAN6_PUMP — the
+  pwm-to-silkscreen mapping on the secondary chip is unverified;
+  the GUI marks these labels with `(unverified)` until silkscreen
+  tracing confirms). BIOS Smart Fan 6 reclaims `pwm_enable` on
+  CPU_FAN at ~1 Hz; the daemon's `pwm_enable` watchdog (v1.3.0+)
+  handles this transparently. To eliminate the reclaim entirely set
+  Smart Fan 6 to *Manual / Full Speed* for every header in BIOS.
+  No upstream `lm_sensors` config exists for this board yet (as of
+  2026-04); the GUI ships a fallback label table (see GUI v1.8.0).
 
 - **Gigabyte B550M DS3H:** `gigabyte_wmi` driver provides temp1-temp6
   with no semantic labels.
