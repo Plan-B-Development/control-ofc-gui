@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QButtonGroup, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from control_ofc.constants import PAGE_CONTROLS, PAGE_DASHBOARD, PAGE_DIAGNOSTICS, PAGE_SETTINGS
-from control_ofc.ui.branding import banner_image_path
 
 _NAV_ITEMS = [
     (PAGE_DASHBOARD, "Dashboard"),
@@ -31,24 +29,12 @@ class Sidebar(QWidget):
         layout.setContentsMargins(8, 8, 8, 16)
         layout.setSpacing(4)
 
-        # Brand mark at top
-        banner_path = banner_image_path()
-        if banner_path:
-            brand_label = QLabel()
-            brand_label.setObjectName("Sidebar_Brand_image")
-            pixmap = QPixmap(str(banner_path))
-            scaled = pixmap.scaledToWidth(160, Qt.TransformationMode.SmoothTransformation)
-            brand_label.setPixmap(scaled)
-            brand_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(brand_label)
-            layout.addSpacing(8)
-        else:
-            brand_text = QLabel("Control-OFC")
-            brand_text.setObjectName("Sidebar_Brand_text")
-            brand_text.setProperty("class", "PageTitle")
-            brand_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(brand_text)
-            layout.addSpacing(8)
+        brand_text = QLabel("Control-OFC")
+        brand_text.setObjectName("Sidebar_Brand_text")
+        brand_text.setProperty("class", "PageTitle")
+        brand_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(brand_text)
+        layout.addSpacing(8)
 
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)

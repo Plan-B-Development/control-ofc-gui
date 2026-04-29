@@ -109,8 +109,6 @@ class TestSettingsRoundtripCompleteness:
         svc = AppSettingsService()
         svc.update(
             theme_name="Neon",
-            fun_mode=False,
-            show_splash=False,
             show_gpu_zero_rpm_warning=False,
             series_colors={"sensor:cpu": "#ff0000"},
             fan_aliases={"openfan:ch00": "Intake"},
@@ -122,8 +120,6 @@ class TestSettingsRoundtripCompleteness:
         svc2.load()
         s = svc2.settings
         assert s.theme_name == "Neon"
-        assert s.fun_mode is False
-        assert s.show_splash is False
         assert s.show_gpu_zero_rpm_warning is False
         assert s.series_colors == {"sensor:cpu": "#ff0000"}
         assert s.fan_aliases == {"openfan:ch00": "Intake"}

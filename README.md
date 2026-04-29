@@ -2,7 +2,7 @@
 
 Desktop fan control interface for Linux. Communicates with the [`control-ofc-daemon`](https://github.com/Plan-B-Development/control-ofc-daemon) service to monitor temperatures, manage fan speeds, and apply custom fan curves.
 
-![Dashboard](screenshots/dashboard.png)
+![Dashboard](screenshots/auto/01_dashboard.png)
 
 ## Features
 
@@ -85,7 +85,12 @@ See the [architecture docs](docs/02_System_Architecture_and_Boundaries.md) and [
 
 ## Documentation
 
-- **[User Manual](manual/getting-started.md)** — installation, features, and usage guide
+- **[User Manual](manual/README.md)** — installation, features, and usage guide
+- **[Hardware Troubleshooting](manual/hardware-troubleshooting.md)** — Hardware Readiness, Test PWM Control, vendor quirks
+- **[Hardware Compatibility](docs/19_Hardware_Compatibility.md)** — chip support matrix, kernel drivers, ACPI conflicts
+- **[AMD Motherboard Fan Control Guide](docs/21_AMD_Motherboard_Fan_Control_Guide.md)** — vendor-by-vendor BIOS notes (Gigabyte, ASUS, MSI, ASRock)
+- **[Sensor Interpretation Guide](docs/20_Sensor_Interpretation_Guide.md)** — what each sensor name means and which to trust
+- **[AMD Sensor Interpretation Deep Dive](docs/22_AMD_Sensor_Interpretation_Deep_Dive.md)** — Tctl/Tdie, edge/junction, and common AMD-specific traps
 - **[Architecture](docs/00_README_START_HERE.md)** — design docs and specs
 - **[API Contract](docs/08_API_Integration_Contract.md)** — daemon endpoint reference
 - **[Decisions](DECISIONS.md)** — architecture decision records

@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.9.0] — 2026-04-29
+
+Content update — refreshed visual presentation across the sidebar, About
+dialog, and Settings page, plus a documentation cleanup pass. No changes
+to fan control, profiles, sensors, daemon contract, or persisted
+profile/theme files. Existing user settings load unchanged; legacy
+display preferences in saved JSON are tolerated and ignored.
+
+### Documentation
+- **New `manual/hardware-troubleshooting.md`** covering the Diagnostics →
+  Fans Hardware Readiness card, vendor quirks, Test PWM Control button
+  and result interpretation, per-header pwm_enable reclaim counter
+  (severity ramp), fan presence annotations, and the per-board hwmon
+  header label resolver. Cross-links into `docs/19_Hardware_Compatibility.md`,
+  `docs/20_Sensor_Interpretation_Guide.md`,
+  `docs/21_AMD_Motherboard_Fan_Control_Guide.md`, and
+  `docs/22_AMD_Sensor_Interpretation_Deep_Dive.md`.
+- **Manual updates for v1.7.0–v1.8.0 features that previously had no user
+  docs.** `manual/diagnostics.md` now covers the Sensors tab Chip /
+  Confidence columns and the Fans tab Control method column / fan
+  presence annotation. The page also points users at the new
+  hardware-troubleshooting page from a top-of-page callout.
+- **README and manual TOC link to motherboard / sensor reference docs.**
+  Top-level `README.md` Documentation section and `manual/README.md`
+  now surface the four `docs/19/20/21/22` reference docs that previously
+  had no entry point from the user-facing manual.
+- **Removed stale parody/microcopy/splash language from internal docs.**
+  `docs/01_Product_Overview.md`, `docs/03_UX_UI_Principles_and_Visual_System.md`,
+  `docs/12_Implementation_Plan_and_Module_Structure.md`,
+  `docs/13_Acceptance_Criteria.md`, and
+  `docs/16_User_Decisions_and_API_Notes_Reference.md` are now consistent
+  with the de-branded v1.9.0 visual direction.
+
+### Fixed
+- **In-app Hardware Compatibility Guide link points at the correct
+  GitHub org.** Diagnostics → Fans → Hardware Readiness previously
+  hard-coded `github.com/control-ofc/control-ofc-gui` (404). Now uses
+  `Plan-B-Development/control-ofc-gui`.
+- **README hero image and `manual/getting-started.md` clone URL.** README
+  was referencing a non-existent `screenshots/dashboard.png`; clone URL
+  in getting-started used the `your-org` placeholder.
+- **`manual/getting-started.md` no longer documents a splash screen** that
+  was removed in v1.9.0.
+
+### Tooling
+- **`scripts/capture_screenshots.py`** dropped its imports of the deleted
+  `control_ofc.ui.microcopy` and `control_ofc.ui.splash` modules (which
+  caused the script to crash before producing any screenshots) and now
+  injects synthetic hardware diagnostics into the Diagnostics → Fans
+  capture so the Hardware Readiness card renders populated. The
+  `16_splash_screen` expected file was removed from
+  `scripts/build_manual.sh`. All 15 manual screenshots regenerated.
+- **`DemoService.hardware_diagnostics()`** new factory returning a
+  populated `HardwareDiagnosticsResult` (Gigabyte X870E AORUS MASTER /
+  IT8696E / RDNA3 PMFW). Used by the screenshot tooling; not consumed by
+  the live `--demo` UI (the diagnostics fetch path still requires a
+  daemon client). Covered by two new tests in `tests/test_demo.py`.
+
 ## [1.8.0] — 2026-04-28
 
 Truthfulness pass triggered by an X870E AORUS MASTER report that PWM fan
@@ -580,24 +638,10 @@ Code quality and robustness hardening from full audit pass.
 
 ## [1.0.0] — 2026-04-08
 
-### Project Rebrand — OnlyFans → Control-OFC
-
-**BREAKING CHANGE:** Complete project rebrand. All paths, package names, and identifiers have changed.
-
-- **Package name:** `onlyfans` → `control-ofc-gui`
-- **Import path:** `onlyfans.*` → `control_ofc.*`
-- **CLI command:** `onlyfans` → `control-ofc-gui`
-- **Display name:** "OnlyFans" → "Control-OFC"
-- **Socket path:** `/run/onlyfans/onlyfans.sock` → `/run/control-ofc/control-ofc.sock`
-- **Config dir:** `~/.config/onlyfans/` → `~/.config/control-ofc/`
-- **Daemon service name:** `onlyfans-daemon` → `control-ofc-daemon`
-
-**Migration:** Users upgrading from the OnlyFans-named installation must:
-1. Uninstall old package: `pip uninstall onlyfans`
-2. Install new: `pip install -e ".[dev]"` (or from package)
-3. Move user config: `mv ~/.config/onlyfans ~/.config/control-ofc`
-4. Update the daemon to v1.0.0 (new socket path)
-5. Launch with: `control-ofc-gui` (or `control-ofc-gui --demo`)
+Content update establishing the package layout, paths, and identifiers used
+by the GUI from this release onward (`control-ofc-gui` package,
+`control_ofc.*` import path, `~/.config/control-ofc/` config dir, and the
+`/run/control-ofc/control-ofc.sock` daemon socket).
 
 ### Removed
 - **`httpx-sse` dependency removed.** The planned `EventStreamService` (DEC-024) was never wired up and the dependency was unused. The GUI continues to use the 1 Hz polling loop for all data. The daemon still exposes `GET /events` for other clients; GUI consumption is tracked as deferred work in `docs/14_Risks_Gaps_and_Future_Work.md`. See DEC-023 and DEC-024 for the updated rationale.

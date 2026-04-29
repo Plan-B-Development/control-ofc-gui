@@ -19,8 +19,6 @@ def test_roundtrip():
         restore_last_page=False,
         demo_on_disconnect=True,
         theme_name="Custom",
-        fun_mode=False,
-        show_splash=False,
     )
     data = original.to_dict()
     restored = AppSettings.from_dict(data)
@@ -28,8 +26,23 @@ def test_roundtrip():
     assert restored.restore_last_page is False
     assert restored.demo_on_disconnect is True
     assert restored.theme_name == "Custom"
-    assert restored.fun_mode is False
-    assert restored.show_splash is False
+
+
+def test_legacy_display_keys_ignored():
+    """Settings JSON written by older versions may still contain `fun_mode`
+    and `show_splash`. Loading must not error and must drop them silently."""
+    legacy = {
+        "version": 1,
+        "theme_name": "Default Dark",
+        "fun_mode": False,
+        "show_splash": False,
+    }
+    restored = AppSettings.from_dict(legacy)
+    assert restored.theme_name == "Default Dark"
+    # Round-tripping must not re-introduce the legacy keys.
+    data = restored.to_dict()
+    assert "fun_mode" not in data
+    assert "show_splash" not in data
 
 
 def test_from_dict_handles_missing_keys():

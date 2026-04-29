@@ -13,8 +13,17 @@ This manual covers every page, setting, and feature of the application.
 5. [Diagnostics](diagnostics.md) — Daemon health, device status, lease info, and logs
 6. [Fan Wizard](fan-wizard.md) — Guided fan identification and labelling
 7. [Profiles and Curves Reference](profiles-and-curves.md) — How profiles, fan roles, and curves work together
+8. [Hardware Troubleshooting](hardware-troubleshooting.md) — Hardware Readiness, vendor quirks, Test PWM Control, and why some fans appear read-only
+
+## Reference Docs
+
+For deeper hardware and sensor topics, see:
+
+- [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) — chip support matrix, kernel driver requirements, ACPI conflicts
+- [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) — vendor-by-vendor BIOS notes (Gigabyte, ASUS, MSI, ASRock)
+- [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) — what each sensor name means and which to trust
+- [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md) — Tctl vs Tdie, edge vs junction, and common AMD-specific traps
 
 ## Screenshots
 
-All screenshots in this manual are captured automatically from the application running in demo mode. See the \screenshots directory for images of the application running live. 
-
+All screenshots in this manual are captured automatically from the application running in demo mode (see `scripts/build_manual.sh`). The `screenshots/auto/` directory holds the canonical set referenced from these pages.

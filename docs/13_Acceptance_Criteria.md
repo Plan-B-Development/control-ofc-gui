@@ -88,7 +88,7 @@
 - [ ] Warning and error states are visually distinct
 - [ ] Controls are understandable without reading a manual first
 - [ ] Empty states look intentional
-- [ ] The parody branding is present but does not compromise usability
+- [ ] Visual identity (icon, sidebar text, About) is restrained and never compromises usability
 
 ## Non-acceptance criteria for V1
 The following are explicitly not required for V1 acceptance:

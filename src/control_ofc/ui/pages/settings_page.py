@@ -130,17 +130,6 @@ class SettingsPage(QWidget):
         self._remember_profile_cb.setObjectName("Settings_Check_rememberProfile")
         layout.addWidget(self._remember_profile_cb)
 
-        # Fun mode
-        self._fun_mode_cb = QCheckBox("Fun mode (cheeky microcopy)")
-        self._fun_mode_cb.setObjectName("Settings_Check_funMode")
-        self._fun_mode_cb.setToolTip("Enable playful text throughout the application")
-        layout.addWidget(self._fun_mode_cb)
-
-        # Splash screen
-        self._splash_cb = QCheckBox("Show splash screen on startup")
-        self._splash_cb.setObjectName("Settings_Check_showSplash")
-        layout.addWidget(self._splash_cb)
-
         # GPU zero-RPM warning
         self._gpu_zero_rpm_warn_cb = QCheckBox(
             "Show GPU zero-RPM warning when adding GPU fan to role"
@@ -396,8 +385,6 @@ class SettingsPage(QWidget):
         self._chart_range_combo.setCurrentIndex(
             min(s.chart_default_range_index, self._chart_range_combo.count() - 1)
         )
-        self._fun_mode_cb.setChecked(s.fun_mode)
-        self._splash_cb.setChecked(s.show_splash)
         self._gpu_zero_rpm_warn_cb.setChecked(s.show_gpu_zero_rpm_warning)
         self._wizard_spindown_spin.setValue(s.wizard_spindown_seconds)
         self._startup_delay_spin.setValue(s.daemon_startup_delay_secs)
@@ -410,8 +397,6 @@ class SettingsPage(QWidget):
         self._export_dir_label.setText(s.export_default_dir or str(export_default_dir()))
 
     def _save_app_settings(self) -> None:
-        from control_ofc.ui.microcopy import set_fun_mode
-
         # Determine directory overrides: empty label text means "use default"
         profiles_override = self._profiles_dir_label.text()
         themes_override = self._themes_dir_label.text()
@@ -435,8 +420,6 @@ class SettingsPage(QWidget):
             demo_on_disconnect=self._demo_disconnect_cb.isChecked(),
             remember_last_profile=self._remember_profile_cb.isChecked(),
             chart_default_range_index=self._chart_range_combo.currentIndex(),
-            fun_mode=self._fun_mode_cb.isChecked(),
-            show_splash=self._splash_cb.isChecked(),
             show_gpu_zero_rpm_warning=self._gpu_zero_rpm_warn_cb.isChecked(),
             wizard_spindown_seconds=self._wizard_spindown_spin.value(),
             daemon_startup_delay_secs=self._startup_delay_spin.value(),
@@ -453,8 +436,6 @@ class SettingsPage(QWidget):
             themes_dir=themes_override,
             export_dir=export_override,
         )
-
-        set_fun_mode(self._fun_mode_cb.isChecked())
 
         # Push startup delay to daemon if connected
         if self._client:

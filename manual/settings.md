@@ -19,8 +19,6 @@ The Settings page manages application preferences, visual themes, and backup/res
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Fun mode (cheeky microcopy)** | On | Enables playful text throughout the interface. Turn off for a more professional tone |
-| **Show splash screen on startup** | On | Display the branded splash screen while the application loads |
 | **Show GPU zero-RPM warning** | On | When you add a GPU fan to a fan role, show an informational popup explaining that the GPU's zero-RPM idle mode will be temporarily disabled while the curve is controlling it |
 | **Chart default time range** | 30m | The initial time window shown on the Dashboard fan speed chart |
 

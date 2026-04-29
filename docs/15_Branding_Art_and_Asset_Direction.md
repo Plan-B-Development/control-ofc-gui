@@ -1,92 +1,55 @@
 # 15 — Branding, Art, and Asset Direction
 
 ## Purpose
-Translate the provided parody-brand image into practical UI asset direction without overwhelming the working app.
+Define the visual direction for Control-OFC: icon, typography, and palette.
+The working app should feel like a proper Linux desktop utility — restrained,
+readable, and professional.
 
-## Supplied source asset
-- `docs/NotJustOnlyFans.png` — the original parody-brand image.
-
-## Where the derived assets actually live
-The working app ships its derived assets from the repo-level `assets/branding/` tree
-(sibling of `src/`, loaded at runtime by `src/control_ofc/ui/branding.py`):
+## Where the assets live
+The working app ships its derived assets from the repo-level `assets/branding/`
+tree (sibling of `src/`, loaded at runtime by
+`src/control_ofc/ui/branding.py`):
 
 ```text
 assets/branding/
-  app_icon/           # application icon set
-  icons/              # in-app iconography
-  splash/             # splash-screen artwork
-  banner.png          # in-app banner (sanitised)
-  banner_original.png # original banner source (reference only)
+  app_icon/   # application icon set (SVG)
 ```
 
-The PNG in `docs/` is retained as the brand reference; runtime lookups should use
-`src/control_ofc/ui/branding.py`, not the docs copy.
+`src/control_ofc/ui/branding.py` is the runtime entry point; it currently
+exposes a single helper, `load_app_icon()`, which loads the SVG icon from
+`assets/branding/app_icon/app_icon.svg`.
 
-## Brand character
+## Tone
 The branding should feel:
-- playful
-- cheeky
-- self-aware
+- restrained
 - modern
-- still competent
+- competent
+- legible at any size
 
 The product should not feel:
-- childish
+- decorative
 - neon-chaotic
-- overly sexualised
 - cluttered
 - unserious in operational screens
 
-## Primary visual cues from the supplied art
-- blue fan iconography
-- flowing soft blue energy/swoosh elements
-- mixed playful script + cleaner text
-- bright branding accent against a clean field
+## App icon
+A simplified, square or rounded-square mark with a stylised fan element. The
+icon must:
+- read clearly at small sizes (sidebar, taskbar, system tray)
+- contain no embedded text
+- work on both light and dark backgrounds
+- ship as a vector (`assets/branding/app_icon/app_icon.svg`)
 
-## How to use the branding in the app
+## Typography
+- System default sans-serif by default
+- Base font size: 10pt
+- User-configurable font family and base size from Settings → Themes
+- No decorative or script faces in operational UI
 
-### Good uses
-- app icon
-- splash screen
-- about dialog/page
-- disconnected/demo empty-state illustration
-- subtle page watermark or hero treatment on welcome/empty screens
-
-### Avoid
-- putting the full bright banner behind every page
-- reducing chart readability with decorative overlays
-- heavy script typography in operational controls
-- overusing gradients in tables/forms
-
-## Suggested icon approach
-Create a simplified icon derived from the blue fan concept:
-- square or rounded-square container
-- stylised blue fan
-- no long text inside the icon
-- legible at small sizes
-
-## Splash/loading screen direction
-A good splash screen could include:
-- dark background
-- centered simplified logo/fan mark
-- product name
-- small status text such as "Connecting to daemon…" or "Starting demo mode…"
-
-## About page direction
-Use the full parody logo more freely here.  
-This is the best place to lean into the joke without hurting core usability.
-
-## Empty-state illustration direction
-For disconnected/demo screens, a simplified graphic can work well:
-- fan icon
-- blue light/swoosh treatment
-- minimal text
-- dark background adaptation
-
-## Suggested default palette direction
+## Palette direction
 - background: near-black charcoal
 - panel surface: deep grey-blue
-- primary accent: vivid mid-blue from logo
+- primary accent: vivid mid-blue
 - secondary accent: lighter icy blue
 - text primary: cool off-white
 - text secondary: muted grey-blue
@@ -94,12 +57,15 @@ For disconnected/demo screens, a simplified graphic can work well:
 - critical: red
 - success: restrained green
 
-## Asset work that can be done later
-- app icon set
-- SVG logo lockup
-- splash screen art
-- demo-mode illustration
-- warning/empty-state illustrations
+The default theme (`Default Dark`) is the canonical reference; custom themes
+can override individual tokens via the Settings → Themes editor.
+
+## Avoid
+- decorative banners or images embedded in operational pages
+- heavy gradients in tables, forms, or charts
+- coloured overlays that reduce chart readability
+- typography or imagery that fights with the primary accent
 
 ## Practical instruction to Claude
-Use the supplied image as inspiration and brand source, but keep the working interface restrained, dark, and readable.
+Keep the working interface restrained, dark, and readable. Visual weight
+should follow data — sensors, fans, profiles, diagnostics — not branding.

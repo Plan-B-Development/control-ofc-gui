@@ -1,6 +1,6 @@
 # Control-OFC GUI — Claude Documentation Pack
 
-This pack is the **working source of truth** for building the Linux-first desktop GUI for **Control-OFC**, the parody-branded GUI for controlling the **OpenFanController** system through the daemon/API.
+This pack is the **working source of truth** for building the Linux-first desktop GUI for **Control-OFC**, the GUI for controlling the **OpenFanController** system through the daemon/API.
 
 ## Read this pack in this order
 1. `01_Product_Overview.md`
@@ -32,7 +32,7 @@ This pack is the **working source of truth** for building the Linux-first deskto
 - V1 is **desktop-window first**
 - Tray/minimise-to-tray comes later
 - Default theme is **dark**
-- Branding is playful/parody-led, but the working UI must still feel technically credible
+- Branding is restrained and professional; the working UI feels technically credible
 - One **profile** is active at a time
 - Fans may belong to **multiple groups**
 - Fan curves use **one sensor** in V1
@@ -59,7 +59,7 @@ The UI should feel like:
 - a proper Linux desktop utility
 - dark, readable, and fast
 - clean enough for daily use
-- playful in branding, but not silly in operation
+- restrained and professional in tone
 - simple at first glance, with advanced complexity progressively revealed
 
 ## Pack contents
@@ -77,9 +77,6 @@ This pack includes:
 - asset/branding direction
 - **operations guide** (18) — daemon config, CLI, permissions, syslog, troubleshooting
 - **documentation audit** — traceability matrix and gap register
-
-## Asset included
-- `NotJustOnlyFans.png`
 
 ## Reference note
 This pack incorporates:
