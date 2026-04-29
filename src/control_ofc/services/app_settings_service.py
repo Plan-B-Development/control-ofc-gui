@@ -23,8 +23,6 @@ class AppSettings:
     remember_last_profile: bool = True
     chart_default_range_index: int = 4  # 15m in TimelineChart
     theme_name: str = "Default Dark"
-    fun_mode: bool = True
-    show_splash: bool = True
     fan_aliases: dict[str, str] = field(default_factory=dict)
     hidden_chart_series: list[str] = field(default_factory=list)
     card_sensor_bindings: dict[str, str] = field(default_factory=dict)
@@ -58,8 +56,6 @@ class AppSettings:
             remember_last_profile=data.get("remember_last_profile", True),
             chart_default_range_index=data.get("chart_default_range_index", 4),
             theme_name=data.get("theme_name", "Default Dark"),
-            fun_mode=data.get("fun_mode", True),
-            show_splash=data.get("show_splash", True),
             fan_aliases=data.get("fan_aliases", {}),
             hidden_chart_series=data.get("hidden_chart_series", []),
             card_sensor_bindings=data.get("card_sensor_bindings", {}),

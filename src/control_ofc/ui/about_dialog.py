@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -13,31 +12,18 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.constants import APP_NAME, APP_VERSION
-from control_ofc.ui.branding import banner_image_path
-from control_ofc.ui.microcopy import get as mc
 
 
 class AboutDialog(QDialog):
-    """Branded About dialog with version info and credits."""
+    """About dialog with version info and credits."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"About {APP_NAME}")
-        self.setFixedSize(480, 360)
+        self.setFixedSize(480, 320)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
-
-        # Banner image
-        banner_path = banner_image_path()
-        if banner_path:
-            banner_label = QLabel()
-            pixmap = QPixmap(str(banner_path))
-            if pixmap.width() > 440:
-                pixmap = pixmap.scaledToWidth(440, Qt.TransformationMode.SmoothTransformation)
-            banner_label.setPixmap(pixmap)
-            banner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(banner_label)
 
         # Title
         title = QLabel(APP_NAME)
@@ -52,13 +38,13 @@ class AboutDialog(QDialog):
         layout.addWidget(version_label)
 
         # Tagline
-        tagline = QLabel(mc("about_tagline"))
+        tagline = QLabel("Fan control for Linux")
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tagline.setStyleSheet("font-style: italic;")
         layout.addWidget(tagline)
 
         # Credits
-        credits_label = QLabel(mc("about_credits"))
+        credits_label = QLabel("Open-source fan control")
         credits_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         credits_label.setProperty("class", "PageSubtitle")
         layout.addWidget(credits_label)

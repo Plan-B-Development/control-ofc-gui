@@ -90,7 +90,7 @@ Diagnostics is production-usable for troubleshooting.
 Build:
 - loading/empty states
 - unsaved change protections
-- improved copy/microcopy
+- improved status/error text
 - keyboard polish
 - error banners
 - default demo data improvements

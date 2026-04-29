@@ -1,14 +1,12 @@
 # 03 — UX/UI Principles and Visual System
 
 ## Design philosophy
-The product is a technical utility with parody branding. The operational screens must feel:
+The product is a technical utility. The operational screens must feel:
 - dark
 - clean
 - fast
 - legible
-- mildly playful, not chaotic
-
-The branding should add personality. It should not reduce clarity.
+- restrained — visual personality must never reduce clarity
 
 ## Core UX principles
 
@@ -160,13 +158,13 @@ Important labels, controls, and meaningful chart elements must remain readable a
 - keep gridlines subtle
 
 ## Brand application
-Use the attached parody image as inspiration for:
-- app icon
-- splash/loading screen
-- about page
-- empty/disconnected/demo illustrations
+Branding is intentionally minimal:
+- a single app icon (rendered in the sidebar and About dialog)
+- text-only application name in the sidebar header
+- dark theme with restrained accent colours
+- no marketing imagery, no banners, no decorative graphics behind workflow screens
 
-Do not put a bright full-banner graphic behind every workflow screen.
+The product is a technical utility. Visual identity should not draw attention away from operational state.
 
 ## Page-level consistency
 Every page should follow the same structural rhythm:
@@ -207,7 +205,7 @@ Each empty state should:
 - explain what the user can do next
 - avoid looking like a crash
 
-## Microcopy examples
+## Status and error text examples
 Good:
 - "Daemon unreachable"
 - "Manual override is active"

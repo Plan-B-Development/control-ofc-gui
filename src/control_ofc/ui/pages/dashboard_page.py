@@ -36,7 +36,6 @@ from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
-from control_ofc.ui.microcopy import get as mc
 from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.widgets.error_banner import ErrorBanner
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
@@ -151,7 +150,7 @@ class DashboardPage(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(16)
 
-        title = QLabel(mc("dashboard_empty_title"))
+        title = QLabel("No Hardware Detected")
         title.setProperty("class", "PageTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)

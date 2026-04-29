@@ -22,7 +22,6 @@ from control_ofc.services.lease_service import LeaseService
 from control_ofc.services.polling import PollingService
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.ui.main_window import MainWindow
-from control_ofc.ui.microcopy import set_fun_mode
 from control_ofc.ui.theme import apply_theme_font, build_stylesheet, default_dark_theme
 
 logging.basicConfig(
@@ -45,10 +44,9 @@ def main() -> None:
     qt_app.setStyleSheet(build_stylesheet(theme))
     apply_theme_font(theme)
 
-    # Load settings early for splash/fun_mode decisions
+    # Load settings early so directory overrides apply before profiles/themes load
     settings_service = AppSettingsService()
     settings_service.load()
-    set_fun_mode(settings_service.settings.fun_mode)
 
     # Apply user-configured directory overrides before loading profiles/themes
     s = settings_service.settings
@@ -57,15 +55,6 @@ def main() -> None:
         themes_dir=s.themes_dir_override,
         export_dir=s.export_default_dir,
     )
-
-    # Splash screen
-    splash = None
-    if settings_service.settings.show_splash:
-        from control_ofc.ui.splash import AppSplashScreen
-
-        splash = AppSplashScreen()
-        splash.show()
-        qt_app.processEvents()
 
     parser = argparse.ArgumentParser(description="Control-OFC desktop fan control GUI")
     parser.add_argument("--socket", default=DEFAULT_SOCKET_PATH, help="Daemon socket path")
@@ -89,10 +78,6 @@ def main() -> None:
             message=f"Failed to load profile '{os.path.basename(path)}': {reason}",
             key=f"profile_load_fail:{path}",
         )
-
-    if splash:
-        splash.set_status("splash_status_connecting")
-        qt_app.processEvents()
 
     # Wire history recording to state updates
     state.sensors_updated.connect(history.record_sensors)
@@ -119,10 +104,6 @@ def main() -> None:
             socket_path=socket_path,
         )
 
-    if splash:
-        splash.set_status("splash_status_loading")
-        qt_app.processEvents()
-
     # Set app icon
     from control_ofc.ui.branding import load_app_icon
 
@@ -142,11 +123,6 @@ def main() -> None:
         demo_mode=demo_mode,
     )
     window.show()
-
-    # Splash finish
-    if splash:
-        splash.set_status("splash_status_ready")
-        splash.finish_with_delay(window, delay_ms=3000)
 
     # Allow Ctrl+C to exit cleanly
     signal.signal(signal.SIGINT, lambda *_: qt_app.quit())

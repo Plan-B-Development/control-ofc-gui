@@ -6,7 +6,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from control_ofc.api.models import ConnectionState, OperationMode
-from control_ofc.ui.microcopy import get as mc
 
 
 class StatusBanner(QWidget):
@@ -45,9 +44,9 @@ class StatusBanner(QWidget):
 
     def set_connection_state(self, state: ConnectionState) -> None:
         labels = {
-            ConnectionState.CONNECTED: mc("status_connected"),
+            ConnectionState.CONNECTED: "Connected",
             ConnectionState.DEGRADED: "Degraded",
-            ConnectionState.DISCONNECTED: mc("status_disconnected"),
+            ConnectionState.DISCONNECTED: "Disconnected",
         }
         colors = {
             ConnectionState.CONNECTED: "SuccessChip",
@@ -68,7 +67,7 @@ class StatusBanner(QWidget):
             OperationMode.AUTOMATIC: "Automatic",
             OperationMode.MANUAL_OVERRIDE: "Manual Override",
             OperationMode.READ_ONLY: "Read-only",
-            OperationMode.DEMO: mc("status_demo"),
+            OperationMode.DEMO: "Demo mode",
         }
         self._mode_label.setText(labels.get(mode, ""))
 

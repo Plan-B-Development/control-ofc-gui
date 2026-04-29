@@ -1450,7 +1450,7 @@ class DiagnosticsPage(QWidget):
         if hw.chips_detected:
             self._docs_link_label.setText(
                 "For detailed hardware compatibility information, see the "
-                '<a href="https://github.com/control-ofc/control-ofc-gui/blob/main/'
+                '<a href="https://github.com/Plan-B-Development/control-ofc-gui/blob/main/'
                 'docs/19_Hardware_Compatibility.md">Hardware Compatibility Guide</a>.'
             )
             self._docs_link_label.setVisible(True)

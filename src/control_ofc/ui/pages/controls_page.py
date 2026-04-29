@@ -44,7 +44,6 @@ from control_ofc.ui.fan_presence import (
     classify_fan_presence,
 )
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
-from control_ofc.ui.microcopy import get as mc
 from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
@@ -437,7 +436,7 @@ class ControlsPage(QWidget):
         if profile:
             self._profile_service.save_profile(profile)
             self._set_unsaved(False)
-            self._unsaved_label.setText(mc("save_success"))
+            self._unsaved_label.setText("Settings saved")
             self._unsaved_label.setProperty("class", "SuccessChip")
             self._unsaved_label.style().unpolish(self._unsaved_label)
             self._unsaved_label.style().polish(self._unsaved_label)

@@ -12,18 +12,25 @@ import time
 
 from control_ofc.api.models import (
     AmdGpuCapability,
+    BoardInfo,
     Capabilities,
     DaemonStatus,
     FanReading,
     FeatureFlags,
+    GpuDiagnosticsInfo,
+    HardwareDiagnosticsResult,
     HwmonCapability,
+    HwmonChipInfo,
+    HwmonDiagnostics,
     HwmonHeader,
+    KernelModuleInfo,
     LeaseState,
     OpenfanCapability,
     SafetyLimits,
     SensorReading,
     StatusCounters,
     SubsystemStatus,
+    ThermalSafetyInfo,
     UnsupportedCapability,
 )
 
@@ -249,6 +256,64 @@ class DemoService:
 
     def hwmon_headers(self) -> list[HwmonHeader]:
         return [HwmonHeader(**h) for h in _DEMO_HWMON_HEADERS]
+
+    def hardware_diagnostics(self) -> HardwareDiagnosticsResult:
+        """Synthetic /diagnostics/hardware payload for demo / screenshot use.
+
+        Models a realistic Gigabyte X870E AORUS MASTER reading: IT8696E primary
+        chip via the out-of-tree it87 driver, k10temp and amdgpu mainline,
+        no ACPI conflicts, healthy thermal safety, and a discrete RDNA3 GPU
+        with PMFW fan curves available.
+        """
+        return HardwareDiagnosticsResult(
+            api_version=1,
+            hwmon=HwmonDiagnostics(
+                chips_detected=[
+                    HwmonChipInfo(
+                        chip_name="it8696",
+                        device_id="ITE IT8696E",
+                        expected_driver="it87",
+                        in_mainline_kernel=False,
+                        header_count=5,
+                    ),
+                ],
+                total_headers=5,
+                writable_headers=2,
+                enable_revert_counts={
+                    "hwmon:it8696:pci0:pwm1:CHA_FAN1": 0,
+                    "hwmon:it8696:pci0:pwm3:CHA_FAN3": 0,
+                },
+            ),
+            gpu=GpuDiagnosticsInfo(
+                pci_bdf="0000:2d:00.0",
+                pci_device_id=0x744C,
+                pci_revision=0xC8,
+                model_name="Radeon RX 7900 XTX",
+                fan_control_method="pmfw",
+                overdrive_enabled=True,
+                ppfeaturemask="0xfff7ffff",
+                ppfeaturemask_bit14_set=True,
+                zero_rpm_available=True,
+            ),
+            thermal_safety=ThermalSafetyInfo(
+                state="normal",
+                cpu_sensor_found=True,
+                emergency_threshold_c=105.0,
+                release_threshold_c=80.0,
+            ),
+            kernel_modules=[
+                KernelModuleInfo(name="it87", loaded=True, in_mainline=False),
+                KernelModuleInfo(name="k10temp", loaded=True, in_mainline=True),
+                KernelModuleInfo(name="amdgpu", loaded=True, in_mainline=True),
+                KernelModuleInfo(name="nvme", loaded=True, in_mainline=True),
+            ],
+            acpi_conflicts=[],
+            board=BoardInfo(
+                vendor="Gigabyte",
+                name="X870E AORUS MASTER",
+                bios_version="F4 (demo)",
+            ),
+        )
 
     def lease_status(self) -> LeaseState:
         return LeaseState(lease_required=True, held=True, lease_id="demo-lease")

@@ -15,13 +15,15 @@ The GUI never accesses hardware directly. All reads and writes go through the da
 ### Arch Linux (AUR)
 
 ```bash
-yay -S control-ofc-gui
+paru -S control-ofc-gui
 ```
+
+(Any AUR helper works — `yay -S control-ofc-gui` does the same thing.)
 
 ### From Source
 
 ```bash
-git clone https://github.com/your-org/control-ofc-gui.git
+git clone https://github.com/Plan-B-Development/control-ofc-gui.git
 cd control-ofc-gui
 pip install -e ".[dev]"
 ```
@@ -34,11 +36,10 @@ control-ofc-gui
 
 On first launch, Control-OFC will:
 
-1. Show a branded **splash screen** (can be disabled in Settings)
-2. Attempt to connect to the daemon at `/run/control-ofc/control-ofc.sock`
-3. If the daemon is reachable, fetch hardware capabilities and begin polling
-4. If the daemon is not reachable, show a "Disconnected" state (or enter demo mode if configured)
-5. Open the **Dashboard** page
+1. Attempt to connect to the daemon at `/run/control-ofc/control-ofc.sock`
+2. If the daemon is reachable, fetch hardware capabilities and begin polling
+3. If the daemon is not reachable, show a "Disconnected" state (or enter demo mode if configured)
+4. Open the **Dashboard** page
 
 ### Demo Mode
 
@@ -76,8 +77,6 @@ The left sidebar provides access to all four pages:
 | **Diagnostics** | Daemon health, sensor freshness, lease status, logs |
 
 An **About** button at the bottom of the sidebar shows version and credit information.
-
-![Splash Screen](../screenshots/auto/16_splash_screen.png)
 
 ---
 

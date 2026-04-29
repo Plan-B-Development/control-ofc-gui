@@ -151,7 +151,7 @@ Diagnostics must expose:
 - copy last errors
 
 ## Visual tone
-The UI should lean into the parody branding, but operation screens must still feel:
+The UI is a technical utility. Operation screens must feel:
 - serious enough for regular use
 - dark-first
 - readable

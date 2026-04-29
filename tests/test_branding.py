@@ -1,10 +1,8 @@
-"""Tests for branding — assets, splash, about dialog, microcopy."""
+"""Tests for branding — app icon, About dialog, sidebar brand mark."""
 
 from __future__ import annotations
 
 from pathlib import Path
-
-from control_ofc.ui import microcopy
 
 # ---------------------------------------------------------------------------
 # Asset existence
@@ -14,12 +12,6 @@ _ASSETS_DIR = Path(__file__).parent.parent / "assets" / "branding"
 
 
 class TestAssets:
-    def test_banner_exists(self):
-        assert (_ASSETS_DIR / "banner.png").exists()
-
-    def test_splash_exists(self):
-        assert (_ASSETS_DIR / "splash" / "splash.png").exists()
-
     def test_app_icon_svg_exists(self):
         assert (_ASSETS_DIR / "app_icon" / "app_icon.svg").exists()
 
@@ -33,53 +25,47 @@ class TestAssets:
 
 
 # ---------------------------------------------------------------------------
-# Microcopy
+# Branding helpers
 # ---------------------------------------------------------------------------
 
 
-class TestMicrocopy:
-    def test_fun_mode_returns_fun_text(self):
-        microcopy.set_fun_mode(True)
-        text = microcopy.get("splash_status_ready")
-        assert text == "Cooling content delivered."
+class TestBrandingHelpers:
+    def test_load_app_icon(self):
+        from control_ofc.ui.branding import load_app_icon
 
-    def test_pro_mode_returns_professional_text(self):
-        microcopy.set_fun_mode(False)
-        text = microcopy.get("splash_status_ready")
-        assert text == "Ready"
+        icon = load_app_icon()
+        assert icon is not None
+        assert not icon.isNull()
 
-    def test_unknown_key_returns_key(self):
-        text = microcopy.get("nonexistent_key_xyz")
-        assert text == "nonexistent_key_xyz"
+    def test_branding_module_does_not_export_image_helpers(self):
+        """`banner_image_path` and `splash_image_path` were removed; verify they
+        are not re-exposed by accident."""
+        from control_ofc.ui import branding
 
-    def test_toggle_persists(self):
-        microcopy.set_fun_mode(True)
-        assert microcopy.is_fun_mode() is True
-        microcopy.set_fun_mode(False)
-        assert microcopy.is_fun_mode() is False
+        assert not hasattr(branding, "banner_image_path")
+        assert not hasattr(branding, "splash_image_path")
 
-    def test_all_keys_have_both_variants(self):
-        """Every microcopy entry must have both fun and professional text."""
-        for key, (fun, pro) in microcopy._COPY.items():
-            assert fun, f"Missing fun text for {key}"
-            assert pro, f"Missing professional text for {key}"
-            assert fun != pro, f"Fun and pro text are identical for {key}"
+    def test_microcopy_module_is_absent(self):
+        """`control_ofc.ui.microcopy` was removed in v1.9.0; importing it
+        should fail."""
+        import importlib
 
+        try:
+            importlib.import_module("control_ofc.ui.microcopy")
+        except ModuleNotFoundError:
+            return
+        raise AssertionError("control_ofc.ui.microcopy should no longer exist")
 
-# ---------------------------------------------------------------------------
-# Splash screen
-# ---------------------------------------------------------------------------
+    def test_splash_module_is_absent(self):
+        """`control_ofc.ui.splash` was removed in v1.9.0; importing it should
+        fail."""
+        import importlib
 
-
-class TestSplash:
-    def test_splash_status_updates(self, qtbot):
-        from control_ofc.ui.splash import AppSplashScreen
-
-        microcopy.set_fun_mode(False)
-        splash = AppSplashScreen()
-        qtbot.addWidget(splash)
-        splash.set_status("splash_status_ready")
-        assert splash._status_text == "Ready"
+        try:
+            importlib.import_module("control_ofc.ui.splash")
+        except ModuleNotFoundError:
+            return
+        raise AssertionError("control_ofc.ui.splash should no longer exist")
 
 
 # ---------------------------------------------------------------------------
@@ -105,30 +91,47 @@ class TestAboutDialog:
         btn = dlg.findChild(QPushButton, "About_Btn_close")
         assert btn is not None
 
+    def test_about_uses_plain_strings(self, qtbot):
+        """Tagline and credits are now plain literals, not microcopy keys."""
+        from PySide6.QtWidgets import QLabel
+
+        from control_ofc.ui.about_dialog import AboutDialog
+
+        dlg = AboutDialog()
+        qtbot.addWidget(dlg)
+        labels = [w.text() for w in dlg.findChildren(QLabel)]
+        assert "Fan control for Linux" in labels
+        assert "Open-source fan control" in labels
+
 
 # ---------------------------------------------------------------------------
-# Branding helpers
+# Sidebar brand mark
 # ---------------------------------------------------------------------------
 
 
-class TestBrandingHelpers:
-    def test_load_app_icon(self):
-        from control_ofc.ui.branding import load_app_icon
+class TestSidebarBrand:
+    def test_sidebar_renders_text_brand(self, qtbot):
+        """Sidebar must render the text brand label, not an image."""
+        from PySide6.QtWidgets import QLabel
 
-        icon = load_app_icon()
-        assert icon is not None
-        assert not icon.isNull()
+        from control_ofc.ui.sidebar import Sidebar
 
-    def test_banner_path(self):
-        from control_ofc.ui.branding import banner_image_path
+        sidebar = Sidebar()
+        qtbot.addWidget(sidebar)
 
-        path = banner_image_path()
-        assert path is not None
-        assert path.exists()
+        text_label = sidebar.findChild(QLabel, "Sidebar_Brand_text")
+        assert text_label is not None
+        assert text_label.text() == "Control-OFC"
 
-    def test_splash_path(self):
-        from control_ofc.ui.branding import splash_image_path
+    def test_sidebar_has_no_brand_image(self, qtbot):
+        """Sidebar must not render a banner image even if one happens to
+        appear under assets/branding/."""
+        from PySide6.QtWidgets import QLabel
 
-        path = splash_image_path()
-        assert path is not None
-        assert path.exists()
+        from control_ofc.ui.sidebar import Sidebar
+
+        sidebar = Sidebar()
+        qtbot.addWidget(sidebar)
+
+        image_label = sidebar.findChild(QLabel, "Sidebar_Brand_image")
+        assert image_label is None

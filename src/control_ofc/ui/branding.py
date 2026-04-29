@@ -1,8 +1,6 @@
-"""Branding helpers — icon loading and asset paths."""
+"""Branding helpers — icon loading."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from PySide6.QtGui import QIcon
 
@@ -15,15 +13,3 @@ def load_app_icon() -> QIcon | None:
     if svg_path.exists():
         return QIcon(str(svg_path))
     return None
-
-
-def splash_image_path() -> Path | None:
-    """Return path to splash image if it exists."""
-    p = assets_dir() / "splash" / "splash.png"
-    return p if p.exists() else None
-
-
-def banner_image_path() -> Path | None:
-    """Return path to banner image if it exists."""
-    p = assets_dir() / "banner.png"
-    return p if p.exists() else None

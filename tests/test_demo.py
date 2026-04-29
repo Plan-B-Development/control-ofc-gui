@@ -79,3 +79,50 @@ def test_demo_fan_aliases_complete():
     assert len(aliases) >= len(fans)
     for fan in fans:
         assert fan.id in aliases, f"Fan {fan.id} missing alias"
+
+
+def test_demo_hardware_diagnostics_shape():
+    """hardware_diagnostics() returns a populated fixture used by the
+    screenshot tooling. The GUI's _populate_hw_diagnostics expects every
+    nested field to be present — a placeholder/empty result would defeat
+    the purpose of capturing a live-looking Hardware Readiness card.
+    """
+    demo = DemoService()
+    diag = demo.hardware_diagnostics()
+    assert diag.api_version == 1
+    # Board info populated so the auto-shown vendor quirk panel fires.
+    assert diag.board.vendor == "Gigabyte"
+    assert "X870E AORUS MASTER" in diag.board.name
+    # At least one chip detected, with a driver name and header count.
+    assert len(diag.hwmon.chips_detected) >= 1
+    chip = diag.hwmon.chips_detected[0]
+    assert chip.chip_name
+    assert chip.expected_driver
+    assert chip.header_count >= 1
+    # Total/writable header counts should reflect the chip header_count.
+    assert diag.hwmon.total_headers >= 1
+    assert diag.hwmon.writable_headers <= diag.hwmon.total_headers
+    # Kernel modules populated with at least it87 + k10temp + amdgpu.
+    module_names = {m.name for m in diag.kernel_modules}
+    assert {"it87", "k10temp", "amdgpu"} <= module_names
+    # Thermal safety reports a CPU sensor was found (so the safety panel
+    # does not render a critical state in the screenshot).
+    assert diag.thermal_safety.cpu_sensor_found is True
+    # GPU diagnostics populated — RDNA3 PMFW path.
+    assert diag.gpu is not None
+    assert diag.gpu.fan_control_method == "pmfw"
+    assert diag.gpu.ppfeaturemask_bit14_set is True
+
+
+def test_demo_hardware_diagnostics_revert_counts_match_writable_headers():
+    """Per-header revert counts should reference the writable header IDs so
+    the Diagnostics revert-count panel renders rows for the same fans the
+    user can actually control."""
+    demo = DemoService()
+    diag = demo.hardware_diagnostics()
+    headers = demo.hwmon_headers()
+    writable_ids = {h.id for h in headers}
+    for header_id in diag.hwmon.enable_revert_counts:
+        assert header_id in writable_ids, (
+            f"revert-count header {header_id} not in writable demo headers"
+        )
