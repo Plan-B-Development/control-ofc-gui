@@ -162,12 +162,6 @@ sudo journalctl -u control-ofc-daemon -f
 - Check socket exists: `ls -la /run/control-ofc/control-ofc.sock`
 - Check socket permissions (GUI user must be able to connect)
 
-### Syslog not working
-- Verify host/port are set: Check Status button in Settings
-- Verify receiver accepts **TCP** (not UDP-only) on the configured port
-- Check daemon logs: `journalctl -u control-ofc-daemon | grep telemetry`
-- Test with `logger`: `logger -n <host> -P <port> --tcp "test message"`
-
 ### Profile not restoring after reboot
 - Check persisted state: `cat /var/lib/control-ofc/daemon_state.json`
 - Check profile file exists at the path stored in state
@@ -178,13 +172,12 @@ sudo journalctl -u control-ofc-daemon -f
 ## Safety behaviour
 
 The daemon enforces a single thermal safety rule (non-negotiable, not configurable):
-- **Trigger**: CPU Tctl reaches 105°C
-- **Action**: Force all fans to 100%
+- **Trigger**: hottest CPU temperature reaches 105°C
+- **Action**: Force all fans to 100% PWM
 - **Hold**: Until temperature drops below 80°C
-- **Recovery**: Resume normal control at 60°C
+- **Recovery**: Apply a 60% PWM recovery floor for one cycle, then resume active profile control
+- **Fallback**: Force 40% PWM if no CPU sensor is reachable for 5 consecutive poll cycles
 
-Per-header safety floors:
-- Chassis fans: minimum 20% (1-19% clamped to 20%, 0% allowed briefly)
-- CPU/pump fans: minimum 30% (0% rejected outright)
+There are no per-header PWM floors. The daemon reports `min_pwm_percent: 0` for every hwmon header. Any safety-floor enforcement is the GUI's responsibility (curve validation, profile constraints) — the daemon never refuses a write on the basis of a per-header floor.
 
-These are daemon-hardcoded and visible via `GET /capabilities` under `limits`.
+Safety thresholds are visible via `GET /capabilities` under `limits`.

@@ -212,9 +212,9 @@ which modules are currently loaded by reading `/proc/modules`.
 ## Thermal Safety
 
 The daemon implements a hardware-independent thermal safety rule:
-- **Emergency:** CPU Tctl >= 105°C → force all fans to 100% PWM
-- **Release:** CPU Tctl drops below 80°C → exit emergency
-- **Recovery:** Resume normal control at 60°C
-- **Failsafe:** If no CPU sensor found for 5 consecutive cycles → force 40%
+- **Emergency:** hottest CPU temperature >= 105°C → force all fans to 100% PWM
+- **Release:** hottest CPU temperature drops below 80°C → exit emergency
+- **Recovery:** apply a 60% PWM recovery floor for one cycle, then resume active profile control
+- **Failsafe:** if no CPU sensor is reachable for 5 consecutive cycles → force 40%
 
 The thermal safety state is reported in the hardware diagnostics response.

@@ -1413,6 +1413,17 @@ class DiagnosticsPage(QWidget):
                         "  Fan control requires bit 14 — add "
                         "'amdgpu.ppfeaturemask=0xffffffff' to kernel parameters"
                     )
+            elif gpu.fan_control_method == "read_only":
+                # No ppfeaturemask kernel param at all, and no fan write path is
+                # available. The most common cause on RDNA3+ (RX 7000/9000) is
+                # the missing kernel parameter; pre-RDNA3 cards normally have
+                # pwm1 working and would not land here without something else
+                # being wrong. Surface the param as the first thing to try.
+                lines.append("  ppfeaturemask: not set on kernel command line")
+                lines.append(
+                    "  Tip: RDNA3+ fan control needs "
+                    "'amdgpu.ppfeaturemask=0xffffffff' (see man control-ofc-daemon)"
+                )
             lines.append(
                 f"  Zero-RPM: {'available' if gpu.zero_rpm_available else 'not available'}"
             )
