@@ -13,7 +13,7 @@ install=control-ofc-gui.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 # Placeholder — recomputed post-tag-push. Fix with a follow-up
 # "fix: update PKGBUILD checksum for v1.9.2" commit.
-sha256sums=('SKIP')
+sha256sums=('f6ff894dfc6ea99701059bd5df3df7abb1cb2adf7a4060666f7801bec5e3e309')
 
 build() {
     cd "$pkgname-$pkgver"
