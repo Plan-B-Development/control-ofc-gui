@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.9.2] — 2026-04-30
+
+Patch release fixing a man-page rendering bug. No code changes.
+
+### Fixed
+- **Man page em-dash rendering.** `man control-ofc-gui` rendered every
+  em-dash (U+2014) as a doubled `——` on systems with groff 1.24+ (current
+  Arch). The groff 1.24 `tty.tmac` defines `.char \[em] \[em]\[em]` for
+  UTF-8 output to approximate the typographic em-quad width on a
+  half-width cell grid; passing literal U+2014 through scdoc therefore
+  emits `——`. Replaced em-dashes in `man/control-ofc-gui.1.scd` with
+  the canonical man-page convention `--`. `man control-ofc-gui` now
+  reads correctly. Verified with `groff -man -K utf8 -Tutf8 -ww` (zero
+  warnings) and `man -l`.
+
 ## [1.9.1] — 2026-04-30
 
 Install-experience and documentation packaging release. No changes to
