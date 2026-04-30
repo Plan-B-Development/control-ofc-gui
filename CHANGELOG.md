@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.9.3] — 2026-04-30
+
+Packaging hygiene release. No source code changes.
+
+### Fixed
+- **`depends=` now declares `hicolor-icon-theme`.** The package installs
+  `/usr/share/icons/hicolor/scalable/apps/control-ofc.svg` and the
+  shipped `.desktop` file references the icon by name. Per Arch
+  packaging policy any package installing into `hicolor/` should list
+  `hicolor-icon-theme` so the directory exists and `gtk-update-icon-cache`
+  has something to scan. Previously satisfied transitively via
+  PySide6 / Qt's own dependencies — declaring it directly fixes the
+  namcap **error** and ensures the icon is discoverable on minimal
+  installs that don't pull in the theme any other way.
+- **In-repo `packaging/.SRCINFO` regenerated.** The committed file had
+  drifted to `pkgver = 1.2.0` (the AUR clone's `.SRCINFO` was current,
+  but the in-repo copy was unmaintained). Regenerated against the
+  current PKGBUILD.
+- **`README.md` requirements section expanded** to list every Python
+  runtime dependency (`PySide6`, `httpx`, `pyqtgraph`, `numpy`,
+  `colorama`) plus the `hicolor-icon-theme` system dep, with a note
+  on why `colorama` is required (transitive at `import pyqtgraph` time).
+
+### Tooling
+- **New `.githooks/pre-commit`** that auto-regenerates
+  `packaging/.SRCINFO` whenever `packaging/PKGBUILD` is staged for
+  commit, so the in-repo file cannot drift again. Opt-in via:
+  `git config core.hooksPath .githooks`. The hook is a no-op when
+  `makepkg` is not on PATH (e.g. on non-Arch CI).
+
 ## [1.9.2] — 2026-04-30
 
 Patch release fixing a man-page rendering bug. No code changes.

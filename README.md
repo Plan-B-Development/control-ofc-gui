@@ -55,10 +55,23 @@ Options:
 
 ## Requirements
 
-- Python >= 3.12
+System:
+- Python >= 3.12 (developed on 3.14)
 - Linux (primary target: Arch Linux / CachyOS, KDE Plasma)
-- PySide6 >= 6.6
 - A running `control-ofc-daemon` instance (or use `--demo`)
+- `hicolor-icon-theme` (for the application icon to be picked up by launchers)
+
+Python runtime dependencies (resolved automatically by `pip install` or
+the AUR package — listed here for transparency):
+- `PySide6 >= 6.6` — Qt6 bindings (UI toolkit)
+- `httpx >= 0.27` — HTTP client used for the daemon's Unix-socket API
+- `pyqtgraph >= 0.14` — chart rendering (timeline + curve editor)
+- `numpy >= 1.26` — numerical helpers behind chart maths
+- `colorama >= 0.4` — required transitively at `import pyqtgraph` time;
+  pyqtgraph imports it unconditionally even on Linux
+
+Development extras (`pip install -e ".[dev]"`):
+- `pytest >= 8.0`, `pytest-qt >= 4.3`, `ruff >= 0.4`
 
 ## Configuration
 
