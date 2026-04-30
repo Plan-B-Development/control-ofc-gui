@@ -44,13 +44,17 @@ This pack is the **working source of truth** for building the Linux-first deskto
 - Full palette editing is **not** in V1, but theme import/export should exist from the start
 
 ## Highest-impact architectural decision
-The daemon is currently **imperative**, not policy-driven. It exposes read endpoints and imperative write endpoints, but it does **not** currently own fan-curve/profile logic. Therefore, for V1:
+The daemon supports **two control modes**:
 
-- the **GUI owns the control loop**
-- the GUI polls sensors
-- the GUI evaluates active profile curves
-- the GUI issues PWM write commands through the daemon/API
-- the GUI persists its own profiles, fan groups, aliases, and themes
+- **Imperative mode** (default — no profile loaded): the GUI owns curve evaluation and the daemon performs only the PWM/RPM writes the GUI requests. This is the V1 GUI's primary mode of operation.
+- **Profile mode** (headless — profile loaded via CLI, env, API, or persisted state): the daemon evaluates curves autonomously. The GUI still takes priority — when the GUI is active and writing within the last 30 s, the daemon's profile engine defers to it (DEC-071, DEC-074), so concurrent operation never produces a dual-writer conflict.
+
+For V1, with the GUI present:
+
+- the **GUI owns the control loop** while connected
+- the GUI polls sensors at 1 Hz
+- the GUI evaluates active profile curves and issues PWM write commands through the daemon API
+- the GUI persists its own profiles, fan groups, aliases, and themes (as well as activating one of them on the daemon for headless operation)
 
 This is the single most important build assumption in this pack.
 
@@ -75,7 +79,7 @@ This pack includes:
 - acceptance criteria
 - risks and future work
 - asset/branding direction
-- **operations guide** (18) — daemon config, CLI, permissions, syslog, troubleshooting
+- **operations guide** (18) — daemon config, CLI, permissions, troubleshooting
 - **documentation audit** — traceability matrix and gap register
 
 ## Reference note

@@ -39,7 +39,7 @@ The app should be portable enough to:
 3. No full theme editor UI.
 4. No multi-sensor blending in curve logic.
 5. No user-customisable dashboard layout.
-6. No daemon-side profile storage.
+6. No GUI-side profile *roaming* across machines (per-host JSON only; daemon-side activation and persistence is supported via `POST /profile/activate`).
 7. No AIO pump-specific advanced flow UI unless backed by real daemon data.
 8. No automatic public release tooling in V1.
 

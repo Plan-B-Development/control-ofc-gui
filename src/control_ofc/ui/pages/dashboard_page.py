@@ -32,6 +32,10 @@ from control_ofc.api.models import (
 )
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
+from control_ofc.services.daemon_service_check import (
+    ENABLE_COMMAND,
+    check_daemon_service_state,
+)
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
@@ -142,7 +146,70 @@ class DashboardPage(QWidget):
         msg.setMaximumWidth(400)
         layout.addWidget(msg)
 
+        # First-launch hint: the daemon service is installed but never enabled.
+        # Hidden by default; populated on demand by _refresh_service_hint().
+        self._service_hint_frame = QFrame()
+        self._service_hint_frame.setObjectName("Dashboard_Frame_serviceHint")
+        self._service_hint_frame.setProperty("class", "Card")
+        self._service_hint_frame.setMaximumWidth(480)
+        self._service_hint_frame.setVisible(False)
+        hint_layout = QVBoxLayout(self._service_hint_frame)
+
+        hint_title = QLabel("Daemon service is installed but disabled")
+        hint_title.setProperty("class", "SectionTitle")
+        hint_layout.addWidget(hint_title)
+
+        hint_msg = QLabel(
+            "The control-ofc-daemon service is present on this system but has "
+            "not been enabled. Run the command below in a terminal, then "
+            "re-open this GUI:"
+        )
+        hint_msg.setWordWrap(True)
+        hint_msg.setProperty("class", "PageSubtitle")
+        hint_layout.addWidget(hint_msg)
+
+        cmd_label = QLabel(ENABLE_COMMAND)
+        cmd_label.setObjectName("Dashboard_Label_enableCommand")
+        cmd_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        cmd_label.setProperty("class", "MonoCommand")
+        cmd_label.setStyleSheet(
+            "font-family: monospace; padding: 6px; background-color: rgba(0,0,0,0.25);"
+        )
+        hint_layout.addWidget(cmd_label)
+
+        copy_btn = QPushButton("Copy command")
+        copy_btn.setObjectName("Dashboard_Btn_copyEnableCommand")
+        copy_btn.clicked.connect(self._copy_enable_command)
+        hint_layout.addWidget(copy_btn)
+
+        layout.addWidget(self._service_hint_frame, alignment=Qt.AlignmentFlag.AlignCenter)
+
         return container
+
+    def _copy_enable_command(self) -> None:
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(ENABLE_COMMAND)
+
+    def _refresh_service_hint(self) -> None:
+        """Probe the system once and show the enable-service hint if the
+        daemon is installed but not enabled. No-op when can_check is False
+        (non-systemd system, missing systemctl) or when the service is
+        already enabled — in both cases the existing 'waiting' text is
+        sufficient and we don't want to mislead the user."""
+        if not hasattr(self, "_service_hint_frame"):
+            return
+        try:
+            socket_path = (
+                self._client.socket_path
+                if self._client is not None
+                else "/run/control-ofc/control-ofc.sock"
+            )
+            state = check_daemon_service_state(socket_path)
+        except Exception:
+            self._service_hint_frame.setVisible(False)
+            return
+        self._service_hint_frame.setVisible(state.installed_but_not_enabled)
 
     def _build_no_hardware_state(self) -> QWidget:
         container = QWidget()
@@ -197,7 +264,8 @@ class DashboardPage(QWidget):
 
         next_msg = QLabel(
             "1. Check that the daemon is running: systemctl status control-ofc-daemon\n"
-            "2. Verify hardware permissions (user in 'dialout' group for serial)\n"
+            "2. Verify serial-port group membership: 'uucp' on Arch / CachyOS, "
+            "'dialout' on Debian / Ubuntu / Fedora\n"
             "3. Open Diagnostics for detailed subsystem health"
         )
         next_msg.setWordWrap(True)
@@ -356,6 +424,7 @@ class DashboardPage(QWidget):
         if state == ConnectionState.DISCONNECTED:
             self._has_data = False
             self._stack.setCurrentIndex(self._IDX_DISCONNECTED)
+            self._refresh_service_hint()
         elif state == ConnectionState.CONNECTED and not self._has_data:
             self._stack.setCurrentIndex(self._IDX_NO_HARDWARE)
 

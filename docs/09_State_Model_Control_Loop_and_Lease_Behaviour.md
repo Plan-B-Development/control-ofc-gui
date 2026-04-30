@@ -1,7 +1,7 @@
 # 09 — State Model, Control Loop, and Lease Behaviour
 
 ## Purpose
-This file defines how the V1 GUI should behave as an active control client over an imperative daemon.
+This file defines how the V1 GUI should behave as an active control client. The daemon supports two control modes (imperative — the GUI drives writes; profile — the daemon evaluates a loaded profile autonomously). When the GUI is active, the daemon's profile engine defers to it (last-30-s GUI-active window — see DEC-071, DEC-074), so the V1 GUI always operates as the active controller while connected.
 
 ## State model overview
 The application should explicitly model these state axes:
@@ -157,15 +157,19 @@ The GUI stores only the last **2 hours** of polling history.
 Use an in-memory ring buffer and optionally persist session snapshots only if needed.
 Avoid building a heavy telemetry database for V1.
 
-## Missing daemon-side features
-The following are not currently daemon-native and must be GUI-owned or clearly unsupported:
-- profile persistence
-- curve storage
-- alias/group persistence
-- fan control mode visibility
-- hardware rescan
-- friendly sensor grouping
-- custom safety floor tuning
+## GUI-owned vs daemon-owned features
+What lives where as of v1.x:
+
+**Daemon-owned (resolved):**
+- profile activation and persistence — `POST /profile/activate` + `/var/lib/control-ofc/daemon_state.json`
+- curve evaluation in profile mode — daemon evaluates the active profile autonomously when the GUI is not connected
+- hardware rescan — `POST /hwmon/rescan` re-enumerates hwmon and returns fresh capabilities
+- profile-engine defer-to-GUI logic — daemon defers writes when the GUI has been active in the last 30 s (DEC-071, DEC-074)
+
+**GUI-owned (by design):**
+- per-machine fan aliases, group/role names, dashboard bindings, themes
+- friendly sensor grouping and per-card sensor selection
+- safety-floor enforcement at the curve level (the daemon reports `min_pwm_percent: 0` for all hwmon headers)
 
 ## Shutdown behaviour
 On app shutdown:

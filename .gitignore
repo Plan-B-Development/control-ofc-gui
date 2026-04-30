@@ -28,4 +28,7 @@ diag/
 scripts/
 docs/16_User_Decisions_and_API_Notes_Reference.md
 docs/17_Claude_Kickoff_Prompt.md
-DIAGNOSTICS_REMEDIATION.md
+# Internal investigation / planning artifacts produced by /investigate-bug
+# and /investigate-mismatch — never ship these to GitHub releases or AUR
+# tarballs. The pattern catches future variants automatically.
+*_REMEDIATION.md

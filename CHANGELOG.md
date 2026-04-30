@@ -1,5 +1,94 @@
 # Changelog
 
+## [1.9.1] — 2026-04-30
+
+Install-experience and documentation packaging release. No changes to
+profile/theme files, daemon contract, or persisted user settings —
+loading on top of an existing 1.9.0 install carries everything forward.
+
+### Added
+- **Man page ships.** `man control-ofc-gui` now renders a manual that
+  documents CLI flags, environment variables, files, and the demo-mode
+  flow.
+- **Shell completions ship** for bash, zsh, and fish under
+  `/usr/share/{bash-completion,zsh/site-functions,fish/vendor_completions.d}/`.
+  Tab-completion of `control-ofc-gui --` works after install.
+- **Full user manual ships in `/usr/share/doc/control-ofc-gui/manual/`** —
+  the nine guides under `manual/` plus `README.md` and `CHANGELOG.md`.
+  Discoverable offline via `pacman -Ql control-ofc-gui | grep manual/`.
+- **First-launch dashboard hint.** When the dashboard is in the
+  Disconnected state and the systemd service `control-ofc-daemon.service`
+  is installed but not enabled, the dashboard shows a card with the
+  exact `sudo systemctl enable --now control-ofc-daemon` command and a
+  Copy button. Probe is best-effort: if `systemctl` is not on PATH or
+  any probe fails, no hint is shown rather than misleading text. The
+  hint never appears once the service is enabled or active. New unit /
+  UI tests cover the decision matrix end-to-end.
+- **Diagnostics surfaces the missing AMD GPU kernel parameter when
+  `ppfeaturemask` is absent and the GPU is read-only.** Previously the
+  guidance only fired when `ppfeaturemask` had a value but bit 14 was
+  unset — a fresh install with no kernel arg set saw nothing. The hint
+  now points at `man control-ofc-daemon` for per-bootloader detail.
+
+### Changed
+- **`post_install` message tightened.** Drops the duplicated "load
+  modules" / "restart daemon" lines (already covered by the daemon's
+  `post_install`) and points users at the new
+  `/usr/share/doc/control-ofc-gui/manual/getting-started.md`.
+- **`post_upgrade` message added.** Previously the GUI install script
+  defined only `post_install`, so an upgrade transcript was silent
+  even on visual / behavioural changes. The new `post_upgrade`
+  reminds the user to restart any running instance and points at the
+  shipped CHANGELOG.
+- **Dashboard hardware-permissions hint mentions the right group per
+  distro.** Previously instructed Arch users to join the `dialout`
+  group, which doesn't exist on Arch (correct group is `uucp`). Now
+  surfaces both group names with their distros: `uucp` on Arch /
+  CachyOS, `dialout` on Debian / Ubuntu / Fedora.
+- **`SECURITY.md` supported-versions table refreshed** to "1.x
+  supported, < 1.0 unsupported" — was stuck at "1.0.x".
+
+### Documentation
+- **Removed stale "imperative-only daemon" claims** from
+  `docs/00_README_START_HERE.md`, `docs/01_Product_Overview.md`,
+  `docs/09_State_Model_Control_Loop_and_Lease_Behaviour.md`. The
+  daemon has had a profile engine since the 1.x line; the V1 GUI is
+  still the active controller while connected because the daemon
+  defers to it (DEC-071, DEC-074), and the docs now say so.
+- **Corrected thermal-safety recovery wording** in
+  `docs/06_Settings_Spec.md`, `docs/18_Operations_Guide.md`, and
+  `docs/19_Hardware_Compatibility.md`. The daemon's recovery is a
+  60 % PWM floor applied for one cycle, not "recover at 60°C" — the
+  three docs now match `safety.rs` and the daemon's man page.
+- **Removed per-header safety-floor claim** in
+  `docs/18_Operations_Guide.md`. The daemon reports
+  `min_pwm_percent: 0` for every hwmon header; floor enforcement is
+  GUI-side, not daemon-side.
+- **Removed stale syslog/telemetry troubleshooting section** from
+  `docs/18_Operations_Guide.md` after the R52 de-scope.
+
+### Packaging
+- Adds `scdoc` to `makedepends`. Builds the man page via
+  `scdoc < man/control-ofc-gui.1.scd` in `build()` and installs to
+  `/usr/share/man/man1/control-ofc-gui.1`.
+- `sha256sums` switched to `SKIP` pending the post-tag-push checksum
+  refresh — same pattern as previous releases.
+
+### Cleanup
+- **`PWM_VERIFY_REMEDIATION.md` is now `.gitignore`d.** Previously this
+  internal `/investigate-bug` planning artifact was committed and
+  shipped to the v1.9.0 GitHub release tarball. The pattern
+  `*_REMEDIATION.md` catches any future variants automatically.
+
+### Why
+A `/audit documentation` pass on both repos plus a fresh
+`paru -S control-ofc-daemon control-ofc-gui` test surfaced eight
+install-experience defects, four of them on the GUI side. This
+release fixes all four and adds a soft-landing for users who scrolled
+past `post_install` (the dashboard hint) plus a more proactive
+diagnostics surface for the AMD GPU kernel parameter. See the daemon
+v1.5.4 entry for the matching daemon-side changes.
+
 ## [1.9.0] — 2026-04-29
 
 Content update — refreshed visual presentation across the sidebar, About

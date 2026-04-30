@@ -72,6 +72,10 @@ class DaemonClient:
         self._client = httpx.Client(transport=transport, base_url=BASE_URL, timeout=timeout)
         self._socket_path = socket_path
 
+    @property
+    def socket_path(self) -> str:
+        return self._socket_path
+
     def close(self) -> None:
         self._client.close()
 
