@@ -15,7 +15,7 @@ communicates with the control-ofc-daemon service over its Unix socket HTTP
 API. It provides real-time monitoring of temperatures and fan speeds, fan
 curve editing, profile management, and manual fan override.
 
-The GUI is a daemon API client only — all hardware access is performed by
+The GUI is a daemon API client only -- all hardware access is performed by
 the daemon.
 
 # OPTIONS
