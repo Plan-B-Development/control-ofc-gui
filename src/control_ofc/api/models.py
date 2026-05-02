@@ -276,6 +276,15 @@ class ActiveProfileInfo:
     profile_name: str = ""
 
 
+@dataclass
+class ProfileDeactivateResult:
+    """Response from POST /profile/deactivate."""
+
+    deactivated: bool = False
+    previous_profile_id: str | None = None
+    previous_profile_name: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Sensor history
 # ---------------------------------------------------------------------------
@@ -586,6 +595,14 @@ def parse_profile_activate(data: dict) -> ProfileActivateResult:
         activated=data.get("activated", False),
         profile_id=data.get("profile_id", ""),
         profile_name=data.get("profile_name", ""),
+    )
+
+
+def parse_profile_deactivate(data: dict) -> ProfileDeactivateResult:
+    return ProfileDeactivateResult(
+        deactivated=bool(data.get("deactivated", False)),
+        previous_profile_id=data.get("previous_profile_id"),
+        previous_profile_name=data.get("previous_profile_name"),
     )
 
 

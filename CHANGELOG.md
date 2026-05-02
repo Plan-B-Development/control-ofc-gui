@@ -1,5 +1,119 @@
 # Changelog
 
+## [1.10.0] — 2026-05-02
+
+Profile-mode safety + cross-stack parity release. Pairs with
+**daemon v1.6.0**. The headline change is a GUI-side, role-aware
+minimum-PWM floor that protects pump and CPU headers from being
+commanded below their stall thresholds, plus a per-GPU zero-RPM
+toggle the daemon now honours, plus an explicit deactivate flow so
+deleting an active profile no longer leaves it driving fans.
+
+### Added
+- **Role-aware `LogicalControl.minimum_pct` (DEC-095).** When members
+  are assigned or edited, the GUI now derives a default safety floor
+  from the role of the control:
+  - 30% for any control with a CPU- or pump-labelled hwmon member,
+  - 20% for chassis / OpenFan-only controls,
+  - 0% for GPU-only controls (PMFW enforces its own OD_RANGE minimum).
+  The floor is recorded as `LogicalControl.minimum_pct` and the daemon's
+  existing tuning pipeline already clamps curve outputs to it. The GUI
+  never lowers an explicit user-set value — it only raises the floor
+  when the role policy demands a higher minimum than the user has set.
+- **Role-aware curve-editor floor.** The Graph editor's drag, table edit,
+  keyboard nudge, and Linear/Flat spinboxes now clamp to the strictest
+  floor across all controls referencing the curve, so the user cannot
+  author a point that would be clamped at write time. Surfaced via a
+  new `CurveEditor.set_min_output(pct)` API wired up from the controls
+  page when a curve is opened for editing.
+- **Minimum-PWM badge on each fan-role card.** The Controls page now
+  shows `Min: NN%` on every control card, with a tooltip explaining
+  the role-derived rationale (chassis 20% / CPU+pump 30%). Pumps no
+  longer silently run below stall threshold because of an
+  out-of-the-box curve.
+- **Per-GPU `fan_zero_rpm` toggle in the Edit Fan Role dialog.** When a
+  role has any `amd_gpu` member, a new section lists each GPU member
+  with an "Allow zero-RPM idle" checkbox. Toggling persists onto
+  `ControlMember.fan_zero_rpm` and the daemon honours the flag when
+  programming the PMFW curve. Default is unchecked (existing behaviour:
+  fans always spin while the curve is active).
+- **Profile schema v4 with backward-compatible migration.** `Profile`
+  bumps to `version: 4` on save. Loading any v3-or-older profile from
+  disk applies the role-aware floor pass to every control before
+  re-saving, so existing profiles are upgraded automatically on first
+  load. Schema migration: any control whose members include a CPU/PUMP
+  header gets `minimum_pct ← max(minimum_pct, 30)`; the rest get the
+  20% chassis floor (raising 0 → 20, never lowering an explicit value).
+- **`POST /profile/deactivate` daemon endpoint, wired into the GUI
+  delete flow (DEC-097).** When the user deletes the daemon's active
+  profile, the GUI now calls `client.deactivate_profile()` first so the
+  curve stops driving fans the moment the file is gone. Idempotent on
+  the daemon side; failures are logged as warnings and the local
+  delete still proceeds. New `DaemonClient.deactivate_profile()`
+  method, new `ProfileDeactivateResult` model, new
+  `parse_profile_deactivate` helper.
+
+### Changed
+- **`ControlMember` gains a `fan_zero_rpm: bool` field** (default
+  `False`) for v4 profiles. Round-trips through `to_dict` / `from_dict`
+  and is persisted on disk. Ignored for non-GPU members; legacy v3
+  profiles deserialise unchanged with the safe default.
+- **`Profile.from_dict` runs the v4 floor migration** for v3-and-older
+  inputs (including the v1 → v2 path) so every loaded profile lands at
+  the current schema with role-aware minima applied.
+- **Controls page member-edit accept now reapplies the role floor**
+  via `apply_role_floor(control)` after the user changes membership.
+  A chassis role becoming a CPU/pump role automatically tightens its
+  minimum_pct to 30%.
+- **Controls page profile-delete flow now calls
+  `client.deactivate_profile()`** when the deleted profile was the
+  active one, before unlinking the JSON file from disk. AppState's
+  active-profile signal fires with `""` so the dashboard banner
+  updates immediately.
+
+### Tests
+- New tests in `tests/test_profile_service.py` (10 tests): role
+  inference for chassis/CPU/pump/GPU/mixed; `apply_role_floor` raise
+  vs. preserve; v3→v4 migration of `minimum_pct` for CPU/pump,
+  chassis, and explicit-user-value cases; `fan_zero_rpm` field
+  round-trip; load-resaves-when-migrating regression.
+- New tests in `tests/test_curve_editor.py` (7 tests): default floor,
+  `set_min_output` storage and clamp, table-edit clamps to role
+  floor, keyboard down-arrow clamps to role floor, Linear/Flat
+  spinboxes inherit role floor.
+- New tests in `tests/test_fan_role_dialog.py` (5 tests): GPU
+  zero-RPM section visibility, one-checkbox-per-GPU-member, initial
+  state from member, `get_result` includes the zero-RPM map, empty
+  map for chassis-only roles.
+- New tests in `tests/test_control_card.py` (4 tests):
+  chassis-default badge, explicit-minimum badge, role-derived
+  badge for CPU/pump, badge refresh on `update_control`.
+- New tests in `tests/test_profile_activation_r24.py` (4 tests):
+  `DaemonClient.deactivate_profile` exists, parser round-trips
+  with-and-without `previous_profile_*`, and the controls page
+  calls `deactivate_profile` only when the deleted profile was
+  active.
+- Existing tests updated to assert `version == 4` (3 sites) and to
+  bump the sensor temperature when a curve definition changes mid-test
+  (3 sites — the new daemon-side deadband would otherwise hold the
+  output across these synthetic transitions).
+
+### Why
+A cross-stack audit and `/investigate-mismatch` pass found that the
+GUI and daemon together had no enforced minimum-PWM floor for
+motherboard pump/CPU headers, despite `docs/05` claiming a
+"hardcoded 20% chassis / 30% CPU/pump" floor (which the daemon does
+not implement and never has — confirmed against
+`min_pwm_percent: 0` in `pwm_discovery.rs`). Industry references
+(Noctua PWM whitepaper, FanControl, fancontrol(8), Arch Wiki) place
+4-pin fan stall threshold at 20% PWM and AIO pump minimum at
+~30–50% PWM, so the audit's recommendation to enforce these floors
+GUI-side (option B) matches established practice. The daemon does
+not gain a per-role policy in this release — that remains the GUI's
+responsibility, preserving the "GUI owns curve safety policy,
+daemon owns thermal emergency" split established by CLAUDE.md and
+DEC-022.
+
 ## [1.9.3] — 2026-04-30
 
 Packaging hygiene release. No source code changes.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from control_ofc.services.profile_service import (
+    ControlMember,
     ControlMode,
     CurveConfig,
     CurveType,
@@ -105,3 +106,69 @@ class TestGetResult:
         dialog._name_edit.setText("")
         result = dialog.get_result()
         assert result["name"] == control.name
+
+
+class TestGpuFanZeroRpmSection:
+    """Per-GPU-member zero-RPM toggle in the dialog (DEC-095)."""
+
+    def _build(self, qtbot, members, curves):
+        ctrl = LogicalControl(id="r", name="Role", curve_id="c1", members=members)
+        dlg = FanRoleDialog(ctrl, curves)
+        qtbot.addWidget(dlg)
+        return dlg
+
+    def test_section_hidden_for_chassis_only_role(self, qtbot, curves):
+        members = [ControlMember(source="openfan", member_id="openfan:ch00")]
+        dlg = self._build(qtbot, members, curves)
+        # No GPU members → no zero-RPM checkboxes built.
+        assert dlg._gpu_zero_rpm_checks == {}
+
+    def test_section_renders_one_checkbox_per_gpu_member(self, qtbot, curves):
+        members = [
+            ControlMember(
+                source="amd_gpu",
+                member_id="amd_gpu:0000:03:00.0",
+                member_label="9070XT",
+            ),
+            ControlMember(
+                source="openfan", member_id="openfan:ch00", member_label="ch00"
+            ),  # ignored
+        ]
+        dlg = self._build(qtbot, members, curves)
+        assert list(dlg._gpu_zero_rpm_checks.keys()) == ["amd_gpu:0000:03:00.0"]
+
+    def test_initial_state_reflects_member_value(self, qtbot, curves):
+        members = [
+            ControlMember(
+                source="amd_gpu",
+                member_id="amd_gpu:0000:03:00.0",
+                member_label="9070XT",
+                fan_zero_rpm=True,
+            ),
+        ]
+        dlg = self._build(qtbot, members, curves)
+        assert dlg._gpu_zero_rpm_checks["amd_gpu:0000:03:00.0"].isChecked() is True
+
+    def test_get_result_includes_zero_rpm_map(self, qtbot, curves):
+        members = [
+            ControlMember(
+                source="amd_gpu",
+                member_id="amd_gpu:0000:03:00.0",
+                member_label="9070XT",
+                fan_zero_rpm=False,
+            ),
+        ]
+        dlg = self._build(qtbot, members, curves)
+        # Toggle the checkbox
+        dlg._gpu_zero_rpm_checks["amd_gpu:0000:03:00.0"].setChecked(True)
+
+        result = dlg.get_result()
+        assert "gpu_fan_zero_rpm" in result
+        assert result["gpu_fan_zero_rpm"] == {"amd_gpu:0000:03:00.0": True}
+
+    def test_get_result_empty_when_no_gpu_members(self, qtbot, curves):
+        members = [ControlMember(source="openfan", member_id="openfan:ch00")]
+        dlg = self._build(qtbot, members, curves)
+        result = dlg.get_result()
+        # Map exists but empty so callers can iterate without None-checking.
+        assert result["gpu_fan_zero_rpm"] == {}

@@ -156,7 +156,52 @@ Recommended:
 - manual override panel separated from profile editing to avoid confusion
 
 ## Safety behaviour
-The daemon enforces hardcoded safety floors (20% chassis, 30% CPU/pump). These are not editable. The GUI must respect them when validating curves.
+
+### Per-control minimum PWM (GUI-owned, role-aware — DEC-095)
+The GUI enforces a role-aware default minimum PWM by setting
+`LogicalControl.minimum_pct` when members are assigned or edited:
+- **30%** for any control whose members include a CPU- or pump-labelled
+  hwmon header (label contains `CPU`, `PUMP`, or `AIO`).
+- **20%** for chassis / OpenFan-only controls.
+- **0%** for GPU-only controls (PMFW enforces its own OD_RANGE
+  minimum, typically 15%; see DEC-053).
+
+The role floor is a **default**, not a ceiling — users can raise
+`minimum_pct` further via the controls page, and the GUI never
+silently lowers an explicit user-set value. The curve editor's drag,
+table edit, keyboard nudge, and Linear/Flat spinbox lower bound all
+clamp to the strictest floor across controls referencing the curve,
+so a curve shared by a chassis control (20%) and a CPU control (30%)
+cannot be edited below 30%. The Controls page surfaces the effective
+floor via a `Min: NN%` badge on each role card.
+
+Profile schema v4 (introduced with GUI v1.10.0 / daemon v1.6.0)
+migrates v3-or-older profiles on load: any control whose members
+include a CPU/PUMP header gets `minimum_pct ← max(minimum_pct, 30)`;
+chassis-only controls are raised to 20%.
+
+### Daemon thermal-emergency override (daemon-owned)
+The daemon owns one absolute backstop independent of the GUI: at
+≥105°C on the hottest CpuTemp sensor, all fans are forced to 100%
+(see `daemon/src/safety.rs`, DEC-022). This is non-editable and
+fires regardless of profile content. The 60% recovery floor and
+40% no-sensor fallback are likewise hardcoded.
+
+Per-header safety floors are **not** enforced by the daemon — the
+hwmon controller treats `min_pwm_percent: 0` for every header. The
+"GUI owns curve safety policy, daemon owns thermal emergency" split
+is intentional (CLAUDE.md, DEC-022, DEC-095). Hand-edited profile
+JSON or third-party clients that bypass the GUI's role-aware floor
+can still command low PWM; the project's threat model treats local
+writers as trusted (DEC-049).
+
+### Per-GPU zero-RPM idle (per-member toggle)
+Each `amd_gpu` member of a control carries a `fan_zero_rpm` boolean
+(default false). The daemon honours the flag when programming the
+PMFW curve (DEC-095): true → preserve `fan_zero_rpm_enable`, false →
+disable it before writing the curve so the fan spins continuously.
+Surfaced as an "Allow zero-RPM idle" checkbox per GPU member in the
+Edit Fan Role dialog.
 
 ---
 

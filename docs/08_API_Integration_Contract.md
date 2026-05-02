@@ -173,6 +173,18 @@ The calibration endpoint runs a long-running sweep (steps × hold_seconds) that 
   - Daemon validates, applies, and persists active profile to `/var/lib/control-ofc/daemon_state.json`
   - Returns `{"activated": true, "profile_id": "...", "profile_name": "..."}`
   - GUI must only update "active" state after daemon confirms success
+- `POST /profile/deactivate` — body ignored (DEC-097, daemon v1.6.0+)
+  - Clears the in-memory active profile, persists the cleared state, and
+    releases any held `profile-engine` lease so the GUI can take a fresh
+    one without a force-take. Leases held by other owners (e.g. `gui`) are
+    explicitly preserved.
+  - Refreshes the GUI-activity marker so the engine doesn't immediately
+    re-take a lease.
+  - Idempotent: returns `{"deactivated": true, "previous_profile_id": null,
+    "previous_profile_name": null}` when no profile was active. With an
+    active profile, the previous values are populated.
+  - The GUI calls this when the user deletes the active profile so the
+    daemon stops driving fans from a curve whose JSON has been removed.
 - `GET /profile/active` — returns current active profile or `{"active": false}`
   - GUI queries on connect/reconnect to reflect daemon truth
   - Prevents stale widget state from misleading user
@@ -183,7 +195,14 @@ The calibration endpoint runs a long-running sweep (steps × hold_seconds) that 
 
 No lease required. Uses 5% minimum change threshold (DEC-070) to avoid SMU firmware churn.
 Profile engine defers GPU writes when GUI is active in last 30s (DEC-071).
-Daemon disables `fan_zero_rpm_enable` before writing PMFW curve, re-enables on reset (DEC-053).
+
+**Zero-RPM handling.** Manual writes via `POST /gpu/{id}/fan/pwm` always
+disable `fan_zero_rpm_enable` before writing the curve so the fan spins
+continuously at the commanded speed (DEC-053). Profile-driven writes
+(daemon v1.6.0+) honour each member's `fan_zero_rpm` boolean: when true,
+the daemon preserves `fan_zero_rpm_enable` so the GPU stops the fan at
+its idle threshold (DEC-095). The default for omitted/legacy v3
+profiles is false, so pre-1.6.0 behaviour is unchanged.
 
 ### Hwmon rescan
 - `POST /hwmon/rescan` — re-enumerate hwmon devices

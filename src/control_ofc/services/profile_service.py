@@ -2,10 +2,12 @@
 
 Profiles are GUI-owned. The daemon knows nothing about them.
 
-Data model (v2):
+Data model (v4):
 - Profile contains LogicalControls (fan groups with mode) and a CurveConfig library.
 - LogicalControl maps to physical outputs via ControlMember.
 - CurveConfig supports Graph, Linear, and Flat types.
+- v4 introduces role-aware ``minimum_pct`` defaults (20% chassis / 30% CPU+pump)
+  enforced GUI-side, and the per-member ``fan_zero_rpm`` flag for GPU fans.
 """
 
 from __future__ import annotations
@@ -149,9 +151,15 @@ class ControlMode(Enum):
 class ControlMember:
     """A physical fan output assigned to a logical control."""
 
-    source: str = ""  # "openfan" | "hwmon"
+    source: str = ""  # "openfan" | "hwmon" | "amd_gpu"
     member_id: str = ""  # stable daemon ID (e.g. "openfan:ch00", "hwmon:nct6775:pwm1")
     member_label: str = ""  # cached display name
+    # Per-GPU-member zero-RPM toggle (v4). When True, the daemon preserves the
+    # PMFW ``fan_zero_rpm_enable`` setting when programming the curve, so GPU
+    # fans stop below the firmware's idle threshold. False keeps the safe
+    # default (zero-RPM disabled, fans always spin). Ignored for non-GPU
+    # members. See DEC-095 in the GUI ``DECISIONS.md``.
+    fan_zero_rpm: bool = False
 
     @property
     def target_id(self) -> str:
@@ -167,7 +175,75 @@ class ControlMember:
             source=data.get("source", ""),
             member_id=data.get("member_id", ""),
             member_label=data.get("member_label", ""),
+            fan_zero_rpm=bool(data.get("fan_zero_rpm", False)),
         )
+
+
+# ---------------------------------------------------------------------------
+# Role inference and minimum-PWM policy (v4)
+# ---------------------------------------------------------------------------
+#
+# Pumps and CPU headers stall below ~30% PWM; chassis/case fans are unsafe
+# below ~20%. The daemon enforces only the 105°C thermal-emergency rule —
+# per-fan stall protection is GUI policy via ``LogicalControl.minimum_pct``
+# (see DEC-095). Roles are inferred from member labels because the daemon's
+# header label is the only authoritative classifier we have.
+
+CONTROL_ROLE_GPU = "gpu"
+CONTROL_ROLE_CPU_PUMP = "cpu_or_pump"
+CONTROL_ROLE_CHASSIS = "chassis"
+
+ROLE_MINIMUM_PCT: dict[str, float] = {
+    CONTROL_ROLE_GPU: 0.0,  # GPU PMFW enforces its own OD_RANGE minimum
+    CONTROL_ROLE_CPU_PUMP: 30.0,
+    CONTROL_ROLE_CHASSIS: 20.0,
+}
+
+_CPU_PUMP_LABEL_HINTS = ("cpu", "pump", "aio")
+
+
+def _label_indicates_cpu_or_pump(label: str) -> bool:
+    """Return True when a hwmon header label looks like a CPU or pump header."""
+    if not label:
+        return False
+    lower = label.lower()
+    return any(hint in lower for hint in _CPU_PUMP_LABEL_HINTS)
+
+
+def infer_member_role(member: ControlMember) -> str:
+    """Classify a single member into one of the three role buckets."""
+    if member.source == "amd_gpu":
+        return CONTROL_ROLE_GPU
+    if member.source == "hwmon" and _label_indicates_cpu_or_pump(member.member_label):
+        return CONTROL_ROLE_CPU_PUMP
+    return CONTROL_ROLE_CHASSIS
+
+
+def infer_control_role(members: list[ControlMember]) -> str:
+    """Classify a control by its members.
+
+    A control with any CPU/pump member gets the strictest floor; a control
+    with only GPU members is GPU; otherwise chassis. Empty controls are
+    treated as chassis (the safer default for a brand-new control with no
+    members assigned yet).
+    """
+    if not members:
+        return CONTROL_ROLE_CHASSIS
+    if any(infer_member_role(m) == CONTROL_ROLE_CPU_PUMP for m in members):
+        return CONTROL_ROLE_CPU_PUMP
+    if all(infer_member_role(m) == CONTROL_ROLE_GPU for m in members):
+        return CONTROL_ROLE_GPU
+    return CONTROL_ROLE_CHASSIS
+
+
+def role_minimum_pct(role: str) -> float:
+    """Return the role's default ``minimum_pct``."""
+    return ROLE_MINIMUM_PCT.get(role, 0.0)
+
+
+def control_minimum_pct(members: list[ControlMember]) -> float:
+    """Convenience: role-derived minimum_pct for a member list."""
+    return role_minimum_pct(infer_control_role(members))
 
 
 @dataclass
@@ -230,6 +306,9 @@ class LogicalControl:
 # ---------------------------------------------------------------------------
 
 
+PROFILE_SCHEMA_VERSION = 4
+
+
 @dataclass
 class Profile:
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
@@ -237,7 +316,7 @@ class Profile:
     description: str = ""
     controls: list[LogicalControl] = field(default_factory=list)
     curves: list[CurveConfig] = field(default_factory=list)
-    version: int = 3
+    version: int = PROFILE_SCHEMA_VERSION
 
     def get_curve(self, curve_id: str) -> CurveConfig | None:
         for c in self.curves:
@@ -260,19 +339,65 @@ class Profile:
         version = data.get("version", 1)
 
         if version < 2 and "assignments" in data:
-            return _migrate_v1_profile(data)
-        # v2→v3: new fields have defaults, no structural migration needed
+            profile = _migrate_v1_profile(data)
+            # Apply the v4 floor pass to v1-migrated profiles too so the
+            # one-shot upgrade path always lands at the current schema.
+            profile.controls = [_migrate_control_to_v4(c) for c in profile.controls]
+            return profile
+        # v2→v3 was non-structural (new fields with defaults).
+        # v3→v4 lifts ``minimum_pct`` to the role-derived floor where the
+        # current value is lower, ensuring CPU/pump members never run below
+        # 30% on legacy profiles authored before the safety policy existed.
 
         controls = [LogicalControl.from_dict(c) for c in data.get("controls", [])]
         curves = [CurveConfig.from_dict(c) for c in data.get("curves", [])]
+
+        if version < 4:
+            controls = [_migrate_control_to_v4(c) for c in controls]
+
         return Profile(
             id=data.get("id", str(uuid.uuid4())[:8]),
             name=data.get("name", ""),
             description=data.get("description", ""),
             controls=controls,
             curves=curves,
-            version=3,
+            version=PROFILE_SCHEMA_VERSION,
         )
+
+
+def _migrate_control_to_v4(control: LogicalControl) -> LogicalControl:
+    """Apply the role-aware ``minimum_pct`` floor to a v3-or-older control.
+
+    Never lowers an explicit user-set value — only raises ``minimum_pct`` to
+    meet the role policy. Controls with no members get no change; the floor
+    is reapplied automatically when members are added through the UI.
+    """
+    role_floor = control_minimum_pct(control.members)
+    if role_floor > control.minimum_pct:
+        log.info(
+            "Profile migration: control '%s' minimum_pct %.0f → %.0f (%s policy)",
+            control.name or control.id,
+            control.minimum_pct,
+            role_floor,
+            infer_control_role(control.members),
+        )
+        control.minimum_pct = role_floor
+    return control
+
+
+def apply_role_floor(control: LogicalControl) -> bool:
+    """Raise ``control.minimum_pct`` to its role-derived floor when too low.
+
+    Call this from the UI after the user edits a control's member list so the
+    control's minimum tracks the new role. Never lowers an explicit value —
+    user-set floors above the role default are preserved. Returns True when
+    the value was changed.
+    """
+    role_floor = control_minimum_pct(control.members)
+    if role_floor > control.minimum_pct:
+        control.minimum_pct = role_floor
+        return True
+    return False
 
 
 def _migrate_v1_profile(data: dict) -> Profile:
@@ -329,7 +454,7 @@ def _migrate_v1_profile(data: dict) -> Profile:
         description=data.get("description", ""),
         controls=controls,
         curves=curves,
-        version=3,
+        version=PROFILE_SCHEMA_VERSION,
     )
 
 
@@ -460,10 +585,12 @@ class ProfileService:
                 data = json.loads(path.read_text())
                 profile = Profile.from_dict(data)
                 self._profiles[profile.id] = profile
-                # Re-save if migrated from v1
-                if data.get("version", 1) < 2:
+                # Re-save if migrated from any earlier schema version. The
+                # v4 migration may also raise ``minimum_pct`` on disk so the
+                # change persists across restarts.
+                if data.get("version", 1) < PROFILE_SCHEMA_VERSION:
                     self.save_profile(profile)
-                    log.info("Migrated profile %s to v2", profile.name)
+                    log.info("Migrated profile %s to v%d", profile.name, PROFILE_SCHEMA_VERSION)
                 loaded = True
             except Exception as e:
                 log.warning("Failed to load profile %s: %s", path, e)

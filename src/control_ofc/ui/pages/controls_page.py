@@ -36,6 +36,8 @@ from control_ofc.services.profile_service import (
     CurveType,
     LogicalControl,
     ProfileService,
+    apply_role_floor,
+    control_minimum_pct,
 )
 from control_ofc.ui.fan_presence import (
     PRESENCE_BADGE,
@@ -426,7 +428,23 @@ class ControlsPage(QWidget):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
+            # If we're deleting the daemon's active profile, tell it to
+            # deactivate first so the curve stops driving fans the moment
+            # the file is gone (DEC-097). Pre-DEC-097 the daemon kept the
+            # in-memory profile until restart, leaving "phantom" curve
+            # writes targeting a profile that no longer exists on disk.
+            was_active_locally = self._profile_service.active_id == profile_id
+            if was_active_locally and self._client is not None:
+                try:
+                    self._client.deactivate_profile()
+                except DaemonError as exc:
+                    self._log.warning("Daemon deactivate before delete failed: %s", exc)
+                    # Continue with the local delete — the file is the
+                    # canonical source for the next activation, and the
+                    # daemon will surface the error itself.
             self._profile_service.delete_profile(profile_id)
+            if was_active_locally and self._state is not None:
+                self._state.set_active_profile("")
             # After deletion, switch to the active profile (or whatever is now first)
             self._refresh_profile_combo(selected_id=self._profile_service.active_id)
             self._refresh_all()
@@ -533,6 +551,11 @@ class ControlsPage(QWidget):
             control.mode = result["mode"]
             control.curve_id = result["curve_id"]
             control.manual_output_pct = result.get("manual_output_pct", control.manual_output_pct)
+            # Persist per-GPU-member zero-RPM toggles back onto the members.
+            zero_rpm_map = result.get("gpu_fan_zero_rpm", {}) or {}
+            for member in control.members:
+                if member.source == "amd_gpu" and member.member_id in zero_rpm_map:
+                    member.fan_zero_rpm = bool(zero_rpm_map[member.member_id])
             card = self._control_cards.get(control_id)
             if card:
                 card.update_control(control, profile.curves)
@@ -633,6 +656,14 @@ class ControlsPage(QWidget):
                     self._show_gpu_zero_rpm_info()
 
             control.members = new_members
+            # Membership change can shift the role (chassis ↔ CPU/pump),
+            # so reapply the role-aware floor before the next save.
+            if apply_role_floor(control):
+                self._log.info(
+                    "Control '%s' minimum_pct raised to %.0f%% by role policy",
+                    control.name,
+                    control.minimum_pct,
+                )
             card = self._control_cards.get(control_id)
             if card:
                 card.update_control(control, profile.curves)
@@ -775,11 +806,35 @@ class ControlsPage(QWidget):
                 self._set_unsaved(True)
         else:
             self._editor_title.setText(f"Editing: {curve.name}")
+            # Clamp the editable floor to the strictest minimum_pct across all
+            # controls referencing this curve. If a curve is shared between a
+            # CPU pump role (30%) and a chassis role (20%), the editor enforces
+            # 30% so the user cannot author a point that would be clamped at
+            # write time for the stricter role.
+            min_floor = self._curve_min_output_floor(profile, curve.id)
+            self._curve_editor.set_min_output(min_floor)
             self._curve_editor.set_curve(curve)
             self._editor_frame.show()
 
     def _close_editor(self) -> None:
         self._editor_frame.hide()
+
+    def _curve_min_output_floor(self, profile, curve_id: str) -> float:
+        """Return the highest ``minimum_pct`` of any control referencing this curve.
+
+        The editor uses this to clamp curve points so a shared curve cannot
+        be authored below the strictest role's safe minimum. Returns 0 when
+        no control references the curve (orphan / brand-new curve).
+        """
+        floor = 0.0
+        for ctrl in profile.controls:
+            if ctrl.curve_id == curve_id:
+                # Use the explicit value if the user raised it, else derive
+                # from members so a freshly-created control still gets the
+                # role-aware floor before it has been migrated.
+                effective = max(ctrl.minimum_pct, control_minimum_pct(ctrl.members))
+                floor = max(floor, effective)
+        return floor
 
     def _on_curve_changed(self) -> None:
         self._set_unsaved(True)

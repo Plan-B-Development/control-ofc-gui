@@ -23,6 +23,7 @@ from control_ofc.api.models import (
     LeaseResult,
     LeaseState,
     ProfileActivateResult,
+    ProfileDeactivateResult,
     ProfileSearchDirsResult,
     SensorHistory,
     SensorReading,
@@ -43,6 +44,7 @@ from control_ofc.api.models import (
     parse_lease_result,
     parse_lease_status,
     parse_profile_activate,
+    parse_profile_deactivate,
     parse_profile_search_dirs,
     parse_sensor_history,
     parse_sensors,
@@ -248,6 +250,17 @@ class DaemonClient:
         """GET /profile/active — query the daemon's currently active profile."""
         data = self._get("/profile/active")
         return parse_active_profile(data)
+
+    def deactivate_profile(self) -> ProfileDeactivateResult:
+        """POST /profile/deactivate — clear the daemon's active profile.
+
+        Idempotent: deactivating when no profile is active is a success
+        no-op. Returns the previously-active profile id/name (both None
+        when there was nothing to deactivate). The daemon falls back to
+        imperative-only behaviour after this call until a new profile is
+        activated. See DEC-097.
+        """
+        return parse_profile_deactivate(self._post("/profile/deactivate", json={}))
 
     def set_gpu_fan_speed(self, gpu_id: str, speed_pct: int) -> GpuFanSetResult:
         """POST /gpu/{gpu_id}/fan/pwm — set GPU fan to a static speed percentage."""

@@ -15,7 +15,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from control_ofc.services.profile_service import ControlMode, CurveConfig, LogicalControl
+from control_ofc.services.profile_service import (
+    ControlMode,
+    CurveConfig,
+    LogicalControl,
+    control_minimum_pct,
+    infer_control_role,
+)
 from control_ofc.ui.widgets.card_metrics import CARD_HEIGHT, CARD_WIDTH
 
 
@@ -57,7 +63,7 @@ class ControlCard(QFrame):
         self._members_label.setObjectName(f"ControlCard_Label_members_{control.id}")
         layout.addWidget(self._members_label)
 
-        # Row 3: Curve assignment
+        # Row 3: Curve assignment + minimum-PWM badge
         curve_row = QHBoxLayout()
         curve_row.setSpacing(4)
         curve_name = self._curve_name(curves, control.curve_id)
@@ -68,6 +74,14 @@ class ControlCard(QFrame):
         self._curve_label.setObjectName(f"ControlCard_Label_curve_{control.id}")
         curve_row.addWidget(self._curve_label)
         curve_row.addStretch()
+        # Minimum-PWM badge: surfaces the role-derived safety floor so the
+        # user can see at a glance why a curve appears clamped at the bottom.
+        # See profile_service.role_minimum_pct + DEC-095.
+        self._min_pwm_label = QLabel("")
+        self._min_pwm_label.setProperty("class", "CardMeta")
+        self._min_pwm_label.setStyleSheet("background: transparent;")
+        self._min_pwm_label.setObjectName(f"ControlCard_Label_minPwm_{control.id}")
+        curve_row.addWidget(self._min_pwm_label)
         layout.addLayout(curve_row)
 
         # Row 4: Output + sensor context
@@ -104,6 +118,7 @@ class ControlCard(QFrame):
         layout.addLayout(actions)
 
         self._update_no_members_state(control)
+        self._update_min_pwm_badge(control)
 
     # ─── Public API ──────────────────────────────────────────────────
 
@@ -144,6 +159,7 @@ class ControlCard(QFrame):
         mode_text = "Manual" if control.mode == ControlMode.MANUAL else curve_name
         self._curve_label.setText(f"Curve: {mode_text}")
         self._update_no_members_state(control)
+        self._update_min_pwm_badge(control)
 
     def update_output_preview(
         self, curve_name: str, sensor_name: str, sensor_value: float, output_pct: float
@@ -177,3 +193,30 @@ class ControlCard(QFrame):
             self._status_chip.setProperty("class", "PageSubtitle")
             self._status_chip.style().unpolish(self._status_chip)
             self._status_chip.style().polish(self._status_chip)
+
+    def _update_min_pwm_badge(self, control: LogicalControl) -> None:
+        """Refresh the inline minimum-PWM badge from the control's effective floor."""
+        # Show the larger of the user-set floor and the role-derived floor so
+        # the user sees the clamp that actually applies. Hide entirely when
+        # there is no floor (0%), so chassis-only roles authored before v4
+        # don't display a misleading "Min: 0%".
+        effective = max(control.minimum_pct, control_minimum_pct(control.members))
+        if effective <= 0.0:
+            self._min_pwm_label.setText("")
+            self._min_pwm_label.setToolTip("")
+            return
+        self._min_pwm_label.setText(f"Min: {effective:.0f}%")
+        role = infer_control_role(control.members)
+        if role == "cpu_or_pump":
+            tip = (
+                "Minimum PWM derived from a CPU or pump member. "
+                "30% protects the pump from stalling."
+            )
+        elif role == "chassis":
+            tip = (
+                "Minimum PWM for chassis fans. "
+                "20% prevents most 4-pin fans from stalling at low duty."
+            )
+        else:
+            tip = "Minimum PWM applied by this control."
+        self._min_pwm_label.setToolTip(tip)

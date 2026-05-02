@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from control_ofc.services.profile_service import (
@@ -262,7 +264,7 @@ def test_v1_profile_migration():
         ],
     }
     profile = Profile.from_dict(v1_data)
-    assert profile.version == 3
+    assert profile.version == 4
     assert len(profile.controls) == 1
     assert len(profile.curves) == 1
     assert profile.controls[0].curve_id == profile.curves[0].id
@@ -293,7 +295,7 @@ def test_v1_profile_migration_group_target():
         ],
     }
     profile = Profile.from_dict(v1_data)
-    assert profile.version == 3
+    assert profile.version == 4
     assert len(profile.controls) == 1
     assert profile.controls[0].name == "Group: all"
     # Group targets have no explicit members (they apply to all fans)
@@ -494,7 +496,7 @@ def test_from_dict_empty_dict_uses_defaults():
     assert p.name == ""
     assert p.controls == []
     assert p.curves == []
-    assert p.version == 3
+    assert p.version == 4
     assert len(p.id) > 0  # auto-generated UUID
 
 
@@ -504,3 +506,236 @@ def test_from_dict_missing_controls_and_curves():
     assert p.name == "Sparse"
     assert p.controls == []
     assert p.curves == []
+
+
+# ---------------------------------------------------------------------------
+# V4 — role-aware minimum_pct, fan_zero_rpm, schema migration (DEC-095)
+# ---------------------------------------------------------------------------
+
+
+def test_role_inference_chassis_for_openfan_only():
+    from control_ofc.services.profile_service import (
+        CONTROL_ROLE_CHASSIS,
+        infer_control_role,
+    )
+
+    members = [
+        ControlMember(source="openfan", member_id="openfan:ch00", member_label="ch00"),
+        ControlMember(source="openfan", member_id="openfan:ch01", member_label="ch01"),
+    ]
+    assert infer_control_role(members) == CONTROL_ROLE_CHASSIS
+
+
+def test_role_inference_cpu_pump_when_label_hints():
+    from control_ofc.services.profile_service import (
+        CONTROL_ROLE_CPU_PUMP,
+        infer_control_role,
+    )
+
+    # CPU header label
+    cpu_members = [
+        ControlMember(source="hwmon", member_id="hwmon:nct6775:pwm1", member_label="CPU_FAN"),
+    ]
+    assert infer_control_role(cpu_members) == CONTROL_ROLE_CPU_PUMP
+
+    # Pump header label
+    pump_members = [
+        ControlMember(source="hwmon", member_id="hwmon:nct6775:pwm2", member_label="AIO_PUMP"),
+    ]
+    assert infer_control_role(pump_members) == CONTROL_ROLE_CPU_PUMP
+
+    # Mixed — any CPU/pump member promotes the whole control
+    mixed = [
+        ControlMember(source="openfan", member_id="openfan:ch00", member_label="ch00"),
+        ControlMember(source="hwmon", member_id="hwmon:nct6775:pwm1", member_label="CPU_FAN"),
+    ]
+    assert infer_control_role(mixed) == CONTROL_ROLE_CPU_PUMP
+
+
+def test_role_inference_gpu_when_only_amd_gpu():
+    from control_ofc.services.profile_service import CONTROL_ROLE_GPU, infer_control_role
+
+    members = [
+        ControlMember(source="amd_gpu", member_id="amd_gpu:0000:03:00.0", member_label="9070XT"),
+    ]
+    assert infer_control_role(members) == CONTROL_ROLE_GPU
+
+
+def test_role_minimum_pct_values():
+    from control_ofc.services.profile_service import (
+        CONTROL_ROLE_CHASSIS,
+        CONTROL_ROLE_CPU_PUMP,
+        CONTROL_ROLE_GPU,
+        role_minimum_pct,
+    )
+
+    # CPU/pump = 30, chassis = 20, GPU = 0 (firmware enforces its own range)
+    assert role_minimum_pct(CONTROL_ROLE_CPU_PUMP) == 30.0
+    assert role_minimum_pct(CONTROL_ROLE_CHASSIS) == 20.0
+    assert role_minimum_pct(CONTROL_ROLE_GPU) == 0.0
+
+
+def test_apply_role_floor_raises_chassis_to_20():
+    from control_ofc.services.profile_service import apply_role_floor
+
+    ctrl = LogicalControl(
+        name="Top fans",
+        members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        minimum_pct=0.0,
+    )
+    changed = apply_role_floor(ctrl)
+    assert changed is True
+    assert ctrl.minimum_pct == 20.0
+
+
+def test_apply_role_floor_raises_cpu_to_30():
+    from control_ofc.services.profile_service import apply_role_floor
+
+    ctrl = LogicalControl(
+        name="Pump",
+        members=[
+            ControlMember(source="hwmon", member_id="hwmon:nct6775:pwm1", member_label="AIO_PUMP")
+        ],
+        minimum_pct=10.0,
+    )
+    assert apply_role_floor(ctrl) is True
+    assert ctrl.minimum_pct == 30.0
+
+
+def test_apply_role_floor_preserves_user_value_above_role():
+    from control_ofc.services.profile_service import apply_role_floor
+
+    # User explicitly set 40% — must not be lowered to 30 by policy.
+    ctrl = LogicalControl(
+        name="Pump",
+        members=[
+            ControlMember(source="hwmon", member_id="hwmon:nct6775:pwm1", member_label="PUMP")
+        ],
+        minimum_pct=40.0,
+    )
+    assert apply_role_floor(ctrl) is False
+    assert ctrl.minimum_pct == 40.0
+
+
+def test_v3_to_v4_migration_raises_cpu_pump_floor():
+    """A v3 profile with a CPU member at minimum_pct=0 must migrate to 30."""
+    v3 = {
+        "id": "legacy",
+        "name": "Legacy",
+        "version": 3,
+        "controls": [
+            {
+                "id": "c1",
+                "name": "CPU",
+                "mode": "curve",
+                "curve_id": "x",
+                "members": [
+                    {
+                        "source": "hwmon",
+                        "member_id": "hwmon:nct6775:pwm1",
+                        "member_label": "CPU_FAN",
+                    }
+                ],
+                "minimum_pct": 0.0,
+            }
+        ],
+        "curves": [],
+    }
+    p = Profile.from_dict(v3)
+    assert p.version == 4
+    assert p.controls[0].minimum_pct == 30.0
+
+
+def test_v3_to_v4_migration_does_not_lower_explicit_user_value():
+    v3 = {
+        "id": "legacy",
+        "name": "Legacy",
+        "version": 3,
+        "controls": [
+            {
+                "id": "c1",
+                "name": "CPU",
+                "mode": "curve",
+                "curve_id": "x",
+                "members": [
+                    {
+                        "source": "hwmon",
+                        "member_id": "hwmon:nct6775:pwm1",
+                        "member_label": "CPU_FAN",
+                    }
+                ],
+                "minimum_pct": 50.0,
+            }
+        ],
+        "curves": [],
+    }
+    p = Profile.from_dict(v3)
+    assert p.controls[0].minimum_pct == 50.0
+
+
+def test_v3_to_v4_migration_chassis_only_raises_to_20():
+    v3 = {
+        "id": "legacy",
+        "name": "Legacy",
+        "version": 3,
+        "controls": [
+            {
+                "id": "c1",
+                "name": "Top",
+                "mode": "curve",
+                "curve_id": "x",
+                "members": [{"source": "openfan", "member_id": "openfan:ch00"}],
+                "minimum_pct": 0.0,
+            }
+        ],
+        "curves": [],
+    }
+    p = Profile.from_dict(v3)
+    assert p.controls[0].minimum_pct == 20.0
+
+
+def test_fan_zero_rpm_field_roundtrip():
+    """ControlMember.fan_zero_rpm survives to_dict/from_dict."""
+    m = ControlMember(
+        source="amd_gpu",
+        member_id="amd_gpu:0000:03:00.0",
+        member_label="9070XT",
+        fan_zero_rpm=True,
+    )
+    d = m.to_dict()
+    assert d["fan_zero_rpm"] is True
+    m2 = ControlMember.from_dict(d)
+    assert m2.fan_zero_rpm is True
+
+
+def test_fan_zero_rpm_default_false_when_missing():
+    """Loading a profile without the field must default to False."""
+    m = ControlMember.from_dict({"source": "amd_gpu", "member_id": "amd_gpu:0000:03:00.0"})
+    assert m.fan_zero_rpm is False
+
+
+def test_load_resaves_when_migrating_from_v3(tmp_path, monkeypatch):
+    """Loading a v3 profile from disk must re-save it as v4."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    profiles_dir = tmp_path / "control-ofc" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    legacy = profiles_dir / "legacy.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "id": "legacy",
+                "name": "Legacy",
+                "version": 3,
+                "controls": [],
+                "curves": [],
+            }
+        )
+    )
+
+    svc = ProfileService()
+    errors = svc.load()
+    assert errors == []
+
+    # File on disk should now report version 4.
+    rewritten = json.loads(legacy.read_text())
+    assert rewritten["version"] == 4
