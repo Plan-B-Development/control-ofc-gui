@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -16,7 +18,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.services.profile_service import ControlMode, CurveConfig, LogicalControl
+from control_ofc.services.profile_service import (
+    ControlMember,
+    ControlMode,
+    CurveConfig,
+    LogicalControl,
+)
 from control_ofc.ui.qt_util import block_signals
 
 
@@ -118,6 +125,14 @@ class FanRoleDialog(QDialog):
         edit_members_btn.clicked.connect(self._on_edit_members)
         layout.addWidget(edit_members_btn)
 
+        # Per-GPU-member zero-RPM toggle (v4). Only renders when the role has
+        # at least one ``amd_gpu`` member; the daemon ignores the flag for
+        # non-GPU sources. Each toggle binds to the member's ``fan_zero_rpm``.
+        self._gpu_zero_rpm_checks: dict[str, QCheckBox] = {}
+        self._gpu_section = self._build_gpu_zero_rpm_section(control.members)
+        if self._gpu_section is not None:
+            layout.addWidget(self._gpu_section)
+
         layout.addStretch()
 
         # OK / Cancel
@@ -165,4 +180,59 @@ class FanRoleDialog(QDialog):
             "mode": ControlMode(self._mode_combo.currentData()),
             "curve_id": self._curve_combo.currentData() or "",
             "manual_output_pct": float(self._manual_spin.value()),
+            "gpu_fan_zero_rpm": self._collect_gpu_zero_rpm(),
         }
+
+    # ─── GPU zero-RPM section ────────────────────────────────────────
+
+    def _build_gpu_zero_rpm_section(self, members: list[ControlMember]) -> QWidget | None:
+        """Build the per-GPU-member zero-RPM toggle group.
+
+        Returns ``None`` when no GPU members are present so the dialog stays
+        compact for chassis-only roles.
+        """
+        gpu_members = [m for m in members if m.source == "amd_gpu"]
+        if not gpu_members:
+            return None
+
+        frame = QFrame()
+        frame.setObjectName("FanRoleDialog_Frame_gpuZeroRpm")
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setSpacing(4)
+
+        title = QLabel("GPU fan idle behaviour")
+        title.setStyleSheet("font-weight: bold;")
+        frame_layout.addWidget(title)
+
+        info = QLabel(
+            "When the GPU is below the firmware's idle threshold, choose "
+            "whether the fan stops (zero-RPM) or keeps spinning at the "
+            "curve's minimum."
+        )
+        info.setWordWrap(True)
+        info.setProperty("class", "PageSubtitle")
+        frame_layout.addWidget(info)
+
+        for m in gpu_members:
+            row = QHBoxLayout()
+            label = QLabel(m.member_label or m.member_id)
+            row.addWidget(label, 1)
+            check = QCheckBox("Allow zero-RPM idle")
+            check.setObjectName(f"FanRoleDialog_Check_zeroRpm_{m.member_id}")
+            check.setToolTip(
+                "Keep the GPU's firmware zero-RPM mode enabled while this "
+                "profile is active — the fan stops at idle and spins up "
+                "with the curve. When unchecked, the daemon disables "
+                "zero-RPM so the fan tracks the curve continuously."
+            )
+            check.setChecked(bool(m.fan_zero_rpm))
+            self._gpu_zero_rpm_checks[m.member_id] = check
+            row.addWidget(check)
+            frame_layout.addLayout(row)
+
+        return frame
+
+    def _collect_gpu_zero_rpm(self) -> dict[str, bool]:
+        """Return ``{member_id: fan_zero_rpm}`` for the GPU members shown."""
+        return {mid: cb.isChecked() for mid, cb in self._gpu_zero_rpm_checks.items()}

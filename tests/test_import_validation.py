@@ -38,7 +38,7 @@ class TestProfileImportValidation:
     def test_empty_dict_produces_default_profile(self):
         profile = Profile.from_dict({})
         assert profile.name == ""
-        assert profile.version == 3
+        assert profile.version == 4
         assert profile.controls == []
         assert profile.curves == []
 

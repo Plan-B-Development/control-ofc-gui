@@ -30,7 +30,7 @@ from control_ofc.ui.theme import ThemeTokens, default_dark_theme
 # Constraints
 MIN_TEMP = 0.0
 MAX_TEMP = 120.0
-MIN_OUTPUT = 0.0
+MIN_OUTPUT = 0.0  # absolute floor; per-curve floor may be higher (see ``set_min_output``)
 MAX_OUTPUT = 100.0
 MIN_TEMP_SPACING = 0.5  # minimum °C between adjacent points
 MIN_POINTS = 2
@@ -79,6 +79,11 @@ class CurveEditor(QWidget):
         self._drag_active: bool = False
         self._selected_idx: int | None = None
         self._current_sensor_value: float | None = None
+        # Per-curve floor — defaults to the absolute MIN_OUTPUT, but the
+        # controls page raises this to the role-derived floor (20% chassis,
+        # 30% CPU/pump) so the user can't drag, type, or nudge a point
+        # below the role's safe minimum.
+        self._min_output: float = MIN_OUTPUT
 
         # Undo/redo stacks
         self._undo_stack: list[list[CurvePoint]] = []
@@ -246,6 +251,29 @@ class CurveEditor(QWidget):
         self._theme = tokens
         self._setup_plot()
         self._redraw()
+
+    def set_min_output(self, min_pct: float) -> None:
+        """Set the role-derived floor for editable curve outputs.
+
+        Clamps the visible/editable range so the user cannot author points
+        below the role's safe minimum. Existing curve points are NOT
+        retroactively raised — the daemon's profile engine clamps low
+        commanded outputs to ``LogicalControl.minimum_pct`` at evaluation
+        time. The editor floor is purely a UX guardrail.
+        """
+        self._min_output = max(MIN_OUTPUT, min(MAX_OUTPUT, float(min_pct)))
+        # Keep linear/flat spinboxes in sync with the new floor.
+        for spin in (
+            getattr(self, "_lin_start_output", None),
+            getattr(self, "_lin_end_output", None),
+            getattr(self, "_flat_output_spin", None),
+        ):
+            if spin is not None:
+                spin.setMinimum(self._min_output)
+
+    @property
+    def min_output(self) -> float:
+        return self._min_output
 
     def eventFilter(self, obj, event) -> bool:
         """Intercept mouse press on plot viewport for press-to-drag."""
@@ -605,7 +633,7 @@ class CurveEditor(QWidget):
         x_min = points[idx - 1].temp_c + MIN_TEMP_SPACING if idx > 0 else MIN_TEMP
         x_max = points[idx + 1].temp_c - MIN_TEMP_SPACING if idx < len(points) - 1 else MAX_TEMP
         new_temp = round(max(x_min, min(x_max, mx)), 1)
-        new_output = round(max(MIN_OUTPUT, min(MAX_OUTPUT, my)), 1)
+        new_output = round(max(self._min_output, min(MAX_OUTPUT, my)), 1)
 
         points[idx].temp_c = new_temp
         points[idx].output_pct = new_output
@@ -670,7 +698,7 @@ class CurveEditor(QWidget):
             handled = True
         elif key == Qt.Key.Key_Down:
             self._push_undo()
-            points[idx].output_pct = round(max(MIN_OUTPUT, points[idx].output_pct - 1), 1)
+            points[idx].output_pct = round(max(self._min_output, points[idx].output_pct - 1), 1)
             handled = True
         elif key == Qt.Key.Key_Right:
             x_max = points[idx + 1].temp_c - MIN_TEMP_SPACING if idx < len(points) - 1 else MAX_TEMP
@@ -777,7 +805,7 @@ class CurveEditor(QWidget):
         if col == 0:
             p.temp_c = round(max(MIN_TEMP, min(MAX_TEMP, val)), 1)
         else:
-            p.output_pct = round(max(MIN_OUTPUT, min(MAX_OUTPUT, val)), 1)
+            p.output_pct = round(max(self._min_output, min(MAX_OUTPUT, val)), 1)
 
         # Enforce X ordering
         self._curve.points.sort(key=lambda pt: pt.temp_c)

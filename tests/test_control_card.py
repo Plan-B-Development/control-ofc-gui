@@ -128,6 +128,68 @@ class TestControlCardUpdate:
         assert card._name_label.text() == "Updated Name"
         assert "Quiet" in card._curve_label.text()
 
+
+class TestControlCardMinPwmBadge:
+    """Minimum-PWM badge surfaces the role-derived floor (DEC-095)."""
+
+    def test_chassis_default_when_no_members(self, card):
+        # Empty control defaults to the chassis role (the safer default for
+        # a brand-new control), so the badge surfaces 20% — same as a
+        # chassis-only role with members. Users see the floor will become
+        # active as soon as they add openfan/chassis members.
+        assert "20" in card._min_pwm_label.text()
+
+    def test_badge_shows_explicit_minimum(self, qtbot, curves):
+        ctrl = LogicalControl(
+            id="explicit",
+            name="Explicit",
+            curve_id="c1",
+            minimum_pct=20.0,
+        )
+        c = ControlCard(ctrl, curves)
+        qtbot.addWidget(c)
+        assert "20" in c._min_pwm_label.text()
+        assert "%" in c._min_pwm_label.text()
+
+    def test_badge_shows_role_derived_minimum_for_cpu_pump(self, qtbot, curves):
+        from control_ofc.services.profile_service import ControlMember
+
+        ctrl = LogicalControl(
+            id="pump",
+            name="Pump",
+            curve_id="c1",
+            members=[
+                ControlMember(
+                    source="hwmon",
+                    member_id="hwmon:nct6775:pwm1",
+                    member_label="AIO_PUMP",
+                )
+            ],
+            minimum_pct=0.0,
+        )
+        c = ControlCard(ctrl, curves)
+        qtbot.addWidget(c)
+        # Even with explicit minimum_pct=0, the role policy yields 30% so
+        # the badge surfaces the effective clamp.
+        assert "30" in c._min_pwm_label.text()
+        assert "pump" in c._min_pwm_label.toolTip().lower()
+
+    def test_update_control_refreshes_badge(self, qtbot, control, curves):
+        from control_ofc.services.profile_service import ControlMember
+
+        c = ControlCard(control, curves)
+        qtbot.addWidget(c)
+        # Add a CPU member — badge should refresh on update_control.
+        control.members.append(
+            ControlMember(
+                source="hwmon",
+                member_id="hwmon:nct6775:pwm1",
+                member_label="CPU_FAN",
+            )
+        )
+        c.update_control(control, curves)
+        assert "30" in c._min_pwm_label.text()
+
     def test_update_output_preview(self, card):
         card.update_output_preview("Balanced", "CPU", 45.0, 55.0)
         assert "Preview" in card._output_label.text()

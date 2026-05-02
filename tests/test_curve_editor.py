@@ -460,3 +460,72 @@ class TestMouseDrag:
         )
         editor.eventFilter(viewport, press)
         assert len(editor._undo_stack) == 1
+
+
+class TestRoleAwareMinOutput:
+    """Editor floor behaviour from set_min_output (DEC-095)."""
+
+    def test_default_min_output_is_zero(self, editor):
+        assert editor.min_output == 0.0
+
+    def test_set_min_output_stores_role_floor(self, editor):
+        editor.set_min_output(30.0)
+        assert editor.min_output == 30.0
+
+    def test_set_min_output_clamps_to_valid_range(self, editor):
+        editor.set_min_output(-5.0)
+        assert editor.min_output == 0.0
+        editor.set_min_output(150.0)
+        assert editor.min_output == 100.0
+
+    def test_table_edit_clamps_output_to_role_floor(self, editor, curve_5pt):
+        from PySide6.QtWidgets import QTableWidgetItem
+
+        editor.set_curve(curve_5pt)
+        editor.set_min_output(30.0)
+        # User types 5% — should be clamped to the 30% role floor.
+        editor._table.setItem(0, 1, QTableWidgetItem("5.0"))
+        assert curve_5pt.points[0].output_pct == 30.0
+
+    def test_keyboard_down_arrow_clamps_to_role_floor(self, editor, curve_5pt):
+        editor.set_curve(curve_5pt)
+        editor.set_min_output(30.0)
+        # Move first point to the floor and try to nudge below it.
+        curve_5pt.points[0].output_pct = 30.0
+        editor._selected_idx = 0
+
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+
+        evt = QKeyEvent(
+            QEvent.Type.KeyPress,
+            Qt.Key.Key_Down,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        editor.keyPressEvent(evt)
+        assert curve_5pt.points[0].output_pct == 30.0
+
+    def test_set_min_output_updates_linear_spinboxes(self, editor):
+        from control_ofc.services.profile_service import CurveType
+
+        linear = CurveConfig(
+            type=CurveType.LINEAR,
+            start_temp_c=30.0,
+            start_output_pct=20.0,
+            end_temp_c=70.0,
+            end_output_pct=80.0,
+        )
+        editor.set_curve(linear)
+        editor.set_min_output(30.0)
+        # Spinbox minimum should follow the role floor — user can't type
+        # a value below the role's safe minimum.
+        assert editor._lin_start_output.minimum() == 30.0
+        assert editor._lin_end_output.minimum() == 30.0
+
+    def test_set_min_output_updates_flat_spinbox(self, editor):
+        from control_ofc.services.profile_service import CurveType
+
+        flat = CurveConfig(type=CurveType.FLAT, flat_output_pct=50.0)
+        editor.set_curve(flat)
+        editor.set_min_output(30.0)
+        assert editor._flat_output_spin.minimum() == 30.0
