@@ -12,9 +12,7 @@ depends=('control-ofc-daemon>=1.6.1' 'python' 'pyside6' 'python-httpx'
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools' 'scdoc')
 install=control-ofc-gui.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-# Placeholder — recomputed post-tag-push. Fix with a follow-up
-# "fix: update PKGBUILD checksum for v1.10.1" commit.
-sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+sha256sums=('8463cae32b9ee2d4b3c1b63de76879fb18f93bdc967025b855db5a5efd63d587')
 
 build() {
     cd "$pkgname-$pkgver"
