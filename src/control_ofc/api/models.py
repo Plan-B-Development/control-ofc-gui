@@ -55,6 +55,20 @@ class HwmonCapability:
 
 
 @dataclass
+class KernelWarning:
+    """Daemon-emitted kernel-version advisory for the active GPU (DEC-098).
+
+    Mirrors `crate::hwmon::kernel_warnings::KernelWarning` on the daemon.
+    Severity is one of ``"info" | "medium" | "high" | "critical"``; the GUI
+    surfaces high/critical entries as a one-time popup and logs everything.
+    """
+
+    id: str = ""
+    severity: str = "info"
+    message: str = ""
+
+
+@dataclass
 class AmdGpuCapability:
     present: bool = False
     model_name: str | None = None
@@ -69,6 +83,10 @@ class AmdGpuCapability:
     pci_device_id: int | None = None
     pci_revision: int | None = None
     gpu_zero_rpm_available: bool = False
+    # DEC-098: list of advisories the daemon detected based on the running
+    # kernel + this GPU's identity. Empty when nothing applies; older daemons
+    # without the field also yield an empty list (parser-tolerant).
+    kernel_warnings: list[KernelWarning] = field(default_factory=list)
 
 
 @dataclass
@@ -476,15 +494,27 @@ def parse_capabilities(data: dict) -> Capabilities:
     features = data.get("features", {})
     limits = data.get("limits", {})
 
+    # DEC-098: kernel_warnings is a list of dicts on the wire; the
+    # `_filter_fields` helper would drop it if it landed here as a list of
+    # dicts (the dataclass-from-kwargs pattern can't construct nested
+    # dataclasses). Hand-parse it so each entry becomes a `KernelWarning`.
+    amd_gpu_raw = _coalesce_pci_bdf(devices.get("amd_gpu", {}))
+    kernel_warnings_raw = amd_gpu_raw.pop("kernel_warnings", []) or []
+    kernel_warnings = [
+        KernelWarning(**_filter_fields(KernelWarning, kw))
+        for kw in kernel_warnings_raw
+        if isinstance(kw, dict)
+    ]
+    amd_gpu = AmdGpuCapability(**_filter_fields(AmdGpuCapability, amd_gpu_raw))
+    amd_gpu.kernel_warnings = kernel_warnings
+
     return Capabilities(
         api_version=data.get("api_version", 1),
         daemon_version=data.get("daemon_version", ""),
         ipc_transport=data.get("ipc_transport", ""),
         openfan=OpenfanCapability(**_filter_fields(OpenfanCapability, devices.get("openfan", {}))),
         hwmon=HwmonCapability(**_filter_fields(HwmonCapability, devices.get("hwmon", {}))),
-        amd_gpu=AmdGpuCapability(
-            **_filter_fields(AmdGpuCapability, _coalesce_pci_bdf(devices.get("amd_gpu", {})))
-        ),
+        amd_gpu=amd_gpu,
         aio_hwmon=UnsupportedCapability(
             **_filter_fields(UnsupportedCapability, devices.get("aio_hwmon", {}))
         ),

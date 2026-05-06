@@ -292,11 +292,22 @@ class _VerifyWorker(QObject):
 
     @Slot(str, str)
     def do_verify(self, header_id: str, lease_id: str) -> None:
-        from control_ofc.api.errors import DaemonError, DaemonUnavailable
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 
         try:
             result = self._ensure_client().verify_hwmon_pwm(header_id, lease_id)
             self.verify_ok.emit(result)
+        except DaemonTimeout:
+            # DEC-098: a verify timeout means the daemon was slow — the write
+            # may still have landed. Don't say "unavailable", which implies
+            # the daemon is gone. The category stays "unavailable" so the
+            # main_window's resume-writes path (paired with verify_completed)
+            # still fires; only the message is rewritten.
+            self.verify_error.emit(
+                "unavailable",
+                "Verify timed out (>8s). The daemon may have completed the "
+                "write — re-check the fan and re-run if needed.",
+            )
         except DaemonUnavailable:
             self.verify_error.emit("unavailable", "Daemon unavailable during verify")
         except DaemonError as e:

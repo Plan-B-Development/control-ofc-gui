@@ -159,12 +159,21 @@ class FakeDaemonClient:
         self._maybe_raise("hwmon_lease_status")
         return LeaseState()
 
-    def set_openfan_pwm(self, channel: int, pwm_percent: int) -> SetPwmResult:
+    def set_openfan_pwm(
+        self, channel: int, pwm_percent: int, *, timeout: float | None = None
+    ) -> SetPwmResult:
+        # `timeout` is accepted but unused — the fake doesn't model latency.
+        # Kept on the signature so callers that pass per-call timeouts (DEC-099)
+        # don't blow up against the test client.
+        del timeout
         self._record("set_openfan_pwm", channel, pwm_percent)
         self._maybe_raise("set_openfan_pwm")
         return SetPwmResult(channel=channel, pwm_percent=pwm_percent)
 
-    def set_openfan_all_pwm(self, pwm_percent: int) -> SetPwmAllResult:
+    def set_openfan_all_pwm(
+        self, pwm_percent: int, *, timeout: float | None = None
+    ) -> SetPwmAllResult:
+        del timeout
         self._record("set_openfan_all_pwm", pwm_percent)
         self._maybe_raise("set_openfan_all_pwm")
         return SetPwmAllResult(pwm_percent=pwm_percent)
@@ -184,7 +193,15 @@ class FakeDaemonClient:
         self._maybe_raise("hwmon_lease_renew")
         return LeaseResult(lease_id=lease_id)
 
-    def set_hwmon_pwm(self, header_id: str, pwm_percent: int, lease_id: str) -> HwmonSetPwmResult:
+    def set_hwmon_pwm(
+        self,
+        header_id: str,
+        pwm_percent: int,
+        lease_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> HwmonSetPwmResult:
+        del timeout
         self._record("set_hwmon_pwm", header_id, pwm_percent, lease_id)
         self._maybe_raise("set_hwmon_pwm")
         return HwmonSetPwmResult(header_id=header_id, pwm_percent=pwm_percent)
@@ -206,12 +223,16 @@ class FakeDaemonClient:
         self._maybe_raise("active_profile")
         return ActiveProfileInfo(active=False)
 
-    def set_gpu_fan_speed(self, gpu_id: str, speed_pct: int) -> GpuFanSetResult:
+    def set_gpu_fan_speed(
+        self, gpu_id: str, speed_pct: int, *, timeout: float | None = None
+    ) -> GpuFanSetResult:
+        del timeout
         self._record("set_gpu_fan_speed", gpu_id, speed_pct)
         self._maybe_raise("set_gpu_fan_speed")
         return GpuFanSetResult(gpu_id=gpu_id, speed_pct=speed_pct)
 
-    def reset_gpu_fan(self, gpu_id: str) -> GpuFanResetResult:
+    def reset_gpu_fan(self, gpu_id: str, *, timeout: float | None = None) -> GpuFanResetResult:
+        del timeout
         self._record("reset_gpu_fan", gpu_id)
         self._maybe_raise("reset_gpu_fan")
         return GpuFanResetResult(gpu_id=gpu_id, reset=True)

@@ -168,6 +168,12 @@ class MainWindow(QWidget):
             self._state.set_connection(ConnectionState.DISCONNECTED)
             self._state.set_mode(OperationMode.READ_ONLY)
 
+        # DEC-098: surface daemon-emitted kernel-version warnings (e.g. 6.19
+        # RDNA hard hang, R9700 SMU mismatch) as a one-time popup. We listen
+        # on capabilities_updated rather than checking once at startup so a
+        # daemon restart with new detection logic refreshes the popup state.
+        self._state.capabilities_updated.connect(self._on_capabilities_updated_for_kernel_warnings)
+
     def _wire_diagnostics_to_control_loop(self) -> None:
         """Connect Diagnostics' verify_started/completed signals to the
         control loop's pause/resume so the 1Hz tick does not race the
@@ -271,6 +277,74 @@ class MainWindow(QWidget):
         if hasattr(self, "diagnostics_page") and self.diagnostics_page is not None:
             self.diagnostics_page.cleanup()
         super().closeEvent(event)
+
+    def _on_capabilities_updated_for_kernel_warnings(self, caps) -> None:
+        """Surface daemon-emitted kernel-version warnings as a one-time popup.
+
+        DEC-098: ``amd_gpu.kernel_warnings`` is populated by the daemon when
+        the running kernel matches a known amdgpu regression. We show a
+        ``QMessageBox`` for each unacknowledged ``high``/``critical`` entry
+        and remember the dismissal in ``acknowledged_kernel_warnings`` so
+        the popup doesn't fire on every reconnect or restart.
+        """
+        if self._demo_mode:
+            return
+        gpu = getattr(caps, "amd_gpu", None)
+        if gpu is None or not getattr(gpu, "kernel_warnings", None):
+            return
+
+        settings = self._settings_service.settings
+        acknowledged = set(settings.acknowledged_kernel_warnings)
+        unack = [
+            w
+            for w in gpu.kernel_warnings
+            if w.id not in acknowledged and w.severity in ("high", "critical")
+        ]
+        if not unack:
+            return
+
+        # Lazy-import QMessageBox so this method stays cheap when there's
+        # nothing to show (the common case).
+        from PySide6.QtWidgets import QMessageBox
+
+        from control_ofc.ui.hwmon_guidance import lookup_amd_gpu_guidance
+
+        for warning in unack:
+            box = QMessageBox(self)
+            box.setIcon(
+                QMessageBox.Icon.Critical
+                if warning.severity == "critical"
+                else QMessageBox.Icon.Warning
+            )
+            box.setWindowTitle("Kernel advisory for your GPU")
+            box.setText(warning.message)
+
+            # Attach GUI-side guidance text + references when we have a
+            # known entry for this warning ID. Falls back gracefully for
+            # warnings the GUI hasn't shipped a knowledge entry for.
+            guidance = lookup_amd_gpu_guidance(warning.id)
+            if guidance is not None:
+                detail_lines: list[str] = list(guidance.details)
+                if guidance.references:
+                    detail_lines.append("")
+                    detail_lines.append("References:")
+                    detail_lines.extend(f"  • {ref}" for ref in guidance.references)
+                box.setDetailedText("\n".join(detail_lines))
+
+            box.setInformativeText(
+                "Click 'Don't show again' to suppress this advisory until "
+                "the warning ID changes (e.g. you boot a different kernel "
+                "or the daemon adds new detections)."
+            )
+            box.addButton(QMessageBox.StandardButton.Ok)
+            dismiss = box.addButton("Don't show again", QMessageBox.ButtonRole.DestructiveRole)
+            box.exec()
+            if box.clickedButton() is dismiss:
+                acknowledged.add(warning.id)
+                log.info("Acknowledged kernel warning %s", warning.id)
+
+        if acknowledged != set(settings.acknowledged_kernel_warnings):
+            self._settings_service.update(acknowledged_kernel_warnings=sorted(acknowledged))
 
     def _maybe_reset_gpu_on_close(self) -> None:
         """Reset the GPU fan to automatic when the GUI drove it and no

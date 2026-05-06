@@ -545,6 +545,91 @@ def detect_module_conflicts(loaded_modules: list[str]) -> list[ModuleConflict]:
 
 
 # ---------------------------------------------------------------------------
+# AMD GPU advisory database (DEC-098)
+#
+# Knowledge entries for AMD GPU + kernel combinations. Keyed by the
+# `KernelWarning.id` the daemon emits in `amd_gpu.kernel_warnings`, so the
+# GUI can render a longer guidance text alongside the daemon's pre-formatted
+# message. Distinct from `ChipGuidance` (Super I/O chips) so the two
+# concerns don't bleed into each other.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AmdGpuGuidance:
+    """Per-warning-ID guidance text the GUI renders next to a kernel advisory.
+
+    `warning_id` matches `KernelWarning.id` on the daemon. `summary` is a
+    short headline; `details` is a multi-line list of bullets. References
+    point at upstream sources so the user can verify and follow the
+    diagnosis themselves.
+    """
+
+    warning_id: str
+    summary: str
+    details: list[str] = field(default_factory=list)
+    references: list[str] = field(default_factory=list)
+
+
+AMD_GPU_GUIDANCE_DB: list[AmdGpuGuidance] = [
+    AmdGpuGuidance(
+        warning_id="rdna_hang_kernel_6_19_x",
+        summary=(
+            "Linux 6.19.x on RDNA3/RDNA4 hard-hangs the system. "
+            "Roll back to 6.18 LTS or move forward to 7.0+."
+        ),
+        details=[
+            "Phoronix and Valve confirmed an unbisected amdgpu regression on "
+            "kernel 6.19 that hard-hangs RDNA3 (RX 7000) and RDNA4 (RX 9070) "
+            "GPUs under load (late 2025).",
+            "CachyOS users explicitly fall back to 6.18 LTS; 7.0 ships "
+            "additional fixes for older Radeon hardware and is past the "
+            "regression window.",
+            "Recovery from a hang typically requires a hard reboot — "
+            "running fan control on a kernel that can hang is not safe.",
+        ],
+        references=[
+            "https://www.phoronix.com/review/old-amdgpu-eoy2025",
+            "https://community.frame.work/t/attn-critical-bugs-in-amdgpu-driver-included-with-kernel-6-18-x-6-19-x/79221",
+        ],
+    ),
+    AmdGpuGuidance(
+        warning_id="smu_mismatch_navi48_r9700_kernel_7_0",
+        summary=(
+            "R9700 (Navi 48 0x7551) on kernel 7.0.x has a documented SMU "
+            "interface mismatch — PMFW fan_curve writes may silently fail."
+        ),
+        details=[
+            "ROCm Issue #6101 documents R9700 boards reporting SMU "
+            "interface 0x32 (50) while the kernel driver supports 0x2e (46). "
+            "The fan_curve sysfs file accepts writes, but the SMU silently "
+            "ignores them — the fan stays at 0 RPM, GPU thermals reach "
+            "109 °C, and dmesg has no 'fan failed' line.",
+            "If your fan does not respond to commanded speed changes, "
+            "fall back to automatic mode (POST /gpu/{bdf}/fan/reset) and "
+            "wait for the upstream driver bump that ships SMU iface 0x32.",
+            "RX 9070 XT (PCI 0x7550) and RX 9070 (0x7551 with revision "
+            "0xC3) are not affected by this specific mismatch.",
+        ],
+        references=[
+            "https://github.com/ROCm/ROCm/issues/6101",
+            "https://github.com/ROCm/ROCm/issues/6155",
+        ],
+    ),
+]
+
+
+def lookup_amd_gpu_guidance(warning_id: str) -> AmdGpuGuidance | None:
+    """Find the GUI-side guidance entry for a daemon-emitted kernel warning."""
+    if not warning_id:
+        return None
+    for entry in AMD_GPU_GUIDANCE_DB:
+        if entry.warning_id == warning_id:
+            return entry
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Post-verification guidance
 # ---------------------------------------------------------------------------
 
