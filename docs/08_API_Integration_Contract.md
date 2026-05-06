@@ -67,6 +67,30 @@ Notable fields:
   both carry the same PCI BDF address during the transition window; GUI
   parsers accept either name (see DECISIONS.md DEC-042 and the 2026-04-22
   contract-mismatch resolution).
+- `devices.amd_gpu.kernel_warnings` (DEC-098, daemon ≥ 1.6.1) is a list of
+  `{id, severity, message}` entries describing kernel-version regressions
+  applicable to the active GPU (e.g. RDNA3/4 hard-hang on Linux 6.19,
+  R9700 SMU mismatch on 7.0). Field is omitted entirely when empty so
+  pre-1.6.1 daemons (which don't set it) yield an empty list on the GUI
+  side without parser changes. The GUI surfaces `high` and `critical`
+  entries as a one-time popup gated by
+  `app_settings.acknowledged_kernel_warnings`.
+
+### Per-call timeouts (DEC-098 / DEC-099)
+
+The GUI's `DaemonClient` accepts a `timeout=` kwarg on every method that
+might exceed the global `API_TIMEOUT_S = 5.0`. Endpoints with known long
+upper bounds:
+
+- `verify_hwmon_pwm` — daemon sleeps 3s; client timeout is **8s**.
+- `calibrate_openfan` — daemon sleeps `(steps+1) × hold_seconds`; client
+  timeout is `(steps+1) × hold_seconds + 10s`.
+- `set_openfan_pwm`, `set_hwmon_pwm`, `set_gpu_fan_speed` (write fast
+  path) — client timeout is **2s** with one retry on `DaemonTimeout`.
+
+`DaemonTimeout` is a distinct subclass of `DaemonError` (separate from
+`DaemonUnavailable`) so callers can distinguish "the daemon is slow" from
+"the daemon is gone."
 
 ### GET /status
 Use for:

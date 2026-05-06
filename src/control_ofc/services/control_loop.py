@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 
 from control_ofc.api.client import DaemonClient
-from control_ofc.api.errors import DaemonError
+from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import (
     ConnectionState,
     FanReading,
@@ -55,11 +55,32 @@ _OPENFAN_CH_RE = re.compile(r"^openfan:ch(\d+)$")
 # pinning a header indefinitely if the verify caller crashes mid-call.
 VERIFY_PAUSE_SAFETY_MS = 5000
 
+# Per-call write timeout: PWM writes complete in <100 ms typically; the
+# serial-timeout cap for OpenFan is 500 ms per channel. 2 s leaves 4x margin
+# for the worst single-command case while shrinking the window during which
+# the GUI blocks on a contended daemon. Pair with a single retry on
+# `DaemonTimeout` (see `do_write`) so a transient mutex-held window doesn't
+# count as a failure. See DEC-099.
+WRITE_TIMEOUT_S = 2.0
+
+# Outcomes the write worker reports back to the control loop. Replaces a
+# bool so diagnostics can distinguish a timeout (likely overload or
+# thermal-emergency mutex hold) from a 4xx (request shape) from a 503
+# (transient hardware fault). DEC-099.
+OUTCOME_OK = "ok"
+OUTCOME_TIMEOUT = "timeout"
+OUTCOME_UNAVAILABLE = "unavailable"  # connection refused / socket gone
+OUTCOME_VALIDATION = "validation"  # 4xx — request shape problem
+OUTCOME_OTHER = "other"  # 5xx other than connection / unspecified failure
+
 
 class _WriteWorker(QObject):
     """Runs in a QThread — executes blocking HTTP write calls off the main thread."""
 
-    write_completed = Signal(str, bool)  # target_id, success
+    # target_id, outcome (OUTCOME_*). Replaces the previous bool signal; the
+    # control loop maps OUTCOME_OK to success and the rest to failure for the
+    # legacy failure-counter, while keeping the outcome for diagnostics.
+    write_completed = Signal(str, str)
 
     def __init__(self, socket_path: str) -> None:
         super().__init__()
@@ -71,38 +92,81 @@ class _WriteWorker(QObject):
             self._client = DaemonClient(socket_path=self._socket_path)
         return self._client
 
+    def _do_one(self, client: DaemonClient, target_id: str, pwm_int: int, lease_id: str) -> bool:
+        """Issue one write attempt. Returns True on success.
+
+        Translates target_id prefixes into the right ``DaemonClient`` call;
+        wraps every call in a 2 s per-call timeout (DEC-099) so the global
+        ``API_TIMEOUT_S`` doesn't apply to fast-path writes.
+        """
+        m = _OPENFAN_CH_RE.match(target_id)
+        if m:
+            channel = int(m.group(1))
+            client.set_openfan_pwm(channel, pwm_int, timeout=WRITE_TIMEOUT_S)
+            return True
+        if target_id.startswith("amd_gpu:"):
+            gpu_id = target_id.removeprefix("amd_gpu:")
+            client.set_gpu_fan_speed(gpu_id, pwm_int, timeout=WRITE_TIMEOUT_S)
+            return True
+        if target_id.startswith("hwmon:"):
+            if not lease_id:
+                return False
+            client.set_hwmon_pwm(target_id, pwm_int, lease_id, timeout=WRITE_TIMEOUT_S)
+            return True
+        return False
+
     @Slot(str, int, str)
     def do_write(self, target_id: str, pwm_int: int, lease_id: str) -> None:
-        """Execute a single PWM write (called on worker thread via signal)."""
-        try:
-            client = self._ensure_client()
-            m = _OPENFAN_CH_RE.match(target_id)
-            if m:
-                channel = int(m.group(1))
-                client.set_openfan_pwm(channel, pwm_int)
-            elif target_id.startswith("amd_gpu:"):
-                gpu_id = target_id.removeprefix("amd_gpu:")
-                client.set_gpu_fan_speed(gpu_id, pwm_int)
-            elif target_id.startswith("hwmon:"):
-                if lease_id:
-                    client.set_hwmon_pwm(target_id, pwm_int, lease_id)
+        """Execute a single PWM write (called on worker thread via signal).
+
+        Retry behaviour (DEC-099): on a single ``DaemonTimeout`` we retry
+        once before reporting OUTCOME_TIMEOUT. Two timeouts in a row are
+        plausibly real overload; a single timeout often coincides with the
+        daemon's thermal-emergency override scan releasing the controller
+        mutex. Connection failures (``DaemonUnavailable``,
+        ``ConnectionError``, ``OSError``) drop the client and never retry —
+        the next cycle will reconnect.
+        """
+        attempted_retry = False
+        while True:
+            try:
+                client = self._ensure_client()
+                if self._do_one(client, target_id, pwm_int, lease_id):
+                    self.write_completed.emit(target_id, OUTCOME_OK)
                 else:
-                    self.write_completed.emit(target_id, False)
-                    return
-            else:
-                self.write_completed.emit(target_id, False)
+                    # Unrecognised target or missing lease — not retryable.
+                    self.write_completed.emit(target_id, OUTCOME_VALIDATION)
                 return
-            self.write_completed.emit(target_id, True)
-        except DaemonError as e:
-            log.warning("Write failed for %s: %s", target_id, e.message)
-            self.write_completed.emit(target_id, False)
-        except (ConnectionError, OSError) as e:
-            log.warning("Write worker connection error for %s: %s", target_id, e)
-            with contextlib.suppress(Exception):
-                if self._client:
-                    self._client.close()
-            self._client = None
-            self.write_completed.emit(target_id, False)
+            except DaemonTimeout as e:
+                if not attempted_retry:
+                    log.info("Write timeout for %s, retrying once: %s", target_id, e.message)
+                    attempted_retry = True
+                    continue
+                log.warning("Write timed out twice for %s: %s", target_id, e.message)
+                self.write_completed.emit(target_id, OUTCOME_TIMEOUT)
+                return
+            except DaemonUnavailable as e:
+                log.warning("Write unavailable for %s: %s", target_id, e.message)
+                with contextlib.suppress(Exception):
+                    if self._client is not None:
+                        self._client.close()
+                self._client = None
+                self.write_completed.emit(target_id, OUTCOME_UNAVAILABLE)
+                return
+            except DaemonError as e:
+                # 4xx surfaces as validation; everything else (5xx etc.) as other.
+                log.warning("Write failed for %s: %s", target_id, e.message)
+                outcome = OUTCOME_VALIDATION if 400 <= e.status < 500 else OUTCOME_OTHER
+                self.write_completed.emit(target_id, outcome)
+                return
+            except (ConnectionError, OSError) as e:
+                log.warning("Write worker connection error for %s: %s", target_id, e)
+                with contextlib.suppress(Exception):
+                    if self._client:
+                        self._client.close()
+                self._client = None
+                self.write_completed.emit(target_id, OUTCOME_UNAVAILABLE)
+                return
 
     def shutdown(self) -> None:
         if self._client:
@@ -157,6 +221,11 @@ class ControlLoopService(QObject):
 
         self._target_states: dict[str, TargetState] = {}
         self._write_failure_counts: dict[str, int] = {}
+        # Per-target, per-outcome counters (DEC-099). Maps target_id to a
+        # dict of outcome -> count. Reset on a clean OUTCOME_OK so the
+        # diagnostics view reflects current trouble rather than session
+        # totals.
+        self._write_outcome_counts: dict[str, dict[str, int]] = {}
         self._manual_override = False
         self._running = False
         self._is_shutdown = False
@@ -427,12 +496,16 @@ class ControlLoopService(QObject):
                     status.targets_active += 1
                     # Track success (sync path — async path uses _on_write_completed)
                     if self._write_worker is None:
-                        self._on_write_completed(target_id, True)
+                        self._on_write_completed(target_id, OUTCOME_OK)
                 else:
                     status.targets_skipped += 1
-                    # Track failure (sync path)
+                    # Track failure (sync path).  ``_write_target`` only returns
+                    # False on validation-shaped failures (no lease, unknown
+                    # target prefix) or sync-path DaemonError; counting these as
+                    # OUTCOME_OTHER keeps the legacy-bool semantics intact for
+                    # the fall-through tests that still invoke it.
                     if self._write_worker is None:
-                        self._on_write_completed(target_id, False)
+                        self._on_write_completed(target_id, OUTCOME_OTHER)
             else:
                 status.targets_active += 1  # still active, just suppressed
 
@@ -526,13 +599,29 @@ class ControlLoopService(QObject):
                 return abs(desired_pwm - fan.last_commanded_pwm) >= PWM_WRITE_THRESHOLD_PCT
         return True  # Fan not in state yet — allow first write
 
-    def _on_write_completed(self, target_id: str, success: bool) -> None:
-        """Handle write result from background worker (runs on main thread)."""
+    def _on_write_completed(self, target_id: str, outcome: str) -> None:
+        """Handle write result from background worker (runs on main thread).
+
+        ``outcome`` is one of the ``OUTCOME_*`` literals (DEC-099). Maps to
+        success vs. the legacy failure counter as: ``OUTCOME_OK`` clears one
+        count; everything else increments. Timeouts and unavailability are
+        tracked separately for diagnostics so a slow daemon (timeouts) is
+        distinguishable from a missing one (unavailable) or a request-shape
+        bug (validation).
+        """
+        success = outcome == OUTCOME_OK
         # M9: remember that the GUI drove the GPU this session so closeEvent
         # can reset the fan when no profile is active (daemon would otherwise
         # leave the fan pinned to the last commanded PWM).
         if success and target_id.startswith("amd_gpu:") and self._state is not None:
             self._state.gui_wrote_gpu_fan = True
+
+        # Per-outcome diagnostics counter — diagnostics page can read this
+        # to distinguish "daemon is slow" from "daemon is gone".
+        if outcome != OUTCOME_OK:
+            outcomes = self._write_outcome_counts.setdefault(target_id, {})
+            outcomes[outcome] = outcomes.get(outcome, 0) + 1
+
         if success:
             count = self._write_failure_counts.get(target_id, 0)
             if count > 0:
@@ -543,16 +632,37 @@ class ControlLoopService(QObject):
                     self._write_failure_counts[target_id] = count
             if count < 3 and self._state:
                 self._state.remove_warning(f"write_fail:{target_id}")
+            # Reset per-outcome counters on a clean success — keeps the
+            # diagnostics view fresh rather than monotonically growing.
+            self._write_outcome_counts.pop(target_id, None)
         else:
             count = self._write_failure_counts.get(target_id, 0) + 1
             self._write_failure_counts[target_id] = count
             if count >= 3 and self._state:
+                # Pick the message based on the dominant outcome for a more
+                # useful warning than the previous generic one.
+                outcomes = self._write_outcome_counts.get(target_id, {})
+                if outcomes.get(OUTCOME_TIMEOUT, 0) >= 2:
+                    msg = (
+                        f"Fan '{target_id}' write timed out {count} times — "
+                        f"daemon may be overloaded (try checking thermal state)"
+                    )
+                elif outcomes.get(OUTCOME_UNAVAILABLE, 0) >= 2:
+                    msg = (
+                        f"Fan '{target_id}' write failed {count} times — "
+                        f"daemon connection lost (check daemon status)"
+                    )
+                elif outcomes.get(OUTCOME_VALIDATION, 0) >= 2:
+                    msg = (
+                        f"Fan '{target_id}' write rejected {count} times — "
+                        f"check lease or fan configuration"
+                    )
+                else:
+                    msg = f"Fan '{target_id}' write failed {count} times — check lease/connection"
                 self._state.add_warning(
                     level="warning",
                     source="control_loop",
-                    message=(
-                        f"Fan '{target_id}' write failed {count} times — check lease/connection"
-                    ),
+                    message=msg,
                     key=f"write_fail:{target_id}",
                 )
 

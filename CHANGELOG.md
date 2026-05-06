@@ -1,5 +1,114 @@
 # Changelog
 
+## [1.10.1] — 2026-05-06
+
+Audit-driven correctness and resilience fixes. Pairs with **daemon v1.6.1**.
+No new user-visible features — every change either corrects a misleading
+error message, makes the GUI more honest about transient daemon load, or
+gives triagers more context in the support bundle.
+
+### Fixed
+- **Verify timeout (DEC-098).** `_VerifyWorker` and the `verify_hwmon_pwm`
+  client now use an 8s per-call timeout instead of the global 5s. The
+  daemon's verify endpoint sleeps 3s between the test write and readback;
+  worst-case round-trip under contention is ~4.5s. The previous 5s budget
+  could time out client-side while the daemon completed the write
+  successfully — the user saw a misleading "Daemon unavailable during
+  verify" message. The worker now distinguishes timeout from disconnect
+  and explains that the write may have landed.
+- **Write timeout + retry (DEC-099).** `_WriteWorker` now uses a 2s
+  per-call timeout (`WRITE_TIMEOUT_S`) and retries once on
+  `DaemonTimeout` before counting failure. PWM writes complete in <100ms
+  typically; the previous 5s default was both too long for the fast path
+  and too short during the daemon's thermal-emergency override scan. The
+  combined behaviour: a transient mutex-held window doesn't surface a
+  spurious `write_fail` warning; sustained timeouts still do.
+- **Calibrate timeout is dynamic.** `calibrate_openfan` now computes its
+  per-call timeout from `(steps + 1) * hold_seconds + 10s`. The previous
+  global 5s default would have failed every default calibration sweep
+  (the daemon clamps to up to `21 * 15 = 315s`). No GUI caller is wired
+  up yet, but the next time the fan wizard calls this it will work.
+- **Stale comment in `polling.py`.** Said "API_TIMEOUT_S default 10s";
+  the constant is 5.0.
+
+### Added
+- **`DaemonTimeout` error subclass.** Distinct from `DaemonUnavailable`
+  so callers (and tests) can tell "the daemon is slow" from "the daemon
+  is gone". `_VerifyWorker` rewrites its UI message to acknowledge that
+  a timed-out verify may have actually completed on the daemon side.
+- **Per-call `timeout=` kwarg on `DaemonClient._post` / `_get`.** Reuses
+  the connection pool (per HTTPX docs) — no separate client instance
+  per slow endpoint. Plumbed through to `verify_hwmon_pwm`,
+  `calibrate_openfan`, `set_openfan_pwm`, `set_hwmon_pwm`,
+  `set_gpu_fan_speed`, `reset_gpu_fan`.
+- **Outcome-aware write counter (DEC-099).** `_on_write_completed` now
+  takes an outcome string (`ok` / `timeout` / `unavailable` /
+  `validation` / `other`) instead of a bool. The user-visible
+  `write_fail` warning text now adapts to the dominant outcome — "fan
+  write timed out N times — daemon may be overloaded" beats the
+  previous generic "check lease/connection" line.
+- **Kernel-warning popup (DEC-098).** When the daemon emits an
+  `amd_gpu.kernel_warnings` entry of `high` or `critical` severity,
+  the GUI surfaces a one-time `QMessageBox` with the daemon's message
+  plus GUI-side detailed-text guidance and reference URLs. Dismissals
+  are persisted in `app_settings.acknowledged_kernel_warnings` so the
+  popup doesn't fire on every reconnect or restart.
+- **`AmdGpuGuidance` knowledge base.** New model in
+  `ui/hwmon_guidance.py` keyed by `KernelWarning.id`, with detailed
+  explanations and references for `rdna_hang_kernel_6_19_x` (Phoronix
+  EOY 2025 Linux 6.19 hard hang) and
+  `smu_mismatch_navi48_r9700_kernel_7_0` (ROCm Issue #6101).
+- **Support bundle: kernel context (DEC-098).** Now captures
+  `os.uname()` (release/version/machine), `/proc/cmdline`,
+  `/sys/module/amdgpu/parameters/ppfeaturemask`, a filtered `lsmod`
+  snapshot scoped to fan/GPU drivers, and a 200-line journalctl
+  excerpt grepped for `amdgpu|smu`. Triagers can now spot a 6.19
+  amdgpu regression or a missing ppfeaturemask without asking the user
+  to run extra commands.
+- **`Capabilities.amd_gpu.kernel_warnings`** parsed from the daemon's
+  new field. Empty list when the daemon is older or has nothing to
+  flag — older daemons cause no UI change.
+
+### Tests
+- 31 new tests in `test_audit_2026_05_06_remediation.py`. Highlights:
+  - Per-call timeout plumbing for `verify_hwmon_pwm` (8s) and
+    `calibrate_openfan` (dynamic).
+  - `DaemonTimeout` is distinct from `DaemonUnavailable` (subclassing
+    contract).
+  - `_post` / `_get` raise `DaemonTimeout` on `httpx.TimeoutException`
+    and `DaemonUnavailable` on `httpx.ConnectError` — separately.
+  - `_WriteWorker.do_write` retry-on-timeout matrix
+    (timeout-then-success → OK; double-timeout → TIMEOUT;
+    unavailable → UNAVAILABLE no retry; 4xx → VALIDATION; 5xx → OTHER).
+  - **Fake-daemon integration test:** A `BaseHTTPRequestHandler` on a
+    Unix socket that holds POSTs for 6s. The real `_WriteWorker`
+    against the fake produces `OUTCOME_TIMEOUT` (not `UNAVAILABLE`),
+    proving the categories are distinct end-to-end.
+  - Outcome-aware warning messages (timeout / unavailable /
+    validation each yield distinct user-visible text).
+  - `parse_capabilities` round-trips `kernel_warnings`; missing/null
+    fields yield empty lists (older-daemon compat).
+  - Support bundle includes the new `kernel` and `kernel_modules`
+    sections; `collect_kernel_modules` filters to known drivers.
+  - Kernel-warning popup gating logic: acknowledged warnings are
+    skipped; unacknowledged critical warnings qualify; low-severity
+    warnings never pop.
+  - `lookup_amd_gpu_guidance` returns guidance for known IDs and
+    `None` for unknown IDs.
+- Existing `test_audit_v3_p1p2_regressions.py` and
+  `test_gpu_reset_on_close.py` updated to use the new outcome-string
+  API instead of the legacy bool.
+- 1297 tests pass (was 1266).
+
+### Documentation
+- `DECISIONS.md`: DEC-098 (legacy-PWM gate + kernel_warnings, full
+  rationale + alternatives), DEC-099 (`spawn_blocking` + per-channel
+  mutex + per-call timeout, full rationale).
+- `AUDIT_2026-05-06_FINDINGS.md` documents the audit verdicts; this
+  file is gitignored.
+
+---
+
 ## [1.10.0] — 2026-05-02
 
 Profile-mode safety + cross-stack parity release. Pairs with

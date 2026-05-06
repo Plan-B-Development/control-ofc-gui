@@ -25,9 +25,26 @@ class DaemonError(Exception):
 
 @dataclass
 class DaemonUnavailable(DaemonError):
-    """Raised when the daemon socket is unreachable."""
+    """Raised when the daemon socket is unreachable (connection refused, EOF)."""
 
     code: str = field(default="daemon_unavailable")
     message: str = field(default="daemon not reachable")
+    retryable: bool = field(default=True)
+    source: str = field(default="connection")
+
+
+@dataclass
+class DaemonTimeout(DaemonError):
+    """Raised when an HTTP call to the daemon exceeds its per-call timeout.
+
+    Distinct from `DaemonUnavailable` so callers can distinguish "the daemon
+    isn't there" from "the daemon is slow / overloaded right now". This
+    matters for the UI: a verify call that times out client-side may still
+    have completed successfully on the daemon, so the user-facing message
+    should not say "daemon unavailable".
+    """
+
+    code: str = field(default="daemon_timeout")
+    message: str = field(default="daemon did not respond within the timeout")
     retryable: bool = field(default=True)
     source: str = field(default="connection")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import platform
 import subprocess
 import sys
@@ -25,6 +26,17 @@ log = logging.getLogger(__name__)
 MAX_EVENTS = 200
 JOURNAL_LINE_LIMIT = 100
 JOURNAL_TIMEOUT_S = 5
+
+# DEC-098: extra system/kernel context captured in the support bundle so
+# triagers can identify amdgpu-regression kernels (e.g. 6.19 RDNA hang) and
+# verify boot parameters (`amdgpu.ppfeaturemask`) without asking the user
+# to run extra commands.
+KERNEL_LOG_LINES = 200
+KERNEL_LOG_TIMEOUT_S = 5
+LSMOD_TIMEOUT_S = 3
+# Modules we care about for fan / GPU diagnosis. Filtering keeps the bundle
+# small and focused; full lsmod output is rarely needed.
+KERNEL_MODULE_FILTER = ("it87", "nct6", "amdgpu", "k10temp", "asus_ec_sensors")
 
 
 def format_uptime(seconds: int) -> str:
@@ -228,6 +240,127 @@ class DiagnosticsService:
         lines.append("Source: daemon /capabilities + /fans endpoints (cached in GUI)")
         return "\n".join(lines)
 
+    @staticmethod
+    def collect_kernel_info() -> dict[str, str | None]:
+        """Capture kernel release, command line, and amdgpu boot parameters.
+
+        Best-effort: every field is independently optional. Missing files
+        return ``None`` so the support bundle can record absence rather
+        than failing to write.
+
+        DEC-098: the daemon's `amd_gpu.kernel_warnings` capability surfaces
+        known regressions, but the support bundle still needs the raw
+        kernel string and command line so a triager who sees a *new*
+        regression has the data without asking the user to run `uname`.
+        """
+        info: dict[str, str | None] = {
+            "release": None,
+            "version": None,
+            "machine": None,
+            "cmdline": None,
+            "amdgpu_ppfeaturemask": None,
+        }
+        try:
+            uname = os.uname()
+            info["release"] = uname.release
+            info["version"] = uname.version
+            info["machine"] = uname.machine
+        except OSError as e:
+            log.debug("os.uname() failed: %s", e)
+
+        try:
+            info["cmdline"] = Path("/proc/cmdline").read_text(errors="replace").strip()
+        except OSError as e:
+            log.debug("read /proc/cmdline failed: %s", e)
+
+        try:
+            info["amdgpu_ppfeaturemask"] = (
+                Path("/sys/module/amdgpu/parameters/ppfeaturemask")
+                .read_text(errors="replace")
+                .strip()
+            )
+        except OSError as e:
+            log.debug("read amdgpu ppfeaturemask failed: %s", e)
+
+        return info
+
+    @staticmethod
+    def collect_kernel_modules() -> str:
+        """Return a filtered `lsmod` snapshot for fan / GPU drivers.
+
+        Filters by `KERNEL_MODULE_FILTER` so the bundle stays focused.
+        Returns a placeholder string on error rather than raising — the
+        bundle export must remain resilient.
+        """
+        try:
+            result = subprocess.run(
+                ["lsmod"],
+                capture_output=True,
+                text=True,
+                timeout=LSMOD_TIMEOUT_S,
+            )
+        except FileNotFoundError:
+            return "lsmod not found (no /proc/modules access)"
+        except subprocess.TimeoutExpired:
+            return f"lsmod timed out after {LSMOD_TIMEOUT_S}s"
+        except OSError as e:
+            return f"lsmod failed: {e}"
+
+        if result.returncode != 0:
+            return f"lsmod exited {result.returncode}: {result.stderr.strip()[:200]}"
+
+        lines = result.stdout.splitlines()
+        if not lines:
+            return "lsmod returned no output"
+        # Keep the header line + any matching modules.
+        header = lines[0]
+        matches = [
+            line for line in lines[1:] if any(line.startswith(mod) for mod in KERNEL_MODULE_FILTER)
+        ]
+        if not matches:
+            return f"{header}\n(no matching modules: {', '.join(KERNEL_MODULE_FILTER)})"
+        return "\n".join([header, *matches])
+
+    @staticmethod
+    def fetch_kernel_log_amdgpu() -> str:
+        """Return recent `amdgpu` / `smu` kernel log lines from journalctl.
+
+        Bounded to `KERNEL_LOG_LINES` lines. Returns a placeholder string
+        on permission error so the bundle still records the attempt.
+        """
+        try:
+            result = subprocess.run(
+                [
+                    "journalctl",
+                    "-k",
+                    "-b",
+                    "0",
+                    "--no-pager",
+                    f"--lines={KERNEL_LOG_LINES}",
+                    "--grep=amdgpu|smu",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=KERNEL_LOG_TIMEOUT_S,
+            )
+        except FileNotFoundError:
+            return "journalctl not found"
+        except subprocess.TimeoutExpired:
+            return f"journalctl -k timed out after {KERNEL_LOG_TIMEOUT_S}s"
+        except OSError as e:
+            return f"journalctl -k failed: {e}"
+
+        output = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if not output:
+            if stderr and "permission" in stderr.lower():
+                return (
+                    "journalctl -k denied (insufficient permissions). "
+                    "Add your user to systemd-journal."
+                )
+            return "(no amdgpu/smu kernel log entries in current boot)"
+        return output
+
     def fetch_journal_entries(self) -> str:
         """Fetch recent control-ofc-daemon journal entries via journalctl subprocess.
 
@@ -294,12 +427,18 @@ class DiagnosticsService:
     def export_support_bundle(self, path: Path) -> None:
         """Export a JSON support bundle for troubleshooting."""
         missing: list[str] = []
+        kernel_info = self.collect_kernel_info()
         bundle: dict = {
             "timestamp": time.time(),
             "system": {
                 "platform": platform.platform(),
                 "python": sys.version,
                 "arch": platform.machine(),
+                # DEC-098: kernel release + boot parameters so triagers
+                # can identify amdgpu regressions and verify ppfeaturemask
+                # without asking the user for extra commands.
+                "kernel": kernel_info,
+                "kernel_modules": self.collect_kernel_modules(),
             },
             "events": [
                 {
@@ -426,6 +565,13 @@ class DiagnosticsService:
             bundle["journal"] = journal_text
         else:
             missing.append("journal: journalctl returned no output")
+
+        # DEC-098: kernel ring-buffer entries scoped to amdgpu/smu so a
+        # silent fan_curve write failure (R9700 SMU mismatch) leaves
+        # forensic evidence in the bundle.
+        kernel_log = self.fetch_kernel_log_amdgpu()
+        if kernel_log:
+            bundle["kernel_log_amdgpu"] = kernel_log
 
         if missing:
             bundle["missing_sections"] = missing

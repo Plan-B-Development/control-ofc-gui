@@ -143,7 +143,7 @@ class TestControlLoopSetsGpuWrittenFlag:
         loop = ControlLoopService(state, profile_svc)
 
         assert state.gui_wrote_gpu_fan is False
-        loop._on_write_completed("amd_gpu:0000:03:00.0", True)
+        loop._on_write_completed("amd_gpu:0000:03:00.0", "ok")
         assert state.gui_wrote_gpu_fan is True
 
     def test_failed_gpu_write_does_not_set_flag(self, qtbot):
@@ -155,7 +155,7 @@ class TestControlLoopSetsGpuWrittenFlag:
         profile_svc = ProfileService()
         loop = ControlLoopService(state, profile_svc)
 
-        loop._on_write_completed("amd_gpu:0000:03:00.0", False)
+        loop._on_write_completed("amd_gpu:0000:03:00.0", "other")
         assert state.gui_wrote_gpu_fan is False
 
     def test_openfan_write_does_not_set_gpu_flag(self, qtbot):
@@ -167,5 +167,5 @@ class TestControlLoopSetsGpuWrittenFlag:
         profile_svc = ProfileService()
         loop = ControlLoopService(state, profile_svc)
 
-        loop._on_write_completed("openfan:ch00", True)
+        loop._on_write_completed("openfan:ch00", "ok")
         assert state.gui_wrote_gpu_fan is False

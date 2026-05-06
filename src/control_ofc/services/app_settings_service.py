@@ -43,6 +43,12 @@ class AppSettings:
     hide_unused_fan_headers: bool = True  # Auto-hide fan headers with 0 RPM
     show_hardware_guidance: bool = True  # Show hardware readiness guidance in diagnostics
 
+    # DEC-098: kernel-warning IDs the user has already dismissed for this
+    # GPU. Keyed by warning.id (not session-scoped). Persisting prevents the
+    # popup from re-firing on every restart for a known-bad-kernel that the
+    # user has acknowledged but cannot or will not change.
+    acknowledged_kernel_warnings: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -71,6 +77,7 @@ class AppSettings:
             hide_igpu_sensors=data.get("hide_igpu_sensors", True),
             hide_unused_fan_headers=data.get("hide_unused_fan_headers", True),
             show_hardware_guidance=data.get("show_hardware_guidance", True),
+            acknowledged_kernel_warnings=list(data.get("acknowledged_kernel_warnings", []) or []),
         )
 
 

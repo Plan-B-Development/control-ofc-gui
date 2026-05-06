@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from control_ofc.api.errors import DaemonError, DaemonUnavailable
+from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import (
     ActiveProfileInfo,
     CalibrationResult,
@@ -73,28 +73,59 @@ class DaemonClient:
         transport = httpx.HTTPTransport(uds=socket_path)
         self._client = httpx.Client(transport=transport, base_url=BASE_URL, timeout=timeout)
         self._socket_path = socket_path
+        self._default_timeout = timeout
 
     @property
     def socket_path(self) -> str:
         return self._socket_path
 
+    @property
+    def default_timeout(self) -> float:
+        """Default per-call timeout in seconds (for callers that need to know)."""
+        return self._default_timeout
+
     def close(self) -> None:
         self._client.close()
 
     # -- helpers --
+    #
+    # ``timeout`` is per-call: pass an explicit value for endpoints whose
+    # daemon-side latency is known to exceed the global default (verify is
+    # ~3 s plus IPC; calibrate is ``(steps + 1) * hold_seconds``). Per-call
+    # timeouts reuse the connection pool — see HTTPX docs:
+    #   https://www.python-httpx.org/advanced/timeouts/
+    # ``httpx.TimeoutException`` is now mapped to ``DaemonTimeout`` so the
+    # UI can distinguish "daemon is slow" from "daemon is gone" — a verify
+    # call that times out client-side may still have completed on the daemon.
 
-    def _get(self, path: str) -> dict[str, Any]:
+    def _get(self, path: str, *, timeout: float | None = None) -> dict[str, Any]:
         try:
-            resp = self._client.get(path)
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
-            raise DaemonUnavailable(message=str(e)) from e
+            kwargs: dict[str, Any] = {}
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            resp = self._client.get(path, **kwargs)
+        except httpx.TimeoutException as e:
+            raise DaemonTimeout(message=str(e), endpoint=path, method="GET") from e
+        except httpx.ConnectError as e:
+            raise DaemonUnavailable(message=str(e), endpoint=path, method="GET") from e
         return self._handle(resp, "GET", path)
 
-    def _post(self, path: str, json: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _post(
+        self,
+        path: str,
+        json: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         try:
-            resp = self._client.post(path, json=json)
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
-            raise DaemonUnavailable(message=str(e)) from e
+            kwargs: dict[str, Any] = {}
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            resp = self._client.post(path, json=json, **kwargs)
+        except httpx.TimeoutException as e:
+            raise DaemonTimeout(message=str(e), endpoint=path, method="POST") from e
+        except httpx.ConnectError as e:
+            raise DaemonUnavailable(message=str(e), endpoint=path, method="POST") from e
         return self._handle(resp, "POST", path)
 
     @staticmethod
@@ -161,12 +192,24 @@ class DaemonClient:
 
     # -- write endpoints --
 
-    def set_openfan_pwm(self, channel: int, pwm_percent: int) -> SetPwmResult:
-        data = self._post(f"/fans/openfan/{channel}/pwm", json={"pwm_percent": pwm_percent})
+    def set_openfan_pwm(
+        self, channel: int, pwm_percent: int, *, timeout: float | None = None
+    ) -> SetPwmResult:
+        data = self._post(
+            f"/fans/openfan/{channel}/pwm",
+            json={"pwm_percent": pwm_percent},
+            timeout=timeout,
+        )
         return parse_set_pwm(data)
 
-    def set_openfan_all_pwm(self, pwm_percent: int) -> SetPwmAllResult:
-        data = self._post("/fans/openfan/pwm", json={"pwm_percent": pwm_percent})
+    def set_openfan_all_pwm(
+        self, pwm_percent: int, *, timeout: float | None = None
+    ) -> SetPwmAllResult:
+        data = self._post(
+            "/fans/openfan/pwm",
+            json={"pwm_percent": pwm_percent},
+            timeout=timeout,
+        )
         return parse_set_pwm_all(data)
 
     def hwmon_lease_take(self, owner_hint: str = "gui") -> LeaseResult:
@@ -181,10 +224,18 @@ class DaemonClient:
         data = self._post("/hwmon/lease/renew", json={"lease_id": lease_id})
         return parse_lease_result(data)
 
-    def set_hwmon_pwm(self, header_id: str, pwm_percent: int, lease_id: str) -> HwmonSetPwmResult:
+    def set_hwmon_pwm(
+        self,
+        header_id: str,
+        pwm_percent: int,
+        lease_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> HwmonSetPwmResult:
         data = self._post(
             f"/hwmon/{header_id}/pwm",
             json={"pwm_percent": pwm_percent, "lease_id": lease_id},
+            timeout=timeout,
         )
         return parse_hwmon_set_pwm(data)
 
@@ -196,10 +247,20 @@ class DaemonClient:
     def calibrate_openfan(
         self, channel: int, steps: int = 10, hold_seconds: int = 5
     ) -> CalibrationResult:
-        """POST /fans/openfan/{channel}/calibrate — run a PWM-to-RPM calibration sweep."""
+        """POST /fans/openfan/{channel}/calibrate — run a PWM-to-RPM calibration sweep.
+
+        Timeout is computed from the request body — the daemon sleeps
+        ``hold_seconds`` per step and there are ``steps + 1`` iterations,
+        plus a 10 s headroom for IPC, mutex contention, and the pre/post
+        PWM restore writes. The daemon clamps ``steps`` to ``[2, 20]`` and
+        ``hold_seconds`` to ``[2, 15]``, so an upper bound of
+        ``21 * 15 + 10 = 325 s`` is always sufficient.
+        """
+        timeout_s = float((steps + 1) * hold_seconds + 10)
         data = self._post(
             f"/fans/openfan/{channel}/calibrate",
             json={"steps": steps, "hold_seconds": hold_seconds},
+            timeout=timeout_s,
         )
         return parse_calibration_result(data)
 
@@ -242,8 +303,19 @@ class DaemonClient:
         return parse_hardware_diagnostics(self._get("/diagnostics/hardware"))
 
     def verify_hwmon_pwm(self, header_id: str, lease_id: str) -> HwmonVerifyResult:
-        """POST /hwmon/{header_id}/verify — test PWM write effectiveness (~3s)."""
-        data = self._post(f"/hwmon/{header_id}/verify", json={"lease_id": lease_id})
+        """POST /hwmon/{header_id}/verify — test PWM write effectiveness (~3s).
+
+        Daemon sleeps `VERIFY_WAIT_SECONDS = 3 s` once between the test
+        write and the readback. Worst-case round-trip under load (mutex
+        contention, USB-CDC turnaround, IPC marshal) is ~4.5 s — so we
+        send an 8 s per-call timeout regardless of the global default.
+        See DEC-098 in `control-ofc-gui/DECISIONS.md`.
+        """
+        data = self._post(
+            f"/hwmon/{header_id}/verify",
+            json={"lease_id": lease_id},
+            timeout=8.0,
+        )
         return parse_hwmon_verify_result(data)
 
     def active_profile(self) -> ActiveProfileInfo | None:
@@ -262,12 +334,18 @@ class DaemonClient:
         """
         return parse_profile_deactivate(self._post("/profile/deactivate", json={}))
 
-    def set_gpu_fan_speed(self, gpu_id: str, speed_pct: int) -> GpuFanSetResult:
+    def set_gpu_fan_speed(
+        self, gpu_id: str, speed_pct: int, *, timeout: float | None = None
+    ) -> GpuFanSetResult:
         """POST /gpu/{gpu_id}/fan/pwm — set GPU fan to a static speed percentage."""
-        data = self._post(f"/gpu/{gpu_id}/fan/pwm", json={"speed_pct": speed_pct})
+        data = self._post(
+            f"/gpu/{gpu_id}/fan/pwm",
+            json={"speed_pct": speed_pct},
+            timeout=timeout,
+        )
         return parse_gpu_fan_set(data)
 
-    def reset_gpu_fan(self, gpu_id: str) -> GpuFanResetResult:
+    def reset_gpu_fan(self, gpu_id: str, *, timeout: float | None = None) -> GpuFanResetResult:
         """POST /gpu/{gpu_id}/fan/reset — reset GPU fan to automatic mode."""
-        data = self._post(f"/gpu/{gpu_id}/fan/reset", json={})
+        data = self._post(f"/gpu/{gpu_id}/fan/reset", json={}, timeout=timeout)
         return parse_gpu_fan_reset(data)

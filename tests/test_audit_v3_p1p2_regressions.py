@@ -46,7 +46,7 @@ class TestWriteFailureCounter:
         svc, state = self._make_loop()
         target = "openfan:ch00"
         for _ in range(3):
-            svc._on_write_completed(target, False)
+            svc._on_write_completed(target, "other")
         assert svc._write_failure_counts[target] == 3
         ext = [w for w in state._external_warnings if target in w.get("message", "")]
         assert len(ext) == 1
@@ -55,7 +55,7 @@ class TestWriteFailureCounter:
         svc, _state = self._make_loop()
         target = "openfan:ch00"
         svc._write_failure_counts[target] = 5
-        svc._on_write_completed(target, True)
+        svc._on_write_completed(target, "ok")
         assert svc._write_failure_counts.get(target) == 4
 
     def test_sustained_success_reaches_zero(self):
@@ -63,19 +63,19 @@ class TestWriteFailureCounter:
         target = "openfan:ch00"
         svc._write_failure_counts[target] = 3
         for _ in range(3):
-            svc._on_write_completed(target, True)
+            svc._on_write_completed(target, "ok")
         assert target not in svc._write_failure_counts
 
     def test_intermittent_pattern_reaches_warning(self):
         """fail, success, fail, fail, fail — counter should reach 3."""
         svc, _state = self._make_loop()
         target = "openfan:ch00"
-        svc._on_write_completed(target, False)
+        svc._on_write_completed(target, "other")
         assert svc._write_failure_counts[target] == 1
-        svc._on_write_completed(target, True)
+        svc._on_write_completed(target, "ok")
         assert target not in svc._write_failure_counts
         for _ in range(3):
-            svc._on_write_completed(target, False)
+            svc._on_write_completed(target, "other")
         assert svc._write_failure_counts[target] == 3
 
     def test_warning_cleared_after_recovery(self):
@@ -83,11 +83,11 @@ class TestWriteFailureCounter:
         svc, state = self._make_loop()
         target = "openfan:ch00"
         for _ in range(3):
-            svc._on_write_completed(target, False)
+            svc._on_write_completed(target, "other")
         ext = [w for w in state._external_warnings if target in w.get("message", "")]
         assert len(ext) == 1
         for _ in range(3):
-            svc._on_write_completed(target, True)
+            svc._on_write_completed(target, "ok")
         ext = [w for w in state._external_warnings if target in w.get("message", "")]
         assert len(ext) == 0
 

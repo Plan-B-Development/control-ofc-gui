@@ -32,3 +32,6 @@ docs/17_Claude_Kickoff_Prompt.md
 # and /investigate-mismatch — never ship these to GitHub releases or AUR
 # tarballs. The pattern catches future variants automatically.
 *_REMEDIATION.md
+# /audit findings (cross-stack quality reports) — internal-only, not for
+# releases or AUR tarballs.
+AUDIT_*.md

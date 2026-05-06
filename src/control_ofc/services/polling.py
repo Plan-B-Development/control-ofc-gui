@@ -85,7 +85,7 @@ class _PollWorker(QObject):
                 # Register the GUI's profile directory with the daemon so
                 # POST /profile/activate accepts GUI-owned profile paths. Runs
                 # on this worker thread to avoid stalling the Qt main loop on
-                # a slow or half-dead daemon (API_TIMEOUT_S default 10s).
+                # a slow or half-dead daemon (API_TIMEOUT_S = 5s).
                 # Called on every reconnect because the daemon may have
                 # restarted with a stale search-dir list. The endpoint is
                 # additive and deduplicated.
