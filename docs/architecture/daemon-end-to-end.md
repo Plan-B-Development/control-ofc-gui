@@ -1,7 +1,17 @@
 # Control-OFC Daemon — End-to-End Technical Documentation
 
-**Version:** 0.2.0
-**Generated from:** Real codebase inspection (2026-03-25)
+> **Snapshot, not source of truth.** This document was generated from a code
+> inspection on 2026-03-25 against daemon v0.2.0. The daemon has since
+> evolved through dozens of releases (current: v1.6.2 as of 2026-05-07) —
+> the structural narrative below is still accurate at the architectural
+> level, but specific claims about endpoints, error codes, or module shape
+> may be stale. For current authoritative documentation:
+> - Module layout: `daemon.md` (in the daemon repo)
+> - API contract: `docs/08_API_Integration_Contract.md` (in this repo)
+> - Endpoint reference: `daemon.md` § API Endpoints
+> - Recent changes: daemon `CHANGELOG.md`
+
+**Snapshot taken at:** daemon v0.2.0 (2026-03-25)
 **Evidence level:** All claims marked as Implemented, Inferred, or Uncertain
 
 ---

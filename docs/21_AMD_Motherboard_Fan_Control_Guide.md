@@ -234,8 +234,14 @@ modprobe nct6687 msi_fan_brute_force=1
 This writes PWM values to all 7 fan curve control points simultaneously.
 It only affects system fans controlled by BIOS, not CPU or pump fans.
 
-The driver auto-enables the `msi_alt1` configuration for 36+ supported MSI
-boards across B850, X870/X870E, and Z890 chipset families.
+The driver maintains an in-tree allowlist of MSI boards across B850,
+X870 / X870E, Z890, and adjacent chipset families that auto-enable the
+`msi_alt1` configuration. The exact list grows release-by-release as
+contributors add tested boards — consult the upstream
+[`TESTING_RESULTS.md`](https://github.com/Fred78290/nct6687d/blob/main/TESTING_RESULTS.md)
+for the current matrix rather than relying on a count cited here. If
+your board is not on the allowlist but exhibits the same symptom, the
+`msi_fan_brute_force=1` modprobe parameter still works.
 
 References:
 - https://github.com/Fred78290/nct6687d
@@ -571,6 +577,23 @@ limitations.
    - The daemon detects system resume via CLOCK_BOOTTIME vs CLOCK_MONOTONIC
      gap and signals a manual mode reset.
    - Some boards require re-writing `pwm_enable=1` after resume.
+
+---
+
+## Known kernel-version regressions
+
+If you have an AMD discrete GPU paired with one of the boards in this
+guide, also check the daemon's kernel-warning catalogue. Two regressions
+are currently flagged:
+
+- **`rdna_hang_kernel_6_19_x` (Critical):** Linux 6.19.x hard-hangs RDNA3/RDNA4 GPUs (RX 7000 / 9000 series) under load. Pin to 6.18.x LTS until upstream lands a stable point release.
+- **`smu_mismatch_navi48_r9700_kernel_7_0` (Critical):** Linux 7.0.x silently fails `fan_curve` writes on the AMD R9700 (PCI 0x7551) only. RX 9070 XT (0x7550) on the same kernel is **not** affected.
+
+The GUI raises a one-time popup when these match your hardware; the
+catalogue is curated in `hwmon/kernel_warnings.rs` (daemon, DEC-098) and
+surfaced via `GET /capabilities`. See
+`docs/19_Hardware_Compatibility.md` § Known kernel-version regressions
+for the full table and mitigation guidance.
 
 ---
 

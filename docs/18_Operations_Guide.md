@@ -1,5 +1,7 @@
 # 18 — Operations Guide
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Purpose
 This document covers daemon configuration, startup, permissions, CLI usage, environment variables, profile management, syslog setup, and troubleshooting. It is the canonical operational reference for running Control-OFC in production.
 

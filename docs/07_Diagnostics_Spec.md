@@ -1,5 +1,7 @@
 # 07 — Diagnostics Spec
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Purpose
 Diagnostics helps the user understand:
 - whether the daemon/API is reachable

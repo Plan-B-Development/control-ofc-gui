@@ -1,5 +1,7 @@
 # 09 — State Model, Control Loop, and Lease Behaviour
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Purpose
 This file defines how the V1 GUI should behave as an active control client. The daemon supports two control modes (imperative — the GUI drives writes; profile — the daemon evaluates a loaded profile autonomously). When the GUI is active, the daemon's profile engine defers to it (last-30-s GUI-active window — see DEC-071, DEC-074), so the V1 GUI always operates as the active controller while connected.
 

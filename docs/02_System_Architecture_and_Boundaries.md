@@ -1,5 +1,7 @@
 # 02 — System Architecture and Boundaries
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Top-level architecture
 
 ```text

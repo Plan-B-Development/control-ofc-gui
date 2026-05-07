@@ -124,7 +124,18 @@ The thermal safety logic forces 100% PWM if no CPU sensor is found for 5 cycles,
 
 ### "GPU fan control says feature_unavailable"
 
-Open Diagnostics → Fans, look at the **GPU diagnostics** row. If `amdgpu.ppfeaturemask` is missing bit `0x4000`, the kernel will not expose PMFW fan curves on RDNA3+ GPUs (RX 7000 / 9000 series). Add `amdgpu.ppfeaturemask=0xfff7ffff` to your kernel command line and reboot. See the [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) doc for the full kernel-parameter explanation.
+Open Diagnostics → Fans, look at the **GPU diagnostics** row. If `amdgpu.ppfeaturemask` is missing bit `0x4000` (`PP_OVERDRIVE_MASK`), the kernel will not expose PMFW fan curves on RDNA3+ GPUs (RX 7000 / 9000 series). Add `amdgpu.ppfeaturemask=0xffffffff` to your kernel command line and reboot. See the [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) doc for the full kernel-parameter explanation.
+
+### "A popup said my kernel has a known regression — should I worry?"
+
+The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel_warnings.rs`, DEC-098). When the running kernel matches a known issue affecting your hardware, the GUI raises a one-time popup, and the warning stays listed on the Diagnostics page until you acknowledge it. The popup includes a Phoronix or upstream-issue reference link.
+
+Currently catalogued:
+
+- **`rdna_hang_kernel_6_19_x` (Critical):** Linux 6.19.x on RDNA3/RDNA4 GPUs (RX 7000/9000 series) hard-hangs under load. Phoronix-confirmed (2025-12-26). Pin to 6.18.x LTS or wait for a stable 6.19 point release.
+- **`smu_mismatch_navi48_r9700_kernel_7_0` (Critical):** Linux 7.0.x on the AMD R9700 (PCI 0x7551) silently fails `fan_curve` writes due to an SMU/PMFW table mismatch. ROCm Issue #6101. RX 9070 XT (0x7550) on the same kernel is **not** affected.
+
+If you acknowledge a popup it is remembered in the `acknowledged_kernel_warnings` field of your `app_settings.json` and won't re-fire on reconnect or restart. To force the popup to re-appear (e.g. after a kernel update), edit `app_settings.json` and remove the relevant entry, then restart the GUI.
 
 ---
 

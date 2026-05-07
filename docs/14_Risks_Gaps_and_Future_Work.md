@@ -1,6 +1,6 @@
 # 14 — Risks, Gaps, and Future Work
 
-**Last updated:** 2026-04-25 (AORUS BIOS Smart Fan note added; 2026-04-22 contract-mismatch sweep folded in)
+**Last updated:** 2026-05-07 (audit-pass-2 wave folded in: DEC-098 legacy-PWM gate + kernel_warnings, DEC-099 spawn_blocking + per-channel mutex, DEC-100 verify restore_failed + GPU reset records gui_active + lease retry-timer suspend + ZRP restore script + SSE admission retry; 2026-04-25 AORUS BIOS Smart Fan note retained; 2026-04-22 contract-mismatch sweep retained)
 
 ## Current Feature Status Matrix
 
@@ -201,3 +201,13 @@ issue.
 | Daemon panic leaves hardware in manual mode | Panic hook restores GPU curves + hwmon pwm_enable=2 | V5 audit (daemon) |
 | GPU reset_to_auto skips zero-RPM on partial failure | Always re-enable zero-RPM regardless of curve reset outcome | V5 audit (daemon) |
 | blockSignals pairs exception-unsafe (GUI) | block_signals() context manager with try/finally | V5 audit |
+| Read-only RDNA3/4 GPUs returned wrong error code | Canonical `AmdGpuInfo::can_write_legacy_pwm()` helper; both `set` and `reset` arms return `400 feature_unavailable + retryable: false` | DEC-098 (daemon v1.6.1 / GUI v1.10.1) |
+| Kernel-version regressions had no in-product surface | `hwmon/kernel_warnings.rs` catalogue + `amd_gpu.kernel_warnings` capability field + GUI one-time popup with acknowledgement persistence | DEC-098 (daemon v1.6.1 / GUI v1.10.1) |
+| Fan PWM writes pinned tokio worker threads | All hwmon and OpenFan write handlers run on `spawn_blocking`; thermal-emergency scan re-locks per channel | DEC-099 (daemon v1.6.1) |
+| GPU `POST /fan/reset` was overwritten by profile engine within 1 s | Reset records GUI activity (both PMFW and legacy-pwm1 arms) so the engine defers for `GUI_ACTIVITY_TIMEOUT` | DEC-100 (daemon v1.6.2) |
+| `POST /hwmon/{id}/verify` silently swallowed restore-PWM errors | Handler returns `restore_failed: bool`; GUI surfaces the failure in the verify result panel | DEC-100 (daemon v1.6.2 / GUI v1.10.2) |
+| `AppState.add_warning` / `remove_warning` had a 1 s UI lag | Both methods now call `_update_warnings()` synchronously and emit `warning_count_changed` immediately | DEC-100 (GUI v1.10.2) |
+| `LeaseService` recurring 30 s timer raced its own retry chain | Recurring timer suspended for the duration of the 5 s/10 s/15 s backoff retry, restarted on first success | DEC-100 (GUI v1.10.2) |
+| `control-ofc-restore-auto.sh` did not restore `fan_zero_rpm_enable` on SIGKILL/OOM | ExecStopPost hook now writes `1\n` + `c\n` to every `fan_zero_rpm_enable` sysfs file alongside the curve reset | DEC-100 (daemon v1.6.2) |
+| SSE admission could spuriously 503 under tight CAS contention | `SSE_ADMISSION_ATTEMPTS = 4` with `tokio::task::yield_now()` between failures | DEC-100 (daemon v1.6.2) |
+| `GPU_PMFW_WRITE_RETRIES` constant misleadingly named | Renamed to `GPU_PMFW_NUM_CURVE_POINTS` with corrected doc (it is the curve point count, not retry count) | DEC-100 (daemon v1.6.2) |

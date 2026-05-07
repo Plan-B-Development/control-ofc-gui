@@ -1,5 +1,7 @@
 # 15 — Branding, Art, and Asset Direction
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Purpose
 Define the visual direction for Control-OFC: icon, typography, and palette.
 The working app should feel like a proper Linux desktop utility — restrained,

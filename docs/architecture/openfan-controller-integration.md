@@ -1,8 +1,16 @@
 # OpenFan Controller Integration — Technical Deep-Dive
 
+> **Snapshot, not source of truth.** This document was inspected against
+> daemon v0.2.0. The serial protocol described below is firmware-side and
+> has not changed since — the wire format, baud rate, command ABI, and
+> calibration sweep mechanics remain accurate. Daemon-side details (error
+> codes, endpoint paths, lock granularity) have evolved through v1.6.2;
+> see `daemon.md` § Module Map and the daemon `CHANGELOG.md` for current
+> behaviour.
+
 **For:** OpenFan Controller firmware developers and hardware integrators
-**Version:** Daemon v0.2.0
-**Evidence level:** All claims verified against actual Rust source code
+**Snapshot taken at:** Daemon v0.2.0
+**Evidence level:** All claims verified against the v0.2.0 Rust source
 
 ---
 
