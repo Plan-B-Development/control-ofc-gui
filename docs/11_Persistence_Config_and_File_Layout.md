@@ -1,5 +1,7 @@
 # 11 — Persistence, Config, and File Layout
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Purpose
 Define what the GUI owns and how it should persist that data.
 

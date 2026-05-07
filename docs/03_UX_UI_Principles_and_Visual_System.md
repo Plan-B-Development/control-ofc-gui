@@ -1,5 +1,7 @@
 # 03 — UX/UI Principles and Visual System
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Design philosophy
 The product is a technical utility. The operational screens must feel:
 - dark

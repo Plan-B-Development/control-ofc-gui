@@ -1,5 +1,7 @@
 # 01 — Product Overview
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Product name
 **Control-OFC**  
 A Linux-first GUI for controlling the OpenFanController ecosystem through the existing daemon/API.

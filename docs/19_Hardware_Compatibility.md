@@ -218,3 +218,35 @@ The daemon implements a hardware-independent thermal safety rule:
 - **Failsafe:** if no CPU sensor is reachable for 5 consecutive cycles → force 40%
 
 The thermal safety state is reported in the hardware diagnostics response.
+
+## Known kernel-version regressions
+
+The daemon ships a curated catalogue (`hwmon/kernel_warnings.rs`,
+DEC-098) that matches the running kernel against published amdgpu
+regressions and surfaces matches via
+`GET /capabilities` (`devices.amd_gpu.kernel_warnings`). The GUI raises a
+one-time `QMessageBox` when a high- or critical-severity warning fires,
+and lists every match on the Diagnostics page. Acknowledged warnings are
+remembered in `app_settings.acknowledged_kernel_warnings` so the popup
+does not re-fire on every reconnect.
+
+Currently catalogued (severity in parentheses):
+
+| `id` | Affected kernels | Affected hardware | Severity | Symptom |
+|---|---|---|---|---|
+| `rdna_hang_kernel_6_19_x` | 6.19.x | RDNA3 (RX 7000) and RDNA4 (RX 9000) | Critical | Hard hang under load. Phoronix-confirmed (2025-12-26). AMDGPU has reverted some 6.19 patches; treat 6.19.x as unsuitable for these GPUs until a stable point release. Pre-RDNA3 GPUs are unaffected. |
+| `smu_mismatch_navi48_r9700_kernel_7_0` | 7.0.x | R9700 only (PCI 0x7551) | Critical | Silent `fan_curve` write failure due to SMU/PMFW table mismatch. ROCm Issue #6101. Scoped narrowly to 0x7551 — RX 9070 XT (0x7550) on the same kernel is **not** affected. |
+
+**Mitigations:**
+
+- For `rdna_hang_kernel_6_19_x`: pin to a 6.18.x or earlier longterm
+  kernel until upstream lands a known-good 6.19 point release. On
+  CachyOS / Arch / Bazzite, this means staying on `linux-lts` or a
+  rollback channel until the regression is resolved upstream.
+- For `smu_mismatch_navi48_r9700_kernel_7_0`: avoid 7.0.x on R9700.
+  RX 9070 XT users on the same kernel are not affected.
+
+The catalogue is data-only — adding a new entry takes a 30-line PR
+against `kernel_warnings.rs`. If your kernel/hardware combination is
+behaving badly and the daemon is silent about it, file an issue with
+your `uname -a`, GPU PCI ID, and a short failure description.

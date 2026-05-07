@@ -291,7 +291,7 @@ class DemoService:
                 model_name="Radeon RX 7900 XTX",
                 fan_control_method="pmfw",
                 overdrive_enabled=True,
-                ppfeaturemask="0xfff7ffff",
+                ppfeaturemask="0xffffffff",
                 ppfeaturemask_bit14_set=True,
                 zero_rpm_available=True,
             ),

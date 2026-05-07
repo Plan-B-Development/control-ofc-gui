@@ -1,5 +1,7 @@
 # Control-OFC GUI — Claude Documentation Pack
 
+**Last updated:** 2026-05-07 (audit-pass-2 doc-correctness wave; reading-order list updated; helper-article cross-references refreshed.)
+
 This pack is the **working source of truth** for building the Linux-first desktop GUI for **Control-OFC**, the GUI for controlling the **OpenFanController** system through the daemon/API.
 
 ## Read this pack in this order
@@ -23,6 +25,8 @@ This pack is the **working source of truth** for building the Linux-first deskto
 18. `20_Sensor_Interpretation_Guide.md`
 19. `21_AMD_Motherboard_Fan_Control_Guide.md` — vendor-by-vendor setup, drivers, quirks, troubleshooting
 20. `22_AMD_Sensor_Interpretation_Deep_Dive.md` — what sensor readings actually mean and confidence levels
+
+> Slots 16 (`16_User_Decisions_and_API_Notes_Reference.md`) and 17 ("Documentation Audit / Traceability Matrix") are intentionally absent from the published pack. Doc 16 is a local-only running log (gitignored). Doc 17's traceability function is now performed by `DECISIONS.md` + per-release `CHANGELOG.md` + the audit logs under `docs/audit/`.
 
 ## Key decisions already made
 - Linux-first desktop app
@@ -80,7 +84,7 @@ This pack includes:
 - risks and future work
 - asset/branding direction
 - **operations guide** (18) — daemon config, CLI, permissions, troubleshooting
-- **documentation audit** — traceability matrix and gap register
+- **hardware compatibility** (19), **sensor guide** (20), **AMD motherboard guide** (21), **AMD sensor deep-dive** (22) — helper / compatibility articles for end-user troubleshooting
 
 ## Reference note
 This pack incorporates:

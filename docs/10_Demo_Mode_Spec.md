@@ -1,5 +1,7 @@
 # 10 — Demo Mode Spec
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Purpose
 Demo mode allows the GUI to be:
 - explored without hardware

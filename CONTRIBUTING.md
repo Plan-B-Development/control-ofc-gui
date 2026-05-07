@@ -42,7 +42,7 @@ control-ofc-gui --socket /tmp/control-ofc.sock
 ## Testing
 
 ```bash
-# Full suite (815+ tests)
+# Full suite — see CHANGELOG.md for the current passing count
 pytest
 
 # Specific file

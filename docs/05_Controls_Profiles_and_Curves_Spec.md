@@ -1,5 +1,7 @@
 # 05 — Controls, Profiles, and Curves Spec
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Purpose
 This page is the operational heart of the app. It owns:
 - profile switching

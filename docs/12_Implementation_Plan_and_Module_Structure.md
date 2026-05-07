@@ -1,5 +1,7 @@
 # 12 — Implementation Plan and Module Structure
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Purpose
 Give Claude a practical build sequence that reduces rework.
 

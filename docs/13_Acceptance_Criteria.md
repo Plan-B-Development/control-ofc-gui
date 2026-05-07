@@ -1,5 +1,7 @@
 # 13 — Acceptance Criteria
 
+**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+
 ## Global acceptance criteria
 
 ### Architecture

@@ -635,6 +635,24 @@ mappings where validated.
 
 ---
 
+## Known kernel-version regressions affecting AMD GPU sensors
+
+Beyond chip- and driver-level quirks, recent Linux kernels have shipped
+regressions that affect amdgpu specifically. The daemon ships a curated
+catalogue (`hwmon/kernel_warnings.rs`, DEC-098) and surfaces matches via
+`GET /capabilities` (`devices.amd_gpu.kernel_warnings`). The GUI raises
+a one-time popup; acknowledged warnings are remembered in
+`app_settings.acknowledged_kernel_warnings`.
+
+| `id` | Affected kernels | Affected hardware | Severity | Symptom |
+|---|---|---|---|---|
+| `rdna_hang_kernel_6_19_x` | 6.19.x | RDNA3 (RX 7000) and RDNA4 (RX 9000) | Critical | Hard hang under GPU load. Phoronix-confirmed (2025-12-26). Pre-RDNA3 GPUs are unaffected. |
+| `smu_mismatch_navi48_r9700_kernel_7_0` | 7.0.x | R9700 only (PCI 0x7551) | Critical | Silent `fan_curve` write failure due to SMU/PMFW table mismatch (ROCm Issue #6101). RX 9070 XT (0x7550) on the same kernel is **not** affected. |
+
+For mitigation guidance, see `docs/19_Hardware_Compatibility.md` § Known kernel-version regressions.
+
+---
+
 ## Source references
 
 ### Linux kernel documentation
