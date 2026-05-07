@@ -1,5 +1,66 @@
 # Changelog
 
+## [1.10.2] — 2026-05-07
+
+Audit-driven hygiene pass. Pairs with **daemon v1.6.2**. No new user-visible
+features — the changes either eliminate misleading internal naming, plug a
+1-second UI-update delay in ad-hoc warnings, or expose a previously
+swallowed daemon error to the operator.
+
+### Fixed
+- **`AppState.add_warning` / `remove_warning` now emit
+  `warning_count_changed` synchronously (DEC-100).** Previously the
+  external-warning list was mutated, but `active_warnings` and the badge
+  count stayed stale until the next 1 Hz polling tick called
+  `_update_warnings()`. Control-loop write failures, lease-loss events,
+  and other ad-hoc warnings now appear in the UI without waiting for the
+  next sensor refresh.
+- **Verify-result UI surfaces a restore-PWM failure (DEC-100).** The
+  daemon's verify endpoint now returns `restore_failed: true` when the
+  post-verify restore-to-original-PWM write fails (previously the error
+  was silently swallowed). The diagnostics page renders an additional
+  line explaining that the header is left at the verify test value and
+  that the user should re-set the desired PWM. The new field defaults to
+  `False` against older daemons, so the GUI is safe to mix with v1.6.1.
+- **Lease renew retry no longer overlaps with the recurring 30 s timer
+  (DEC-100).** `LeaseService._renew` now stops the periodic renew
+  `QTimer` for the duration of the 5 s/10 s/15 s backoff retry chain and
+  restarts it once a retry succeeds. Previously a recurring tick could
+  fire mid-backoff and produce a second concurrent `lease/renew` API
+  call. No behavioural symptom in the wild — extra log noise and one
+  redundant API call per renewal failure — but the contention was
+  genuine.
+
+### Removed
+- **Dead `colorama` dependency.** Never imported in `src/` or `tests/`,
+  flagged by `namcap`. Dropped from `pyproject.toml` and the AUR
+  PKGBUILD.
+
+### Tests
+- 8 new tests:
+  - `test_app_state.py`: synchronous emission of `warning_count_changed`
+    on `add_warning` / `remove_warning`, plus the no-emit-on-acknowledged
+    idempotency contract.
+  - `test_lease_service.py`: recurring renew timer is suspended during
+    the retry chain, restarts after a retry succeeds, and stays stopped
+    after retry exhaustion.
+  - `test_v1_2_diagnostics.py`: `parse_hwmon_verify_result` defaults
+    `restore_failed=False` for older daemons and faithfully parses
+    `restore_failed=True` from new daemons.
+- `pytest tests/` — **1305 passed** (was 1297 before this pass).
+- Cross-stack: pairs with daemon v1.6.2 integration tests for
+  `gpu_reset_fan_records_gui_write` and the
+  `HwmonVerifyResponse.restore_failed` wire format.
+
+### Documentation
+- **DECISIONS.md:** new DEC-100 (audit-pass-2 remediations: ad-hoc
+  warning signal emission, verify restore_failed contract addition, GPU
+  reset records gui_active, lease retry timer suspend).
+- **CHANGELOG/PKGBUILD:** version bump to 1.10.2; pinned daemon dep to
+  `>= 1.6.2`.
+
+---
+
 ## [1.10.1] — 2026-05-06
 
 Audit-driven correctness and resilience fixes. Pairs with **daemon v1.6.1**.

@@ -150,3 +150,74 @@ def test_shutdown_releases(mock_client, qtbot):
     svc.shutdown()
     assert svc.is_held is False
     mock_client.hwmon_lease_release.assert_called_once()
+
+
+def test_renew_failure_stops_recurring_timer(mock_client, qtbot):
+    """Audit P2.6 regression: while the retry chain (5s/10s/15s backoff) is
+    in flight, the recurring 30s renew timer must be stopped so a recurring
+    tick cannot race the backoff retry and produce overlapping renew API
+    calls. The recurring timer restarts only after a retry succeeds.
+    """
+    svc = LeaseService(mock_client)
+    svc.acquire()
+    assert svc._renew_timer.isActive(), "recurring timer must run after acquire"
+
+    mock_client.hwmon_lease_renew.side_effect = DaemonError(
+        code="hardware_unavailable", message="transient"
+    )
+
+    # First failure schedules the first backoff retry — recurring timer must
+    # be stopped to avoid double-firing renews while the backoff is pending.
+    svc._renew()
+    assert svc._renew_retry_count == 1
+    assert svc.is_held is True
+    assert not svc._renew_timer.isActive(), "recurring timer must be suspended during retry chain"
+
+
+def test_renew_retry_success_restarts_recurring_timer(mock_client, qtbot):
+    """When a backoff retry succeeds, the recurring 30s timer must restart
+    so periodic renewal continues. Without this, a recovered lease would
+    never auto-renew again until the next manual call.
+    """
+    svc = LeaseService(mock_client)
+    svc.acquire()
+
+    # Force a failure → recurring timer stops, retry pending.
+    mock_client.hwmon_lease_renew.side_effect = DaemonError(
+        code="hardware_unavailable", message="transient"
+    )
+    svc._renew()
+    assert not svc._renew_timer.isActive()
+    assert svc._renew_retry_count == 1
+
+    # Retry succeeds — recurring timer must come back up.
+    mock_client.hwmon_lease_renew.side_effect = None
+    mock_client.hwmon_lease_renew.return_value = LeaseResult(
+        lease_id="lease-abc", owner_hint="gui", ttl_seconds=60
+    )
+    with qtbot.waitSignal(svc.lease_renewed, timeout=1000):
+        svc._renew()
+
+    assert svc._renew_retry_count == 0
+    assert svc._renew_timer.isActive(), "recurring timer must restart after a retry succeeds"
+
+
+def test_renew_retry_exhausted_leaves_timer_stopped(mock_client, qtbot):
+    """When all retries fail, the recurring timer stays stopped — there is no
+    lease to renew, and a recurring tick would just re-trigger the failure.
+    """
+    svc = LeaseService(mock_client)
+    svc.acquire()
+    mock_client.hwmon_lease_renew.side_effect = DaemonError(
+        code="not_found", message="lease expired"
+    )
+
+    # Exhaust retries.
+    svc._renew()
+    svc._renew()
+    svc._renew()
+    with qtbot.waitSignal(svc.lease_lost, timeout=1000):
+        svc._renew()
+
+    assert svc.is_held is False
+    assert not svc._renew_timer.isActive()

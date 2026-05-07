@@ -190,6 +190,64 @@ def test_warning_count_updates(qtbot):
     assert signals == [1]
 
 
+def test_add_warning_emits_signal_immediately(qtbot):
+    """Audit P2.4 regression: ad-hoc warnings must update the count and emit
+    ``warning_count_changed`` synchronously. Previously, ``add_warning`` only
+    mutated ``_external_warnings`` and the UI had to wait up to 1 s for the
+    next ``set_sensors``/``set_fans`` cycle to call ``_update_warnings`` and
+    emit the signal — control-loop failures appeared "delayed".
+    """
+    state = AppState()
+    signals: list[int] = []
+    state.warning_count_changed.connect(lambda c: signals.append(c))
+
+    state.add_warning("error", "control_loop", "fan write failed")
+
+    # Active list must already contain the warning, count must be 1.
+    assert state.warning_count == 1
+    assert len(state.active_warnings) == 1
+    assert state.active_warnings[0]["source"] == "control_loop"
+    # And the signal must already have fired — no waiting for the next tick.
+    assert signals == [1]
+
+
+def test_remove_warning_emits_signal_immediately(qtbot):
+    """Audit P2.4 regression: ``remove_warning`` must also recompute the
+    count synchronously so the UI badge clears without a polling-tick delay.
+    """
+    state = AppState()
+    state.add_warning("error", "control_loop", "fan write failed", key="fan_write")
+    assert state.warning_count == 1
+
+    signals: list[int] = []
+    state.warning_count_changed.connect(lambda c: signals.append(c))
+
+    state.remove_warning("fan_write")
+
+    assert state.warning_count == 0
+    assert state.active_warnings == []
+    assert signals == [0]
+
+
+def test_add_warning_no_signal_when_acknowledged(qtbot):
+    """An acknowledged warning must not re-emit when added again — the
+    immediate-emit fix must not regress this idempotency contract.
+    """
+    state = AppState()
+    state.add_warning("error", "control_loop", "fan write failed", key="fan_write")
+    state.clear_warnings()
+    assert state.warning_count == 0
+
+    signals: list[int] = []
+    state.warning_count_changed.connect(lambda c: signals.append(c))
+
+    # Re-adding the now-acknowledged key must be a silent no-op.
+    state.add_warning("error", "control_loop", "fan write failed", key="fan_write")
+
+    assert state.warning_count == 0
+    assert signals == []
+
+
 def test_set_active_profile(qtbot):
     state = AppState()
     with qtbot.waitSignal(state.active_profile_changed, timeout=1000):

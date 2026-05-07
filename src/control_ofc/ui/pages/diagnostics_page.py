@@ -1646,6 +1646,12 @@ class DiagnosticsPage(QWidget):
             lines.append(f"RPM: {init.rpm} → {final.rpm}")
         if init.pwm_enable is not None and final.pwm_enable is not None:
             lines.append(f"pwm_enable: {init.pwm_enable} → {final.pwm_enable}")
+        if result.restore_failed:
+            lines.append(
+                f"Note: restoring the original PWM after the test failed — "
+                f"the header is left at the {result.test_pwm_percent}% test "
+                f"value. Re-set the desired PWM from the Controls page."
+            )
 
         # Post-verification guidance based on result + board/chip context
         board_vendor = ""

@@ -175,27 +175,41 @@ class AppState(QObject):
         return fan_id
 
     def add_warning(self, level: str, source: str, message: str, key: str = "") -> None:
-        """Add an ad-hoc warning from a service (e.g., control loop write failure)."""
+        """Add an ad-hoc warning from a service (e.g., control loop write failure).
+
+        Recomputes ``active_warnings`` and emits ``warning_count_changed``
+        immediately rather than waiting for the next polling tick — callers
+        signalling a transient daemon problem expect the UI to reflect it
+        without a 1s delay.
+        """
         if not key:
             key = f"{source}:{message}"
-        if key not in self._acknowledged:
-            self._external_warnings = [w for w in self._external_warnings if w.get("_key") != key]
-            self._external_warnings.append(
-                {
-                    "timestamp": self._warning_first_seen.get(key, time.time()),
-                    "level": level,
-                    "source": source,
-                    "message": message,
-                    "_key": key,
-                }
-            )
-            if key not in self._warning_first_seen:
-                self._warning_first_seen[key] = time.time()
+        if key in self._acknowledged:
+            return
+        self._external_warnings = [w for w in self._external_warnings if w.get("_key") != key]
+        self._external_warnings.append(
+            {
+                "timestamp": self._warning_first_seen.get(key, time.time()),
+                "level": level,
+                "source": source,
+                "message": message,
+                "_key": key,
+            }
+        )
+        if key not in self._warning_first_seen:
+            self._warning_first_seen[key] = time.time()
+        self._update_warnings()
 
     def remove_warning(self, key: str) -> None:
-        """Remove an ad-hoc warning by key (e.g., when condition clears)."""
+        """Remove an ad-hoc warning by key (e.g., when condition clears).
+
+        Recomputes ``active_warnings`` and emits ``warning_count_changed``
+        immediately so the UI clears the badge without waiting for the next
+        polling tick.
+        """
         self._external_warnings = [w for w in self._external_warnings if w.get("_key") != key]
         self._warning_first_seen.pop(key, None)
+        self._update_warnings()
 
     def clear_warnings(self) -> None:
         """Acknowledge all current warnings — resets count, preserves event log history."""
