@@ -44,6 +44,8 @@ def _make_diag_result(
     bios_version: str = "",
     chips: list[HwmonChipInfo] | None = None,
     revert_counts: dict[str, int] | None = None,
+    expected_chips: list[str] | None = None,
+    kernel_detected_chips: list[str] | None = None,
 ) -> HardwareDiagnosticsResult:
     return HardwareDiagnosticsResult(
         hwmon=HwmonDiagnostics(
@@ -55,6 +57,8 @@ def _make_diag_result(
         thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
         kernel_modules=[KernelModuleInfo(name="it87", loaded=True, in_mainline=False)],
         board=BoardInfo(vendor=board_vendor, name=board_name, bios_version=bios_version),
+        expected_chips=expected_chips or [],
+        kernel_detected_chips=kernel_detected_chips or [],
     )
 
 
@@ -204,7 +208,7 @@ class TestVerifyResultParsing:
             "initial_state": {"pwm_enable": 1, "pwm_raw": 128, "pwm_percent": 50, "rpm": 1200},
             "final_state": {"pwm_enable": 1, "pwm_raw": 178, "pwm_percent": 70, "rpm": 900},
             "test_pwm_percent": 70,
-            "wait_seconds": 3,
+            "wait_seconds": 6,
             "details": "PWM accepted and RPM changed",
         }
         result = parse_hwmon_verify_result(data)
@@ -224,7 +228,7 @@ class TestVerifyResultParsing:
             "initial_state": {"pwm_enable": 1, "pwm_raw": 128, "rpm": 1200},
             "final_state": {"pwm_enable": 2, "pwm_raw": 128, "rpm": 1200},
             "test_pwm_percent": 70,
-            "wait_seconds": 3,
+            "wait_seconds": 6,
             "details": "BIOS reclaimed pwm_enable",
         }
         result = parse_hwmon_verify_result(data)
@@ -245,7 +249,7 @@ class TestVerifyResultParsing:
             "initial_state": {"pwm_enable": 1, "pwm_raw": 128, "pwm_percent": 50, "rpm": 1200},
             "final_state": {"pwm_enable": 1, "pwm_raw": 178, "pwm_percent": 70, "rpm": 900},
             "test_pwm_percent": 70,
-            "wait_seconds": 3,
+            "wait_seconds": 6,
             "details": "PWM accepted and RPM changed",
         }
         result = parse_hwmon_verify_result(data)
@@ -266,7 +270,7 @@ class TestVerifyResultParsing:
             "initial_state": {"pwm_enable": 1, "pwm_raw": 128, "pwm_percent": 50, "rpm": 1200},
             "final_state": {"pwm_enable": 1, "pwm_raw": 51, "pwm_percent": 20, "rpm": 700},
             "test_pwm_percent": 20,
-            "wait_seconds": 3,
+            "wait_seconds": 6,
             "details": "PWM accepted and RPM changed",
             "restore_failed": True,
         }
@@ -490,7 +494,7 @@ class TestDiagnosticsPageVerifyUI:
             initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
             final_state=HwmonVerifyState(pwm_enable=1, rpm=900),
             test_pwm_percent=70,
-            wait_seconds=3,
+            wait_seconds=6,
             details="PWM control working",
         )
         page._show_verify_result(result)
@@ -510,7 +514,7 @@ class TestDiagnosticsPageVerifyUI:
             initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
             final_state=HwmonVerifyState(pwm_enable=2, rpm=1200),
             test_pwm_percent=70,
-            wait_seconds=3,
+            wait_seconds=6,
             details="BIOS reclaimed",
         )
         page._show_verify_result(result)
@@ -529,7 +533,7 @@ class TestDiagnosticsPageVerifyUI:
             initial_state=HwmonVerifyState(pwm_enable=1, pwm_raw=128, rpm=1200),
             final_state=HwmonVerifyState(pwm_enable=1, pwm_raw=128, rpm=1200),
             test_pwm_percent=70,
-            wait_seconds=3,
+            wait_seconds=6,
             details="PWM register overridden",
         )
         page._show_verify_result(result)
@@ -540,10 +544,11 @@ class TestDiagnosticsPageVerifyUI:
 
 
 class TestDiagnosticsPageVerifyWorker:
-    """Verify the 3-second hardware probe runs off the UI thread.
+    """Verify the 6-second hardware probe runs off the UI thread.
 
     Regression for the audit finding: verify_hwmon_pwm used to be called
-    synchronously on the main thread, freezing the UI for ~3s during the test.
+    synchronously on the main thread, freezing the UI for ~6s during the test
+    (raised from 3 s in DEC-101 — slow-spinning fans need more settle time).
     """
 
     def test_ensure_verify_worker_requires_socket_path(self, qtbot):
@@ -585,7 +590,7 @@ class TestDiagnosticsPageVerifyWorker:
             initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
             final_state=HwmonVerifyState(pwm_enable=1, rpm=900),
             test_pwm_percent=70,
-            wait_seconds=3,
+            wait_seconds=6,
             details="PWM control working",
         )
         page._on_verify_ok(result)
@@ -672,3 +677,379 @@ class TestSupportBundleHwDiag:
 
         bundle = json.loads(bundle_path.read_text())
         assert "hardware_diagnostics" not in bundle
+
+
+# ---------------------------------------------------------------------------
+# DEC-101 — verify wait timing safety constants
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyTimingConstantsDec101:
+    """Regression: GUI's safety auto-resume and HTTP timeout must always
+    stay strictly above the daemon's verify wait. The daemon was bumped
+    from 3 s to 6 s in DEC-101; if the GUI side is later changed without
+    updating both the safety timer and the HTTP timeout, the 1 Hz control
+    loop or the HTTP layer would race the daemon's readback.
+    """
+
+    def test_safety_timer_exceeds_daemon_verify_wait_with_slack(self):
+        from control_ofc.services.control_loop import VERIFY_PAUSE_SAFETY_MS
+
+        # Daemon's VERIFY_WAIT_SECONDS is 6 s — the safety timer must allow
+        # at least 2 s slack for IPC + restore-PWM + classify, otherwise
+        # the auto-resume can fire mid-verify.
+        assert VERIFY_PAUSE_SAFETY_MS >= 8000, (
+            f"VERIFY_PAUSE_SAFETY_MS={VERIFY_PAUSE_SAFETY_MS} ms must be ≥ 8000 ms "
+            f"(daemon verify wait 6 s + 2 s slack). DEC-101."
+        )
+
+    def test_http_timeout_exceeds_daemon_verify_wait_with_slack(self):
+        # The verify HTTP call is hard-coded to a 12 s per-call timeout so
+        # the global API_TIMEOUT_S can stay aggressive for fast endpoints.
+        # We assert the literal here so a future drift to <8 s is caught.
+        import inspect
+
+        from control_ofc.api.client import DaemonClient
+
+        src = inspect.getsource(DaemonClient.verify_hwmon_pwm)
+        # Look for the explicit timeout=NN.N kwarg.
+        import re
+
+        m = re.search(r"timeout\s*=\s*(\d+(?:\.\d+)?)", src)
+        assert m is not None, "verify_hwmon_pwm must pass an explicit timeout"
+        timeout_value = float(m.group(1))
+        assert timeout_value >= 9.0, (
+            f"verify_hwmon_pwm timeout={timeout_value} s must be ≥ 9 s "
+            f"(daemon verify wait 6 s + ~3 s round-trip slack). DEC-101."
+        )
+
+
+# ---------------------------------------------------------------------------
+# DEC-101 — dual-chip warning banner (Fans tab)
+# ---------------------------------------------------------------------------
+
+
+class TestDualChipWarningBannerDec101:
+    """The dual-chip warning fires when DMI says the board has two ITE chips
+    but the kernel only enumerated one (typically: secondary IT87952E on
+    Gigabyte X670/X870/Z790 silently failed to bind). The banner must:
+        - hide on boards the daemon doesn't know about (empty expected_chips)
+        - hide when every expected chip is detected
+        - appear with the missing chip name when one is missing
+        - explain `mmio=on` remediation
+    """
+
+    def test_hidden_when_expected_chips_empty(self, qtbot):
+        page, _ = _make_page(qtbot)
+        diag = _make_diag_result(
+            board_vendor="Gigabyte Technology Co., Ltd.",
+            board_name="X870E AORUS MASTER",
+            chips=[
+                HwmonChipInfo(chip_name="it8696", header_count=5),
+            ],
+            expected_chips=[],  # Older daemon didn't ship the field.
+        )
+        page._populate_hw_diagnostics(diag)
+        label = page.findChild(QLabel, "Diagnostics_Label_dualChipWarning")
+        assert label is not None
+        assert label.isHidden()
+
+    def test_hidden_when_all_expected_chips_present(self, qtbot):
+        page, _ = _make_page(qtbot)
+        diag = _make_diag_result(
+            board_vendor="Gigabyte Technology Co., Ltd.",
+            board_name="X870E AORUS MASTER",
+            chips=[
+                HwmonChipInfo(chip_name="it8696", header_count=5),
+                HwmonChipInfo(chip_name="it87952", header_count=3),
+            ],
+            expected_chips=["it8696", "it87952"],
+        )
+        page._populate_hw_diagnostics(diag)
+        label = page.findChild(QLabel, "Diagnostics_Label_dualChipWarning")
+        assert label.isHidden()
+
+    def test_visible_when_secondary_chip_missing(self, qtbot):
+        # The reference scenario — the user's actual machine with the
+        # secondary IT87952E unbound.
+        page, _ = _make_page(qtbot)
+        diag = _make_diag_result(
+            board_vendor="Gigabyte Technology Co., Ltd.",
+            board_name="X870E AORUS MASTER",
+            chips=[HwmonChipInfo(chip_name="it8696", header_count=5)],
+            expected_chips=["it8696", "it87952"],
+        )
+        page._populate_hw_diagnostics(diag)
+        label = page.findChild(QLabel, "Diagnostics_Label_dualChipWarning")
+        assert not label.isHidden()
+        text = label.text()
+        # Must name the missing chip, the board, and the mmio=on remediation.
+        assert "it87952" in text.lower() or "IT87952E" in text
+        assert "X870E AORUS MASTER" in text
+        assert "mmio=on" in text
+        assert "modprobe" in text.lower() or "modprobe.d" in text.lower()
+        # Must not crash on the WarningChip class assignment.
+        assert label.property("class") == "WarningChip"
+
+
+# ---------------------------------------------------------------------------
+# DEC-101 — dual-chip verify hint (post-verify result)
+# ---------------------------------------------------------------------------
+
+
+class TestDualChipVerifyHintDec101:
+    """When a `pwm_value_clamped` or `no_rpm_effect` outcome lands on a
+    board that's missing one of its expected chips, the verify result
+    panel appends a one-line pointer to the dual-chip warning. Other
+    outcomes / boards are unchanged.
+    """
+
+    def test_clamped_on_dual_chip_board_appends_hint(self, qtbot):
+        # Set up state with a hwmon header so chip_name resolves.
+        state = _make_state()
+        state.hwmon_headers = [
+            HwmonHeader(id="hwmon:it8696:0a40:pwm1", chip_name="it8696", is_writable=True),
+        ]
+        page, _ = _make_page(qtbot, state=state)
+        diag = _make_diag_result(
+            board_vendor="Gigabyte Technology Co., Ltd.",
+            board_name="X870E AORUS MASTER",
+            chips=[HwmonChipInfo(chip_name="it8696", header_count=5)],
+            expected_chips=["it8696", "it87952"],
+        )
+        # Push the diagnostics into the service so _show_verify_result can
+        # see the board context.
+        page._diag.last_hw_diagnostics = diag
+        # Populate to make the warning visible (also exercises the
+        # populate path so a regression there blows up loudly).
+        page._populate_hw_diagnostics(diag)
+
+        result = HwmonVerifyResult(
+            header_id="hwmon:it8696:0a40:pwm1",
+            result="pwm_value_clamped",
+            initial_state=HwmonVerifyState(pwm_enable=1, pwm_raw=128, rpm=1200),
+            final_state=HwmonVerifyState(pwm_enable=1, pwm_raw=128, rpm=1200),
+            test_pwm_percent=70,
+            wait_seconds=6,
+            details="PWM register overridden",
+        )
+        page._show_verify_result(result)
+
+        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
+        assert not label.isHidden()
+        text = label.text().lower()
+        assert "dual-chip" in text or "fans tab" in text
+
+    def test_effective_does_not_append_hint(self, qtbot):
+        state = _make_state()
+        state.hwmon_headers = [
+            HwmonHeader(id="hwmon:it8696:0a40:pwm1", chip_name="it8696", is_writable=True),
+        ]
+        page, _ = _make_page(qtbot, state=state)
+        diag = _make_diag_result(
+            board_vendor="Gigabyte Technology Co., Ltd.",
+            board_name="X870E AORUS MASTER",
+            chips=[HwmonChipInfo(chip_name="it8696", header_count=5)],
+            expected_chips=["it8696", "it87952"],
+        )
+        page._diag.last_hw_diagnostics = diag
+
+        result = HwmonVerifyResult(
+            header_id="hwmon:it8696:0a40:pwm1",
+            result="effective",
+            initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
+            final_state=HwmonVerifyState(pwm_enable=1, rpm=900),
+            test_pwm_percent=70,
+            wait_seconds=6,
+            details="working",
+        )
+        page._show_verify_result(result)
+
+        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
+        text = label.text().lower()
+        assert "dual-chip" not in text
+        assert "fans tab" not in text
+
+
+# ---------------------------------------------------------------------------
+# DEC-101 — batch verify all writable headers (2E)
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyAllBatchDec101:
+    """The batch verify button must:
+    - refuse to run without a held lease (no spurious 403s on the daemon)
+    - run with no double-click duplication
+    - aggregate results in a summary
+    - abort cleanly if the lease is lost mid-run
+    """
+
+    def test_button_exists_and_has_object_name(self, qtbot):
+        page, _ = _make_page(qtbot)
+        btn = page.findChild(QPushButton, "Diagnostics_Btn_verifyAll")
+        assert btn is not None
+        assert btn.text() == "Verify All Writable"
+
+    def test_run_without_lease_shows_error(self, qtbot):
+        # No lease held → the progress label must explain instead of
+        # firing an unauthorised verify request.
+        state = _make_state()
+        state.hwmon_headers = [
+            HwmonHeader(id="hwmon:it8696:0a40:pwm1", chip_name="it8696", is_writable=True),
+        ]
+        client = MagicMock()
+        client._socket_path = "/tmp/fake.sock"
+        page, _ = _make_page(qtbot, state=state, client=client)
+        page._run_pwm_verify_all()
+
+        label = page.findChild(QLabel, "Diagnostics_Label_verifyAllProgress")
+        assert label is not None
+        assert not label.isHidden()
+        assert "lease" in label.text().lower()
+        # No batch state must persist after a refused start.
+        assert page._verify_all_total == 0
+
+    def test_run_without_writable_headers_shows_message(self, qtbot):
+        state = _make_state()
+        state.hwmon_headers = [
+            HwmonHeader(id="hwmon:it8696:0a40:pwm1", chip_name="it8696", is_writable=False),
+        ]
+        # Fake an active lease.
+        state.lease.held = True
+        state.lease.lease_id = "test-lease"
+        client = MagicMock()
+        client._socket_path = "/tmp/fake.sock"
+        page, _ = _make_page(qtbot, state=state, client=client)
+
+        page._run_pwm_verify_all()
+        label = page.findChild(QLabel, "Diagnostics_Label_verifyAllProgress")
+        assert "no writable" in label.text().lower()
+
+    def test_summary_renders_results(self, qtbot):
+        # Drive _show_verify_all_summary directly to check rendering.
+        page, _ = _make_page(qtbot)
+        page._verify_all_total = 2
+        page._verify_all_results = [
+            ("hwmon:a:pwm1", "effective"),
+            ("hwmon:a:pwm2", "pwm_value_clamped"),
+        ]
+        page._show_verify_all_summary()
+        label = page.findChild(QLabel, "Diagnostics_Label_verifyAllProgress")
+        text = label.text()
+        assert "hwmon:a:pwm1" in text
+        assert "hwmon:a:pwm2" in text
+        assert "OK" in text
+        assert "clamped" in text
+        # Mixed warning result → WarningChip class.
+        assert label.property("class") == "WarningChip"
+
+
+# ---------------------------------------------------------------------------
+# DEC-101 — model parsing for new daemon fields
+# ---------------------------------------------------------------------------
+
+
+class TestHardwareDiagnosticsModelDec101:
+    """The Python parser must accept and store the new
+    `expected_chips` / `kernel_detected_chips` fields, default them to
+    [] when absent, and tolerate non-string list members defensively.
+    """
+
+    def test_parse_expected_chips(self):
+        from control_ofc.api.models import parse_hardware_diagnostics
+
+        data = {
+            "hwmon": {"chips_detected": [], "total_headers": 0, "writable_headers": 0},
+            "thermal_safety": {"state": "normal", "cpu_sensor_found": True},
+            "kernel_modules": [],
+            "acpi_conflicts": [],
+            "expected_chips": ["it8696", "it87952"],
+            "kernel_detected_chips": ["it8696"],
+        }
+        result = parse_hardware_diagnostics(data)
+        assert result.expected_chips == ["it8696", "it87952"]
+        assert result.kernel_detected_chips == ["it8696"]
+
+    def test_missing_fields_default_to_empty(self):
+        from control_ofc.api.models import parse_hardware_diagnostics
+
+        data = {
+            "hwmon": {"chips_detected": [], "total_headers": 0, "writable_headers": 0},
+            "thermal_safety": {"state": "normal", "cpu_sensor_found": True},
+            "kernel_modules": [],
+            "acpi_conflicts": [],
+        }
+        result = parse_hardware_diagnostics(data)
+        assert result.expected_chips == []
+        assert result.kernel_detected_chips == []
+
+    def test_filters_falsy_entries(self):
+        # Defensive: future shape drift could send None/"" entries; the
+        # parser must drop them rather than propagate.
+        from control_ofc.api.models import parse_hardware_diagnostics
+
+        data = {
+            "hwmon": {"chips_detected": [], "total_headers": 0, "writable_headers": 0},
+            "thermal_safety": {"state": "normal", "cpu_sensor_found": True},
+            "kernel_modules": [],
+            "acpi_conflicts": [],
+            "expected_chips": ["it8696", "", None, "it87952"],
+        }
+        result = parse_hardware_diagnostics(data)
+        assert result.expected_chips == ["it8696", "it87952"]
+
+
+# ---------------------------------------------------------------------------
+# DEC-101 — dual_chip_warning_html / dual_chip_verify_hint pure functions
+# ---------------------------------------------------------------------------
+
+
+class TestDualChipHelpersDec101:
+    def test_warning_lists_missing_chip_pretty_name(self):
+        from control_ofc.ui.hwmon_guidance import dual_chip_warning_html
+
+        out = dual_chip_warning_html(
+            "X870E AORUS MASTER",
+            ["it8696", "it87952"],
+            ["it8696"],
+        )
+        assert out is not None
+        # Pretty-names render as IT8696E / IT87952E so users can match
+        # the silkscreen on their motherboard.
+        assert "IT87952E" in out
+        assert "X870E AORUS MASTER" in out
+
+    def test_warning_returns_none_for_unknown_board(self):
+        from control_ofc.ui.hwmon_guidance import dual_chip_warning_html
+
+        # No expected chips → no warning regardless of detected list.
+        assert dual_chip_warning_html("Some Other Board", [], []) is None
+        assert dual_chip_warning_html("Some Other Board", [], ["it8696"]) is None
+
+    def test_warning_returns_none_when_all_present(self):
+        from control_ofc.ui.hwmon_guidance import dual_chip_warning_html
+
+        assert (
+            dual_chip_warning_html(
+                "X870E AORUS MASTER",
+                ["it8696", "it87952"],
+                ["it8696", "it87952"],
+            )
+            is None
+        )
+
+    def test_verify_hint_only_for_clamped_or_no_rpm(self):
+        from control_ofc.ui.hwmon_guidance import dual_chip_verify_hint
+
+        for result in ("pwm_value_clamped", "no_rpm_effect"):
+            assert dual_chip_verify_hint(result, ["it8696", "it87952"], ["it8696"]) is not None
+        for result in ("effective", "pwm_enable_reverted", "rpm_unavailable"):
+            assert dual_chip_verify_hint(result, ["it8696", "it87952"], ["it8696"]) is None
+
+    def test_verify_hint_none_when_no_dual_chip(self):
+        from control_ofc.ui.hwmon_guidance import dual_chip_verify_hint
+
+        # Single-chip board → never a dual-chip hint.
+        assert dual_chip_verify_hint("pwm_value_clamped", ["it8696"], ["it8696"]) is None
+        # Empty expected_chips → never a hint.
+        assert dual_chip_verify_hint("pwm_value_clamped", [], []) is None

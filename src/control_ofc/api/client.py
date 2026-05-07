@@ -303,18 +303,19 @@ class DaemonClient:
         return parse_hardware_diagnostics(self._get("/diagnostics/hardware"))
 
     def verify_hwmon_pwm(self, header_id: str, lease_id: str) -> HwmonVerifyResult:
-        """POST /hwmon/{header_id}/verify — test PWM write effectiveness (~3s).
+        """POST /hwmon/{header_id}/verify — test PWM write effectiveness (~6s).
 
-        Daemon sleeps `VERIFY_WAIT_SECONDS = 3 s` once between the test
-        write and the readback. Worst-case round-trip under load (mutex
-        contention, USB-CDC turnaround, IPC marshal) is ~4.5 s — so we
-        send an 8 s per-call timeout regardless of the global default.
-        See DEC-098 in `control-ofc-gui/DECISIONS.md`.
+        Daemon sleeps `VERIFY_WAIT_SECONDS = 6 s` once between the test
+        write and the readback (raised from 3 s — slow-spinning fans need
+        more settle time, see DEC-101). Worst-case round-trip under load
+        (mutex contention, USB-CDC turnaround, IPC marshal) is ~7.5 s —
+        so we send a 12 s per-call timeout regardless of the global
+        default. See DEC-098 / DEC-101 in `control-ofc-gui/DECISIONS.md`.
         """
         data = self._post(
             f"/hwmon/{header_id}/verify",
             json={"lease_id": lease_id},
-            timeout=8.0,
+            timeout=12.0,
         )
         return parse_hwmon_verify_result(data)
 

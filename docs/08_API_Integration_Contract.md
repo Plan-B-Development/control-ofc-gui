@@ -84,7 +84,10 @@ The GUI's `DaemonClient` accepts a `timeout=` kwarg on every method that
 might exceed the global `API_TIMEOUT_S = 5.0`. Endpoints with known long
 upper bounds:
 
-- `verify_hwmon_pwm` — daemon sleeps 3s; client timeout is **8s**.
+- `verify_hwmon_pwm` — daemon sleeps **6 s** (raised from 3 s in DEC-101);
+  client timeout is **12 s**. The control-loop pause-safety auto-resume
+  must stay strictly above the daemon wait — see
+  `control_loop.VERIFY_PAUSE_SAFETY_MS` (currently 9 s).
 - `calibrate_openfan` — daemon sleeps `(steps+1) × hold_seconds`; client
   timeout is `(steps+1) × hold_seconds + 10s`.
 - `set_openfan_pwm`, `set_hwmon_pwm`, `set_gpu_fan_speed` (write fast
@@ -158,6 +161,28 @@ Returns per-sensor time-series history from the daemon's ring buffer.
 `last` defaults to 250 and is capped server-side at 1000 samples per request.
 Used to pre-fill the GUI's `HistoryStore` on first connection so the timeline chart
 shows data immediately instead of starting empty.
+
+### GET /diagnostics/hardware
+
+Comprehensive hardware readiness report. Stable v1 fields documented in
+the daemon's `responses.rs::HardwareDiagnosticsResponse`. New optional
+fields added in DEC-101 — both serialise with
+`skip_serializing_if = "Vec::is_empty"`, so older daemons emit nothing
+and the GUI parser defaults to `[]`:
+
+- `expected_chips: list[str]` — chip names this DMI board is known to
+  expose, sourced from a curated dual-chip board lookup. Lower-cased,
+  no `E` suffix (matches the `chip_name` format under
+  `hwmon.chips_detected`). Empty for boards not in the lookup. The GUI
+  uses `set(expected_chips) − set(detected_chip_names)` to drive a
+  Fans-tab warning banner with the `mmio=on` modprobe.d remediation.
+- `kernel_detected_chips: list[str]` — best-effort kernel-level chip
+  detection parsed from `/dev/kmsg` `it87:` lines. Populated when the
+  kernel ring buffer is readable (Arch default
+  `kernel.dmesg_restrict=0`); empty otherwise. Useful for distinguishing
+  "kernel saw the chip but driver did not bind" from "kernel never saw
+  the chip"; not authoritative — the source of truth for "what works"
+  is `hwmon.chips_detected`.
 
 ### GET /events (SSE) — daemon-only, not consumed by GUI
 The daemon exposes a Server-Sent Events stream at `GET /events` for other clients

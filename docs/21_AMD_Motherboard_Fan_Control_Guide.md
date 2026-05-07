@@ -435,21 +435,32 @@ Reference: https://github.com/frankcrawford/it87
 
 - **Gigabyte X870E AORUS MASTER (IT8696E rev 0 + IT87952E):** PWM fan
   control **works** on `it87-dkms-git` 332.20f2f2f+ and BIOS F13a
-  (2026-03 onwards) with no kernel parameters and no BIOS flat-curve
-  workaround. Distinct from the X670E AORUS MASTER case above — that
-  one is IT8689E rev 1 with a manual-control limitation; this is
-  IT8696E rev 0 (primary) plus IT87952E (secondary), both
+  (2026-03 onwards). Distinct from the X670E AORUS MASTER case above
+  — that one is IT8689E rev 1 with a manual-control limitation; this
+  is IT8696E rev 0 (primary) plus IT87952E (secondary), both
   controllable. The board exposes **8 writable PWM headers total**:
   5 on IT8696E (CPU_FAN, SYS_FAN1, SYS_FAN2, SYS_FAN3, CPU_OPT) and
   3 on IT87952E (likely SYS_FAN4, SYS_FAN5_PUMP, SYS_FAN6_PUMP — the
   pwm-to-silkscreen mapping on the secondary chip is unverified;
   the GUI marks these labels with `(unverified)` until silkscreen
-  tracing confirms). BIOS Smart Fan 6 reclaims `pwm_enable` on
-  CPU_FAN at ~1 Hz; the daemon's `pwm_enable` watchdog (v1.3.0+)
-  handles this transparently. To eliminate the reclaim entirely set
-  Smart Fan 6 to *Manual / Full Speed* for every header in BIOS.
-  No upstream `lm_sensors` config exists for this board yet (as of
-  2026-04); the GUI ships a fallback label table (see GUI v1.8.0).
+  tracing confirms).
+
+  **Secondary chip enumeration may need `mmio=on`.** On some boots
+  only the IT8696E primary chip appears (5 of 8 headers). When this
+  happens, create `/etc/modprobe.d/it87.conf` with
+  `options it87 mmio=on`, reboot, and verify both chips are listed
+  under `/sys/class/hwmon/`. Avoid running `sensors-detect` afterwards
+  — it can disturb the SuperIO state and cause the secondary chip to
+  fail enumeration on the next reboot. See frankcrawford/it87 issue
+  [#70](https://github.com/frankcrawford/it87/issues/70) and DEC-101
+  for the diagnostics surfaced by the GUI.
+
+  BIOS Smart Fan 6 reclaims `pwm_enable` on CPU_FAN at ~1 Hz; the
+  daemon's `pwm_enable` watchdog (v1.3.0+) handles this transparently.
+  To eliminate the reclaim entirely set Smart Fan 6 to
+  *Manual / Full Speed* for every header in BIOS. No upstream
+  `lm_sensors` config exists for this board yet (as of 2026-04); the
+  GUI ships a fallback label table (see GUI v1.8.0).
 
 - **Gigabyte B550M DS3H:** `gigabyte_wmi` driver provides temp1-temp6
   with no semantic labels.

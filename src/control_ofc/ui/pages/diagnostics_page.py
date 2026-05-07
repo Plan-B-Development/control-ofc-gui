@@ -54,6 +54,8 @@ from control_ofc.ui.fan_presence import (
 )
 from control_ofc.ui.hwmon_guidance import (
     detect_module_conflicts,
+    dual_chip_verify_hint,
+    dual_chip_warning_html,
     format_driver_status,
     lookup_chip_guidance,
     lookup_vendor_quirks,
@@ -342,12 +344,12 @@ class DiagnosticsPage(QWidget):
     """System health, device discovery, lease state, logs, and support bundle export."""
 
     # Main-thread signal that fires a queued connection to the verify worker
-    # (running on its own QThread) so the ~3s hardware probe never blocks the UI.
+    # (running on its own QThread) so the ~6s hardware probe never blocks the UI.
     _verify_request = Signal(str, str)
 
     # Public signals used by main_window to coordinate the GUI control loop —
     # the loop pauses writes to the header under verify so its 1Hz tick does
-    # not race the daemon's 3-second verify wait (A1).
+    # not race the daemon's 6-second verify wait (A1, DEC-101).
     verify_started = Signal(str)  # header_id
     verify_completed = Signal(str)  # header_id
 
@@ -374,6 +376,17 @@ class DiagnosticsPage(QWidget):
         # the right id from both ok and error paths (the error signal does not
         # carry the header_id).
         self._verify_active_header: str | None = None
+
+        # DEC-101 (2E): batch verification state. ``_verify_all_queue`` is
+        # the remaining headers to test (FIFO); ``_verify_all_results`` is
+        # the per-header outcome string for the summary; ``_verify_all_total``
+        # is the original count for the progress label "k/N". When the queue
+        # is empty and ``_verify_all_total > 0`` we are between iterations
+        # and should NOT start a new single-verify. Empty queue + zero total
+        # means no batch is active.
+        self._verify_all_queue: list[str] = []
+        self._verify_all_results: list[tuple[str, str]] = []  # [(header_id, result), …]
+        self._verify_all_total: int = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 16, 24, 16)
@@ -588,6 +601,19 @@ class DiagnosticsPage(QWidget):
         self._vendor_quirk_label.setVisible(False)
         hw_layout.addWidget(self._vendor_quirk_label)
 
+        # DEC-101: dual-chip board warning. Surfaces when the daemon's
+        # `expected_chips` (derived from the it87.c DMI lookup) lists chips
+        # the kernel did not enumerate. Common on Gigabyte X670/X870/Z790
+        # AORUS boards where the secondary IT87952E silently fails to bind
+        # without an explicit `mmio=on` modprobe.d option. Rich text so the
+        # docs link is clickable.
+        self._dual_chip_warning_label = _transparent_label("", "Diagnostics_Label_dualChipWarning")
+        self._dual_chip_warning_label.setWordWrap(True)
+        self._dual_chip_warning_label.setTextFormat(Qt.TextFormat.RichText)
+        self._dual_chip_warning_label.setOpenExternalLinks(True)
+        self._dual_chip_warning_label.setVisible(False)
+        hw_layout.addWidget(self._dual_chip_warning_label)
+
         # Chip/driver table
         self._chip_table = QTableWidget(0, 5)
         self._chip_table.setObjectName("Diagnostics_Table_chips")
@@ -716,12 +742,35 @@ class DiagnosticsPage(QWidget):
         self._verify_btn = QPushButton("Test PWM Control")
         self._verify_btn.setObjectName("Diagnostics_Btn_verifyPwm")
         self._verify_btn.setToolTip(
-            "Write a test PWM value and check if the BIOS overrides it (~3s)"
+            "Write a test PWM value and check if the BIOS overrides it (~6s)"
         )
         self._verify_btn.clicked.connect(self._run_pwm_verify)
         verify_row.addWidget(self._verify_btn)
+
+        # DEC-101 (2E): batch verification of every writable header.
+        # Runs each header sequentially through the same _VerifyWorker so
+        # we never hold the lease longer than one verify at a time. The
+        # progress label updates between steps; results are summarised at
+        # the end. Long-running (~6s per header) — disabled while in flight.
+        self._verify_all_btn = QPushButton("Verify All Writable")
+        self._verify_all_btn.setObjectName("Diagnostics_Btn_verifyAll")
+        self._verify_all_btn.setToolTip(
+            "Sequentially run the PWM test on every writable hwmon header "
+            "(~6 s each). Useful when several headers may be misbehaving."
+        )
+        self._verify_all_btn.clicked.connect(self._run_pwm_verify_all)
+        verify_row.addWidget(self._verify_all_btn)
         verify_row.addStretch()
         hw_layout.addLayout(verify_row)
+
+        # Batch progress label (DEC-101 2E). Hidden until a batch run starts.
+        self._verify_all_progress_label = _transparent_label(
+            "", "Diagnostics_Label_verifyAllProgress"
+        )
+        self._verify_all_progress_label.setWordWrap(True)
+        self._verify_all_progress_label.setProperty("class", "CardMeta")
+        self._verify_all_progress_label.setVisible(False)
+        hw_layout.addWidget(self._verify_all_progress_label)
 
         self._verify_result_label = _transparent_label("", "Diagnostics_Label_verifyResult")
         self._verify_result_label.setWordWrap(True)
@@ -1250,6 +1299,26 @@ class DiagnosticsPage(QWidget):
         else:
             self._board_info_label.setVisible(False)
 
+        # DEC-101: dual-chip board warning. Computed before chip-table render
+        # so users see "missing chips" guidance above the table that will
+        # otherwise look short. ``expected_chips`` is empty for boards the
+        # daemon doesn't know about (and for daemons that predate DEC-101),
+        # in which case the warning stays hidden.
+        detected_chip_names = [c.chip_name for c in hw.chips_detected]
+        dual_chip_html = dual_chip_warning_html(
+            board.name,
+            list(diag.expected_chips),
+            detected_chip_names,
+        )
+        if dual_chip_html:
+            self._dual_chip_warning_label.setText(dual_chip_html)
+            self._dual_chip_warning_label.setProperty("class", "WarningChip")
+            self._dual_chip_warning_label.style().unpolish(self._dual_chip_warning_label)
+            self._dual_chip_warning_label.style().polish(self._dual_chip_warning_label)
+            self._dual_chip_warning_label.setVisible(True)
+        else:
+            self._dual_chip_warning_label.setVisible(False)
+
         # Vendor quirks
         all_quirks = []
         for chip in hw.chips_detected:
@@ -1526,8 +1595,8 @@ class DiagnosticsPage(QWidget):
             return
 
         # Pause the GUI control loop's writes to this header so the daemon's
-        # 3-second verify wait does not get stomped on by our own 1Hz tick (A1).
-        # The control loop has its own 5-second safety auto-resume, so a hung
+        # 6-second verify wait does not get stomped on by our own 1Hz tick (A1).
+        # The control loop has its own 9-second safety auto-resume, so a hung
         # verify cannot pin the header indefinitely even if we never emit
         # verify_completed.
         self._verify_active_header = header_id
@@ -1570,6 +1639,11 @@ class DiagnosticsPage(QWidget):
         self._verify_btn.setEnabled(True)
         self._verify_btn.setText("Test PWM Control")
         self._emit_verify_completed()
+        # DEC-101 (2E): if a batch run is active, record this result and
+        # advance the queue. Outside a batch run this is a no-op.
+        if self._verify_all_total > 0:
+            self._verify_all_results.append((result.header_id, result.result))
+            self._step_pwm_verify_all()
 
     @Slot(str, str)
     def _on_verify_error(self, category: str, message: str) -> None:
@@ -1581,6 +1655,149 @@ class DiagnosticsPage(QWidget):
         self._verify_btn.setEnabled(True)
         self._verify_btn.setText("Test PWM Control")
         self._emit_verify_completed()
+        # DEC-101 (2E): in a batch run, record the failure and advance
+        # rather than aborting the whole run. The user still gets the
+        # remaining headers tested; the summary highlights the error.
+        if self._verify_all_total > 0:
+            header_id = self._verify_all_active_header_id() or "unknown"
+            self._verify_all_results.append((header_id, f"error:{category}"))
+            self._step_pwm_verify_all()
+
+    # ── DEC-101 (2E): batch verify all writable headers ──────────────
+
+    def _run_pwm_verify_all(self) -> None:
+        """Sequentially verify every writable hwmon header."""
+        if not self._state:
+            self._verify_all_progress_label.setText("Cannot verify: no app state")
+            self._verify_all_progress_label.setVisible(True)
+            return
+        if not self._client:
+            self._verify_all_progress_label.setText("Cannot verify: no daemon connection")
+            self._verify_all_progress_label.setVisible(True)
+            return
+        if not self._state.lease.held or not self._state.lease.lease_id:
+            self._verify_all_progress_label.setText(
+                "Cannot verify: no hwmon lease held. Start fan control or acquire a lease first."
+            )
+            self._verify_all_progress_label.setVisible(True)
+            return
+        if self._verify_all_total > 0:
+            # Already running — guard against double-clicks.
+            return
+
+        writable = [h.id for h in self._state.hwmon_headers if h.is_writable]
+        if not writable:
+            self._verify_all_progress_label.setText("No writable headers to test.")
+            self._verify_all_progress_label.setVisible(True)
+            return
+
+        if not self._ensure_verify_worker():
+            self._verify_all_progress_label.setText("Verify unavailable: no socket path")
+            self._verify_all_progress_label.setVisible(True)
+            return
+
+        self._verify_all_queue = list(writable)
+        self._verify_all_results = []
+        self._verify_all_total = len(writable)
+
+        # Lock both buttons during the run; the per-header progress label
+        # tells the user what's happening, the per-step verify result
+        # label still fills in as each step completes.
+        self._verify_btn.setEnabled(False)
+        self._verify_all_btn.setEnabled(False)
+        self._verify_all_btn.setText("Testing...")
+        self._verify_all_progress_label.setProperty("class", "CardMeta")
+        self._verify_all_progress_label.style().unpolish(self._verify_all_progress_label)
+        self._verify_all_progress_label.style().polish(self._verify_all_progress_label)
+        self._verify_all_progress_label.setVisible(True)
+
+        self._step_pwm_verify_all()
+
+    def _verify_all_active_header_id(self) -> str | None:
+        """Header currently under test in the batch run, if any."""
+        return self._verify_active_header
+
+    def _step_pwm_verify_all(self) -> None:
+        """Advance the batch-verify state machine by one header.
+
+        If the queue is empty, finalises and shows a summary. If the
+        lease has been lost mid-run (no lease_id available), aborts the
+        rest of the queue with a clear message.
+        """
+        # End-of-batch: render summary, reset state.
+        if not self._verify_all_queue:
+            self._show_verify_all_summary()
+            self._verify_all_total = 0
+            self._verify_btn.setEnabled(self._verify_combo.count() > 0)
+            self._verify_all_btn.setEnabled(True)
+            self._verify_all_btn.setText("Verify All Writable")
+            return
+
+        # Lease check before each step — if the lease evaporated mid-run
+        # we cannot send another verify request, so abort cleanly with
+        # whatever results we have so far.
+        if not self._state or not self._state.lease.held:
+            remaining = list(self._verify_all_queue)
+            self._verify_all_queue.clear()
+            for h in remaining:
+                self._verify_all_results.append((h, "error:lease_lost"))
+            self._show_verify_all_summary(aborted=True)
+            self._verify_all_total = 0
+            self._verify_btn.setEnabled(self._verify_combo.count() > 0)
+            self._verify_all_btn.setEnabled(True)
+            self._verify_all_btn.setText("Verify All Writable")
+            return
+
+        lease_id = self._state.lease.lease_id or ""
+        header_id = self._verify_all_queue.pop(0)
+        completed = self._verify_all_total - len(self._verify_all_queue) - 1
+        next_index = completed + 1
+        self._verify_all_progress_label.setText(
+            f"Testing {next_index}/{self._verify_all_total}: {header_id}"
+        )
+        self._verify_active_header = header_id
+        self.verify_started.emit(header_id)
+        self._verify_request.emit(header_id, lease_id)
+
+    def _show_verify_all_summary(self, *, aborted: bool = False) -> None:
+        """Render the multi-header summary into the progress label."""
+        if not self._verify_all_results:
+            self._verify_all_progress_label.setText("Verify all: no results.")
+            return
+
+        # Severity heuristic for the badge: any error/critical → CriticalChip,
+        # any warning-level → WarningChip, else SuccessChip.
+        critical_keys = {"pwm_enable_reverted"}
+        warning_keys = {"pwm_value_clamped", "no_rpm_effect"}
+        has_critical = any(
+            r.startswith("error:") or r in critical_keys for _, r in self._verify_all_results
+        )
+        has_warning = any(r in warning_keys for _, r in self._verify_all_results)
+        css_class = (
+            "CriticalChip" if has_critical else "WarningChip" if has_warning else "SuccessChip"
+        )
+
+        intro = (
+            "Verify all (aborted — lease lost):"
+            if aborted
+            else f"Verify all complete ({len(self._verify_all_results)}/"
+            f"{self._verify_all_total} tested):"
+        )
+        lines = [intro]
+        for header_id, result_str in self._verify_all_results:
+            short = {
+                "effective": "OK",
+                "pwm_enable_reverted": "BIOS reclaimed",
+                "pwm_value_clamped": "clamped",
+                "no_rpm_effect": "no RPM change",
+                "rpm_unavailable": "no tach",
+            }.get(result_str, result_str)
+            lines.append(f"  • {header_id}: {short}")
+
+        self._verify_all_progress_label.setText("\n".join(lines))
+        self._verify_all_progress_label.setProperty("class", css_class)
+        self._verify_all_progress_label.style().unpolish(self._verify_all_progress_label)
+        self._verify_all_progress_label.style().polish(self._verify_all_progress_label)
 
     def _emit_verify_completed(self) -> None:
         """Resume the control loop's writes for the header that was under
@@ -1656,6 +1873,8 @@ class DiagnosticsPage(QWidget):
         # Post-verification guidance based on result + board/chip context
         board_vendor = ""
         chip_name = ""
+        expected_chips: list[str] = []
+        detected_chip_names: list[str] = []
         if self._state:
             header = next(
                 (h for h in self._state.hwmon_headers if h.id == result.header_id),
@@ -1665,11 +1884,24 @@ class DiagnosticsPage(QWidget):
                 chip_name = header.chip_name
             if self._diag.last_hw_diagnostics:
                 board_vendor = self._diag.last_hw_diagnostics.board.vendor
+                expected_chips = list(self._diag.last_hw_diagnostics.expected_chips)
+                detected_chip_names = [
+                    c.chip_name for c in self._diag.last_hw_diagnostics.hwmon.chips_detected
+                ]
 
         guidance = verification_guidance(result.result, board_vendor, chip_name)
         if guidance:
             lines.append("")
             lines.append(f"Next step: {guidance}")
+
+        # DEC-101 (2F): when a clamped/no-rpm result coincides with a known
+        # dual-chip board missing one of its chips, append a pointer to the
+        # Fans-tab dual-chip notice. The hint is None on boards that don't
+        # match the criteria so the existing wording is unaffected.
+        dual_hint = dual_chip_verify_hint(result.result, expected_chips, detected_chip_names)
+        if dual_hint:
+            lines.append("")
+            lines.append(dual_hint)
 
         self._verify_result_label.setText("\n".join(lines))
         self._verify_result_label.setProperty("class", css_class)

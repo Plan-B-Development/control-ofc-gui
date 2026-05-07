@@ -51,9 +51,13 @@ log = logging.getLogger(__name__)
 _OPENFAN_CH_RE = re.compile(r"^openfan:ch(\d+)$")
 
 # Safety auto-resume for pause_writes_for_header. The daemon's verify endpoint
-# waits ~3s before reading back; 5s leaves headroom for slow IPC and avoids
-# pinning a header indefinitely if the verify caller crashes mid-call.
-VERIFY_PAUSE_SAFETY_MS = 5000
+# waits ~6s before reading back (raised from 3 s in DEC-101 — slow-spinning
+# fans needed more settle time). 9 s leaves 3 s headroom for slow IPC plus
+# the post-wait restore-PWM write, and still avoids pinning a header
+# indefinitely if the verify caller crashes mid-call. Must stay strictly
+# greater than the daemon's VERIFY_WAIT_SECONDS to avoid the 1 Hz control
+# loop racing the daemon's readback. See DEC-101.
+VERIFY_PAUSE_SAFETY_MS = 9000
 
 # Per-call write timeout: PWM writes complete in <100 ms typically; the
 # serial-timeout cap for OpenFan is 500 ms per channel. 2 s leaves 4x margin
@@ -332,7 +336,7 @@ class ControlLoopService(QObject):
         called or the safety timer fires (A1).
 
         Used by Diagnostics' verify worker to keep the control loop from
-        racing the daemon's 3-second verify wait. A 5-second safety auto-
+        racing the daemon's 6-second verify wait. A 9-second safety auto-
         resume guarantees a hung verify cannot pin the header forever.
         Each pause issues a fresh generation token; only the matching
         safety callback can auto-resume, so calling pause again before the

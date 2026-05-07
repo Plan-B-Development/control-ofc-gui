@@ -39,13 +39,33 @@ guidance system (`hwmon_guidance.py`).
 The out-of-tree `it87` driver is maintained by Frank Crawford:
 https://github.com/frankcrawford/it87
 
-Recent Gigabyte AORUS boards (X870/X870E generation) often pair an
-**IT8696E** primary Super-I/O with an **IT87952E** secondary that
-exposes the additional SYS_FAN4 / FAN5_PUMP / FAN6_PUMP headers. Both
-chips are detected by the same driver via DMI auto-match — no
-modparams needed on current driver versions. See
-`21_AMD_Motherboard_Fan_Control_Guide.md` § Gigabyte → Reported
-examples for the X870E AORUS MASTER worked example.
+Recent Gigabyte AORUS boards (X870/X870E and several Z690/Z790/X670E
+SKUs) pair a primary ITE Super-I/O (typically **IT8696E** on AM5
+800-series, **IT8689E** on Z690/Z790/X670E) with an **IT87952E**
+secondary that exposes additional SYS_FAN4 / FAN5_PUMP / FAN6_PUMP
+headers. Both chips ship in the same `it87` driver, but the secondary
+chip's enumeration depends on a healthy SuperIO bridge state at boot.
+
+**Known issue — secondary chip not enumerated.** On some systems only
+the primary chip appears in `sensors` output (5 of 8 fan headers
+visible on X870E AORUS MASTER, etc.). The secondary chip's DEVID
+read fails when the SuperIO bridge has been left in configuration
+mode by an earlier process — most commonly a previous run of
+`sensors-detect`, but also some early-boot kernel modules or BIOS
+quirks. The frankcrawford/it87 issue
+[#70](https://github.com/frankcrawford/it87/issues/70) tracks this
+on multiple Gigabyte boards.
+
+**Workaround:** create `/etc/modprobe.d/it87.conf` with
+`options it87 mmio=on` and reboot. Avoid running `sensors-detect`
+after boot — it can disturb the SuperIO state mid-session.
+
+The control-ofc daemon detects this case (DEC-101): when DMI matches
+a known dual-chip board but only one ITE chip enumerated, the
+Diagnostics → Fans tab surfaces a warning banner with the exact
+remediation steps. See `21_AMD_Motherboard_Fan_Control_Guide.md` §
+Gigabyte → Reported examples for the X870E AORUS MASTER worked
+example.
 
 ### Fintek
 

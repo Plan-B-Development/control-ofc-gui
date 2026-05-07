@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.11.0] — 2026-05-07
+
+Diagnostics → Fans tab improvements. Pairs with **daemon v1.6.3**. The
+PWM verify wait is doubled from 3 s to 6 s so slow-spinning fans settle
+in time to be classified correctly, and the Diagnostics page now
+surfaces a dedicated warning when a Gigabyte dual-chip motherboard
+fails to enumerate its second ITE chip — the most common cause of
+"some of my fan headers are missing" reports.
+
+### Added
+- **Dual-chip board warning banner (DEC-101).** When the daemon's new
+  `/diagnostics/hardware.expected_chips` lookup names a chip that is
+  not in `chips_detected` (typical case: Gigabyte X670/X870/Z790 AORUS
+  boards where the secondary IT87952E silently failed to bind), the
+  Fans tab now shows a clearly-marked warning naming the missing chip
+  and listing the exact `mmio=on` modprobe.d remediation. Includes a
+  pointer to frankcrawford/it87 issue #70 and the project Hardware
+  Compatibility Guide.
+- **"Verify All Writable" button (DEC-101 / 2E).** Sequentially runs
+  the per-header PWM test against every writable hwmon header,
+  showing per-step progress and an aggregated severity-coded summary
+  at the end. Reuses the existing background verify worker, so the
+  hwmon lease is only held for one verify at a time.
+- **Verify-result panel mentions the dual-chip case (DEC-101 / 2F).**
+  When a `pwm_value_clamped` or `no_rpm_effect` outcome lands on a
+  board that's missing one of its expected chips, the result panel
+  appends a one-line pointer to the dual-chip warning so users fix
+  the enumeration before chasing per-header behaviour.
+
+### Changed
+- **PWM verify wait raised from 3 s to 6 s (DEC-101 / 1A).**
+  Slow-spinning fans (pumps, large 140 mm chassis fans) need more
+  than 3 s to settle their RPM after a PWM transition; the previous
+  wait produced false `no_rpm_effect` verdicts. Coordinated with the
+  daemon: the GUI's `verify_hwmon_pwm` HTTP timeout is now 12 s
+  (was 8 s) and the control-loop pause-safety auto-resume is now 9 s
+  (was 5 s). New regression tests (`TestVerifyTimingConstantsDec101`)
+  guard the relationship `daemon_wait < pause_safety < http_timeout`
+  so a future drift can't silently re-introduce the race the original
+  pause was meant to prevent.
+- **`it87` row in the Diagnostics → Modules table now reads
+  "Mainline: No" (DEC-101 / 2C).** The *module name* `it87` ships in
+  the mainline tree, but every chip we actually target requires the
+  out-of-tree DKMS build, so calling the module mainline was
+  misleading users running the DKMS build. The chip-level "Mainline"
+  column already reported per-chip accuracy and is unchanged.
+
 ## [1.10.2] — 2026-05-07
 
 Audit-driven hygiene pass. Pairs with **daemon v1.6.2**. No new user-visible

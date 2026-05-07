@@ -118,6 +118,24 @@ Open Diagnostics → Fans, look at the **Hardware Readiness** card:
 - If the status is "loaded" but **writable_headers is 0**, run **Test PWM Control** on a header. A `pwm_enable_reverted` result means the BIOS is overriding control — fix it in BIOS Smart Fan settings.
 - If `acpi_enforce_resources=lax` is required (common with `it87`), the ACPI conflicts row will tell you so.
 
+### "Some of my fan headers are missing — only 5 of 8 show up"
+
+Open Diagnostics → Fans. If the **dual-chip warning banner** at the top of the Hardware Readiness card is visible, your motherboard is one of the dual-IO Gigabyte boards (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) where the secondary ITE chip silently failed to enumerate.
+
+This usually means one of:
+
+- The `it87` driver was loaded without `mmio=on`, and the secondary chip's DEVID read returned `0xFFFF` because the SuperIO bridge was left in configuration mode by an earlier process.
+- A previous run of `sensors-detect` poked the SuperIO bridge into a state the driver can't recover from until reboot.
+
+The fix:
+
+1. Create `/etc/modprobe.d/it87.conf` containing: `options it87 mmio=on`
+2. Avoid running `sensors-detect` after boot.
+3. Reboot.
+4. Click **Refresh Hardware Diagnostics** — the chips table should now list both ITE chips and `total_headers` should match what the board physically exposes.
+
+If the warning persists after these steps, see the upstream tracker thread at [frankcrawford/it87 issue #70](https://github.com/frankcrawford/it87/issues/70) for board-specific notes.
+
 ### "Fans run at full speed regardless of profile"
 
 The thermal safety logic forces 100% PWM if no CPU sensor is found for 5 cycles, or if any CPU sensor reports ≥105°C. Check the **Thermal safety** row of the Hardware Readiness card. If it reports "no CPU sensor", install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`).
