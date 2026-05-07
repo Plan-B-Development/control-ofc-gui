@@ -707,3 +707,149 @@ def verification_guidance(
         )
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Dual-chip board warning (DEC-101)
+# ---------------------------------------------------------------------------
+
+
+# Pretty model names for the chips we surface in the warning. Falls back to
+# the upper-cased chip name for anything not in the table.
+_CHIP_PRETTY_NAMES: dict[str, str] = {
+    "it8688": "IT8688E",
+    "it8689": "IT8689E",
+    "it8696": "IT8696E",
+    "it8792": "IT8792E/IT8795E",
+    "it87952": "IT87952E",
+    "it8686": "IT8686E",
+}
+
+
+def _pretty_chip(chip: str) -> str:
+    return _CHIP_PRETTY_NAMES.get(chip.lower(), chip.upper())
+
+
+def dual_chip_warning_html(
+    board_name: str,
+    expected_chips: list[str],
+    detected_chip_names: list[str],
+) -> str | None:
+    """Return rich-text HTML for the dual-chip board warning, or None.
+
+    Returns None when:
+        - ``expected_chips`` is empty (daemon does not know this board)
+        - every expected chip is in ``detected_chip_names`` (the kernel
+          enumerated the full set — nothing to warn about)
+
+    When some expected chips are missing, returns an HTML string with the
+    remediation steps (`mmio=on` modparam + post-boot warnings) suitable
+    for display in a `Qt.RichText` label. The wording is deliberately
+    explicit about *which* chip is missing so users can correlate with
+    their hardware docs.
+
+    *board_name* is the DMI ``board_name`` (used only for the heading);
+    callers should pass the empty string when DMI is unavailable and the
+    function will use a generic heading instead.
+    """
+    if not expected_chips:
+        return None
+
+    detected_lower = {c.lower() for c in detected_chip_names}
+    missing = [c for c in expected_chips if c.lower() not in detected_lower]
+    if not missing:
+        return None
+
+    expected_count = len(expected_chips)
+    detected_count = expected_count - len(missing)
+
+    # Heading uses the board name verbatim when available so users
+    # immediately recognise their machine.
+    if board_name.strip():
+        heading = (
+            f"<b>Dual-chip board detected — missing PWM headers</b><br>"
+            f"This board ({board_name}) is expected to expose {expected_count} ITE "
+            f"Super-IO chips, but the kernel only enumerated {detected_count}: "
+        )
+    else:
+        heading = (
+            f"<b>Missing PWM headers detected</b><br>"
+            f"This board is expected to expose {expected_count} ITE Super-IO chips, "
+            f"but the kernel only enumerated {detected_count}: "
+        )
+
+    expected_pretty = ", ".join(f"<b>{_pretty_chip(c)}</b>" for c in expected_chips)
+    missing_pretty = ", ".join(f"<b>{_pretty_chip(c)}</b>" for c in missing)
+    chip_summary = (
+        f"expected {expected_pretty}; missing {missing_pretty}.<br><br>"
+        f"<b>Most likely cause:</b> the it87 driver's secondary-chip scan "
+        f"failed because the SuperIO bridge was left in configuration mode "
+        f"by an earlier process (typically a previous run of "
+        f"<code>sensors-detect</code>), or the <code>mmio=on</code> module "
+        f"parameter is not set.<br><br>"
+        f"<b>To fix:</b><br>"
+        f"&nbsp;&nbsp;1. Create <code>/etc/modprobe.d/it87.conf</code> with: "
+        f"<code>options it87 mmio=on</code><br>"
+        f"&nbsp;&nbsp;2. Avoid running <code>sensors-detect</code> after boot "
+        f"(it can leave the SuperIO bridge in a bad state).<br>"
+        f"&nbsp;&nbsp;3. Reboot the machine.<br>"
+        f"&nbsp;&nbsp;4. Click <i>Refresh Hardware Diagnostics</i> to re-check.<br><br>"
+        f"<b>Still missing after reboot?</b> The frankcrawford/it87 "
+        f'<a href="https://github.com/frankcrawford/it87/issues/70">issue #70</a> '
+        f"thread documents the same failure mode on similar boards. See also "
+        f"the project's "
+        f'<a href="https://github.com/Plan-B-Development/control-ofc-gui/blob/main/'
+        f'docs/19_Hardware_Compatibility.md">Hardware Compatibility Guide</a>.'
+    )
+    return heading + chip_summary
+
+
+def is_known_dual_chip_board(expected_chips: list[str]) -> bool:
+    """Cheap check used by post-verify guidance (DEC-101 / 2F).
+
+    Any board where the daemon emitted ≥2 expected chips is considered a
+    dual-chip target. Single-chip lookup hits (or empty lookups) return
+    False so the verify-result wording stays unchanged on those boards.
+    """
+    return len(expected_chips) >= 2
+
+
+def dual_chip_verify_hint(
+    result: str,
+    expected_chips: list[str],
+    detected_chip_names: list[str],
+) -> str | None:
+    """Return a one-line follow-up note for the verify result panel
+    when the verify outcome could plausibly be tied to the dual-chip
+    enumeration problem (DEC-101 / 2F).
+
+    Triggers only on `pwm_value_clamped` and `no_rpm_effect` results
+    AND when the board is a known dual-chip target with at least one
+    chip missing — the union of "verify suggests something off" and
+    "we know about a board-level enumeration gap that would explain
+    fewer headers being available than the user expected".
+
+    Returns None when:
+        - the result is `effective` (working correctly — no dual-chip
+          confusion to explain)
+        - the result is `pwm_enable_reverted` or `rpm_unavailable` —
+          those failures are clearly BIOS/EC-driven or wiring-driven
+          and adding a dual-chip hint would just be noise
+        - the board is not a dual-chip target
+        - no chips are missing (all expected chips already detected)
+    """
+    if result not in ("pwm_value_clamped", "no_rpm_effect"):
+        return None
+    if not is_known_dual_chip_board(expected_chips):
+        return None
+    detected_lower = {c.lower() for c in detected_chip_names}
+    missing = [c for c in expected_chips if c.lower() not in detected_lower]
+    if not missing:
+        return None
+    return (
+        "If you also have fan headers missing from the list (your board has "
+        f"{len(expected_chips)} ITE chips but only "
+        f"{len(expected_chips) - len(missing)} were enumerated), see the "
+        "dual-chip notice on the Fans tab — fixing the enumeration may also "
+        "make this header behave."
+    )

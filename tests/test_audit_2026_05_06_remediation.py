@@ -256,9 +256,13 @@ class TestPerCallTimeout:
         client._get("/test", timeout=2.0)
         assert fake.last_get_timeout == 2.0
 
-    def test_verify_hwmon_pwm_uses_8s_timeout(self):
-        """The verify endpoint must override the global 5s default — daemon
-        sleeps 3s and worst case is ~4.5s; 5s leaves no margin."""
+    def test_verify_hwmon_pwm_uses_long_timeout(self):
+        """The verify endpoint must override the global default — daemon
+        sleeps 6 s (DEC-101, raised from 3 s) and worst case is ~7.5 s
+        round-trip; 5 s would leave no margin. Asserts ≥ 9 s so a future
+        regression that drops the timeout below the daemon wait is caught
+        even if the literal value drifts within reason.
+        """
         client, fake = _make_client_with_fake_http()
         # Stub the parse helper since the fake returns {}.
         with patch(
@@ -266,7 +270,11 @@ class TestPerCallTimeout:
             return_value=MagicMock(),
         ):
             client.verify_hwmon_pwm("hwmon:test", "lease-id")
-        assert fake.last_post_timeout == 8.0
+        assert isinstance(fake.last_post_timeout, float)
+        assert fake.last_post_timeout >= 9.0, (
+            f"verify_hwmon_pwm timeout={fake.last_post_timeout} must be ≥ 9 s "
+            f"(daemon wait 6 s + slack). DEC-101."
+        )
 
     def test_calibrate_openfan_computes_dynamic_timeout(self):
         """Calibrate timeout = (steps + 1) * hold_seconds + 10s headroom."""

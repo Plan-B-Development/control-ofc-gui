@@ -456,6 +456,20 @@ class HardwareDiagnosticsResult:
     kernel_modules: list[KernelModuleInfo] = field(default_factory=list)
     acpi_conflicts: list[AcpiConflictInfo] = field(default_factory=list)
     board: BoardInfo = field(default_factory=BoardInfo)
+    # DEC-101: chip names this DMI board is expected to expose, sourced
+    # from the daemon's curated dual-chip board table. Empty when the
+    # board is unknown or the daemon predates DEC-101 (the field is
+    # `skip_serializing_if = "Vec::is_empty"` on the wire). The
+    # diagnostics page compares this against `hwmon.chips_detected[]
+    # .chip_name` to render a missing-chip warning banner with the
+    # `mmio=on` modprobe.d remediation steps.
+    expected_chips: list[str] = field(default_factory=list)
+    # DEC-101: best-effort kernel-level chip detection (parsed from
+    # /dev/kmsg by the daemon). Populated when the kernel ring buffer
+    # is readable; empty otherwise. Useful for surfacing the
+    # "kernel found chip but driver did not bind" diagnostic; not
+    # authoritative for "what works".
+    kernel_detected_chips: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -697,6 +711,16 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
     board_raw = data.get("board", {})
     board = BoardInfo(**_filter_fields(BoardInfo, board_raw))
 
+    # DEC-101: dual-chip detection fields — daemon emits them only when
+    # non-empty (skip_serializing_if = "Vec::is_empty"), so older daemons
+    # that predate the field send no key and we default to []. The list
+    # comprehensions also coerce non-string entries to strings as a
+    # defensive measure against future shape drift.
+    expected_chips_raw = data.get("expected_chips") or []
+    expected_chips = [str(c) for c in expected_chips_raw if c]
+    kernel_detected_chips_raw = data.get("kernel_detected_chips") or []
+    kernel_detected_chips = [str(c) for c in kernel_detected_chips_raw if c]
+
     return HardwareDiagnosticsResult(
         api_version=data.get("api_version", 1),
         hwmon=hwmon,
@@ -711,6 +735,8 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
             for c in data.get("acpi_conflicts", [])
         ],
         board=board,
+        expected_chips=expected_chips,
+        kernel_detected_chips=kernel_detected_chips,
     )
 
 
