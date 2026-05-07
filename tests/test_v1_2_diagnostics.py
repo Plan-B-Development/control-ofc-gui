@@ -232,6 +232,47 @@ class TestVerifyResultParsing:
         assert result.initial_state.pwm_enable == 1
         assert result.final_state.pwm_enable == 2
 
+    def test_parse_restore_failed_default_false(self):
+        """Audit P2.5: ``restore_failed`` defaults to False when the daemon
+        does not include the field (older daemons, or successful restores —
+        the field is ``skip_serializing_if = "is_false"`` on the daemon side).
+        """
+        from control_ofc.api.models import parse_hwmon_verify_result
+
+        data = {
+            "header_id": "it8696-isa-0a30/pwm1",
+            "result": "effective",
+            "initial_state": {"pwm_enable": 1, "pwm_raw": 128, "pwm_percent": 50, "rpm": 1200},
+            "final_state": {"pwm_enable": 1, "pwm_raw": 178, "pwm_percent": 70, "rpm": 900},
+            "test_pwm_percent": 70,
+            "wait_seconds": 3,
+            "details": "PWM accepted and RPM changed",
+        }
+        result = parse_hwmon_verify_result(data)
+        assert result.restore_failed is False
+
+    def test_parse_restore_failed_true(self):
+        """Audit P2.5 regression: when the daemon's post-verify restore PWM
+        write fails, ``restore_failed: true`` reaches the GUI dataclass and
+        the diagnostics page can surface the warning. Previously the daemon
+        silently swallowed the error and the GUI had no signal that the
+        header was left at the verify test value.
+        """
+        from control_ofc.api.models import parse_hwmon_verify_result
+
+        data = {
+            "header_id": "it8696-isa-0a30/pwm1",
+            "result": "effective",
+            "initial_state": {"pwm_enable": 1, "pwm_raw": 128, "pwm_percent": 50, "rpm": 1200},
+            "final_state": {"pwm_enable": 1, "pwm_raw": 51, "pwm_percent": 20, "rpm": 700},
+            "test_pwm_percent": 20,
+            "wait_seconds": 3,
+            "details": "PWM accepted and RPM changed",
+            "restore_failed": True,
+        }
+        result = parse_hwmon_verify_result(data)
+        assert result.restore_failed is True
+
 
 # ---------------------------------------------------------------------------
 # Diagnostics page — board info display

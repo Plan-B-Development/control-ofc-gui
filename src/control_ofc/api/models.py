@@ -441,6 +441,10 @@ class HwmonVerifyResult:
     test_pwm_percent: int = 0
     wait_seconds: int = 0
     details: str = ""
+    # True if the daemon's post-verify restore-to-original-PWM failed. The
+    # daemon serializes this only when true (skip_serializing_if), so older
+    # daemons that lack the field appear here as the default ``False``.
+    restore_failed: bool = False
 
 
 @dataclass
@@ -724,4 +728,5 @@ def parse_hwmon_verify_result(data: dict) -> HwmonVerifyResult:
         test_pwm_percent=data.get("test_pwm_percent", 0),
         wait_seconds=data.get("wait_seconds", 0),
         details=data.get("details", ""),
+        restore_failed=bool(data.get("restore_failed", False)),
     )

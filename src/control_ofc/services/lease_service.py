@@ -82,6 +82,12 @@ class LeaseService(QObject):
         on the Qt main thread (QTimer + direct calls from UI/control loop).
         No lock is needed because Qt's event loop is single-threaded.
         If multi-threaded lease access is ever added, a lock must be introduced.
+
+        Retry-vs-recurring fairness: while the retry chain is in flight
+        (5s/10s/15s backoff) the recurring 30s renew timer is stopped so a
+        recurring tick cannot race the backoff retry and double up the
+        ``lease/renew`` API calls. The recurring timer is restarted once a
+        retry succeeds.
         """
         if not self._lease_id:
             self._renew_timer.stop()
@@ -89,12 +95,21 @@ class LeaseService(QObject):
         try:
             result = self._client.hwmon_lease_renew(self._lease_id)
             self._lease_id = result.lease_id
+            was_in_retry = self._renew_retry_count > 0
             self._renew_retry_count = 0
             log.debug("Lease renewed: %s (ttl=%ds)", result.lease_id, result.ttl_seconds)
+            # If a retry just succeeded, the recurring timer was stopped at
+            # failure time — restart it so periodic renewal resumes.
+            if was_in_retry and not self._renew_timer.isActive():
+                self._renew_timer.start()
             self.lease_renewed.emit(result.lease_id)
         except DaemonError as e:
             self._renew_retry_count += 1
             if self._renew_retry_count <= self._MAX_RENEW_RETRIES:
+                # Suspend the recurring timer for the duration of the retry
+                # chain. Without this, a 30s tick can fire between two 5s
+                # backoff retries and produce concurrent renew API calls.
+                self._renew_timer.stop()
                 backoff_ms = self._renew_retry_count * 5000
                 log.warning(
                     "Lease renewal failed (retry %d/%d in %dms): %s",
