@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.11.2] — 2026-05-08
+
+Bug-fix release. Reverts a packaging-only regression introduced by
+DEC-100 (v1.10.2): the `colorama` dependency was dropped after a
+grep-based audit flagged it as "dead" because nothing under `src/` or
+`tests/` directly imports it. In reality, `pyqtgraph 0.14.x`
+unconditionally imports `colorama.win32` and `colorama.winterm` at
+module-load time (`pyqtgraph/util/cprint.py`) — the platform check
+happens *after* the imports, so the imports fire on Linux too. Arch's
+upstream `python-pyqtgraph` package omits `python-colorama` from its
+declared dependencies, so on a clean system that doesn't already have
+`python-colorama` installed (e.g. fresh CachyOS), the GUI crashed at
+launch with `ModuleNotFoundError: colorama` before Qt was even
+initialised. This is the second time the same regression has happened;
+DEC-103 captures the rule so future audits cannot remove it again.
+
+### Fixed
+- **GUI fails to start on clean installs (`ModuleNotFoundError:
+  colorama`) (DEC-103).** Re-added `colorama>=0.4` to `pyproject.toml`
+  `dependencies` and `python-colorama` to the AUR PKGBUILD `depends`
+  array, with an in-PKGBUILD comment pointing to DEC-103 so the
+  declaration is load-bearing and explicit. The same fix shipped in
+  v1.9.0 and was incorrectly reverted by DEC-100 P1.2 in v1.10.2.
+
+### Tests
+- New `tests/test_packaging_dependencies.py`. Parses both
+  `pyproject.toml` and `packaging/PKGBUILD` and asserts that each
+  declares `colorama` / `python-colorama`. The failure message
+  references DEC-103 and cites `pyqtgraph/util/cprint.py:6-7`, so any
+  future grep-based audit attempting the same drop is caught at gate
+  time with a pointer to the rationale.
+
+### Documentation
+- **DEC-103 added.** Records that `colorama` is a required transitive
+  runtime dependency via `pyqtgraph` and that grep-based checks of
+  `src/` cannot be the sole evidence for removing it. Supersedes the
+  `pyproject.toml` / `packaging/PKGBUILD` clauses of DEC-100 P1.2 in
+  the implications of v1.10.2.
+- **`packaging/.SRCINFO` regenerated** against the v1.11.2 PKGBUILD so
+  the in-repo metadata once again reflects the actual published
+  package.
+
 ## [1.11.1] — 2026-05-08
 
 Bug-fix release. Pairs with **daemon v1.6.4**. Stops a 1 Hz error storm
