@@ -10,6 +10,21 @@ Control-OFC requires:
 
 The GUI never accesses hardware directly. All reads and writes go through the daemon's API over a local Unix socket.
 
+### Daemon prerequisites
+
+The daemon has its own prerequisites — kernel modules for your motherboard's
+Super I/O chip, possibly an AUR DKMS driver on newer Gigabyte / MSI / ASRock
+boards (2022+), and (for RDNA3+ AMD GPUs) the kernel parameter
+`amdgpu.ppfeaturemask=0xffffffff`. See the
+[daemon prerequisites guide](https://github.com/Plan-B-Development/control-ofc-daemon#prerequisites)
+before installing the daemon — it covers BIOS settings, kernel modules,
+and per-bootloader steps for the kernel parameter.
+
+If you have already installed the daemon, the quickest way to discover
+what your specific system needs is to launch the GUI and open
+**Diagnostics → Fans → Hardware Readiness** — it inspects your hardware
+and recommends the exact AUR packages or kernel parameters required.
+
 ## Installation
 
 ### Arch Linux (AUR)
@@ -19,6 +34,13 @@ paru -S control-ofc-gui
 ```
 
 (Any AUR helper works — `yay -S control-ofc-gui` does the same thing.)
+
+> **Tip — first-time AUR install UX:** paru pages the `PKGBUILD` and `.install`
+> through `less` and asks you to confirm before building. That is paru's
+> default security review (press `q` to exit the pager, then `y` to proceed),
+> not specific to this package. To install non-interactively, pass
+> `--skipreview` to paru (`paru -S --skipreview control-ofc-gui`), or add
+> `SkipReview` to the `[options]` section of `~/.config/paru/paru.conf`.
 
 ### From Source
 
