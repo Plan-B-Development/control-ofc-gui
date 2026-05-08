@@ -20,6 +20,6 @@ pkgbase = control-ofc-gui
 	depends = python-colorama
 	depends = hicolor-icon-theme
 	source = control-ofc-gui-1.11.2.tar.gz::https://github.com/Plan-B-Development/control-ofc-gui/archive/v1.11.2.tar.gz
-	sha256sums = cfbf41cb47f6c7e87ef3178692af248b3733deffb0b85e25b302d53023166701
+	sha256sums = 2e551c09ad3b1b9143efa7c4bb049a5c1c39ee59007e96aab9fc0e3d5b3bf253
 
 pkgname = control-ofc-gui
