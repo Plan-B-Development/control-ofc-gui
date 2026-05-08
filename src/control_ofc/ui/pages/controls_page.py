@@ -589,6 +589,15 @@ class ControlsPage(QWidget):
             header_by_id = {h.id: h for h in self._state.hwmon_headers}
 
             for fan in self._state.fans:
+                # DEC-102: drop hwmon-source fans whose header is read-only.
+                # Pre-DEC-102 a read-only header could be assigned to a
+                # control and produce a 1 Hz EACCES storm. Daemon discovery
+                # also drops these (Option A); this is defense-in-depth so
+                # an older daemon still under upgrade cannot offer them.
+                if fan.source == "hwmon":
+                    h = header_by_id.get(fan.id)
+                    if h is not None and not h.is_writable:
+                        continue
                 label = self._state.fan_display_name(fan.id)
                 if fan.source == "amd_gpu" and not gpu_writable:
                     label = f"{label} (read-only)"
@@ -609,12 +618,18 @@ class ControlsPage(QWidget):
                 available.append(entry)
 
             for header in self._state.hwmon_headers:
+                # DEC-102: drop read-only hwmon headers from the picker
+                # entirely. The previous "(read-only)" suffix labelled the
+                # header but still allowed assignment; users (or imported
+                # profiles) bound them to controls and the control loop
+                # then produced 1 Hz 503/EACCES storms. Read-only headers
+                # remain visible in Diagnostics → Fans for awareness.
+                if not header.is_writable:
+                    continue
                 if not any(a["id"] == header.id for a in available):
                     label = header.label or header.id
                     presence = classify_fan_presence(None, header)
-                    if presence == FanPresence.READ_ONLY:
-                        label = f"{label} (read-only)"
-                    elif PRESENCE_BADGE.get(presence):
+                    if PRESENCE_BADGE.get(presence):
                         label = f"{label} ({PRESENCE_BADGE[presence]})"
                     tip_parts = [f"ID: {header.id}"]
                     if header.chip_name:

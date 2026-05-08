@@ -174,6 +174,18 @@ class MainWindow(QWidget):
         # daemon restart with new detection logic refreshes the popup state.
         self._state.capabilities_updated.connect(self._on_capabilities_updated_for_kernel_warnings)
 
+        # DEC-102: when fresh hwmon header data arrives, sanitize any
+        # profile member that targets an unknown or read-only header.
+        # Load-time sanitization (``_drop_dead_hwmon_members``) only
+        # catches the canonical ``hwmon:amdgpu:`` shape. This runtime
+        # pass covers every other case using the daemon's authoritative
+        # writability flag. Runs once per ``headers_updated`` emission
+        # but persists to disk only when the member set actually
+        # changes, so steady-state polling does not thrash the profile
+        # files.
+        self._headers_sanitization_done = False
+        self._state.headers_updated.connect(self._sanitize_profiles_against_headers)
+
     def _wire_diagnostics_to_control_loop(self) -> None:
         """Connect Diagnostics' verify_started/completed signals to the
         control loop's pause/resume so the 1Hz tick does not race the
@@ -345,6 +357,48 @@ class MainWindow(QWidget):
 
         if acknowledged != set(settings.acknowledged_kernel_warnings):
             self._settings_service.update(acknowledged_kernel_warnings=sorted(acknowledged))
+
+    def _sanitize_profiles_against_headers(self, headers) -> None:
+        """Drop profile members that target unknown / read-only hwmon headers.
+
+        DEC-102: pairs with the load-time ``_drop_dead_hwmon_members``
+        sanitizer. Load-time sanitization knows only the canonical
+        pre-DEC-102 ``hwmon:amdgpu:`` shape; this runtime pass uses the
+        daemon's authoritative writability flag to catch every other case.
+
+        Runs once per session: the first non-empty ``headers_updated``
+        emission triggers the sweep. Subsequent emissions are ignored to
+        avoid log noise on steady-state polling. A daemon ``/hwmon/rescan``
+        does not refresh this — by that point any new dead members would
+        already be filtered by the picker (Option C-1).
+        """
+        if self._demo_mode:
+            return
+        if self._headers_sanitization_done:
+            return
+        if not headers:
+            return  # wait for the first real header set
+
+        writable_ids = {h.id for h in headers if getattr(h, "is_writable", True)}
+        all_ids = {h.id for h in headers}
+
+        total_dropped = 0
+        affected: list = []
+        for profile in self._profile_service.profiles:
+            dropped = profile.sanitize_hwmon_members(writable_ids, all_ids)
+            if dropped:
+                total_dropped += dropped
+                affected.append(profile)
+
+        for profile in affected:
+            self._profile_service.save_profile(profile)
+        if total_dropped:
+            log.info(
+                "DEC-102 runtime sanitization: dropped %d member(s) across %d profile(s)",
+                total_dropped,
+                len(affected),
+            )
+        self._headers_sanitization_done = True
 
     def _maybe_reset_gpu_on_close(self) -> None:
         """Reset the GPU fan to automatic when the GUI drove it and no
