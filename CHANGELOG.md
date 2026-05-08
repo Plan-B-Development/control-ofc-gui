@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.11.1] — 2026-05-08
+
+Bug-fix release. Pairs with **daemon v1.6.4**. Stops a 1 Hz error storm
+on RDNA3+ AMD GPU systems where the daemon was advertising the GPU's
+read-only hwmon `pwm1` shadow as a controllable fan header.
+
+### Fixed
+- **AMD GPU hwmon `pwm1` shadow no longer offered as a fan target
+  (DEC-102).** Pre-fix, the daemon advertised
+  `hwmon:amdgpu:0000:XX:XX.X:pwm1:pwm1` in `GET /hwmon/headers`. The
+  Controls → Edit Members picker showed it (with a cosmetic
+  "(read-only)" suffix); a user binding it to a control produced one
+  `503 Service Unavailable` per second forever, with the daemon log
+  reporting `Permission denied (os error 13)` against
+  `/sys/class/hwmon/hwmonN/pwm1`. RDNA3+ kernels expose that file
+  read-only without `pwm1_enable`, so the write can never succeed —
+  this is documented kernel behaviour, not a permissions bug. The fix
+  has three layers:
+  - The daemon excludes `chip_name == "amdgpu"` from hwmon discovery
+    entirely. GPU fans are owned by the GPU subsystem (`amd_gpu:`
+    prefix) only.
+  - The daemon's `POST /hwmon/{header_id}/pwm` short-circuits with
+    `400 feature_unavailable` when the header's `is_writable=false`,
+    so any unforeseen chip with a read-only `pwmN` produces a clean
+    non-retryable error instead of a misclassified 503 storm.
+  - The GUI member-picker filters `is_writable=false` headers out of
+    the available list (replacing the previous "(read-only)" cosmetic
+    label, which still allowed selection).
+- **Existing user profiles that bound the dead header are auto-repaired
+  on first launch (DEC-102).** `Profile.from_dict` drops members whose
+  `member_id` starts with `hwmon:amdgpu:` and re-saves the profile to
+  disk. A runtime sanitizer in `MainWindow` makes the same drop against
+  the live header set when the daemon's `headers_updated` signal first
+  fires, catching any other read-only header pattern that doesn't match
+  the syntactic shape.
+
+### Tests
+- 8 new GUI tests in `tests/test_dec102_amdgpu_hwmon_exclusion.py`
+  covering the picker filter, the load-time syntactic drop, the
+  re-save behaviour, and the runtime sanitizer's three branches
+  (unwritable / missing / non-hwmon members).
+- The daemon side gains four new integration tests in
+  `daemon/tests/ipc_integration.rs` plus four reworked unit tests in
+  `pwm_discovery::tests`. See daemon CHANGELOG.
+
 ## [1.11.0] — 2026-05-07
 
 Diagnostics → Fans tab improvements. Pairs with **daemon v1.6.3**. The

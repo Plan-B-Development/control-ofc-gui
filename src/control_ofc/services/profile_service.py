@@ -324,6 +324,55 @@ class Profile:
                 return c
         return None
 
+    def sanitize_hwmon_members(
+        self,
+        writable_header_ids: set[str],
+        all_header_ids: set[str] | None = None,
+    ) -> int:
+        """Drop ``hwmon:`` members that no current header can satisfy (DEC-102).
+
+        Args:
+            writable_header_ids: Header ids the daemon reports as
+                ``is_writable=True``. Members targeting these are kept.
+            all_header_ids: Optional superset including read-only headers,
+                used to distinguish "header is gone" from "header is
+                read-only" in the log line. When None, every dropped
+                member is logged simply as not-currently-writable.
+
+        Returns:
+            Number of members dropped across all controls. Callers
+            should re-save affected profiles when this is non-zero so
+            the cleanup persists across restarts.
+        """
+        dropped = 0
+        for control in self.controls:
+            kept: list[ControlMember] = []
+            for m in control.members:
+                if m.source != "hwmon":
+                    kept.append(m)
+                    continue
+                if m.member_id in writable_header_ids:
+                    kept.append(m)
+                    continue
+                # Member targets an hwmon header that is either missing
+                # entirely or present-but-read-only. Both cases mean the
+                # control loop will fail every cycle — drop the member.
+                reason = (
+                    "missing from current hwmon discovery"
+                    if all_header_ids is not None and m.member_id not in all_header_ids
+                    else "is not writable"
+                )
+                log.warning(
+                    "DEC-102: removing member '%s' (label=%r) from control '%s' — header %s",
+                    m.member_id,
+                    m.member_label,
+                    control.name or control.id,
+                    reason,
+                )
+                dropped += 1
+            control.members = kept
+        return dropped
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -343,6 +392,8 @@ class Profile:
             # Apply the v4 floor pass to v1-migrated profiles too so the
             # one-shot upgrade path always lands at the current schema.
             profile.controls = [_migrate_control_to_v4(c) for c in profile.controls]
+            # DEC-102 sanitization runs on every load, regardless of schema.
+            _drop_dead_hwmon_members(profile.controls)
             return profile
         # v2→v3 was non-structural (new fields with defaults).
         # v3→v4 lifts ``minimum_pct`` to the role-derived floor where the
@@ -355,6 +406,14 @@ class Profile:
         if version < 4:
             controls = [_migrate_control_to_v4(c) for c in controls]
 
+        # DEC-102: strip members bound to the read-only RDNA3+ amdgpu hwmon
+        # header (e.g. ``hwmon:amdgpu:0000:03:00.0:pwm1:pwm1``). The daemon
+        # no longer advertises it (Option A), and writes against it returned
+        # 503/EACCES every cycle — so any control that bound it produced a
+        # 1 Hz error storm. The corresponding GPU fan is still controllable
+        # via its ``amd_gpu:`` member; only the dead hwmon shadow is dropped.
+        _drop_dead_hwmon_members(controls)
+
         return Profile(
             id=data.get("id", str(uuid.uuid4())[:8]),
             name=data.get("name", ""),
@@ -363,6 +422,56 @@ class Profile:
             curves=curves,
             version=PROFILE_SCHEMA_VERSION,
         )
+
+
+# DEC-102: known-dead member-id patterns. These ids were advertised by
+# pre-DEC-102 daemons that included AMD GPU `pwm1` in hwmon discovery.
+# RDNA3+ exposes that file read-only without `pwm1_enable`, so any write
+# returned EACCES → 503/retryable, producing a 1 Hz error storm in the
+# control loop. Daemon discovery now drops `chip_name == "amdgpu"`, so the
+# corresponding member id can never round-trip; sanitizing on load
+# repairs profiles that were authored against an older daemon.
+_DEAD_HWMON_MEMBER_PREFIXES: tuple[str, ...] = ("hwmon:amdgpu:",)
+
+
+def _is_known_dead_hwmon_member(member: ControlMember) -> bool:
+    """Return True for member ids that are known to be unwritable.
+
+    The list is deliberately conservative — it only covers cases where the
+    full prefix proves the id targets a read-only sysfs path. Broader
+    sanitization (against the live header list) is handled separately at
+    runtime by ``Profile.sanitize_hwmon_members``.
+    """
+    if member.source != "hwmon":
+        return False
+    return any(member.member_id.startswith(p) for p in _DEAD_HWMON_MEMBER_PREFIXES)
+
+
+def _drop_dead_hwmon_members(controls: list[LogicalControl]) -> int:
+    """Remove members whose ids match a known-dead hwmon pattern.
+
+    Mutates each control's ``members`` list in place and returns the
+    total number of members dropped. Logs a warning for every drop so a
+    repaired profile leaves a forensic trail in the journal.
+    """
+    dropped = 0
+    for control in controls:
+        kept: list[ControlMember] = []
+        for m in control.members:
+            if _is_known_dead_hwmon_member(m):
+                log.warning(
+                    "DEC-102: dropping dead hwmon member '%s' (label=%r) from control '%s' — "
+                    "this id refers to an AMD GPU pwm1 file that is read-only on RDNA3+ kernels; "
+                    "GPU fan control should be bound via the 'amd_gpu:' member instead",
+                    m.member_id,
+                    m.member_label,
+                    control.name or control.id,
+                )
+                dropped += 1
+                continue
+            kept.append(m)
+        control.members = kept
+    return dropped
 
 
 def _migrate_control_to_v4(control: LogicalControl) -> LogicalControl:
@@ -583,14 +692,36 @@ class ProfileService:
         for path in sorted(d.glob("*.json")):
             try:
                 data = json.loads(path.read_text())
+                # Snapshot the on-disk member ids before sanitization so we
+                # can detect DEC-102 drops without re-running the pattern
+                # match here. Compares against the post-load profile state.
+                pre_sanitize_member_ids = {
+                    m.get("member_id", "")
+                    for c in data.get("controls", [])
+                    for m in c.get("members", [])
+                }
                 profile = Profile.from_dict(data)
                 self._profiles[profile.id] = profile
                 # Re-save if migrated from any earlier schema version. The
                 # v4 migration may also raise ``minimum_pct`` on disk so the
                 # change persists across restarts.
-                if data.get("version", 1) < PROFILE_SCHEMA_VERSION:
+                schema_migrated = data.get("version", 1) < PROFILE_SCHEMA_VERSION
+                # DEC-102: also re-save when load-time sanitization dropped
+                # any members, so the cleanup persists. Without this,
+                # every restart would re-detect and re-warn forever.
+                post_sanitize_member_ids = {
+                    m.member_id for c in profile.controls for m in c.members
+                }
+                members_sanitized = pre_sanitize_member_ids != post_sanitize_member_ids
+                if schema_migrated or members_sanitized:
                     self.save_profile(profile)
-                    log.info("Migrated profile %s to v%d", profile.name, PROFILE_SCHEMA_VERSION)
+                    if schema_migrated:
+                        log.info("Migrated profile %s to v%d", profile.name, PROFILE_SCHEMA_VERSION)
+                    if members_sanitized:
+                        log.info(
+                            "Profile %s persisted after DEC-102 member sanitization",
+                            profile.name,
+                        )
                 loaded = True
             except Exception as e:
                 log.warning("Failed to load profile %s: %s", path, e)

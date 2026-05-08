@@ -143,6 +143,14 @@ Use to discover:
 - enable support
 - rpm support
 - min/max PWM percentages
+- `is_writable` — whether the daemon believes the `pwmN` file is writable.
+  After DEC-102 the daemon excludes `chip_name == "amdgpu"` from this list
+  entirely (GPU fans are owned by the GPU subsystem; their hwmon shadow
+  file is read-only on RDNA3+ kernels and writes return `EACCES`). Any
+  other chip whose `pwmN` lacks write permission appears here with
+  `is_writable: false` — the GUI must not offer such headers in the
+  member-picker, since `POST /hwmon/{header_id}/pwm` will return 400
+  `feature_unavailable`.
 
 ### GET /hwmon/lease/status
 Use to show:
@@ -219,6 +227,12 @@ The calibration endpoint runs a long-running sweep (steps × hold_seconds) that 
 ### Hwmon PWM write
 - `POST /hwmon/{header_id}/pwm`
 
+May return `400 feature_unavailable` (DEC-102) when the targeted
+header's discovered `is_writable` flag is false — the kernel exposes
+its `pwmN` file read-only and writes would otherwise EACCES into a
+1 Hz 503 storm. The GUI should treat this as a misconfigured profile
+member (drop the member, not retry the write).
+
 ### Profile activation
 - `POST /profile/activate` — `{"profile_path": "/path/to/profile.json"}` or `{"profile_id": "quiet"}`
   - Daemon validates, applies, and persists active profile to `/var/lib/control-ofc/daemon_state.json`
@@ -275,7 +289,11 @@ All errors use a standard nested envelope:
 
 Error codes and HTTP statuses:
 - 400 `validation_error` (source: `"validation"`, retryable: false)
-- 400 `feature_unavailable` (source: `"validation"`, retryable: false) — the endpoint exists and the addressed device exists, but that device does not support the requested operation. Currently surfaced by GPU fan writes/resets when the GPU has neither a PMFW `fan_curve` nor legacy `pwm1` write path. Distinct from `hardware_unavailable` (transient / retryable) and `validation_error` (malformed request). Permanent for this device — clients must not retry.
+- 400 `feature_unavailable` (source: `"validation"`, retryable: false) — the endpoint exists and the addressed device exists, but that device does not support the requested operation. Currently surfaced by:
+  - GPU fan writes/resets when the GPU has neither a PMFW `fan_curve` nor legacy `pwm1` write path (DEC-098); and
+  - hwmon PWM writes when the targeted header's discovered `is_writable=false` (DEC-102), e.g. an unforeseen chip exposing a read-only `pwmN` file.
+
+  Distinct from `hardware_unavailable` (transient / retryable) and `validation_error` (malformed request). Permanent for this device — clients must not retry.
 - 400/403 `lease_required` (source: `"validation"`, retryable: false) — 400 for invalid/expired lease ID, 403 for missing lease on write
 - 404 `not_found` (source: `"validation"`, retryable: false)
 - 409 `lease_already_held` (source: `"validation"`, retryable: false) — surfaced only by hwmon PWM writes when another owner holds the lease; `POST /hwmon/lease/take` unconditionally force-takes and never returns this code
