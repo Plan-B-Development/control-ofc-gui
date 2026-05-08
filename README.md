@@ -23,6 +23,13 @@ Desktop fan control interface for Linux. Communicates with the [`control-ofc-dae
 paru -S control-ofc-gui
 ```
 
+> **Tip — first-time AUR install UX:** paru pages the `PKGBUILD` and `.install`
+> through `less` and asks you to confirm before building. That is paru's default
+> security review (press `q` to exit the pager, then `y` to proceed), not
+> specific to this package. To install non-interactively, pass `--skipreview`
+> to paru (`paru -S --skipreview control-ofc-gui`), or add `SkipReview` to the
+> `[options]` section of `~/.config/paru/paru.conf`.
+
 **From source:**
 
 ```bash
@@ -44,6 +51,15 @@ control-ofc-gui
 # 3. Or try demo mode (no daemon required)
 control-ofc-gui --demo
 ```
+
+> **First-time daemon setup?** The daemon has its own prerequisites — kernel
+> modules for your motherboard's Super I/O chip, possibly an AUR DKMS driver
+> on newer Gigabyte / MSI / ASRock boards (2022+), and a kernel parameter
+> for RDNA3+ AMD GPU fan control. See the
+> [daemon prerequisites guide](https://github.com/Plan-B-Development/control-ofc-daemon#prerequisites)
+> before installing the daemon, or open **Diagnostics → Fans → Hardware
+> Readiness** in the GUI after install — it identifies your chip and
+> recommends the exact AUR package.
 
 ## CLI
 

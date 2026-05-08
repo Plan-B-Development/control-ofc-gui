@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.11.3] — 2026-05-08
+
+Documentation-only release. Pairs with **daemon v1.6.5**. Documents
+paru's PKGBUILD-review pager UX so first-time AUR installers know what
+the "press `q`" prompt is and how to opt out for unattended installs.
+No GUI code changes — same binary wheel, same API client, same
+behaviour.
+
+### Documentation
+- **Install-UX tip in `README.md` and `manual/getting-started.md`
+  (DEC-104).** Footnote-style note describing paru's PKGBUILD-review
+  pager (the "press `q`" prompt new users see on first install) and
+  how to opt out via `paru -S --skipreview` or `SkipReview` in
+  `~/.config/paru/paru.conf`. Phrased as a tip, not the canonical
+  install command — paru's review is a security feature and we are not
+  normalising "skip review by default" for an Arch audience.
+- **DEC-104 added** to the authoritative GUI `DECISIONS.md` log and
+  mirrored in the daemon `DECISIONS.md`. Records the investigation
+  that traced the new-user "press `q`" complaint to paru's default
+  review pager (not a SHA256 mismatch — both daemon and GUI checksums
+  verified), the alternatives considered (custom signed pacman repo
+  rejected as disproportionate for a single-author project), and why
+  the in-package fix is limited to cutting our own pager content +
+  documenting paru's opt-out.
+
 ## [1.11.2] — 2026-05-08
 
 Bug-fix release. Reverts a packaging-only regression introduced by
