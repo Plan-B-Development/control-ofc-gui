@@ -354,3 +354,153 @@ class TestParserResilience:
         result = parse_status(data)
         assert len(result.subsystems) == 1
         assert result.subsystems[0].name == "serial"
+
+
+# ---------------------------------------------------------------------------
+# T2 (test-tests audit): parser failure-path coverage.
+#
+# Audit finding: parse_* functions are exercised on the happy path and on
+# missing-field / extra-field shapes, but never on type-mismatch shapes
+# (string where int expected, null where string expected, etc.). The
+# `_filter_fields` helper makes most parsers permissive — they drop unknown
+# keys — but a wrong-type value can still raise inside the dataclass
+# constructor. These tests pin the *documented* behaviour: the parsers
+# return safe defaults via .get() rather than propagating raw KeyError /
+# TypeError surfaces, and any required-field omission yields the default
+# value the GUI is built around.
+# ---------------------------------------------------------------------------
+
+
+class TestParserFailureModes:
+    def test_parse_sensors_with_missing_id_uses_empty_string_default(self):
+        """SensorReading.id defaults to "" so a malformed daemon response
+        produces a parseable reading with empty id rather than crashing
+        the polling loop. Locks the safe-defaults contract: bad upstream
+        data degrades gracefully, the UI flags it later."""
+        sensors = parse_sensors({"sensors": [{"value_c": 50.0}]})
+        assert len(sensors) == 1
+        assert sensors[0].id == ""
+        assert sensors[0].value_c == 50.0
+
+    def test_parse_sensors_with_wrong_type_in_value_field_passes_through(self):
+        """_filter_fields does no type coercion — strings flow into float
+        fields. The downstream consumer (UI) is responsible for handling
+        bad types. Lock the behaviour: parser does not raise, value is
+        stored verbatim. Catches accidental introduction of coercion that
+        would mask upstream daemon bugs."""
+        sensors = parse_sensors(
+            {"sensors": [{"id": "cpu", "value_c": "not-a-number", "age_ms": 0}]}
+        )
+        assert len(sensors) == 1
+        assert sensors[0].value_c == "not-a-number"
+
+    def test_parse_lease_status_missing_held_defaults_to_false(self):
+        """If the daemon omits `held`, the parser must NOT crash; default
+        to False so the UI shows 'no lease' rather than an exception."""
+        result = parse_lease_status({})
+        assert result.held is False
+        assert result.lease_id is None
+        assert result.ttl_seconds_remaining is None
+
+    def test_parse_lease_status_with_null_lease_id(self):
+        """`lease_id: null` is the daemon's wire shape when no lease is
+        held. Must survive parsing without coercion."""
+        result = parse_lease_status({"held": False, "lease_id": None})
+        assert result.lease_id is None
+
+    def test_parse_status_missing_overall_status_defaults_to_unknown(self):
+        """Required-on-the-wire field missing → parser falls back to
+        'unknown' string rather than raising. The UI distinguishes
+        'unknown' from 'ok' so this default carries meaning."""
+        result = parse_status({})
+        assert result.overall_status == "unknown"
+        assert result.subsystems == []
+
+    def test_parse_set_pwm_missing_fields_uses_defaults(self):
+        """SetPwmResult parser must not raise on incomplete envelopes —
+        defaults to channel=0, pwm_percent=0, coalesced=False."""
+        result = parse_set_pwm({})
+        assert result.channel == 0
+        assert result.pwm_percent == 0
+        assert result.coalesced is False
+
+    def test_parse_lease_result_missing_lease_id_defaults_to_empty_string(self):
+        """Empty string default (not None) so downstream code can treat
+        the field as a string everywhere without isinstance checks."""
+        result = parse_lease_result({})
+        assert result.lease_id == ""
+        assert isinstance(result.lease_id, str)
+        assert result.ttl_seconds == 0
+
+    def test_parse_capabilities_with_completely_empty_input(self):
+        """The smoke test: an empty dict must yield sensible defaults
+        across every nested capability and limits field. This is the
+        worst-case-still-survivable shape."""
+        caps = parse_capabilities({})
+        assert caps.api_version == 1
+        assert caps.daemon_version == ""
+        assert caps.openfan.present is False
+        assert caps.hwmon.present is False
+        assert caps.amd_gpu.present is False
+        assert caps.limits.pwm_percent_min == 0
+        assert caps.limits.pwm_percent_max == 100
+
+    def test_parse_capabilities_with_null_devices_field_falls_back(self):
+        """If a future daemon were to send `devices: null` (unlikely but
+        possible), the parser .get() chain treats it as 'missing'."""
+        # We can't pass None as `.get("devices", {})` returns {} only when
+        # the key is absent, not when its value is None. So this asserts
+        # the current contract: null causes the standard fall-through path
+        # via AttributeError on .get(). Lock the failure mode so a future
+        # contributor cannot quietly "fix" it without an audit.
+        import pytest
+
+        with pytest.raises(AttributeError):
+            parse_capabilities({"devices": None})
+
+    def test_parse_lease_released_with_string_released_field(self):
+        """released=True is the contract, but the parser does not coerce.
+        Lock the pass-through behaviour to catch a sneaky `bool()` wrap."""
+        result = parse_lease_released({"released": "true"})
+        # No coercion: string "true" survives. The UI sees a truthy
+        # non-bool which is unusual but documented.
+        assert result.released == "true"
+
+    def test_parse_sensors_with_nonlist_sensors_field_raises(self):
+        """If `sensors` is a dict instead of a list (bad daemon shape),
+        the list comprehension raises — not silently treats it as empty.
+        This blast-radius is acceptable because the only callsite (the
+        polling worker) wraps parse_sensors in DaemonError handling."""
+        import pytest
+
+        with pytest.raises((TypeError, AttributeError)):
+            parse_sensors({"sensors": {"cpu": {"value_c": 50.0}}})
+
+    def test_parse_calibration_result_with_no_points_uses_empty_list(self):
+        """No-points calibration is valid (calibration failed/aborted).
+        Parser must yield an empty list, not crash."""
+        result = parse_calibration_result({"fan_id": "ch0"})
+        assert result.fan_id == "ch0"
+        assert result.points == []
+        assert result.min_rpm == 0
+        assert result.max_rpm == 0
+
+    def test_parse_hwmon_set_pwm_missing_header_id_uses_empty_string(self):
+        """Empty-string default keeps the type stable for downstream
+        consumers (e.g. logging concatenations) at the cost of a slightly
+        suspicious value. Lock this trade-off."""
+        result = parse_hwmon_set_pwm({})
+        assert result.header_id == ""
+        assert result.pwm_percent == 0
+        assert result.raw_value == 0
+
+    def test_parse_sensor_history_missing_v_uses_zero_default(self):
+        """HistoryPoint.v defaults to 0.0 so a malformed point still parses
+        (charts may render a zero line briefly until the next poll). Locks
+        the safe-defaults contract — the alternative is the entire poll
+        cycle bombing out on one bad point."""
+        result = parse_sensor_history({"entity_id": "cpu", "points": [{"ts": 1234}]})
+        assert result.entity_id == "cpu"
+        assert len(result.points) == 1
+        assert result.points[0].ts == 1234
+        assert result.points[0].v == 0.0

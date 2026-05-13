@@ -115,3 +115,106 @@ def test_pruning_removes_old_entries():
         # Old entry should be pruned (older than 5s)
         assert len(series) == 1
         assert series[0].value == 50.0
+
+
+# ---------------------------------------------------------------------------
+# T2 (test-tests audit): prefill_sensor on a pre-existing series + prune
+# boundary semantics.
+#
+# Mutation testing showed:
+#  - prefill_sensor's "create deque if missing" path mutated to "always create"
+#    (replacing the existing series) survived — no test populated a series and
+#    then called prefill again to verify append-not-replace semantics.
+#  - _prune's `while series and series[0].timestamp < cutoff` boundary mutated
+#    to `<=` survived — no test exercised an entry exactly at the cutoff to
+#    distinguish strict vs non-strict.
+# ---------------------------------------------------------------------------
+
+
+def test_prefill_sensor_appends_to_existing_series():
+    """prefill_sensor on a series that already has live readings must APPEND
+    (not replace, not duplicate). The existing readings are higher-timestamp
+    than the prefill, so a correct append leaves both visible."""
+    store = HistoryStore()
+    # Seed with one live reading first.
+    store.record_sensors([SensorReading(id="cpu", value_c=55.0)])
+    initial = store.get_series("sensor:cpu")
+    assert len(initial) == 1, "precondition: one live reading"
+
+    # Now prefill with daemon history — should append, not replace.
+    now_ms = int(time.time() * 1000)
+    points = [
+        HistoryPoint(ts=now_ms - 3000, v=40.0),
+        HistoryPoint(ts=now_ms - 2000, v=42.0),
+    ]
+    store.prefill_sensor("cpu", points)
+    series = store.get_series("sensor:cpu")
+    # Three entries total: 2 prefilled + 1 from record_sensors.
+    assert len(series) == 3, f"expected 3 entries after append, got {len(series)}"
+    # All three values must be present (order not important here — order
+    # depends on whether prefill happens before or after the live reading).
+    values = sorted(r.value for r in series)
+    assert values == [40.0, 42.0, 55.0]
+
+
+def test_prune_boundary_keeps_entry_exactly_at_cutoff():
+    """The prune predicate is `timestamp < cutoff` (strict less-than) — an
+    entry whose timestamp equals the cutoff must be RETAINED. Locks down
+    `<` vs `<=` on the prune loop's condition."""
+    import time as _time
+    from collections import deque
+    from unittest.mock import patch
+
+    from control_ofc.services.history_store import TimestampedReading
+
+    store = HistoryStore(max_age_s=5)
+
+    # Establish a deterministic monotonic baseline by recording at t=0 (real).
+    base = _time.monotonic()
+
+    # Seed two entries at known monotonic timestamps:
+    #   entry A: t = base (the future cutoff will land *exactly* here)
+    #   entry B: t = base + 1 (clearly inside the window)
+    store._series["sensor:cpu"] = deque(
+        [
+            TimestampedReading(timestamp=base, value=10.0),
+            TimestampedReading(timestamp=base + 1.0, value=20.0),
+        ]
+    )
+
+    # Patch monotonic so cutoff = base + 5 - 5 = base.
+    # Then entry A (timestamp = base) is EXACTLY at the cutoff.
+    with patch("time.monotonic", lambda: base + 5.0):
+        series = store.get_series("sensor:cpu")
+        # The strict `<` predicate keeps the entry at the cutoff.
+        assert len(series) == 2, (
+            "entry exactly at cutoff must be retained "
+            f"(strict `<`), got {len(series)} entries: {[r.value for r in series]}"
+        )
+        assert series[0].value == 10.0
+        assert series[1].value == 20.0
+
+
+def test_prune_drops_entry_just_past_cutoff():
+    """Companion to the boundary test: an entry whose timestamp is even
+    1 nanosecond past the cutoff must be dropped."""
+    import time as _time
+    from collections import deque
+    from unittest.mock import patch
+
+    from control_ofc.services.history_store import TimestampedReading
+
+    store = HistoryStore(max_age_s=5)
+    base = _time.monotonic()
+    store._series["sensor:cpu"] = deque(
+        [
+            TimestampedReading(timestamp=base - 0.001, value=10.0),  # past cutoff
+            TimestampedReading(timestamp=base + 1.0, value=20.0),
+        ]
+    )
+
+    # cutoff = base + 5 - 5 = base. Entry A is base - 0.001 < base → pruned.
+    with patch("time.monotonic", lambda: base + 5.0):
+        series = store.get_series("sensor:cpu")
+        assert len(series) == 1
+        assert series[0].value == 20.0

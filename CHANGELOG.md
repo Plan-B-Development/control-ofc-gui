@@ -1,5 +1,66 @@
 # Changelog
 
+## [Unreleased]
+
+Test-tests audit hardening pass. A `/test-tests` mutation-driven audit
+identified a set of equivalent-mutant survivors in both the Python GUI
+and the Rust daemon; this pass closes those gaps with 31 new GUI tests
+and the corresponding daemon counterpart, plus two small contract
+additions to make daemon-side behaviour observable. See DEC-107.
+
+### Tests
+- **31 new GUI tests** across six suites, every one anchored to a
+  specific mutation-survivor pattern from the audit:
+  - **`test_polling_service.py`**: 6 new tests exercising the real
+    `PollingService.__init__` instead of bypassing it via
+    `__new__`. Locks down `setInterval(POLL_INTERVAL_MS)`, the
+    six worker→state signal wirings, the worker QThread being
+    started, and `start()` / `stop()` toggling the timer.
+  - **`test_lease_service.py`**: 3 new tests pinning down the
+    renew-timer interval (`LEASE_RENEW_INTERVAL_S * 1000` ms),
+    the literal `"gui"` owner-hint string sent to the daemon,
+    and the invariant `LEASE_RENEW_INTERVAL_S < 60` against the
+    daemon's lease TTL.
+  - **`test_history.py`**: 3 new tests for `prefill_sensor` on a
+    pre-existing series (append-not-replace semantics) and the
+    `_prune` boundary (`<` vs `<=`) — an entry exactly at the
+    cutoff must be retained, an entry one tick past it must be
+    dropped.
+  - **`test_session_stats.py`**: 4 new tests covering the `<`
+    and `>` boundaries in `SessionStatsTracker.update`. Catches
+    `<` → `<=` and `>` → `>=` mutations that were previously
+    survivable because no test fed a value exactly equal to the
+    current min or max.
+  - **`test_ui_clicks.py`**: 2 widget-existence-only tests
+    (`*_button_exists`) replaced with behaviour assertions — the
+    new control click now drives a real `LogicalControl` into
+    the active profile, and the refresh-overview click drives
+    the status label to `"Refreshed"`.
+  - **`test_models.py`**: 13 new parser failure-mode tests
+    covering missing required fields, wrong-type passthroughs,
+    null lease_id, completely empty input dicts, and a few
+    explicit raises-on-pathological-shape cases. Pins the
+    "safe defaults at the boundary" contract end-to-end.
+
+### Added (daemon contract surface, non-breaking)
+- **`LeaseError::Expired` variant** — distinguishes "lease id
+  matches but TTL elapsed" from "lease id doesn't match the
+  active lease". HTTP wire shape unchanged: both still map to
+  `403 lease_required`. Internally, callers can now reason
+  about whether to renew vs re-acquire without parsing log
+  text. See DEC-107.
+- **`HwmonPwmController.verify_mismatch_counts()` accessor** —
+  exposes a per-header cumulative count of PWM verify-after-
+  write mismatches. Mirrors `enable_revert_counts()`. Useful
+  for diagnostics and — more importantly — makes the existing
+  mismatch path observable in tests. See DEC-107.
+
+### Documentation
+- **DECISIONS.md:** new DEC-107 (test-tests audit hardening:
+  rationale, mutation-survivor inventory, contract additions).
+
+---
+
 ## [1.12.0] — 2026-05-13
 
 Pairs with **daemon v1.7.0**. Coordinated AMD-board-support hardening

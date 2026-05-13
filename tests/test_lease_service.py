@@ -221,3 +221,58 @@ def test_renew_retry_exhausted_leaves_timer_stopped(mock_client, qtbot):
 
     assert svc.is_held is False
     assert not svc._renew_timer.isActive()
+
+
+# ---------------------------------------------------------------------------
+# T2 (test-tests audit): timer interval and owner string assertions.
+#
+# These constants and the "gui" literal are passed to the daemon and define
+# the wire contract. Mutation testing showed:
+#  - `LEASE_RENEW_INTERVAL_S * 1000` mutated to `* 100` or `/ 1000` survived
+#    — no test asserted the actual ms interval.
+#  - `client.hwmon_lease_take("gui")` mutated to take("XXguiXX") survived
+#    — no test asserted the literal owner-hint string sent to the daemon.
+# These tests lock both down.
+# ---------------------------------------------------------------------------
+
+
+def test_renew_timer_interval_matches_constant(mock_client):
+    """LeaseService._renew_timer.interval() must equal LEASE_RENEW_INTERVAL_S * 1000.
+
+    The constant is exposed in the daemon API contract: the GUI must renew
+    *before* the 60s daemon TTL elapses, so changing this magic number
+    without an audit could cause silent lease loss.
+    """
+    from control_ofc.constants import LEASE_RENEW_INTERVAL_S
+
+    svc = LeaseService(mock_client)
+    assert svc._renew_timer.interval() == LEASE_RENEW_INTERVAL_S * 1000
+    # And LEASE_RENEW_INTERVAL_S must itself be < the daemon's 60s TTL
+    # (locked in case someone bumps it past the safety margin).
+    assert LEASE_RENEW_INTERVAL_S < 60, "renew interval must be < daemon's 60s lease TTL"
+
+
+def test_acquire_sends_literal_gui_owner_hint(mock_client):
+    """LeaseService.acquire() must call hwmon_lease_take with the literal "gui".
+
+    The owner-hint is the string the daemon's profile engine checks against
+    when deciding whether to defer hwmon writes (DEC-074: 'gui' takes priority
+    over 'profile-engine'). Sending the wrong string would cause silent
+    dual-writer conflicts.
+    """
+    svc = LeaseService(mock_client)
+    svc.acquire()
+    mock_client.hwmon_lease_take.assert_called_once_with("gui")
+
+
+def test_renew_starts_recurring_timer_with_correct_interval_on_acquire(mock_client):
+    """After acquire() the recurring timer must be ACTIVE and using the
+    full LEASE_RENEW_INTERVAL_S * 1000 ms cadence — not a zero/instant timer."""
+    from control_ofc.constants import LEASE_RENEW_INTERVAL_S
+
+    svc = LeaseService(mock_client)
+    assert not svc._renew_timer.isActive(), "timer must not run before acquire"
+    svc.acquire()
+    assert svc._renew_timer.isActive(), "timer must run after successful acquire"
+    # Interval should not have been altered by acquire().
+    assert svc._renew_timer.interval() == LEASE_RENEW_INTERVAL_S * 1000

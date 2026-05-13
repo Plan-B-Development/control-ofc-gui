@@ -415,3 +415,123 @@ class TestPollingServiceLifecycle:
 
         assert svc._state is state
         svc.shutdown()  # must not raise
+
+
+class TestPollingServiceConstruction:
+    """T2 (test-tests audit): drive the real PollingService.__init__ instead
+    of bypassing it via __new__, so the timer interval, signal wiring, and
+    worker-thread setup are actually exercised. The prior `_make_polling_service`
+    helper used __new__ + manual attribute assignment, leaving 56 lines of
+    __init__ logic untested. Mutation testing showed flipping `setInterval(POLL_INTERVAL_MS)`,
+    the per-signal connect() calls, and the thread.start() invocation all
+    survived. These tests lock those down."""
+
+    def test_init_creates_worker_and_thread(self, tmp_path):
+        """The real __init__ wires up worker, thread, and timer attributes."""
+        from PySide6.QtCore import QThread, QTimer
+
+        from control_ofc.services.polling import _PollWorker
+
+        state = AppState()
+        socket_path = str(tmp_path / "nonexistent.sock")
+        svc = PollingService(state, socket_path)
+        try:
+            assert isinstance(svc._worker, _PollWorker)
+            assert isinstance(svc._thread, QThread)
+            assert isinstance(svc._timer, QTimer)
+            assert not svc._running, "service must not auto-start"
+        finally:
+            svc.shutdown()
+
+    def test_init_sets_timer_interval_to_poll_interval(self, tmp_path):
+        """Locks down the QTimer interval — POLL_INTERVAL_MS, not arbitrary."""
+        from control_ofc.constants import POLL_INTERVAL_MS
+
+        state = AppState()
+        socket_path = str(tmp_path / "nonexistent.sock")
+        svc = PollingService(state, socket_path)
+        try:
+            assert svc._timer.interval() == POLL_INTERVAL_MS
+        finally:
+            svc.shutdown()
+
+    def test_init_socket_path_propagated_to_worker(self, tmp_path):
+        """The socket path the GUI was launched with must reach the worker."""
+        state = AppState()
+        socket_path = str(tmp_path / "ctl.sock")
+        svc = PollingService(state, socket_path)
+        try:
+            assert svc._worker._socket_path == socket_path
+        finally:
+            svc.shutdown()
+
+    def test_init_thread_is_started(self, tmp_path):
+        """The worker QThread must be running so worker.poll() can execute on it."""
+        state = AppState()
+        socket_path = str(tmp_path / "nonexistent.sock")
+        svc = PollingService(state, socket_path)
+        try:
+            assert svc._thread.isRunning(), "polling worker thread must be started"
+        finally:
+            svc.shutdown()
+
+    def test_start_starts_timer_stop_stops_it(self, tmp_path):
+        """start() activates the QTimer; stop() deactivates it."""
+        state = AppState()
+        socket_path = str(tmp_path / "nonexistent.sock")
+        svc = PollingService(state, socket_path)
+        try:
+            assert not svc._timer.isActive()
+            svc.start()
+            assert svc._timer.isActive()
+            assert svc._running
+            svc.stop()
+            assert not svc._timer.isActive()
+            assert not svc._running
+        finally:
+            svc.shutdown()
+
+    def test_init_wires_worker_signals_to_state(self, tmp_path):
+        """Each worker signal must update AppState — verify by emitting once."""
+        state = AppState()
+        socket_path = str(tmp_path / "nonexistent.sock")
+        svc = PollingService(state, socket_path)
+        try:
+            # Emit each signal and confirm the wired slot ran on AppState.
+            # status_ready → state.set_status
+            from control_ofc.api.models import (
+                Capabilities,
+                ConnectionState,
+                DaemonStatus,
+                FanReading,
+                LeaseState,
+                SensorReading,
+            )
+
+            caps = Capabilities(daemon_version="0.1.0")
+            svc._worker.capabilities_ready.emit(caps)
+            assert state.capabilities is caps
+
+            status = DaemonStatus(overall_status="ok")
+            svc._worker.status_ready.emit(status)
+            assert state.daemon_status is status
+
+            sensors = [SensorReading(id="cpu", value_c=42.0, age_ms=10)]
+            svc._worker.sensors_ready.emit(sensors)
+            assert state.sensors == sensors
+
+            fans = [FanReading(id="fan0", rpm=1000, age_ms=10)]
+            svc._worker.fans_ready.emit(fans)
+            assert state.fans == fans
+
+            lease = LeaseState()
+            svc._worker.lease_ready.emit(lease)
+            assert state.lease is lease
+
+            # connected/disconnected drive state.connection
+            svc._worker.connected.emit()
+            assert state.connection == ConnectionState.CONNECTED
+            svc._worker.disconnected.emit()
+            assert state.connection == ConnectionState.DISCONNECTED
+        finally:
+            svc.shutdown()
