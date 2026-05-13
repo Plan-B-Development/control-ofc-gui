@@ -1,5 +1,232 @@
 # Changelog
 
+## [1.12.0] — 2026-05-13
+
+Pairs with **daemon v1.7.0**. Coordinated AMD-board-support hardening
+release covering AM4 400-series (DEC-105) and AM4 500 / AM5 600 / AM5
+800 (DEC-106) in one minor bump. Adds verified-against-upstream label
+fallbacks, an expanded vendor-quirk database spanning every shipping
+AMD chipset generation, a CRITICAL diagnostics banner for the
+NCT6797D-vs-`nct6687` register-corruption brick risk, and refined
+detector behaviour that no longer false-CRITICALs on legitimate dual-
+Nuvoton boards (ASRock X870E Taichi Lite). 1380 GUI tests pass; 407
+daemon tests pass.
+
+### DEC-106 — AM4 500 / AM5 600 / AM5 800 hardening
+
+Stacks on DEC-105's AM4 400-series pass to bring the rest of the AMD
+lineup up to the same quality bar. Adds collision-detector refinement,
+narrower chip-prefix entries, new vendor quirks, new label fallbacks,
+and an expanded vendor-by-vendor doc section spanning AM4 500-series
+through AM5 800-series. Continues the no-breaking-contract discipline:
+the daemon emits the same `/diagnostics/hardware.module_collisions`
+shape; the refinement is purely a reduction in false-positive entries.
+
+#### Features
+- **Daemon collision-detector dual-Nuvoton exemption (DEC-106).** The
+  `(nct6687, nct6775)` simultaneous-load collision no longer emits a
+  CRITICAL banner when `chips_detected` shows TWO distinct nct6 chips
+  at distinct `device_id`s. This protects users on legitimate dual-
+  Nuvoton boards — most prominently **ASRock X870E Taichi Lite**
+  (NCT6686 at 0x0a20 + NCT6799 at 0x0290) — from being told to
+  blacklist one of their working drivers. The original brick-risk
+  detection (single chip + both modules loaded) is unchanged.
+- **AM4 500-series & AM5 800-series Gigabyte AORUS dual-chip entries
+  added to `GIGABYTE_DUAL_CHIP_BOARDS`:** B550 VISION D (it8688 +
+  it8792, verified against upstream `configs/Gigabyte/
+  GA-B550-VISION-D.conf`) and B850-AI-TOP (it8696 + it87952, per
+  frankcrawford/it87 issue #93). X870 AORUS STEALTH ICE is
+  deliberately NOT added — its IT8883 secondary has no Linux driver,
+  so a permanent missing-chip warning would be useless; it is
+  documented in the chip-guidance DB instead.
+- **Narrower NCT679x chip-prefix entries in GUI `CHIP_GUIDANCE_DB`.**
+  NCT6799D (with ASRock Taichi Lite reference), NCT6798D (with the
+  chip-ID-0xd428 / no-DEC-105-risk explanation), and NCT6796D-S (with
+  the ASRock X870 Nova reference) now have their own entries instead
+  of falling through to the generic `nct679` row. Longest-prefix
+  match still resolves correctly for NCT6797D, NCT6795D, etc.
+- **IT8883 preliminary chip entry (per D4.A).** Ships with explicit
+  "no Linux driver as of 2026-Q2" notes and a link to frankcrawford/
+  it87 issue #81, so users on Gigabyte X870 AORUS STEALTH ICE see a
+  named chip rather than "Unknown chip" when investigating their
+  diagnostic gaps.
+- **Eight new x500/x600/x800 vendor quirks** in `VENDOR_QUIRKS_DB`:
+  Gigabyte IT8688E AM4 500-series (info — dual-chip & sleep/resume
+  hint), MSI nct6687 auto-allowlist (info — points users at the v2.x
+  msi_alt1 self-enabling table), MSI 500-series NCT6687-R camp
+  (medium — distinguishes from the DEC-105 NCT6797D brick risk),
+  ASRock NCT6799 Taichi Lite (info — references DEC-106), ASRock
+  NCT6798D AM4 500-series (info), ASRock NCT6796D-S X870 Nova (info),
+  ASUS NCT6798D AM4 500 / AM5 600 (info), and Gigabyte IT8696E
+  X870 AORUS STEALTH ICE / IT8883 unsupported (medium). The existing
+  IT8689E Rev 1 critical quirk now also references frankcrawford/it87
+  issue #96.
+- **Three new `HWMON_LABEL_FALLBACK` boards** (D-B.B1 — verified
+  against upstream lm-sensors `configs/` only): Gigabyte B550 VISION D
+  (it8688 + it8792 dual-chip mapping), Gigabyte B550M AORUS PRO
+  (it8688 single-chip; glob covers WIFI variant), and MSI X570-A PRO
+  (nct6797). Per D3.A, MSI nct6687d-only-fanN-labelled boards
+  (MAG B550 TOMAHAWK, MS-7C56 B550 A-PRO) were skipped — they rely on
+  the runtime libsensors parser instead.
+
+#### Documentation
+- `docs/21_AMD_Motherboard_Fan_Control_Guide.md`: added dedicated
+  "AM4 500-series specifics", "AM5 600-series specifics", and "AM5
+  800-series specifics" sections paralleling DEC-105's AM4 400-series
+  treatment. Each section enumerates the per-vendor chip / driver
+  story and calls out the generation-specific hazards (Gigabyte
+  IT8689E Rev 1 dead end, ASRock dual-Nuvoton, MSI auto-allowlist).
+- `docs/19_Hardware_Compatibility.md`: AM4 500 / AM5 600 / AM5 800
+  rows in the AMD-platform→chip-mapping table expanded from one row
+  each to per-vendor granularity, matching the AM4 400-series level
+  of detail. ASRock alternative-driver list extended to AM5 600.
+
+#### Tests
+- New `tests/test_am5_600_series_quirks.py` (23 tests) covers the
+  narrower chip-prefix entries (longest-prefix matching invariants),
+  the IT8883 preliminary entry, every new vendor quirk, every new
+  label fallback (including wrong-chip / wrong-vendor negative
+  cases), and the GUI parser round-trip for both the daemon's
+  suppressed and emitted `module_collisions` shapes.
+- Daemon `api::diagnostics::tests` extended with five new tests:
+  legitimate-dual-Nuvoton suppression, single-chip critical retention,
+  empty-chips defensive fallback (still CRITICAL), non-nct6 chips
+  ignored for the suppression rule, plus dual-chip table coverage
+  for B550 VISION D and B850-AI-TOP.
+- Three pre-existing `test_v1_2_diagnostics.py::TestVendorQuirkLookup`
+  tests loosened from "exact count" to "content present" so adding
+  legitimate new quirks to the database does not break unrelated
+  tests. The `test_hwmon_guidance.py` NCT6798 / case-insensitive
+  tests updated to expect the new narrower `nct6798` prefix.
+  Implementation-coupled `test_msi_x870_brute_force_quirk` (was
+  `details[2]`-indexed) replaced with content-anywhere assertion;
+  `test_case_insensitive_vendor` strengthened from "returns
+  something" to "returns the SAME set of summaries as the canonical-
+  cased lookup".
+
+#### Security / robustness
+- **`_vendor_quirk_label` now explicitly sets `Qt.TextFormat.PlainText`**
+  (security-reviewer finding). The label was previously relying on
+  Qt's `AutoText` default; mirroring the explicit format set on every
+  other sibling label closes a latent gap should daemon-supplied
+  strings ever flow into this label.
+- **Headline collision-detector assertions tightened.** The new
+  `test_msi_nct6687_auto_allowlist_quirk` now asserts on both
+  `msi_alt1` (specific module parameter name) AND the 33-board
+  allowlist count (anchors the upstream source). The new
+  `test_nct6798_picks_specific_entry_not_generic` now requires the
+  `0xd428` chip-ID anchor explicitly (was a disjunction that could
+  silently accept unrelated text).
+- **New `test_unverified_entry_gets_unverified_suffix`** asserts the
+  `(unverified)` suffix on `FallbackLabel.display()` so an accidental
+  edit that drops the suffix logic cannot silently mislabel
+  unverified headers as if they were verified.
+
+#### Documentation
+- `docs/08_API_Integration_Contract.md` extended with a DEC-106
+  paragraph under `/diagnostics/hardware.module_collisions` describing
+  the dual-Nuvoton suppression condition. Old daemons emit the
+  broader result; the GUI parser handles both shapes identically.
+
+### DEC-105 — AM4 400-series hardening
+
+Pulls AM4 400-series (B450 / X470) board coverage up to the same
+standard as the AM5 boards, after wider research surfaced a chip-ID-
+collision trap that can permanently brick CPU fan headers on common
+MSI AM4 boards. No breaking contract changes: the new daemon response
+field (`/diagnostics/hardware.module_collisions`) is additive and
+older GUIs default to `[]`. Older daemons that don't emit the field
+fall back to the GUI's existing `CONFLICTING_MODULE_SETS` static
+table.
+
+#### Features
+- **NCT6797D ↔ `nct6687` chip-ID collision detection (DEC-105).** The
+  daemon's `/diagnostics/hardware` endpoint now emits a new
+  `module_collisions` list. The flagship entry flags the simultaneous
+  load of `nct6687` (out-of-tree, chip-ID 0xd450) and `nct6775`
+  (in-kernel) — a known register-corruption race on AM4 400-series MSI
+  boards using NCT6797D (B450M MORTAR, X470 GAMING PRO CARBON, MAG B450
+  TOMAHAWK MAX) as well as the wider AM5 lineage. The GUI renders a
+  CRITICAL banner with the exact blacklist remediation and discourages
+  PWM writes until the collision is resolved. The same pair is also
+  added to the GUI's static `CONFLICTING_MODULE_SETS` table so users on
+  daemons that predate this field still see the warning.
+- **AM4 400-series Gigabyte AORUS dual-chip lookup.** The daemon's
+  `GIGABYTE_DUAL_CHIP_BOARDS` table now covers X470 AORUS ULTRA GAMING,
+  X470 AORUS GAMING 5 WIFI, X470 AORUS GAMING 7 WIFI, and B450 AORUS PRO
+  (matches the WIFI variant via substring). Existing B450 AORUS PRO-CF
+  entry kept for continuity. Chip pairing is IT8686E + IT8792E,
+  consistent with the lm-sensors upstream config for the ULTRA GAMING.
+- **Kernel-documented `asus_wmi_sensors` AM4 boards.** New vendor quirk
+  enumerates the kernel allowlist (PRIME X470-PRO, ROG STRIX B450-E/F/I
+  GAMING, ROG STRIX X470-F/I GAMING) and reiterates the upstream warning
+  that high-frequency polling can stop fans or pin them at maximum on
+  these boards. The daemon's 1 Hz polling stays within safe bounds; the
+  guidance discourages running additional sensor-polling tools
+  concurrently.
+- **`asus_atk0110` recognition.** Added to the daemon's `KNOWN_MODULES`
+  table and the GUI's `CHIP_GUIDANCE_DB`, plus a vendor quirk explaining
+  this is a read-only ACPI sensor path — closing a real diagnostic dead
+  end for ASUS users who saw the driver loaded but no controllable PWM
+  headers.
+- **MSI NCT6795D / NCT6797D / NCT6798D guidance.** New vendor quirks
+  cover the AM4-series MSI chip lineup explicitly. NCT6795D is marked
+  INFO (mainline supported, no collision concern). NCT6797D/6798D carry
+  the CRITICAL collision warning. Helps users distinguish between
+  "needs out-of-tree driver" and "must not load out-of-tree driver".
+- **ASRock NCT6779D / NCT6792D AM4 guidance.** New INFO-severity quirks
+  confirm mainline coverage and point users toward BIOS Smart Fan
+  toggles as the usual culprit when headers appear read-only.
+- **AM4 400-series `HWMON_LABEL_FALLBACK` entries.** Verified against
+  upstream lm-sensors `configs/`: X470 AORUS ULTRA GAMING (it8686 +
+  it8792), MSI X470 GAMING PRO (nct6795), MSI B450M MORTAR (nct6797),
+  ASRock B450 Gaming ITX/AC (nct6792). Every entry quotes its upstream
+  source file in the comment so the mapping can be re-verified later.
+  Only boards with an upstream config are added — others continue to
+  rely on the user's local `/etc/sensors.d/` content or the raw `pwmN`
+  sensor name.
+
+#### Documentation
+- `docs/21_AMD_Motherboard_Fan_Control_Guide.md`: promoted the one-line
+  AM4 400-series row in the platform overview to a dedicated "AM4
+  400-series specifics" section covering all four DEC-105 hazards
+  (NCT6797D collision, ASUS WMI polling, Gigabyte dual-chip, ASRock
+  generally-smooth).
+- `docs/19_Hardware_Compatibility.md`: added NCT6797D / NCT6795D /
+  NCT6792D / NCT6779D rows to the Nuvoton table; added an ASUS
+  sensor-only-drivers comparison table covering `asus_wmi_sensors` /
+  `asus_ec_sensors` / `asus_atk0110`; added an "AMD platform → typical
+  chip mapping" table spanning AM4 400, AM4 500, AM5 600, AM5 800.
+
+#### Tests
+- New `tests/test_am4_400_series_quirks.py` covers the MSI NCT6797
+  CRITICAL misID quirk (anchored on both `0xd450` AND `nct6687` strings
+  inside the SAME critical quirk's details — not just any-of), ASUS WMI
+  AM4 board allowlist, ASRock AM4 guidance (asserts INFO severity, not
+  just existence), GUI-side fallback module-conflict detection, daemon
+  `module_collisions` round-trip through `parse_hardware_diagnostics`,
+  the `severity` default-to-`"info"` invariant, the GUI fallback
+  banner-suppression sorted-tuple canonicalisation, and the four AM4
+  400-series label-fallback entries verified against upstream
+  lm-sensors configs.
+
+#### Security / robustness
+- **HTML-escape daemon-supplied strings in the `module_collisions`
+  banner.** The Diagnostics page renders `summary` and `remediation`
+  in a Qt RichText label; the new escape pattern mirrors the existing
+  revert-counts banner. Defensive even though the daemon is the user's
+  own process today.
+- **`ModuleCollisionInfo.severity` defaults to `"info"` (not
+  `"critical"`).** Mirrors the `KernelWarning.severity` precedent so
+  any future malformed entry without `severity` does not falsely
+  promote to a CRITICAL banner.
+- **Remediation framing rewritten** to require chip-ID verification
+  (`cat /sys/class/hwmon/hwmon*/name`) before any blacklist command,
+  and to show both the `blacklist nct6775` and `blacklist nct6687`
+  paths as parallel alternatives. Protects users on genuine NCT6687-R
+  boards from inadvertently removing their only working fan-control
+  driver.
+
 ## [1.11.3] — 2026-05-08
 
 Documentation-only release. Pairs with **daemon v1.6.5**. Documents

@@ -192,6 +192,34 @@ and the GUI parser defaults to `[]`:
   the chip"; not authoritative — the source of truth for "what works"
   is `hwmon.chips_detected`.
 
+Additional optional field added in DEC-105 (same wire convention —
+`skip_serializing_if = "Vec::is_empty"`, so older daemons emit nothing
+and the GUI parser defaults to `[]`):
+
+- `module_collisions: list[ModuleCollisionInfo]` — pairs of simultaneously
+  loaded driver modules known to race for the same chip. Each entry has
+  `module_a`, `module_b`, `severity` (`"critical" | "high" | "medium"`),
+  `summary`, and `remediation` fields. The flagship entry is
+  `(nct6687, nct6775)` at CRITICAL severity — these two drivers overlap
+  on chip ID `0xd450` (NCT6797D's legitimate ID) and concurrent loading
+  can corrupt non-volatile fan registers on common AM4/AM5 MSI boards
+  (NCT6797D ships on the B450M MORTAR per its upstream lm-sensors
+  config). The GUI renders this as a CRITICAL banner above the existing
+  module-conflict label, suppresses the GUI-only `CONFLICTING_MODULE_SETS`
+  banner for the same pair (avoids two warnings for one problem), and
+  refuses no writes but discourages PWM writes until the user resolves
+  the load ordering. All daemon-supplied strings in this field are
+  HTML-escaped before interpolating into the Qt RichText label.
+
+  **DEC-106 refinement:** the daemon suppresses the `(nct6687, nct6775)`
+  entry when `hwmon.chips_detected` shows two or more distinct `nct6`-
+  family chips at distinct `device_id`s. This avoids a false CRITICAL
+  banner on legitimate dual-Nuvoton boards (e.g. ASRock X870E Taichi
+  Lite, which ships NCT6686 at 0x0a20 + NCT6799 at 0x0290, each bound
+  by its own driver). The single-chip brick scenario from DEC-105 still
+  emits CRITICAL. Older daemons (pre-DEC-106) emit the broader
+  result; the GUI parser handles both shapes identically.
+
 ### GET /events (SSE) — daemon-only, not consumed by GUI
 The daemon exposes a Server-Sent Events stream at `GET /events` for other clients
 (custom integrations, future tooling, etc.).

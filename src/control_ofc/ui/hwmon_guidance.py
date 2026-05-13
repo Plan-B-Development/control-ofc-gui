@@ -35,6 +35,61 @@ class VendorQuirk:
 
 
 CHIP_GUIDANCE_DB: list[ChipGuidance] = [
+    # DEC-106: narrower nct679x entries take precedence over the generic
+    # nct679 fallthrough below thanks to longest-prefix matching in
+    # `lookup_chip_guidance`. Each entry calls out a chip-specific quirk
+    # or supported-board hint without changing the underlying driver
+    # binding (still `nct6775` in-kernel for all of them).
+    ChipGuidance(
+        chip_prefix="nct6799",
+        driver_name="nct6775",
+        in_mainline=True,
+        driver_package="linux (built-in)",
+        driver_url="https://www.kernel.org/doc/html/latest/hwmon/nct6775.html",
+        known_issues=[
+            "ASRock X870E Taichi Lite uses NCT6799D as the SECONDARY chip "
+            "(alongside an NCT6686 primary). Both `nct6775` and `nct6687d` "
+            "are legitimately loaded on that board — see the ASRock + "
+            "dual-Nuvoton vendor quirk.",
+        ],
+        notes=(
+            "Nuvoton NCT6799D — mainline kernel support. Shipped on some "
+            "AM5 800-series ASRock boards (e.g. X870E Taichi Lite) as the "
+            "secondary Super-I/O chip."
+        ),
+    ),
+    ChipGuidance(
+        chip_prefix="nct6798",
+        driver_name="nct6775",
+        in_mainline=True,
+        driver_package="linux (built-in)",
+        driver_url="https://www.kernel.org/doc/html/latest/hwmon/nct6775.html",
+        known_issues=[
+            "Chip ID 0xd428 — distinct from NCT6797D's 0xd450. Out-of-tree "
+            "`nct6687` does not target this chip, so the DEC-105 brick-risk "
+            "module collision does not apply to a single-chip NCT6798D board.",
+        ],
+        notes=(
+            "Nuvoton NCT6798D — mainline kernel support. Common on AM4 "
+            "500-series and AM5 600-series ASUS / ASRock boards "
+            "(e.g. ASRock B550 Steel Legend, ASUS TUF GAMING X570-PLUS)."
+        ),
+    ),
+    ChipGuidance(
+        chip_prefix="nct6796",
+        driver_name="nct6775",
+        in_mainline=True,
+        driver_package="linux (built-in)",
+        driver_url="https://www.kernel.org/doc/html/latest/hwmon/nct6775.html",
+        known_issues=[
+            "NCT6796D-S variant appears on ASRock X870 Nova (Fred78290/nct6687d "
+            "issue #153). The in-kernel `nct6775` driver binds it cleanly.",
+        ],
+        notes=(
+            "Nuvoton NCT6796D / NCT6796D-S — mainline kernel support. Shipped "
+            "on some AM5 800-series ASRock boards."
+        ),
+    ),
     ChipGuidance(
         chip_prefix="nct679",
         driver_name="nct6775",
@@ -209,6 +264,34 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_url="https://github.com/frankcrawford/it87",
         notes="ITE IT8625E — requires out-of-tree driver.",
     ),
+    # DEC-106 (D4.A): IT8883 is a new ITE chip that ships on Gigabyte
+    # X870 AORUS STEALTH ICE as the secondary Super-I/O (alongside
+    # IT8696E). As of 2026-Q2 there is NO Linux driver — neither
+    # frankcrawford/it87 nor mainline `it87` enumerates it. This entry
+    # exists so the GUI can name the chip and explain the situation
+    # rather than rendering "Unknown chip" and leaving users guessing.
+    # Tracking: frankcrawford/it87 issue #81. Re-evaluate when a driver
+    # ships.
+    ChipGuidance(
+        chip_prefix="it8883",
+        driver_name="(none — chip unsupported on Linux as of 2026-Q2)",
+        in_mainline=False,
+        driver_package="(no driver available)",
+        driver_url="https://github.com/frankcrawford/it87/issues/81",
+        known_issues=[
+            "No Linux driver currently supports this chip — fan headers "
+            "and sensors wired through IT8883 are not visible to Linux.",
+            "Some Gigabyte X870 boards (X870 AORUS STEALTH ICE) pair this "
+            "chip as a secondary alongside IT8696E. The primary IT8696E "
+            "headers work via it87-dkms-git; IT8883-attached headers do not.",
+            "Tracking upstream: frankcrawford/it87 issue #81.",
+        ],
+        notes=(
+            "ITE IT8883 — preliminary entry (DEC-106 / D4.A). No driver "
+            "available as of 2026-Q2. Users with this chip should not "
+            "expect Linux fan control on its headers."
+        ),
+    ),
     ChipGuidance(
         chip_prefix="it87",
         driver_name="it87",
@@ -281,11 +364,31 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "Sensor-enrichment driver only — does NOT provide PWM write capability.",
             "PRIME X470-PRO is specifically called out in upstream docs as having "
             "buggy WMI that can cause fans to stop or get stuck at maximum.",
+            "Kernel-documented AM4 boards: PRIME X470-PRO, ROG STRIX B450-E "
+            "GAMING, ROG STRIX B450-F GAMING, ROG STRIX B450-I GAMING, "
+            "ROG STRIX X470-F GAMING, ROG STRIX X470-I GAMING.",
             "More frequent polling increases the risk of triggering firmware bugs.",
         ],
         notes=(
             "ASUS WMI Sensors — exposes extra sensors via BIOS WMI interface. "
             "Read-only. Poll conservatively to avoid firmware bugs."
+        ),
+    ),
+    ChipGuidance(
+        chip_prefix="asus_atk0110",
+        driver_name="asus_atk0110",
+        in_mainline=True,
+        driver_package="linux (built-in)",
+        driver_url="https://www.kernel.org/doc/html/latest/hwmon/asus_atk0110.html",
+        known_issues=[
+            "Sensor-enrichment driver only — does NOT provide PWM write capability.",
+            "Loaded automatically on many ASUS boards via ACPI ATK0110 device.",
+            "Look for nct6775, it87, or another Super I/O driver as the actual PWM write path.",
+        ],
+        notes=(
+            "ASUS ATK0110 ACPI hwmon — exposes board sensors via the ACPI ATK0110 "
+            "method. Read-only. Found on a wide range of ASUS boards spanning "
+            "AM3/AM4/AM5 generations."
         ),
     ),
 ]
@@ -335,7 +438,9 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         details=[
             "IT8689E Rev 1 (e.g. X670E Aorus Master): PWM writes are silently "
             "accepted with zero hardware effect. No known software workaround — "
-            "consider using a different fan header or external fan controller.",
+            "consider using a different fan header or external fan controller. "
+            "Tracking upstream: frankcrawford/it87 issue #96 (open with no "
+            "resolution as of 2026-Q2).",
             "IT8689E Rev 2 (e.g. B650 Eagle AX): BIOS overrides unless a "
             "degenerate fan curve is configured in BIOS Smart Fan settings.",
             "Workaround: In BIOS → Smart Fan 6, set all temperature points to "
@@ -493,6 +598,307 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "testing only and should not be used in production.",
         ],
     ),
+    # ── AM4 400-series additions (DEC-105) ──────────────────────────
+    VendorQuirk(
+        vendor_pattern="micro-star",
+        chip_prefix="nct6797",
+        severity="critical",
+        summary=(
+            "MSI AM4 + NCT6797D — out-of-tree nct6687 can mis-claim this chip "
+            "and corrupt fan registers"
+        ),
+        details=[
+            "The out-of-tree nct6687 driver declares chip ID 0xd450 — the same "
+            "ID assigned to the legitimate NCT6797D found on MSI AM4 boards "
+            "(B450M MORTAR, X470 GAMING PRO CARBON, MAG B450 TOMAHAWK MAX, "
+            "and similar). When both nct6687 and nct6775 are loaded, whichever "
+            "driver binds first claims the chip and the other may write into "
+            "the wrong registers.",
+            "Public incident: a user lost their CPU fan header on an MSI MAG "
+            "X570 TOMAHAWK WIFI because nct6687 wrote into NCT6797D's "
+            "non-volatile state. Same chip family is used on AM4 400-series "
+            "MSI boards.",
+            "If diagnostics detected the (nct6687, nct6775) collision, DO NOT "
+            "write PWM until you have resolved the load ordering.",
+            "Workaround: identify which chip the board actually has "
+            "(cat /sys/class/hwmon/hwmon*/name on a known-good kernel) and "
+            "blacklist the wrong driver. For NCT6797D, blacklist nct6687: "
+            "echo 'blacklist nct6687' | sudo tee /etc/modprobe.d/blacklist-nct6687.conf",
+            "Bazzite (and other distros that pre-load nct6687) ship the "
+            "blacklist by default for this reason.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="micro-star",
+        chip_prefix="nct6798",
+        severity="critical",
+        summary=(
+            "MSI + NCT6798D — out-of-tree nct6687 can mis-claim this chip and corrupt fan registers"
+        ),
+        details=[
+            "Same trap as NCT6797D: the out-of-tree nct6687 driver overlaps "
+            "the chip ID space, so concurrent loading with nct6775 can leave "
+            "the wrong driver bound and writes can scribble into non-volatile "
+            "fan registers.",
+            "If diagnostics detected the (nct6687, nct6775) collision, DO NOT "
+            "write PWM until you have resolved the load ordering.",
+            "Workaround: blacklist nct6687 unless you are intentionally "
+            "running the out-of-tree driver on a board that needs it.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="micro-star",
+        chip_prefix="nct6795",
+        severity="info",
+        summary="MSI AM4 + NCT6795D — mainline kernel coverage is solid",
+        details=[
+            "NCT6795D is the chip on common AM4 400-series MSI boards such "
+            "as the X470 GAMING PRO. The in-kernel nct6775 driver supports "
+            "monitoring and PWM writes out of the box.",
+            "Do NOT install the out-of-tree nct6687 driver on these boards — "
+            "it overlaps the chip ID space of NCT6797D (a different chip on "
+            "other MSI SKUs) and can race with nct6775 on systems that load "
+            "both.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asustek",
+        chip_prefix="asus_wmi_sensors",
+        severity="high",
+        summary=("ASUS AM4 + asus_wmi_sensors — kernel-documented buggy WMI on specific boards"),
+        details=[
+            "Kernel docs explicitly list these AM4 boards as supported AND "
+            "warn about firmware bugs: PRIME X470-PRO, ROG STRIX B450-E "
+            "GAMING, ROG STRIX B450-F GAMING, ROG STRIX B450-I GAMING, "
+            "ROG STRIX X470-F GAMING, ROG STRIX X470-I GAMING.",
+            "PRIME X470-PRO is called out specifically as triggering fans "
+            "stopping, fans stuck at maximum, or sensors freezing under "
+            "heavy polling.",
+            "The daemon polls at 1 Hz which is within the kernel-documented "
+            "safe band. Avoid running additional tools (Open Hardware Monitor, "
+            "lm-sensors GUIs, fan-control daemons) against these sensors at "
+            "the same time.",
+            "asus_wmi_sensors is sensor enrichment ONLY — it never provides "
+            "the PWM write path. Look for nct6775 (NCT6798D etc.) as the "
+            "actual fan-control driver.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asustek",
+        chip_prefix="asus_ec_sensors",
+        severity="info",
+        summary="ASUS AM4 + asus_ec_sensors — PRIME X470-PRO sensor enrichment",
+        details=[
+            "PRIME X470-PRO is the only AM4 400-series board on the kernel "
+            "asus_ec_sensors list (the rest are X570/X670/X870 territory).",
+            "Sensor enrichment only — NOT a PWM write path. Look elsewhere "
+            "(typically nct6798) for actual fan control.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asustek",
+        chip_prefix="asus_atk0110",
+        severity="info",
+        summary="ASUS + asus_atk0110 — ACPI sensor read-only path",
+        details=[
+            "asus_atk0110 exposes board sensors via the ACPI ATK0110 method. It is read-only.",
+            "If you see this driver loaded but no controllable PWM headers, "
+            "the PWM path is on a separate Super I/O driver (nct6775, it87, "
+            "or similar). Check that driver's binding status.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asrock",
+        chip_prefix="nct6779",
+        severity="info",
+        summary="ASRock AM4 + NCT6779D — mainline kernel coverage is solid",
+        details=[
+            "NCT6779D is the chip on common AM4 400-series ASRock boards. "
+            "The in-kernel nct6775 driver supports monitoring and PWM writes "
+            "out of the box.",
+            "If headers appear read-only, the cause is usually a BIOS "
+            "'Smart Fan' override rather than a driver problem — disable "
+            "Smart Fan for the affected header in BIOS.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asrock",
+        chip_prefix="nct6792",
+        severity="info",
+        summary="ASRock AM4 + NCT6792D — mainline kernel coverage is solid",
+        details=[
+            "NCT6792D is the chip on AM4 400-series ASRock ITX/AC boards "
+            "(e.g. B450 Gaming ITX/AC). The in-kernel nct6775 driver "
+            "supports monitoring and PWM writes.",
+            "Fan headers: CPU_FAN1, CHA_FAN1, CHA_FAN2 per the upstream "
+            "lm-sensors config — values come through libsensors-resolved "
+            "labels rather than the in-repo fallback table.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="gigabyte",
+        chip_prefix="it8686",
+        severity="info",
+        summary=("Gigabyte AM4 400-series AORUS + IT8686E — dual-chip board (secondary IT8792E)"),
+        details=[
+            "AM4 400-series AORUS boards (X470 AORUS ULTRA GAMING, X470 "
+            "AORUS GAMING 5/7 WIFI, B450 AORUS PRO/PRO-CF) pair the primary "
+            "IT8686E with a secondary IT8792E for additional fan headers.",
+            "If the diagnostics page reports a missing chip, follow the "
+            "dual-chip remediation: 'options it87 mmio=on' in "
+            "/etc/modprobe.d/it87.conf, then reboot. Avoid running "
+            "sensors-detect after boot.",
+            "The secondary IT8792E was historically read-only on some "
+            "Gigabyte AM4 boards; verify per-header writability before "
+            "assigning fans to it in profiles.",
+        ],
+    ),
+    # ── DEC-106: AM4 500-series, AM5 600-series, AM5 800-series ──
+    VendorQuirk(
+        vendor_pattern="gigabyte",
+        chip_prefix="it8688",
+        severity="info",
+        summary="Gigabyte AM4 500-series AORUS + IT8688E — common dual-chip topology",
+        details=[
+            "Most AM4 500-series Gigabyte AORUS boards (X570 AORUS MASTER/"
+            "PRO/PRO WIFI/ULTRA, B550 VISION D) pair the primary IT8688E "
+            "with a secondary IT8792E for additional fan headers. "
+            "Single-chip variants (B550M AORUS PRO) ship only the IT8688E.",
+            "If the diagnostics page reports a missing secondary chip, "
+            "follow the dual-chip remediation: 'options it87 mmio=on' in "
+            "/etc/modprobe.d/it87.conf, then reboot. Avoid running "
+            "sensors-detect after boot — it can leave the SuperIO bridge "
+            "in configuration mode (frankcrawford/it87 issue #70).",
+            "X570 AORUS PRO sleep/resume can re-trigger the dual-chip "
+            "enumeration trap (frankcrawford/it87 issue #99) — `mmio=on` "
+            "is the same fix.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="micro-star",
+        chip_prefix="nct6687",
+        severity="info",
+        summary="MSI AM5 800-series + nct6687d — msi_alt1 auto-allowlist",
+        details=[
+            "nct6687d v2.x ships an auto-enabled board allowlist covering "
+            "33 MSI AM5 boards across B840 / B850 / X870 / Z890 (see "
+            "Fred78290/nct6687d source: `nct6687.c::msi_alt1_dmi_table`). "
+            "On listed boards the driver enables the alt1 register layout "
+            "automatically — no module parameter required.",
+            "If your MSI X870/B850 board is NOT on the allowlist and "
+            "system fans don't respond to PWM writes, try loading with "
+            "msi_alt1=1 (or msi_fan_brute_force=1 on older driver builds): "
+            "`sudo modprobe -r nct6687 && sudo modprobe nct6687 msi_alt1=1`. "
+            "Persist via /etc/modprobe.d/nct6687.conf.",
+            "Per the same upstream source, `msi_fan_brute_force=1` remains "
+            "the manual override for unlisted boards.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="micro-star",
+        chip_prefix="nct6687",
+        severity="medium",
+        summary="MSI AM4 500-series + NCT6687-R — out-of-tree driver path",
+        details=[
+            "MSI AM4 500-series boards with NCT6687-R (MAG B550 TOMAHAWK, "
+            "MAG B550 A-PRO, MPG X570 variants) need the out-of-tree "
+            "`nct6687d` driver from Fred78290/nct6687d. The in-kernel "
+            "`nct6683` driver may surface monitoring but PWM writes "
+            "typically don't take effect.",
+            "BIOS: disable 'Smart Fan Mode' in Hardware Monitor for the "
+            "fan headers you want to control from Linux, otherwise headers "
+            "may appear read-only.",
+            "Reminder: NCT6687-R has chip ID 0xd590 (no overlap with "
+            "NCT6797D's 0xd450) — loading nct6687d alongside the kernel's "
+            "nct6775 on a genuine NCT6687-R board is safe. The DEC-105 "
+            "brick risk applies only to single-chip boards where the chip "
+            "is actually NCT6797D and nct6687d mis-claims it.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asrock",
+        chip_prefix="nct6799",
+        severity="info",
+        summary="ASRock X870E Taichi Lite — legitimate dual-Nuvoton config",
+        details=[
+            "ASRock X870E Taichi Lite ships TWO Super-I/O chips: NCT6686 "
+            "at I/O 0x0a20 (bound by nct6687d) and NCT6799 at I/O 0x0290 "
+            "(bound by mainline nct6775). Both drivers MUST be loaded "
+            "concurrently to control all fan headers.",
+            "DEC-106 refines the daemon's collision detector so this "
+            "configuration is no longer flagged CRITICAL. The brick risk "
+            "from DEC-105 only applies to SINGLE-chip boards where the "
+            "chip ID 0xd450 (NCT6797D) is ambiguously claimed; on Taichi "
+            "Lite each driver binds to its own physical chip.",
+            "If the diagnostics page does surface a (nct6687, nct6775) "
+            "collision banner on this board, it means only one nct6 chip "
+            "enumerated — verify both chips appear in "
+            "`cat /sys/class/hwmon/hwmon*/name` before changing module "
+            "blacklists.",
+            "References: Fred78290/nct6687d issue #155, "
+            "Level1Techs ASRock Taichi X870E forum thread.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asrock",
+        chip_prefix="nct6798",
+        severity="info",
+        summary="ASRock AM4 500-series + NCT6798D — mainline kernel coverage",
+        details=[
+            "ASRock AM4 500-series boards with NCT6798D (B550 Steel Legend, "
+            "X570 Taichi non-Razer-Edition, B550 PG Velocita) are covered "
+            "by the in-kernel `nct6775` driver. No out-of-tree driver "
+            "needed.",
+            "If headers appear read-only the usual cause is BIOS 'Smart "
+            "Fan' overriding manual mode — disable it for the affected "
+            "header in BIOS, or set fan mode to 'Full Speed'.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asrock",
+        chip_prefix="nct6796",
+        severity="info",
+        summary="ASRock X870 Nova + NCT6796D-S — mainline kernel coverage",
+        details=[
+            "ASRock X870 Nova ships NCT6796D-S (per Fred78290/nct6687d "
+            "issue #153). The in-kernel `nct6775` driver binds it cleanly; "
+            "no out-of-tree driver needed.",
+            "Do NOT load nct6687d on this board — it can mis-claim Nuvoton "
+            "chips at the contested chip-ID space.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asus",
+        chip_prefix="nct6798",
+        severity="info",
+        summary="ASUS AM4 500-series & AM5 600-series + NCT6798D — mainline",
+        details=[
+            "ASUS AM4 500-series (TUF GAMING X570-PLUS, ROG STRIX X570/"
+            "B550 series) and AM5 600-series boards commonly ship NCT6798D, "
+            "covered by mainline `nct6775`. Many also expose extra sensors "
+            "via `asus_ec_sensors` — that is a READ-ONLY enrichment path, "
+            "not the PWM control path.",
+            "Check `asus_ec_sensors` and `asus_wmi_sensors` mainline "
+            "allowlists for your specific board: kernel docs at "
+            "docs.kernel.org/hwmon/asus_ec_sensors.html.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="gigabyte",
+        chip_prefix="it8696",
+        severity="medium",
+        summary="Gigabyte X870 AORUS STEALTH ICE + IT8883 — unsupported secondary chip",
+        details=[
+            "Gigabyte X870 AORUS STEALTH ICE pairs the primary IT8696E "
+            "(supported via it87-dkms-git) with a SECONDARY IT8883 chip "
+            "that has NO Linux driver as of 2026-Q2. Fan headers wired "
+            "through IT8883 are uncontrollable from Linux.",
+            "Tracking upstream: frankcrawford/it87 issue #81.",
+            "Practical advice: use only the primary-chip fan headers, or "
+            "attach IT8883-wired fans to an OpenFanController / external "
+            "controller.",
+        ],
+    ),
 ]
 
 
@@ -521,6 +927,26 @@ CONFLICTING_MODULE_SETS: list[tuple[str, str, str]] = [
         "They may compete for the same hwmon device, causing PWM writes to fail. "
         "Blacklist nct6683 if using nct6687d: "
         "echo 'blacklist nct6683' | sudo tee /etc/modprobe.d/blacklist-nct6683.conf",
+    ),
+    # DEC-105: GUI-side fallback for daemons that predate the daemon's
+    # `module_collisions` field. When the daemon DOES emit module_collisions,
+    # diagnostics_page.py suppresses this banner so the user does not see
+    # two warnings for the same problem.
+    (
+        "nct6687",
+        "nct6775",
+        "nct6687 (out-of-tree, MSI legacy) and nct6775 (in-kernel) are both "
+        "loaded. nct6687 declares chip ID 0xd450 which overlaps the legitimate "
+        "NCT6797D chip — on AM4 400/500-series MSI boards the wrong driver can "
+        "scribble into non-volatile fan registers (CPU_FAN has been bricked by "
+        "this in the wild). Do NOT write PWM until resolved. "
+        "(1) Identify the chip FIRST: cat /sys/class/hwmon/hwmon*/name. "
+        "(2) For NCT6687-R (genuine MSI 500/600-series chip), blacklist "
+        "nct6775. "
+        "(3) For NCT6797D / NCT6798D (common on AM4 400/500 MSI boards e.g. "
+        "B450M MORTAR, X470 GAMING PRO CARBON), blacklist nct6687: "
+        "echo 'blacklist nct6687' | sudo tee /etc/modprobe.d/blacklist-nct6687.conf. "
+        "Blacklisting the wrong driver removes the working fan-control path.",
     ),
 ]
 

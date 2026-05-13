@@ -82,33 +82,47 @@ class TestVendorQuirkLookup:
         assert "SmartFan" in quirks[0].summary
 
     def test_gigabyte_it8696_returns_high(self):
+        # DEC-106 added an IT8883/STEALTH-ICE medium entry that also
+        # matches it8696. The original IT8696E SmartFan-6 HIGH entry
+        # must still be present.
         quirks = lookup_vendor_quirks("Gigabyte Technology Co., Ltd.", "it8696")
-        assert len(quirks) == 1
-        assert quirks[0].severity == "high"
+        assert any(q.severity == "high" for q in quirks)
 
     def test_gigabyte_it8688_returns_high(self):
+        # DEC-106 added an IT8688E AM4 500-series INFO entry that also
+        # matches. The original SmartFan-5 HIGH entry must still be present.
         quirks = lookup_vendor_quirks("Gigabyte Technology Co., Ltd.", "it8688")
-        assert len(quirks) == 1
-        assert quirks[0].severity == "high"
+        assert any(q.severity == "high" for q in quirks)
 
     def test_msi_nct6687_returns_medium_and_high(self):
+        # Original DB had exactly one medium + one high quirk. DEC-106
+        # added an INFO auto-allowlist entry and a MEDIUM AM4 500-series
+        # entry. The contract is "both severities are present", not the
+        # exact total count.
         quirks = lookup_vendor_quirks("Micro-Star International Co., Ltd.", "nct6687")
-        assert len(quirks) == 2
         severities = {q.severity for q in quirks}
         assert "medium" in severities
         assert "high" in severities
 
     def test_asus_nct679x_returns_medium(self):
+        # DEC-106 added an ASUS+NCT6798D INFO entry that also matches.
+        # The original ACPI-conflict MEDIUM entry must still be present.
         quirks = lookup_vendor_quirks("ASUSTeK COMPUTER INC.", "nct6798")
-        assert len(quirks) == 1
-        assert quirks[0].severity == "medium"
-        assert "ACPI" in quirks[0].summary
+        acpi_medium = [q for q in quirks if q.severity == "medium" and "ACPI" in q.summary]
+        assert acpi_medium, (
+            f"Expected ASUS+NCT6798 MEDIUM ACPI quirk to still be present; "
+            f"got: {[(q.severity, q.summary) for q in quirks]}"
+        )
 
     def test_no_quirk_for_unknown_vendor(self):
         quirks = lookup_vendor_quirks("Unknown Vendor", "it8696")
         assert quirks == []
 
     def test_no_quirk_for_unmatched_chip(self):
+        # No Gigabyte+nct6798 quirk has ever been seeded (Gigabyte boards
+        # are ITE-based, not Nuvoton). DEC-106 did not change this — the
+        # AM5 800-series ASRock NCT6798D quirks are vendor-keyed to
+        # ASRock / ASUS, not Gigabyte.
         quirks = lookup_vendor_quirks("Gigabyte Technology Co., Ltd.", "nct6798")
         assert quirks == []
 
@@ -121,8 +135,19 @@ class TestVendorQuirkLookup:
         assert len(quirks[0].details) > 0
 
     def test_case_insensitive_vendor(self):
-        quirks = lookup_vendor_quirks("GIGABYTE TECHNOLOGY CO., LTD.", "it8696")
-        assert len(quirks) == 1
+        # The contract is "case-insensitive vendor matching works": an
+        # all-uppercase vendor must return the same set of quirks as a
+        # mixed-case vendor. Asserting set equality on summaries is
+        # strictly stronger than the original exact-count assertion AND
+        # survives future quirk additions, because both sides of the
+        # comparison see the same DB.
+        upper = lookup_vendor_quirks("GIGABYTE TECHNOLOGY CO., LTD.", "it8696")
+        canonical = lookup_vendor_quirks("Gigabyte Technology Co., Ltd.", "it8696")
+        assert {q.summary for q in upper} == {q.summary for q in canonical}, (
+            "Case-insensitive vendor lookup must return the SAME quirks "
+            "as the canonical-cased lookup"
+        )
+        assert canonical, "Sanity: canonical lookup must itself return matches"
 
 
 # ---------------------------------------------------------------------------

@@ -598,6 +598,12 @@ class DiagnosticsPage(QWidget):
         # Vendor quirk alert
         self._vendor_quirk_label = _transparent_label("", "Diagnostics_Label_vendorQuirk")
         self._vendor_quirk_label.setWordWrap(True)
+        # Explicit PlainText (DEC-106 review): chip names are interpolated
+        # into the lookup key, so a future regression that ever pipes
+        # daemon-supplied strings into the rendered text would otherwise
+        # be auto-detected as HTML by Qt's AutoText default and could
+        # render a clickable `<a href=...>` from a hostile chip name.
+        self._vendor_quirk_label.setTextFormat(Qt.TextFormat.PlainText)
         self._vendor_quirk_label.setVisible(False)
         hw_layout.addWidget(self._vendor_quirk_label)
 
@@ -672,6 +678,16 @@ class DiagnosticsPage(QWidget):
         self._acpi_label.setWordWrap(True)
         self._acpi_label.setVisible(False)
         hw_layout.addWidget(self._acpi_label)
+
+        # Module collisions (DEC-105) — daemon-reported critical pairs
+        # that race for the same Super I/O chip. Distinct from the
+        # GUI-only `_module_conflict_label` below, which is a static
+        # fallback table for daemons that predate the daemon-side check.
+        self._module_collision_label = _transparent_label("", "Diagnostics_Label_moduleCollisions")
+        self._module_collision_label.setWordWrap(True)
+        self._module_collision_label.setTextFormat(Qt.TextFormat.RichText)
+        self._module_collision_label.setVisible(False)
+        hw_layout.addWidget(self._module_collision_label)
 
         # Module conflicts
         self._module_conflict_label = _transparent_label("", "Diagnostics_Label_moduleConflicts")
@@ -1414,9 +1430,53 @@ class DiagnosticsPage(QWidget):
         else:
             self._acpi_label.setVisible(False)
 
-        # Module conflicts
+        # DEC-105: daemon-reported module collisions (critical pairs that
+        # race for the same chip, e.g. nct6687 + nct6775 → corrupted fan
+        # registers). Rendered first so users see the most severe warning
+        # at the top; the GUI-only fallback CONFLICTING_MODULE_SETS check
+        # below covers older daemons that don't emit module_collisions.
+        # All daemon-supplied strings are HTML-escaped before interpolating
+        # into this RichText label — same defensive pattern as the
+        # revert-counts banner. The daemon is the user's own process
+        # today, but the trust model should not assume future networked
+        # transports or compromised installs cannot ship hostile strings.
+        daemon_collisions = getattr(diag, "module_collisions", []) or []
+        if daemon_collisions:
+            from html import escape
+
+            parts: list[str] = [
+                "<b>Driver module collision detected — do not write PWM until resolved.</b><br>"
+            ]
+            for col in daemon_collisions:
+                parts.append(
+                    f"<br><b>{escape(col.module_a)}</b> + "
+                    f"<b>{escape(col.module_b)}</b> "
+                    f"({escape(col.severity.upper())})<br>"
+                    f"{escape(col.summary)}<br>"
+                    f"<i>Remediation:</i> {escape(col.remediation)}"
+                )
+            self._module_collision_label.setText("".join(parts))
+            self._module_collision_label.setProperty("class", "CriticalChip")
+            self._module_collision_label.style().unpolish(self._module_collision_label)
+            self._module_collision_label.style().polish(self._module_collision_label)
+            self._module_collision_label.setVisible(True)
+        else:
+            self._module_collision_label.setVisible(False)
+
+        # Module conflicts (GUI-only fallback for older daemons that don't
+        # emit module_collisions, plus any pairs that are not yet daemon-side).
         loaded_names = [m.name for m in diag.kernel_modules if m.loaded]
         mod_conflicts = detect_module_conflicts(loaded_names)
+        # Suppress the fallback banner when the daemon already reported
+        # the same pair via module_collisions — avoids two banners for
+        # one underlying problem.
+        if daemon_collisions:
+            daemon_pairs = {tuple(sorted([c.module_a, c.module_b])) for c in daemon_collisions}
+            mod_conflicts = [
+                mc
+                for mc in mod_conflicts
+                if tuple(sorted([mc.module_a, mc.module_b])) not in daemon_pairs
+            ]
         if mod_conflicts:
             lines = ["Driver module conflicts detected:"]
             for mc in mod_conflicts:
