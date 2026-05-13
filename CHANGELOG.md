@@ -1,6 +1,20 @@
 # Changelog
 
-## [Unreleased]
+## [1.13.0] — 2026-05-13
+
+Pairs with **daemon v1.8.0**. Combined release of two prior `[Unreleased]`
+waves: the DEC-107 mutation-driven test-tests hardening pass (+47 tests
+across both repos, two small non-breaking daemon contract additions)
+and the DEC-108 `/audit` follow-up hardening pass (3 P1 + 4 P2 fixes
+spanning fsync atomic writes, a dedicated lease worker thread, write-
+worker shutdown ordering, `set_pwm_all` broadcast coalescing,
+profile-path-traversal IPC tests, and a noise-reduction log-level
+demotion). All additions are backward-compatible on the wire and the
+internal API; older daemons and older GUIs interoperate with the new
+counterpart without behavioural change. GUI: 1423 tests pass; daemon:
+482 tests pass.
+
+### Wave 1 — DEC-107 test-tests audit hardening
 
 Test-tests audit hardening pass. A `/test-tests` mutation-driven audit
 identified a set of equivalent-mutant survivors in both the Python GUI
@@ -61,7 +75,7 @@ additions to make daemon-side behaviour observable. See DEC-107.
 
 ---
 
-### `/audit` follow-up hardening pass (DEC-108)
+### Wave 2 — DEC-108 `/audit` follow-up hardening pass
 
 A post-v1.12.0 / v1.7.0 `/audit` of both repos surfaced three P1
 issues and four P2 issues; this section captures the GUI-side
