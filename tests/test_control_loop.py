@@ -495,6 +495,46 @@ class TestStartStop:
         loop.shutdown()
         assert loop.is_running is False
 
+    def test_shutdown_quits_thread_before_closing_worker_client(
+        self, state, profile_service, qtbot
+    ):
+        """P2-C regression: ControlLoopService.shutdown() must quit + wait
+        the write thread BEFORE invoking worker.shutdown() (which closes the
+        worker's DaemonClient). Doing it in the opposite order races the
+        worker's do_write slot, which reads `worker._client` on the worker
+        thread.
+
+        We lock the ordering by spying on the relevant calls and asserting
+        their relative order. A real production setup is hard to instrument
+        from a test because the thread machinery is internal — so we drive
+        the same code path with a minimal stub worker and a stub thread.
+        """
+        from unittest.mock import MagicMock
+
+        loop = ControlLoopService(state, profile_service)
+
+        events: list[str] = []
+        fake_thread = MagicMock()
+        fake_thread.quit = MagicMock(side_effect=lambda: events.append("thread.quit"))
+        fake_thread.wait = MagicMock(
+            side_effect=lambda *args, **kwargs: events.append("thread.wait") or True
+        )
+        fake_worker = MagicMock()
+        fake_worker.shutdown = MagicMock(side_effect=lambda: events.append("worker.shutdown"))
+
+        # Inject the stubs in place of the real worker/thread the service may
+        # have created in __init__ (none, since we didn't pass socket_path).
+        loop._write_thread = fake_thread
+        loop._write_worker = fake_worker
+
+        loop.shutdown()
+
+        # Must observe: thread.quit → thread.wait → worker.shutdown.
+        # Critically NOT: worker.shutdown ... thread.quit (the pre-fix order).
+        assert events == ["thread.quit", "thread.wait", "worker.shutdown"], (
+            f"shutdown order must be quit → wait → close; got {events}"
+        )
+
 
 class TestLeaseGating:
     """Lease acquisition is gated on capabilities.hwmon.present (M4)."""

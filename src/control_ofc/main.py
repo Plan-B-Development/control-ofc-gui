@@ -95,7 +95,9 @@ def main() -> None:
         # thread on first successful poll and after every reconnect
         # (see PollingService._PollWorker._register_profile_search_dir).
         # Kept off the Qt main thread so a slow daemon cannot stall the UI.
-        lease = LeaseService(client)
+        # socket_path enables the dedicated lease worker thread (DEC-108) so
+        # take/renew/release HTTP calls never block the Qt main thread.
+        lease = LeaseService(client, socket_path=socket_path)
         control_loop = ControlLoopService(
             state=state,
             profile_service=profile_service,

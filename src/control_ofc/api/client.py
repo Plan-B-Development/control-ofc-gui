@@ -212,16 +212,20 @@ class DaemonClient:
         )
         return parse_set_pwm_all(data)
 
-    def hwmon_lease_take(self, owner_hint: str = "gui") -> LeaseResult:
-        data = self._post("/hwmon/lease/take", json={"owner_hint": owner_hint})
+    def hwmon_lease_take(
+        self, owner_hint: str = "gui", *, timeout: float | None = None
+    ) -> LeaseResult:
+        data = self._post("/hwmon/lease/take", json={"owner_hint": owner_hint}, timeout=timeout)
         return parse_lease_result(data)
 
-    def hwmon_lease_release(self, lease_id: str) -> LeaseReleasedResult:
-        data = self._post("/hwmon/lease/release", json={"lease_id": lease_id})
+    def hwmon_lease_release(
+        self, lease_id: str, *, timeout: float | None = None
+    ) -> LeaseReleasedResult:
+        data = self._post("/hwmon/lease/release", json={"lease_id": lease_id}, timeout=timeout)
         return parse_lease_released(data)
 
-    def hwmon_lease_renew(self, lease_id: str) -> LeaseResult:
-        data = self._post("/hwmon/lease/renew", json={"lease_id": lease_id})
+    def hwmon_lease_renew(self, lease_id: str, *, timeout: float | None = None) -> LeaseResult:
+        data = self._post("/hwmon/lease/renew", json={"lease_id": lease_id}, timeout=timeout)
         return parse_lease_result(data)
 
     def set_hwmon_pwm(
