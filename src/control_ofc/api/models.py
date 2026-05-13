@@ -418,6 +418,30 @@ class AcpiConflictInfo:
 
 
 @dataclass
+class ModuleCollisionInfo:
+    """Pair of loaded driver modules that race for the same chip (DEC-105).
+
+    Distinct from `AcpiConflictInfo` (about I/O port ranges) and the
+    GUI-side `CONFLICTING_MODULE_SETS` (a static name-pair fallback used
+    when the daemon doesn't report this field). When the daemon reports a
+    collision the GUI must render a CRITICAL banner and discourage PWM
+    writes until the user resolves the load ordering.
+    """
+
+    module_a: str = ""
+    module_b: str = ""
+    # `severity` defaults to "info" deliberately — the conservative
+    # direction. The daemon always serializes the field on every entry it
+    # emits (no `skip_serializing_if`), so the default only applies when a
+    # malformed entry is missing the field. In that case we never want to
+    # misclassify a lower-severity future entry as CRITICAL. Mirrors the
+    # `KernelWarning.severity` default convention.
+    severity: str = "info"
+    summary: str = ""
+    remediation: str = ""
+
+
+@dataclass
 class BoardInfo:
     vendor: str = ""
     name: str = ""
@@ -470,6 +494,11 @@ class HardwareDiagnosticsResult:
     # "kernel found chip but driver did not bind" diagnostic; not
     # authoritative for "what works".
     kernel_detected_chips: list[str] = field(default_factory=list)
+    # DEC-105: simultaneous-load collisions detected by the daemon. Empty
+    # when the daemon predates DEC-105 (skip_serializing_if = "Vec::is_empty"
+    # on the wire). When present, the GUI renders a CRITICAL banner and
+    # discourages PWM writes until the user resolves the load ordering.
+    module_collisions: list[ModuleCollisionInfo] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -721,6 +750,17 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
     kernel_detected_chips_raw = data.get("kernel_detected_chips") or []
     kernel_detected_chips = [str(c) for c in kernel_detected_chips_raw if c]
 
+    # DEC-105: module-collision pairs. Same wire convention — daemons
+    # without DEC-105 omit the key, so default to []. Only accept dict
+    # entries to avoid `**` unpack failures if the field is present but
+    # malformed.
+    module_collisions_raw = data.get("module_collisions") or []
+    module_collisions = [
+        ModuleCollisionInfo(**_filter_fields(ModuleCollisionInfo, mc))
+        for mc in module_collisions_raw
+        if isinstance(mc, dict)
+    ]
+
     return HardwareDiagnosticsResult(
         api_version=data.get("api_version", 1),
         hwmon=hwmon,
@@ -737,6 +777,7 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         board=board,
         expected_chips=expected_chips,
         kernel_detected_chips=kernel_detected_chips,
+        module_collisions=module_collisions,
     )
 
 

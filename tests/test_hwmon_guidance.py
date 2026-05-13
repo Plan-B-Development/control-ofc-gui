@@ -17,9 +17,12 @@ class TestLookupChipGuidance:
         assert g.in_mainline is False
 
     def test_nct6798_matches_nct679x(self):
+        # DEC-106 added a narrower `nct6798` entry that takes precedence
+        # over the generic `nct679` entry. The user-visible binding
+        # (driver name, mainline status) is unchanged.
         g = lookup_chip_guidance("nct6798")
         assert g is not None
-        assert g.chip_prefix == "nct679"
+        assert g.chip_prefix == "nct6798"
         assert g.driver_name == "nct6775"
         assert g.in_mainline is True
 
@@ -56,9 +59,12 @@ class TestLookupChipGuidance:
         assert lookup_chip_guidance("totally_unknown_chip") is None
 
     def test_case_insensitive(self):
+        # DEC-106 added the narrower `nct6798` entry, so an upper-case
+        # NCT6798 query now hits that — still proving the case-insensitive
+        # match works.
         g = lookup_chip_guidance("NCT6798")
         assert g is not None
-        assert g.chip_prefix == "nct679"
+        assert g.chip_prefix == "nct6798"
 
     def test_most_specific_prefix_wins(self):
         g = lookup_chip_guidance("it8688E")
@@ -184,16 +190,32 @@ class TestNewChipEntries:
 
 class TestNewVendorQuirks:
     def test_asus_wmi_polling_quirk(self):
+        # DEC-105 added a second, AM4-specific asus_wmi_sensors quirk that
+        # also matches an ASUS+asus_wmi_sensors lookup. Both legitimately
+        # carry the polling warning — assert that at least one entry
+        # surfaces the polling concern at HIGH severity.
         quirks = lookup_vendor_quirks("ASUSTeK COMPUTER INC.", "asus_wmi_sensors")
-        assert len(quirks) == 1
-        assert quirks[0].severity == "high"
-        assert "polling" in quirks[0].summary.lower()
+        assert quirks, "expected at least one ASUS+asus_wmi_sensors quirk"
+        polling_high = [
+            q for q in quirks if q.severity == "high" and "polling" in q.summary.lower()
+        ]
+        assert polling_high, (
+            f"expected at least one HIGH polling quirk; got {[q.summary for q in quirks]}"
+        )
 
     def test_msi_x870_brute_force_quirk(self):
+        # The HIGH quirk for MSI X870/B850 7-point-write must mention
+        # `msi_fan_brute_force`. Asserting on `any(...)` rather than a
+        # specific `details[2]` index makes the test robust to detail-
+        # list reordering — what matters is that the workaround is
+        # documented, not which line carries it.
         quirks = lookup_vendor_quirks("Micro-Star International Co., Ltd.", "nct6687")
         high_quirks = [q for q in quirks if q.severity == "high"]
-        assert len(high_quirks) == 1
-        assert "brute_force" in high_quirks[0].details[2]
+        assert high_quirks, "Expected MSI X870/B850 HIGH quirk to exist"
+        assert any("brute_force" in d for q in high_quirks for d in q.details), (
+            "Expected the HIGH MSI+nct6687 quirk to document the "
+            "`msi_fan_brute_force=1` module parameter as a workaround"
+        )
 
     def test_asrock_nct6686_quirk(self):
         quirks = lookup_vendor_quirks("ASRock", "nct6686d")

@@ -19,10 +19,28 @@ guidance system (`hwmon_guidance.py`).
 | Chip Series | Kernel Driver | Mainline | Package |
 |-------------|--------------|----------|---------|
 | NCT679x (NCT6798, NCT6799) | `nct6775` | Yes | linux (built-in) |
+| NCT6797D (chip ID 0xd450) | `nct6775` | Yes (via `nct6775-platform.c`) | linux (built-in) — **see NCT6687-R collision warning below** |
+| NCT6795D | `nct6775` | Yes | linux (built-in) — common on MSI AM4 X470 GAMING PRO |
+| NCT6792D | `nct6775` | Yes | linux (built-in) — common on ASRock AM4 ITX |
+| NCT6779D | `nct6775` | Yes | linux (built-in) — common on ASRock AM4 |
 | NCT677x (NCT6775, NCT6776) | `nct6775` | Yes | linux (built-in) |
 | NCT6683 | `nct6683` | Yes | linux (built-in) |
 | NCT6686D | `nct6683` | Yes | linux (built-in) — monitoring; PWM writes may not work on all boards |
-| NCT6687-R | `nct6687` | **No** | `nct6687d-dkms-git` (AUR) |
+| NCT6687-R | `nct6687` | **No** | `nct6687d-dkms-git` (AUR) — **chip-ID 0xd450 overlaps NCT6797D, see warning** |
+
+**NCT6797D / NCT6798D vs out-of-tree `nct6687` — chip-ID collision (DEC-104):**
+The out-of-tree `nct6687` driver declares chip ID `0xd450`. This is the
+same chip ID assigned to the legitimate NCT6797D in `drivers/hwmon/nct6775-platform.c`.
+When both `nct6687` and `nct6775` are loaded simultaneously the wrong
+driver can bind to the chip and write into the wrong registers — an
+upstream report on the MSI MAG X570 TOMAHAWK WIFI documents a permanently
+bricked CPU_FAN header from this exact race. The same chip family is
+common on AM4 400-series MSI boards (e.g. B450M MORTAR uses NCT6797D, per
+its upstream lm-sensors config). Bazzite blacklists `nct6687` by default
+for this reason. See `21_AMD_Motherboard_Fan_Control_Guide.md` § AM4
+400-series specifics for the full remediation. The daemon detects the
+collision in `/diagnostics/hardware` → `module_collisions` and the GUI
+renders a CRITICAL banner discouraging PWM writes until resolved.
 
 ### ITE
 
@@ -67,6 +85,14 @@ remediation steps. See `21_AMD_Motherboard_Fan_Control_Guide.md` §
 Gigabyte → Reported examples for the X870E AORUS MASTER worked
 example.
 
+### Other ASUS sensor-only drivers
+
+| Driver | Mainline | Function |
+|---|---|---|
+| `asus_wmi_sensors` | Yes | Read-only board sensor enrichment via WMI. **Kernel docs warn** that high-frequency polling can stop fans or pin them at maximum on AM4 boards (PRIME X470-PRO, ROG STRIX B450/X470 series). Never the PWM write path. |
+| `asus_ec_sensors` | Yes | Read-only EC sensor enrichment. PRIME X470-PRO is the only AM4 400-series board in the kernel's allowlist; the rest are X570+ territory. |
+| `asus_atk0110` | Yes | Read-only ACPI ATK0110 hwmon. Auto-loaded on a wide range of ASUS boards. If you see this driver loaded but no controllable headers, look for `nct6775` or `it87` as the PWM path. |
+
 ### Fintek
 
 | Chip Series | Kernel Driver | Mainline | Package |
@@ -80,6 +106,44 @@ example.
 |-------------|--------------|----------|---------|
 | SCH5627 | `sch5627` | Yes | linux (built-in) |
 | SCH5636 | `sch5636` | Yes | linux (built-in) |
+
+## AMD platform → typical chip mapping
+
+This table summarises what hwmon chip(s) you are likely to find on each
+AMD platform generation. Use it as a starting point for diagnostics —
+it is not exhaustive, but every entry is cross-referenced against the
+frankcrawford/it87 DMI table, the upstream lm-sensors `configs/`
+directory, or kernel `asus_*` driver allowlists.
+
+| Generation | Typical Vendors | Typical Hwmon Chip(s) | Driver Path |
+|---|---|---|---|
+| **AM4 400-series** (B450 / X470) | ASUS (PRIME X470-PRO, ROG STRIX B450/X470 -E/-F/-I) | NCT6798D + `asus_wmi_sensors` / `asus_ec_sensors` / `asus_atk0110` | mainline `nct6775` + sensor-only ASUS drivers |
+| | MSI (B450M MORTAR, X470 GAMING PRO, MAG B450 TOMAHAWK MAX) | NCT6797D / NCT6795D | mainline `nct6775` — **never load `nct6687` here unless the chip is genuinely NCT6687-R** |
+| | Gigabyte (X470 AORUS ULTRA/GAMING 5/7, B450 AORUS PRO/PRO-CF) | IT8686E + IT8792E (dual-chip) | out-of-tree `it87-dkms-git` |
+| | ASRock (B450 Gaming ITX/AC, B450 Pro4, X470 Taichi) | NCT6779D or NCT6792D | mainline `nct6775` |
+| **AM4 500-series** (X570 / B550 / A520) | ASUS (TUF GAMING X570-PLUS, ROG STRIX X570/B550, PRIME X570-PRO) | NCT6798D + asus_ec_sensors enrichment | mainline `nct6775` |
+| | MSI **NCT6687-R camp** (MAG B550 TOMAHAWK, MAG B550 A-PRO, MPG X570 variants) | NCT6687-R (chip ID 0xd590) | out-of-tree `nct6687d-dkms-git` |
+| | MSI **NCT6797D camp** (X570-A PRO, X570 GAMING PRO CARBON, X570 GAMING PLUS/EDGE) | NCT6797D (chip ID 0xd450) | mainline `nct6775` — **must not load nct6687d here** (DEC-105 brick risk) |
+| | Gigabyte AORUS (X570 AORUS MASTER/PRO/PRO WIFI/ULTRA, B550 VISION D) | IT8688E + IT8792E (dual-chip) | out-of-tree `it87-dkms-git` |
+| | Gigabyte AORUS single-chip (B550M AORUS PRO) | IT8688E only | out-of-tree `it87-dkms-git` |
+| | ASRock (B550 Steel Legend, X570 Taichi non-Razer, B550 PG Velocita) | NCT6798D | mainline `nct6775` |
+| | ASRock B550 Taichi Razer Edition | NCT6683 family | `asrock-nct6683` (out-of-tree, board-specific) |
+| **AM5 600-series** (B650 / X670 / A620) | ASUS (ROG STRIX X670E, ROG CROSSHAIR X670E EXTREME, PRIME X670) | NCT6798D + `asus_ec_sensors` (expanded allowlist) | mainline `nct6775` for PWM; `asus_ec_sensors` for sensor enrichment |
+| | MSI (MAG B650 TOMAHAWK, MAG X670E TOMAHAWK, MPG X670E CARBON, MEG X670E ACE) | NCT6687-R variants | out-of-tree `nct6687d-dkms-git` |
+| | Gigabyte AORUS (X670E AORUS MASTER, X670E AORUS PRO X) | **IT8689E** + IT87952E dual-chip — **Rev 1 silently ignores PWM writes** (issue #96) | out-of-tree `it87-dkms-git`; Rev 1 hardware has no software fix |
+| | Gigabyte AORUS newer (X670 AORUS / B650 boards) | IT8696E (+ optional IT87952E dual) | out-of-tree `it87-dkms-git` |
+| | ASRock A620/B650/X670 NCT6686D boards | NCT6686D | `nct6686d` or `asrock-nct6683` or `nct6687d` (board-specific — test before relying) |
+| **AM5 800-series** (B850 / X870 / B840) | ASUS (X870E variants, X870 series) | NCT6798D + expanded `asus_ec_sensors` allowlist | mainline `nct6775` + sensor enrichment |
+| | MSI **auto-allowlist** (33 boards across B840/B850/X870/Z890) | NCT6687-R variants with msi_alt1 auto-enabled | out-of-tree `nct6687d-dkms-git` v2.x |
+| | MSI boards NOT on the allowlist | NCT6687-R variants | `nct6687d` + `msi_alt1=1` or `msi_fan_brute_force=1` |
+| | Gigabyte X870E AORUS MASTER / X870E AORUS PRO / B850-AI-TOP | IT8696E + IT87952E (dual-chip) | out-of-tree `it87-dkms-git`; needs `mmio=on` |
+| | **Gigabyte X870 AORUS STEALTH ICE** | IT8696E + **IT8883** | IT8696E via `it87-dkms-git`; **IT8883 has no Linux driver** (issue #81) |
+| | ASRock X870 Nova | **NCT6796D-S** | mainline `nct6775` |
+| | **ASRock X870E Taichi Lite — dual-Nuvoton** | NCT6686 + NCT6799 (separate chips) | `nct6687d` + mainline `nct6775` (DEC-106 collision-detector exemption) |
+
+The Diagnostics page (`/diagnostics/hardware`) reports the actual loaded
+modules and detected chips, so users should always cross-reference this
+generic table against their own system's output.
 
 ## Manufacturer Quirks
 

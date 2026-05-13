@@ -102,6 +102,139 @@ HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
         "pwm2": FallbackLabel("SYS_FAN5_PUMP", verified=False),
         "pwm3": FallbackLabel("SYS_FAN6_PUMP", verified=False),
     },
+    # ── DEC-105: AM4 400-series boards with upstream lm-sensors configs ─
+    # Each entry below is taken VERBATIM from a config file in
+    # https://github.com/lm-sensors/lm-sensors/tree/master/configs — we
+    # only ship the fallback for boards where there is an upstream config
+    # to defend the mapping. Other AM4 400-series boards rely on the
+    # libsensors parser to pick up the user's own /etc/sensors.d/ file or
+    # default to the raw pwmN identifier.
+    # ── Gigabyte X470 AORUS ULTRA GAMING ────────────────────────────
+    # Source: configs/Gigabyte/X470-AORUS-ULTRA-GAMING.conf
+    # Primary IT8686E at 0x0a40 (CPU_FAN, SYS_FAN1..3, CPU_OPT) and
+    # secondary IT8792E at 0x0a60 (SYS_FAN5_PUMP, SYS_FAN6_PUMP, SYS_FAN4).
+    BoardKey(
+        vendor="Gigabyte Technology Co., Ltd.",
+        board_glob="X470 AORUS ULTRA GAMING",
+        chip="it8686",
+    ): {
+        "pwm1": FallbackLabel("CPU_FAN", verified=True),
+        "pwm2": FallbackLabel("SYS_FAN1", verified=True),
+        "pwm3": FallbackLabel("SYS_FAN2", verified=True),
+        "pwm4": FallbackLabel("SYS_FAN3", verified=True),
+        "pwm5": FallbackLabel("CPU_OPT", verified=True),
+    },
+    BoardKey(
+        vendor="Gigabyte Technology Co., Ltd.",
+        board_glob="X470 AORUS ULTRA GAMING",
+        chip="it8792",
+    ): {
+        "pwm1": FallbackLabel("SYS_FAN5_PUMP", verified=True),
+        "pwm2": FallbackLabel("SYS_FAN6_PUMP", verified=True),
+        "pwm3": FallbackLabel("SYS_FAN4", verified=True),
+    },
+    # ── MSI X470 GAMING PRO (MS-7B79) ───────────────────────────────
+    # Source: configs/MSI/MS_7B79_X470_GAMINGPRO.conf
+    # Chip: NCT6795D. Note: fan1 = PUMP_FAN1, fan2 = CPU_FAN1.
+    BoardKey(
+        vendor="Micro-Star International Co., Ltd.",
+        board_glob="X470 GAMING PRO",
+        chip="nct6795",
+    ): {
+        "pwm1": FallbackLabel("PUMP_FAN1", verified=True),
+        "pwm2": FallbackLabel("CPU_FAN1", verified=True),
+        "pwm3": FallbackLabel("SYS_FAN1", verified=True),
+        "pwm4": FallbackLabel("SYS_FAN2", verified=True),
+        "pwm5": FallbackLabel("SYS_FAN3", verified=True),
+        "pwm6": FallbackLabel("SYS_FAN4", verified=True),
+    },
+    # ── MSI B450M MORTAR (MS-7B89) ──────────────────────────────────
+    # Source: configs/MSI/MS-7B89-B450M-MORTAR.conf
+    # Chip: NCT6797D. fan1 is ignored upstream; fan2-fan5 mapped.
+    # NCT6797D is the chip that the out-of-tree nct6687 driver
+    # mis-claims via ID 0xd450 — see DEC-105 collision warning.
+    BoardKey(
+        vendor="Micro-Star International Co., Ltd.",
+        board_glob="B450M MORTAR*",
+        chip="nct6797",
+    ): {
+        "pwm2": FallbackLabel("CPU 1", verified=True),
+        "pwm3": FallbackLabel("SYSTEM 1", verified=True),
+        "pwm4": FallbackLabel("SYSTEM 2", verified=True),
+        "pwm5": FallbackLabel("SYSTEM 3", verified=True),
+    },
+    # ── ASRock B450 Gaming ITX/AC ────────────────────────────────────
+    # Source: configs/ASRock/B450-Gaming-ITX-ac.conf
+    # Chip: NCT6792D (mainline kernel coverage).
+    BoardKey(
+        vendor="ASRock",
+        board_glob="B450 Gaming ITX/ac",
+        chip="nct6792",
+    ): {
+        "pwm1": FallbackLabel("CHA_FAN1", verified=True),
+        "pwm2": FallbackLabel("CPU_FAN1", verified=True),
+        "pwm3": FallbackLabel("CHA_FAN2", verified=True),
+    },
+    # ── DEC-106: AM4 500-series boards with upstream lm-sensors configs ─
+    # Same D-B.B1 discipline as DEC-105: adopt only where upstream gives a
+    # citable mapping. The libsensors convention is that `fanN_label` and
+    # `pwmN` address the same physical fan, so we translate `fanN` labels
+    # to `pwmN` keys at `verified=True` exactly as DEC-105 did.
+    # ── Gigabyte B550 VISION D (GA-B550-VISION-D) ──────────────────
+    # Source: configs/Gigabyte/GA-B550-VISION-D.conf
+    # Primary IT8688E at 0x0a40 + secondary IT8792E at 0x0a60.
+    BoardKey(
+        vendor="Gigabyte Technology Co., Ltd.",
+        board_glob="B550 VISION D",
+        chip="it8688",
+    ): {
+        "pwm1": FallbackLabel("CPU_FAN", verified=True),
+        "pwm2": FallbackLabel("SYS_FAN1", verified=True),
+        "pwm3": FallbackLabel("SYS_FAN2", verified=True),
+        "pwm4": FallbackLabel("SYS_FAN3", verified=True),
+        "pwm5": FallbackLabel("CPU_OPT", verified=True),
+    },
+    BoardKey(
+        vendor="Gigabyte Technology Co., Ltd.",
+        board_glob="B550 VISION D",
+        chip="it8792",
+    ): {
+        "pwm1": FallbackLabel("SYS_FAN5_PUMP", verified=True),
+        "pwm2": FallbackLabel("SYS_FAN6_PUMP", verified=True),
+        "pwm3": FallbackLabel("SYS_FAN4", verified=True),
+    },
+    # ── Gigabyte B550M AORUS PRO (GA-B550M-AORUS-PRO) ───────────────
+    # Source: configs/Gigabyte/GA-B550M-AORUS-PRO.conf
+    # Single-chip variant — IT8688E only.
+    BoardKey(
+        vendor="Gigabyte Technology Co., Ltd.",
+        board_glob="B550M AORUS PRO*",
+        chip="it8688",
+    ): {
+        "pwm1": FallbackLabel("CPU_FAN", verified=True),
+        "pwm2": FallbackLabel("SYS_FAN1", verified=True),
+        "pwm3": FallbackLabel("SYS_FAN2", verified=True),
+        "pwm4": FallbackLabel("SYS_FAN3", verified=True),
+        "pwm5": FallbackLabel("CPU_OPT", verified=True),
+    },
+    # ── MSI X570-A PRO (MS-7C37) ────────────────────────────────────
+    # Source: configs/MSI/X570-A-Pro.conf
+    # Chip: NCT6797D — same chip family as the DEC-105 B450M MORTAR
+    # entry; the DEC-105 collision warning applies if `nct6687d` is
+    # also loaded on this board.
+    BoardKey(
+        vendor="Micro-Star International Co., Ltd.",
+        board_glob="X570-A PRO*",
+        chip="nct6797",
+    ): {
+        "pwm1": FallbackLabel("Pump", verified=True),
+        "pwm2": FallbackLabel("CPU Fan", verified=True),
+        "pwm3": FallbackLabel("System Fan 1", verified=True),
+        "pwm4": FallbackLabel("System Fan 2", verified=True),
+        "pwm5": FallbackLabel("System Fan 3", verified=True),
+        "pwm6": FallbackLabel("System Fan 4", verified=True),
+        "pwm7": FallbackLabel("PCH Fan", verified=True),
+    },
 }
 
 

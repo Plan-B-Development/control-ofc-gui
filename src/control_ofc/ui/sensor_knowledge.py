@@ -536,6 +536,14 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
             "No reliable Linux-side mapping available",
         ],
     ),
+    # -- ASUS AM4 400-series — kernel asus_wmi_sensors entry boards --
+    # The kernel asus_wmi_sensors driver explicitly supports PRIME X470-PRO
+    # and ROG STRIX B450-E/F/I + X470-F/I GAMING. PRIME X470-PRO is called
+    # out in kernel docs as triggering fans stopping or being pinned at
+    # maximum under heavy polling. We do not add a label_pattern entry
+    # here because that requires a specific sensor name to override.
+    # Vendor-level warnings live in hwmon_guidance.py
+    # (`asustek + asus_wmi_sensors` quirk).
 ]
 
 
