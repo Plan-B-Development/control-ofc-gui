@@ -53,6 +53,12 @@ class _PollWorker(QObject):
         self._consecutive_failures = 0
         self._caps_interval = max(1, CAPABILITIES_REFRESH_INTERVAL_S * 1000 // POLL_INTERVAL_MS)
         self._history = history
+        # P2-D: dirs already announced to the daemon. Logged at INFO the
+        # first time we send a dir (a real state change), DEBUG on later
+        # re-registrations (post-reconnect, daemon may have restarted —
+        # call is still made for safety, but it's almost always a no-op
+        # on the daemon side and shouldn't clutter the journal).
+        self._announced_dirs: set[str] = set()
 
     def _ensure_client(self) -> DaemonClient:
         if self._client is None:
@@ -148,23 +154,38 @@ class _PollWorker(QObject):
                 log.debug("Failed to fetch history for %s", s.id)
 
     def _register_profile_search_dir(self, client: DaemonClient) -> None:
-        """Tell the daemon where this GUI stores its profiles."""
+        """Tell the daemon where this GUI stores its profiles.
+
+        Called on first poll and on every reconnect (because the daemon may
+        have restarted while we were disconnected and lost its in-memory
+        search-dir list). The first time per process we log at INFO so the
+        registration is visible to operators; subsequent re-registrations
+        log at DEBUG because they are almost always a no-op on the daemon
+        side (the endpoint is additive and deduplicated).
+        """
         dir_path = str(profiles_dir())
         try:
             client.update_profile_search_dirs(add=[dir_path])
-            log.info("Registered profile search dir with daemon: %s", dir_path)
         except DaemonError as exc:
             log.warning(
                 "Could not register profile search dir %s with daemon: %s",
                 dir_path,
                 exc.message,
             )
+            return
         except (ConnectionError, OSError) as exc:
             log.warning(
                 "Connection error registering profile search dir %s: %s",
                 dir_path,
                 exc,
             )
+            return
+
+        if dir_path in self._announced_dirs:
+            log.debug("Re-registered profile search dir with daemon: %s", dir_path)
+        else:
+            log.info("Registered profile search dir with daemon: %s", dir_path)
+            self._announced_dirs.add(dir_path)
 
     def _close_client(self) -> None:
         if self._client:

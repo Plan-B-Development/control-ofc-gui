@@ -190,10 +190,22 @@ def test_parse_set_pwm():
 
 
 def test_parse_set_pwm_all():
+    # P2-B: daemon now surfaces a `coalesced` field on set_pwm_all responses
+    # mirroring the per-channel set_pwm shape. Parsing must accept both the
+    # legacy (no coalesced) and the new (coalesced present) payloads.
     data = {"pwm_percent": 50, "channels_affected": 6}
     result = parse_set_pwm_all(data)
     assert result.pwm_percent == 50
     assert result.channels_affected == 6
+    assert result.coalesced is False, "missing coalesced must default to False"
+
+
+def test_parse_set_pwm_all_with_coalesced_field():
+    data = {"pwm_percent": 50, "channels_affected": 6, "coalesced": True}
+    result = parse_set_pwm_all(data)
+    assert result.pwm_percent == 50
+    assert result.channels_affected == 6
+    assert result.coalesced is True
 
 
 def test_parse_lease_result():

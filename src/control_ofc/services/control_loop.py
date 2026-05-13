@@ -173,6 +173,14 @@ class _WriteWorker(QObject):
                 return
 
     def shutdown(self) -> None:
+        """Close the underlying DaemonClient.
+
+        MUST be called only after the worker thread has been quit + joined,
+        because closing `self._client` mutates state the worker thread reads
+        from inside `do_write`. See `ControlLoopService.shutdown()` for the
+        correct ordering — that path quits the thread, waits for it to
+        drain, then calls this method.
+        """
         if self._client:
             with contextlib.suppress(Exception):
                 self._client.close()
@@ -394,14 +402,19 @@ class ControlLoopService(QObject):
             return
         self._is_shutdown = True
         self.stop()
-        if self._write_worker:
-            self._write_worker.shutdown()
+        # P2-C: quit + join the worker thread BEFORE closing its DaemonClient.
+        # `_WriteWorker.shutdown()` mutates `worker._client = None`, which is
+        # read by `worker.do_write` on the worker thread. Doing that while
+        # the worker may still be running a write is a data race — Python's
+        # GIL hides it most of the time but it's not safe.
         if self._write_thread:
             self._write_thread.quit()
             if not self._write_thread.wait(2000):
                 log.warning("Control loop write thread did not stop within 2s, terminating")
                 self._write_thread.terminate()
                 self._write_thread.wait(1000)
+        if self._write_worker:
+            self._write_worker.shutdown()
 
     def _on_sensors_updated(self, _sensors: list) -> None:
         """Evaluate immediately when fresh sensor data arrives.
@@ -692,12 +705,20 @@ class ControlLoopService(QObject):
             self._demo.set_fan_pwm(target_id, pwm_int)
             return True
 
-        # Determine lease_id for hwmon writes
+        # Determine lease_id for hwmon writes.
+        # DEC-108: in worker mode `acquire()` is async — it queues the take
+        # request and returns True immediately even though `is_held` is still
+        # False. We must only proceed when we actually hold the lease;
+        # otherwise we'd send an empty lease_id and the daemon would 403.
+        # Skipping the write is fine — `is_held` will flip True on a later
+        # cycle once the worker's take_completed signal lands.
         lease_id = ""
         if target_id.startswith("hwmon:"):
-            if (self._lease and self._lease.is_held) or (self._lease and self._lease.acquire()):
+            if self._lease and self._lease.is_held:
                 lease_id = self._lease.lease_id or ""
             else:
+                if self._lease:
+                    self._lease.acquire()
                 log.warning("hwmon write skipped -- no lease for %s", target_id)
                 return False
 

@@ -61,6 +61,68 @@ additions to make daemon-side behaviour observable. See DEC-107.
 
 ---
 
+### `/audit` follow-up hardening pass (DEC-108)
+
+A post-v1.12.0 / v1.7.0 `/audit` of both repos surfaced three P1
+issues and four P2 issues; this section captures the GUI-side
+fixes. See DEC-108 for the full rationale.
+
+#### Fixed (GUI)
+- **Lease HTTP calls no longer block the Qt main thread.** A new
+  `_LeaseWorker` `QObject` runs on a dedicated `QThread`;
+  `LeaseService` keeps its public API and signals but the actual
+  `POST /hwmon/lease/{take,renew,release}` calls now happen on the
+  worker. Pairs with DEC-099 to close the last main-thread blocking
+  site in the 1 Hz hot path. (P1-C)
+- **`ControlLoopService.shutdown()` quits and waits the write
+  worker thread BEFORE closing the worker's `DaemonClient`.** The
+  previous order mutated `_WriteWorker._client = None` from the
+  main thread while the worker could still be running `do_write`.
+  GIL made it benign in practice; the reorder removes the race.
+  Regression locked by `test_shutdown_quits_thread_before_closing_worker_client`.
+  (P2-C)
+- **`_PollWorker._register_profile_search_dir` no longer logs at
+  INFO on every reconnect.** First registration per process is
+  still INFO; subsequent re-registrations (same dir) log at DEBUG.
+  The HTTP call still fires every reconnect for safety (daemon
+  may have restarted with a stale search-dir list). (P2-D)
+
+#### Added (GUI)
+- **`LEASE_API_TIMEOUT_S = 1.5` constant** (in `constants.py`)
+  passed to all three lease HTTP calls. Below `LEASE_RENEW_INTERVAL_S
+  = 30 s` so a contended daemon cannot pile up concurrent renews.
+- **`SetPwmAllResult.coalesced: bool`** field on the GUI model,
+  parsed from the new daemon response field. Defaults to `False`
+  for forward compatibility with pre-DEC-108 daemons.
+- **`LeaseService.__init__(client, *, socket_path=None)`** —
+  passing `socket_path` engages worker-thread mode. Existing
+  callers (and all current tests) continue to work without it
+  by using the sync fallback against an injected mock client.
+
+#### Tests (GUI)
+- **+8 lease worker-mode tests** in `test_lease_service.py`:
+  thread created when `socket_path` supplied, sync mode when
+  not, `acquire()` queues request and returns True, duplicate
+  acquires coalesce, take_completed updates state + signal,
+  take_completed failure → lease_lost, renew coalesces while
+  in-flight, stale renew response after release is discarded,
+  shutdown joins thread before closing client.
+- **+2 existing test updates** for the new `timeout` kwarg on
+  `hwmon_lease_take` / `hwmon_lease_release`.
+- **+1 shutdown-order test** in `test_control_loop.py`
+  (`test_shutdown_quits_thread_before_closing_worker_client`).
+- **+1 parser test** in `test_models.py`
+  (`test_parse_set_pwm_all_with_coalesced_field`).
+- **+1 log-level test** in `test_profile_search_dir_registration.py`
+  (`test_first_registration_logs_info_subsequent_logs_debug`).
+- Test count: 1411 → 1423 passing (+12 net, all green).
+
+#### Documentation
+- **DECISIONS.md:** new DEC-108 (audit follow-up: full rationale,
+  cross-repo coupling, fixes for P1-A through P2-D).
+
+---
+
 ## [1.12.0] — 2026-05-13
 
 Pairs with **daemon v1.7.0**. Coordinated AMD-board-support hardening

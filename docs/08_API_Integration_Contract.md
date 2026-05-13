@@ -353,7 +353,13 @@ According to the provided daemon notes:
 - PWM 0–100 passed through — no clamping in the daemon. Safety floors are
   GUI-side profile constraints (see
   `docs/09_State_Model_Control_Loop_and_Lease_Behaviour.md`).
-- duplicate writes may be coalesced
+- duplicate writes may be coalesced. Both `POST /fans/openfan/{ch}/pwm`
+  and `POST /fans/openfan/pwm` return a `coalesced: bool` field in
+  the response body. `true` means the daemon skipped the serial
+  command because the requested value matched the last commanded
+  value (per-channel: that channel; all-channel: every channel).
+  The cache is left untouched on coalesce. The GUI parses this on
+  both `SetPwmResult` and `SetPwmAllResult`. (DEC-108)
 
 ### Hwmon
 - PWM 0–100 passed through — no per-header floors in the daemon

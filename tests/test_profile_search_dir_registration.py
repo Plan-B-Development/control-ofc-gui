@@ -97,6 +97,44 @@ class TestRegisterProfileSearchDir:
         finally:
             set_path_overrides()
 
+    def test_first_registration_logs_info_subsequent_logs_debug(self, tmp_profiles_dir, caplog):
+        """P2-D: only the first successful registration should appear at INFO.
+
+        Re-registration on every reconnect is intentional (the daemon may
+        have restarted with a stale search-dir list), but emitting a new
+        INFO line every time clutters the journal on a flapping socket.
+        First call → INFO. Subsequent calls → DEBUG.
+        """
+        import logging
+
+        worker = _PollWorker(socket_path="/tmp/nonexistent.sock")
+        client = MagicMock()
+
+        # First registration: must log at INFO.
+        with caplog.at_level(logging.DEBUG, logger="control_ofc.services.polling"):
+            worker._register_profile_search_dir(client)
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert any("Registered profile search dir" in r.message for r in info_records), (
+            f"first registration must log at INFO; got {info_records}"
+        )
+        caplog.clear()
+
+        # Second registration (same dir, same session): must log at DEBUG, NOT INFO.
+        with caplog.at_level(logging.DEBUG, logger="control_ofc.services.polling"):
+            worker._register_profile_search_dir(client)
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert not info_records, (
+            f"re-registration of the same dir must NOT log at INFO; got {info_records}"
+        )
+        assert any("Re-registered profile search dir" in r.message for r in debug_records), (
+            f"re-registration must log at DEBUG; got {debug_records}"
+        )
+
+        # The daemon call still happens (additive endpoint, daemon may have
+        # restarted) — we only changed the log level, not the wire behaviour.
+        assert client.update_profile_search_dirs.call_count == 2
+
 
 class TestRegistrationRunsInWorkerPollCycle:
     """P1-3: Registration runs inside the worker's poll() cycle, not on the Qt
