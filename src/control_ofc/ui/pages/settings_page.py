@@ -39,7 +39,7 @@ from control_ofc.paths import (
 )
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
-from control_ofc.ui.theme import ThemeTokens, default_dark_theme, load_theme, save_theme
+from control_ofc.ui.theme import ThemeTokens, load_theme, save_theme
 
 log = logging.getLogger(__name__)
 
@@ -244,7 +244,12 @@ class SettingsPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel(label_text))
         path_label.setMinimumWidth(250)
-        path_label.setStyleSheet(f"color: {default_dark_theme().text_muted};")
+        # Use the *active* theme so the dir-picker label tint follows light
+        # vs dark theme changes — pre-DEC-109 this was pinned to the default
+        # dark token and looked wrong under any other theme.
+        from control_ofc.ui.theme import active_theme
+
+        path_label.setStyleSheet(f"color: {active_theme().text_muted};")
         row.addWidget(path_label, 1)
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(browse_callback)

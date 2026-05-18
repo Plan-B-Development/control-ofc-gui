@@ -149,8 +149,26 @@ At minimum define tokens for:
 - demo mode highlight
 
 ## Accessibility and readability rules
-Aim for strong contrast and legibility in dark mode.
+**Project policy (DEC-109): shipped themes must pass WCAG 2.1 AA on every
+contrast pair `check_contrast_warnings()` evaluates.** The thresholds:
+
+- **4.5:1** — body text (< 18 pt regular, < 14 pt bold). Applies to
+  `text_primary` on every meaningful surface, `input_text` on `input_bg`,
+  `table_text` on `table_row_bg` / `table_row_alt_bg`, and `primary_btn_text`
+  on `accent_primary` and `accent_secondary` (hover).
+- **3:1** — large text, focus indicators, chart axis labels, and
+  non-text UI components. Applies to `text_muted` on cards,
+  `text_secondary` on cards, `nav_text_active` on `nav_item_active`,
+  `chart_axis_text` on `chart_bg`, `input_placeholder` on `input_bg`,
+  and `focus_ring` on `app_bg`.
+- **Disabled controls are exempt** — WCAG itself exempts them, so
+  `disabled_text` / `disabled_bg` is not enforced.
+
 Important labels, controls, and meaningful chart elements must remain readable and distinguishable.
+
+The Theme Editor's "Contrast Warnings" panel lists any pair that falls
+below its threshold. A theme that produces no warnings can be considered
+AA-compliant for the pairs the GUI cares about.
 
 ### Chart readability rules
 - always show a legend or direct labels for visible series

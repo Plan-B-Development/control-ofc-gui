@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication
 
 from control_ofc.api.client import DaemonClient
 from control_ofc.constants import APP_NAME, APP_VERSION, DEFAULT_SOCKET_PATH
-from control_ofc.paths import ensure_dirs, set_path_overrides
+from control_ofc.paths import ensure_dirs, set_path_overrides, themes_dir
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.control_loop import ControlLoopService
@@ -22,7 +22,15 @@ from control_ofc.services.lease_service import LeaseService
 from control_ofc.services.polling import PollingService
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.ui.main_window import MainWindow
-from control_ofc.ui.theme import apply_theme_font, build_stylesheet, default_dark_theme
+from control_ofc.ui.theme import (
+    ThemeTokens,
+    apply_theme_font,
+    build_stylesheet,
+    default_dark_theme,
+    ensure_bundled_themes_installed,
+    load_theme,
+    set_active_theme,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,17 +40,42 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+def _resolve_startup_theme(theme_name: str) -> ThemeTokens:
+    """Return the persisted theme by name, or the default dark theme.
+
+    Resolution order:
+      1. ``Default Dark`` (or empty / unknown name) — bundled default tokens
+      2. Any matching JSON file in ``themes_dir()`` whose loaded
+         ``ThemeTokens.name`` equals ``theme_name``
+      3. Fallback to default dark if the file is missing or invalid
+
+    Failures are logged but never raise: a corrupted theme must not prevent
+    the GUI from starting. The user can re-pick a theme from Settings if
+    their persisted choice is no longer loadable.
+    """
+    if not theme_name or theme_name == "Default Dark":
+        return default_dark_theme()
+    td = themes_dir()
+    if not td.exists():
+        return default_dark_theme()
+    for path in sorted(td.glob("*.json")):
+        try:
+            tokens = load_theme(path)
+        except (OSError, ValueError, KeyError) as exc:
+            log.warning("Skipping unreadable theme %s on startup: %s", path, exc)
+            continue
+        if tokens.name == theme_name:
+            return tokens
+    log.info("Persisted theme %r not found in %s; falling back to Default Dark", theme_name, td)
+    return default_dark_theme()
+
+
 def main() -> None:
     ensure_dirs()
 
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName(APP_NAME)
     qt_app.setApplicationVersion(APP_VERSION)
-
-    # Apply dark theme
-    theme = default_dark_theme()
-    qt_app.setStyleSheet(build_stylesheet(theme))
-    apply_theme_font(theme)
 
     # Load settings early so directory overrides apply before profiles/themes load
     settings_service = AppSettingsService()
@@ -55,6 +88,22 @@ def main() -> None:
         themes_dir=s.themes_dir_override,
         export_dir=s.export_default_dir,
     )
+
+    # Install bundled presets (Solar Light, Noctua Dark) on first run so they
+    # show up in the Settings → Theme selector. Existing files are left alone
+    # so a user who has edited a preset doesn't lose their changes.
+    installed = ensure_bundled_themes_installed(themes_dir())
+    for path in installed:
+        log.info("Installed bundled theme preset: %s", path.name)
+
+    # Resolve the persisted theme (or fall back to Default Dark) and apply it
+    # *after* themes_dir is correct so the selection actually loads from the
+    # right location. The active theme is registered so widgets that don't
+    # carry a parent reference can look up live tokens via active_theme().
+    theme = _resolve_startup_theme(s.theme_name)
+    set_active_theme(theme)
+    qt_app.setStyleSheet(build_stylesheet(theme))
+    apply_theme_font(theme)
 
     parser = argparse.ArgumentParser(description="Control-OFC desktop fan control GUI")
     parser.add_argument("--socket", default=DEFAULT_SOCKET_PATH, help="Daemon socket path")

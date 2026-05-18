@@ -1,6 +1,6 @@
 [project]
 name = "control-ofc-gui"
-version = "1.13.0"
+version = "1.14.0"
 description = "Desktop fan control GUI for the Control-OFC daemon"
 requires-python = ">=3.12"
 license = "MIT"
@@ -34,6 +34,11 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.setuptools.package-data]
+# Ship bundled theme presets inside the wheel so first-run install can
+# copy them into the user's themes_dir.
+"control_ofc" = ["ui/presets/*.json"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

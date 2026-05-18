@@ -62,10 +62,9 @@ from control_ofc.ui.hwmon_guidance import (
     verification_guidance,
 )
 from control_ofc.ui.sensor_knowledge import classify_sensor, format_sensor_tooltip
-from control_ofc.ui.theme import default_dark_theme
+from control_ofc.ui.theme import active_theme
 
 _TRANSPARENT = "background: transparent;"
-_THEME = default_dark_theme()
 
 log = logging.getLogger(__name__)
 
@@ -225,12 +224,17 @@ def reclaim_severity_color(severity: str) -> str:
     Mirrors ``SuccessChip`` / ``WarningChip`` / ``CriticalChip`` so the per-row
     colours line up with the rest of the diagnostics UI even when this widget
     is rendered in rich-text mode (which doesn't pick up Qt CSS class styling).
+
+    Reads from :func:`active_theme` on every call so a theme switch picks up
+    the new status colours on the next render — pre-DEC-109 this was pinned
+    to a module-level Default Dark snapshot.
     """
+    theme = active_theme()
     if severity == RECLAIM_SEVERITY_OK:
-        return _THEME.status_ok
+        return theme.status_ok
     if severity == RECLAIM_SEVERITY_HIGH:
-        return _THEME.status_crit
-    return _THEME.status_warn
+        return theme.status_crit
+    return theme.status_warn
 
 
 def render_reclaim_rows(reverts: dict[str, int] | None) -> str | None:
@@ -1093,12 +1097,13 @@ class DiagnosticsPage(QWidget):
 
             freshness_item = self._sensor_table.item(i, 5)
             freshness_item.setText(s.freshness.value)
+            theme = active_theme()
             if s.freshness == Freshness.STALE:
-                freshness_item.setForeground(QColor(_THEME.status_warn))
+                freshness_item.setForeground(QColor(theme.status_warn))
             elif s.freshness == Freshness.INVALID:
-                freshness_item.setForeground(QColor(_THEME.status_crit))
+                freshness_item.setForeground(QColor(theme.status_crit))
             else:
-                freshness_item.setForeground(QColor(_THEME.text_primary))
+                freshness_item.setForeground(QColor(theme.text_primary))
 
             confidence_text = _CONFIDENCE_DISPLAY.get(
                 classification.confidence, classification.confidence
@@ -1164,12 +1169,13 @@ class DiagnosticsPage(QWidget):
 
             freshness_item = self._fan_table.item(row, 5)
             freshness_item.setText(f.freshness.value)
+            theme = active_theme()
             if f.freshness == Freshness.STALE:
-                freshness_item.setForeground(QColor(_THEME.status_warn))
+                freshness_item.setForeground(QColor(theme.status_warn))
             elif f.freshness == Freshness.INVALID:
-                freshness_item.setForeground(QColor(_THEME.status_crit))
+                freshness_item.setForeground(QColor(theme.status_crit))
             else:
-                freshness_item.setForeground(QColor(_THEME.text_primary))
+                freshness_item.setForeground(QColor(theme.text_primary))
 
             row_tip = self._fan_row_tooltip(f, presence)
             method_tip = _CONTROL_METHOD_TOOLTIPS.get(
@@ -1867,6 +1873,25 @@ class DiagnosticsPage(QWidget):
         if header:
             self.verify_completed.emit(header)
         self._verify_active_header = None
+
+    def set_theme(self, _tokens) -> None:
+        """Force a re-render of theme-coloured cells after a theme change.
+
+        Sensor and fan tables are repainted from the latest cached readings
+        so the freshness column foreground colours pick up the new
+        ``status_warn`` / ``status_crit`` / ``text_primary`` values from
+        :func:`active_theme` (DEC-109). The reclaim-count card depends on
+        ``reclaim_severity_color`` and is refreshed by re-populating from
+        the cached hardware diagnostics result if one has been fetched.
+        """
+        if self._state is not None:
+            if self._state.sensors:
+                self._on_sensors(self._state.sensors)
+            if self._state.fans:
+                self._on_fans(self._state.fans)
+        cached_hw = getattr(self._diag, "last_hw_diagnostics", None)
+        if cached_hw is not None:
+            self._populate_hw_diagnostics(cached_hw)
 
     def cleanup(self) -> None:
         """Stop the verify worker thread. Called from main window closeEvent."""

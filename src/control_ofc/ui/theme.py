@@ -49,20 +49,26 @@ class ThemeTokens:
     surface_3: str = "#253552"
     text_primary: str = "#e0e0e8"
     text_secondary: str = "#a0a8c0"
-    text_muted: str = "#606878"
-    accent_primary: str = "#4a90d9"
-    accent_secondary: str = "#7ec8e3"
+    # text_muted: bumped from #606878 (2.5:1 on surface_2) to #8a92a4 to hit
+    # the WCAG AA 3:1 non-text target on cards (DEC-109).
+    text_muted: str = "#8a92a4"
+    # accent_primary: darkened from #4a90d9 (3.3:1 with white) to #2f73c4
+    # so primary-button text reaches WCAG AA 4.5:1 (DEC-109).
+    accent_primary: str = "#2f73c4"
+    # accent_secondary: previously #7ec8e3, used as primary-button hover
+    # (1.9:1 with white). Reused as a darker "pressed" tone (#1d5fa9, 5.7:1).
+    accent_secondary: str = "#1d5fa9"
 
     # ─── Borders & separators ────────────────────────────────────────
     border_default: str = "#2a3a5c"
-    border_focus: str = "#4a90d9"
+    border_focus: str = "#2f73c4"
     divider: str = "#2a3a5c"
 
     # ─── Interactive states ──────────────────────────────────────────
     hover_bg: str = "#253552"
-    pressed_bg: str = "#4a90d9"
-    selected_bg: str = "#2a4a7f"
-    focus_ring: str = "#4a90d9"
+    pressed_bg: str = "#1d5fa9"
+    selected_bg: str = "#1a3a6a"
+    focus_ring: str = "#2f73c4"
     disabled_bg: str = "#1e1e30"
     disabled_text: str = "#505868"
 
@@ -75,15 +81,17 @@ class ThemeTokens:
     # ─── Charts / Graphs ─────────────────────────────────────────────
     chart_bg: str = "#16213e"
     chart_grid: str = "#2a3a5c"
-    chart_axis_text: str = "#606878"
-    chart_line_primary: str = "#4a90d9"
-    chart_point: str = "#4a90d9"
+    # chart_axis_text: bumped from #606878 (2.8:1) to #8a92a4 (4.5:1)
+    # so chart axis labels meet WCAG AA non-text contrast (DEC-109).
+    chart_axis_text: str = "#8a92a4"
+    chart_line_primary: str = "#5fa4ec"
+    chart_point: str = "#5fa4ec"
     chart_point_selected: str = "#ffffff"
     chart_point_hover: str = "#ffffff"
-    chart_crosshair: str = "#606878"
+    chart_crosshair: str = "#8a92a4"
     chart_series: list[str] = field(
         default_factory=lambda: [
-            "#4a90d9",
+            "#5fa4ec",
             "#7ec8e3",
             "#e06c75",
             "#98c379",
@@ -97,16 +105,20 @@ class ThemeTokens:
     # ─── Sidebar / navigation ────────────────────────────────────────
     nav_bg: str = "#16213e"
     nav_text: str = "#a0a8c0"
-    nav_text_active: str = "#4a90d9"
+    # nav_text_active: brightened to reach 3:1 against nav_item_active so the
+    # selected sidebar item is legible (was 2.6:1 with #4a90d9) (DEC-109).
+    nav_text_active: str = "#a4caf5"
     nav_item_hover: str = "#1f2b47"
-    nav_item_active: str = "#2a4a7f"
+    nav_item_active: str = "#1a3a6a"
 
     # ─── Inputs / controls ───────────────────────────────────────────
     input_bg: str = "#1f2b47"
     input_text: str = "#e0e0e8"
-    input_placeholder: str = "#606878"
+    # input_placeholder: bumped from #606878 (2.5:1 on input_bg) to match the
+    # new text_muted at 3.3:1 — non-text contrast minimum (DEC-109).
+    input_placeholder: str = "#8a92a4"
     input_border: str = "#2a3a5c"
-    input_border_focus: str = "#4a90d9"
+    input_border_focus: str = "#2f73c4"
 
     # ─── Modals / dialogs ────────────────────────────────────────────
     modal_overlay: str = "#000000aa"
@@ -123,10 +135,16 @@ class ThemeTokens:
     # ─── Primary button text ─────────────────────────────────────────
     primary_btn_text: str = "#ffffff"
 
+    # ─── Surfaces for inline code / commands ─────────────────────────
+    # Used by widgets that need a "code block" tint over the app surface
+    # (e.g. the systemctl enable hint on the dashboard). Token-driven so
+    # light themes can swap to a lighter tint instead of pure black (DEC-109).
+    code_block_bg: str = "#0d1224"
+
     # ─── Brand ───────────────────────────────────────────────────────
-    brand_primary: str = "#4a90d9"
+    brand_primary: str = "#2f73c4"
     brand_secondary: str = "#7ec8e3"
-    brand_accent: str = "#2a4a7f"
+    brand_accent: str = "#1a3a6a"
 
     # ─── Typography ──────────────────────────────────────────────────
     font_family: str = ""  # empty = system default
@@ -157,12 +175,34 @@ def font_sizes(base: int) -> dict[str, int]:
 
 
 _active_base_size: int = 10
+_active_theme: ThemeTokens | None = None
 
 
 def set_active_base_size(size: int) -> None:
     """Update the module-level base font size used by current_font_sizes()."""
     global _active_base_size
     _active_base_size = size
+
+
+def set_active_theme(tokens: ThemeTokens) -> None:
+    """Register the currently-applied theme so widgets without a parent
+    reference can look up the live tokens via :func:`active_theme`.
+
+    Called by ``main.py`` at startup and by ``MainWindow._on_theme_changed``
+    whenever the user applies a new theme. Mirrors the existing
+    ``_active_base_size`` pattern so widgets like the diagnostics page or the
+    timeline chart can read the current colour set on every render instead of
+    captunting a stale snapshot at import time (DEC-109).
+    """
+    global _active_theme
+    _active_theme = tokens
+
+
+def active_theme() -> ThemeTokens:
+    """Return the currently-applied theme, or the default dark theme if
+    no theme has been registered yet (e.g. during pure unit tests that do
+    not boot the QApplication)."""
+    return _active_theme if _active_theme is not None else default_dark_theme()
 
 
 def apply_theme_font(tokens: ThemeTokens) -> None:
@@ -208,7 +248,11 @@ def load_theme(path: Path) -> ThemeTokens:
 
 
 def _migrate_tokens(data: dict) -> dict:
-    """Migrate old token names to new spec names."""
+    """Migrate old token names to new spec names.
+
+    Bumps the schema version to v3 when an old file is loaded so the GUI
+    can later detect themes that predate DEC-109's WCAG-AA pass.
+    """
     result = dict(data)
     for old_name, new_name in _TOKEN_MIGRATION.items():
         if old_name in result and new_name not in result:
@@ -254,14 +298,49 @@ def contrast_ratio(color_a: str, color_b: str) -> float:
 
 
 def check_contrast_warnings(tokens: ThemeTokens) -> list[str]:
-    """Return a list of contrast warnings for critical token pairs."""
+    """Return a list of WCAG 2.1 contrast warnings for critical token pairs.
+
+    Thresholds:
+      - 4.5:1 — body text (WCAG AA, < 18pt regular / < 14pt bold)
+      - 3.0:1 — large text, non-text UI components, icons, focus indicators
+
+    Coverage was expanded in DEC-109 to catch the failures the previous
+    set silently allowed (primary-button-on-accent, hover state,
+    active-nav-on-its-fill, chart axis text, placeholder text, muted text
+    on cards). WCAG explicitly exempts disabled controls from contrast
+    requirements, so ``disabled_text``/``disabled_bg`` is intentionally
+    excluded here.
+    """
     warnings: list[str] = []
     pairs = [
+        # ─── Body text (AA: 4.5:1) ────────────────────────────────
+        ("text_primary", "app_bg", 4.5),
         ("text_primary", "surface_1", 4.5),
-        ("text_secondary", "surface_2", 3.0),
-        ("nav_text", "nav_bg", 3.0),
+        ("text_primary", "surface_2", 4.5),
         ("input_text", "input_bg", 4.5),
         ("table_text", "table_row_bg", 4.5),
+        ("table_text", "table_row_alt_bg", 4.5),
+        # ─── Primary-button label on its fill (AA: 4.5:1) ─────────
+        # Covers both the resting state and the hover state so the editor
+        # can't certify a theme whose button hover becomes unreadable.
+        # ``pressed_bg`` is intentionally excluded — that token drives the
+        # *normal* QPushButton:pressed state (under text_primary), not the
+        # primary button.
+        ("primary_btn_text", "accent_primary", 4.5),
+        ("primary_btn_text", "accent_secondary", 4.5),
+        # ─── Normal-button pressed state (text_primary on pressed_bg) ───
+        ("text_primary", "pressed_bg", 4.5),
+        # ─── Secondary / muted text on its surface (AA-large: 3:1) ───
+        ("text_secondary", "surface_2", 3.0),
+        ("text_muted", "surface_2", 3.0),
+        ("text_muted", "surface_1", 3.0),
+        ("input_placeholder", "input_bg", 3.0),
+        # ─── Navigation (AA-large: 3:1) ───────────────────────────
+        ("nav_text", "nav_bg", 3.0),
+        ("nav_text_active", "nav_item_active", 3.0),
+        # ─── Chart axis text on chart bg (AA-large: 3:1) ──────────
+        ("chart_axis_text", "chart_bg", 3.0),
+        # ─── Focus indicator (AA non-text: 3:1) ───────────────────
         ("focus_ring", "app_bg", 3.0),
     ]
     for fg_name, bg_name, min_ratio in pairs:
@@ -276,6 +355,59 @@ def check_contrast_warnings(tokens: ThemeTokens) -> list[str]:
                 f"(minimum {min_ratio}:1 recommended)"
             )
     return warnings
+
+
+# ---------------------------------------------------------------------------
+# Bundled presets
+# ---------------------------------------------------------------------------
+
+
+def bundled_themes_dir() -> Path:
+    """Return the directory containing in-tree JSON theme presets.
+
+    Presets ship with the package and are copied into ``themes_dir()`` on
+    first run by ``ensure_bundled_themes_installed`` so they appear in the
+    selector without requiring the user to download them. The function
+    locates the directory relative to this module so it works both in the
+    dev tree and in the installed package layout.
+    """
+    return Path(__file__).resolve().parent / "presets"
+
+
+def list_bundled_themes() -> list[Path]:
+    """Return all *.json preset files shipped in :func:`bundled_themes_dir`."""
+    d = bundled_themes_dir()
+    if not d.exists():
+        return []
+    return sorted(d.glob("*.json"))
+
+
+def ensure_bundled_themes_installed(target_dir: Path) -> list[Path]:
+    """Copy any bundled presets into *target_dir* that aren't there already.
+
+    Returns the list of files written. Existing files are left alone so a
+    user who has edited a preset doesn't lose their changes on the next
+    launch. The copy uses :func:`atomic_write` so a crash mid-copy can't
+    leave a half-written theme file behind.
+    """
+    from control_ofc.paths import atomic_write
+
+    written: list[Path] = []
+    if not target_dir.exists():
+        return written
+    for src in list_bundled_themes():
+        dest = target_dir / src.name
+        if dest.exists():
+            continue
+        try:
+            atomic_write(dest, src.read_text())
+            written.append(dest)
+        except OSError:
+            # Best-effort; missing presets only mean the user has to import
+            # them manually. Surfacing this would require a UI plumbing that
+            # isn't worth the noise for an optional convenience.
+            continue
+    return written
 
 
 # ---------------------------------------------------------------------------

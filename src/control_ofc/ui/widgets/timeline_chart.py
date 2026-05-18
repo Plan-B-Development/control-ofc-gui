@@ -16,7 +16,7 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QHBoxLayout, QVBoxLayout, QWidget
 
 from control_ofc.services.history_store import HistoryStore
-from control_ofc.ui.theme import default_dark_theme
+from control_ofc.ui.theme import ThemeTokens, active_theme
 
 if TYPE_CHECKING:
     from control_ofc.services.series_selection import SeriesSelectionModel
@@ -48,7 +48,9 @@ class TimelineChart(QWidget):
         super().__init__(parent)
         self._history = history
         self._selection = selection
-        self._theme = default_dark_theme()
+        # Read the live active theme rather than pinning to default-dark at
+        # construction time (DEC-109). set_theme() updates this on switch.
+        self._theme = active_theme()
         self._color_overrides: dict[str, str] = color_overrides or {}
         self._time_range_s = 300  # default 5 minutes
         self._temp_items: dict[str, pg.PlotDataItem] = {}
@@ -135,6 +137,48 @@ class TimelineChart(QWidget):
         self._proxy = pg.SignalProxy(
             plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
         )
+
+    def set_theme(self, tokens: ThemeTokens) -> None:
+        """Restyle the plot with the supplied tokens.
+
+        The original implementation snapshot-cached the default-dark theme
+        in ``__init__`` and rebuilt the plot only once, so theme switches
+        left the chart background, gridlines, axes, crosshair, and hover
+        label stuck on the previous palette (DEC-109). This method updates
+        every plot element that paints with a token value and recolours
+        any existing series so they pick up new ``chart_series`` defaults.
+        """
+        self._theme = tokens
+        self._plot_widget.setBackground(tokens.chart_bg)
+        plot = self._plot_widget.getPlotItem()
+        if plot is None:
+            return
+
+        for axis_name in ("left", "bottom"):
+            axis = plot.getAxis(axis_name)
+            axis.setPen(pg.mkPen(tokens.chart_axis_text))
+            axis.setTextPen(pg.mkPen(tokens.text_secondary))
+
+        right_axis = plot.getAxis("right")
+        if right_axis is not None:
+            right_axis.setPen(pg.mkPen(tokens.chart_axis_text))
+            right_axis.setTextPen(pg.mkPen(tokens.text_secondary))
+
+        if hasattr(self, "_crosshair_v") and self._crosshair_v is not None:
+            self._crosshair_v.setPen(pg.mkPen(tokens.chart_crosshair, width=1))
+        if hasattr(self, "_hover_label") and self._hover_label is not None:
+            self._hover_label.setColor(tokens.text_primary)
+
+        # Existing series previously rendered with the old palette get
+        # recoloured here so the chart isn't visually two-toned until the
+        # next history rotation. Honors user colour overrides — only the
+        # default (hashed) colours are recomputed.
+        for key, item in self._temp_items.items():
+            if key not in self._color_overrides:
+                item.setPen(pg.mkPen(self.color_for_key(key), width=1))
+        for key, item in self._rpm_items.items():
+            if key not in self._color_overrides:
+                item.setPen(pg.mkPen(self.color_for_key(key), width=1))
 
     def cleanup(self) -> None:
         """Disconnect the SignalProxy to avoid stale callbacks after teardown."""

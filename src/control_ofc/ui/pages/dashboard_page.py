@@ -172,9 +172,10 @@ class DashboardPage(QWidget):
         cmd_label.setObjectName("Dashboard_Label_enableCommand")
         cmd_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         cmd_label.setProperty("class", "MonoCommand")
-        cmd_label.setStyleSheet(
-            "font-family: monospace; padding: 6px; background-color: rgba(0,0,0,0.25);"
-        )
+        # Background colour pulled from the active theme so a light theme
+        # gets a light tint rather than a hardcoded black wash (DEC-109).
+        self._enable_cmd_label = cmd_label
+        self._apply_enable_cmd_style()
         hint_layout.addWidget(cmd_label)
 
         copy_btn = QPushButton("Copy command")
@@ -185,6 +186,33 @@ class DashboardPage(QWidget):
         layout.addWidget(self._service_hint_frame, alignment=Qt.AlignmentFlag.AlignCenter)
 
         return container
+
+    def _apply_enable_cmd_style(self) -> None:
+        """Restyle the enable-command label using the current active theme.
+
+        Called once at construction time and again from ``set_theme`` so the
+        background tint follows light/dark theme changes (DEC-109).
+        """
+        if not hasattr(self, "_enable_cmd_label") or self._enable_cmd_label is None:
+            return
+        from control_ofc.ui.theme import active_theme
+
+        tokens = active_theme()
+        self._enable_cmd_label.setStyleSheet(
+            f"font-family: monospace; padding: 6px; "
+            f"background-color: {tokens.code_block_bg}; color: {tokens.text_primary};"
+        )
+
+    def set_theme(self, tokens) -> None:
+        """Refresh widget styling for the new theme.
+
+        Updates the inline enable-command label tint and forwards the change
+        to the timeline chart so its background, axes, and crosshair pick up
+        the new colours (DEC-109).
+        """
+        self._apply_enable_cmd_style()
+        if hasattr(self, "_chart") and self._chart is not None:
+            self._chart.set_theme(tokens)
 
     def _copy_enable_command(self) -> None:
         clipboard = QApplication.clipboard()
