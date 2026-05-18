@@ -203,13 +203,24 @@ class MainWindow(QWidget):
     def _on_theme_changed(self, tokens) -> None:
         from PySide6.QtWidgets import QApplication
 
-        from control_ofc.ui.theme import apply_theme_font, build_stylesheet
+        from control_ofc.ui.theme import apply_theme_font, build_stylesheet, set_active_theme
+
+        # Register the new theme so widgets without a parent reference
+        # (diagnostics page, timeline chart, etc.) read the live tokens on
+        # the next render instead of an import-time snapshot (DEC-109).
+        set_active_theme(tokens)
 
         app = QApplication.instance()
         if app:
             app.setStyleSheet(build_stylesheet(tokens))
         apply_theme_font(tokens)
         self.controls_page.set_theme(tokens)
+        # Propagate to widgets that need to refresh internal styling
+        # (chart background, axis colours, freshness cell colours).
+        if hasattr(self, "dashboard_page"):
+            self.dashboard_page.set_theme(tokens)
+        if hasattr(self, "diagnostics_page"):
+            self.diagnostics_page.set_theme(tokens)
 
     def _on_connection_changed(self, state: ConnectionState) -> None:
         if state == ConnectionState.DISCONNECTED:

@@ -74,6 +74,7 @@ _TOKEN_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
             ("chart_point", "Chart point"),
             ("chart_point_selected", "Selected point ring"),
             ("chart_point_hover", "Hover point ring"),
+            ("chart_crosshair", "Hover crosshair"),
         ],
     ),
     (
@@ -112,9 +113,15 @@ _TOKEN_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
             ("modal_bg", "Dialog background"),
             ("modal_border", "Dialog border"),
             ("primary_btn_text", "Primary button text"),
+            ("code_block_bg", "Inline command / code tint"),
         ],
     ),
 ]
+
+# Number of chart series swatches exposed in the editor. The default theme
+# ships an 8-colour palette — exposing all of them lets the user repaint the
+# whole timeline graph from one place.
+_CHART_SERIES_SLOTS = 8
 
 
 class ColorSwatch(QPushButton):
@@ -255,6 +262,10 @@ class ThemeEditorWidget(QWidget):
         self._tokens = tokens or default_dark_theme()
         self._swatches: dict[str, ColorSwatch] = {}
         self._hex_labels: dict[str, QLabel] = {}
+        # Per-series chart-palette swatches. Keyed by slot index so the
+        # callback knows which entry in tokens.chart_series to mutate.
+        self._series_swatches: dict[int, ColorSwatch] = {}
+        self._series_hex_labels: dict[int, QLabel] = {}
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -308,6 +319,44 @@ class ThemeEditorWidget(QWidget):
             group_layout.addLayout(grid)
             editor_layout.addWidget(group_frame)
 
+        # ─── Chart series palette ────────────────────────────────────
+        # The chart_series tokens are a list-of-hex (not a single token),
+        # so they don't fit the dataclass-driven grid above. Render each
+        # slot as its own swatch row inside a dedicated card.
+        series_frame = QFrame()
+        series_frame.setProperty("class", "Card")
+        series_layout = QVBoxLayout(series_frame)
+        series_title = QLabel("Chart Series")
+        series_title.setProperty("class", "PageSubtitle")
+        series_layout.addWidget(series_title)
+        series_grid = QGridLayout()
+        series_grid.setSpacing(4)
+        for slot in range(_CHART_SERIES_SLOTS):
+            value = (
+                self._tokens.chart_series[slot]
+                if slot < len(self._tokens.chart_series)
+                else "#888888"
+            )
+            swatch = ColorSwatch(f"chart_series[{slot}]", value)
+            swatch.color_changed.connect(
+                lambda _name, hx, s=slot: self._on_series_color_changed(s, hx)
+            )
+            self._series_swatches[slot] = swatch
+            series_grid.addWidget(swatch, slot, 0)
+
+            hex_label = QLabel(value)
+            hex_label.setProperty("class", "SmallLabel")
+            hex_label.setStyleSheet("font-family: monospace;")
+            hex_label.setMinimumWidth(70)
+            self._series_hex_labels[slot] = hex_label
+            series_grid.addWidget(hex_label, slot, 1)
+
+            desc_label = QLabel(f"Series #{slot + 1}")
+            desc_label.setProperty("class", "PageSubtitle")
+            series_grid.addWidget(desc_label, slot, 2)
+        series_layout.addLayout(series_grid)
+        editor_layout.addWidget(series_frame)
+
         editor_layout.addStretch()
         editor_scroll.setWidget(editor_widget)
         layout.addWidget(editor_scroll, 2)
@@ -348,6 +397,14 @@ class ThemeEditorWidget(QWidget):
             value = getattr(self._tokens, token_name, "#000000")
             swatch.set_color(value)
             self._hex_labels[token_name].setText(value)
+        for slot, swatch in self._series_swatches.items():
+            value = (
+                self._tokens.chart_series[slot]
+                if slot < len(self._tokens.chart_series)
+                else "#888888"
+            )
+            swatch.set_color(value)
+            self._series_hex_labels[slot].setText(value)
         self._update_warnings()
         self._update_preview()
 
@@ -355,6 +412,16 @@ class ThemeEditorWidget(QWidget):
         setattr(self._tokens, token_name, hex_color)
         self._hex_labels[token_name].setText(hex_color)
         self._update_warnings()
+        self._update_preview()
+        self.theme_modified.emit(self._tokens)
+
+    def _on_series_color_changed(self, slot: int, hex_color: str) -> None:
+        # Pad the list if the loaded theme had fewer entries than slots so
+        # the assignment doesn't IndexError on a sparse legacy theme.
+        while len(self._tokens.chart_series) <= slot:
+            self._tokens.chart_series.append("#888888")
+        self._tokens.chart_series[slot] = hex_color
+        self._series_hex_labels[slot].setText(hex_color)
         self._update_preview()
         self.theme_modified.emit(self._tokens)
 

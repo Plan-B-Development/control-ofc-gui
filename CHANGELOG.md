@@ -1,5 +1,90 @@
 # Changelog
 
+## [1.14.0] — 2026-05-18
+
+Themes audit (DEC-109). Every visible widget is now driven by named
+tokens, the default-dark palette was tightened to pass WCAG AA on every
+pair the checker now evaluates, and the GUI ships two new bundled
+presets (Solar Light and Noctua Dark). Persisted theme selection is now
+actually restored on startup.
+
+### Added
+- **Active-theme registry** in `theme.py` (`set_active_theme`,
+  `active_theme`) so widgets without a parent reference can look up
+  the live tokens on every render instead of capturing a stale snapshot
+  at import time. Mirrors the existing `_active_base_size` pattern.
+- **Bundled theme presets** in `src/control_ofc/ui/presets/`:
+  - **Solar Light** — neutral GitHub-style light theme, every pair
+    verified ≥ WCAG AA.
+  - **Noctua Dark** — beige/brown-on-charcoal palette inspired by
+    Noctua's NF-A14 colours, every pair verified ≥ WCAG AA. Primary
+    button text is dark on the beige accent to keep contrast.
+  Presets are copied into `themes_dir()` on first run via
+  `ensure_bundled_themes_installed`, which is idempotent and never
+  overwrites a user-edited file.
+- **`code_block_bg` token** for inline command/code surfaces so a light
+  theme can swap to a light tint instead of pure black.
+- **`set_theme()` methods** on `DashboardPage`, `DiagnosticsPage`, and
+  `TimelineChart` so a theme switch repaints the inline command label,
+  freshness column foreground colours, hardware reclaim card, and the
+  timeline chart's background / axes / crosshair / existing series.
+- **Chart series swatches** are now editable from the Theme Editor —
+  the previously inaccessible 8-colour `chart_series` palette is now
+  exposed as a per-slot grid.
+- **`chart_crosshair`** is now editable from the Theme Editor.
+
+### Changed
+- **Default Dark palette tightened** to pass WCAG AA on every contrast
+  pair the checker now evaluates. Affected tokens: `text_muted` →
+  `#8a92a4` (3.4:1 on cards, was 2.5:1), `accent_primary` → `#2f73c4`
+  (4.8:1 with white, was 3.3:1), `accent_secondary` repurposed as a
+  darker hover (`#1d5fa9`, 6.4:1), `nav_text_active` → `#a4caf5` on
+  `nav_item_active` `#1a3a6a` (6.6:1, was 2.6:1), `chart_axis_text`
+  and `input_placeholder` → `#8a92a4`.
+- **`check_contrast_warnings()` covers eight additional token pairs**
+  (primary-button-text on accent + hover, muted text on cards, chart
+  axis text on chart bg, placeholder text on input bg, active nav on
+  its own fill, plus the normal-button pressed state). The editor's
+  "No contrast issues detected" badge is no longer a lie on themes
+  that fail real pairs.
+- **Persisted theme is restored at startup** — `main.py` reads
+  `AppSettings.theme_name`, scans `themes_dir()`, and applies the
+  matching JSON file before falling back to Default Dark. Previously
+  the persisted name was ignored and every restart returned to
+  Default Dark.
+
+### Fixed
+- **Theme switching no longer leaves stale widgets** on the previous
+  palette:
+  - `DashboardPage` enable-command label background previously pinned
+    to `rgba(0,0,0,0.25)` — now uses `code_block_bg` and follows
+    light themes correctly.
+  - `SettingsPage` dir-picker label colour previously pinned to the
+    default-dark `text_muted` snapshot — now reads `active_theme()`.
+  - `DiagnosticsPage` module-level `_THEME = default_dark_theme()`
+    snapshot is gone; sensor/fan freshness column foreground colours
+    and the per-header reclaim card now read `active_theme()` per
+    render.
+  - `TimelineChart` snapshot in `__init__` is gone; the chart now
+    refreshes background, axes, crosshair, hover label, and existing
+    (non-overridden) series colours when `set_theme()` is invoked.
+
+### Tests
+- **37 new tests** in `tests/test_theme_dec109.py` covering the
+  active-theme registry, the expanded contrast checks (six negative
+  cases pinning the original failing pairs, one positive case per
+  newly-checked pair on Default Dark), bundled-preset loading and AA
+  verification, first-run install idempotency, startup theme
+  resolution (including missing/corrupted/missing-dir cases), the new
+  `set_theme()` hooks, the live-theme behaviour of
+  `reclaim_severity_color`, and a regression guard for each of the
+  four hardcoded-style offenders the audit identified.
+
+### Docs
+- **DEC-109** added to `DECISIONS.md`: bundled presets ship in-tree,
+  WCAG AA is adopted as project policy, and the persisted-theme
+  startup contract is documented.
+
 ## [1.13.0] — 2026-05-13
 
 Pairs with **daemon v1.8.0**. Combined release of two prior `[Unreleased]`
