@@ -335,11 +335,18 @@ def _classify_nct6775(
             confidence="medium_high",
             notes=["Board/firmware-accessible CPU temperature feed"],
         )
+    # DEC-110: Intel PECI labels on nct6775-family chips. The kernel driver
+    # exposes Intel PECI as "PECI Agent 0", "PECI 0", or similar — without
+    # a leading "CPU" keyword, so the cpu-keyword fallback below would miss
+    # them. Match the "peci" substring explicitly and tag as Intel PECI
+    # specifically so the tooltip says "Intel PECI" rather than the generic
+    # PECI wording the AMD case used.
     if "peci" in lower_label:
         return SensorClassification(
             source_class="cpu_peci",
-            display_description=f"CPU temperature via PECI ({label})",
+            display_description=f"CPU temperature via Intel PECI ({label})",
             confidence="medium_high",
+            notes=["Intel CPU temperature reported via the PECI bus"],
         )
     if lower_label == "systin":
         return SensorClassification(
@@ -544,6 +551,65 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
     # here because that requires a specific sensor name to override.
     # Vendor-level warnings live in hwmon_guidance.py
     # (`asustek + asus_wmi_sensors` quirk).
+    # -- DEC-110: ASUS Intel asus_ec_sensors kernel allowlist (LGA1700) --
+    # The kernel driver provides semantic labels (VRM, T_Sensor, Chipset)
+    # natively, so these entries serve as validation anchors confirming
+    # the label → placement mapping when present, rather than overriding.
+    # Sourced verbatim from docs.kernel.org/hwmon/asus_ec_sensors.html
+    # board list, filtered to LGA1700-era boards (Z690/Z790). Older
+    # Z270/Z390/Z490 boards omitted — kept conservative per DEC-110 D4
+    # ("only verified entries").
+    BoardSensorOverride(
+        vendor_pattern="asus",
+        model_pattern="maximus z690 formula",
+        label_pattern="VRM",
+        source_class="vrm",
+        display_description="VRM heatsink area temperature (ASUS EC)",
+        notes=["Validated via asus_ec_sensors kernel driver allowlist"],
+    ),
+    BoardSensorOverride(
+        vendor_pattern="asus",
+        model_pattern="strix z690-a gaming wifi",
+        label_pattern="T_Sensor",
+        source_class="external_probe",
+        display_description="T_Sensor header — external temperature probe",
+        notes=[
+            "Validated via asus_ec_sensors kernel driver",
+            "DDR4 variant — D5 SKUs use a different EC path",
+        ],
+    ),
+    BoardSensorOverride(
+        vendor_pattern="asus",
+        model_pattern="strix z690-e gaming wifi",
+        label_pattern="VRM",
+        source_class="vrm",
+        display_description="VRM heatsink area temperature (ASUS EC)",
+        notes=["Validated via asus_ec_sensors kernel driver allowlist"],
+    ),
+    BoardSensorOverride(
+        vendor_pattern="asus",
+        model_pattern="strix z790-e gaming wifi ii",
+        label_pattern="VRM",
+        source_class="vrm",
+        display_description="VRM heatsink area temperature (ASUS EC)",
+        notes=["Validated via asus_ec_sensors kernel driver allowlist"],
+    ),
+    BoardSensorOverride(
+        vendor_pattern="asus",
+        model_pattern="strix z790-h gaming wifi",
+        label_pattern="VRM",
+        source_class="vrm",
+        display_description="VRM heatsink area temperature (ASUS EC)",
+        notes=["Validated via asus_ec_sensors kernel driver allowlist"],
+    ),
+    BoardSensorOverride(
+        vendor_pattern="asus",
+        model_pattern="strix z790-i gaming wifi",
+        label_pattern="VRM",
+        source_class="vrm",
+        display_description="VRM heatsink area temperature (ASUS EC)",
+        notes=["Validated via asus_ec_sensors kernel driver allowlist"],
+    ),
 ]
 
 

@@ -502,6 +502,13 @@ class HardwareDiagnosticsResult:
     # on the wire). When present, the GUI renders a CRITICAL banner and
     # discourages PWM writes until the user resolves the load ordering.
     module_collisions: list[ModuleCollisionInfo] = field(default_factory=list)
+    # DEC-110: CPU vendor string from `/proc/cpuinfo` vendor_id, normalised
+    # by the daemon to ``"Intel"`` / ``"AMD"`` / ``""`` (empty when unknown
+    # or the daemon predates DEC-110; `skip_serializing_if = "String::is_empty"`
+    # on the wire). Used by the diagnostics page to scope platform-specific
+    # vendor quirks (e.g. MSI Z890 vs MSI X870E) without inferring platform
+    # from board name.
+    cpu_vendor: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -782,6 +789,7 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         expected_chips=expected_chips,
         kernel_detected_chips=kernel_detected_chips,
         module_collisions=module_collisions,
+        cpu_vendor=str(data.get("cpu_vendor") or ""),
     )
 
 

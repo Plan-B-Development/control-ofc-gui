@@ -235,6 +235,27 @@ HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
         "pwm6": FallbackLabel("System Fan 4", verified=True),
         "pwm7": FallbackLabel("PCH Fan", verified=True),
     },
+    # ── DEC-110: Intel LGA1700 — ASRock Z690 Extreme ───────────────
+    # Source: configs/ASRock/Z690_Extreme.conf (verified upstream
+    # lm-sensors config — chip reported as nct6798-isa-02a0 even though
+    # the physical part is NCT6796D-E).
+    # Only Intel-era board with an upstream lm-sensors config covering
+    # the LGA1700+ generation as of 2026-Q2; other Intel Z690/Z790/Z890
+    # boards rely on the libsensors parser to pick up the user's own
+    # /etc/sensors.d/ file or default to the raw pwmN identifier.
+    BoardKey(
+        vendor="ASRock",
+        board_glob="Z690 Extreme",
+        chip="nct6798",
+    ): {
+        "pwm1": FallbackLabel("Chassis fan3", verified=True),
+        "pwm2": FallbackLabel("CPU fan1", verified=True),
+        "pwm3": FallbackLabel("CPU fan2", verified=True),
+        "pwm4": FallbackLabel("Chassis fan1", verified=True),
+        "pwm5": FallbackLabel("Chassis fan2", verified=True),
+        "pwm6": FallbackLabel("Chassis fan4", verified=True),
+        "pwm7": FallbackLabel("Chassis fan5", verified=True),
+    },
 }
 
 
