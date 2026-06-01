@@ -174,14 +174,7 @@ def font_sizes(base: int) -> dict[str, int]:
     }
 
 
-_active_base_size: int = 10
 _active_theme: ThemeTokens | None = None
-
-
-def set_active_base_size(size: int) -> None:
-    """Update the module-level base font size used by current_font_sizes()."""
-    global _active_base_size
-    _active_base_size = size
 
 
 def set_active_theme(tokens: ThemeTokens) -> None:
@@ -189,10 +182,10 @@ def set_active_theme(tokens: ThemeTokens) -> None:
     reference can look up the live tokens via :func:`active_theme`.
 
     Called by ``main.py`` at startup and by ``MainWindow._on_theme_changed``
-    whenever the user applies a new theme. Mirrors the existing
-    ``_active_base_size`` pattern so widgets like the diagnostics page or the
-    timeline chart can read the current colour set on every render instead of
-    captunting a stale snapshot at import time (DEC-109).
+    whenever the user applies a new theme. Lets widgets like the
+    diagnostics page or the timeline chart read the current colour set on
+    every render instead of capturing a stale snapshot at import time
+    (DEC-109).
     """
     global _active_theme
     _active_theme = tokens
@@ -210,8 +203,6 @@ def apply_theme_font(tokens: ThemeTokens) -> None:
     from PySide6.QtGui import QFont, QFontDatabase
     from PySide6.QtWidgets import QApplication
 
-    set_active_base_size(tokens.base_font_size_pt)
-
     family = tokens.font_family
     if not family:
         sys_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
@@ -221,15 +212,6 @@ def apply_theme_font(tokens: ThemeTokens) -> None:
     app = QApplication.instance()
     if app:
         app.setFont(font)
-
-
-def current_font_sizes() -> dict[str, int]:
-    """Return font sizes for the currently active base size.
-
-    Cards call this at construction time so their inline styles use the
-    current base font size, which is updated by apply_theme_font().
-    """
-    return font_sizes(_active_base_size)
 
 
 def default_dark_theme() -> ThemeTokens:

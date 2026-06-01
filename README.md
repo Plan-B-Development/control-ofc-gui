@@ -1,6 +1,6 @@
 # Control-OFC GUI
 
-**Latest release:** v1.10.2 — 2026-05-07. Pairs with `control-ofc-daemon` ≥ v1.6.2. See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
+**Latest release:** v1.14.1 — 2026-06-01. Pairs with `control-ofc-daemon` ≥ v1.8.1. See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 Desktop fan control interface for Linux. Communicates with the [`control-ofc-daemon`](https://github.com/Plan-B-Development/control-ofc-daemon) service to monitor temperatures, manage fan speeds, and apply custom fan curves.
 

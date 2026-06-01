@@ -9,7 +9,6 @@ import httpx
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import (
     ActiveProfileInfo,
-    CalibrationResult,
     Capabilities,
     DaemonStatus,
     FanReading,
@@ -27,11 +26,9 @@ from control_ofc.api.models import (
     ProfileSearchDirsResult,
     SensorHistory,
     SensorReading,
-    SetPwmAllResult,
     SetPwmResult,
     StartupDelayResult,
     parse_active_profile,
-    parse_calibration_result,
     parse_capabilities,
     parse_fans,
     parse_gpu_fan_reset,
@@ -49,7 +46,6 @@ from control_ofc.api.models import (
     parse_sensor_history,
     parse_sensors,
     parse_set_pwm,
-    parse_set_pwm_all,
     parse_startup_delay,
     parse_status,
 )
@@ -202,16 +198,6 @@ class DaemonClient:
         )
         return parse_set_pwm(data)
 
-    def set_openfan_all_pwm(
-        self, pwm_percent: int, *, timeout: float | None = None
-    ) -> SetPwmAllResult:
-        data = self._post(
-            "/fans/openfan/pwm",
-            json={"pwm_percent": pwm_percent},
-            timeout=timeout,
-        )
-        return parse_set_pwm_all(data)
-
     def hwmon_lease_take(
         self, owner_hint: str = "gui", *, timeout: float | None = None
     ) -> LeaseResult:
@@ -242,31 +228,6 @@ class DaemonClient:
             timeout=timeout,
         )
         return parse_hwmon_set_pwm(data)
-
-    def hwmon_rescan(self) -> list[HwmonHeader]:
-        """POST /hwmon/rescan — re-enumerate hwmon devices and return fresh headers."""
-        data = self._post("/hwmon/rescan")
-        return parse_hwmon_headers(data)
-
-    def calibrate_openfan(
-        self, channel: int, steps: int = 10, hold_seconds: int = 5
-    ) -> CalibrationResult:
-        """POST /fans/openfan/{channel}/calibrate — run a PWM-to-RPM calibration sweep.
-
-        Timeout is computed from the request body — the daemon sleeps
-        ``hold_seconds`` per step and there are ``steps + 1`` iterations,
-        plus a 10 s headroom for IPC, mutex contention, and the pre/post
-        PWM restore writes. The daemon clamps ``steps`` to ``[2, 20]`` and
-        ``hold_seconds`` to ``[2, 15]``, so an upper bound of
-        ``21 * 15 + 10 = 325 s`` is always sufficient.
-        """
-        timeout_s = float((steps + 1) * hold_seconds + 10)
-        data = self._post(
-            f"/fans/openfan/{channel}/calibrate",
-            json={"steps": steps, "hold_seconds": hold_seconds},
-            timeout=timeout_s,
-        )
-        return parse_calibration_result(data)
 
     def activate_profile(
         self,

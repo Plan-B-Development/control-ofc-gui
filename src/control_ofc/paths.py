@@ -67,10 +67,6 @@ def app_settings_path() -> Path:
     return config_dir() / "app_settings.json"
 
 
-def log_path() -> Path:
-    return state_dir() / "gui.log"
-
-
 def assets_dir() -> Path:
     """Return the branding assets directory.
 
@@ -97,15 +93,20 @@ def ensure_dirs() -> None:
 def atomic_write(filepath: Path, content: str) -> None:
     """Write *content* to *filepath* atomically.
 
-    Uses the standard temp-file + fsync + os.replace pattern:
+    Uses the standard temp-file + fsync + os.replace + dir-fsync pattern:
     1. Write to a temp file in the same directory (same filesystem required)
     2. fsync the file to flush data to disk
     3. os.replace atomically swaps old -> new (POSIX rename guarantee)
-    4. Cleanup temp file on any error
+    4. fsync the parent directory so the rename itself is durable across
+       power loss (matches daemon/src/atomic_io.rs DEC-108)
+    5. Cleanup temp file on any error
 
     This ensures readers always see either the complete old file or the
     complete new file — never a partial write. A mid-write crash leaves
-    the original file intact.
+    the original file intact. Without step 4, ext4/btrfs can land the
+    rename in the journal while the dirent change is still in the page
+    cache, so power loss between rename and journal flush can resurrect
+    the old name on next mount even though the new file's data is durable.
     """
     dirpath = str(filepath.parent)
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -118,6 +119,18 @@ def atomic_write(filepath: Path, content: str) -> None:
             os.fsync(f.fileno())
         os.replace(tmp_path, str(filepath))
         os.chmod(str(filepath), 0o600)
+        # Parent-dir fsync — see step 4 in the docstring. Failure here is
+        # not fatal: the file content is already on disk under the new
+        # name; only the rename's durability across power loss is lost.
+        # Some filesystems (tmpfs) do not honour dir fsync; suppress
+        # OSError to stay portable, matching the daemon's "log+continue"
+        # posture in atomic_io.rs.
+        with contextlib.suppress(OSError):
+            dir_fd = os.open(dirpath, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp_path)

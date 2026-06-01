@@ -1,5 +1,78 @@
 # Changelog
 
+## [1.14.1] — 2026-06-01
+
+Audit remediation pass following a cross-stack `/audit effort=max` sweep
+on 2026-06-01. No new features, no contract-breaking changes. Pairs
+with **daemon v1.8.1**, which lands the matching SIGTERM and
+documentation fixes on the Rust side.
+
+### Hardened
+- **`paths.atomic_write` now fsyncs the parent directory after rename**,
+  matching daemon DEC-108. Without this step, ext4/btrfs can land the
+  rename in the journal while the dirent change is still in the page
+  cache, so power loss between rename and journal flush can resurrect
+  the old name on next mount even though the new file's data is
+  durable. Failure of the dir fsync is non-fatal (some filesystems —
+  tmpfs in particular — do not honour it). Two new regression tests in
+  `tests/test_paths.py` pin the fsync attempt and the failure tolerance.
+
+### Cleanup
+- **Removed three unused `DaemonClient` wrappers**:
+  `set_openfan_all_pwm`, `hwmon_rescan`, `calibrate_openfan`. None had
+  any caller under `src/`; the v1 GUI never exposed a Rescan button or
+  a built-in calibration sweep. The daemon endpoints stay in place
+  (documented under "Daemon endpoints the v1 GUI does not call" in
+  `docs/08_API_Integration_Contract.md`) — restore the wrappers from
+  git if a future UI surface needs them. Test infrastructure
+  cleaned up alongside: FakeDaemonClient mocks, `simulate_unavailable`
+  list, `test_control_loop_writes` write-method allow-list, the
+  calibrate dynamic-timeout test.
+- **Removed dead helpers and constants**: `paths.log_path()`,
+  `constants.ORG_NAME`, `constants.HISTORY_MAX_SAMPLES`,
+  `ui.theme.current_font_sizes()` (and the now-orphan
+  `_active_base_size` module-state + `set_active_base_size`). Each had
+  zero callers in `src/` or `tests/`.
+- **Replaced one hardcoded socket-path literal** in
+  `ui/pages/dashboard_page.py:234` with `DEFAULT_SOCKET_PATH` from
+  `constants.py`, removing the last duplicate of that string in the
+  GUI's runtime code.
+- **Removed the empty `src/control_ofc/persistence/` package**. The
+  module shipped only `__init__.py` since v1.0.0; persistence work
+  lives in the per-service `*_service.py` files (`app_settings_service`,
+  `profile_service`, `series_selection`, etc.). `docs/12_Implementation_Plan`
+  is corrected to match.
+
+### Documentation
+- **`docs/08_API_Integration_Contract.md`** now documents the
+  `pwm_mode` field on `GET /hwmon/headers` (`0` = DC, `1` = PWM,
+  omitted when the chip does not expose `pwmN_mode`) — consumed by the
+  dashboard and diagnostics pages but previously undocumented in the
+  contract spec. The `calibrate_openfan` bullet is replaced with a
+  "Daemon endpoints the v1 GUI does not call" section listing the four
+  POST endpoints the daemon ships but the client does not wrap.
+- **`docs/12_Implementation_Plan_and_Module_Structure.md`** no longer
+  references the telemetry features that were fully de-scoped in
+  v0.72.0 (R52). The persistence section now correctly describes the
+  per-service ownership model, and the packaging direction is corrected
+  from AppImage (early speculation) to AUR (what shipped).
+- **`docs/11_Persistence_Config_and_File_Layout.md`** suggested-layout
+  block no longer lists `gui.log`, `last_session.json`, and
+  `support_bundle_work/` — none of which exist in the GUI. Replaced
+  with a note that runtime state lives entirely under
+  `~/.config/control-ofc/` and that support bundles are generated on
+  demand to a user-selected export location. Aliases and groups live
+  inside `app_settings.json`, not separate files.
+- **`docs/14_Risks_Gaps_and_Future_Work.md`** "GUI rescan button —
+  ABSENT" line updated to record that the underlying client wrapper
+  was removed in v1.14.1 (restore from git when implementing the UI).
+- **README "Latest release" line** refreshed to v1.14.1 (was 4 minor
+  versions stale).
+
+### Tests
+- 1467 tests passing (+7 new atomic_write tests).
+- 89% line coverage maintained.
+
 ## [1.14.0] — 2026-05-18
 
 Themes audit (DEC-109). Every visible widget is now driven by named

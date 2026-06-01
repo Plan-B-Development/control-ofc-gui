@@ -79,7 +79,7 @@ def _hwmon_calls(client):
 
 def _write_calls(client):
     """Extract all write-type calls."""
-    write_methods = {"set_openfan_pwm", "set_hwmon_pwm", "set_openfan_all_pwm"}
+    write_methods = {"set_openfan_pwm", "set_hwmon_pwm"}
     return [(m, a, k) for m, a, k in client.calls if m in write_methods]
 
 

@@ -88,14 +88,32 @@ upper bounds:
   client timeout is **12 s**. The control-loop pause-safety auto-resume
   must stay strictly above the daemon wait — see
   `control_loop.VERIFY_PAUSE_SAFETY_MS` (currently 9 s).
-- `calibrate_openfan` — daemon sleeps `(steps+1) × hold_seconds`; client
-  timeout is `(steps+1) × hold_seconds + 10s`.
 - `set_openfan_pwm`, `set_hwmon_pwm`, `set_gpu_fan_speed` (write fast
   path) — client timeout is **2s** with one retry on `DaemonTimeout`.
 
 `DaemonTimeout` is a distinct subclass of `DaemonError` (separate from
 `DaemonUnavailable`) so callers can distinguish "the daemon is slow" from
 "the daemon is gone."
+
+### Daemon endpoints the v1 GUI does not call
+
+The daemon ships several POST endpoints that the v1 GUI's `DaemonClient`
+does not wrap. They remain documented in the daemon's own contract and
+can be exercised via `curl --unix-socket`:
+
+- `POST /fans/openfan/pwm` — set all OpenFan channels at once. The GUI's
+  per-cycle control loop writes channels individually so per-target
+  hysteresis and write-suppression apply uniformly across backends.
+- `POST /hwmon/rescan` — re-enumerate hwmon devices. The v1 GUI's
+  capabilities snapshot is taken once per session at 1 Hz polling; a
+  user-facing "Rescan hardware" button is intentionally deferred
+  (`docs/14_Risks_Gaps_and_Future_Work.md` §Device Lifecycle).
+- `POST /fans/openfan/{channel}/calibrate` — long-running PWM-to-RPM
+  calibration sweep. The Fan Wizard provides a guided alternative for
+  fan identification; full calibration as a built-in UI flow is deferred.
+- `POST /fans/openfan/{channel}/target_rpm` — closed-loop RPM target.
+  V1 control is duty-cycle based; closed-loop control would require
+  reconciling with the GUI-side curve evaluator and is out of scope.
 
 ### GET /status
 Use for:
@@ -151,6 +169,12 @@ Use to discover:
   `is_writable: false` — the GUI must not offer such headers in the
   member-picker, since `POST /hwmon/{header_id}/pwm` will return 400
   `feature_unavailable`.
+- `pwm_mode` (optional integer) — `0` = DC (voltage) mode, `1` = PWM
+  mode, omitted when the chip does not expose `pwmN_mode`. Consumed by
+  the dashboard fan table and the diagnostics hwmon panel to label
+  DC-driven fans differently from PWM-driven ones (`models.py`
+  `HwmonHeader.pwm_mode`, daemon `responses.rs`
+  `PwmHeaderEntry.pwm_mode`).
 
 ### GET /hwmon/lease/status
 Use to show:

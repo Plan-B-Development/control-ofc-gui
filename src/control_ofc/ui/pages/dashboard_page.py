@@ -30,6 +30,7 @@ from control_ofc.api.models import (
     OperationMode,
     SensorReading,
 )
+from control_ofc.constants import DEFAULT_SOCKET_PATH
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.daemon_service_check import (
@@ -229,9 +230,7 @@ class DashboardPage(QWidget):
             return
         try:
             socket_path = (
-                self._client.socket_path
-                if self._client is not None
-                else "/run/control-ofc/control-ofc.sock"
+                self._client.socket_path if self._client is not None else DEFAULT_SOCKET_PATH
             )
             state = check_daemon_service_state(socket_path)
         except Exception:

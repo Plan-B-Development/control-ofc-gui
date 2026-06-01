@@ -9,7 +9,6 @@ import pytest
 from control_ofc.api.errors import DaemonUnavailable
 from control_ofc.api.models import (
     ActiveProfileInfo,
-    CalibrationResult,
     Capabilities,
     ConnectionState,
     DaemonStatus,
@@ -23,7 +22,6 @@ from control_ofc.api.models import (
     OperationMode,
     SensorHistory,
     SensorReading,
-    SetPwmAllResult,
     SetPwmResult,
 )
 from control_ofc.services.app_settings_service import AppSettingsService
@@ -88,9 +86,7 @@ class FakeDaemonClient:
             "hwmon_headers",
             "hwmon_lease_status",
             "sensor_history",
-            "calibrate_openfan",
             "set_openfan_pwm",
-            "set_openfan_all_pwm",
             "hwmon_lease_take",
             "hwmon_lease_release",
             "hwmon_lease_renew",
@@ -170,14 +166,6 @@ class FakeDaemonClient:
         self._maybe_raise("set_openfan_pwm")
         return SetPwmResult(channel=channel, pwm_percent=pwm_percent)
 
-    def set_openfan_all_pwm(
-        self, pwm_percent: int, *, timeout: float | None = None
-    ) -> SetPwmAllResult:
-        del timeout
-        self._record("set_openfan_all_pwm", pwm_percent)
-        self._maybe_raise("set_openfan_all_pwm")
-        return SetPwmAllResult(pwm_percent=pwm_percent)
-
     def hwmon_lease_take(self, owner_hint: str = "gui") -> LeaseResult:
         self._record("hwmon_lease_take", owner_hint)
         self._maybe_raise("hwmon_lease_take")
@@ -210,13 +198,6 @@ class FakeDaemonClient:
         self._record("sensor_history", entity_id, last)
         self._maybe_raise("sensor_history")
         return SensorHistory(entity_id=entity_id, points=[])
-
-    def calibrate_openfan(
-        self, channel: int, steps: int = 10, hold_seconds: int = 5
-    ) -> CalibrationResult:
-        self._record("calibrate_openfan", channel, steps, hold_seconds)
-        self._maybe_raise("calibrate_openfan")
-        return CalibrationResult(fan_id=f"openfan:ch{channel:02}")
 
     def active_profile(self) -> ActiveProfileInfo | None:
         self._record("active_profile")

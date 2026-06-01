@@ -7,7 +7,6 @@ try:
     APP_VERSION = version("control-ofc-gui")
 except PackageNotFoundError:
     APP_VERSION = "dev"
-ORG_NAME = "control-ofc"
 
 # Daemon IPC
 DEFAULT_SOCKET_PATH = "/run/control-ofc/control-ofc.sock"
@@ -33,7 +32,6 @@ PWM_WRITE_THRESHOLD_PCT = 1
 
 # History
 HISTORY_DURATION_S = 7200  # 2 hours
-HISTORY_MAX_SAMPLES = HISTORY_DURATION_S  # ~1 sample/sec
 
 # Curves
 DEFAULT_CURVE_POINTS = 5

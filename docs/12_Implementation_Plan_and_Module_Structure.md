@@ -1,6 +1,6 @@
 # 12 — Implementation Plan and Module Structure
 
-**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Last updated:** 2026-06-01 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour. 2026-06-01 audit pass removed references to telemetry features de-scoped in v0.72.0, dropped the unused `persistence/*` module placeholder, and corrected the packaging direction to AUR.)
 
 ## Purpose
 Give Claude a practical build sequence that reduces rework.
@@ -69,7 +69,7 @@ Automatic control works through the daemon/API.
 ### Phase 6 — Settings
 Build:
 - app settings
-- telemetry runtime settings
+- daemon runtime settings (startup delay, profile search dirs)
 - theme import/export
 - GUI settings import/export
 
@@ -81,8 +81,8 @@ Build:
 - health overview
 - sensor/fan health tables
 - lease status
-- telemetry status
-- recent logs
+- hardware readiness report
+- recent logs / event log
 - support bundle export
 
 Deliverable:
@@ -134,9 +134,12 @@ The app feels coherent and test-ready.
 ### `services/demo_service.py`
 - synthetic models and event simulation
 
-### `persistence/*`
-- read/write JSON config objects
-- schema version handling
+### Persistence
+Persistence is owned by the individual `services/*_service.py` files
+(`app_settings_service`, `profile_service`, `series_selection`, etc.).
+Each service uses `paths.atomic_write` for crash-safe JSON persistence
+and owns its own schema-version handling. There is no separate
+`persistence/` package.
 
 ### `ui/pages/*`
 - thin page controllers + widgets
@@ -153,12 +156,13 @@ The app feels coherent and test-ready.
 8. Prefer a stable, boring architecture over cleverness.
 
 ## Charting recommendation
-Use pyqtgraph for live telemetry-style graphs and keep chart wrappers modular so the chart implementation can be swapped later if needed.
+Use pyqtgraph for live sensor/RPM charts and keep chart wrappers modular so the chart implementation can be swapped later if needed.
 
 ## Packaging direction
-Target a packaged Linux desktop release suitable for friend testing.
-AppImage is the most practical early packaging direction.
-Do not optimise packaging before the core experience works.
+Ship as an AUR package — `packaging/PKGBUILD` builds the Python wheel,
+installs the systemd unit, desktop entry, manpage, and bash completion.
+The companion daemon ships from `control-ofc-daemon/packaging/PKGBUILD`
+and both AUR sources live under `/home/mitch/Development/aur/`.
 
 ## Testing focus areas
 - disconnected startup
@@ -168,7 +172,7 @@ Do not optimise packaging before the core experience works.
 - unsaved profile changes
 - lease unavailable
 - mixed OpenFan + hwmon targets
-- telemetry config validation
+- profile activation / deactivation
 - chart time-range switching
 - manual override entry/exit
 
