@@ -1,6 +1,6 @@
 # 11 — Persistence, Config, and File Layout
 
-**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Last updated:** 2026-06-01 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour. 2026-06-01 audit pass corrected the suggested file layout to drop files that never shipped — `gui.log`, `last_session.json`, `support_bundle_work/`.)
 
 ## Purpose
 Define what the GUI owns and how it should persist that data.
@@ -49,14 +49,15 @@ Recommended approach:
     balanced.json
     performance.json
     custom_profile.json
-  aliases.json
-  groups.json
-
-~/.local/state/control-ofc/
-  gui.log
-  last_session.json
-  support_bundle_work/
 ```
+
+GUI runtime state currently lives entirely under `~/.config/control-ofc/`.
+The XDG state and cache directories are created by `ensure_dirs()` but the
+v1 GUI does not yet write to them — no on-disk log, no `last_session.json`
+snapshot, no `support_bundle_work/` staging directory. Support bundles are
+generated on demand and written to a user-selected export location.
+Aliases and group memberships are persisted inside `app_settings.json`
+rather than separate `aliases.json` / `groups.json` files.
 
 Use platform-aware path helpers rather than hardcoding these paths.
 

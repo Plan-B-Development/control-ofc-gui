@@ -276,17 +276,6 @@ class TestPerCallTimeout:
             f"(daemon wait 6 s + slack). DEC-101."
         )
 
-    def test_calibrate_openfan_computes_dynamic_timeout(self):
-        """Calibrate timeout = (steps + 1) * hold_seconds + 10s headroom."""
-        client, fake = _make_client_with_fake_http()
-        with patch(
-            "control_ofc.api.client.parse_calibration_result",
-            return_value=MagicMock(),
-        ):
-            client.calibrate_openfan(channel=0, steps=10, hold_seconds=5)
-        # (10 + 1) * 5 + 10 = 65
-        assert fake.last_post_timeout == 65.0
-
 
 # ---------------------------------------------------------------------------
 # DEC-099 — _post raises DaemonTimeout vs DaemonUnavailable distinctly

@@ -20,7 +20,7 @@
 | Serial startup retry | IMPLEMENTED | 5x exponential backoff (1-16s) |
 | **Serial runtime reconnect** | **IMPLEMENTED (R43)** | After 5 consecutive errors, enters reconnect mode with backoff |
 | hwmon manual rescan | IMPLEMENTED | `POST /hwmon/rescan` endpoint |
-| GUI rescan button | ABSENT | Endpoint exists but not wired in GUI |
+| GUI rescan button | ABSENT | Endpoint exists but not wired in GUI. The `DaemonClient.hwmon_rescan` wrapper was removed in v1.14.1 as dead code; restore from git when implementing the UI button. |
 | udev stable symlink | TEMPLATE ONLY | `packaging/99-control-ofc.rules` — requires user VID/PID |
 | udev hotplug trigger | ABSENT | No automatic device-event service start |
 | Runtime hwmon hotplug | ABSENT | Devices added after startup are invisible |
