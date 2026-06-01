@@ -145,6 +145,44 @@ The Diagnostics page (`/diagnostics/hardware`) reports the actual loaded
 modules and detected chips, so users should always cross-reference this
 generic table against their own system's output.
 
+## Intel platform → typical chip mapping
+
+Parallel table for Intel LGA1700 (12th–14th Gen Core) and LGA1851 (Core
+Ultra) platforms. Added in DEC-110 alongside the GUI's Intel vendor
+quirks and the daemon's CPU vendor detection. As with the AMD table,
+every entry is cross-referenced against a verifiable upstream source
+(kernel allowlists, lm-sensors `configs/`, Fred78290/nct6687d source,
+or frankcrawford/it87 DMI table).
+
+| Generation | Typical Vendors | Typical Hwmon Chip(s) | Driver Path |
+|---|---|---|---|
+| **LGA1700 600-series** (Z690 / B660 / H670) | ASUS (ROG MAXIMUS Z690 FORMULA, ROG STRIX Z690-A/E GAMING WIFI, TUF GAMING Z690-PLUS) | NCT6798D + `asus_ec_sensors` enrichment on allowlisted ROG boards | mainline `nct6775` for PWM; `asus_ec_sensors` for sensor enrichment |
+| | MSI (MAG Z690 TOMAHAWK, MPG Z690 EDGE) | NCT6687D (plain — chip ID 0xd440; **no `msi_alt1` needed**) | out-of-tree `nct6687d-dkms-git` (auto-detected register layout) |
+| | Gigabyte Z690 AORUS (PRO, ELITE AX, MASTER, XTREME) | **IT8689E + IT87952E** (dual-chip) | out-of-tree `it87-dkms-git`; needs `mmio=on` |
+| | ASRock (Z690 Steel Legend, Z690 Taichi, **Z690 Extreme** — upstream lm-sensors config) | NCT6798D (Z690 Extreme reports NCT6796D-E as `nct6798-isa-02a0`) | mainline `nct6775` |
+| **LGA1700 700-series** (Z790 / B760 / H770) | ASUS (ROG STRIX Z790-E/-H/-I GAMING WIFI II — kernel `asus_ec_sensors` allowlist) | NCT6798D + `asus_ec_sensors` enrichment | mainline `nct6775` + sensor enrichment |
+| | MSI (MAG Z790 TOMAHAWK WIFI, MPG Z790 EDGE WIFI, MEG Z790 ACE) | NCT6687D (plain — same register layout as Z690) | out-of-tree `nct6687d-dkms-git`; no `msi_alt1` |
+| | Gigabyte Z790 AORUS (ELITE AX, MASTER, XTREME) | IT8689E + IT87952E (dual-chip — same as Z690 AORUS) | out-of-tree `it87-dkms-git`; needs `mmio=on` |
+| | ASRock (Z790 Steel Legend WIFI, Z790 Taichi) | NCT6798D | mainline `nct6775` |
+| **LGA1851 800-series** (Z890 / B860 / H810) | MSI (MAG/MEG/MPG Z890) | **NCT6687DR** (chip ID 0xd441; **requires `msi_alt1=1`**) | out-of-tree `nct6687d-dkms-git` v2.x (auto-allowlist) or manual `msi_alt1=1` |
+| | ASUS (ROG STRIX Z890 — not yet on kernel `asus_ec_sensors` allowlist as of 2026-Q2) | NCT6798D / NCT6799D | mainline `nct6775` |
+| | Gigabyte Z890 AORUS | **IT8696E + IT87952E** (same as AMD X870E AORUS MASTER generation) | out-of-tree `it87-dkms-git`; same `mmio=on` remediation |
+| | ASRock Z890 (Steel Legend, Taichi) | NCT6798D / NCT6799D | mainline `nct6775` |
+
+Notes:
+
+- The daemon's `/diagnostics/hardware` response now includes a `cpu_vendor`
+  field (`"Intel"` / `"AMD"` / `""`) populated from `/proc/cpuinfo`. The
+  GUI uses this to scope DEC-110 platform-specific quirks (the same
+  chip can ship on different vendors' Intel boards and AMD boards with
+  different quirks — e.g. NCT6687DR on MSI Z890 vs MSI X870E).
+- Intel CPU temperature is always provided by the `coretemp` mainline
+  driver (per-core + `Package id 0`). It is not a fan-control driver.
+- `intel_pch_thermal` registers a sensor-only hwmon device for the PCH
+  temperature; it is enrichment, not control.
+- For end-user setup, BIOS tips, and troubleshooting, see
+  `23_Intel_Motherboard_Fan_Control_Guide.md`.
+
 ## Manufacturer Quirks
 
 ### Gigabyte (ITE chips)

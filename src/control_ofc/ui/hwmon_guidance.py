@@ -25,13 +25,29 @@ class ChipGuidance:
 
 @dataclass(frozen=True)
 class VendorQuirk:
-    """Board-vendor + chip combination with known BIOS interference."""
+    """Board-vendor + chip combination with known BIOS interference.
+
+    `platform` (DEC-110) optionally scopes a quirk to one CPU vendor:
+    ``"intel"`` / ``"amd"`` / ``None`` (matches any). Used to distinguish
+    e.g. the MSI Z890 NCT6687DR ``msi_alt1`` quirk from MSI AMD X870E
+    boards that ship the same chip but a different BIOS surface. Empty
+    or ``None`` preserves the pre-DEC-110 behaviour (matches all).
+
+    `board_pattern` (DEC-110) optionally scopes a quirk to a board-name
+    substring (case-insensitive) on top of vendor + chip. Used when a
+    chip name appears on boards from the same vendor across multiple
+    platforms (e.g. NCT6687D auto-detected on MSI Z690/Z790 vs.
+    NCT6687DR ``msi_alt1`` on MSI Z890). Empty string preserves the
+    pre-DEC-110 behaviour (no board scoping).
+    """
 
     vendor_pattern: str
     chip_prefix: str
     severity: str  # "critical" | "high" | "medium" | "info"
     summary: str
     details: list[str] = field(default_factory=list)
+    platform: str | None = None  # "intel" | "amd" | None (DEC-110)
+    board_pattern: str = ""  # case-insensitive substring (DEC-110)
 
 
 CHIP_GUIDANCE_DB: list[ChipGuidance] = [
@@ -899,20 +915,221 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "controller.",
         ],
     ),
+    # ── DEC-110: Intel platform quirks (LGA1700 / LGA1851) ─────────
+    # Each entry is platform-scoped so that boards from the same vendor on
+    # the opposite platform (e.g. MSI AMD X870E) do not match. Sources
+    # cited in DEC-110 / docs/23.
+    VendorQuirk(
+        vendor_pattern="asustek",
+        chip_prefix="asus_ec_sensors",
+        severity="info",
+        platform="intel",
+        summary="ASUS Intel Z690/Z790 + asus_ec_sensors — kernel-documented allowlist",
+        details=[
+            "Kernel docs (docs.kernel.org/hwmon/asus_ec_sensors.html) "
+            "list the following Intel LGA1700 boards as natively "
+            "supported by the in-tree asus_ec_sensors driver: ROG "
+            "MAXIMUS Z690 FORMULA, ROG STRIX Z690-A GAMING WIFI D4, "
+            "ROG STRIX Z690-E GAMING WIFI, ROG STRIX Z790-E GAMING "
+            "WIFI II, ROG STRIX Z790-H GAMING WIFI, ROG STRIX Z790-I "
+            "GAMING WIFI. The driver provides semantic sensor labels "
+            "(VRM, T_Sensor, Water_In/Out, Chipset).",
+            "asus_ec_sensors is sensor enrichment only — it never "
+            "provides the PWM write path. Fan control on these boards "
+            "still uses nct6798 / nct6799 via the mainline nct6775 "
+            "driver. If the diagnostics page lists no controllable "
+            "headers, check that nct6775 is loaded.",
+            "Unlike the AMD side, ASUS Intel WMI sensor bugs (PRIME "
+            "X470-PRO etc.) DO NOT apply here — asus_wmi_sensors is "
+            "AMD-only per upstream kernel docs.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asustek",
+        chip_prefix="nct6798",
+        severity="info",
+        platform="intel",
+        summary="ASUS Intel Z690/Z790 + NCT6798D — mainline kernel coverage",
+        details=[
+            "ASUS LGA1700 boards (ROG STRIX Z690/Z790, TUF GAMING "
+            "Z690/Z790, PRIME Z690/Z790 series) commonly ship NCT6798D "
+            "as the primary Super-I/O chip. The in-kernel nct6775 "
+            "driver supports monitoring and PWM writes out of the box.",
+            "The DEC-105 chip-ID overlap warning (NCT6797D vs out-of-"
+            "tree nct6687) does NOT apply on these Intel boards — they "
+            "ship NCT6798D (chip ID 0xd428), not NCT6797D (0xd450). "
+            "Do NOT install the out-of-tree nct6687d driver on ASUS "
+            "LGA1700 boards.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="micro-star",
+        chip_prefix="nct6687",
+        severity="info",
+        platform="intel",
+        summary="MSI Intel Z690/Z790 + NCT6687D (plain) — auto-detect, no msi_alt1",
+        details=[
+            "Per Fred78290/nct6687d (nct6687.c::msi_alt1_dmi_table), "
+            "the plain NCT6687D chip on MSI Intel Z690/Z790 boards "
+            "(MAG MORTAR, MPG EDGE, MEG ACE, PRO-A) is auto-detected "
+            "without `msi_alt1` — the default register mapping is "
+            "correct for this generation.",
+            "If system fans don't respond to PWM writes despite the "
+            "driver loading cleanly, the most common cause is BIOS "
+            "Smart Fan overriding manual mode. Disable Smart Fan Mode "
+            "in BIOS → Hardware Monitor for each header you want to "
+            "control from Linux.",
+            "Distinct from MSI Z890 NCT6687DR which needs `msi_alt1` — "
+            "see the Z890-scoped quirk for that case.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="micro-star",
+        chip_prefix="nct6687",
+        severity="high",
+        platform="intel",
+        board_pattern="Z890",
+        summary="MSI Z890 + NCT6687DR — needs msi_alt1 module parameter",
+        details=[
+            "MSI Z890 boards ship NCT6687DR (NCT6687D-Refresh). Per "
+            "Fred78290/nct6687d (nct6687.c::msi_alt1_dmi_table), the "
+            "alt1 register layout is required for correct PWM and "
+            "fan-tach register addressing. v2.x of the out-of-tree "
+            "driver auto-enables it on the Z890 allowlist.",
+            "If your specific Z890 SKU is NOT yet on the upstream "
+            "allowlist, load the driver with msi_alt1=1: "
+            "`sudo modprobe -r nct6687 && sudo modprobe nct6687 "
+            "msi_alt1=1`. Persist via /etc/modprobe.d/nct6687.conf: "
+            "`options nct6687 msi_alt1=1`.",
+            "Symptoms of msi_alt1 being needed-but-missing: PWM writes "
+            "are accepted but fan RPM does not change, or fan-tach "
+            "values read back as 0 / 65535. Check `dmesg | grep nct6687`.",
+            "Same NCT6687DR chip ships on MSI AMD X870/X870E boards, "
+            "but this quirk is Intel-scoped — the AMD case is covered "
+            "by the existing AM5 800-series MSI quirk.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="gigabyte",
+        chip_prefix="it8689",
+        severity="high",
+        platform="intel",
+        summary="Gigabyte Intel Z690/Z790 AORUS + IT8689E — dual-chip with IT87952E",
+        details=[
+            "Gigabyte Intel Z690/Z790 AORUS boards (Z690 AORUS PRO, "
+            "Z790 AORUS ELITE AX, Z790 AORUS MASTER, Z790 AORUS "
+            "XTREME) pair the primary IT8689E with a secondary "
+            "IT87952E for additional fan headers — same dual-chip "
+            "topology as the AMD X670E AORUS family.",
+            "If the diagnostics page reports a missing secondary chip, "
+            "follow the dual-chip remediation: `options it87 mmio=on` "
+            "in /etc/modprobe.d/it87.conf, then reboot. Avoid running "
+            "sensors-detect after boot (frankcrawford/it87 issue #70).",
+            "BIOS: Gigabyte SmartFan 6 actively overrides PWM unless "
+            "fan mode is set to 'Full Speed' or a degenerate curve is "
+            "configured. The pwm_enable watchdog detects and "
+            "re-asserts manual mode, but BIOS configuration is the "
+            "reliable fix.",
+            "IT8689E Rev 1 boards may exhibit the silent-PWM-writes "
+            "behaviour even on Intel; check `cat /sys/.../in0_input` "
+            "for a revision indicator and verify writes effective "
+            "before relying on Linux fan control.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="gigabyte",
+        chip_prefix="it8696",
+        severity="high",
+        platform="intel",
+        summary="Gigabyte Intel Z890 AORUS + IT8696E — dual-chip with IT87952E",
+        details=[
+            "Gigabyte Intel Z890 AORUS boards (Z890 AORUS MASTER, Z890 "
+            "AORUS PRO, Z890 AORUS ELITE) ship the same IT8696E + "
+            "IT87952E topology as their AMD X870E counterparts.",
+            "Apply the same `options it87 mmio=on` remediation if the "
+            "secondary chip fails to enumerate. The daemon's "
+            "expected_chips lookup currently covers AMD Z690/Z790 "
+            "AORUS topologies; Z890 entries are added per-board as "
+            "they are verified upstream.",
+            "BIOS: SmartFan 6 'Full Speed' setting is required for "
+            "Linux to keep manual fan control; otherwise the EC "
+            "reclaims pwm_enable within seconds.",
+        ],
+    ),
+    VendorQuirk(
+        vendor_pattern="asrock",
+        chip_prefix="nct6798",
+        severity="info",
+        platform="intel",
+        summary="ASRock Intel Z690/Z790 + NCT6798D — mainline kernel coverage",
+        details=[
+            "ASRock LGA1700 boards (Z690 Steel Legend, Z690 Taichi, "
+            "Z790 Steel Legend WIFI, Z790 Taichi) ship NCT6798D as the "
+            "primary chip. The in-kernel nct6775 driver supports "
+            "monitoring and PWM writes — no out-of-tree driver needed.",
+            "If headers appear read-only, the typical cause is BIOS "
+            "'Smart Fan' overriding manual mode. Disable Smart Fan for "
+            "the affected header in BIOS, or set fan mode to 'Full "
+            "Speed' / 'Performance'.",
+            "Some ASRock Z690 Taichi-class boards expose monitoring "
+            "but not PWM writes via the in-kernel driver; if writes "
+            "are silently ignored, follow the verify-result diagnosis "
+            "in the Diagnostics page.",
+        ],
+    ),
 ]
 
 
-def lookup_vendor_quirks(board_vendor: str, chip_name: str) -> list[VendorQuirk]:
-    """Find vendor+chip specific quirks matching a board and chip."""
+def lookup_vendor_quirks(
+    board_vendor: str,
+    chip_name: str,
+    *,
+    cpu_vendor: str = "",
+    board_name: str = "",
+) -> list[VendorQuirk]:
+    """Find vendor+chip specific quirks matching a board and chip.
+
+    DEC-110 additions:
+        - ``cpu_vendor`` (``"Intel"``/``"AMD"``/``""``) filters quirks with
+          a non-``None`` ``platform`` field. Empty / unknown disables
+          platform filtering (matches the pre-DEC-110 behaviour).
+        - ``board_name`` filters quirks with a non-empty
+          ``board_pattern`` (case-insensitive substring). Empty disables.
+
+    A quirk matches when every non-default scope field also matches —
+    so pre-DEC-110 quirks (``platform=None``, ``board_pattern=""``)
+    continue to match purely on vendor + chip exactly as before.
+    """
     if not board_vendor or not chip_name:
         return []
     vendor_lower = board_vendor.lower()
     chip_lower = chip_name.lower()
-    return [
-        q
-        for q in VENDOR_QUIRKS_DB
-        if q.vendor_pattern in vendor_lower and chip_lower.startswith(q.chip_prefix)
-    ]
+    cpu_vendor_lower = cpu_vendor.lower()  # "intel" | "amd" | ""
+    board_name_lower = board_name.lower()
+
+    matches: list[VendorQuirk] = []
+    for q in VENDOR_QUIRKS_DB:
+        if q.vendor_pattern not in vendor_lower:
+            continue
+        if not chip_lower.startswith(q.chip_prefix):
+            continue
+        # Platform scope: when a quirk declares one, the caller must supply a
+        # matching cpu_vendor. Unknown cpu_vendor (empty) suppresses
+        # platform-scoped quirks rather than firing them indiscriminately —
+        # the truthful direction is "we don't know, so don't claim".
+        if q.platform is not None and (
+            not cpu_vendor_lower or cpu_vendor_lower != q.platform.lower()
+        ):
+            continue
+        # Board scope: when set, only fire if the board name contains the
+        # substring (case-insensitive). Same suppression rule: empty
+        # board_name skips board-scoped quirks rather than firing.
+        if q.board_pattern and (
+            not board_name_lower or q.board_pattern.lower() not in board_name_lower
+        ):
+            continue
+        matches.append(q)
+    return matches
 
 
 # ---------------------------------------------------------------------------

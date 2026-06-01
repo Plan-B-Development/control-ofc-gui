@@ -244,6 +244,27 @@ and the GUI parser defaults to `[]`):
   emits CRITICAL. Older daemons (pre-DEC-106) emit the broader
   result; the GUI parser handles both shapes identically.
 
+Additional optional field added in DEC-110 (`skip_serializing_if =
+"String::is_empty"` — older daemons emit nothing and the GUI parser
+defaults to `""`):
+
+- `cpu_vendor: str` — CPU vendor normalised from `/proc/cpuinfo`
+  `vendor_id`: `"Intel"` (for `GenuineIntel`), `"AMD"` (for
+  `AuthenticAMD` and `HygonGenuine`), or `""` when the file is
+  unreadable or the vendor is unrecognised (hypervisor strings etc.).
+  The GUI uses this to scope platform-specific vendor quirks. Quirks
+  that declare a `platform` scope (`"intel"` / `"amd"`) match only when
+  `cpu_vendor` is non-empty AND matches; empty `cpu_vendor` suppresses
+  platform-scoped quirks (the truthful direction: "we don't know, so
+  don't claim"). Quirks without a `platform` scope fire on any vendor,
+  preserving pre-DEC-110 behaviour.
+
+  Also added to `KernelModuleInfo` indirectly: the daemon's
+  `KNOWN_MODULES` table now lists `intel_pch_thermal` (mainline=true) so
+  Intel users see it reported honestly. `x86_pkg_temp` is deliberately
+  excluded because its kernel driver registers with `.no_hwmon = true` —
+  it appears as a thermal zone only, not under `/sys/class/hwmon`.
+
 ### GET /events (SSE) — daemon-only, not consumed by GUI
 The daemon exposes a Server-Sent Events stream at `GET /events` for other clients
 (custom integrations, future tooling, etc.).

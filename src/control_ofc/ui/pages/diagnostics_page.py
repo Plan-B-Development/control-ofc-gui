@@ -1341,10 +1341,21 @@ class DiagnosticsPage(QWidget):
         else:
             self._dual_chip_warning_label.setVisible(False)
 
-        # Vendor quirks
+        # Vendor quirks — pass the daemon-supplied CPU vendor and board
+        # name so DEC-110 platform-scoped Intel quirks fire on real
+        # hardware. Older daemons without `cpu_vendor` send empty string
+        # here, which suppresses platform-scoped quirks rather than
+        # firing them indiscriminately.
         all_quirks = []
         for chip in hw.chips_detected:
-            all_quirks.extend(lookup_vendor_quirks(board.vendor, chip.chip_name))
+            all_quirks.extend(
+                lookup_vendor_quirks(
+                    board.vendor,
+                    chip.chip_name,
+                    cpu_vendor=diag.cpu_vendor,
+                    board_name=board.name,
+                )
+            )
         if all_quirks:
             quirk_lines: list[str] = []
             for q in all_quirks:

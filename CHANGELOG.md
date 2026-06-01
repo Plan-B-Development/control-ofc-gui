@@ -1,5 +1,74 @@
 # Changelog
 
+## [1.15.0] — 2026-06-01
+
+Initial Intel motherboard / CPU support foundation (DEC-110). No
+behavioural changes to the control loop, lease lifecycle, or write
+paths — this is a truthful-reporting pass that makes Intel hardware
+show up correctly in Diagnostics and BIOS guidance. Pairs with
+**daemon v1.8.2**, which adds the `cpu_vendor` field on
+`/diagnostics/hardware` and the `intel_pch_thermal` row in
+`KNOWN_MODULES`.
+
+### Added
+- **Intel platform vendor quirks** in `hwmon_guidance.py` covering
+  ASUS Intel asus_ec_sensors allowlist (Z690 FORMULA + STRIX
+  Z690-A/E + Z790-E II / -H / -I WIFI), ASUS Intel NCT6798D
+  mainline coverage, MSI Intel Z690/Z790 NCT6687D (plain — no
+  `msi_alt1`), MSI Intel Z890 NCT6687DR (HIGH severity — needs
+  `msi_alt1`), Gigabyte Intel Z690/Z790 IT8689E dual-chip,
+  Gigabyte Intel Z890 IT8696E dual-chip, ASRock Intel Z690/Z790
+  NCT6798D coverage. Each entry is platform-scoped via the new
+  `VendorQuirk.platform` field so AMD coverage from the same
+  vendors continues firing unchanged.
+- **`VendorQuirk.platform` (`"intel"`/`"amd"`/`None`) and
+  `VendorQuirk.board_pattern` (case-insensitive substring) fields**
+  for scoping quirks to one CPU vendor and/or one board-name
+  pattern. The MSI Z690/Z790 vs Z890 NCT6687 distinction
+  (same chip name, different register layouts) is the headline
+  case for `board_pattern`. Pre-DEC-110 quirks default to
+  `platform=None` / `board_pattern=""` and continue to match
+  vendor + chip only.
+- **`lookup_vendor_quirks(cpu_vendor=..., board_name=...)`**
+  keyword args, plumbed from the diagnostics page using the
+  daemon's new `cpu_vendor` field and the existing `board.name`.
+  Backward-compatible — existing two-positional-arg callers
+  continue to work.
+- **Intel `BoardSensorOverride` entries** for the six kernel-
+  documented `asus_ec_sensors` Intel allowlist boards.
+- **ASRock Z690 Extreme label fallback** (`verified=True`) — the
+  only LGA1700-era board with an upstream lm-sensors config in
+  `lm-sensors/configs/ASRock/Z690_Extreme.conf`.
+- **Intel PECI sensor classification** in `_classify_nct6775`:
+  labels like `PECI Agent 0` and `PECI 0` (no `"CPU"` substring)
+  now classify as `cpu_peci` with `medium_high` confidence and a
+  truthful "Intel CPU temperature reported via the PECI bus"
+  tooltip.
+- **`HardwareDiagnosticsResult.cpu_vendor: str`** parsed from
+  the daemon. Defaults to `""` for older daemons.
+- **`docs/23_Intel_Motherboard_Fan_Control_Guide.md`** — vendor-
+  by-vendor setup, drivers, quirks, troubleshooting for Intel
+  LGA1700 / LGA1851 platforms. Companion to doc 21.
+- **`docs/19_Hardware_Compatibility.md`** Intel platform → typical
+  chip mapping table parallel to the AMD one.
+- **`docs/08_API_Integration_Contract.md`** documents the new
+  `cpu_vendor` field and `intel_pch_thermal` module entry.
+- **`docs/00_README_START_HERE.md`** reading list updated to
+  include doc 23.
+
+### Tested
+- `tests/test_intel_lga1700_quirks.py` (29 tests): CPU vendor round-
+  trip, VendorQuirk platform/board_pattern scoping, MSI Intel
+  NCT6687D vs AMD disambiguation, ASUS Intel asus_ec_sensors
+  allowlist quirk, ASUS Intel NCT6798D supported guidance,
+  Gigabyte Intel Z690/Z790 dual-chip, ASRock Intel NCT6798D,
+  Intel coretemp + PECI classification, kernel allowlist board
+  overrides, ASRock Z690 Extreme label fallback.
+- `tests/test_intel_lga1851_quirks.py` (8 tests): MSI Z890
+  NCT6687DR `msi_alt1` quirk fires on Z890 + Intel only;
+  suppressed on Z690 / Z790 (plain) + AMD X870E (same chip,
+  different platform); Gigabyte Z890 AORUS Intel IT8696E quirk.
+
 ## [1.14.1] — 2026-06-01
 
 Audit remediation pass following a cross-stack `/audit effort=max` sweep
