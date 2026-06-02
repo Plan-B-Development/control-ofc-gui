@@ -10,6 +10,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# Shown beneath every "To fix" block across the diagnostics UI (DEC-113).
+# Lives here (the lowest-level guidance module) so both the dual-chip warning
+# and the readiness "To fix" guidance can share it without a circular import.
+REMEDIATION_DISCLAIMER = (
+    "These steps change kernel parameters or driver/module configuration. "
+    "Apply them at your own risk and back up your configuration first — an "
+    "incorrect kernel parameter can stop the system booting."
+)
+
 
 @dataclass(frozen=True)
 class ChipGuidance:
@@ -1436,7 +1445,8 @@ def dual_chip_warning_html(
         f"&nbsp;&nbsp;2. Avoid running <code>sensors-detect</code> after boot "
         f"(it can leave the SuperIO bridge in a bad state).<br>"
         f"&nbsp;&nbsp;3. Reboot the machine.<br>"
-        f"&nbsp;&nbsp;4. Click <i>Refresh Hardware Diagnostics</i> to re-check.<br><br>"
+        f"&nbsp;&nbsp;4. Click <i>Refresh Hardware Diagnostics</i> to re-check.<br>"
+        f"<i>⚠ {REMEDIATION_DISCLAIMER}</i><br><br>"
         f"<b>Still missing after reboot?</b> The frankcrawford/it87 "
         f'<a href="https://github.com/frankcrawford/it87/issues/70">issue #70</a> '
         f"thread documents the same failure mode on similar boards. See also "

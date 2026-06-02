@@ -581,9 +581,16 @@ class DashboardPage(QWidget):
         super().hideEvent(event)
 
     def cleanup(self) -> None:
-        """Release chart resources before app shutdown."""
+        """Release chart resources before app shutdown. Idempotent."""
         self._chart_timer.stop()
         self._chart.cleanup()
+
+    def closeEvent(self, event) -> None:
+        """Release chart resources when the page is closed (e.g. window-manager
+        close or test teardown) and not only via an explicit ``cleanup`` call,
+        so the secondary-ViewBox links are broken before destruction."""
+        self.cleanup()
+        super().closeEvent(event)
 
     def _on_app_focus_changed(self, state) -> None:
         """Throttle chart when app loses focus (reduces compositor work while gaming)."""

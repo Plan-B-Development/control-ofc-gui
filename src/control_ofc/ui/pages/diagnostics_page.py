@@ -65,6 +65,12 @@ from control_ofc.ui.sensor_knowledge import classify_sensor, format_sensor_toolt
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.event_log_view import EventLogView
+from control_ofc.ui.widgets.readiness_report import (
+    ReadinessReportDialog,
+    build_fix_guidance_html,
+    build_readiness_report_html,
+    readiness_verdict,
+)
 
 _TRANSPARENT = "background: transparent;"
 
@@ -394,6 +400,10 @@ class DiagnosticsPage(QWidget):
         self._verify_all_results: list[tuple[str, str]] = []  # [(header_id, result), …]
         self._verify_all_total: int = 0
 
+        # DEC-113: hardware-readiness auto-fetch + pop-out report state.
+        self._hw_diag_auto_fetched = False
+        self._report_dialog: ReadinessReportDialog | None = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(8)
@@ -414,6 +424,10 @@ class DiagnosticsPage(QWidget):
         self._tabs.addTab(self._build_lease_tab(), "Lease")
         self._tabs.addTab(self._build_logs_tab(), "Event Log")
         layout.addWidget(self._tabs, 1)
+        # DEC-113: auto-fetch hardware diagnostics the first time the Fans tab
+        # (index 2) is shown, so the readiness verdict populates without a click.
+        self._fans_tab_index = 2
+        self._tabs.currentChanged.connect(self._on_diag_tab_changed)
 
         # Action buttons
         btn_row = QHBoxLayout()
@@ -594,6 +608,28 @@ class DiagnosticsPage(QWidget):
         hw_title.setProperty("class", "PageSubtitle")
         hw_layout.addWidget(hw_title)
 
+        # ── Verdict banner + full-report pop-out (DEC-113) ─────────────
+        # A prominent, always-visible one-line verdict fills the collapsed
+        # view with a useful at-a-glance answer; the button opens the full
+        # report in its own window for boards with a lot of detail.
+        verdict_row = QHBoxLayout()
+        self._readiness_verdict_label = _transparent_label(
+            "Checking hardware readiness…", "Diagnostics_Label_readinessVerdict", bold=True
+        )
+        self._readiness_verdict_label.setWordWrap(True)
+        verdict_row.addWidget(self._readiness_verdict_label, 1)
+
+        self._open_report_btn = QPushButton("Open Full Report ↗")
+        self._open_report_btn.setObjectName("Diagnostics_Btn_openReport")
+        self._open_report_btn.setToolTip(
+            "Open the complete hardware-readiness report in its own window "
+            "(all detail, clickable links)."
+        )
+        self._open_report_btn.clicked.connect(self._open_readiness_report)
+        self._open_report_btn.setEnabled(False)
+        verdict_row.addWidget(self._open_report_btn, 0, Qt.AlignmentFlag.AlignTop)
+        hw_layout.addLayout(verdict_row)
+
         # ── Always-visible: readiness summary + board identity ─────────
         self._hw_ready_summary = _transparent_label(
             "Fetching hardware diagnostics…",
@@ -622,6 +658,7 @@ class DiagnosticsPage(QWidget):
         self._module_collision_label = _transparent_label("", "Diagnostics_Label_moduleCollisions")
         self._module_collision_label.setWordWrap(True)
         self._module_collision_label.setTextFormat(Qt.TextFormat.RichText)
+        self._module_collision_label.setOpenExternalLinks(True)
         self._module_collision_label.setVisible(False)
         hw_layout.addWidget(self._module_collision_label)
 
@@ -739,6 +776,7 @@ class DiagnosticsPage(QWidget):
         self._revert_label = _transparent_label("", "Diagnostics_Label_revertCounts")
         self._revert_label.setWordWrap(True)
         self._revert_label.setTextFormat(Qt.TextFormat.RichText)
+        self._revert_label.setOpenExternalLinks(True)
         self._revert_label.setVisible(False)
 
         self._revert_footnote_label = _transparent_label("", "Diagnostics_Label_revertFootnote")
@@ -786,9 +824,20 @@ class DiagnosticsPage(QWidget):
         self._docs_link_label.setProperty("class", "CardMeta")
         self._docs_link_label.setVisible(False)
 
+        # "To fix" guidance — GUI-authored remediation steps with a disclaimer
+        # and clickable doc links (DEC-113). Contains no daemon strings, so it
+        # is safe as rich text with external links enabled.
+        self._fix_guidance_label = _transparent_label("", "Diagnostics_Label_fixGuidance")
+        self._fix_guidance_label.setWordWrap(True)
+        self._fix_guidance_label.setTextFormat(Qt.TextFormat.RichText)
+        self._fix_guidance_label.setOpenExternalLinks(True)
+        self._fix_guidance_label.setProperty("class", "WarningChip")
+        self._fix_guidance_label.setVisible(False)
+
         self._section_guidance = CollapsibleSection(
             "Guidance & documentation", "Diagnostics_Section_guidance"
         )
+        self._section_guidance.add_widget(self._fix_guidance_label)
         self._section_guidance.add_widget(self._guidance_label)
         self._section_guidance.add_widget(self._docs_link_label)
         hw_layout.addWidget(self._section_guidance)
@@ -904,7 +953,7 @@ class DiagnosticsPage(QWidget):
         # scrolls when sections are expanded.
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([420, 340])
+        splitter.setSizes([370, 390])
 
         return splitter
 
@@ -1402,6 +1451,32 @@ class DiagnosticsPage(QWidget):
         except DaemonError as e:
             self._hw_ready_summary.setText(f"Diagnostics error: {e.message}")
 
+    def _on_diag_tab_changed(self, index: int) -> None:
+        """Auto-fetch hardware diagnostics the first time the Fans tab is shown.
+
+        Fires once per session (guarded by ``_hw_diag_auto_fetched``) so the
+        readiness verdict is populated without the user clicking Refresh.
+        """
+        if index != self._fans_tab_index or self._hw_diag_auto_fetched:
+            return
+        self._hw_diag_auto_fetched = True
+        if self._client and self._diag.last_hw_diagnostics is None:
+            self._fetch_hardware_diagnostics()
+
+    def _open_readiness_report(self) -> None:
+        """Open the full hardware-readiness report in its own window (DEC-113)."""
+        diag = self._diag.last_hw_diagnostics
+        if diag is None:
+            return
+        html = build_readiness_report_html(diag)
+        if self._report_dialog is None:
+            self._report_dialog = ReadinessReportDialog(html, self)
+        else:
+            self._report_dialog.set_html(html)
+        self._report_dialog.show()
+        self._report_dialog.raise_()
+        self._report_dialog.activateWindow()
+
     def _populate_hw_diagnostics(self, diag: HardwareDiagnosticsResult) -> None:
         """Populate hardware readiness UI from a diagnostics result."""
         hw = diag.hwmon
@@ -1739,6 +1814,26 @@ class DiagnosticsPage(QWidget):
                     label = h.label or h.id
                     self._verify_combo.addItem(f"{label} ({h.id})", h.id)
         self._verify_btn.setEnabled(self._verify_combo.count() > 0)
+
+        # DEC-113: readiness verdict banner, "To fix" guidance, and enable the
+        # full-report pop-out now that a diagnostics result is available.
+        verdict_text, verdict_cls = readiness_verdict(diag)
+        self._readiness_verdict_label.setText(verdict_text)
+        self._readiness_verdict_label.setProperty("class", verdict_cls)
+        self._readiness_verdict_label.style().unpolish(self._readiness_verdict_label)
+        self._readiness_verdict_label.style().polish(self._readiness_verdict_label)
+
+        fix_html = build_fix_guidance_html(diag)
+        if fix_html:
+            self._fix_guidance_label.setText(fix_html)
+            self._fix_guidance_label.setVisible(True)
+        else:
+            self._fix_guidance_label.setVisible(False)
+
+        self._open_report_btn.setEnabled(True)
+        # If the pop-out is already open, refresh it with the new data.
+        if self._report_dialog is not None and self._report_dialog.isVisible():
+            self._report_dialog.set_html(build_readiness_report_html(diag))
 
     def _run_pwm_verify(self) -> None:
         """Run PWM verification test on the selected header."""
