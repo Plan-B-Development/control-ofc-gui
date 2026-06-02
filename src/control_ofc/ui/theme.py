@@ -480,6 +480,29 @@ def build_stylesheet(t: ThemeTokens) -> str:
         font-weight: bold;
     }}
 
+    /* Collapsible section headers (progressive disclosure).
+       Subordinate to .PageSubtitle card titles — body-sized + semibold so a
+       card can hold several without competing with its own title. The chevron
+       is part of the button text, so it inherits this colour. */
+    .CollapsibleSectionHeader {{
+        background-color: transparent;
+        color: {t.text_primary};
+        border: none;
+        border-radius: 4px;
+        padding: 6px 4px;
+        font-size: {fs["body"]}pt;
+        font-weight: 600;
+        text-align: left;
+    }}
+
+    .CollapsibleSectionHeader:hover {{
+        background-color: {t.hover_bg};
+    }}
+
+    .CollapsibleSectionHeader:pressed {{
+        background-color: {t.pressed_bg};
+    }}
+
     .SmallLabel {{
         font-size: {fs["small"]}pt;
     }}

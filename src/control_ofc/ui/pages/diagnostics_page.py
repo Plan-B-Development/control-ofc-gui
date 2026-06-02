@@ -63,6 +63,7 @@ from control_ofc.ui.hwmon_guidance import (
 )
 from control_ofc.ui.sensor_knowledge import classify_sensor, format_sensor_tooltip
 from control_ofc.ui.theme import active_theme
+from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.event_log_view import EventLogView
 
 _TRANSPARENT = "background: transparent;"
@@ -568,6 +569,12 @@ class DiagnosticsPage(QWidget):
         splitter.setChildrenCollapsible(False)
 
         # ─── Top pane: Hardware Readiness (scrollable) ────────────────
+        # DEC-112: dense readiness/forensics detail is grouped into the
+        # collapsible sections below (progressive disclosure) so the
+        # always-relevant summary + critical alerts stay high on the page
+        # and the live fan table is not buried. Warnings are NEVER placed
+        # inside a collapsed section — only explanatory depth and reference
+        # tables collapse.
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         hw_container = QWidget()
@@ -579,6 +586,7 @@ class DiagnosticsPage(QWidget):
         self._hw_ready_frame.setProperty("class", "Card")
         self._hw_ready_frame.setObjectName("Diagnostics_Frame_hwReadiness")
         hw_layout = QVBoxLayout(self._hw_ready_frame)
+        hw_layout.setSpacing(6)
 
         hw_title = _transparent_label(
             "Hardware Readiness", "Diagnostics_Label_hwReadyTitle", bold=True
@@ -586,8 +594,9 @@ class DiagnosticsPage(QWidget):
         hw_title.setProperty("class", "PageSubtitle")
         hw_layout.addWidget(hw_title)
 
+        # ── Always-visible: readiness summary + board identity ─────────
         self._hw_ready_summary = _transparent_label(
-            "Fetching hardware diagnostics\u2026",
+            "Fetching hardware diagnostics…",
             "Diagnostics_Label_hwReadySummary",
         )
         self._hw_ready_summary.setWordWrap(True)
@@ -600,17 +609,27 @@ class DiagnosticsPage(QWidget):
         self._board_info_label.setVisible(False)
         hw_layout.addWidget(self._board_info_label)
 
-        # Vendor quirk alert
-        self._vendor_quirk_label = _transparent_label("", "Diagnostics_Label_vendorQuirk")
-        self._vendor_quirk_label.setWordWrap(True)
-        # Explicit PlainText (DEC-106 review): chip names are interpolated
-        # into the lookup key, so a future regression that ever pipes
-        # daemon-supplied strings into the rendered text would otherwise
-        # be auto-detected as HTML by Qt's AutoText default and could
-        # render a clickable `<a href=...>` from a hostile chip name.
-        self._vendor_quirk_label.setTextFormat(Qt.TextFormat.PlainText)
-        self._vendor_quirk_label.setVisible(False)
-        hw_layout.addWidget(self._vendor_quirk_label)
+        # ── Always-visible: critical alerts (each setVisible-gated) ────
+        # Per progressive-disclosure best practice (NN/g), essential
+        # warnings live OUTSIDE collapsed panels so a problem board surfaces
+        # them all at once; this group collapses to nothing on a healthy
+        # system. Ordered most-severe first.
+
+        # Module collisions (DEC-105) — daemon-reported critical pairs
+        # that race for the same Super I/O chip. Distinct from the
+        # GUI-only `_module_conflict_label` below, which is a static
+        # fallback table for daemons that predate the daemon-side check.
+        self._module_collision_label = _transparent_label("", "Diagnostics_Label_moduleCollisions")
+        self._module_collision_label.setWordWrap(True)
+        self._module_collision_label.setTextFormat(Qt.TextFormat.RichText)
+        self._module_collision_label.setVisible(False)
+        hw_layout.addWidget(self._module_collision_label)
+
+        # Module conflicts
+        self._module_conflict_label = _transparent_label("", "Diagnostics_Label_moduleConflicts")
+        self._module_conflict_label.setWordWrap(True)
+        self._module_conflict_label.setVisible(False)
+        hw_layout.addWidget(self._module_conflict_label)
 
         # DEC-101: dual-chip board warning. Surfaces when the daemon's
         # `expected_chips` (derived from the it87.c DMI lookup) lists chips
@@ -625,6 +644,37 @@ class DiagnosticsPage(QWidget):
         self._dual_chip_warning_label.setVisible(False)
         hw_layout.addWidget(self._dual_chip_warning_label)
 
+        # Vendor quirk alert
+        self._vendor_quirk_label = _transparent_label("", "Diagnostics_Label_vendorQuirk")
+        self._vendor_quirk_label.setWordWrap(True)
+        # Explicit PlainText (DEC-106 review): chip names are interpolated
+        # into the lookup key, so a future regression that ever pipes
+        # daemon-supplied strings into the rendered text would otherwise
+        # be auto-detected as HTML by Qt's AutoText default and could
+        # render a clickable `<a href=...>` from a hostile chip name.
+        self._vendor_quirk_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._vendor_quirk_label.setVisible(False)
+        hw_layout.addWidget(self._vendor_quirk_label)
+
+        # ACPI conflicts
+        self._acpi_label = _transparent_label("", "Diagnostics_Label_acpiConflicts")
+        self._acpi_label.setWordWrap(True)
+        self._acpi_label.setVisible(False)
+        hw_layout.addWidget(self._acpi_label)
+
+        # BIOS interference headline (revert counts). The headline stays in
+        # the always-visible alert stack with a stable severity Qt class so
+        # automated screenshots and tests can colour-check at a glance; the
+        # per-header detail + footnote live in the collapsible "BIOS
+        # interference detail" section below.
+        self._revert_headline_label = _transparent_label(
+            "", "Diagnostics_Label_revertHeadline", bold=True
+        )
+        self._revert_headline_label.setWordWrap(True)
+        self._revert_headline_label.setVisible(False)
+        hw_layout.addWidget(self._revert_headline_label)
+
+        # ── Collapsible: Detected hardware (chip + kernel module tables) ─
         # Chip/driver table
         self._chip_table = QTableWidget(0, 5)
         self._chip_table.setObjectName("Diagnostics_Table_chips")
@@ -676,65 +726,50 @@ class DiagnosticsPage(QWidget):
         table_splitter.addWidget(self._modules_table)
         table_splitter.setStretchFactor(0, 1)
         table_splitter.setStretchFactor(1, 2)
-        hw_layout.addWidget(table_splitter)
 
-        # ACPI conflicts
-        self._acpi_label = _transparent_label("", "Diagnostics_Label_acpiConflicts")
-        self._acpi_label.setWordWrap(True)
-        self._acpi_label.setVisible(False)
-        hw_layout.addWidget(self._acpi_label)
-
-        # Module collisions (DEC-105) — daemon-reported critical pairs
-        # that race for the same Super I/O chip. Distinct from the
-        # GUI-only `_module_conflict_label` below, which is a static
-        # fallback table for daemons that predate the daemon-side check.
-        self._module_collision_label = _transparent_label("", "Diagnostics_Label_moduleCollisions")
-        self._module_collision_label.setWordWrap(True)
-        self._module_collision_label.setTextFormat(Qt.TextFormat.RichText)
-        self._module_collision_label.setVisible(False)
-        hw_layout.addWidget(self._module_collision_label)
-
-        # Module conflicts
-        self._module_conflict_label = _transparent_label("", "Diagnostics_Label_moduleConflicts")
-        self._module_conflict_label.setWordWrap(True)
-        self._module_conflict_label.setVisible(False)
-        hw_layout.addWidget(self._module_conflict_label)
-
-        # BIOS interference (revert counts)
-        # Headline label keeps a stable Qt class for the highest severity so
-        # automated screenshots and tests can colour-check at a glance; the
-        # detail label renders one row per header in matching colours.
-        self._revert_headline_label = _transparent_label(
-            "", "Diagnostics_Label_revertHeadline", bold=True
+        self._section_detected_hw = CollapsibleSection(
+            "Detected hardware", "Diagnostics_Section_detectedHardware"
         )
-        self._revert_headline_label.setWordWrap(True)
-        self._revert_headline_label.setVisible(False)
-        hw_layout.addWidget(self._revert_headline_label)
+        self._section_detected_hw.add_widget(table_splitter)
+        hw_layout.addWidget(self._section_detected_hw)
 
+        # ── Collapsible: BIOS interference detail ──────────────────────
+        # Auto-expanded by _populate_hw_diagnostics when any header has a
+        # non-zero revert count, so a real problem is never hidden.
         self._revert_label = _transparent_label("", "Diagnostics_Label_revertCounts")
         self._revert_label.setWordWrap(True)
         self._revert_label.setTextFormat(Qt.TextFormat.RichText)
         self._revert_label.setVisible(False)
-        hw_layout.addWidget(self._revert_label)
 
         self._revert_footnote_label = _transparent_label("", "Diagnostics_Label_revertFootnote")
         self._revert_footnote_label.setWordWrap(True)
         self._revert_footnote_label.setProperty("class", "CardMeta")
         self._revert_footnote_label.setVisible(False)
-        hw_layout.addWidget(self._revert_footnote_label)
 
-        # Thermal safety
+        self._section_bios = CollapsibleSection(
+            "BIOS interference detail", "Diagnostics_Section_biosInterference"
+        )
+        self._section_bios.add_widget(self._revert_label)
+        self._section_bios.add_widget(self._revert_footnote_label)
+        hw_layout.addWidget(self._section_bios)
+
+        # ── Collapsible: Thermal safety & GPU ──────────────────────────
         self._thermal_label = _transparent_label("", "Diagnostics_Label_thermalSafety")
         self._thermal_label.setWordWrap(True)
         self._thermal_label.setProperty("class", "CardMeta")
-        hw_layout.addWidget(self._thermal_label)
 
-        # GPU diagnostics
         self._gpu_diag_label = _transparent_label("", "Diagnostics_Label_gpuDiag")
         self._gpu_diag_label.setWordWrap(True)
         self._gpu_diag_label.setVisible(False)
-        hw_layout.addWidget(self._gpu_diag_label)
 
+        self._section_thermal_gpu = CollapsibleSection(
+            "Thermal safety & GPU", "Diagnostics_Section_thermalGpu"
+        )
+        self._section_thermal_gpu.add_widget(self._thermal_label)
+        self._section_thermal_gpu.add_widget(self._gpu_diag_label)
+        hw_layout.addWidget(self._section_thermal_gpu)
+
+        # ── Collapsible: Guidance & documentation ──────────────────────
         # Guidance detail (rich text with clickable driver doc links)
         self._guidance_label = _transparent_label("", "Diagnostics_Label_guidance")
         self._guidance_label.setWordWrap(True)
@@ -742,7 +777,6 @@ class DiagnosticsPage(QWidget):
         self._guidance_label.setOpenExternalLinks(True)
         self._guidance_label.setProperty("class", "CardMeta")
         self._guidance_label.setVisible(False)
-        hw_layout.addWidget(self._guidance_label)
 
         # Documentation reference link
         self._docs_link_label = _transparent_label("", "Diagnostics_Label_docsLink")
@@ -751,9 +785,18 @@ class DiagnosticsPage(QWidget):
         self._docs_link_label.setOpenExternalLinks(True)
         self._docs_link_label.setProperty("class", "CardMeta")
         self._docs_link_label.setVisible(False)
-        hw_layout.addWidget(self._docs_link_label)
 
-        # PWM verify section
+        self._section_guidance = CollapsibleSection(
+            "Guidance & documentation", "Diagnostics_Section_guidance"
+        )
+        self._section_guidance.add_widget(self._guidance_label)
+        self._section_guidance.add_widget(self._docs_link_label)
+        hw_layout.addWidget(self._section_guidance)
+
+        # ── Collapsible: PWM control test ──────────────────────────────
+        # The verify controls and their result labels share one section, so
+        # reaching the buttons necessarily expands the section that shows the
+        # outcome — no separate auto-expand wiring is needed.
         verify_row = QHBoxLayout()
         self._verify_combo = QComboBox()
         self._verify_combo.setObjectName("Diagnostics_Combo_verifyHeader")
@@ -782,7 +825,6 @@ class DiagnosticsPage(QWidget):
         self._verify_all_btn.clicked.connect(self._run_pwm_verify_all)
         verify_row.addWidget(self._verify_all_btn)
         verify_row.addStretch()
-        hw_layout.addLayout(verify_row)
 
         # Batch progress label (DEC-101 2E). Hidden until a batch run starts.
         self._verify_all_progress_label = _transparent_label(
@@ -791,20 +833,29 @@ class DiagnosticsPage(QWidget):
         self._verify_all_progress_label.setWordWrap(True)
         self._verify_all_progress_label.setProperty("class", "CardMeta")
         self._verify_all_progress_label.setVisible(False)
-        hw_layout.addWidget(self._verify_all_progress_label)
 
         self._verify_result_label = _transparent_label("", "Diagnostics_Label_verifyResult")
         self._verify_result_label.setWordWrap(True)
         self._verify_result_label.setVisible(False)
-        hw_layout.addWidget(self._verify_result_label)
 
-        # Fetch button
+        self._section_pwm_test = CollapsibleSection(
+            "PWM control test", "Diagnostics_Section_pwmTest"
+        )
+        self._section_pwm_test.add_layout(verify_row)
+        self._section_pwm_test.add_widget(self._verify_all_progress_label)
+        self._section_pwm_test.add_widget(self._verify_result_label)
+        hw_layout.addWidget(self._section_pwm_test)
+
+        # Fetch button (always visible, below the sections)
         fetch_btn = QPushButton("Refresh Hardware Diagnostics")
         fetch_btn.setObjectName("Diagnostics_Btn_fetchHwDiag")
         fetch_btn.clicked.connect(self._fetch_hardware_diagnostics)
         hw_layout.addWidget(fetch_btn)
 
         hw_container_layout.addWidget(self._hw_ready_frame)
+        # Pin the card to the top so collapsed sections don't leave the card
+        # stretched with empty gaps inside the resizable scroll area.
+        hw_container_layout.addStretch()
         scroll.setWidget(hw_container)
         splitter.addWidget(scroll)
 
@@ -846,8 +897,14 @@ class DiagnosticsPage(QWidget):
 
         splitter.addWidget(fan_pane)
 
-        splitter.setStretchFactor(0, 2)
+        # Give the readiness pane enough initial height to show the summary,
+        # any critical alerts, and all collapsed section headers without
+        # scrolling on a typical board, while leaving the live fan table a
+        # usable share. The splitter stays user-adjustable and the top pane
+        # scrolls when sections are expanded.
+        splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
+        splitter.setSizes([420, 340])
 
         return splitter
 
@@ -1588,6 +1645,12 @@ class DiagnosticsPage(QWidget):
                 "change."
             )
             self._revert_footnote_label.setVisible(True)
+
+            # DEC-112: a non-zero revert count is a real problem the user
+            # must not miss, so surface the per-header detail by expanding
+            # the section. Idempotent and never auto-collapses, so a manual
+            # toggle on a healthy system is left untouched.
+            self._section_bios.set_expanded(True)
 
         # Thermal safety
         ts = diag.thermal_safety

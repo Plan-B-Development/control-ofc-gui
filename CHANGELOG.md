@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.17.0] — 2026-06-02
+
+Diagnostics > Fans tab refined with **progressive disclosure** (**DEC-112**).
+The "Hardware Readiness" pane stacked ~20 widgets in one long scroll, which
+became a wall of warnings, tables, and driver forensics on exactly the problem
+boards where it is read — pushing the live fan table below the fold. The detail
+is now grouped into collapsible sections while the readiness summary, the
+critical-alert stack, and the fan table stay visible. GUI-only release — no
+daemon contract change.
+
+### Added
+- **`CollapsibleSection` widget** (`src/control_ofc/ui/widgets/collapsible_section.py`)
+  — a first-party titled, collapsible container (chevron header, multiple
+  sections open at once, instant toggle). Reusable on other pages later.
+- **`.CollapsibleSectionHeader`** theme rule — body-sized, semibold, theme-
+  derived font size (no hardcoded px), chevron colour inherited from the theme.
+
+### Changed
+- **Diagnostics > Fans tab layout** — the Hardware Readiness card now shows an
+  always-visible readiness summary + board identity and a critical-alert stack
+  (module collisions/conflicts, dual-chip, vendor quirks, ACPI, BIOS-revert
+  headline), followed by five collapsible sections: *Detected hardware*,
+  *BIOS interference detail*, *Thermal safety & GPU*, *Guidance & documentation*,
+  and *PWM control test*. The *Refresh Hardware Diagnostics* button and the live
+  *Fan Status* table remain always visible.
+- **BIOS interference detail auto-expands** when any header reports a non-zero
+  revert count, so a real problem is never hidden; it never auto-collapses, so a
+  manual toggle on a healthy system is respected.
+- The Fans-tab splitter now favours the live fan table by default, since the
+  top pane is compact when sections are collapsed.
+
+### Notes
+- No data-model, business-logic, or daemon-API changes — only the widget tree
+  was reorganised. Every existing widget attribute and `objectName` is
+  preserved; the `Diagnostics_Splitter_fans` 2-child vertical contract is kept.
+- Critical warnings are deliberately kept *outside* collapsed panels, per NN/g
+  desktop-accordion guidance.
+
 ## [1.16.0] — 2026-06-02
 
 Diagnostics > Event Log overhaul (**DEC-111**). The event log was
