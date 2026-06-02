@@ -226,7 +226,7 @@ class TestDiagnosticsOverdriveGuidance:
 
         from PySide6.QtWidgets import QPlainTextEdit
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         text = log_view.toPlainText()
         assert "Overdrive enabled: No" in text
 

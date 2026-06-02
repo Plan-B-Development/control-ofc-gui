@@ -63,6 +63,7 @@ from control_ofc.ui.hwmon_guidance import (
 )
 from control_ofc.ui.sensor_knowledge import classify_sensor, format_sensor_tooltip
 from control_ofc.ui.theme import active_theme
+from control_ofc.ui.widgets.event_log_view import EventLogView
 
 _TRANSPARENT = "background: transparent;"
 
@@ -924,7 +925,66 @@ class DiagnosticsPage(QWidget):
         container = QWidget()
         layout = QVBoxLayout(container)
 
-        # Category buttons — fetch detail on demand
+        intro = QLabel(
+            "Live session events from the GUI. The system journal "
+            "(<code>journalctl -u control-ofc-daemon</code>) is the authoritative "
+            "cross-restart log; the Active Warnings dialog reflects current conditions."
+        )
+        intro.setProperty("class", "CardMeta")
+        intro.setWordWrap(True)
+        intro.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(intro)
+
+        # Event-log controls (severity / source / search / auto-scroll / export / copy)
+        # live inside the EventLogView widget; only Clear Log / Clear Warnings
+        # remain at the page level so they're visible regardless of which
+        # event the user has selected.
+        log_action_row = QHBoxLayout()
+
+        clear_btn = QPushButton("Clear Log")
+        clear_btn.setObjectName("Diagnostics_Btn_clearLogs")
+        clear_btn.setToolTip("Clear the in-process event log (does not affect snapshots below)")
+        clear_btn.clicked.connect(self._clear_log)
+        log_action_row.addWidget(clear_btn)
+
+        clear_warn_btn = QPushButton("Clear Warnings")
+        clear_warn_btn.setObjectName("Diagnostics_Btn_clearWarnings")
+        clear_warn_btn.setToolTip("Acknowledge all current active warnings")
+        clear_warn_btn.clicked.connect(self._clear_warnings)
+        log_action_row.addWidget(clear_warn_btn)
+
+        copy_errors_btn = QPushButton("Copy Last Errors")
+        copy_errors_btn.setObjectName("Diagnostics_Btn_copyErrors")
+        copy_errors_btn.setToolTip(
+            "One-click copy of every error/warning row, regardless of the current filter"
+        )
+        copy_errors_btn.clicked.connect(self._copy_last_errors)
+        log_action_row.addWidget(copy_errors_btn)
+
+        log_action_row.addStretch()
+        layout.addLayout(log_action_row)
+
+        self._event_log_view = EventLogView(self._diag)
+        self._event_log_view.setObjectName("Diagnostics_View_eventLog")
+        layout.addWidget(self._event_log_view, 1)
+
+        # ─── Diagnostic Snapshots ───────────────────────────────────
+        # Separate sub-section beneath the event log so the on-demand
+        # detail dumps (daemon, controller, GPU, journal) don't share the
+        # same scroll area as the live event stream (DEC-111).
+        snapshots_label = QLabel("Diagnostic Snapshots")
+        snapshots_label.setProperty("class", "CardSubtitle")
+        layout.addWidget(snapshots_label)
+
+        snapshots_hint = QLabel(
+            "Fetch on-demand details that aren't part of the live event stream. "
+            "Output is appended to the snapshot view below; clearing the event "
+            "log does not affect it."
+        )
+        snapshots_hint.setProperty("class", "CardMeta")
+        snapshots_hint.setWordWrap(True)
+        layout.addWidget(snapshots_hint)
+
         cat_row = QHBoxLayout()
 
         daemon_btn = QPushButton("Daemon Status")
@@ -951,45 +1011,28 @@ class DiagnosticsPage(QWidget):
         journal_btn.clicked.connect(self._fetch_journal)
         cat_row.addWidget(journal_btn)
 
+        clear_snap_btn = QPushButton("Clear Snapshots")
+        clear_snap_btn.setObjectName("Diagnostics_Btn_clearSnapshots")
+        clear_snap_btn.setToolTip("Empty the snapshot view")
+        clear_snap_btn.clicked.connect(self._clear_snapshots)
+        cat_row.addWidget(clear_snap_btn)
+
         cat_row.addStretch()
         layout.addLayout(cat_row)
 
-        # Standard log controls
-        btn_row = QHBoxLayout()
-        refresh_btn = QPushButton("Refresh Log")
-        refresh_btn.setObjectName("Diagnostics_Btn_refreshLogs")
-        refresh_btn.clicked.connect(self._refresh_log)
-        btn_row.addWidget(refresh_btn)
-
-        clear_btn = QPushButton("Clear Log")
-        clear_btn.setObjectName("Diagnostics_Btn_clearLogs")
-        clear_btn.clicked.connect(self._clear_log)
-        btn_row.addWidget(clear_btn)
-
-        clear_warn_btn = QPushButton("Clear Warnings")
-        clear_warn_btn.setObjectName("Diagnostics_Btn_clearWarnings")
-        clear_warn_btn.clicked.connect(self._clear_warnings)
-        btn_row.addWidget(clear_warn_btn)
-
-        copy_errors_btn = QPushButton("Copy Last Errors")
-        copy_errors_btn.setObjectName("Diagnostics_Btn_copyErrors")
-        copy_errors_btn.setToolTip(
-            "Copy recent errors and warnings to clipboard (GPU, hwmon, serial, control loop)"
+        self._snapshot_view = QPlainTextEdit()
+        self._snapshot_view.setObjectName("Diagnostics_Text_snapshotView")
+        self._snapshot_view.setReadOnly(True)
+        self._snapshot_view.setMaximumBlockCount(2000)
+        self._snapshot_view.setPlaceholderText(
+            "Click a button above to fetch a snapshot — daemon health, "
+            "controller status, GPU state, or recent journal entries."
         )
-        copy_errors_btn.clicked.connect(self._copy_last_errors)
-        btn_row.addWidget(copy_errors_btn)
-
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        self._log_view = QPlainTextEdit()
-        self._log_view.setObjectName("Diagnostics_Text_logView")
-        self._log_view.setReadOnly(True)
-        self._log_view.setMaximumBlockCount(2000)
-        font = self._log_view.font()
+        font = self._snapshot_view.font()
         font.setFamily("monospace")
-        self._log_view.setFont(font)
-        layout.addWidget(self._log_view, 1)
+        self._snapshot_view.setFont(font)
+        layout.addWidget(self._snapshot_view, 1)
+
         return container
 
     # ─── Signal handlers ─────────────────────────────────────────────
@@ -1894,6 +1937,9 @@ class DiagnosticsPage(QWidget):
         :func:`active_theme` (DEC-109). The reclaim-count card depends on
         ``reclaim_severity_color`` and is refreshed by re-populating from
         the cached hardware diagnostics result if one has been fetched.
+
+        DEC-111: also repaint the event-log severity column so a theme
+        switch updates the per-row Info/Warning/Error colours.
         """
         if self._state is not None:
             if self._state.sensors:
@@ -1903,6 +1949,8 @@ class DiagnosticsPage(QWidget):
         cached_hw = getattr(self._diag, "last_hw_diagnostics", None)
         if cached_hw is not None:
             self._populate_hw_diagnostics(cached_hw)
+        if getattr(self, "_event_log_view", None) is not None:
+            self._event_log_view.refresh_theme()
 
     def cleanup(self) -> None:
         """Stop the verify worker thread. Called from main window closeEvent."""
@@ -2018,25 +2066,32 @@ class DiagnosticsPage(QWidget):
         self._on_sensors(self._state.sensors)
         self._on_fans(self._state.fans)
         self._on_lease(self._state.lease)
-        self._refresh_log()
+        # Event log self-updates from diag signals; no refresh action needed.
         self._status_label.setText("Refreshed")
 
-    def _refresh_log(self) -> None:
-        lines = []
-        for e in self._diag.events:
-            lines.append(f"[{e.time_str}] [{e.level.upper():7s}] [{e.source}] {e.message}")
-        self._log_view.setPlainText("\n".join(lines) if lines else "(no events)")
-
     def _clear_log(self) -> None:
+        # DiagnosticsService.events_cleared drives EventLogView to flush its
+        # rows, so the table goes empty without the page touching the widget.
         self._diag.clear_events()
-        self._log_view.setPlainText("(cleared)")
+        self._status_label.setText("Event log cleared")
 
     def _clear_warnings(self) -> None:
         if self._state:
             self._state.clear_warnings()
 
+    def _clear_snapshots(self) -> None:
+        """Empty the snapshot view (separate from the event log)."""
+        self._snapshot_view.clear()
+        self._status_label.setText("Snapshots cleared")
+
     def _copy_last_errors(self) -> None:
-        """Copy recent errors/warnings from the diagnostics event log to clipboard."""
+        """One-click copy of every error/warning event regardless of filter.
+
+        The EventLogView's own "Copy view" button copies the *filtered* set;
+        this is the explicit "give me everything that's currently noisy"
+        shortcut so users don't have to remember to flip filters before
+        copying.
+        """
         from PySide6.QtWidgets import QApplication
 
         error_levels = {"error", "warning"}
@@ -2053,35 +2108,34 @@ class DiagnosticsPage(QWidget):
             self._status_label.setText("No recent errors to copy")
 
     def _fetch_daemon_status(self) -> None:
-        """Fetch and display a daemon status snapshot in the log view."""
+        """Fetch and display a daemon status snapshot in the snapshot view."""
         text = self._diag.format_daemon_status()
-        self._append_detail_block("DAEMON STATUS", text)
+        self._append_snapshot_block("DAEMON STATUS", text)
 
     def _fetch_controller_status(self) -> None:
-        """Fetch and display controller detection info in the log view."""
+        """Fetch and display controller detection info in the snapshot view."""
         text = self._diag.format_controller_status()
-        self._append_detail_block("CONTROLLER STATUS", text)
+        self._append_snapshot_block("CONTROLLER STATUS", text)
 
     def _fetch_gpu_status(self) -> None:
-        """Fetch and display GPU detection and fan state in the log view."""
+        """Fetch and display GPU detection and fan state in the snapshot view."""
         text = self._diag.format_gpu_status()
-        self._append_detail_block("GPU STATUS", text)
+        self._append_snapshot_block("GPU STATUS", text)
 
     def _fetch_journal(self) -> None:
-        """Fetch and display recent journal entries in the log view."""
+        """Fetch and display recent journal entries in the snapshot view."""
         text = self._diag.fetch_journal_entries()
-        self._append_detail_block("SYSTEM JOURNAL", text)
+        self._append_snapshot_block("SYSTEM JOURNAL", text)
 
-    def _append_detail_block(self, source: str, text: str) -> None:
-        """Append a labeled detail block to the log view."""
+    def _append_snapshot_block(self, source: str, text: str) -> None:
+        """Append a labeled detail block to the snapshot view."""
         import time
 
         timestamp = time.strftime("%H:%M:%S")
         separator = "\u2500" * 60
         block = f"\n{separator}\n[{timestamp}] [{source}]\n{separator}\n{text}\n"
-        self._log_view.appendPlainText(block)
-        # Scroll to bottom
-        scrollbar = self._log_view.verticalScrollBar()
+        self._snapshot_view.appendPlainText(block)
+        scrollbar = self._snapshot_view.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
     def _export_bundle(self) -> None:

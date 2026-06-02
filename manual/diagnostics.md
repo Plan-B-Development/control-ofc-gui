@@ -100,11 +100,39 @@ If another tool (or another instance of Control-OFC) holds the lease, the GUI ca
 
 ![Diagnostics — Event Log Tab](../screenshots/auto/10_diagnostics_event_log.png)
 
-A timestamped log of events, warnings, and errors. The log retains up to 2000 entries.
+A live, filterable table of in-process GUI events: daemon connect/disconnect, lease lifecycle, control-loop write failures, profile activations, theme changes, and the like. The log retains up to 200 entries (oldest discarded first).
 
-### Detail Buttons
+Three concepts that look similar but answer different questions:
 
-The top row provides on-demand detail fetches:
+| Surface | Question it answers | Persistence |
+|---------|---------------------|-------------|
+| **Event Log** (this tab) | *What has the GUI been doing in this session?* | In-process only, capped at 200 |
+| **Active Warnings** (status-banner badge → dialog) | *What is wrong right now?* | Cleared when the condition resolves or is acknowledged |
+| **System Journal** (snapshot button below) | *What happened across restarts on the daemon side?* | Persisted by systemd |
+
+### Filters
+
+| Control | Behaviour |
+|---------|-----------|
+| **Info / Warning / Error toggles** | Multi-select severity filter. Uncheck a level to hide every row at that severity. |
+| **Source dropdown** | Single-select source filter — `gui`, `polling`, `lease`, `control_loop`, `profile`, `kernel`, etc. New sources appear automatically the first time they fire. |
+| **Search** | Case-insensitive substring match against message text and source. |
+| **Auto-scroll** | When on, the view follows new events while you are at the bottom. Scroll up to pause; scroll back to the bottom to resume. |
+
+Selecting a row shows its full message in the Details pane below.
+
+### Log Actions
+
+| Button | Action |
+|--------|--------|
+| **Clear Log** | Empty the event log table (does not affect snapshots below). |
+| **Clear Warnings** | Reset the warning counter shown in the status banner. |
+| **Copy Last Errors** | One-click copy of every error/warning event, regardless of the current filter. |
+| **Export view... / Copy view** (toolbar inside the table) | Save / copy the *currently-visible* rows after filters and search are applied. |
+
+### Diagnostic Snapshots
+
+A separate sub-section below the event log fetches on-demand detail dumps. Output is appended to its own monospace view so clearing the event log never wipes a snapshot you just fetched.
 
 | Button | What it Fetches |
 |--------|----------------|
@@ -112,15 +140,7 @@ The top row provides on-demand detail fetches:
 | **Controller Status** | OpenFan controller detection and capability details |
 | **GPU Status** | AMD GPU detection, fan capabilities, and current fan state |
 | **System Journal** | Recent entries from the `control-ofc-daemon.service` systemd journal |
-
-### Log Controls
-
-| Button | Action |
-|--------|--------|
-| **Refresh Log** | Reload the event list |
-| **Clear Log** | Remove all entries from the display |
-| **Clear Warnings** | Reset the warning counter shown in the status banner |
-| **Copy Last Errors** | Copy recent errors and warnings to the clipboard for sharing |
+| **Clear Snapshots** | Empty the snapshot view |
 
 ## Export Support Bundle
 

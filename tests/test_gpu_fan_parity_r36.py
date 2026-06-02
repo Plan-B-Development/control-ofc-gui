@@ -175,7 +175,7 @@ class TestDiagnosticsGpuStatusButton:
 
         from PySide6.QtWidgets import QPlainTextEdit
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         text = log_view.toPlainText()
         assert "GPU STATUS" in text
         assert "9070XT" in text or "RX 9070 XT" in text
@@ -191,7 +191,7 @@ class TestDiagnosticsGpuStatusButton:
 
         from PySide6.QtWidgets import QPlainTextEdit
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         assert "No AMD" in log_view.toPlainText()
 
 

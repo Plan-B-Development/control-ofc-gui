@@ -82,6 +82,94 @@ class TestEventLog:
 
 
 # ---------------------------------------------------------------------------
+# Event signals (DEC-111)
+# ---------------------------------------------------------------------------
+
+
+class TestEventSignals:
+    """``DiagnosticsService`` emits Qt signals so the view can subscribe live."""
+
+    def test_log_event_emits_event_appended(self, qtbot):
+        svc = DiagnosticsService()
+        with qtbot.waitSignal(svc.event_appended, timeout=1000) as blocker:
+            svc.log_event("warning", "control_loop", "test message")
+        # The signal payload carries the DiagEvent itself so the view does
+        # not have to re-read the deque to render the new row.
+        (ev,) = blocker.args
+        assert ev.level == "warning"
+        assert ev.source == "control_loop"
+        assert ev.message == "test message"
+
+    def test_clear_events_emits_events_cleared(self, qtbot):
+        svc = DiagnosticsService()
+        svc.log_event("info", "test", "one")
+        with qtbot.waitSignal(svc.events_cleared, timeout=1000):
+            svc.clear_events()
+        assert svc.events == []
+
+
+# ---------------------------------------------------------------------------
+# filter_events (DEC-111)
+# ---------------------------------------------------------------------------
+
+
+class TestFilterEvents:
+    """Helper for ad-hoc filtering — the view consumes this for export/copy."""
+
+    def _populate(self) -> DiagnosticsService:
+        svc = DiagnosticsService()
+        svc.log_event("info", "polling", "Daemon connected")
+        svc.log_event("warning", "control_loop", "Fan ch00 write failed")
+        svc.log_event("error", "lease", "Lease lost: timeout")
+        svc.log_event("info", "gui", "Theme changed: Solar Light")
+        return svc
+
+    def test_no_filter_returns_all(self):
+        svc = self._populate()
+        assert len(svc.filter_events()) == 4
+
+    def test_filter_by_levels(self):
+        svc = self._populate()
+        result = svc.filter_events(levels={"warning", "error"})
+        assert len(result) == 2
+        assert {ev.level for ev in result} == {"warning", "error"}
+
+    def test_filter_by_sources(self):
+        svc = self._populate()
+        result = svc.filter_events(sources={"polling", "lease"})
+        assert {ev.source for ev in result} == {"polling", "lease"}
+
+    def test_filter_by_search_substring(self):
+        svc = self._populate()
+        result = svc.filter_events(search="theme")
+        assert len(result) == 1
+        assert result[0].source == "gui"
+
+    def test_filter_search_matches_source(self):
+        # Searching for a source token should also match — useful when the
+        # user types "control" to find every control_loop row regardless
+        # of the message wording.
+        svc = self._populate()
+        result = svc.filter_events(search="control")
+        assert len(result) == 1
+        assert result[0].source == "control_loop"
+
+    def test_filter_combines_all_three(self):
+        svc = self._populate()
+        result = svc.filter_events(
+            levels={"warning", "error", "info"},
+            sources={"gui"},
+            search="solar",
+        )
+        assert len(result) == 1
+        assert "Solar Light" in result[0].message
+
+    def test_known_sources_sorted(self):
+        svc = self._populate()
+        assert svc.known_sources() == ["control_loop", "gui", "lease", "polling"]
+
+
+# ---------------------------------------------------------------------------
 # format_daemon_status
 # ---------------------------------------------------------------------------
 

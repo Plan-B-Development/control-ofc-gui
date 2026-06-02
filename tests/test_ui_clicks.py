@@ -9,7 +9,6 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QPlainTextEdit,
     QPushButton,
     QStackedWidget,
 )
@@ -119,19 +118,22 @@ class TestControlsPage:
 
 class TestDiagnosticsPage:
     def test_clear_logs(self, qtbot, window):
-        log_view = window.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
-        assert log_view is not None
+        """Clear Log empties the event-log table without touching snapshots.
 
-        # Pre-populate with text
-        log_view.setPlainText("some log output\nmore lines")
-        assert log_view.toPlainText() != ""
+        Replaces the pre-DEC-111 QPlainTextEdit check: the event log is now
+        a QTableView fed by ``DiagnosticsService.events``, and the snapshot
+        view is a separate widget that survives Clear Log.
+        """
+        diag = window.diagnostics_page._diag
+        diag.log_event("info", "polling", "Daemon connected")
+        diag.log_event("warning", "control_loop", "Fan ch00 write failed")
+        assert len(diag.events) == 2
 
         clear_btn = window.findChild(QPushButton, "Diagnostics_Btn_clearLogs")
         assert clear_btn is not None
         qtbot.mouseClick(clear_btn, Qt.MouseButton.LeftButton)
 
-        # The clear handler sets "(cleared)" rather than empty string
-        assert "some log output" not in log_view.toPlainText()
+        assert diag.events == []
 
     def test_refresh_overview_button_click_updates_status_label(self, qtbot, window):
         """T2 (test-tests audit): clicking Refresh must run `_refresh_all`,

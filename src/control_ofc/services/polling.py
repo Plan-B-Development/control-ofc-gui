@@ -24,6 +24,7 @@ from control_ofc.api.models import (
 from control_ofc.constants import CAPABILITIES_REFRESH_INTERVAL_S, POLL_INTERVAL_MS
 from control_ofc.paths import profiles_dir
 from control_ofc.services.app_state import AppState
+from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
 
 log = logging.getLogger(__name__)
@@ -206,9 +207,14 @@ class PollingService(QObject):
         socket_path: str,
         history: HistoryStore | None = None,
         parent: QObject | None = None,
+        diagnostics: DiagnosticsService | None = None,
     ) -> None:
         super().__init__(parent)
         self._state = state
+        self._diag = diagnostics
+        # Track previous connection state so we only emit a diag event on
+        # the connected↔disconnected transition, not on every poll cycle.
+        self._was_connected: bool | None = None
         self._running = False
 
         # Worker thread
@@ -256,22 +262,42 @@ class PollingService(QObject):
             self._thread.wait(1000)
 
     def _on_connected(self) -> None:
+        was_connected = self._was_connected
+        self._was_connected = True
         if self._state.connection != ConnectionState.CONNECTED:
             log.info("Daemon connection established")
         self._state.set_connection(ConnectionState.CONNECTED)
         if self._state.mode == OperationMode.READ_ONLY:
             self._state.set_mode(OperationMode.AUTOMATIC)
             log.info("Mode set to AUTOMATIC (daemon connected)")
+        # DEC-111: emit a single event per disconnect→connect transition so
+        # the event log reads "Daemon connected" rather than appending one
+        # row per successful poll. ``was_connected is None`` is the very
+        # first cycle after startup; that's worth recording too.
+        if self._diag is not None and was_connected is not True:
+            self._diag.log_event("info", "polling", "Daemon connected")
 
     def _on_active_profile(self, info: ActiveProfileInfo | None) -> None:
         """Update AppState with the daemon's active profile on connect/reconnect."""
         if info and info.active:
             log.info("Daemon active profile: %s (id=%s)", info.profile_name, info.profile_id)
             self._state.set_active_profile(info.profile_name)
+            if self._diag is not None:
+                self._diag.log_event(
+                    "info", "polling", f"Daemon active profile: {info.profile_name}"
+                )
         else:
             log.debug("Daemon has no active profile")
 
     def _on_disconnected(self) -> None:
+        was_connected = self._was_connected
+        self._was_connected = False
         self._state.set_connection(ConnectionState.DISCONNECTED)
         if self._state.mode == OperationMode.AUTOMATIC:
             self._state.set_mode(OperationMode.READ_ONLY)
+        # DEC-111: only emit on the connected→disconnected edge — the worker
+        # signals ``disconnected`` on every failed poll, so an unconditional
+        # log_event would flood the event log with one row per second while
+        # the daemon was unreachable.
+        if self._diag is not None and was_connected is True:
+            self._diag.log_event("warning", "polling", "Daemon disconnected")

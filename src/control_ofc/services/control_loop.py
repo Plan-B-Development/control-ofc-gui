@@ -43,6 +43,7 @@ from control_ofc.services.profile_service import (
 
 if TYPE_CHECKING:
     from control_ofc.services.demo_service import DemoService
+    from control_ofc.services.diagnostics_service import DiagnosticsService
     from control_ofc.services.profile_service import Profile
 
 log = logging.getLogger(__name__)
@@ -223,6 +224,7 @@ class ControlLoopService(QObject):
         demo_service: DemoService | None = None,
         parent: QObject | None = None,
         socket_path: str | None = None,
+        diagnostics: DiagnosticsService | None = None,
     ) -> None:
         super().__init__(parent)
         self._state = state
@@ -230,6 +232,7 @@ class ControlLoopService(QObject):
         self._client = client
         self._lease = lease_service
         self._demo = demo_service
+        self._diag = diagnostics
 
         self._target_states: dict[str, TargetState] = {}
         self._write_failure_counts: dict[str, int] = {}
@@ -294,6 +297,8 @@ class ControlLoopService(QObject):
             self._timer.start()
             self._maybe_acquire_lease()
             log.info("Control loop started (interval=%dms)", CONTROL_LOOP_INTERVAL_MS)
+            if self._diag is not None:
+                self._diag.log_event("info", "control_loop", "Control loop started")
 
     def _maybe_acquire_lease(self) -> None:
         """Acquire the hwmon lease only when hwmon is actually present.
@@ -319,6 +324,8 @@ class ControlLoopService(QObject):
             self._running = False
             self._timer.stop()
             log.info("Control loop stopped")
+            if self._diag is not None:
+                self._diag.log_event("info", "control_loop", "Control loop stopped")
 
     def set_manual_override(self, active: bool) -> None:
         """Enter or exit manual override mode."""
@@ -641,6 +648,7 @@ class ControlLoopService(QObject):
 
         if success:
             count = self._write_failure_counts.get(target_id, 0)
+            was_warned = count >= 3
             if count > 0:
                 count -= 1
                 if count == 0:
@@ -652,9 +660,16 @@ class ControlLoopService(QObject):
             # Reset per-outcome counters on a clean success — keeps the
             # diagnostics view fresh rather than monotonically growing.
             self._write_outcome_counts.pop(target_id, None)
+            # DEC-111: log the recovery edge so the event log shows that a
+            # previously-troubled target is healthy again. Only fires when
+            # we were past the warning threshold — silent recovery is the
+            # common case and not worth a row.
+            if was_warned and count < 3 and self._diag is not None:
+                self._diag.log_event("info", "control_loop", f"Fan '{target_id}' writes recovered")
         else:
             count = self._write_failure_counts.get(target_id, 0) + 1
             self._write_failure_counts[target_id] = count
+            crossed_threshold = count == 3
             if count >= 3 and self._state:
                 # Pick the message based on the dominant outcome for a more
                 # useful warning than the previous generic one.
@@ -682,6 +697,12 @@ class ControlLoopService(QObject):
                     message=msg,
                     key=f"write_fail:{target_id}",
                 )
+                # DEC-111: emit the matching event exactly once per
+                # threshold crossing (count == 3). The active-warnings
+                # dialog reflects current condition; the event log
+                # records that it happened.
+                if crossed_threshold and self._diag is not None:
+                    self._diag.log_event("warning", "control_loop", msg)
 
     def _on_lease_lost(self, reason: str) -> None:
         """Handle lease loss — transition to READ_ONLY for safety (P0-G2)."""
@@ -693,6 +714,12 @@ class ControlLoopService(QObject):
             message="Fan control paused: lost daemon lease. Fans returning to BIOS control.",
             key="lease_lost",
         )
+        if self._diag is not None:
+            self._diag.log_event(
+                "error",
+                "control_loop",
+                f"Fan control paused — lost daemon lease ({reason})",
+            )
 
     def _write_target(self, target_id: str, pwm_percent: float) -> bool:
         """Write PWM — dispatches to background worker or falls back to sync."""
