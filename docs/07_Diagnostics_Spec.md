@@ -214,6 +214,9 @@ All labels inside Card frames use `background: transparent` inline style. This p
 - Card title labels: `.PageSubtitle` class (bold section-header role, inherits theme size)
 - Metadata/explanatory labels: `.CardMeta` class (smaller, secondary color)
 - Status label in button row: `.CardMeta` class
+- Collapsible section headers: `.CollapsibleSectionHeader` class (DEC-112) —
+  body-sized + semibold, subordinate to `.PageSubtitle` card titles, theme-
+  derived font size (no hardcoded px), chevron in the button text
 - No hardcoded `font-size: Npx` on any Diagnostics label
 
 ### No inline font-size overrides
@@ -244,6 +247,41 @@ presents a unified view of hardware compatibility and driver status.
 7. **Chip guidance** — contextual BIOS tips, known issues, and driver
    documentation links from the chip-family knowledge base
    (`hwmon_guidance.py`). Shown per unique chip prefix.
+
+### Layout: progressive disclosure (DEC-112)
+The same data above is presented through **collapsible sections** so the pane
+does not become a wall of text on a problem board (the exact case where it is
+read). The grouping, top-to-bottom inside the Hardware Readiness card:
+
+- **Always visible (never collapsed):** the readiness summary line, board
+  identity, and the **critical-alert stack** — module collisions, module
+  conflicts, dual-chip warning, vendor quirks, ACPI conflicts, and the
+  BIOS-interference headline. Each alert is individually visibility-gated, so
+  the stack collapses to nothing on a healthy system. Per NN/g accordion
+  guidance, essential warnings are kept *outside* collapsed panels.
+- **Collapsible sections** (`CollapsibleSection`, all collapsed by default):
+  *Detected hardware* (chip + kernel-module tables), *BIOS interference detail*
+  (per-header revert rows + footnote), *Thermal safety & GPU*,
+  *Guidance & documentation*, and *PWM control test* (verify combo, Test PWM
+  Control, Verify All Writable, progress + result).
+- **Always visible:** the *Refresh Hardware Diagnostics* button, and the live
+  *Fan Status* table in the bottom splitter pane.
+
+Default expand state is static (not persisted across launches). The
+*BIOS interference detail* section **auto-expands** when any header reports a
+non-zero revert count, so a real problem is never hidden; it never
+auto-collapses, so a manual toggle on a healthy system is respected. The
+verify controls and their result labels share one section, so reaching the
+buttons necessarily expands the section that shows the outcome.
+
+`CollapsibleSection` (`ui/widgets/collapsible_section.py`) is a first-party
+widget: a `QToolButton` header (chevron rendered in the button text so it
+inherits the themed `.CollapsibleSectionHeader` colour) toggling a content
+container. Multiple sections may be open at once (unlike `QToolBox`). The
+toggle is instant (no animation) for deterministic tests. Because Qt's
+`QWidget.isHidden()` reflects a widget's *own* explicit show/hide flag rather
+than an ancestor's collapsed state, the visibility-gated labels keep working
+unchanged inside the sections.
 
 ### Chip-family knowledge base
 `src/control_ofc/ui/hwmon_guidance.py` maps chip name prefixes to:
