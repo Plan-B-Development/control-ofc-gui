@@ -15,6 +15,7 @@ from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.control_loop import ControlLoopService
 from control_ofc.services.demo_service import DemoService
+from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.lease_service import LeaseService
 from control_ofc.services.profile_service import ProfileService
@@ -42,6 +43,7 @@ class MainWindow(QWidget):
         client: DaemonClient | None = None,
         control_loop: ControlLoopService | None = None,
         lease_service: LeaseService | None = None,
+        diagnostics_service: DiagnosticsService | None = None,
         demo_mode: bool = False,
         parent: QWidget | None = None,
     ) -> None:
@@ -59,6 +61,15 @@ class MainWindow(QWidget):
         self._demo_service: DemoService | None = None
         self._control_loop: ControlLoopService | None = control_loop
         self._lease_service = lease_service
+        # DEC-111: share one DiagnosticsService across the page, snapshots,
+        # and the event-log view so every emitter writes to the same deque.
+        # Tests construct MainWindow without one, so we fall back to a fresh
+        # instance with whatever services are available.
+        self._diag = diagnostics_service or DiagnosticsService(
+            self._state,
+            settings_service=self._settings_service,
+            profile_service=self._profile_service,
+        )
         self._series_selection = SeriesSelectionModel()
 
         # Restore persisted settings into state
@@ -102,6 +113,7 @@ class MainWindow(QWidget):
         )
         self.diagnostics_page = DiagnosticsPage(
             state=self._state,
+            diagnostics_service=self._diag,
             settings_service=self._settings_service,
             profile_service=self._profile_service,
             client=self._client,
@@ -139,6 +151,10 @@ class MainWindow(QWidget):
         self._state.mode_changed.connect(self.status_banner.set_operation_mode)
         self._state.active_profile_changed.connect(self.status_banner.set_active_profile)
         self._state.warning_count_changed.connect(self.status_banner.set_warning_count)
+
+        # DEC-111: surface profile + mode transitions in the event log.
+        self._state.active_profile_changed.connect(self._on_active_profile_for_events)
+        self._state.mode_changed.connect(self._on_mode_for_events)
 
         # --- Restore persisted window state ---
         s = self._settings_service.settings
@@ -221,6 +237,30 @@ class MainWindow(QWidget):
             self.dashboard_page.set_theme(tokens)
         if hasattr(self, "diagnostics_page"):
             self.diagnostics_page.set_theme(tokens)
+        # DEC-111: record the theme change in the event log so a session
+        # bundle reflects what the user was actually looking at.
+        name = getattr(tokens, "name", "") or "(unnamed)"
+        self._diag.log_event("info", "gui", f"Theme changed: {name}")
+
+    def _on_active_profile_for_events(self, name: str) -> None:
+        """Mirror profile activation/deactivation into the event log."""
+        if name:
+            self._diag.log_event("info", "profile", f"Active profile: {name}")
+        else:
+            self._diag.log_event("info", "profile", "Profile deactivated")
+
+    def _on_mode_for_events(self, mode: OperationMode) -> None:
+        """Mirror notable mode transitions into the event log.
+
+        AUTOMATIC/READ_ONLY churn during reconnects is already captured by
+        the polling connect/disconnect events, so this only records
+        MANUAL_OVERRIDE and DEMO — the two modes that change what the user
+        can do at the control surface.
+        """
+        if mode == OperationMode.MANUAL_OVERRIDE:
+            self._diag.log_event("info", "gui", "Manual override enabled")
+        elif mode == OperationMode.DEMO:
+            self._diag.log_event("info", "gui", "Demo mode active")
 
     def _on_connection_changed(self, state: ConnectionState) -> None:
         if state == ConnectionState.DISCONNECTED:
@@ -365,6 +405,7 @@ class MainWindow(QWidget):
             if box.clickedButton() is dismiss:
                 acknowledged.add(warning.id)
                 log.info("Acknowledged kernel warning %s", warning.id)
+                self._diag.log_event("info", "kernel", f"Kernel warning acknowledged: {warning.id}")
 
         if acknowledged != set(settings.acknowledged_kernel_warnings):
             self._settings_service.update(acknowledged_kernel_warnings=sorted(acknowledged))

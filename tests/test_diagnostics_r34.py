@@ -279,32 +279,47 @@ class TestLeaseExplanation:
 
 
 # ---------------------------------------------------------------------------
-# Event log — QPlainTextEdit and category buttons
+# Event log — EventLogView + snapshot QPlainTextEdit (DEC-111)
 # ---------------------------------------------------------------------------
 
 
 class TestEventLogWidget:
-    """Event log uses QPlainTextEdit with bounded line count."""
+    """Event log uses the filterable EventLogView; snapshots live in their own
+    read-only QPlainTextEdit (DEC-111)."""
 
-    def test_log_view_is_plain_text_edit(self, qtbot):
-        page, _ = _make_page(qtbot)
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
-        assert log_view is not None
+    def test_event_log_view_present(self, qtbot):
+        from control_ofc.ui.widgets.event_log_view import EventLogView
 
-    def test_log_view_is_read_only(self, qtbot):
         page, _ = _make_page(qtbot)
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
-        assert log_view.isReadOnly()
+        view = page.findChild(EventLogView, "Diagnostics_View_eventLog")
+        assert view is not None
 
-    def test_log_view_has_max_block_count(self, qtbot):
+    def test_snapshot_view_is_read_only(self, qtbot):
         page, _ = _make_page(qtbot)
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
-        assert log_view.maximumBlockCount() == 2000
+        snap = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
+        assert snap is not None
+        assert snap.isReadOnly()
 
-    def test_log_view_monospace_font(self, qtbot):
+    def test_snapshot_view_has_max_block_count(self, qtbot):
         page, _ = _make_page(qtbot)
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
-        assert "monospace" in log_view.font().family().lower()
+        snap = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
+        assert snap.maximumBlockCount() == 2000
+
+    def test_snapshot_view_monospace_font(self, qtbot):
+        page, _ = _make_page(qtbot)
+        snap = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
+        assert "monospace" in snap.font().family().lower()
+
+    def test_clear_log_does_not_touch_snapshot_view(self, qtbot):
+        """Clear Log should empty the event log only — DEC-111 carved the
+        snapshot view out so a snapshot the user just fetched is not lost
+        when they clear the live event stream."""
+        page, _ = _make_page(qtbot)
+        page._fetch_daemon_status()
+        snap = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
+        assert "DAEMON STATUS" in snap.toPlainText()
+        page._clear_log()
+        assert "DAEMON STATUS" in snap.toPlainText()
 
 
 class TestEventLogCategoryButtons:
@@ -343,7 +358,7 @@ class TestDaemonStatusRetrieval:
 
         page._fetch_daemon_status()
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         text = log_view.toPlainText()
         assert "DAEMON STATUS" in text
         assert "ok" in text
@@ -355,7 +370,7 @@ class TestDaemonStatusRetrieval:
 
         page._fetch_daemon_status()
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         text = log_view.toPlainText()
         assert "GUI application state" in text
 
@@ -382,7 +397,7 @@ class TestControllerStatusRetrieval:
 
         page._fetch_controller_status()
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         text = log_view.toPlainText()
         assert "CONTROLLER STATUS" in text
         assert "OpenFan" in text
@@ -394,7 +409,7 @@ class TestControllerStatusRetrieval:
 
         page._fetch_controller_status()
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         assert "not yet received" in log_view.toPlainText()
 
     def test_controller_status_source_label(self, qtbot):
@@ -405,7 +420,7 @@ class TestControllerStatusRetrieval:
 
         page._fetch_controller_status()
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         assert "/capabilities" in log_view.toPlainText()
 
 
@@ -436,7 +451,7 @@ class TestJournalRetrieval:
 
             page._fetch_journal()
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         text = log_view.toPlainText()
         assert "SYSTEM JOURNAL" in text
         assert "journalctl" in text
@@ -452,7 +467,7 @@ class TestJournalRetrieval:
         ):
             page._fetch_journal()
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         assert "not found" in log_view.toPlainText().lower()
 
     def test_journal_timeout_shows_error(self, qtbot):
@@ -468,7 +483,7 @@ class TestJournalRetrieval:
         ):
             page._fetch_journal()
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         assert "timed out" in log_view.toPlainText().lower()
 
     def test_journal_permission_shows_hint(self, qtbot):
@@ -484,7 +499,7 @@ class TestJournalRetrieval:
 
             page._fetch_journal()
 
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_logView")
+        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
         text = log_view.toPlainText()
         assert "systemd-journal" in text
 

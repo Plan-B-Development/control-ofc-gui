@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import QObject, Signal
+
 from control_ofc.services.app_state import AppState
 
 if TYPE_CHECKING:
@@ -23,6 +25,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# DEC-111: in-process session breadcrumbs are intentionally bounded — the
+# system journal is the authoritative cross-restart store. 200 rows covers
+# ~20 minutes of typical activity (transitions only, not per-poll noise) and
+# keeps memory + filter overhead negligible.
 MAX_EVENTS = 200
 JOURNAL_LINE_LIMIT = 100
 JOURNAL_TIMEOUT_S = 5
@@ -64,15 +70,28 @@ class DiagEvent:
         return time.strftime("%H:%M:%S", time.localtime(self.timestamp))
 
 
-class DiagnosticsService:
-    """Collects diagnostic events, retrieves status detail, and exports support bundles."""
+class DiagnosticsService(QObject):
+    """Collects diagnostic events, retrieves status detail, and exports support bundles.
+
+    DEC-111: a ``QObject`` so the event-log view can subscribe to fresh events
+    via Qt signals instead of polling the deque. Listeners on the main thread
+    receive ``event_appended`` synchronously; cross-thread emitters get queued
+    delivery automatically.
+    """
+
+    # Emitted whenever ``log_event`` appends a new entry.
+    event_appended = Signal(object)  # DiagEvent
+    # Emitted when ``clear_events`` is called so the view can flush its rows.
+    events_cleared = Signal()
 
     def __init__(
         self,
         state: AppState | None = None,
         settings_service: AppSettingsService | None = None,
         profile_service: ProfileService | None = None,
+        parent: QObject | None = None,
     ) -> None:
+        super().__init__(parent)
         self._state = state
         self._settings_service = settings_service
         self._profile_service = profile_service
@@ -99,9 +118,51 @@ class DiagnosticsService:
             source,
             message,
         )
+        # Notify subscribers AFTER the deque is updated so listeners that
+        # re-read ``events`` (e.g. for export-current-view) see the row.
+        self.event_appended.emit(event)
 
     def clear_events(self) -> None:
         self._events.clear()
+        self.events_cleared.emit()
+
+    def filter_events(
+        self,
+        *,
+        levels: set[str] | None = None,
+        sources: set[str] | None = None,
+        search: str = "",
+    ) -> list[DiagEvent]:
+        """Return events matching every supplied filter.
+
+        ``levels`` and ``sources`` are interpreted as multi-select sets — an
+        empty/``None`` set means *no level/source filter*. ``search`` is a
+        case-insensitive substring match against both the message text and
+        the source attribution. The result preserves insertion order so the
+        view can render newest-at-bottom without re-sorting.
+        """
+        needle = search.strip().lower()
+        result: list[DiagEvent] = []
+        for ev in self._events:
+            if levels and ev.level not in levels:
+                continue
+            if sources and ev.source not in sources:
+                continue
+            if needle:
+                hay = f"{ev.message} {ev.source}".lower()
+                if needle not in hay:
+                    continue
+            result.append(ev)
+        return result
+
+    def known_sources(self) -> list[str]:
+        """Return the distinct event sources observed so far, sorted.
+
+        Used by the event-log view to populate its source filter dropdown
+        without prescribing a fixed source vocabulary. New emitters (added
+        later) automatically appear in the dropdown the first time they fire.
+        """
+        return sorted({ev.source for ev in self._events})
 
     # ─── Detail retrieval ────────────────────────────────────────────
 

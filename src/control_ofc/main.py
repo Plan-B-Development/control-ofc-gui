@@ -17,6 +17,7 @@ from control_ofc.paths import ensure_dirs, set_path_overrides, themes_dir
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.control_loop import ControlLoopService
+from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.lease_service import LeaseService
 from control_ofc.services.polling import PollingService
@@ -117,6 +118,17 @@ def main() -> None:
     state = AppState()
     history = HistoryStore()
     profile_service = ProfileService()
+
+    # DEC-111: a single DiagnosticsService is shared between the polling
+    # service, lease service, control loop, main window, and diagnostics
+    # page so every emitter writes into the same in-process event deque.
+    diagnostics = DiagnosticsService(
+        state=state,
+        settings_service=settings_service,
+        profile_service=profile_service,
+    )
+    diagnostics.log_event("info", "gui", f"GUI started v{APP_VERSION}")
+
     profile_load_errors = profile_service.load()
     for path, reason in profile_load_errors:
         # Surface per-profile load failures to Diagnostics so a corrupted
@@ -126,6 +138,13 @@ def main() -> None:
             source="profile_service",
             message=f"Failed to load profile '{os.path.basename(path)}': {reason}",
             key=f"profile_load_fail:{path}",
+        )
+        # DEC-111: also record in the event log so the support bundle
+        # carries the failure even after the user acknowledges the warning.
+        diagnostics.log_event(
+            "warning",
+            "profile",
+            f"Failed to load profile '{os.path.basename(path)}': {reason}",
         )
 
     # Wire history recording to state updates
@@ -139,20 +158,21 @@ def main() -> None:
     lease: LeaseService | None = None
     if not demo_mode:
         client = DaemonClient(socket_path=socket_path)
-        polling = PollingService(state, socket_path, history=history)
+        polling = PollingService(state, socket_path, history=history, diagnostics=diagnostics)
         # Profile-search-dir registration runs inside the polling worker
         # thread on first successful poll and after every reconnect
         # (see PollingService._PollWorker._register_profile_search_dir).
         # Kept off the Qt main thread so a slow daemon cannot stall the UI.
         # socket_path enables the dedicated lease worker thread (DEC-108) so
         # take/renew/release HTTP calls never block the Qt main thread.
-        lease = LeaseService(client, socket_path=socket_path)
+        lease = LeaseService(client, socket_path=socket_path, diagnostics=diagnostics)
         control_loop = ControlLoopService(
             state=state,
             profile_service=profile_service,
             client=client,
             lease_service=lease,
             socket_path=socket_path,
+            diagnostics=diagnostics,
         )
 
     # Set app icon
@@ -171,6 +191,7 @@ def main() -> None:
         client=client if not demo_mode else None,
         control_loop=control_loop,
         lease_service=lease,
+        diagnostics_service=diagnostics,
         demo_mode=demo_mode,
     )
     window.show()
@@ -188,6 +209,11 @@ def main() -> None:
         control_loop.start()
 
     exit_code = qt_app.exec()
+
+    # DEC-111: record the exit so a support bundle saved on the way out
+    # still has a closing breadcrumb. Logged before service shutdown so the
+    # message lands while diagnostics is still owned by the main thread.
+    diagnostics.log_event("info", "gui", "GUI exiting")
 
     # Cleanup
     if control_loop:

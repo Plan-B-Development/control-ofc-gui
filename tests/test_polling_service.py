@@ -87,11 +87,14 @@ def _collect_signal(signal) -> list:
 def _make_polling_service(state: AppState) -> PollingService:
     """Build a PollingService without starting a real QThread or QTimer.
 
-    Patches __init__ to only set _state, which is all the _on_* handlers need.
+    Patches __init__ to only set _state, _was_connected, and _diag, which is
+    all the _on_* handlers need.
     """
     with patch.object(PollingService, "__init__", lambda self, *a, **kw: None):
         svc = PollingService.__new__(PollingService)
         svc._state = state
+        svc._was_connected = None
+        svc._diag = None
     return svc
 
 

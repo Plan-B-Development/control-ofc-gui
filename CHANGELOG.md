@@ -1,5 +1,76 @@
 # Changelog
 
+## [1.16.0] — 2026-06-02
+
+Diagnostics > Event Log overhaul (**DEC-111**). The event log was
+visible to users but never populated — `DiagnosticsService.log_event`
+had zero non-test call sites. This release wires every meaningful
+transition into the deque, rebuilds the tab around a filterable
+`QTableView`, and carves the on-demand snapshot dumps into a separate
+sub-section so clearing the log no longer wipes journal output the
+user just fetched. GUI-only release — no daemon contract change.
+
+### Added
+- **`EventLogView` widget** (`src/control_ofc/ui/widgets/event_log_view.py`)
+  — table-based event log with multi-select severity filter,
+  source dropdown, free-text search, auto-follow-while-at-bottom,
+  details pane, and Export / Copy of the currently-filtered rows.
+- **Live event emission** from production services:
+  - `polling` — daemon connected / disconnected (transitions only,
+    no per-cycle noise) and daemon-reported active profile.
+  - `lease` — acquired / released / lost.
+  - `control_loop` — started / stopped, write-fail threshold crossed,
+    per-target recovery, lease-lost transition.
+  - `profile` — load failures.
+  - `gui` — GUI start / exit, theme change, manual override entered,
+    demo mode active, kernel-warning acknowledged.
+- **`Diagnostic Snapshots` sub-section** below the event log. The four
+  on-demand detail buttons (Daemon Status, Controller Status, GPU
+  Status, System Journal) write to their own `QPlainTextEdit`
+  (`Diagnostics_Text_snapshotView`) and have a new `Clear Snapshots`
+  button. Clearing the event log no longer wipes snapshot output.
+- **`DiagnosticsService` is now a `QObject`** emitting
+  `event_appended(DiagEvent)` and `events_cleared()` so the view
+  follows the deque live. Adds `filter_events(...)` and
+  `known_sources()` helpers.
+- **DEC-111** in `DECISIONS.md` recording the architecture, the
+  three-concept separation (Event Log vs. Active Warnings vs. System
+  Journal), and the alternatives considered.
+
+### Changed
+- `PollingService` / `LeaseService` / `ControlLoopService` /
+  `MainWindow` accept a new optional `diagnostics=` keyword to
+  receive the shared `DiagnosticsService`. Without it (e.g. tests),
+  each service keeps working exactly as before — emitters become
+  no-ops.
+- `manual/diagnostics.md` rewritten to describe the new layout and
+  filter controls; the stale "2000 entries" claim is corrected to
+  the actual 200-row cap.
+- `docs/07_Diagnostics_Spec.md` "Event log detail retrieval" section
+  rewritten to cover the three-concept separation, the emitter
+  contract, and the snapshot sub-section.
+
+### Fixed
+- `Clear Log` no longer wipes Daemon Status / Controller Status / GPU
+  Status / System Journal output the user just fetched — the
+  snapshot view is now a separate widget.
+- The event log finally renders real GUI activity instead of being a
+  permanently empty `QPlainTextEdit`.
+
+### Tests
+- New `tests/test_event_log_view.py` (qtbot) covering severity /
+  source / search filters, details-pane rendering, copy-filtered-view,
+  empty-state visibility, and live row append on
+  `event_appended` signal.
+- New `tests/test_event_log_emitters.py` pinning every transition
+  emission for polling / lease / control loop (write-fail threshold,
+  recovery, lease lost).
+- Extended `tests/test_diagnostics_service.py` with `event_appended`
+  / `events_cleared` signal tests and `filter_events` matrix.
+- Existing diagnostics tests updated to the new
+  `Diagnostics_Text_snapshotView` widget name and the new
+  `Diagnostic Snapshots` carve-out.
+
 ## [1.15.0] — 2026-06-01
 
 Initial Intel motherboard / CPU support foundation (DEC-110). No

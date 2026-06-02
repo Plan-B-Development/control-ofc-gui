@@ -124,6 +124,32 @@ Diagnostics page also auto-shows the matching `VendorQuirk` card when the
 board+chip combination is recognised, pointing the operator at this BIOS
 setting.
 
+### 12. Real-time daemon journal follow (deferred — DEC-111)
+
+The "System Journal" snapshot button fetches the last ~100 lines of
+`journalctl -u control-ofc-daemon` on demand. A streaming follow (the
+equivalent of `journalctl -u control-ofc-daemon -f`) is not wired —
+users who want live daemon logs run `journalctl` themselves. Adding
+streaming follow inside the GUI would require a subprocess + thread
+to read continuously and is out of scope for the DEC-111 in-process
+event log rewrite.
+
+**When to build:** if support tickets repeatedly need real-time
+daemon-side context that the in-process event log + on-demand journal
+snapshot don't cover.
+
+### 13. Cross-restart event-log persistence (deferred — DEC-111)
+
+DEC-111 keeps the event log session-only (in-memory deque, MAX_EVENTS
+= 200). The system journal is the proper cross-restart store; the
+support bundle JSON already captures a snapshot of the deque on
+demand. Persisting per-session files to disk was considered and
+rejected in DEC-111 as duplicate responsibility plus a privacy /
+cleanup surface for no significant gain over the bundle.
+
+**When to build:** unlikely. If we ever want a forensic trail
+across restarts, the daemon journal is the right place.
+
 ### 11. GUI surface for `reset_gpu_fan` (deferred)
 
 `DaemonClient.reset_gpu_fan` and its parser are implemented, but no GUI caller
@@ -172,6 +198,7 @@ issue.
 | Startup sidebar shows Dashboard when another page restored | sidebar.select_page() on restore (R54) | v0.73.0 |
 | Daemon config path hardcoded | --config CLI + CONTROL_OFC_CONFIG env var override | v0.5.4 (release gen) |
 | Serial fallback limited to ttyACM only | Added ttyUSB0-9 probing | v0.5.4 (release gen) |
+| Event Log tab perpetually empty | log_event wired to polling/lease/control_loop/profile/gui transitions; new EventLogView with filters + search (DEC-111) | v1.16.0 |
 | Service DeviceAllow hardcoded to ttyACM0-1 | Wildcard char-ttyACM/ttyUSB classes | v0.5.4 (release gen) |
 | Serial group uucp not portable | Both uucp + dialout in SupplementaryGroups | v0.5.4 (release gen) |
 | Color dialog too small (static getColor) | Instance-based QColorDialog with setMinimumSize | v0.74.0 (R55) |

@@ -30,7 +30,7 @@ from control_ofc.api.errors import DaemonError
 from control_ofc.constants import LEASE_API_TIMEOUT_S, LEASE_RENEW_INTERVAL_S
 
 if TYPE_CHECKING:
-    pass
+    from control_ofc.services.diagnostics_service import DiagnosticsService
 
 log = logging.getLogger(__name__)
 
@@ -132,9 +132,11 @@ class LeaseService(QObject):
         parent: QObject | None = None,
         *,
         socket_path: str | None = None,
+        diagnostics: DiagnosticsService | None = None,
     ) -> None:
         super().__init__(parent)
         self._client = client
+        self._diag = diagnostics
         self._lease_id: str | None = None
         self._renew_retry_count = 0
         # Coalesce duplicate in-flight requests in worker mode so a flurry
@@ -199,11 +201,15 @@ class LeaseService(QObject):
             self._lease_id = result.lease_id
             self._renew_timer.start()
             log.info("Lease acquired: %s (ttl=%ds)", result.lease_id, result.ttl_seconds)
+            if self._diag is not None:
+                self._diag.log_event("info", "lease", f"Lease acquired (id={result.lease_id})")
             self.lease_acquired.emit(result.lease_id)
             return True
         except DaemonError as e:
             reason = f"{e.code}: {e.message}"
             log.warning("Lease acquire failed: %s", reason)
+            if self._diag is not None:
+                self._diag.log_event("error", "lease", f"Lease acquire failed: {reason}")
             self.lease_lost.emit(reason)
             return False
 
@@ -226,8 +232,12 @@ class LeaseService(QObject):
         try:
             self._client.hwmon_lease_release(lease_id, timeout=LEASE_API_TIMEOUT_S)
             log.info("Lease released: %s", lease_id)
+            if self._diag is not None:
+                self._diag.log_event("info", "lease", "Lease released")
         except DaemonError as e:
             log.warning("Lease release failed: %s", e.message)
+            if self._diag is not None:
+                self._diag.log_event("warning", "lease", f"Lease release failed: {e.message}")
 
     def _renew(self) -> None:
         """Renew the lease periodically with retry on failure (P0-G2).
@@ -269,9 +279,13 @@ class LeaseService(QObject):
             self._lease_id = lease_id
             self._renew_timer.start()
             log.info("Lease acquired: %s (ttl=%ds)", lease_id, ttl)
+            if self._diag is not None:
+                self._diag.log_event("info", "lease", f"Lease acquired (id={lease_id})")
             self.lease_acquired.emit(lease_id)
         else:
             log.warning("Lease acquire failed: %s", err)
+            if self._diag is not None:
+                self._diag.log_event("error", "lease", f"Lease acquire failed: {err}")
             self.lease_lost.emit(err)
 
     @Slot(bool, str, int, str)
@@ -295,8 +309,12 @@ class LeaseService(QObject):
     def _on_release_completed(self, success: bool, err: str) -> None:
         if success:
             log.info("Lease released")
+            if self._diag is not None:
+                self._diag.log_event("info", "lease", "Lease released")
         else:
             log.warning("Lease release failed: %s", err)
+            if self._diag is not None:
+                self._diag.log_event("warning", "lease", f"Lease release failed: {err}")
 
     def _on_renew_success(self, lease_id: str, ttl: int) -> None:
         self._lease_id = lease_id
@@ -343,6 +361,15 @@ class LeaseService(QObject):
         self._lease_id = None
         self._renew_timer.stop()
         self._renew_retry_count = 0
+        if self._diag is not None:
+            self._diag.log_event(
+                "error",
+                "lease",
+                (
+                    f"Lease lost: renewal failed after {self._MAX_RENEW_RETRIES} retries "
+                    f"({lose_reason})"
+                ),
+            )
         self.lease_lost.emit(
             f"renewal failed after {self._MAX_RENEW_RETRIES} retries: {lose_reason}"
         )

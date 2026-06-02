@@ -140,23 +140,43 @@ These differences are **expected behavior**, not a bug. The GUI poll cycle (1000
 - **WARN**: age > 2× and <= 5× interval
 - **CRIT**: age > 5× interval or never updated
 
-## Implementation: Event log detail retrieval (R34)
+## Implementation: Event log + diagnostic snapshots (DEC-111)
 
-### Category buttons
-The Event Log tab provides three on-demand detail retrieval buttons:
+### Three distinct concepts
+The Diagnostics > Event Log tab surfaces three closely-related but distinct streams. Confusing them is the original sin the DEC-111 rewrite cleared up:
 
-| Button | Source | What it shows |
-|--------|--------|---------------|
-| Daemon Status | AppState snapshot | Connection, mode, daemon version, overall status, subsystem details, sensor/fan counts, warnings, active profile |
-| Controller Status | AppState capabilities + status | OpenFan/hwmon presence, channels, write support, subsystem freshness, reason text |
-| System Journal | `journalctl -u control-ofc-daemon` | Last 100 lines of control-ofc-daemon journal entries |
+| Surface | What it answers | Storage | Lifetime |
+|---------|-----------------|---------|----------|
+| Event Log (this tab) | What has the GUI been doing in this session? | In-process `collections.deque` (`MAX_EVENTS = 200`) | Session-only — cleared on GUI exit |
+| Active Warnings (banner badge → dialog) | What is wrong **right now**? | `AppState.active_warnings` recomputed every poll | Cleared when the condition resolves or the user acknowledges |
+| System Journal (snapshot button) | What happened across daemon restarts? | systemd journal, fetched on demand via `journalctl -u control-ofc-daemon` | Daemon-owned; persistent |
 
-### Source labeling
-Each detail block is appended to the log view with:
-- A separator line
-- Timestamp and `[SOURCE]` header
-- The detail content
-- A source attribution line explaining where the data came from
+### EventLogView widget
+Located at `src/control_ofc/ui/widgets/event_log_view.py`. Backed by a `QStandardItemModel` (one row per `DiagEvent`) wrapped in a custom `QSortFilterProxyModel` (`_EventFilterProxy`) that ANDs three filters:
+
+- **Severity** — multi-select (`info` / `warning` / `error`) via checkable `QPushButton`s.
+- **Source** — single-select `QComboBox`; populates dynamically from observed sources, starting with "All sources".
+- **Search** — `QLineEdit` substring match against both message and source columns (case-insensitive).
+
+Severity column foreground colours read from `active_theme()` on every repaint and on `refresh_theme()` (called from `DiagnosticsPage.set_theme`) so a theme switch picks up the new `status_ok` / `status_warn` / `status_crit` values without a restart.
+
+Auto-scroll behaviour: the view follows the bottom only when the user is already at the bottom before the new event lands. Scrolling up pauses the follow; scrolling back down resumes it.
+
+### Emitter contract
+`DiagnosticsService.log_event(level, source, message)` is called from production services at *state transitions only*, never per cycle:
+
+| Source | Emits when |
+|--------|------------|
+| `gui` | GUI start/exit; theme changed; manual override entered; demo mode activated; kernel warning acknowledged |
+| `polling` | First connection established; disconnected (after a prior connect); daemon-reported active profile detected |
+| `lease` | Acquired; released; renewal failed after all retries (lost) |
+| `control_loop` | Loop started/stopped; write-fail threshold crossed (count == 3); per-target recovery; lease lost transition |
+| `profile` | Activated/deactivated; profile load error |
+
+Per-cycle work (every poll, every write attempt) must continue to use Python `logging` directly — the in-process event log is for breadcrumbs the user opens Diagnostics to see, not the daemon journal.
+
+### Diagnostic Snapshots sub-section
+The four on-demand detail buttons (Daemon Status, Controller Status, GPU Status, System Journal) live in a separate sub-section below the event log, writing to their own `QPlainTextEdit` (`Diagnostics_Text_snapshotView`). `Clear Log` only clears the event-log table; `Clear Snapshots` clears the snapshot view. Before DEC-111 both shared one `QPlainTextEdit` and Clear Log wiped journal blocks the user had just fetched.
 
 ### Journal access
 - Uses `subprocess.run()` with `--lines=100 --no-pager --output=short-iso`
@@ -164,9 +184,8 @@ Each detail block is appended to the log view with:
 - Permission failure → message explaining `systemd-journal` group requirement
 - `journalctl` not found → message explaining systemd dependency
 
-### Log widget
-Uses `QPlainTextEdit` (not `QTextEdit`) for efficient append-heavy plain text.
-`setMaximumBlockCount(2000)` prevents unbounded memory growth.
+### Snapshot widget
+`QPlainTextEdit` with `setMaximumBlockCount(2000)` and a monospace font. The high cap is appropriate for journal pastes; the event-log table has its own 200-row cap that mirrors the deque.
 
 ## Implementation: Lease explanation (R34)
 
