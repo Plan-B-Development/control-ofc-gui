@@ -7,7 +7,9 @@ export themes via the Theme Editor in Settings.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -397,9 +399,51 @@ def ensure_bundled_themes_installed(target_dir: Path) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
+def combo_arrow_svg_path(color: str) -> str | None:
+    """Write a themed combo-box down-arrow SVG to the cache dir; return its path.
+
+    Styling ``QComboBox::drop-down`` (as this theme does, to drop the native
+    separator) makes Qt discard the native down-arrow entirely, so we must
+    supply one. The app is stylesheet-only with no bundled image assets and
+    supports arbitrary custom theme colours, so a static asset cannot follow
+    the theme — instead we generate a tiny chevron SVG in the requested colour
+    and reference it from the stylesheet (DEC-113).
+
+    The file is keyed by colour so repeated calls for the same theme reuse it.
+    Returns ``None`` (and the caller omits the rule) if the cache is not
+    writable — the combo still works, it just falls back to no custom arrow.
+    """
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" '
+        'viewBox="0 0 12 12">'
+        f'<path d="M2.5 4.75 L6 8.25 L9.5 4.75" fill="none" stroke="{color}" '
+        'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    )
+    try:
+        cache_root = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+            os.path.expanduser("~"), ".cache"
+        )
+        cache_dir = Path(cache_root) / "control-ofc-gui"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha1(color.encode("utf-8")).hexdigest()[:12]
+        path = cache_dir / f"combo-arrow-{digest}.svg"
+        if not path.exists() or path.read_text(encoding="utf-8") != svg:
+            path.write_text(svg, encoding="utf-8")
+        # Forward slashes only — Qt stylesheet url() wants them on every OS.
+        return path.as_posix()
+    except OSError:
+        return None
+
+
 def build_stylesheet(t: ThemeTokens) -> str:
     """Generate a Qt stylesheet from theme tokens."""
     fs = font_sizes(t.base_font_size_pt)
+    _arrow_path = combo_arrow_svg_path(t.text_secondary)
+    combo_down_arrow = (
+        f"QComboBox::down-arrow {{ image: url({_arrow_path}); width: 12px; height: 12px; }}"
+        if _arrow_path
+        else ""
+    )
     return f"""
     /* Global */
     QWidget {{
@@ -600,7 +644,12 @@ def build_stylesheet(t: ThemeTokens) -> str:
 
     QComboBox::drop-down {{
         border: none;
+        width: 22px;
+        subcontrol-origin: padding;
+        subcontrol-position: center right;
     }}
+
+    {combo_down_arrow}
 
     QComboBox QAbstractItemView {{
         background-color: {t.surface_1};

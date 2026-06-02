@@ -56,7 +56,10 @@ Hover any row to see a tooltip explaining the chip's source class, description, 
 
 The Fans tab is split vertically:
 
-- **Top pane: Hardware Readiness** — chip detection, driver status, kernel modules, ACPI conflicts, vendor quirk guidance, and a **Test PWM Control** button for verifying that motherboard headers actually move fans. To stay readable on problem boards, the detail is grouped with **progressive disclosure**: the readiness summary and any critical alerts are always shown, while **Detected hardware**, **BIOS interference detail**, **Thermal safety & GPU**, **Guidance & documentation**, and **PWM control test** collapse by default and expand on click. (BIOS interference detail expands automatically when the BIOS has been reclaiming fan control, so a real problem is never hidden.) Covered in detail on the [Hardware Troubleshooting](hardware-troubleshooting.md) page.
+- **Top pane: Hardware Readiness** — chip detection, driver status, kernel modules, ACPI conflicts, vendor quirk guidance, and a **Test PWM Control** button for verifying that motherboard headers actually move fans. It opens with a **readiness verdict** at the top — a green *✓ System ready* line, or an amber/red *⚠ N issues need attention* — populated automatically the first time you open the tab. To stay readable on problem boards, the rest is grouped with **progressive disclosure**: the verdict and any critical alerts are always shown, while **Detected hardware**, **BIOS interference detail**, **Thermal safety & GPU**, **Guidance & documentation**, and **PWM control test** collapse by default and expand on click. (BIOS interference detail expands automatically when the BIOS has been reclaiming fan control, so a real problem is never hidden.)
+  - When there are problems, **Guidance & documentation** holds a **To fix** list — concrete remediation steps with a short safety disclaimer and a clickable link to the relevant documentation for each issue.
+  - **Open Full Report ↗** opens the complete readiness report in its own resizable window (handy when there is a lot of detail); every link in it is clickable.
+  - Covered in detail on the [Hardware Troubleshooting](hardware-troubleshooting.md) page.
 - **Bottom pane: Fans table** — every controllable fan output reported by the daemon.
 
 The fan table has the following columns:

@@ -275,13 +275,49 @@ verify controls and their result labels share one section, so reaching the
 buttons necessarily expands the section that shows the outcome.
 
 `CollapsibleSection` (`ui/widgets/collapsible_section.py`) is a first-party
-widget: a `QToolButton` header (chevron rendered in the button text so it
-inherits the themed `.CollapsibleSectionHeader` colour) toggling a content
-container. Multiple sections may be open at once (unlike `QToolBox`). The
-toggle is instant (no animation) for deterministic tests. Because Qt's
+widget: a flat `QPushButton` header (chevron rendered in the button text so it
+inherits the themed `.CollapsibleSectionHeader` colour, and so the text
+left-aligns — `QToolButton` ignores stylesheet `text-align`) toggling a
+content container. Multiple sections may be open at once (unlike `QToolBox`).
+The toggle is instant (no animation) for deterministic tests. Because Qt's
 `QWidget.isHidden()` reflects a widget's *own* explicit show/hide flag rather
 than an ancestor's collapsed state, the visibility-gated labels keep working
 unchanged inside the sections.
+
+### Readiness verdict, auto-fetch, "To fix", and pop-out report (DEC-113)
+- **Verdict banner** — a prominent, always-visible one-line status at the top
+  of the card, computed by `readiness_report.readiness_verdict(diag)`:
+  `✓ System ready — N headers, M writable · thermal safety <state>`
+  (`SuccessChip`) or `⚠ K issue(s) need attention …` (`WarningChip` /
+  `CriticalChip`). It fills the otherwise-empty collapsed view with an
+  at-a-glance answer. Problem detection lives in one place
+  (`detect_readiness_problems`) so the verdict and the "To fix" guidance can
+  never disagree; **info-level vendor quirks are FYI notes and are not counted
+  as problems**.
+- **Auto-fetch** — opening the Fans tab fetches `/diagnostics/hardware` once
+  per session (guarded), so the verdict is populated without a manual
+  *Refresh* click.
+- **"To fix" guidance** — `build_fix_guidance_html(diag)` renders a remediation
+  bullet per detected problem (ACPI, module collision, GPU `ppfeaturemask`,
+  dual-chip, all-read-only, …) with a clickable doc link and a shared
+  `REMEDIATION_DISCLAIMER`. It is **GUI-authored only** (no daemon strings), so
+  it is safe as rich text with external links — sidestepping the DEC-106
+  escaping requirement. The dual-chip warning carries the same disclaimer.
+- **Pop-out report** — *Open Full Report ↗* opens `ReadinessReportDialog`, a
+  themed, resizable `QTextBrowser` window with the complete report (summary,
+  detected-hardware table, thermal/GPU, and the "To fix" block). Daemon strings
+  **are** HTML-escaped here. Link colour is set inline per anchor (the app-wide
+  stylesheet overrides the palette Link role, so inline `style="color:…"` is
+  the only reliably-applied path for contrast).
+
+### Combo-box down-arrow (DEC-113)
+The theme styles `QComboBox::drop-down`, which makes Qt drop the native
+down-arrow. The app is stylesheet-only (no `QPalette`) and ships no image
+assets, and supports arbitrary custom theme colours, so a static asset cannot
+follow the theme. `theme.combo_arrow_svg_path(color)` instead generates a tiny
+chevron SVG in the theme's `text_secondary` colour to the cache dir and the
+stylesheet references it via `QComboBox::down-arrow { image: url(…) }`. It
+degrades gracefully (no rule) if the cache is not writable.
 
 ### Chip-family knowledge base
 `src/control_ofc/ui/hwmon_guidance.py` maps chip name prefixes to:

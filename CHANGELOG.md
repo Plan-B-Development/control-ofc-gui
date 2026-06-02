@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.18.0] — 2026-06-02
+
+Diagnostics > Fans readiness UX refinement and a combo-box arrow fix
+(**DEC-113**), following up on the DEC-112 progressive-disclosure work.
+GUI-only release — no daemon contract change.
+
+### Fixed
+- **Combo-box down-arrow was invisible app-wide.** Styling
+  `QComboBox::drop-down` made Qt drop the native arrow on every combo box
+  (Settings, fan-role dialog, curve editor, the PWM-verify picker, …). The
+  theme now generates a chevron SVG in the active theme's colour and the
+  stylesheet references it, so the arrow is always visible and follows the
+  theme. The DEC-112 section chevron was never the problem — it renders
+  correctly; the "disappearing dropdown" was this missing combo arrow.
+- **Timeline-chart teardown use-after-free.** The dashboard chart's secondary
+  RPM ViewBox stayed X-linked into widget destruction, raising "Internal C++
+  object (ViewBox) already deleted" on shutdown/teardown. `TimelineChart`
+  cleanup now breaks the links and `DashboardPage.closeEvent` runs it.
+
+### Added
+- **Readiness verdict banner** at the top of Hardware Readiness — a green
+  *✓ System ready — N headers, M writable · thermal safety <state>* or an
+  amber/red *⚠ K issue(s) need attention*, so the collapsed view answers at a
+  glance. Populated automatically the first time the Fans tab is opened
+  (auto-fetch), filling the previously-empty space.
+- **"To fix" guidance** in *Guidance & documentation* — per-issue remediation
+  steps (ACPI conflicts, module collisions, GPU `ppfeaturemask`, dual-chip,
+  all-read-only, …) with a short safety disclaimer and a clickable
+  documentation link for each.
+- **Open Full Report ↗** — opens the complete hardware-readiness report
+  (`ReadinessReportDialog`) in its own resizable window with all detail and
+  clickable links, for boards with a lot of information.
+- New first-party module `ui/widgets/readiness_report.py` and theme helper
+  `combo_arrow_svg_path`.
+
+### Changed
+- Info-level vendor quirks are treated as FYI notes and no longer count as
+  "issues needing attention" in the verdict.
+- The `module_collisions` and BIOS-revert labels now open external links;
+  report/guidance link colour is set inline for contrast on dark themes.
+- Internal: the `CollapsibleSection` header is a flat `QPushButton` (so its
+  text left-aligns; `QToolButton` ignores stylesheet `text-align`).
+
 ## [1.17.0] — 2026-06-02
 
 Diagnostics > Fans tab refined with **progressive disclosure** (**DEC-112**).

@@ -7,6 +7,7 @@ values for all visible series at the cursor position.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import TYPE_CHECKING
 
@@ -181,10 +182,33 @@ class TimelineChart(QWidget):
                 item.setPen(pg.mkPen(self.color_for_key(key), width=1))
 
     def cleanup(self) -> None:
-        """Disconnect the SignalProxy to avoid stale callbacks after teardown."""
+        """Disconnect signals and tear down the secondary ViewBox safely.
+
+        Besides the mouse-move ``SignalProxy``, the right-axis RPM ViewBox is
+        X-linked to the main plot and synced on resize. If those links survive
+        into widget destruction, a final resize event propagates through the
+        X-link to an already-freed ViewBox and shiboken raises
+        "Internal C++ object (ViewBox) already deleted". Breaking the links
+        here prevents that on app shutdown and in test teardown. Idempotent:
+        guarded by ``_rpm_vb`` being cleared, so it is safe to call twice
+        (e.g. from both ``closeEvent`` and an explicit shutdown ``cleanup``).
+        """
         if self._proxy is not None:
-            self._proxy.disconnect()
+            with contextlib.suppress(RuntimeError, TypeError):
+                self._proxy.disconnect()
             self._proxy = None
+        if self._rpm_vb is not None:
+            plot = self._plot_widget.getPlotItem()
+            if plot is not None:
+                with contextlib.suppress(RuntimeError, TypeError):
+                    plot.vb.sigResized.disconnect(self._sync_rpm_viewbox)
+                with contextlib.suppress(RuntimeError):
+                    self._rpm_vb.setXLink(None)
+                scene = plot.scene()
+                if scene is not None:
+                    with contextlib.suppress(RuntimeError):
+                        scene.removeItem(self._rpm_vb)
+            self._rpm_vb = None
 
     def _sync_rpm_viewbox(self) -> None:
         plot = self._plot_widget.getPlotItem()
