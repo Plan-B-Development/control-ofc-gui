@@ -14,7 +14,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.ui.theme import ThemeTokens, active_theme
@@ -61,15 +68,23 @@ class TimelineChart(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        # Controls row
+        # Controls row — unlabeled combos read as decoration. The label
+        # makes the only chart-level control on the dashboard self-describing
+        # without forcing the user to click to discover what it does.
         controls = QHBoxLayout()
         controls.setSpacing(8)
+        range_label = QLabel("Range:")
+        range_label.setObjectName("TimelineChart_Label_range")
+        range_label.setBuddy(None)
+        controls.addWidget(range_label)
         self._range_combo = QComboBox()
         self._range_combo.setObjectName("TimelineChart_Combo_range")
+        self._range_combo.setToolTip("Time window shown on the chart")
         for label, _ in TIME_RANGES:
             self._range_combo.addItem(label)
         self._range_combo.setCurrentIndex(2)  # 5m default
         self._range_combo.currentIndexChanged.connect(self._on_range_changed)
+        range_label.setBuddy(self._range_combo)
         controls.addWidget(self._range_combo)
         controls.addStretch()
         layout.addLayout(controls)
@@ -102,10 +117,16 @@ class TimelineChart(QWidget):
         plot.setLabel("left", "Temperature (\u00b0C)")
         plot.setLabel("bottom", "Time (s ago)")
 
+        # Grid lines are drawn with the tick pen at the showGrid() alpha
+        # (pyqtgraph AxisItem.generateDrawSpecs). Without an explicit tick
+        # pen, the grid inherits chart_axis_text, so the chart_grid token
+        # advertised in the theme editor would have no visible effect.
+        grid_pen = pg.mkPen(t.chart_grid)
         for axis_name in ("left", "bottom"):
             axis = plot.getAxis(axis_name)
             axis.setPen(pg.mkPen(t.chart_axis_text))
             axis.setTextPen(pg.mkPen(t.text_secondary))
+            axis.setTickPen(grid_pen)
 
         # Y-axis limits: temperatures and RPM can never be negative
         plot.getViewBox().setLimits(yMin=0)
@@ -115,10 +136,12 @@ class TimelineChart(QWidget):
         self._rpm_vb.setLimits(yMin=0)
         plot.scene().addItem(self._rpm_vb)
         plot.showAxis("right")
-        plot.getAxis("right").linkToView(self._rpm_vb)
-        plot.getAxis("right").setLabel("RPM")
-        plot.getAxis("right").setPen(pg.mkPen(t.chart_axis_text))
-        plot.getAxis("right").setTextPen(pg.mkPen(t.text_secondary))
+        right_axis = plot.getAxis("right")
+        right_axis.linkToView(self._rpm_vb)
+        right_axis.setLabel("RPM")
+        right_axis.setPen(pg.mkPen(t.chart_axis_text))
+        right_axis.setTextPen(pg.mkPen(t.text_secondary))
+        right_axis.setTickPen(grid_pen)
         self._rpm_vb.setXLink(plot.vb)
 
         plot.vb.sigResized.connect(self._sync_rpm_viewbox)
@@ -146,7 +169,8 @@ class TimelineChart(QWidget):
         in ``__init__`` and rebuilt the plot only once, so theme switches
         left the chart background, gridlines, axes, crosshair, and hover
         label stuck on the previous palette (DEC-109). This method updates
-        every plot element that paints with a token value and recolours
+        every plot element that paints with a token value — including the
+        gridline colour (driven by the per-axis tick pen) — and recolours
         any existing series so they pick up new ``chart_series`` defaults.
         """
         self._theme = tokens
@@ -155,15 +179,18 @@ class TimelineChart(QWidget):
         if plot is None:
             return
 
+        grid_pen = pg.mkPen(tokens.chart_grid)
         for axis_name in ("left", "bottom"):
             axis = plot.getAxis(axis_name)
             axis.setPen(pg.mkPen(tokens.chart_axis_text))
             axis.setTextPen(pg.mkPen(tokens.text_secondary))
+            axis.setTickPen(grid_pen)
 
         right_axis = plot.getAxis("right")
         if right_axis is not None:
             right_axis.setPen(pg.mkPen(tokens.chart_axis_text))
             right_axis.setTextPen(pg.mkPen(tokens.text_secondary))
+            right_axis.setTickPen(grid_pen)
 
         if hasattr(self, "_crosshair_v") and self._crosshair_v is not None:
             self._crosshair_v.setPen(pg.mkPen(tokens.chart_crosshair, width=1))
