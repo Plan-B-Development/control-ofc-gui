@@ -215,6 +215,24 @@ kernel is included in the description.
 All readings classify as `cpu_die` at `high` confidence. The coretemp driver
 reads per-core DTS (Digital Thermal Sensor) values from Intel CPUs.
 
+## Where the rich classification surfaces
+
+Three places consume this knowledge base:
+
+1. **Cell tooltips** on every Sensors-tab cell (`format_sensor_tooltip`).
+   The note list is capped at 3 entries for readability.
+2. **Sensor Detail dialog** (`Diagnostics_SensorDetail_Dialog`, DEC-117) —
+   opens via the per-row Details button, row double-click, or
+   right-click → "Open detail…". Shows the full classification
+   description **and every classification note** (not truncated), the
+   matching board override if one exists, board context, the Thresholds
+   section, and a clickable kernel.org driver doc link. This is the
+   canonical surface when a user wants the full story behind a sensor.
+3. **Header summary line** and **inline `⚠`/`?` chips** on the Sensors
+   tab (DEC-117) — the `bogus` and `low`-confidence rows in the table
+   below have a visible prefix on the Label cell so they're discoverable
+   without hovering.
+
 ## Confidence levels
 
 | Level | Meaning | When to use |

@@ -117,6 +117,7 @@ class MainWindow(QWidget):
             settings_service=self._settings_service,
             profile_service=self._profile_service,
             client=self._client,
+            series_selection=self._series_selection,
         )
 
         self.page_stack.addWidget(self.dashboard_page)

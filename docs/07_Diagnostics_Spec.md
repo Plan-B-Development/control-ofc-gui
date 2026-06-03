@@ -42,13 +42,76 @@ Show:
 - whether RPM support is available
 
 ### 4. Sensor health
-Show a list/table of sensors with:
-- label
-- kind
-- current value
-- age/freshness
-- status
-- issue text for stale/invalid cases
+A rich diagnostic table of every sensor the daemon reports, designed to
+answer "what is this sensor, what is it doing, and is it reliable?" at a
+glance — without forcing the user to hover every cell (DEC-117).
+
+**Header summary line** above the table:
+`Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · M hidden`
+(empty kind buckets are suppressed; the line collapses to `Sensors: —` when
+no sensors are reported.)
+
+**14-column table** (all visible by default; the last column hosts a per-row
+"Details" button widget):
+
+1. **Label** — sensor label reported by the kernel driver. Prefixed with `⚠ `
+   for bogus-quirk sensors (e.g. ASUS NCT6776F CPUTIN) and `? ` for
+   low-confidence classifications.
+2. **Sensor ID** — stable `hwmon:<chip>:<dev_id>:<label>` identifier. Users
+   need this to bind sensors to profile members.
+3. **Source class** — pretty-printed classification from the sensor knowledge
+   base (`CPU die`, `VRM`, `External probe`, `Board thermistor`, …). Unknown
+   classes pass through verbatim for forward compatibility.
+4. **Kind** — coarse daemon classification (`cpu_temp` / `mb_temp` /
+   `gpu_temp` / `disk_temp`).
+5. **Source** — daemon source subsystem (`hwmon` / `amd_gpu`).
+6. **Chip** — kernel driver / chip name (`k10temp`, `nct6798`, …). Em-dash
+   when missing.
+7. **Driver type** — human label for `tempN_type` (`diode (3)`,
+   `thermistor (4)`, `AMD TSI (5)`, `Intel PECI (6)`, em-dash when absent).
+8. **Value (°C)** — current reading. When `crit_alarm` is asserted OR the
+   live value has crossed the reported `crit_c`, the cell appends
+   `⚠ ALARM` in `status_crit` colour.
+9. **Trend** — smoothed change rate (`↑ +0.6 °C/s`); suppressed below
+   ±0.1 °C/s to match the existing tooltip rule.
+10. **Session min/max** — lowest and highest values observed since daemon
+    start (`21.0 - 78.5 °C`).
+11. **Age (ms)** — time since the daemon last polled this sensor.
+12. **Freshness** — `fresh`/`stale`/`invalid`, paint-coloured.
+13. **Confidence** — classification confidence (`High` / `Medium-High` /
+    `Medium` / `Low`).
+14. **Details** — per-row button opening the **Sensor Detail dialog**
+    (`Diagnostics_SensorDetail_Dialog`).
+
+**Sensor Detail dialog** (DEC-117) — opens on Details-button click, row
+double-click, or right-click → "Open detail…". A `QTextBrowser` that mirrors
+the Hardware Readiness pop-out, surfacing:
+- Identity block (Sensor ID, Source, Chip, Kind, Driver type)
+- Current state (Value, Age, Freshness, Trend)
+- Session range with "currently at X% of session range" marker
+- Full classification description and **every** classification note (not
+  truncated to 3 like the cell tooltip)
+- Board-context section with optional board override note
+- **Thresholds** section (DEC-117 Phase B) — listing every populated
+  `tempN_max/crit/emergency/alarm/...` value the daemon supplied, plus a
+  one-line headroom indicator ("25.0 °C below crit"). When the daemon
+  supplies nothing, an explicit "Daemon did not report any threshold
+  attributes" placeholder appears so the section is never empty chrome.
+- "Driver documentation" link to the chip's kernel.org hwmon page.
+
+**Hide-list** (DEC-117) — right-click a row → "Hide sensor" persists the id
+to `AppSettings.diagnostics_hidden_sensor_ids`. Hidden sensors collapse into
+a single toggle row at the bottom — `▸ N hidden sensor(s) (click to
+expand)` — that re-renders the rows in greyed-out form when expanded.
+Right-click → "Unhide sensor" reverses. The Diagnostics hide-list is
+**local to this tab** by default; the **Mirror hidden to dashboard** button
+in the header pushes the current hide-list into the shared
+`SeriesSelectionModel` as a one-shot (so the dashboard chart hides the same
+sensors). Subsequent diagnostics-side changes stay local until the user
+mirrors again.
+
+Tooltip behaviour on each cell is unchanged (still uses
+`format_sensor_tooltip` for hover context).
 
 ### 5. Lease state
 If hwmon requires a lease, show:
