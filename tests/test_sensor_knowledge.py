@@ -158,7 +158,15 @@ class TestBoardOverride:
         )
         assert override is not None
         assert override.source_class == "external_probe"
-        assert "24-pin" in override.notes[0]
+        # The Crosshair VIII T_Sensor override was softened by the
+        # 2026-06-03 docs-correctness audit: the kernel asus_ec_sensors
+        # doc confirms the channel exists but does NOT specify physical
+        # pin location, and the location varies by SKU. The notes now
+        # cite the ASUS board manual + the kernel allowlist URL instead
+        # of claiming a specific header position.
+        joined_notes = " ".join(override.notes).lower()
+        assert "board manual" in joined_notes
+        assert "asus_ec_sensors" in joined_notes
 
     def test_board_override_lookup_no_match(self):
         override = lookup_board_override(

@@ -258,8 +258,17 @@ def _classify_asus_ec(label: str, lower_label: str) -> SensorClassification:
 
 
 def _classify_asus_wmi(label: str, lower_label: str) -> SensorClassification:
-    """ASUS WMI sensors -- trust labels but note polling caveat."""
-    base_notes = ["Some ASUS WMI implementations may stick with aggressive polling"]
+    """ASUS WMI sensors -- trust labels but note polling caveat.
+
+    Reference: https://docs.kernel.org/hwmon/asus_wmi_sensors.html — the
+    kernel doc explicitly cites the BIOS-update remedy for the PRIME
+    X470-PRO firmware bug, so the user note carries that pointer.
+    """
+    base_notes = [
+        "Some ASUS WMI implementations may stick with aggressive polling",
+        "Durable fix is a BIOS update to WMI method version ≥ 2 "
+        "(per kernel doc asus_wmi_sensors.html)",
+    ]
     if "cpu" in lower_label:
         return SensorClassification(
             source_class="cpu_board_side",
@@ -487,6 +496,12 @@ class BoardSensorOverride:
     notes: list[str] = field(default_factory=list)
 
 
+# Citation constants used by the override entries below. Pinning them at
+# module level keeps long URLs out of each entry and means a doc-page
+# rename only needs to update one line.
+_ASUS_EC_KERNEL_DOC_URL = "https://docs.kernel.org/hwmon/asus_ec_sensors.html"
+_SBTSI_KERNEL_DOC_URL = "https://docs.kernel.org/hwmon/sbtsi_temp.html"
+
 # Documented board-specific overrides.
 # Add entries here when exact sensor placement is validated from:
 # - kernel documentation
@@ -497,7 +512,7 @@ class BoardSensorOverride:
 # vendor/model use case-insensitive substring matching.
 BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
     # -- ASUS EC boards (kernel-documented sensor identities) ------
-    # These boards are explicitly listed in kernel asus_ec_sensors docs.
+    # These boards are explicitly listed in the kernel asus_ec_sensors doc.
     # The EC driver already provides semantic labels, so these overrides
     # serve as validation anchors confirming the label -> placement mapping.
     # ASUS ROG CROSSHAIR VIII series (X570)
@@ -507,7 +522,15 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
         label_pattern="T_Sensor",
         source_class="external_probe",
         display_description="T_Sensor header — external temperature probe",
-        notes=["Located near 24-pin ATX connector on most Crosshair VIII variants"],
+        # Physical pin location varies by SKU and revision; the kernel
+        # asus_ec_sensors doc only confirms the channel is exposed, not
+        # where the header sits on the PCB. Consult the per-SKU ASUS
+        # board manual for the exact location rather than assuming.
+        notes=[
+            "Header physical location varies by Crosshair VIII SKU — "
+            "see the ASUS board manual for the exact pin location",
+            f"Channel validated via {_ASUS_EC_KERNEL_DOC_URL}",
+        ],
     ),
     # ASUS ROG STRIX X670E series
     BoardSensorOverride(
@@ -516,7 +539,7 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
         label_pattern="VRM",
         source_class="vrm",
         display_description="VRM heatsink area temperature",
-        notes=["Validated via asus_ec_sensors kernel driver"],
+        notes=[f"Validated via asus_ec_sensors kernel driver: {_ASUS_EC_KERNEL_DOC_URL}"],
     ),
     # -- ASRock X670E -- nct6686D thermistor mapping ---------------
     # ASRock X670E boards commonly use nct6686D. Channel assignments
@@ -529,7 +552,13 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
         source_class="amd_tsi",
         display_description="CPU temperature (board-side AMD TSI, socket 0)",
         confidence="high",
-        notes=["SB-TSI address 98h is normally socket 0 per AMD docs"],
+        # The kernel sbtsi_temp doc confirms "The SB-TSI address is
+        # normally 98h for socket 0 and 90h for socket 1." Verified
+        # 2026-06-03 at the URL below.
+        notes=[
+            "SB-TSI address 98h is normally socket 0 per kernel sbtsi_temp doc",
+            f"Source: {_SBTSI_KERNEL_DOC_URL}",
+        ],
     ),
     # -- Gigabyte B550/X570 -- gigabyte_wmi channel hints ----------
     # These are NOT confirmed placements -- they document the ABSENCE
@@ -569,7 +598,10 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
         label_pattern="VRM",
         source_class="vrm",
         display_description="VRM heatsink area temperature (ASUS EC)",
-        notes=["Validated via asus_ec_sensors kernel driver allowlist"],
+        notes=[
+            "Validated via asus_ec_sensors kernel driver allowlist",
+            f"Source: {_ASUS_EC_KERNEL_DOC_URL}",
+        ],
     ),
     BoardSensorOverride(
         vendor_pattern="asus",
@@ -578,8 +610,9 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
         source_class="external_probe",
         display_description="T_Sensor header — external temperature probe",
         notes=[
-            "Validated via asus_ec_sensors kernel driver",
+            "Validated via asus_ec_sensors kernel driver allowlist",
             "DDR4 variant — D5 SKUs use a different EC path",
+            f"Source: {_ASUS_EC_KERNEL_DOC_URL}",
         ],
     ),
     BoardSensorOverride(
@@ -588,7 +621,10 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
         label_pattern="VRM",
         source_class="vrm",
         display_description="VRM heatsink area temperature (ASUS EC)",
-        notes=["Validated via asus_ec_sensors kernel driver allowlist"],
+        notes=[
+            "Validated via asus_ec_sensors kernel driver allowlist",
+            f"Source: {_ASUS_EC_KERNEL_DOC_URL}",
+        ],
     ),
     BoardSensorOverride(
         vendor_pattern="asus",
@@ -596,7 +632,10 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
         label_pattern="VRM",
         source_class="vrm",
         display_description="VRM heatsink area temperature (ASUS EC)",
-        notes=["Validated via asus_ec_sensors kernel driver allowlist"],
+        notes=[
+            "Validated via asus_ec_sensors kernel driver allowlist",
+            f"Source: {_ASUS_EC_KERNEL_DOC_URL}",
+        ],
     ),
     BoardSensorOverride(
         vendor_pattern="asus",
@@ -604,7 +643,10 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
         label_pattern="VRM",
         source_class="vrm",
         display_description="VRM heatsink area temperature (ASUS EC)",
-        notes=["Validated via asus_ec_sensors kernel driver allowlist"],
+        notes=[
+            "Validated via asus_ec_sensors kernel driver allowlist",
+            f"Source: {_ASUS_EC_KERNEL_DOC_URL}",
+        ],
     ),
     BoardSensorOverride(
         vendor_pattern="asus",
@@ -612,7 +654,10 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
         label_pattern="VRM",
         source_class="vrm",
         display_description="VRM heatsink area temperature (ASUS EC)",
-        notes=["Validated via asus_ec_sensors kernel driver allowlist"],
+        notes=[
+            "Validated via asus_ec_sensors kernel driver allowlist",
+            f"Source: {_ASUS_EC_KERNEL_DOC_URL}",
+        ],
     ),
 ]
 
@@ -636,6 +681,21 @@ def lookup_board_override(
     return None
 
 
+# Sysfs `tempN_type` integer → human label.
+#
+# The current kernel hwmon sysfs interface docs
+# (https://docs.kernel.org/hwmon/sysfs-interface.html) describe `tempN_type`
+# as "Sensor type selection" without enumerating the integer codes
+# user-facing. The enumeration below is the canonical mapping observed in
+# driver source. Most-load-bearing values for our supported chip range
+# (3 = diode, 4 = thermistor, 5 = AMD TSI, 6 = Intel PECI) come from the
+# nct6683 driver source:
+#   https://github.com/torvalds/linux/blob/master/drivers/hwmon/nct6683.c
+#   (function `get_temp_type` / source-range mapping).
+# Values 1 (CPU embedded diode), 2 (3904 transistor), 7 (AMD SB-TSI) are
+# part of the older hwmon ABI surviving in driver source; they're rarely
+# returned by drivers we currently classify but are kept here so a future
+# daemon that does report them won't render as a bare integer.
 _TEMP_TYPE_LABELS: dict[int, str] = {
     1: "CPU embedded diode (1)",
     2: "3904 transistor (2)",
@@ -650,20 +710,26 @@ _TEMP_TYPE_LABELS: dict[int, str] = {
 def temp_type_label(temp_type: int | None) -> str:
     """Render the sysfs ``tempN_type`` integer as a human label.
 
-    Values follow the kernel hwmon ABI
-    (`Documentation/hwmon/sysfs-interface`). Returns ``"—"`` when the
-    sensor exposes no type file or the value is outside the documented set
-    so the Diagnostics column never silently shows a misleading category.
+    Values are sourced from driver-level enumerations (see the comment on
+    :data:`_TEMP_TYPE_LABELS` for the citations). Returns ``"—"`` when the
+    sensor exposes no type file so the Diagnostics column never silently
+    shows a misleading category.
     """
     if temp_type is None:
         return "—"
     return _TEMP_TYPE_LABELS.get(temp_type, f"unknown ({temp_type})")
 
 
-# Chip-family → kernel.org doc URL. Used by the Sensor Detail dialog to
-# render a "Driver documentation" link. Keys are normalised lowercase chip
-# name *prefixes*; lookup uses the first matching prefix so families like
-# ``it87`` cover all ``it8xxx`` variants.
+# Chip-family → authoritative driver-documentation URL. Used by the Sensor
+# Detail dialog to render a "Driver documentation" link. Keys are normalised
+# lowercase chip name *prefixes*; lookup uses the first matching prefix so
+# families like ``it87`` cover all ``it8xxx`` variants.
+#
+# Where a kernel.org hwmon doc exists we link to that. Where the driver has
+# no published doc page (gigabyte_wmi, nvme, asus_atk0110 — verified absent
+# from https://docs.kernel.org/hwmon/index.html), we link to the driver
+# source in the mainline Linux tree, which IS authoritative for behaviour
+# even when no user-facing doc exists.
 _CHIP_DOC_URL_PREFIXES: list[tuple[str, str]] = [
     ("k10temp", "https://docs.kernel.org/hwmon/k10temp.html"),
     ("coretemp", "https://docs.kernel.org/hwmon/coretemp.html"),
@@ -677,9 +743,21 @@ _CHIP_DOC_URL_PREFIXES: list[tuple[str, str]] = [
     ("it8", "https://docs.kernel.org/hwmon/it87.html"),
     ("asus_ec_sensors", "https://docs.kernel.org/hwmon/asus_ec_sensors.html"),
     ("asus_wmi_sensors", "https://docs.kernel.org/hwmon/asus_wmi_sensors.html"),
-    ("gigabyte_wmi", "https://docs.kernel.org/hwmon/gigabyte_wmi.html"),
     ("amdgpu", "https://docs.kernel.org/gpu/amdgpu/thermal.html"),
-    ("nvme", "https://docs.kernel.org/hwmon/nvme.html"),
+    # No kernel.org hwmon doc page — link to mainline driver source so the
+    # "Driver documentation" button doesn't 404.
+    (
+        "gigabyte_wmi",
+        "https://github.com/torvalds/linux/blob/master/drivers/platform/x86/gigabyte-wmi.c",
+    ),
+    (
+        "nvme",
+        "https://github.com/torvalds/linux/blob/master/drivers/nvme/host/hwmon.c",
+    ),
+    (
+        "asus_atk0110",
+        "https://github.com/torvalds/linux/blob/master/drivers/hwmon/asus_atk0110.c",
+    ),
 ]
 
 

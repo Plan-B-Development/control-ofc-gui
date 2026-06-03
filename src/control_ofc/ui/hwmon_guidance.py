@@ -404,7 +404,10 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_name="asus_atk0110",
         in_mainline=True,
         driver_package="linux (built-in)",
-        driver_url="https://www.kernel.org/doc/html/latest/hwmon/asus_atk0110.html",
+        # No kernel.org hwmon doc page exists for asus_atk0110 (verified
+        # absent from https://docs.kernel.org/hwmon/index.html). Link to
+        # the mainline driver source instead.
+        driver_url=("https://github.com/torvalds/linux/blob/master/drivers/hwmon/asus_atk0110.c"),
         known_issues=[
             "Sensor-enrichment driver only — does NOT provide PWM write capability.",
             "Loaded automatically on many ASUS boards via ACPI ATK0110 device.",

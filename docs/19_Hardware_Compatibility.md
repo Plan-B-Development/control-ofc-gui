@@ -24,9 +24,25 @@ guidance system (`hwmon_guidance.py`).
 | NCT6792D | `nct6775` | Yes | linux (built-in) — common on ASRock AM4 ITX |
 | NCT6779D | `nct6775` | Yes | linux (built-in) — common on ASRock AM4 |
 | NCT677x (NCT6775, NCT6776) | `nct6775` | Yes | linux (built-in) |
-| NCT6683 | `nct6683` | Yes | linux (built-in) |
-| NCT6686D | `nct6683` | Yes | linux (built-in) — monitoring; PWM writes may not work on all boards |
-| NCT6687-R | `nct6687` | **No** | `nct6687d-dkms-git` (AUR) — **chip-ID 0xd450 overlaps NCT6797D, see warning** |
+| NCT6683 (chip ID 0xc730) | `nct6683` | Yes | linux (built-in) |
+| NCT6686D (chip ID 0xd440) | `nct6683` | Yes | linux (built-in) — monitoring; PWM writes may not work on all boards |
+| NCT6687-R (chip ID 0xd590) | `nct6687` | **No** | `nct6687d-dkms-git` (AUR) — **legacy 0xd450 claim removed by PR #164, see warning below** |
+
+**NCT6683 / NCT6686 / NCT6687 family chip-ID table.** Sourced from the
+out-of-tree driver register definitions
+([Fred78290/nct6687d/src/nct6687.c](https://github.com/Fred78290/nct6687d/blob/main/src/nct6687.c))
+and the mainline `nct6683` driver
+([drivers/hwmon/nct6683.c](https://github.com/torvalds/linux/blob/master/drivers/hwmon/nct6683.c)):
+
+| Chip      | Chip ID | Driver          | Boards seen                                   |
+|-----------|---------|-----------------|-----------------------------------------------|
+| NCT6683   | `0xc730` | `nct6683` (mainline) | older MSI / ASRock |
+| NCT6686D  | `0xd440` | `nct6683` (mainline; read-only) or `nct6686d` (out-of-tree) | ASRock B650 Steel Legend WiFi, BC-250 |
+| NCT6687-R | `0xd590` | `nct6687d-dkms-git` (out-of-tree only) | MSI MAG B550 TOMAHAWK, MAG B650 TOMAHAWK, MPG/MEG X670E |
+
+(NCT6797D = `0xd450` and NCT6798D = `0xd428` are separate
+`nct6775`-driven chips — see the `nct6775-platform.c` constants in the
+mainline driver source for cross-reference.)
 
 **NCT6797D / NCT6798D vs out-of-tree `nct6687` — chip-ID collision (DEC-104):**
 Older builds of the out-of-tree `nct6687` driver declare chip ID `0xd450` —
@@ -283,11 +299,17 @@ mainline `nct6775` driver.
 
 ### Requirements
 
-- **RDNA3+ (RX 7000/9000 series):** Fan control uses PMFW `fan_curve`
+- **RDNA3+ (RX 7000 / RX 9000 series):** Fan control uses PMFW `fan_curve`
   sysfs interface. Requires `amdgpu.ppfeaturemask` kernel parameter with
   bit 14 set (e.g., `amdgpu.ppfeaturemask=0xffffffff`).
-- **Pre-RDNA3 (RX 6000 and older):** Uses traditional `pwm1_enable=1`
-  + `pwm1` control.
+- **RDNA2 and older (RX 6000, RX 5000, Vega, Polaris):** Use the
+  traditional `pwm1_enable=1` + `pwm1` control path. RX 6000 = RDNA2,
+  RX 5000 = RDNA1; RX 7000 is the first generation where the legacy
+  path was removed in favour of PMFW `fan_curve`.
+  AMD GPU family map: [AMD `amdgpu.ids` (libdrm)](https://gitlab.freedesktop.org/mesa/drm/-/blob/main/data/amdgpu.ids),
+  cross-checked against the kernel
+  [`amd_shared.h`](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/include/amd_shared.h)
+  family constants.
 
 ### ppfeaturemask
 
@@ -332,8 +354,12 @@ known SIO I/O ranges.
    sidesteps the ACPI Super-I/O port reservation on supported ASUS boards,
    avoiding the need for `acpi_enforce_resources=lax` there. (This is a WMI
    sensor-read path, not a general "ACPI mutex" lock — the separately-proposed
-   ACPI-mutex patch was never merged upstream. See the
-   [nct6775 hwmon doc](https://docs.kernel.org/hwmon/nct6775.html).)
+   ACPI-mutex patch was never merged upstream.) The mechanism is implemented
+   in [`drivers/hwmon/nct6775-platform.c`](https://github.com/torvalds/linux/blob/master/drivers/hwmon/nct6775-platform.c)
+   — see `enum sensor_access` (`access_direct` / `access_asuswmi`) and the
+   `asus_wmi_boards[]` allowlist of supported boards. The kernel-level
+   user-facing [nct6775 hwmon doc](https://docs.kernel.org/hwmon/nct6775.html)
+   covers the driver's sensor schema but does not document this access path.
 
 ## force_id warning
 
