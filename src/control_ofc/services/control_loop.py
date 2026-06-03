@@ -79,6 +79,39 @@ OUTCOME_VALIDATION = "validation"  # 4xx — request shape problem
 OUTCOME_OTHER = "other"  # 5xx other than connection / unspecified failure
 
 
+def _dispatch_write(
+    client: DaemonClient,
+    target_id: str,
+    pwm_int: int,
+    lease_id: str,
+    *,
+    timeout: float | None = None,
+) -> bool:
+    """Route a PWM write to the right ``DaemonClient`` call by target-id prefix.
+
+    Shared by the background ``_WriteWorker`` (which passes a per-call
+    ``timeout``, DEC-099) and the synchronous test/fallback path in
+    ``ControlLoopService._write_target`` (which passes none). ``timeout=None``
+    omits the kwarg entirely, preserving the exact call shape each path used
+    before this was unified. Returns True on a dispatched write; False for an
+    unrecognised target or a hwmon write with no lease.
+    """
+    kw: dict[str, float] = {} if timeout is None else {"timeout": timeout}
+    m = _OPENFAN_CH_RE.match(target_id)
+    if m:
+        client.set_openfan_pwm(int(m.group(1)), pwm_int, **kw)
+        return True
+    if target_id.startswith("amd_gpu:"):
+        client.set_gpu_fan_speed(target_id.removeprefix("amd_gpu:"), pwm_int, **kw)
+        return True
+    if target_id.startswith("hwmon:"):
+        if not lease_id:
+            return False
+        client.set_hwmon_pwm(target_id, pwm_int, lease_id, **kw)
+        return True
+    return False
+
+
 class _WriteWorker(QObject):
     """Runs in a QThread — executes blocking HTTP write calls off the main thread."""
 
@@ -100,25 +133,11 @@ class _WriteWorker(QObject):
     def _do_one(self, client: DaemonClient, target_id: str, pwm_int: int, lease_id: str) -> bool:
         """Issue one write attempt. Returns True on success.
 
-        Translates target_id prefixes into the right ``DaemonClient`` call;
-        wraps every call in a 2 s per-call timeout (DEC-099) so the global
-        ``API_TIMEOUT_S`` doesn't apply to fast-path writes.
+        Delegates target-id routing to ``_dispatch_write`` and applies the 2 s
+        per-call timeout (DEC-099) so the global ``API_TIMEOUT_S`` doesn't apply
+        to fast-path writes.
         """
-        m = _OPENFAN_CH_RE.match(target_id)
-        if m:
-            channel = int(m.group(1))
-            client.set_openfan_pwm(channel, pwm_int, timeout=WRITE_TIMEOUT_S)
-            return True
-        if target_id.startswith("amd_gpu:"):
-            gpu_id = target_id.removeprefix("amd_gpu:")
-            client.set_gpu_fan_speed(gpu_id, pwm_int, timeout=WRITE_TIMEOUT_S)
-            return True
-        if target_id.startswith("hwmon:"):
-            if not lease_id:
-                return False
-            client.set_hwmon_pwm(target_id, pwm_int, lease_id, timeout=WRITE_TIMEOUT_S)
-            return True
-        return False
+        return _dispatch_write(client, target_id, pwm_int, lease_id, timeout=WRITE_TIMEOUT_S)
 
     @Slot(str, int, str)
     def do_write(self, target_id: str, pwm_int: int, lease_id: str) -> None:
@@ -760,20 +779,7 @@ class ControlLoopService(QObject):
         if self._client is None:
             return False
         try:
-            m = _OPENFAN_CH_RE.match(target_id)
-            if m:
-                channel = int(m.group(1))
-                self._client.set_openfan_pwm(channel, pwm_int)
-                return True
-            elif target_id.startswith("amd_gpu:"):
-                gpu_id = target_id.removeprefix("amd_gpu:")
-                self._client.set_gpu_fan_speed(gpu_id, pwm_int)
-                return True
-            elif target_id.startswith("hwmon:") and lease_id:
-                self._client.set_hwmon_pwm(target_id, pwm_int, lease_id)
-                return True
+            return _dispatch_write(self._client, target_id, pwm_int, lease_id)
         except DaemonError as e:
             log.warning("Write failed for %s: %s", target_id, e.message)
             return False
-
-        return False

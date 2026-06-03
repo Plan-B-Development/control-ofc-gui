@@ -94,9 +94,17 @@ class DaemonClient:
     # UI can distinguish "daemon is slow" from "daemon is gone" — a verify
     # call that times out client-side may still have completed on the daemon.
 
-    def _get(self, path: str, *, timeout: float | None = None) -> dict[str, Any]:
+    def _get(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         try:
             kwargs: dict[str, Any] = {}
+            if params is not None:
+                kwargs["params"] = params
             if timeout is not None:
                 kwargs["timeout"] = timeout
             resp = self._client.get(path, **kwargs)
@@ -182,8 +190,13 @@ class DaemonClient:
         return status, sensors, fans
 
     def sensor_history(self, entity_id: str, last: int = 250) -> SensorHistory:
-        """GET /sensors/history — retrieve recent history for a sensor."""
-        data = self._get(f"/sensors/history?id={entity_id}&last={last}")
+        """GET /sensors/history — retrieve recent history for a sensor.
+
+        ``entity_id`` is a sysfs-derived string (``hwmon:{chip}:{device}:{label}``)
+        and may contain query-special characters, so it is passed via httpx
+        ``params=`` (percent-encoded) rather than interpolated into the path.
+        """
+        data = self._get("/sensors/history", params={"id": entity_id, "last": last})
         return parse_sensor_history(data)
 
     # -- write endpoints --

@@ -14,6 +14,8 @@ Covers the GUI side of the motherboard PWM investigation (Batch C):
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from control_ofc.api.models import (
@@ -343,3 +345,67 @@ class TestGigabyteIt8696QuirkAutoShow:
         )
         page._populate_hw_diagnostics(diag)
         assert page._vendor_quirk_label.isHidden()
+
+
+class TestHwDiagAsyncFetch:
+    """Finding D: the hardware-diagnostics fetch runs on a worker thread so the
+    blocking GET never freezes the UI, with a synchronous fallback that
+    preserves behaviour when no socket path is available (mock-client tests)."""
+
+    def _diag(self) -> HardwareDiagnosticsResult:
+        return HardwareDiagnosticsResult(
+            hwmon=HwmonDiagnostics(total_headers=1, writable_headers=1),
+            thermal_safety=ThermalSafetyInfo(state="normal"),
+        )
+
+    def test_on_hw_diag_ok_applies_result(self, app) -> None:
+        page = DiagnosticsPage()
+        diag = self._diag()
+        page._on_hw_diag_ok(diag)
+        assert page._diag.last_hw_diagnostics is diag
+        assert "refreshed" in page._status_label.text().lower()
+
+    def test_on_hw_diag_error_unavailable_sets_summary(self, app) -> None:
+        page = DiagnosticsPage()
+        page._on_hw_diag_error("unavailable", "Daemon unavailable — cannot fetch diagnostics")
+        assert "unavailable" in page._hw_ready_summary.text().lower()
+
+    def test_on_hw_diag_error_error_category_is_prefixed(self, app) -> None:
+        page = DiagnosticsPage()
+        page._on_hw_diag_error("error", "boom")
+        text = page._hw_ready_summary.text().lower()
+        assert "boom" in text
+        assert "error" in text
+
+    def test_fetch_uses_sync_fallback_without_socket(self, app) -> None:
+        # A mock client with no socket_path must not spin up a worker thread;
+        # the fetch falls back to a synchronous call and applies the result.
+        page = DiagnosticsPage()
+        diag = self._diag()
+        client = MagicMock()
+        client.socket_path = None
+        client.hardware_diagnostics.return_value = diag
+        page._client = client
+
+        page._fetch_hardware_diagnostics()
+
+        client.hardware_diagnostics.assert_called_once()
+        assert page._diag.last_hw_diagnostics is diag
+        assert page._hw_diag_worker is None  # no worker created on the sync path
+
+    def test_worker_lifecycle_create_and_cleanup(self, app) -> None:
+        # With a socket path the worker + thread are created and started; the
+        # fetch is never triggered (do_fetch only runs on the queued signal), so
+        # the thread stays idle and cleanup() stops it deterministically.
+        page = DiagnosticsPage()
+        client = MagicMock()
+        client.socket_path = "/tmp/control-ofc-test-nonexistent.sock"
+        page._client = client
+
+        assert page._ensure_hw_diag_worker() is True
+        assert page._hw_diag_worker is not None
+        assert page._hw_diag_thread is not None
+
+        page.cleanup()
+        assert page._hw_diag_thread is None
+        assert page._hw_diag_worker is None

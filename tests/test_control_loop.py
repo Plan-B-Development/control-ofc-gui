@@ -13,7 +13,7 @@ from control_ofc.api.models import (
     SensorReading,
 )
 from control_ofc.services.app_state import AppState
-from control_ofc.services.control_loop import ControlLoopService
+from control_ofc.services.control_loop import ControlLoopService, _dispatch_write
 from control_ofc.services.profile_service import (
     ControlMember,
     ControlMode,
@@ -846,3 +846,48 @@ class TestTuningPipeline:
         assert len(statuses) == 1
         assert "tc" in statuses[0].control_outputs
         assert statuses[0].control_outputs["tc"] == pytest.approx(55.0)
+
+
+class TestDispatchWrite:
+    """Finding E: the shared write-dispatch helper routes by target-id prefix
+    and preserves each caller's exact call shape (timeout omitted vs present),
+    which is what keeps the worker and sync paths behaviourally identical."""
+
+    def test_openfan_route(self):
+        c = MagicMock()
+        assert _dispatch_write(c, "openfan:ch03", 55, "") is True
+        c.set_openfan_pwm.assert_called_once_with(3, 55)
+
+    def test_amd_gpu_route(self):
+        c = MagicMock()
+        assert _dispatch_write(c, "amd_gpu:0000:2d:00.0", 60, "") is True
+        c.set_gpu_fan_speed.assert_called_once_with("0000:2d:00.0", 60)
+
+    def test_hwmon_route_with_lease(self):
+        c = MagicMock()
+        assert _dispatch_write(c, "hwmon:it8696:pci0:pwm1", 40, "lease-1") is True
+        c.set_hwmon_pwm.assert_called_once_with("hwmon:it8696:pci0:pwm1", 40, "lease-1")
+
+    def test_hwmon_without_lease_returns_false_and_does_not_write(self):
+        c = MagicMock()
+        assert _dispatch_write(c, "hwmon:it8696:pci0:pwm1", 40, "") is False
+        c.set_hwmon_pwm.assert_not_called()
+
+    def test_unknown_target_returns_false(self):
+        c = MagicMock()
+        assert _dispatch_write(c, "bogus:xyz", 40, "lease-1") is False
+        c.set_openfan_pwm.assert_not_called()
+        c.set_gpu_fan_speed.assert_not_called()
+        c.set_hwmon_pwm.assert_not_called()
+
+    def test_timeout_forwarded_when_set(self):
+        c = MagicMock()
+        _dispatch_write(c, "openfan:ch00", 50, "", timeout=2.0)
+        c.set_openfan_pwm.assert_called_once_with(0, 50, timeout=2.0)
+
+    def test_timeout_omitted_when_none(self):
+        # The sync/test path passes no timeout; the kwarg must be absent so
+        # existing exact-arg assertions (fan wizard, GPU parity) keep matching.
+        c = MagicMock()
+        _dispatch_write(c, "openfan:ch00", 50, "")
+        c.set_openfan_pwm.assert_called_once_with(0, 50)

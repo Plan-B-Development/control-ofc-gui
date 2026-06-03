@@ -344,6 +344,56 @@ class _VerifyWorker(QObject):
             self._client = None
 
 
+class _HwDiagWorker(QObject):
+    """Runs in a QThread — executes the blocking GET /diagnostics/hardware call
+    off the UI thread. The daemon performs several sysfs/procfs reads to build
+    the report, so a synchronous fetch on a slow/contended daemon would freeze
+    the GUI — notably the once-per-session auto-fetch when the Fans tab is first
+    shown."""
+
+    fetch_ok = Signal(object)  # HardwareDiagnosticsResult
+    fetch_error = Signal(str, str)  # category ('unavailable'|'error'), message
+
+    def __init__(self, socket_path: str) -> None:
+        super().__init__()
+        self._socket_path = socket_path
+        self._client: DaemonClient | None = None
+
+    def _ensure_client(self) -> DaemonClient:
+        from control_ofc.api.client import DaemonClient as _DaemonClient
+
+        if self._client is None:
+            self._client = _DaemonClient(socket_path=self._socket_path)
+        return self._client
+
+    @Slot()
+    def do_fetch(self) -> None:
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            result = self._ensure_client().hardware_diagnostics()
+            self.fetch_ok.emit(result)
+        except DaemonTimeout:
+            self.fetch_error.emit("unavailable", "Diagnostics fetch timed out")
+        except DaemonUnavailable:
+            self.fetch_error.emit("unavailable", "Daemon unavailable — cannot fetch diagnostics")
+        except DaemonError as e:
+            self.fetch_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("HW diagnostics worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.fetch_error.emit("unavailable", "Connection lost during diagnostics fetch")
+
+    def shutdown(self) -> None:
+        if self._client is not None:
+            with contextlib.suppress(Exception):
+                self._client.close()
+            self._client = None
+
+
 def _transparent_label(text: str, object_name: str, *, bold: bool = False) -> QLabel:
     """Create a QLabel with transparent background, suitable for use inside Card frames."""
     label = QLabel(text)
@@ -361,6 +411,10 @@ class DiagnosticsPage(QWidget):
     # Main-thread signal that fires a queued connection to the verify worker
     # (running on its own QThread) so the ~6s hardware probe never blocks the UI.
     _verify_request = Signal(str, str)
+
+    # Main-thread signal that kicks the hardware-diagnostics worker (its own
+    # QThread) so the blocking GET /diagnostics/hardware never freezes the UI.
+    _hw_diag_request = Signal()
 
     # Public signals used by main_window to coordinate the GUI control loop —
     # the loop pauses writes to the header under verify so its 1Hz tick does
@@ -387,6 +441,10 @@ class DiagnosticsPage(QWidget):
         # Lazy-created verify worker + thread (see _ensure_verify_worker).
         self._verify_thread: QThread | None = None
         self._verify_worker: _VerifyWorker | None = None
+        # Lazy-created hardware-diagnostics worker + thread (see
+        # _ensure_hw_diag_worker) — keeps the blocking GET off the UI thread.
+        self._hw_diag_thread: QThread | None = None
+        self._hw_diag_worker: _HwDiagWorker | None = None
         # Header currently under verify — used to emit verify_completed with
         # the right id from both ok and error paths (the error signal does not
         # carry the header_id).
@@ -583,12 +641,13 @@ class DiagnosticsPage(QWidget):
         splitter.setChildrenCollapsible(False)
 
         # ─── Top pane: Hardware Readiness card (scrollable) ───────────
-        # DEC-115: the whole card is a single collapsible section. Its
-        # persistent area (verdict + the critical-alert stack) stays visible
-        # even when the card is collapsed; the body — summary, board identity,
-        # and the five detail sub-sections — folds away so the live fan table
-        # can rise. Warnings are never hidden: the alert stack is persistent
-        # and the card force-expands on a problem (_populate_hw_diagnostics).
+        # DEC-115/DEC-116: the whole card is a single collapsible section. Its
+        # persistent area (verdict + the critical/blocking-alert stack) stays
+        # visible even when the card is collapsed; the body — informational
+        # alerts, summary, board identity, and the five detail sub-sections —
+        # folds away so the live fan table can rise. Safety warnings are never
+        # hidden: blocking alerts are persistent and the card force-expands on
+        # a problem (_populate_hw_diagnostics).
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         hw_container = QWidget()
@@ -625,11 +684,12 @@ class DiagnosticsPage(QWidget):
     def _build_readiness_card(self) -> QFrame:
         """Build the Hardware Readiness card as a single collapsible section.
 
-        DEC-115: the section's *persistent* area holds the always-visible
-        verdict banner + critical-alert stack; its collapsible *body* holds
-        the readiness summary, board identity, and the five detail
-        sub-sections. Collapsing folds the body away while the verdict and any
-        active alerts stay on screen.
+        DEC-115/DEC-116: the section's *persistent* area holds the
+        always-visible verdict banner + the critical/blocking-alert stack; its
+        collapsible *body* holds the informational alerts, readiness summary,
+        board identity, and the five detail sub-sections. Collapsing folds the
+        body away (clearing the informational alerts) while the verdict and any
+        blocking alerts stay on screen.
         """
         self._hw_ready_frame = QFrame()
         self._hw_ready_frame.setProperty("class", "Card")
@@ -663,15 +723,22 @@ class DiagnosticsPage(QWidget):
         verdict_row.addWidget(self._open_report_btn, 0, Qt.AlignmentFlag.AlignTop)
         self._hw_ready_section.add_persistent_layout(verdict_row)
 
-        # ── Persistent: critical-alert stack (each setVisible-gated) ────
+        # ── Alerts: critical persistent, informational demoted (DEC-116) ──
         # Per NN/g progressive-disclosure guidance, essential warnings stay
-        # OUTSIDE the collapsible body so a problem board surfaces them all at
-        # once even when folded; the stack collapses to nothing on a healthy
-        # system.
-        for alert in self._create_alert_labels():
+        # OUTSIDE the collapsible body so a folded card still surfaces them:
+        # blocking alerts (module collisions/conflicts, active BIOS-revert)
+        # are persistent. Informational alerts (dual-chip setup, vendor quirks,
+        # ACPI) live in the body so collapsing actually clears them — they stay
+        # visible by default because a problem board force-expands the card.
+        # Both stacks collapse to nothing on a healthy system.
+        persistent_alerts, demoted_alerts = self._create_alert_labels()
+        for alert in persistent_alerts:
             self._hw_ready_section.add_persistent_widget(alert)
 
-        # ── Collapsible body: readiness summary + board identity ────────
+        # ── Collapsible body: demoted alerts, then summary + board ──────
+        for alert in demoted_alerts:
+            self._hw_ready_section.add_widget(alert)
+
         self._hw_ready_summary = _transparent_label(
             "Fetching hardware diagnostics…", "Diagnostics_Label_hwReadySummary"
         )
@@ -693,9 +760,23 @@ class DiagnosticsPage(QWidget):
 
         return self._hw_ready_frame
 
-    def _create_alert_labels(self) -> list[QWidget]:
-        """Create the critical-alert labels (each setVisible-gated), returned
-        in most-severe-first order for the card's persistent area."""
+    def _create_alert_labels(self) -> tuple[list[QWidget], list[QWidget]]:
+        """Create the readiness alert labels (each setVisible-gated).
+
+        Returns ``(persistent, demoted)`` (DEC-116):
+
+        - ``persistent`` — safety-critical, blocking alerts that stay visible
+          even when the card is collapsed: driver-module collisions/conflicts
+          (which mean "do not write PWM until resolved") and the active
+          BIOS/EC interference headline. A user who folds the card away must
+          still see these.
+        - ``demoted`` — informational alerts that live in the collapsible body
+          so collapsing the card actually clears them: dual-chip setup
+          guidance, vendor quirks (FYI notes), and ACPI conflicts. They stay
+          visible by default because a problem board force-expands the card
+          (`_populate_hw_diagnostics`); only an explicit user collapse hides
+          them, and the persistent verdict banner still flags the problem.
+        """
         # Module collisions (DEC-105) — daemon-reported critical pairs that
         # race for the same Super I/O chip. Distinct from the GUI-only
         # `_module_conflict_label` below, a fallback for daemons that predate
@@ -745,14 +826,17 @@ class DiagnosticsPage(QWidget):
         self._revert_headline_label.setWordWrap(True)
         self._revert_headline_label.setVisible(False)
 
-        return [
+        persistent = [
             self._module_collision_label,
             self._module_conflict_label,
+            self._revert_headline_label,
+        ]
+        demoted = [
             self._dual_chip_warning_label,
             self._vendor_quirk_label,
             self._acpi_label,
-            self._revert_headline_label,
         ]
+        return persistent, demoted
 
     def _build_detected_hw_section(self) -> CollapsibleSection:
         """Collapsible: detected chip + kernel-module tables."""
@@ -830,6 +914,12 @@ class DiagnosticsPage(QWidget):
         )
         self._section_bios.add_widget(self._revert_label)
         self._section_bios.add_widget(self._revert_footnote_label)
+        # DEC-116: the section has nothing to show until the daemon watchdog
+        # reports a non-zero pwm_enable revert count — which never happens on
+        # the overwhelming majority of systems. Start hidden; only
+        # _populate_hw_diagnostics reveals it when reverts actually exist, so
+        # the user never expands an empty section header.
+        self._section_bios.setVisible(False)
         return self._section_bios
 
     def _build_thermal_gpu_section(self) -> CollapsibleSection:
@@ -1451,34 +1541,67 @@ class DiagnosticsPage(QWidget):
     # ─── Hardware diagnostics ──────────────────────────────────────────
 
     def _fetch_hardware_diagnostics(self) -> None:
-        """Fetch hardware diagnostics from daemon and populate the UI."""
+        """Fetch hardware diagnostics from the daemon and populate the UI.
+
+        Production runs the blocking GET on a worker thread so the UI stays
+        responsive (including the once-per-session auto-fetch when the Fans tab
+        is first shown). When no socket path is available (e.g. tests with a
+        mock client), falls back to a synchronous fetch so behaviour there is
+        unchanged.
+        """
         if not self._client:
             self._hw_ready_summary.setText("Cannot fetch: no daemon connection")
             return
-        try:
-            from control_ofc.api.errors import DaemonError, DaemonUnavailable
 
+        # Off-thread path (production).
+        if self._ensure_hw_diag_worker():
+            self._status_label.setText("Refreshing hardware diagnostics…")
+            self._hw_diag_request.emit()
+            return
+
+        # Synchronous fallback — no socket path (e.g. mock-client tests).
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
             result = self._client.hardware_diagnostics()
-            self._diag.last_hw_diagnostics = result
-            self._populate_hw_diagnostics(result)
-            # writable_headers and board.vendor are now available — refresh the
-            # Overview hwmon+Features lines (runtime reality) and re-render the
-            # Sensors tab so classification picks up board-specific quirks
-            # (e.g. the ASUS NCT6776F CPUTIN caveat).
-            if self._state:
-                # Push DMI board info into AppState so AppState.fan_display_name
-                # can apply board-specific hwmon label fallbacks (A3).
-                self._state.board_info = result.board
-                if self._state.capabilities:
-                    self._refresh_hwmon_and_features(self._state.capabilities)
-                self._on_sensors(self._state.sensors)
-                # Re-render fans now that resolver has board context.
-                self._on_fans(self._state.fans)
-            self._status_label.setText("Hardware diagnostics refreshed")
+        except DaemonTimeout:
+            self._on_hw_diag_error("unavailable", "Diagnostics fetch timed out")
         except DaemonUnavailable:
-            self._hw_ready_summary.setText("Daemon unavailable — cannot fetch diagnostics")
+            self._on_hw_diag_error("unavailable", "Daemon unavailable — cannot fetch diagnostics")
         except DaemonError as e:
-            self._hw_ready_summary.setText(f"Diagnostics error: {e.message}")
+            self._on_hw_diag_error("error", e.message)
+        else:
+            self._on_hw_diag_ok(result)
+
+    @Slot(object)
+    def _on_hw_diag_ok(self, result: HardwareDiagnosticsResult) -> None:
+        """Apply a hardware-diagnostics result on the main thread."""
+        self._diag.last_hw_diagnostics = result
+        self._populate_hw_diagnostics(result)
+        # writable_headers and board.vendor are now available — refresh the
+        # Overview hwmon+Features lines (runtime reality) and re-render the
+        # Sensors tab so classification picks up board-specific quirks
+        # (e.g. the ASUS NCT6776F CPUTIN caveat).
+        if self._state:
+            # Push DMI board info into AppState so AppState.fan_display_name
+            # can apply board-specific hwmon label fallbacks (A3).
+            self._state.board_info = result.board
+            if self._state.capabilities:
+                self._refresh_hwmon_and_features(self._state.capabilities)
+            self._on_sensors(self._state.sensors)
+            # Re-render fans now that resolver has board context.
+            self._on_fans(self._state.fans)
+        self._status_label.setText("Hardware diagnostics refreshed")
+
+    @Slot(str, str)
+    def _on_hw_diag_error(self, category: str, message: str) -> None:
+        """Surface a hardware-diagnostics fetch failure on the main thread."""
+        if category == "unavailable":
+            self._hw_ready_summary.setText(
+                message or "Daemon unavailable — cannot fetch diagnostics"
+            )
+        else:
+            self._hw_ready_summary.setText(f"Diagnostics error: {message}")
 
     def _on_diag_tab_changed(self, index: int) -> None:
         """Auto-fetch hardware diagnostics the first time the Fans tab is shown.
@@ -1688,10 +1811,14 @@ class DiagnosticsPage(QWidget):
         reverts = getattr(hw, "enable_revert_counts", None) or {}
         body_html = render_reclaim_rows(reverts)
         if body_html is None:
+            # DEC-116: nothing to report — hide the whole sub-section, not just
+            # its inner labels, so the user never expands an empty header.
+            self._section_bios.setVisible(False)
             self._revert_headline_label.setVisible(False)
             self._revert_label.setVisible(False)
             self._revert_footnote_label.setVisible(False)
         else:
+            self._section_bios.setVisible(True)
             max_count = max(reverts.values())
             top_severity = classify_reclaim_severity(max_count)
             severity_class = {
@@ -1908,6 +2035,37 @@ class DiagnosticsPage(QWidget):
         self._verify_thread.start()
         return True
 
+    def _ensure_hw_diag_worker(self) -> bool:
+        """Create the hardware-diagnostics worker + thread on first use. Returns
+        False if no socket path is available (callers then fall back to a
+        synchronous fetch)."""
+        if self._hw_diag_worker is not None:
+            return True
+        # getattr: real DaemonClient always has socket_path; test mocks may not,
+        # in which case callers fall back to a synchronous fetch.
+        socket_path = getattr(self._client, "socket_path", None) if self._client else None
+        if not socket_path:
+            return False
+
+        self._hw_diag_thread = QThread(self)
+        self._hw_diag_worker = _HwDiagWorker(socket_path)
+        self._hw_diag_worker.moveToThread(self._hw_diag_thread)
+
+        # Main thread → worker thread via queued connection.
+        self._hw_diag_request.connect(
+            self._hw_diag_worker.do_fetch, Qt.ConnectionType.QueuedConnection
+        )
+        # Worker thread → main thread via queued connections.
+        self._hw_diag_worker.fetch_ok.connect(
+            self._on_hw_diag_ok, Qt.ConnectionType.QueuedConnection
+        )
+        self._hw_diag_worker.fetch_error.connect(
+            self._on_hw_diag_error, Qt.ConnectionType.QueuedConnection
+        )
+
+        self._hw_diag_thread.start()
+        return True
+
     @Slot(object)
     def _on_verify_ok(self, result: HwmonVerifyResult) -> None:
         self._show_verify_result(result)
@@ -2105,7 +2263,8 @@ class DiagnosticsPage(QWidget):
             self._event_log_view.refresh_theme()
 
     def cleanup(self) -> None:
-        """Stop the verify worker thread. Called from main window closeEvent."""
+        """Stop the verify + hardware-diagnostics worker threads. Called from the
+        main window closeEvent."""
         if self._verify_worker is not None:
             self._verify_worker.shutdown()
         if self._verify_thread is not None:
@@ -2116,6 +2275,16 @@ class DiagnosticsPage(QWidget):
                 self._verify_thread.wait(1000)
             self._verify_thread = None
             self._verify_worker = None
+        if self._hw_diag_worker is not None:
+            self._hw_diag_worker.shutdown()
+        if self._hw_diag_thread is not None:
+            self._hw_diag_thread.quit()
+            if not self._hw_diag_thread.wait(2000):
+                log.warning("HW diagnostics thread did not stop within 2s, terminating")
+                self._hw_diag_thread.terminate()
+                self._hw_diag_thread.wait(1000)
+            self._hw_diag_thread = None
+            self._hw_diag_worker = None
 
     def _show_verify_result(self, result: HwmonVerifyResult) -> None:
         """Display the result of a PWM verification test.
