@@ -248,7 +248,7 @@ presents a unified view of hardware compatibility and driver status.
    documentation links from the chip-family knowledge base
    (`hwmon_guidance.py`). Shown per unique chip prefix.
 
-### Layout: progressive disclosure (DEC-112, card-level collapse DEC-115)
+### Layout: progressive disclosure (DEC-112, card-level collapse DEC-115/DEC-116)
 The card is itself a single collapsible section (DEC-115): a top-level
 `CollapsibleSection` titled "Hardware Readiness", **expanded by default**. Its
 **persistent area** stays visible even when the card is folded; its
@@ -259,16 +259,24 @@ where it is read). Top-to-bottom:
 
 - **Persistent (visible even when the card is collapsed):** the readiness
   **verdict banner** (DEC-113) + "Open Full Report" button, and the
-  **critical-alert stack** — module collisions, module conflicts, dual-chip
-  warning, vendor quirks, ACPI conflicts, and the BIOS-interference headline.
-  Each alert is individually visibility-gated, so the stack collapses to
-  nothing on a healthy system. Per NN/g accordion guidance, essential warnings
-  are kept *outside* collapsed panels — here, in the persistent area.
+  **blocking-alert stack** — module collisions, module conflicts, and the
+  BIOS-interference headline (DEC-116: only the *blocking* alerts — those that
+  mean "do not write PWM until resolved" or report active EC contention — stay
+  persistent). Each alert is individually visibility-gated, so the stack
+  collapses to nothing on a healthy system. Per NN/g accordion guidance,
+  essential warnings are kept *outside* collapsed panels — here, in the
+  persistent area.
+- **Collapsible body — informational alerts** (DEC-116): the **dual-chip**
+  setup warning, **vendor quirks**, and **ACPI conflicts**. These are advisory,
+  not blocking, so they live in the foldable body — collapsing the card clears
+  them. They are still visible by default because a problem board force-expands
+  the card, and the persistent verdict banner still flags the issue when folded.
 - **Collapsible body — summary:** the readiness summary line and board
   identity.
 - **Collapsible body — detail sub-sections** (`CollapsibleSection`, all
   collapsed by default): *Detected hardware* (chip + kernel-module tables),
-  *BIOS interference detail* (per-header revert rows + footnote),
+  *BIOS interference detail* (per-header revert rows + footnote — **hidden
+  entirely unless a header reports a non-zero revert count**, DEC-116),
   *Thermal safety & GPU*, *Guidance & documentation*, and *PWM control test*
   (verify combo, Test PWM Control, Verify All Writable, progress + result).
 - **Always visible (outside the card):** the *Refresh Hardware Diagnostics*
@@ -280,12 +288,14 @@ expanded. `_populate_hw_diagnostics` **force-expands the card** whenever
 `readiness_verdict` reports a problem (any non-`SuccessChip` verdict), and the
 card never auto-collapses — so a user who folds a healthy card is respected,
 but a problem board always shows its detail and "To fix" guidance. The
-*BIOS interference detail* sub-section likewise **auto-expands** on a non-zero
-revert count. The verify controls and their result labels share one
-sub-section, so reaching the buttons necessarily expands the section that
-shows the outcome. Because the verdict + alert stack are persistent and the
-card force-expands on a problem, **warnings are never hidden behind a
-collapse**.
+*BIOS interference detail* sub-section is **hidden whenever there is no
+interference to report** and is revealed + **auto-expanded** only on a non-zero
+revert count (DEC-116) — so it never presents an empty header to expand into
+nothing. The verify controls and their result labels share one sub-section, so
+reaching the buttons necessarily expands the section that shows the outcome.
+Because the verdict + the **blocking** alerts are persistent and the card
+force-expands on a problem, **safety warnings are never hidden behind a
+collapse**; an explicit collapse only folds away the advisory detail (DEC-116).
 
 `CollapsibleSection` (`ui/widgets/collapsible_section.py`) is a first-party
 widget (DEC-112 D1): a flat `QPushButton` header (chevron rendered in the

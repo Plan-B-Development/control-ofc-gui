@@ -1,5 +1,49 @@
 # Changelog
 
+## [1.19.1] — 2026-06-03
+
+Follow-up to the DEC-115 collapsible Hardware Readiness card (**DEC-116**),
+fixing two reports that it presented "data for the sake of it." Also bundles
+internal efficiency/robustness fixes from a full cross-stack audit (no
+behaviour or daemon-contract change); pairs with **control-ofc-daemon v1.8.4**.
+
+### Fixed
+- **Collapsing the Hardware Readiness card now actually hides the detail.**
+  DEC-115 pinned the verdict *and the whole alert stack* to the always-visible
+  area, so folding a flagged board (e.g. one with a vendor quirk) left the
+  alerts on screen and the collapse felt like a no-op. Informational alerts —
+  dual-chip setup, vendor quirks, and ACPI conflicts — now live in the foldable
+  body, so a collapse clears them. **Blocking** alerts (driver-module
+  collisions/conflicts and the active BIOS-revert headline) and the readiness
+  **verdict** stay visible even when folded, and a problem board still
+  force-expands, so no safety warning is hidden.
+- **The "BIOS interference detail" section no longer shows an empty body.** It
+  rendered a header on every system but only had content when the daemon's
+  watchdog had recorded a `pwm_enable` revert — which never happens on the vast
+  majority of machines (and not on the demo board), so it expanded to nothing.
+  The section is now hidden unless a header reports a real revert count, and
+  re-hides if the interference clears.
+
+### Changed
+- **Hardware-diagnostics fetch no longer blocks the UI thread (audit).** The
+  `GET /diagnostics/hardware` call now runs on a worker thread (mirroring the
+  existing verify worker), so the once-per-session auto-fetch on the Fans tab
+  and the manual Refresh no longer freeze the UI on a slow/contended daemon.
+- **Unified the control-loop write-dispatch routing (audit).** The background
+  write worker and the synchronous fallback now share one `_dispatch_write`
+  helper, so target-id → daemon-call routing can't drift between them.
+- **`/sensors/history` requests are URL-encoded (audit).** The sensor entity id
+  is passed via httpx `params=` rather than interpolated into the path, so a
+  sysfs label with query-special characters can't corrupt the request.
+
+### Tests
+- Persistent-vs-demoted alert placement, a collapse-hides-informational-keeps-
+  blocking behavioural test, and BIOS-section hidden/shown coverage (empty,
+  all-zero counts, and revert-then-clear).
+- Audit fixes ship with tests: off-thread fetch slots + sync-fallback + worker
+  lifecycle, the `_dispatch_write` helper (all routes + timeout-shape), and a
+  special-character `/sensors/history` round-trip.
+
 ## [1.19.0] — 2026-06-03
 
 Diagnostics → Fans usability + internal de-duplication (**DEC-115**), bundled
