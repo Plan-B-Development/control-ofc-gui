@@ -121,3 +121,48 @@ class TestContent:
         assert label.isHidden() is False
         label.setVisible(False)
         assert label.isHidden() is True
+
+
+class TestPersistentArea:
+    def test_persistent_hidden_until_widget_added(self, qtbot):
+        # A section with no persistent content keeps the container hidden, so
+        # the existing collapsible sections render exactly as before.
+        section = _make(qtbot, object_name="Sec_p1")
+        assert section.persistent_widget().isHidden() is True
+
+    def test_persistent_object_name_derived(self, qtbot):
+        section = _make(qtbot, object_name="Sec_p2")
+        assert section.persistent_widget().objectName() == "Sec_p2_Persistent"
+
+    def test_persistent_widget_reachable_via_findchild(self, qtbot):
+        section = _make(qtbot, object_name="Sec_p3")
+        label = QLabel("verdict")
+        label.setObjectName("Verdict_label")
+        section.add_persistent_widget(label)
+        assert section.persistent_widget().isHidden() is False
+        assert section.findChild(QLabel, "Verdict_label") is label
+
+    def test_persistent_stays_visible_when_collapsed(self, qtbot):
+        # Load-bearing invariant for the Hardware Readiness card: a persistent
+        # widget stays visible even when the section is collapsed, while the
+        # collapsible content does not.
+        section = _make(qtbot, object_name="Sec_p4", expanded=True)
+        section.add_widget(QLabel("detail"))
+        section.add_persistent_widget(QLabel("always"))
+
+        section.set_expanded(False)
+        assert section.is_expanded() is False
+        assert section.content_widget().isVisibleTo(section) is False
+        assert section.persistent_widget().isVisibleTo(section) is True
+
+    def test_persistent_layout_supported(self, qtbot):
+        from PySide6.QtWidgets import QHBoxLayout
+
+        section = _make(qtbot, object_name="Sec_p5")
+        row = QHBoxLayout()
+        member = QLabel("in-row")
+        member.setObjectName("Row_label")
+        row.addWidget(member)
+        section.add_persistent_layout(row)
+        assert section.persistent_widget().isHidden() is False
+        assert section.findChild(QLabel, "Row_label") is member

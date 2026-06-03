@@ -1,5 +1,90 @@
 # Changelog
 
+## [1.19.0] — 2026-06-03
+
+Diagnostics → Fans usability + internal de-duplication (**DEC-115**), bundled
+with the v1.18.1 hardware-claim correctness fixes (**DEC-114**, detailed below)
+that were not separately released. The DEC-115 work is GUI-only; the bundle
+pairs with `control-ofc-daemon` ≥ **v1.8.3** (carried over from DEC-114).
+
+### Added
+- **The Hardware Readiness card is now collapsible.** Diagnostics → Fans wraps
+  the whole card in one collapsible section: click the "Hardware Readiness"
+  header to fold the detail away and let the live fan table rise. The readiness
+  **verdict** and any **critical alerts** stay visible even when collapsed
+  (a new always-visible *persistent* area of `CollapsibleSection`), and a
+  problem board **force-expands** the card so its detail and "To fix" guidance
+  are never hidden. The card opens expanded; a manual collapse on a healthy
+  board is respected.
+
+### Fixed
+- **Full Report drift.** The pop-out "Hardware Readiness — Full Report" had
+  silently dropped the chip **Status** column and the kernel-module
+  **Mainline** column present on the inline card. Both now render identically:
+  the card and the report derive every chip / module / board / summary /
+  thermal line from one shared set of formatters, so they cannot drift again.
+
+### Changed
+- `CollapsibleSection` gains a reusable persistent-area API
+  (`add_persistent_widget` / `add_persistent_layout`).
+- `diagnostics_page.py` internals: `_build_fans_tab` (~380 lines) split into a
+  thin orchestrator + eight focused sub-builders; a 10×-copied
+  stylesheet-repolish idiom and duplicated freshness / row-init /
+  header-tooltip loops folded into shared helpers; the verify worker now uses
+  the public `DaemonClient.socket_path` property. No behaviour change.
+
+### Tests
+- New coverage: card-level collapse (incl. force-expand-on-problem and
+  respect-manual-collapse), the `CollapsibleSection` persistent area, the
+  shared section-body formatters, and card↔report render consistency.
+
+## [1.18.1] — 2026-06-02
+
+Hardware-claim correctness fix (**DEC-114**) from a cross-repo documentation
+audit that re-verified every externally-sourced hardware claim against
+primary sources and now links them inline. One finding is safety-critical.
+Pairs with **daemon v1.8.3**.
+
+### Fixed
+- **Kernel hard-hang guidance was unsafe.** The RDNA3/RDNA4 6.19 warning
+  recommended rolling back to "6.18 LTS", but 6.18 is _also_ affected
+  (Phoronix EOY 2025; ROCm #6101 reports panics on 6.18.20 and 6.19.10). The
+  GUI guidance now recommends a verified-safe **6.15–6.17** longterm kernel,
+  covers both 6.18.x and 6.19.x, and drops the unverified "AMD reverted
+  patches" claim. The warning id is renamed `rdna_hang_kernel_6_19_x` →
+  `rdna_hang_kernel_6_18_6_19` so the popup re-fires for anyone who
+  acknowledged the earlier, unsafe advice.
+- **Wrong RX 9070 device ID** in the GPU kernel-warning guidance
+  (`hwmon_guidance.py`): RX 9070 is PCI `0x7550` rev `0xC3`, not `0x7551`
+  (which is the R9700). Corrected.
+- **R9700 SMU warning re-characterised:** it is an SMU interface-version
+  mismatch (firmware v50 vs driver v46, ROCm #6101) that leaves no working
+  fan-control path (`pwm1` read-only) across all current kernels — not a
+  "silent `fan_curve` write failure" on 7.0.x only. Id renamed
+  `smu_mismatch_navi48_r9700_kernel_7_0` → `smu_mismatch_navi48_r9700`.
+- **nct6687 `0xd450` collision** is now framed as historical (the chip-ID
+  claim was removed upstream in Fred78290/nct6687d PR #164, 2026); the false
+  "Bazzite blacklists nct6687 by default" is corrected to a requested,
+  unshipped fix (ublue-os/bazzite #4498).
+
+### Documented
+- **docs/19, 21, 22 corrected** for the above plus: the asus_wmi_sensors
+  fan-stop warning scope (only the PRIME X470-PRO is singled out), the
+  asus_ec_sensors AM4 400-series allowlist (three boards, not one), the
+  nct6775 ACPI workaround (a 5.16 ASUS-WMI access path, not "ACPI mutex
+  ≥5.17"), the docs/19 NCT6687 Intel-table chip IDs (`0xd440`/`0xd441` were
+  wrong/unverifiable — now described by DMI selection), and the it87
+  issue #70/#81 framing.
+- **docs/19 gains a Sources section** with inline primary-source links
+  (kernel.org, torvalds/linux, Phoronix, ROCm #6101, Fred78290/nct6687d,
+  frankcrawford/it87, Bazzite #4498, AMD `amdgpu.ids`), matching docs/23's
+  citation style.
+
+### Tested
+- New `test_renamed_ids_invalidate_old_acknowledgements` proves the renamed
+  ids invalidate stale acknowledgements; existing kernel-warning parsing /
+  gating tests updated to the new ids.
+
 ## [1.18.0] — 2026-06-02
 
 Diagnostics > Fans readiness UX refinement and a combo-box arrow fix

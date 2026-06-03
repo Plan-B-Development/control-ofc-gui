@@ -1,6 +1,7 @@
-"""Hardware-readiness verdict, "To fix" guidance, and pop-out report (DEC-113).
+"""Hardware-readiness verdict, "To fix" guidance, and pop-out report
+(DEC-113, shared formatters added in DEC-115).
 
-Three things live here so the inline Fans-tab card and the pop-out window share
+The following live here so the inline Fans-tab card and the pop-out window share
 one source of truth (no drift):
 
 * :func:`detect_readiness_problems` — the single problem-detection pass. Both
@@ -9,6 +10,12 @@ one source of truth (no drift):
 * :func:`build_fix_guidance_html` — GUI-authored "To fix" bullets (disclaimer +
   clickable doc links). Deliberately contains **no daemon-supplied strings**, so
   it is safe to render as rich text without the escaping dance DEC-106 requires.
+* :func:`board_identity_line` / :func:`header_summary_line` / :func:`chip_rows` /
+  :func:`module_rows` / :func:`thermal_line` — shared section-body formatters
+  (DEC-115) so the card's widgets and the report's HTML derive their content
+  once and cannot drift (before these, the report had silently dropped the chip
+  "Status" and module "Mainline" columns). They return **raw** daemon strings;
+  HTML consumers escape, plain table-cell consumers do not.
 * :func:`build_readiness_report_html` + :class:`ReadinessReportDialog` — the full
   scrollable report shown in its own window; daemon strings ARE escaped here.
 """
@@ -16,7 +23,7 @@ one source of truth (no drift):
 from __future__ import annotations
 
 from html import escape
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from PySide6.QtWidgets import (
     QDialog,
@@ -31,6 +38,7 @@ from control_ofc.ui.hwmon_guidance import (
     REMEDIATION_DISCLAIMER,
     detect_module_conflicts,
     dual_chip_warning_html,
+    format_driver_status,
     lookup_vendor_quirks,
 )
 from control_ofc.ui.theme import active_theme
@@ -291,6 +299,88 @@ def build_fix_guidance_html(diag: HardwareDiagnosticsResult) -> str | None:
     return "<br>".join(parts)
 
 
+# ── Shared section-body formatters (DEC-115) ──────────────────────────────
+# One derivation per section, consumed by BOTH the inline card (QLabel /
+# QTableWidget) and the pop-out report (HTML). Strings are returned raw — the
+# HTML consumer escapes them, the table-cell consumer sets them verbatim.
+
+
+class ChipRow(NamedTuple):
+    """One detected-chip row. ``status`` is computed from driver-load state."""
+
+    chip: str
+    driver: str
+    status: str
+    mainline: str
+    headers: str
+
+
+class ModuleRow(NamedTuple):
+    """One kernel-module row."""
+
+    name: str
+    loaded: str
+    mainline: str
+
+
+def board_identity_line(diag: HardwareDiagnosticsResult) -> str | None:
+    """Return ``"vendor — name — BIOS x"`` (no ``"Board:"`` prefix), or ``None``
+    when the board reports neither vendor nor name."""
+    board = diag.board
+    parts = [p for p in (board.vendor, board.name) if p]
+    if not parts:
+        return None
+    if board.bios_version:
+        parts.append(f"BIOS {board.bios_version}")
+    return " — ".join(parts)
+
+
+def header_summary_line(hw) -> str:
+    """Return the one-line PWM-header count summary (GUI text; ints only)."""
+    return f"{hw.total_headers} PWM header(s) detected, {hw.writable_headers} writable"
+
+
+def chip_rows(diag: HardwareDiagnosticsResult) -> list[ChipRow]:
+    """Per-chip display rows. ``status`` reflects whether the expected driver
+    is among the loaded kernel modules (computed once for all chips)."""
+    loaded = {m.name for m in diag.kernel_modules if m.loaded}
+    return [
+        ChipRow(
+            chip=c.chip_name,
+            driver=c.expected_driver,
+            status=format_driver_status(c.chip_name, c.expected_driver in loaded),
+            mainline="Yes" if c.in_mainline_kernel else "No (out-of-tree)",
+            headers=str(c.header_count),
+        )
+        for c in diag.hwmon.chips_detected
+    ]
+
+
+def module_rows(diag: HardwareDiagnosticsResult) -> list[ModuleRow]:
+    """Per-kernel-module display rows."""
+    return [
+        ModuleRow(
+            name=m.name,
+            loaded="Loaded" if m.loaded else "Not loaded",
+            mainline="Yes" if m.in_mainline else "No",
+        )
+        for m in diag.kernel_modules
+    ]
+
+
+def thermal_line(ts) -> str | None:
+    """Return the one-line thermal-safety summary, or ``None`` when no thermal
+    info is present. Only ``state`` is daemon-supplied (escape in HTML)."""
+    if ts is None:
+        return None
+    found = "found" if ts.cpu_sensor_found else "NOT found"
+    return (
+        f"State: {ts.state} · CPU sensor: {found} · "
+        f"emergency {ts.emergency_threshold_c:.0f}°C · "
+        f"release {ts.release_threshold_c:.0f}°C"
+    )
+
+
 def build_readiness_report_html(diag: HardwareDiagnosticsResult) -> str:
     """Build the full, self-contained HTML report for the pop-out window.
 
@@ -298,7 +388,6 @@ def build_readiness_report_html(diag: HardwareDiagnosticsResult) -> str:
     """
     t = active_theme()
     hw = diag.hwmon
-    board = diag.board
     verdict_text, verdict_cls = readiness_verdict(diag)
     sev_color = {
         "SuccessChip": t.status_ok,
@@ -315,54 +404,50 @@ def build_readiness_report_html(diag: HardwareDiagnosticsResult) -> str:
         f"{escape(verdict_text)}</div>"
     )
 
-    # Board + summary
+    # Board + summary (shared formatters, DEC-115)
     out.append(h("Summary"))
-    bits = [b for b in (board.vendor, board.name) if b]
-    if board.bios_version:
-        bits.append(f"BIOS {board.bios_version}")
-    if bits:
-        out.append(f"<div>Board: {escape(' — '.join(bits))}</div>")
-    out.append(
-        f"<div>{hw.total_headers} PWM header(s) detected, {hw.writable_headers} writable.</div>"
-    )
+    identity = board_identity_line(diag)
+    if identity:
+        out.append(f"<div>Board: {escape(identity)}</div>")
+    out.append(f"<div>{header_summary_line(hw)}.</div>")
 
-    # Detected chips
-    if hw.chips_detected:
+    # Detected chips — same five columns as the inline card (DEC-115).
+    crows = chip_rows(diag)
+    if crows:
         out.append(h("Detected hardware"))
         rows = [
             '<tr><th align="left">Chip</th><th align="left">Driver</th>'
-            '<th align="left">Mainline</th><th align="left">Headers</th></tr>'
+            '<th align="left">Status</th><th align="left">Mainline</th>'
+            '<th align="left">Headers</th></tr>'
         ]
-        for c in hw.chips_detected:
+        for r in crows:
             rows.append(
-                f"<tr><td>{escape(c.chip_name)}</td>"
-                f"<td>{escape(c.expected_driver)}</td>"
-                f"<td>{'Yes' if c.in_mainline_kernel else 'No (out-of-tree)'}</td>"
-                f"<td>{c.header_count}</td></tr>"
+                f"<tr><td>{escape(r.chip)}</td><td>{escape(r.driver)}</td>"
+                f"<td>{escape(r.status)}</td><td>{escape(r.mainline)}</td>"
+                f"<td>{escape(r.headers)}</td></tr>"
             )
         out.append(f'<table cellpadding="4">{"".join(rows)}</table>')
 
-    # Kernel modules
-    if diag.kernel_modules:
+    # Kernel modules — same three columns as the inline card (DEC-115).
+    mrows = module_rows(diag)
+    if mrows:
         out.append(h("Kernel modules"))
-        rows = ['<tr><th align="left">Module</th><th align="left">Loaded</th></tr>']
-        for m in diag.kernel_modules:
+        rows = [
+            '<tr><th align="left">Module</th><th align="left">Loaded</th>'
+            '<th align="left">Mainline</th></tr>'
+        ]
+        for r in mrows:
             rows.append(
-                f"<tr><td>{escape(m.name)}</td>"
-                f"<td>{'Loaded' if m.loaded else 'Not loaded'}</td></tr>"
+                f"<tr><td>{escape(r.name)}</td><td>{escape(r.loaded)}</td>"
+                f"<td>{escape(r.mainline)}</td></tr>"
             )
         out.append(f'<table cellpadding="4">{"".join(rows)}</table>')
 
     # Thermal + GPU
-    ts = diag.thermal_safety
-    if ts:
+    thermal = thermal_line(diag.thermal_safety)
+    if thermal:
         out.append(h("Thermal safety"))
-        out.append(
-            f"<div>State: {escape(ts.state)} · CPU sensor: "
-            f"{'found' if ts.cpu_sensor_found else 'NOT found'} · "
-            f"emergency {ts.emergency_threshold_c:.0f}°C · "
-            f"release {ts.release_threshold_c:.0f}°C</div>"
-        )
+        out.append(f"<div>{escape(thermal)}</div>")
     if diag.gpu:
         g = diag.gpu
         out.append(h("GPU"))
