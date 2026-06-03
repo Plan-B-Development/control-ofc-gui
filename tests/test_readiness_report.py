@@ -19,10 +19,15 @@ from control_ofc.api.models import (
 )
 from control_ofc.ui.widgets.readiness_report import (
     ReadinessReportDialog,
+    board_identity_line,
     build_fix_guidance_html,
     build_readiness_report_html,
+    chip_rows,
     detect_readiness_problems,
+    header_summary_line,
+    module_rows,
     readiness_verdict,
+    thermal_line,
 )
 
 
@@ -199,6 +204,92 @@ class TestReport:
         html = build_readiness_report_html(diag)
         assert "<script>evil</script>" not in html
         assert "&lt;script&gt;" in html
+
+
+class TestSharedFormatters:
+    """DEC-115: the card and the report build their section bodies from one set
+    of pure formatters, so the report regained the chip Status + module Mainline
+    columns it had silently dropped."""
+
+    def test_chip_rows_fields(self):
+        diag = _healthy(
+            hwmon=HwmonDiagnostics(
+                chips_detected=[
+                    HwmonChipInfo(
+                        chip_name="it8689",
+                        expected_driver="it87",
+                        in_mainline_kernel=False,
+                        header_count=2,
+                    )
+                ],
+                total_headers=2,
+                writable_headers=2,
+            ),
+            kernel_modules=[KernelModuleInfo(name="it87", loaded=True, in_mainline=False)],
+        )
+        rows = chip_rows(diag)
+        assert len(rows) == 1
+        r = rows[0]
+        assert (r.chip, r.driver, r.mainline, r.headers) == (
+            "it8689",
+            "it87",
+            "No (out-of-tree)",
+            "2",
+        )
+        assert r.status  # format_driver_status produced a status string
+
+    def test_module_rows_fields(self):
+        diag = _healthy(
+            kernel_modules=[
+                KernelModuleInfo(name="nct6775", loaded=True, in_mainline=True),
+                KernelModuleInfo(name="it87", loaded=False, in_mainline=False),
+            ]
+        )
+        rows = module_rows(diag)
+        assert (rows[0].name, rows[0].loaded, rows[0].mainline) == ("nct6775", "Loaded", "Yes")
+        assert (rows[1].name, rows[1].loaded, rows[1].mainline) == ("it87", "Not loaded", "No")
+
+    def test_board_identity_and_summary(self):
+        diag = _healthy(board=BoardInfo(vendor="ASUS", name="X670E", bios_version="1654"))
+        assert board_identity_line(diag) == "ASUS — X670E — BIOS 1654"
+        assert header_summary_line(diag.hwmon) == "5 PWM header(s) detected, 5 writable"
+
+    def test_board_identity_none_when_empty(self):
+        assert board_identity_line(_healthy(board=BoardInfo(vendor="", name=""))) is None
+
+    def test_thermal_line(self):
+        diag = _healthy(
+            thermal_safety=ThermalSafetyInfo(
+                state="normal",
+                cpu_sensor_found=True,
+                emergency_threshold_c=105.0,
+                release_threshold_c=80.0,
+            )
+        )
+        line = thermal_line(diag.thermal_safety)
+        assert "normal" in line
+        assert "105°C" in line
+        assert "80°C" in line
+
+    def test_report_regains_status_and_mainline_columns(self):
+        diag = _healthy(
+            hwmon=HwmonDiagnostics(
+                chips_detected=[
+                    HwmonChipInfo(
+                        chip_name="nct6779",
+                        expected_driver="nct6775",
+                        in_mainline_kernel=True,
+                        header_count=5,
+                    )
+                ],
+                total_headers=5,
+                writable_headers=5,
+            ),
+            kernel_modules=[KernelModuleInfo(name="nct6775", loaded=True, in_mainline=True)],
+        )
+        html = build_readiness_report_html(diag)
+        assert ">Status<" in html  # chip table regained its Status column
+        assert html.count(">Mainline<") == 2  # one Mainline header per table
 
 
 class TestDialog:

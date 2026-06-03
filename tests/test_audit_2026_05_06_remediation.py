@@ -63,7 +63,7 @@ class TestKernelWarningsParsing:
                     "overdrive_enabled": True,
                     "kernel_warnings": [
                         {
-                            "id": "rdna_hang_kernel_6_19_x",
+                            "id": "rdna_hang_kernel_6_18_6_19",
                             "severity": "critical",
                             "message": "Kernel 6.19.7 is affected by ...",
                         }
@@ -78,7 +78,7 @@ class TestKernelWarningsParsing:
         caps = parse_capabilities(payload)
         assert len(caps.amd_gpu.kernel_warnings) == 1
         kw = caps.amd_gpu.kernel_warnings[0]
-        assert kw.id == "rdna_hang_kernel_6_19_x"
+        assert kw.id == "rdna_hang_kernel_6_18_6_19"
         assert kw.severity == "critical"
         assert kw.message.startswith("Kernel 6.19.7")
 
@@ -587,7 +587,7 @@ class TestKernelWarningPopupAcknowledgement:
 
         settings_svc = AppSettingsService()
         settings_svc._settings = AppSettings(
-            acknowledged_kernel_warnings=["rdna_hang_kernel_6_19_x"]
+            acknowledged_kernel_warnings=["rdna_hang_kernel_6_18_6_19"]
         )
 
         caps = Capabilities()
@@ -595,7 +595,7 @@ class TestKernelWarningPopupAcknowledgement:
             present=True,
             kernel_warnings=[
                 KernelWarning(
-                    id="rdna_hang_kernel_6_19_x",
+                    id="rdna_hang_kernel_6_18_6_19",
                     severity="critical",
                     message="ack'd",
                 )
@@ -626,7 +626,7 @@ class TestKernelWarningPopupAcknowledgement:
             present=True,
             kernel_warnings=[
                 KernelWarning(
-                    id="smu_mismatch_navi48_r9700_kernel_7_0",
+                    id="smu_mismatch_navi48_r9700",
                     severity="critical",
                     message="r9700 mismatch",
                 )
@@ -640,7 +640,7 @@ class TestKernelWarningPopupAcknowledgement:
             if w.id not in acknowledged and w.severity in ("high", "critical")
         ]
         assert len(unack) == 1
-        assert unack[0].id == "smu_mismatch_navi48_r9700_kernel_7_0"
+        assert unack[0].id == "smu_mismatch_navi48_r9700"
 
     def test_low_severity_warning_does_not_pop(self):
         """info/medium severities log only — never show a modal popup."""
@@ -679,10 +679,22 @@ class TestAmdGpuGuidanceLookup:
     def test_known_warning_id_returns_guidance(self):
         from control_ofc.ui.hwmon_guidance import lookup_amd_gpu_guidance
 
-        guidance = lookup_amd_gpu_guidance("rdna_hang_kernel_6_19_x")
+        guidance = lookup_amd_gpu_guidance("rdna_hang_kernel_6_18_6_19")
         assert guidance is not None
         assert guidance.summary
         assert guidance.references, "must include at least one reference URL"
+
+    def test_renamed_ids_invalidate_old_acknowledgements(self):
+        # DEC-114: the warning ids were renamed when their advice materially
+        # changed (the 6.19-only hang warning recommended an also-affected
+        # 6.18 kernel), so old acknowledgements no longer match and the GUI
+        # re-prompts with the corrected guidance.
+        from control_ofc.ui.hwmon_guidance import lookup_amd_gpu_guidance
+
+        assert lookup_amd_gpu_guidance("rdna_hang_kernel_6_19_x") is None
+        assert lookup_amd_gpu_guidance("smu_mismatch_navi48_r9700_kernel_7_0") is None
+        assert lookup_amd_gpu_guidance("rdna_hang_kernel_6_18_6_19") is not None
+        assert lookup_amd_gpu_guidance("smu_mismatch_navi48_r9700") is not None
 
     def test_unknown_warning_id_returns_none(self):
         from control_ofc.ui.hwmon_guidance import lookup_amd_gpu_guidance

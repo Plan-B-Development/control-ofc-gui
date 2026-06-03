@@ -1,12 +1,16 @@
-"""Tests for the Diagnostics > Fans tab progressive-disclosure layout (DEC-112).
+"""Tests for the Diagnostics > Fans tab progressive-disclosure layout
+(DEC-112, extended by DEC-115).
 
-The dense Hardware Readiness detail is grouped into collapsible sections so the
-always-relevant summary, critical alerts, and live fan table stay visible. These
+The dense Hardware Readiness detail is grouped into collapsible sections, and
+(DEC-115) the whole card is itself one collapsible section: its persistent area
+keeps the verdict + critical-alert stack on screen while the body folds. These
 tests lock down:
-  * the five collapsible sections exist and start collapsed,
-  * each section actually contains the widgets it should,
-  * always-visible widgets (summary + alert stack) are NOT trapped inside any
-    collapsed section,
+  * the five detail sub-sections exist and start collapsed,
+  * each sub-section actually contains the widgets it should,
+  * the verdict + alert stack live in the card's persistent area and the
+    summary/board in its collapsible body — none trapped in a detail section,
+  * the whole card collapses (keeping the verdict visible) and force-expands on
+    a problem while respecting a manual collapse on a healthy board,
   * the outer Diagnostics_Splitter_fans contract is preserved, and
   * the BIOS-interference section auto-expands when (and only when) there is a
     real revert count, and survives a theme refresh.
@@ -65,11 +69,14 @@ SECTION_MEMBERS = {
     ],
 }
 
-# Widgets that must remain visible without expanding anything — the readiness
-# summary, board identity, and the whole critical-alert stack.
-ALWAYS_VISIBLE_NAMES = [
-    "Diagnostics_Label_hwReadySummary",
-    "Diagnostics_Label_boardInfo",
+# The card (DEC-115) is one collapsible section. Its PERSISTENT area keeps the
+# verdict + the critical-alert stack on screen even when folded; its collapsible
+# BODY holds the summary + board identity. None of these may be trapped inside
+# one of the five detail sub-sections.
+CARD_SECTION = "Diagnostics_Section_hwReadiness"
+
+PERSISTENT_NAMES = [
+    "Diagnostics_Label_readinessVerdict",
     "Diagnostics_Label_moduleCollisions",
     "Diagnostics_Label_moduleConflicts",
     "Diagnostics_Label_dualChipWarning",
@@ -77,6 +84,12 @@ ALWAYS_VISIBLE_NAMES = [
     "Diagnostics_Label_acpiConflicts",
     "Diagnostics_Label_revertHeadline",
 ]
+CARD_BODY_NAMES = [
+    "Diagnostics_Label_hwReadySummary",
+    "Diagnostics_Label_boardInfo",
+]
+# Everything that must stay out of the five detail sub-sections.
+ALWAYS_VISIBLE_NAMES = CARD_BODY_NAMES + PERSISTENT_NAMES
 
 
 def _make_state() -> AppState:
@@ -127,6 +140,21 @@ def _diag_with_revert(header_id: str, count: int) -> HardwareDiagnosticsResult:
             total_headers=1,
             writable_headers=1,
             enable_revert_counts={header_id: count},
+        ),
+    )
+
+
+def _healthy_diag() -> HardwareDiagnosticsResult:
+    # vendor="" avoids any vendor quirk; all headers writable; one chip; no
+    # reverts/acpi/collisions → detect_readiness_problems is empty (SuccessChip).
+    return _diag(
+        board=BoardInfo(vendor="", name="Generic"),
+        hwmon=HwmonDiagnostics(
+            chips_detected=[
+                HwmonChipInfo(chip_name="nct6779", expected_driver="nct6775", header_count=5)
+            ],
+            total_headers=5,
+            writable_headers=5,
         ),
     )
 
@@ -222,3 +250,93 @@ class TestAlwaysVisibleContent:
         for section_name in SECTION_NAMES:
             section = page.findChild(CollapsibleSection, section_name)
             assert section.findChild(QWidget, "Diagnostics_Label_revertHeadline") is None
+
+
+class TestCardLevelCollapse:
+    """DEC-115: the whole Hardware Readiness card is one collapsible section —
+    verdict + alerts persistent (visible when folded), body collapsible, with a
+    force-expand on problems that still respects a manual collapse when healthy.
+    """
+
+    def _card(self, page) -> CollapsibleSection:
+        section = page.findChild(CollapsibleSection, CARD_SECTION)
+        assert section is not None, "missing Hardware Readiness card section"
+        return section
+
+    def test_card_section_exists_and_starts_expanded(self, qtbot):
+        page = _make_page(qtbot)
+        assert self._card(page).is_expanded() is True
+
+    def test_verdict_and_alerts_are_persistent(self, qtbot):
+        page = _make_page(qtbot)
+        persistent = self._card(page).persistent_widget()
+        for name in PERSISTENT_NAMES:
+            assert persistent.findChild(QWidget, name) is not None, (
+                f"{name} must live in the card's persistent (always-visible) area"
+            )
+
+    def test_summary_and_board_in_collapsible_body(self, qtbot):
+        page = _make_page(qtbot)
+        content = self._card(page).content_widget()
+        for name in CARD_BODY_NAMES:
+            assert content.findChild(QWidget, name) is not None, (
+                f"{name} must live in the card's collapsible body"
+            )
+
+    def test_collapse_keeps_persistent_visible_hides_body(self, qtbot):
+        page = _make_page(qtbot)
+        card = self._card(page)
+        card.set_expanded(False)
+        # The verdict + alert stack stay on screen; the detail body folds away.
+        assert card.persistent_widget().isVisibleTo(card) is True
+        assert card.content_widget().isVisibleTo(card) is False
+
+    def test_problem_force_expands_collapsed_card(self, qtbot):
+        page = _make_page(qtbot)
+        card = self._card(page)
+        card.set_expanded(False)
+        # A revert count is a real problem → the card must re-expand so the
+        # detail and "To fix" guidance are visible by default.
+        page._populate_hw_diagnostics(_diag_with_revert("pwm1", 12))
+        assert card.is_expanded() is True
+
+    def test_healthy_respects_manual_collapse(self, qtbot):
+        page = _make_page(qtbot)
+        card = self._card(page)
+        card.set_expanded(False)
+        # A healthy board must NOT fight a user who folded the card.
+        page._populate_hw_diagnostics(_healthy_diag())
+        assert card.is_expanded() is False
+
+
+class TestRenderConsistency:
+    """DEC-115 DRY: the card's chip/module tables are populated from the same
+    chip_rows()/module_rows() the pop-out report uses, so they cannot drift."""
+
+    def test_card_chip_table_matches_chip_rows(self, qtbot):
+        from control_ofc.ui.widgets.readiness_report import chip_rows
+
+        page = _make_page(qtbot)
+        diag = _diag()
+        page._populate_hw_diagnostics(diag)
+        rows = chip_rows(diag)
+        assert page._chip_table.rowCount() == len(rows)
+        for i, r in enumerate(rows):
+            assert page._chip_table.item(i, 0).text() == r.chip
+            assert page._chip_table.item(i, 1).text() == r.driver
+            assert page._chip_table.item(i, 2).text() == r.status
+            assert page._chip_table.item(i, 3).text() == r.mainline
+            assert page._chip_table.item(i, 4).text() == r.headers
+
+    def test_card_modules_table_matches_module_rows(self, qtbot):
+        from control_ofc.ui.widgets.readiness_report import module_rows
+
+        page = _make_page(qtbot)
+        diag = _diag()
+        page._populate_hw_diagnostics(diag)
+        rows = module_rows(diag)
+        assert page._modules_table.rowCount() == len(rows)
+        for i, r in enumerate(rows):
+            assert page._modules_table.item(i, 0).text() == r.name
+            assert page._modules_table.item(i, 1).text() == r.loaded
+            assert page._modules_table.item(i, 2).text() == r.mainline

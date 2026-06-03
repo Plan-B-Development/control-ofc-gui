@@ -22,6 +22,12 @@ Design notes:
   ``QWidget.isHidden()`` reflects a widget's *own* explicit show/hide flag, not
   whether an ancestor is collapsed, so a populated label inside a collapsed
   section still reports ``isHidden() is False``.
+- An optional *persistent area* sits between the header and the collapsible
+  content: widgets added via ``add_persistent_widget`` stay visible even when
+  the section is collapsed, so a section can fold its detail away while keeping
+  a one-line summary (and any critical alerts) on screen. The Fans-tab
+  Hardware Readiness card uses this so the readiness verdict survives a
+  collapse.
 """
 
 from __future__ import annotations
@@ -33,9 +39,12 @@ from PySide6.QtWidgets import QPushButton, QSizePolicy, QVBoxLayout, QWidget
 class CollapsibleSection(QWidget):
     """A titled, collapsible container for progressive disclosure.
 
-    Add content with :meth:`add_widget` / :meth:`add_layout`. Query or change
-    the open state with :meth:`is_expanded` / :meth:`set_expanded`. The
-    :attr:`toggled` signal emits ``True`` on expand and ``False`` on collapse.
+    Add collapsible content with :meth:`add_widget` / :meth:`add_layout`, and
+    always-visible content (a summary or critical alerts that must stay on
+    screen while folded) with :meth:`add_persistent_widget` /
+    :meth:`add_persistent_layout`. Query or change the open state with
+    :meth:`is_expanded` / :meth:`set_expanded`. The :attr:`toggled` signal
+    emits ``True`` on expand and ``False`` on collapse.
     """
 
     toggled = Signal(bool)  # True when expanded, False when collapsed
@@ -74,6 +83,20 @@ class CollapsibleSection(QWidget):
         self._header.toggled.connect(self._on_header_toggled)
         outer.addWidget(self._header)
 
+        # Persistent area: widgets that stay visible regardless of collapsed
+        # state, rendered directly under the header. Used when a section keeps
+        # an at-a-glance summary (and any critical alerts) visible even while
+        # collapsed. Hidden until the first persistent widget is added, so a
+        # section with none renders byte-for-byte as before.
+        self._persistent = QWidget()
+        if object_name:
+            self._persistent.setObjectName(f"{object_name}_Persistent")
+        self._persistent_layout = QVBoxLayout(self._persistent)
+        self._persistent_layout.setContentsMargins(10, 2, 0, 2)
+        self._persistent_layout.setSpacing(8)
+        self._persistent.setVisible(False)
+        outer.addWidget(self._persistent)
+
         self._content = QWidget()
         if object_name:
             self._content.setObjectName(f"{object_name}_Content")
@@ -95,6 +118,22 @@ class CollapsibleSection(QWidget):
     def add_layout(self, layout) -> None:
         """Append a nested layout to the section's content area."""
         self._content_layout.addLayout(layout)
+
+    def add_persistent_widget(self, widget: QWidget) -> None:
+        """Append a widget that stays visible regardless of collapsed state.
+
+        Persistent widgets render between the header and the collapsible
+        content; collapsing the section hides only the content, never these.
+        Use for a summary line or critical alerts that must remain on screen
+        when the section is folded.
+        """
+        self._persistent_layout.addWidget(widget)
+        self._persistent.setVisible(True)
+
+    def add_persistent_layout(self, layout) -> None:
+        """Append a nested layout to the always-visible persistent area."""
+        self._persistent_layout.addLayout(layout)
+        self._persistent.setVisible(True)
 
     def is_expanded(self) -> bool:
         """Return whether the content area is currently shown."""
@@ -126,6 +165,10 @@ class CollapsibleSection(QWidget):
     def content_widget(self) -> QWidget:
         """The container holding the section's content widgets."""
         return self._content
+
+    def persistent_widget(self) -> QWidget:
+        """The container holding always-visible (non-collapsing) widgets."""
+        return self._persistent
 
     # ── Internals ────────────────────────────────────────────────────
 

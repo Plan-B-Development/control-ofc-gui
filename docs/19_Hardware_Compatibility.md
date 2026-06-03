@@ -1,6 +1,6 @@
 # 19 — Hardware Compatibility Guide
 
-**Last updated:** 2026-04-28 (v1.8.0 — added IT87952E row)
+**Last updated:** 2026-06-01 (v1.15.0 — added Intel platform mapping table, DEC-110)
 
 **See also:** `21_AMD_Motherboard_Fan_Control_Guide.md` for comprehensive
 vendor-by-vendor setup and troubleshooting guidance.
@@ -29,18 +29,27 @@ guidance system (`hwmon_guidance.py`).
 | NCT6687-R | `nct6687` | **No** | `nct6687d-dkms-git` (AUR) — **chip-ID 0xd450 overlaps NCT6797D, see warning** |
 
 **NCT6797D / NCT6798D vs out-of-tree `nct6687` — chip-ID collision (DEC-104):**
-The out-of-tree `nct6687` driver declares chip ID `0xd450`. This is the
-same chip ID assigned to the legitimate NCT6797D in `drivers/hwmon/nct6775-platform.c`.
-When both `nct6687` and `nct6775` are loaded simultaneously the wrong
-driver can bind to the chip and write into the wrong registers — an
-upstream report on the MSI MAG X570 TOMAHAWK WIFI documents a permanently
-bricked CPU_FAN header from this exact race. The same chip family is
-common on AM4 400-series MSI boards (e.g. B450M MORTAR uses NCT6797D, per
-its upstream lm-sensors config). Bazzite blacklists `nct6687` by default
-for this reason. See `21_AMD_Motherboard_Fan_Control_Guide.md` § AM4
-400-series specifics for the full remediation. The daemon detects the
-collision in `/diagnostics/hardware` → `module_collisions` and the GUI
-renders a CRITICAL banner discouraging PWM writes until resolved.
+Older builds of the out-of-tree `nct6687` driver declare chip ID `0xd450` —
+the same chip ID assigned to the legitimate NCT6797D in
+[`nct6775-platform.c`](https://github.com/torvalds/linux/blob/master/drivers/hwmon/nct6775-platform.c)
+(`#define SIO_NCT6797_ID 0xd450`). When both `nct6687` and `nct6775` are
+loaded simultaneously the wrong driver can bind to the chip and write into
+the wrong registers — the
+[Bazzite report (ublue-os/bazzite #4498)](https://github.com/ublue-os/bazzite/issues/4498)
+documents a permanently bricked CPU_FAN header on an MSI MAG X570 TOMAHAWK
+WIFI from this exact race (the board's chip reads `0xd451`, which masks to
+`0xd450`). The same chip family is common on AM4 400-series MSI boards
+(e.g. B450M MORTAR uses NCT6797D, per its upstream lm-sensors config).
+**The `0xd450` claim was removed upstream in
+[Fred78290/nct6687d PR #164](https://github.com/Fred78290/nct6687d/pull/164)
+(2026)**, so a current `nct6687d` build no longer collides; the risk remains
+for already-loaded modules and not-yet-updated distro packages. Note that
+Bazzite #4498 *requests* a default `nct6687` blacklist but, as of writing,
+does not ship one — do not assume your distro handles this. See
+`21_AMD_Motherboard_Fan_Control_Guide.md` § AM4 400-series specifics for the
+full remediation. The daemon detects the collision in `/diagnostics/hardware`
+→ `module_collisions` and the GUI renders a CRITICAL banner discouraging PWM
+writes until resolved.
 
 ### ITE
 
@@ -67,16 +76,21 @@ chip's enumeration depends on a healthy SuperIO bridge state at boot.
 **Known issue — secondary chip not enumerated.** On some systems only
 the primary chip appears in `sensors` output (5 of 8 fan headers
 visible on X870E AORUS MASTER, etc.). The secondary chip's DEVID
-read fails when the SuperIO bridge has been left in configuration
+read can fail when the SuperIO bridge has been left in configuration
 mode by an earlier process — most commonly a previous run of
 `sensors-detect`, but also some early-boot kernel modules or BIOS
 quirks. The frankcrawford/it87 issue
-[#70](https://github.com/frankcrawford/it87/issues/70) tracks this
-on multiple Gigabyte boards.
+[#70](https://github.com/frankcrawford/it87/issues/70) (Gigabyte X870E
+AORUS PRO, missing SYS_FAN4/5/6) discusses this config-mode cause —
+though in that specific report a clean power-cycle did **not** restore
+the second chip, pointing at a stuck SuperIO bridge rather than
+`sensors-detect`.
 
 **Workaround:** create `/etc/modprobe.d/it87.conf` with
 `options it87 mmio=on` and reboot. Avoid running `sensors-detect`
-after boot — it can disturb the SuperIO state mid-session.
+after boot — it can disturb the SuperIO state mid-session. (Where the
+second chip is an undriveable IT8883, MMIO cannot help — see issue
+[#81](https://github.com/frankcrawford/it87/issues/81).)
 
 The control-ofc daemon detects this case (DEC-101): when DMI matches
 a known dual-chip board but only one ITE chip enumerated, the
@@ -89,8 +103,8 @@ example.
 
 | Driver | Mainline | Function |
 |---|---|---|
-| `asus_wmi_sensors` | Yes | Read-only board sensor enrichment via WMI. **Kernel docs warn** that high-frequency polling can stop fans or pin them at maximum on AM4 boards (PRIME X470-PRO, ROG STRIX B450/X470 series). Never the PWM write path. |
-| `asus_ec_sensors` | Yes | Read-only EC sensor enrichment. PRIME X470-PRO is the only AM4 400-series board in the kernel's allowlist; the rest are X570+ territory. |
+| `asus_wmi_sensors` | Yes | Read-only board sensor enrichment via WMI. The [kernel doc](https://docs.kernel.org/hwmon/asus_wmi_sensors.html) warns that buggy ASUS BIOS WMI can stop fans or pin them at maximum the more frequently it is polled — it singles out the **PRIME X470-PRO** as "particularly bad" (a BIOS with WMI method version ≥ 2 fixes it). Never the PWM write path. |
+| `asus_ec_sensors` | Yes | Read-only EC sensor enrichment. The AM4 400-series boards in the [kernel allowlist](https://docs.kernel.org/hwmon/asus_ec_sensors.html) are the PRIME X470-PRO **and** the ROG STRIX X470-F / X470-I GAMING; everything else in the list is X570+ / Intel territory. |
 | `asus_atk0110` | Yes | Read-only ACPI ATK0110 hwmon. Auto-loaded on a wide range of ASUS boards. If you see this driver loaded but no controllable headers, look for `nct6775` or `it87` as the PWM path. |
 
 ### Fintek
@@ -137,7 +151,7 @@ directory, or kernel `asus_*` driver allowlists.
 | | MSI **auto-allowlist** (33 boards across B840/B850/X870/Z890) | NCT6687-R variants with msi_alt1 auto-enabled | out-of-tree `nct6687d-dkms-git` v2.x |
 | | MSI boards NOT on the allowlist | NCT6687-R variants | `nct6687d` + `msi_alt1=1` or `msi_fan_brute_force=1` |
 | | Gigabyte X870E AORUS MASTER / X870E AORUS PRO / B850-AI-TOP | IT8696E + IT87952E (dual-chip) | out-of-tree `it87-dkms-git`; needs `mmio=on` |
-| | **Gigabyte X870 AORUS STEALTH ICE** | IT8696E + **IT8883** | IT8696E via `it87-dkms-git`; **IT8883 has no Linux driver** (issue #81) |
+| | **Gigabyte X870 AORUS STEALTH ICE** | IT8696E + **IT8883** | IT8696E via `it87-dkms-git`; **IT8883 has no working fan-control support** — it can be force-loaded but its fan headers don't respond ([issue #81](https://github.com/frankcrawford/it87/issues/81)) |
 | | ASRock X870 Nova | **NCT6796D-S** | mainline `nct6775` |
 | | **ASRock X870E Taichi Lite — dual-Nuvoton** | NCT6686 + NCT6799 (separate chips) | `nct6687d` + mainline `nct6775` (DEC-106 collision-detector exemption) |
 
@@ -157,14 +171,14 @@ or frankcrawford/it87 DMI table).
 | Generation | Typical Vendors | Typical Hwmon Chip(s) | Driver Path |
 |---|---|---|---|
 | **LGA1700 600-series** (Z690 / B660 / H670) | ASUS (ROG MAXIMUS Z690 FORMULA, ROG STRIX Z690-A/E GAMING WIFI, TUF GAMING Z690-PLUS) | NCT6798D + `asus_ec_sensors` enrichment on allowlisted ROG boards | mainline `nct6775` for PWM; `asus_ec_sensors` for sensor enrichment |
-| | MSI (MAG Z690 TOMAHAWK, MPG Z690 EDGE) | NCT6687D (plain — chip ID 0xd440; **no `msi_alt1` needed**) | out-of-tree `nct6687d-dkms-git` (auto-detected register layout) |
+| | MSI (MAG Z690 TOMAHAWK, MPG Z690 EDGE) | NCT6687D (plain — **no `msi_alt1` needed**; selected via the driver's DMI table, not a distinct published chip ID) | out-of-tree `nct6687d-dkms-git` (auto-detected register layout) |
 | | Gigabyte Z690 AORUS (PRO, ELITE AX, MASTER, XTREME) | **IT8689E + IT87952E** (dual-chip) | out-of-tree `it87-dkms-git`; needs `mmio=on` |
 | | ASRock (Z690 Steel Legend, Z690 Taichi, **Z690 Extreme** — upstream lm-sensors config) | NCT6798D (Z690 Extreme reports NCT6796D-E as `nct6798-isa-02a0`) | mainline `nct6775` |
 | **LGA1700 700-series** (Z790 / B760 / H770) | ASUS (ROG STRIX Z790-E/-H/-I GAMING WIFI II — kernel `asus_ec_sensors` allowlist) | NCT6798D + `asus_ec_sensors` enrichment | mainline `nct6775` + sensor enrichment |
 | | MSI (MAG Z790 TOMAHAWK WIFI, MPG Z790 EDGE WIFI, MEG Z790 ACE) | NCT6687D (plain — same register layout as Z690) | out-of-tree `nct6687d-dkms-git`; no `msi_alt1` |
 | | Gigabyte Z790 AORUS (ELITE AX, MASTER, XTREME) | IT8689E + IT87952E (dual-chip — same as Z690 AORUS) | out-of-tree `it87-dkms-git`; needs `mmio=on` |
 | | ASRock (Z790 Steel Legend WIFI, Z790 Taichi) | NCT6798D | mainline `nct6775` |
-| **LGA1851 800-series** (Z890 / B860 / H810) | MSI (MAG/MEG/MPG Z890) | **NCT6687DR** (chip ID 0xd441; **requires `msi_alt1=1`**) | out-of-tree `nct6687d-dkms-git` v2.x (auto-allowlist) or manual `msi_alt1=1` |
+| **LGA1851 800-series** (Z890 / B860 / H810) | MSI (MAG/MEG/MPG Z890) | **NCT6687DR** (NCT6687D-Refresh; **requires `msi_alt1=1`**, selected via the driver's `msi_alt1_dmi_table`, not a distinct published chip ID) | out-of-tree `nct6687d-dkms-git` v2.x (auto-allowlist) or manual `msi_alt1=1` |
 | | ASUS (ROG STRIX Z890 — not yet on kernel `asus_ec_sensors` allowlist as of 2026-Q2) | NCT6798D / NCT6799D | mainline `nct6775` |
 | | Gigabyte Z890 AORUS | **IT8696E + IT87952E** (same as AMD X870E AORUS MASTER generation) | out-of-tree `it87-dkms-git`; same `mmio=on` remediation |
 | | ASRock Z890 (Steel Legend, Taichi) | NCT6798D / NCT6799D | mainline `nct6775` |
@@ -278,7 +292,9 @@ mainline `nct6775` driver.
 ### ppfeaturemask
 
 The `ppfeaturemask` parameter enables AMD GPU power management features.
-Bit 14 (`0x4000`) specifically enables overdrive/PMFW fan curve access.
+Bit 14 (`0x4000`) is `PP_OVERDRIVE_MASK` in the kernel header
+[`amd_shared.h`](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/include/amd_shared.h);
+it enables OverDrive, which is what exposes the PMFW fan-curve sysfs tree.
 
 To check current value:
 ```bash
@@ -311,8 +327,13 @@ known SIO I/O ranges.
 **Fix options:**
 1. **Preferred (driver-local, it87 only):** `modprobe it87 ignore_resource_conflict=1`
 2. **System-wide fallback:** Add `acpi_enforce_resources=lax` to kernel command line.
-3. **nct6775 (kernel >= 5.17):** The driver supports ACPI mutex coordination
-   natively, avoiding the need for kernel parameters on most boards.
+3. **nct6775 (kernel >= 5.16, ASUS boards):** Since Linux 5.16 the driver can
+   read the chip through an ASUS WMI access path (`access_asuswmi`) that
+   sidesteps the ACPI Super-I/O port reservation on supported ASUS boards,
+   avoiding the need for `acpi_enforce_resources=lax` there. (This is a WMI
+   sensor-read path, not a general "ACPI mutex" lock — the separately-proposed
+   ACPI-mutex patch was never merged upstream. See the
+   [nct6775 hwmon doc](https://docs.kernel.org/hwmon/nct6775.html).)
 
 ## force_id warning
 
@@ -356,19 +377,46 @@ Currently catalogued (severity in parentheses):
 
 | `id` | Affected kernels | Affected hardware | Severity | Symptom |
 |---|---|---|---|---|
-| `rdna_hang_kernel_6_19_x` | 6.19.x | RDNA3 (RX 7000) and RDNA4 (RX 9000) | Critical | Hard hang under load. Phoronix-confirmed (2025-12-26). AMDGPU has reverted some 6.19 patches; treat 6.19.x as unsuitable for these GPUs until a stable point release. Pre-RDNA3 GPUs are unaffected. |
-| `smu_mismatch_navi48_r9700_kernel_7_0` | 7.0.x | R9700 only (PCI 0x7551) | Critical | Silent `fan_curve` write failure due to SMU/PMFW table mismatch. ROCm Issue #6101. Scoped narrowly to 0x7551 — RX 9070 XT (0x7550) on the same kernel is **not** affected. |
+| `rdna_hang_kernel_6_18_6_19` | 6.18.x **and** 6.19.x | RDNA3 (RX 7000) and RDNA4 (RX 9000) | Critical | Hard hang under load ([Phoronix, EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)). Not bisected; **no** AMD revert or fix confirmed. [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101) reports kernel panics on both 6.18.20 and 6.19.10. Pre-RDNA3 GPUs are unaffected. |
+| `smu_mismatch_navi48_r9700` | all current kernels (6.14 → 7.0 tested) | R9700 only (PCI `0x7551`) | Critical | No working PMFW fan-control path: an SMU interface-version mismatch (firmware iface v50 vs driver v46, [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)) leaves `pwm1` read-only and commanded fan changes ineffective; the GPU can reach 109 °C with no dmesg error. Scoped to `0x7551` — the RX 9070 XT (`0x7550`) is **not** affected. |
 
 **Mitigations:**
 
-- For `rdna_hang_kernel_6_19_x`: pin to a 6.18.x or earlier longterm
-  kernel until upstream lands a known-good 6.19 point release. On
-  CachyOS / Arch / Bazzite, this means staying on `linux-lts` or a
-  rollback channel until the regression is resolved upstream.
-- For `smu_mismatch_navi48_r9700_kernel_7_0`: avoid 7.0.x on R9700.
-  RX 9070 XT users on the same kernel are not affected.
+- For `rdna_hang_kernel_6_18_6_19`: pin to a **6.15–6.17** longterm kernel.
+  **Do NOT roll back to 6.18 — it is also affected.** No known-good fix has
+  landed upstream as of writing, so avoid both 6.18.x and 6.19.x on RDNA3/4
+  until a stable point release is confirmed.
+- For `smu_mismatch_navi48_r9700`: there is no working fan-control path on the
+  R9700 until the amdgpu driver ships the matching SMU interface (v50). Use
+  automatic mode (`POST /gpu/{bdf}/fan/reset`). The mismatch is device-scoped,
+  not kernel-7.0-specific — RX 9070 XT (`0x7550`) users are unaffected on any
+  kernel.
 
 The catalogue is data-only — adding a new entry takes a 30-line PR
 against `kernel_warnings.rs`. If your kernel/hardware combination is
 behaving badly and the daemon is silent about it, file an issue with
 your `uname -a`, GPU PCI ID, and a short failure description.
+
+## Sources
+
+Primary sources for the externally-verifiable claims in this document
+(re-verified during the DEC-114 audit; the AMD/Intel board-mapping tables
+are additionally cross-referenced against the upstream lm-sensors `configs/`
+directory and the driver DMI tables cited inline above):
+
+**Kernel drivers & docs**
+- [nct6775 `nct6775-platform.c`](https://github.com/torvalds/linux/blob/master/drivers/hwmon/nct6775-platform.c) — `SIO_NCT6797_ID 0xd450`, `SIO_NCT6798_ID 0xd428`; [nct6775 hwmon doc](https://docs.kernel.org/hwmon/nct6775.html)
+- [it87 hwmon doc](https://docs.kernel.org/hwmon/it87.html)
+- [asus_wmi_sensors hwmon doc](https://docs.kernel.org/hwmon/asus_wmi_sensors.html) — buggy-BIOS fan-stop warning + supported-board list
+- [asus_ec_sensors hwmon doc](https://docs.kernel.org/hwmon/asus_ec_sensors.html) — EC allowlist
+- [amdgpu `PP_OVERDRIVE_MASK` (`amd_shared.h`)](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/include/amd_shared.h) — bit 14 = `0x4000`
+
+**Out-of-tree drivers**
+- [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) — MSI NCT6686D / NCT6687D, `msi_alt1` & `msi_fan_brute_force` params; [PR #164](https://github.com/Fred78290/nct6687d/pull/164) removed the `0xd450` collision
+- [frankcrawford/it87](https://github.com/frankcrawford/it87) — IT8625E+ support, `force_id` / `ignore_resource_conflict` / `mmio` params; issues [#70](https://github.com/frankcrawford/it87/issues/70), [#81](https://github.com/frankcrawford/it87/issues/81), [#96](https://github.com/frankcrawford/it87/issues/96)
+
+**GPU device IDs & kernel regressions**
+- AMD `amdgpu.ids` (libdrm) and `pci.ids` (hwdata) — Navi 48 `0x7550` (RX 9070 XT rev `0xC0` / RX 9070 rev `0xC3`) and `0x7551` (Radeon AI PRO R9700)
+- [Phoronix — RDNA3/RDNA4 hard hang on Linux 6.18/6.19 (EOY 2025)](https://www.phoronix.com/review/old-amdgpu-eoy2025)
+- [ROCm Issue #6101](https://github.com/ROCm/ROCm/issues/6101) — R9700 SMU interface-version mismatch; 6.18.20 / 6.19.10 panics
+- [Bazzite (ublue-os/bazzite) #4498](https://github.com/ublue-os/bazzite/issues/4498) — nct6687 / nct6775 `0xd450` collision brick report

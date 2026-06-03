@@ -633,12 +633,15 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "and corrupt fan registers"
         ),
         details=[
-            "The out-of-tree nct6687 driver declares chip ID 0xd450 — the same "
-            "ID assigned to the legitimate NCT6797D found on MSI AM4 boards "
-            "(B450M MORTAR, X470 GAMING PRO CARBON, MAG B450 TOMAHAWK MAX, "
-            "and similar). When both nct6687 and nct6775 are loaded, whichever "
-            "driver binds first claims the chip and the other may write into "
-            "the wrong registers.",
+            "Older out-of-tree nct6687 builds declare chip ID 0xd450 — the "
+            "same ID assigned to the legitimate NCT6797D found on MSI AM4 "
+            "boards (B450M MORTAR, X470 GAMING PRO CARBON, MAG B450 TOMAHAWK "
+            "MAX, and similar). When both nct6687 and nct6775 are loaded, "
+            "whichever driver binds first claims the chip and the other may "
+            "write into the wrong registers. The 0xd450 claim was removed "
+            "upstream in Fred78290/nct6687d PR #164 (2026), so updating the "
+            "driver removes this mechanism — but already-loaded modules and "
+            "not-yet-updated packages remain at risk.",
             "Public incident: a user lost their CPU fan header on an MSI MAG "
             "X570 TOMAHAWK WIFI because nct6687 wrote into NCT6797D's "
             "non-volatile state. Same chip family is used on AM4 400-series "
@@ -649,8 +652,10 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "(cat /sys/class/hwmon/hwmon*/name on a known-good kernel) and "
             "blacklist the wrong driver. For NCT6797D, blacklist nct6687: "
             "echo 'blacklist nct6687' | sudo tee /etc/modprobe.d/blacklist-nct6687.conf",
-            "Bazzite (and other distros that pre-load nct6687) ship the "
-            "blacklist by default for this reason.",
+            "The Bazzite report (ublue-os/bazzite #4498) documents a bricked "
+            "CPU_FAN header from this exact collision and requests a default "
+            "nct6687 blacklist; as of writing that blacklist is not yet "
+            "shipped, so do not assume your distro handles this for you.",
         ],
     ),
     VendorQuirk(
@@ -1225,43 +1230,46 @@ class AmdGpuGuidance:
 
 AMD_GPU_GUIDANCE_DB: list[AmdGpuGuidance] = [
     AmdGpuGuidance(
-        warning_id="rdna_hang_kernel_6_19_x",
+        warning_id="rdna_hang_kernel_6_18_6_19",
         summary=(
-            "Linux 6.19.x on RDNA3/RDNA4 hard-hangs the system. "
-            "Roll back to 6.18 LTS or move forward to 7.0+."
+            "Linux 6.18.x and 6.19.x on RDNA3/RDNA4 hard-hang the system. "
+            "Pin to a 6.15-6.17 longterm kernel — do NOT roll back to 6.18."
         ),
         details=[
-            "Phoronix and Valve confirmed an unbisected amdgpu regression on "
-            "kernel 6.19 that hard-hangs RDNA3 (RX 7000) and RDNA4 (RX 9070) "
-            "GPUs under load (late 2025).",
-            "CachyOS users explicitly fall back to 6.18 LTS; 7.0 ships "
-            "additional fixes for older Radeon hardware and is past the "
-            "regression window.",
-            "Recovery from a hang typically requires a hard reboot — "
-            "running fan control on a kernel that can hang is not safe.",
+            "Phoronix (EOY 2025) reported an unbisected amdgpu regression that "
+            "hard-hangs RDNA3 (RX 7000) and RDNA4 (RX 9000) GPUs under load on "
+            "both kernel 6.18.x and 6.19.x — not 6.19 alone.",
+            "Roll back to a 6.15-6.17 longterm kernel. 6.18 is NOT a safe "
+            "target: ROCm #6101 reports kernel panics on both 6.18.20 and "
+            "6.19.10, and no upstream fix or revert is confirmed.",
+            "Recovery from a hang typically requires a hard reboot — running "
+            "fan control on a kernel that can hang is not safe.",
         ],
         references=[
             "https://www.phoronix.com/review/old-amdgpu-eoy2025",
             "https://community.frame.work/t/attn-critical-bugs-in-amdgpu-driver-included-with-kernel-6-18-x-6-19-x/79221",
+            "https://github.com/ROCm/ROCm/issues/6101",
         ],
     ),
     AmdGpuGuidance(
-        warning_id="smu_mismatch_navi48_r9700_kernel_7_0",
+        warning_id="smu_mismatch_navi48_r9700",
         summary=(
-            "R9700 (Navi 48 0x7551) on kernel 7.0.x has a documented SMU "
-            "interface mismatch — PMFW fan_curve writes may silently fail."
+            "R9700 (Navi 48 0x7551) has no working PMFW fan-control path on "
+            "current kernels — an SMU interface-version mismatch (ROCm #6101)."
         ),
         details=[
-            "ROCm Issue #6101 documents R9700 boards reporting SMU "
-            "interface 0x32 (50) while the kernel driver supports 0x2e (46). "
-            "The fan_curve sysfs file accepts writes, but the SMU silently "
-            "ignores them — the fan stays at 0 RPM, GPU thermals reach "
-            "109 °C, and dmesg has no 'fan failed' line.",
-            "If your fan does not respond to commanded speed changes, "
-            "fall back to automatic mode (POST /gpu/{bdf}/fan/reset) and "
-            "wait for the upstream driver bump that ships SMU iface 0x32.",
-            "RX 9070 XT (PCI 0x7550) and RX 9070 (0x7551 with revision "
-            "0xC3) are not affected by this specific mismatch.",
+            "ROCm Issue #6101 documents R9700 boards reporting SMU interface "
+            "0x32 (50) while the amdgpu driver supports 0x2e (46). With no "
+            "matching interface there is no usable write path: pwm1 is "
+            "read-only and commanded fan changes have no effect, while the GPU "
+            "can reach 109 °C under load with no dmesg 'fan failed' line.",
+            "The mismatch is device-scoped (PCI 0x7551), not kernel-7.0-scoped "
+            "— it is reported across every tested kernel (6.14, 6.17, 7.0). Use "
+            "automatic mode (POST /gpu/{bdf}/fan/reset) until the amdgpu driver "
+            "ships SMU iface 0x32.",
+            "The RX 9070 XT (PCI 0x7550, revision 0xC0) and RX 9070 (0x7550, "
+            "revision 0xC3) are not affected — they are device 0x7550, distinct "
+            "from the R9700's 0x7551.",
         ],
         references=[
             "https://github.com/ROCm/ROCm/issues/6101",

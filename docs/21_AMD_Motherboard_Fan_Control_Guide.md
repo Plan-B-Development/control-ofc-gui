@@ -131,16 +131,21 @@ the per-vendor guidance below. All four are addressed by the daemon's
 
 ### 1. NCT6797D vs the out-of-tree `nct6687` driver
 
-The out-of-tree `nct6687` driver (`nct6687d-dkms-git` on the AUR) declares
-chip ID `0xd450`. This is the **legitimate chip ID assigned to NCT6797D**,
-a chip that AM4 400-series MSI boards (B450M MORTAR, X470 GAMING PRO
-CARBON, MAG B450 TOMAHAWK MAX) actually ship with. When both `nct6687`
-and `nct6775` are loaded at the same time, whichever driver binds first
-claims the chip — and the other may scribble into the wrong registers,
-which in at least one upstream report **bricked the CPU_FAN header on an
-MSI MAG X570 TOMAHAWK WIFI** (ublue-os/bazzite #4498). The same chip
-family is used on AM4 400-series MSI boards, so the trap is not
-500-series-only.
+Older builds of the out-of-tree `nct6687` driver (`nct6687d-dkms-git` on
+the AUR) declare chip ID `0xd450`. This is the **legitimate chip ID
+assigned to NCT6797D**, a chip that AM4 400-series MSI boards (B450M
+MORTAR, X470 GAMING PRO CARBON, MAG B450 TOMAHAWK MAX) actually ship with.
+When both `nct6687` and `nct6775` are loaded at the same time, whichever
+driver binds first claims the chip — and the other may scribble into the
+wrong registers, which in at least one upstream report **bricked the
+CPU_FAN header on an MSI MAG X570 TOMAHAWK WIFI**
+([ublue-os/bazzite #4498](https://github.com/ublue-os/bazzite/issues/4498)).
+The same chip family is used on AM4 400-series MSI boards, so the trap is
+not 500-series-only. **The `0xd450` claim was removed upstream in
+[Fred78290/nct6687d PR #164](https://github.com/Fred78290/nct6687d/pull/164)
+(2026)** — a current `nct6687d` build no longer collides — but already-loaded
+modules and not-yet-updated AUR/distro packages remain at risk, so the
+remediation below still applies.
 
 **Remediation:**
 
@@ -917,8 +922,8 @@ If you have an AMD discrete GPU paired with one of the boards in this
 guide, also check the daemon's kernel-warning catalogue. Two regressions
 are currently flagged:
 
-- **`rdna_hang_kernel_6_19_x` (Critical):** Linux 6.19.x hard-hangs RDNA3/RDNA4 GPUs (RX 7000 / 9000 series) under load. Pin to 6.18.x LTS until upstream lands a stable point release.
-- **`smu_mismatch_navi48_r9700_kernel_7_0` (Critical):** Linux 7.0.x silently fails `fan_curve` writes on the AMD R9700 (PCI 0x7551) only. RX 9070 XT (0x7550) on the same kernel is **not** affected.
+- **`rdna_hang_kernel_6_18_6_19` (Critical):** Linux **6.18.x and 6.19.x** hard-hang RDNA3/RDNA4 GPUs (RX 7000 / 9000 series) under load. Pin to a **6.15–6.17** longterm kernel — **do not roll back to 6.18, which is also affected** ([Phoronix EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025); [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101) reports panics on 6.18.20 and 6.19.10).
+- **`smu_mismatch_navi48_r9700` (Critical):** the AMD R9700 (PCI `0x7551`) has no working `fan_curve` path on current kernels — an SMU interface-version mismatch ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)) leaves `pwm1` read-only and commanded fan changes ineffective. Device-scoped, not 7.0-specific; the RX 9070 XT (`0x7550`) is **not** affected.
 
 The GUI raises a one-time popup when these match your hardware; the
 catalogue is curated in `hwmon/kernel_warnings.rs` (daemon, DEC-098) and

@@ -248,41 +248,57 @@ presents a unified view of hardware compatibility and driver status.
    documentation links from the chip-family knowledge base
    (`hwmon_guidance.py`). Shown per unique chip prefix.
 
-### Layout: progressive disclosure (DEC-112)
-The same data above is presented through **collapsible sections** so the pane
-does not become a wall of text on a problem board (the exact case where it is
-read). The grouping, top-to-bottom inside the Hardware Readiness card:
+### Layout: progressive disclosure (DEC-112, card-level collapse DEC-115)
+The card is itself a single collapsible section (DEC-115): a top-level
+`CollapsibleSection` titled "Hardware Readiness", **expanded by default**. Its
+**persistent area** stays visible even when the card is folded; its
+**collapsible body** holds the detail and folds away so the live fan table can
+rise. The body's readiness data is *further* grouped into nested collapsible
+sub-sections so a problem board does not become a wall of text (the exact case
+where it is read). Top-to-bottom:
 
-- **Always visible (never collapsed):** the readiness summary line, board
-  identity, and the **critical-alert stack** — module collisions, module
-  conflicts, dual-chip warning, vendor quirks, ACPI conflicts, and the
-  BIOS-interference headline. Each alert is individually visibility-gated, so
-  the stack collapses to nothing on a healthy system. Per NN/g accordion
-  guidance, essential warnings are kept *outside* collapsed panels.
-- **Collapsible sections** (`CollapsibleSection`, all collapsed by default):
-  *Detected hardware* (chip + kernel-module tables), *BIOS interference detail*
-  (per-header revert rows + footnote), *Thermal safety & GPU*,
-  *Guidance & documentation*, and *PWM control test* (verify combo, Test PWM
-  Control, Verify All Writable, progress + result).
-- **Always visible:** the *Refresh Hardware Diagnostics* button, and the live
-  *Fan Status* table in the bottom splitter pane.
+- **Persistent (visible even when the card is collapsed):** the readiness
+  **verdict banner** (DEC-113) + "Open Full Report" button, and the
+  **critical-alert stack** — module collisions, module conflicts, dual-chip
+  warning, vendor quirks, ACPI conflicts, and the BIOS-interference headline.
+  Each alert is individually visibility-gated, so the stack collapses to
+  nothing on a healthy system. Per NN/g accordion guidance, essential warnings
+  are kept *outside* collapsed panels — here, in the persistent area.
+- **Collapsible body — summary:** the readiness summary line and board
+  identity.
+- **Collapsible body — detail sub-sections** (`CollapsibleSection`, all
+  collapsed by default): *Detected hardware* (chip + kernel-module tables),
+  *BIOS interference detail* (per-header revert rows + footnote),
+  *Thermal safety & GPU*, *Guidance & documentation*, and *PWM control test*
+  (verify combo, Test PWM Control, Verify All Writable, progress + result).
+- **Always visible (outside the card):** the *Refresh Hardware Diagnostics*
+  button below the card, and the live *Fan Status* table in the bottom
+  splitter pane.
 
-Default expand state is static (not persisted across launches). The
-*BIOS interference detail* section **auto-expands** when any header reports a
-non-zero revert count, so a real problem is never hidden; it never
-auto-collapses, so a manual toggle on a healthy system is respected. The
-verify controls and their result labels share one section, so reaching the
-buttons necessarily expands the section that shows the outcome.
+Default expand state is static (not persisted across launches): the card opens
+expanded. `_populate_hw_diagnostics` **force-expands the card** whenever
+`readiness_verdict` reports a problem (any non-`SuccessChip` verdict), and the
+card never auto-collapses — so a user who folds a healthy card is respected,
+but a problem board always shows its detail and "To fix" guidance. The
+*BIOS interference detail* sub-section likewise **auto-expands** on a non-zero
+revert count. The verify controls and their result labels share one
+sub-section, so reaching the buttons necessarily expands the section that
+shows the outcome. Because the verdict + alert stack are persistent and the
+card force-expands on a problem, **warnings are never hidden behind a
+collapse**.
 
 `CollapsibleSection` (`ui/widgets/collapsible_section.py`) is a first-party
-widget: a flat `QPushButton` header (chevron rendered in the button text so it
-inherits the themed `.CollapsibleSectionHeader` colour, and so the text
-left-aligns — `QToolButton` ignores stylesheet `text-align`) toggling a
-content container. Multiple sections may be open at once (unlike `QToolBox`).
-The toggle is instant (no animation) for deterministic tests. Because Qt's
-`QWidget.isHidden()` reflects a widget's *own* explicit show/hide flag rather
-than an ancestor's collapsed state, the visibility-gated labels keep working
-unchanged inside the sections.
+widget (DEC-112 D1): a flat `QPushButton` header (chevron rendered in the
+button text so it inherits the themed `.CollapsibleSectionHeader` colour, and
+so the text left-aligns — `QToolButton` ignores stylesheet `text-align`)
+toggling a content container. Multiple sections may be open at once (unlike
+`QToolBox`). The toggle is instant (no animation) for deterministic tests. A
+section may also carry a **persistent area** (`add_persistent_widget`,
+DEC-115) — widgets between the header and the content that stay visible
+regardless of collapse state; the Hardware Readiness card uses it for the
+verdict + alert stack. Because Qt's `QWidget.isHidden()` reflects a widget's
+*own* show/hide flag rather than an ancestor's collapsed state, the
+visibility-gated labels keep working unchanged inside the sections.
 
 ### Readiness verdict, auto-fetch, "To fix", and pop-out report (DEC-113)
 - **Verdict banner** — a prominent, always-visible one-line status at the top

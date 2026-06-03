@@ -150,8 +150,8 @@ The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel
 
 Currently catalogued:
 
-- **`rdna_hang_kernel_6_19_x` (Critical):** Linux 6.19.x on RDNA3/RDNA4 GPUs (RX 7000/9000 series) hard-hangs under load. Phoronix-confirmed (2025-12-26). Pin to 6.18.x LTS or wait for a stable 6.19 point release.
-- **`smu_mismatch_navi48_r9700_kernel_7_0` (Critical):** Linux 7.0.x on the AMD R9700 (PCI 0x7551) silently fails `fan_curve` writes due to an SMU/PMFW table mismatch. ROCm Issue #6101. RX 9070 XT (0x7550) on the same kernel is **not** affected.
+- **`rdna_hang_kernel_6_18_6_19` (Critical):** Linux **6.18.x and 6.19.x** on RDNA3/RDNA4 GPUs (RX 7000/9000 series) hard-hang under load ([Phoronix EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025); [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101) reports panics on 6.18.20 and 6.19.10). Pin to a **6.15–6.17** longterm kernel — **do not roll back to 6.18, which is also affected.**
+- **`smu_mismatch_navi48_r9700` (Critical):** the AMD R9700 (PCI `0x7551`) has no working `fan_curve` path on current kernels — an SMU interface-version mismatch (firmware v50 vs driver v46, [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)) leaves `pwm1` read-only and commanded fan changes ineffective. Device-scoped, not 7.0-specific; the RX 9070 XT (`0x7550`) is **not** affected.
 
 If you acknowledge a popup it is remembered in the `acknowledged_kernel_warnings` field of your `app_settings.json` and won't re-fire on reconnect or restart. To force the popup to re-appear (e.g. after a kernel update), edit `app_settings.json` and remove the relevant entry, then restart the GUI.
 
