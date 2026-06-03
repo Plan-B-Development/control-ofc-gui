@@ -402,18 +402,58 @@ class TestOverviewHwmonRuntimeReality:
 # ─── P2.1 — Sensor classification ─────────────────────────────────────
 
 
+def _col(page, header_text: str) -> int:
+    """Resolve a Sensors-table column index by header text.
+
+    DEC-117 expanded the table from 7→14 columns and made the order
+    (Label · Sensor ID · Source class · Kind · Source · Chip · Driver
+    type · Value · Trend · Session min/max · Age · Freshness · Confidence
+    · Details). Looking columns up by name keeps these tests stable
+    against future re-ordering and removes the hard-coded indexes that
+    were the audit's red flag.
+    """
+    table = page._sensor_table
+    for i in range(table.columnCount()):
+        item = table.horizontalHeaderItem(i)
+        if item is not None and item.text() == header_text:
+            return i
+    raise AssertionError(f"column {header_text!r} not present in Sensors table")
+
+
 class TestSensorsTableStructure:
-    def test_sensors_table_has_7_columns(self, qtbot):
+    def test_sensors_table_has_dec117_columns(self, qtbot):
+        """DEC-117: the Sensors table grew from 7 → 14 columns (13 data
+        + 1 Details-button column). Locks the columnCount so a future
+        accidental removal of a column blocks before regressing the UX."""
         page, _ = _make_page(qtbot)
-        assert page._sensor_table.columnCount() == 7
+        assert page._sensor_table.columnCount() == 14
 
-    def test_chip_column_label(self, qtbot):
+    def test_required_columns_present(self, qtbot):
+        """Each named column from DEC-117 §A1 is present in the header row.
+        Locks the *set* of headers — order is asserted separately so a
+        deliberate re-ordering doesn't fail the wrong test."""
         page, _ = _make_page(qtbot)
-        assert page._sensor_table.horizontalHeaderItem(2).text() == "Chip"
-
-    def test_confidence_column_label(self, qtbot):
-        page, _ = _make_page(qtbot)
-        assert page._sensor_table.horizontalHeaderItem(6).text() == "Confidence"
+        headers = [
+            page._sensor_table.horizontalHeaderItem(i).text()
+            for i in range(page._sensor_table.columnCount())
+        ]
+        expected = {
+            "Label",
+            "Sensor ID",
+            "Source class",
+            "Kind",
+            "Source",
+            "Chip",
+            "Driver type",
+            "Value (°C)",
+            "Trend",
+            "Session min/max",
+            "Age (ms)",
+            "Freshness",
+            "Confidence",
+            "Details",
+        }
+        assert expected.issubset(set(headers))
 
 
 class TestSensorClassification:
@@ -431,7 +471,7 @@ class TestSensorClassification:
             ]
         )
         # Confidence cell visible on-screen (not only in tooltip)
-        assert page._sensor_table.item(0, 6).text() == "High"
+        assert page._sensor_table.item(0, _col(page, "Confidence")).text() == "High"
 
     def test_chip_column_shows_driver_name(self, qtbot):
         page, _ = _make_page(qtbot)
@@ -446,7 +486,7 @@ class TestSensorClassification:
                 )
             ]
         )
-        assert page._sensor_table.item(0, 2).text() == "k10temp"
+        assert page._sensor_table.item(0, _col(page, "Chip")).text() == "k10temp"
 
     def test_k10temp_tctl_tooltip_exposes_not_direct_note(self, qtbot):
         page, _ = _make_page(qtbot)
@@ -461,7 +501,7 @@ class TestSensorClassification:
                 )
             ]
         )
-        tip = page._sensor_table.item(0, 0).toolTip()
+        tip = page._sensor_table.item(0, _col(page, "Label")).toolTip()
         assert "not a direct physical" in tip.lower()
 
     def test_asus_nct6776_cputin_low_confidence(self, qtbot):
@@ -484,8 +524,8 @@ class TestSensorClassification:
                 )
             ]
         )
-        assert page._sensor_table.item(0, 6).text() == "Low"
-        tip = page._sensor_table.item(0, 0).toolTip()
+        assert page._sensor_table.item(0, _col(page, "Confidence")).text() == "Low"
+        tip = page._sensor_table.item(0, _col(page, "Label")).toolTip()
         assert "ASUS" in tip
 
     def test_gigabyte_wmi_low_confidence(self, qtbot):
@@ -501,7 +541,7 @@ class TestSensorClassification:
                 )
             ]
         )
-        assert page._sensor_table.item(0, 6).text() == "Low"
+        assert page._sensor_table.item(0, _col(page, "Confidence")).text() == "Low"
 
     def test_unknown_driver_low_confidence(self, qtbot):
         page, _ = _make_page(qtbot)
@@ -516,7 +556,7 @@ class TestSensorClassification:
                 )
             ]
         )
-        assert page._sensor_table.item(0, 6).text() == "Low"
+        assert page._sensor_table.item(0, _col(page, "Confidence")).text() == "Low"
 
     def test_board_vendor_flows_from_diagnostics_into_classification(self, qtbot):
         """Without diagnostics, nct6776+CPUTIN classifies as medium; once
@@ -532,13 +572,13 @@ class TestSensorClassification:
             chip_name="nct6776",
         )
         page._on_sensors([sensor])
-        before = page._sensor_table.item(0, 6).text()
+        before = page._sensor_table.item(0, _col(page, "Confidence")).text()
 
         page._diag.last_hw_diagnostics = _diag_with_writable(
             writable=3, total=3, board_vendor="ASUSTeK COMPUTER INC."
         )
         page._on_sensors([sensor])
-        after = page._sensor_table.item(0, 6).text()
+        after = page._sensor_table.item(0, _col(page, "Confidence")).text()
 
         assert before == "Medium"
         assert after == "Low"
@@ -558,4 +598,4 @@ class TestSensorClassification:
                 )
             ]
         )
-        assert page._sensor_table.item(0, 2).text() == "—"
+        assert page._sensor_table.item(0, _col(page, "Chip")).text() == "—"

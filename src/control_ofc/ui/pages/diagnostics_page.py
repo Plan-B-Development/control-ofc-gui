@@ -6,7 +6,7 @@ import contextlib
 import logging
 from html import escape
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from PySide6.QtGui import QColor
 
@@ -14,7 +14,8 @@ if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
     from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.profile_service import ProfileService
-from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QPoint, Qt, QThread, Signal, Slot
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -43,9 +45,11 @@ from control_ofc.api.models import (
     HwmonHeader,
     HwmonVerifyResult,
     LeaseState,
+    SensorReading,
 )
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService, format_uptime
+from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.fan_presence import (
     PRESENCE_BADGE,
@@ -61,7 +65,11 @@ from control_ofc.ui.hwmon_guidance import (
     lookup_vendor_quirks,
     verification_guidance,
 )
-from control_ofc.ui.sensor_knowledge import classify_sensor, format_sensor_tooltip
+from control_ofc.ui.sensor_knowledge import (
+    classify_sensor,
+    format_sensor_tooltip,
+    temp_type_label,
+)
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.event_log_view import EventLogView
@@ -76,6 +84,7 @@ from control_ofc.ui.widgets.readiness_report import (
     readiness_verdict,
     thermal_line,
 )
+from control_ofc.ui.widgets.sensor_detail_dialog import SensorDetailDialog
 
 _TRANSPARENT = "background: transparent;"
 
@@ -110,6 +119,109 @@ _CONFIDENCE_DISPLAY: dict[str, str] = {
     "medium": "Medium",
     "low": "Low",
 }
+
+# Display strings for the Source class column (DEC-117). Mirrors
+# ``SensorClassification.source_class`` values produced by
+# ``sensor_knowledge.classify_sensor``; unknown values pass through verbatim
+# so a forward-compatible new class name doesn't render as blank.
+_SOURCE_CLASS_DISPLAY: dict[str, str] = {
+    "cpu_die": "CPU die",
+    "cpu_control": "CPU control",
+    "cpu_ccd": "CPU CCD",
+    "cpu_peci": "CPU (PECI)",
+    "cpu_board_side": "CPU (board-side)",
+    "cpu_internal": "CPU internal",
+    "cpu_package": "CPU package",
+    "amd_tsi": "AMD TSI",
+    "gpu_edge": "GPU edge",
+    "gpu_junction": "GPU junction",
+    "gpu_memory": "GPU memory",
+    "gpu_other": "GPU",
+    "vrm": "VRM",
+    "chipset": "Chipset",
+    "external_probe": "External probe",
+    "coolant_in": "Coolant in",
+    "coolant_out": "Coolant out",
+    "coolant": "Coolant",
+    "board_ambient": "Board ambient",
+    "board_system": "Board (SYSTIN)",
+    "board_auxiliary": "Board (aux)",
+    "board_thermistor": "Board thermistor",
+    "thermal_diode": "Thermal diode",
+    "memory_dimm": "DIMM",
+    "smbus_device": "SMBus",
+    "virtual": "Virtual",
+    "chip_local": "Chip local",
+    "disk_composite": "Disk",
+    "super_io_channel": "Super-I/O ch.",
+    "vendor_wmi_unlabeled": "Vendor WMI",
+    "vendor_labeled": "Vendor",
+    "bogus": "Bogus",
+    "unknown": "Unknown",
+}
+
+
+class _SensorColumn(NamedTuple):
+    """Definition of one column in the Diagnostics > Sensors table (DEC-117).
+
+    Bundles header text + header tooltip so the two never drift; tests rely
+    on looking up column indices by header text rather than hard-coding ints.
+    """
+
+    header: str
+    tooltip: str
+
+
+# DEC-117: the 14-column table for Diagnostics > Sensors. The "Details"
+# column at the end hosts a per-row button widget.
+_SENSOR_COLUMNS: list[_SensorColumn] = [
+    _SensorColumn("Label", "Sensor label reported by the kernel driver"),
+    _SensorColumn(
+        "Sensor ID",
+        "Stable identifier (hwmon:<chip>:<dev_id>:<label>) — used by profiles",
+    ),
+    _SensorColumn(
+        "Source class",
+        "Source classification from the sensor knowledge base (cpu_die, vrm, board_thermistor, …)",
+    ),
+    _SensorColumn(
+        "Kind",
+        "Coarse daemon classification (CpuTemp / MbTemp / GpuTemp / DiskTemp)",
+    ),
+    _SensorColumn(
+        "Source",
+        "Daemon source subsystem (hwmon, amd_gpu)",
+    ),
+    _SensorColumn(
+        "Chip",
+        "Kernel driver / chip providing the reading (k10temp, nct6798, etc.)",
+    ),
+    _SensorColumn(
+        "Driver type",
+        "Sysfs tempN_type value (diode, thermistor, AMD TSI, Intel PECI)",
+    ),
+    _SensorColumn("Value (°C)", "Current temperature in °C"),
+    _SensorColumn(
+        "Trend",
+        "Smoothed temperature change rate (suppressed below ±0.1 °C/s)",
+    ),
+    _SensorColumn(
+        "Session min/max",
+        "Lowest and highest values observed since the daemon started",
+    ),
+    _SensorColumn("Age (ms)", "Time since the daemon last polled this sensor"),
+    _SensorColumn(
+        "Freshness",
+        "Data freshness: fresh (<2 s), stale (2-10 s), invalid (>10 s)",
+    ),
+    _SensorColumn(
+        "Confidence",
+        "Classification confidence from the sensor knowledge base. "
+        "Hover a cell for source class, description, and driver notes.",
+    ),
+    _SensorColumn("Details", "Open the per-sensor detail dialog"),
+]
+_SENSOR_COL_INDEX: dict[str, int] = {c.header: i for i, c in enumerate(_SENSOR_COLUMNS)}
 
 
 def _fan_control_method(fan: FanReading, state: AppState | None) -> str:
@@ -429,14 +541,29 @@ class DiagnosticsPage(QWidget):
         settings_service: AppSettingsService | None = None,
         profile_service: ProfileService | None = None,
         client: DaemonClient | None = None,
+        series_selection: SeriesSelectionModel | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._state = state
         self._client = client
+        self._settings_service = settings_service
+        # DEC-117: Diagnostics > Sensors "Mirror hidden to dashboard" button
+        # pushes the local diagnostics_hidden_sensor_ids list into the shared
+        # SeriesSelectionModel as a one-shot. None when the page is built
+        # outside main_window (e.g. unit tests) — the button is then hidden.
+        self._series_selection = series_selection
         self._diag = diagnostics_service or DiagnosticsService(
             state, settings_service=settings_service, profile_service=profile_service
         )
+
+        # DEC-117: cached sensor list + UI state for the Sensors tab.
+        # ``_all_sensors`` is the last payload from ``_on_sensors``; the
+        # table is fully re-rendered from this on every refresh so visibility
+        # toggles never require a fresh daemon poll.
+        self._all_sensors: list[SensorReading] = []
+        self._hidden_group_expanded = False
+        self._sensor_detail_dialog: SensorDetailDialog | None = None
 
         # Lazy-created verify worker + thread (see _ensure_verify_worker).
         self._verify_thread: QThread | None = None
@@ -596,41 +723,67 @@ class DiagnosticsPage(QWidget):
         return scroll
 
     def _build_sensors_tab(self) -> QWidget:
+        """Build the expanded Diagnostics > Sensors tab (DEC-117).
+
+        Layout:
+
+        ``Summary line (counts) \u2502 [Mirror hidden to dashboard]``
+        ``------------------------------------------------------------``
+        ``13-column data table + 14th Details-button column``
+        ``  (visible sensors, then a single toggle row, then optionally``
+        ``  hidden sensors when the group is expanded)``
+
+        The Details column hosts a per-row :class:`QPushButton`; double-click
+        and right-click context menu are also wired so power users have a
+        keyboard-free path.
+        """
         container = QWidget()
         layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
 
-        self._sensor_table = QTableWidget(0, 7)
-        self._sensor_table.setObjectName("Diagnostics_Table_sensors")
-        self._sensor_table.setHorizontalHeaderLabels(
-            [
-                "Label",
-                "Kind",
-                "Chip",
-                "Value (\u00b0C)",
-                "Age (ms)",
-                "Freshness",
-                "Confidence",
-            ]
+        # Header row: counts summary + "Mirror hidden to dashboard" button.
+        header_row = QHBoxLayout()
+        self._sensor_summary_label = _transparent_label(
+            "Sensors: \u2014", "Diagnostics_Label_sensorSummary"
         )
+        self._sensor_summary_label.setWordWrap(True)
+        header_row.addWidget(self._sensor_summary_label, 1)
+
+        self._mirror_hidden_btn = QPushButton("Mirror hidden to dashboard")
+        self._mirror_hidden_btn.setObjectName("Diagnostics_Btn_mirrorHidden")
+        self._mirror_hidden_btn.setToolTip(
+            "Push the current Diagnostics hide-list into the dashboard chart's "
+            "visibility model (one-shot \u2014 future changes here stay local)."
+        )
+        self._mirror_hidden_btn.clicked.connect(self._mirror_hidden_to_dashboard)
+        # Hidden when no SeriesSelectionModel was provided (e.g. unit tests).
+        self._mirror_hidden_btn.setVisible(self._series_selection is not None)
+        header_row.addWidget(self._mirror_hidden_btn)
+        layout.addLayout(header_row)
+
+        # 14-column data table (13 data columns + Details button column).
+        self._sensor_table = QTableWidget(0, len(_SENSOR_COLUMNS))
+        self._sensor_table.setObjectName("Diagnostics_Table_sensors")
+        self._sensor_table.setHorizontalHeaderLabels([c.header for c in _SENSOR_COLUMNS])
         self._sensor_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Interactive
         )
+        # Stretch-last-section matches every other diagnostics table (chips,
+        # modules, fans). The Details button column sits in that last slot
+        # and grows with the table \u2014 costs nothing visually and keeps the
+        # existing "all diagnostics tables stretch-last" assertion stable.
         self._sensor_table.horizontalHeader().setStretchLastSection(True)
         self._sensor_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._sensor_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._sensor_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._sensor_table.customContextMenuRequested.connect(self._on_sensor_context_menu)
+        self._sensor_table.cellDoubleClicked.connect(self._on_sensor_cell_double_clicked)
 
-        _sensor_header_tooltips = [
-            "Sensor label reported by the kernel driver",
-            "Coarse daemon classification (CpuTemp / MbTemp / GpuTemp / DiskTemp)",
-            "Kernel driver / chip providing the reading (k10temp, nct6798, etc.)",
-            "Current temperature in \u00b0C",
-            "Time since the daemon last polled this sensor",
-            "Data freshness: fresh (<2 s), stale (2-10 s), invalid (>10 s)",
-            (
-                "Classification confidence from the sensor knowledge base. "
-                "Hover a cell for source class, description, and driver notes."
-            ),
-        ]
-        self._apply_header_tooltips(self._sensor_table, _sensor_header_tooltips)
+        self._apply_header_tooltips(
+            self._sensor_table,
+            [c.tooltip for c in _SENSOR_COLUMNS],
+        )
 
         layout.addWidget(self._sensor_table)
         return container
@@ -1355,49 +1508,461 @@ class DiagnosticsPage(QWidget):
         )
 
     def _on_sensors(self, sensors: list) -> None:
-        col_count = 7
-        if self._sensor_table.rowCount() != len(sensors):
-            self._sensor_table.setRowCount(len(sensors))
+        """Cache the latest sensor payload and trigger a full re-render
+        (DEC-117). Visibility toggles, the hidden-group expander, and the
+        Mirror-to-dashboard button all read from ``_all_sensors`` so they
+        never need a fresh daemon poll."""
+        self._all_sensors = list(sensors)
+        self._render_sensors_table()
+
+    # ── DEC-117: Sensors-tab helpers ─────────────────────────────────
+
+    def _hidden_sensor_ids(self) -> set[str]:
+        """Live view of ``AppSettings.diagnostics_hidden_sensor_ids``.
+
+        Returns an empty set when no settings service was wired in (test
+        construction) or when the setting is missing (forward-compatible
+        AppSettings).
+        """
+        if self._settings_service is None:
+            return set()
+        return set(
+            getattr(self._settings_service.settings, "diagnostics_hidden_sensor_ids", []) or []
+        )
+
+    def _set_hidden_sensor_ids(self, ids: list[str]) -> None:
+        """Persist the Diagnostics hide-list to ``AppSettings``.
+
+        No-op when no settings service was wired in — the in-memory state
+        still updates via the caller, but nothing survives the session.
+        """
+        if self._settings_service is None:
+            return
+        self._settings_service.update(diagnostics_hidden_sensor_ids=ids)
+
+    def _render_sensors_table(self) -> None:
+        """Re-render the Sensors tab from ``_all_sensors``.
+
+        Partitions into visible/hidden by the current AppSettings hide-list,
+        renders visible rows, then a single toggle row, then optionally the
+        hidden rows when the group is expanded.
+        """
+        hidden_ids = self._hidden_sensor_ids()
+        visible = [s for s in self._all_sensors if s.id not in hidden_ids]
+        hidden = [s for s in self._all_sensors if s.id in hidden_ids]
+
+        total_rows = len(visible)
+        if hidden:
+            total_rows += 1  # toggle row
+            if self._hidden_group_expanded:
+                total_rows += len(hidden)
+
+        # Clear any stale cell widgets (Details buttons) before resizing —
+        # Qt does not release them when rowCount shrinks, leaving zombie
+        # buttons holding references that survive the next render.
+        for row in range(self._sensor_table.rowCount()):
+            self._sensor_table.removeCellWidget(row, _SENSOR_COL_INDEX["Details"])
+
+        if self._sensor_table.rowCount() != total_rows:
+            self._sensor_table.setRowCount(total_rows)
+        self._sensor_table.clearSpans()
 
         board_vendor = ""
         if self._diag.last_hw_diagnostics is not None:
             board_vendor = self._diag.last_hw_diagnostics.board.vendor
 
-        for i, s in enumerate(sensors):
-            self._ensure_row_items(self._sensor_table, i, col_count)
+        for i, s in enumerate(visible):
+            self._set_sensor_row(i, s, board_vendor, dimmed=False)
 
+        if hidden:
+            toggle_row = len(visible)
+            self._set_hidden_toggle_row(toggle_row, len(hidden))
+            if self._hidden_group_expanded:
+                for j, s in enumerate(hidden):
+                    self._set_sensor_row(toggle_row + 1 + j, s, board_vendor, dimmed=True)
+
+        self._recompute_sensor_summary(visible, hidden)
+
+    def _set_sensor_row(
+        self,
+        row: int,
+        s: SensorReading,
+        board_vendor: str,
+        *,
+        dimmed: bool,
+    ) -> None:
+        """Populate every column of one sensor row.
+
+        ``dimmed=True`` greys the row's foreground colour so hidden sensors
+        (when expanded) read as background context, not active data.
+        """
+        table = self._sensor_table
+        col_count = len(_SENSOR_COLUMNS)
+        self._ensure_row_items(table, row, col_count - 1)  # Details holds a widget
+
+        classification = classify_sensor(
+            chip_name=s.chip_name,
+            label=s.label,
+            temp_type=s.temp_type,
+            board_vendor=board_vendor,
+        )
+
+        # ── Quirk chip on the Label cell ─────────────────────────────
+        # source_class == "bogus" comes from the sensor knowledge base
+        # quirk database (e.g. ASUS NCT6776F CPUTIN). Low confidence is
+        # a softer "we don't know what this is" signal — both surface as
+        # an inline "⚠" prefix so the user can spot them at a glance
+        # without opening the detail dialog.
+        is_quirky = classification.source_class == "bogus"
+        is_low_confidence = classification.confidence == "low"
+        label_text = s.label or s.id
+        prefix = ""
+        if is_quirky:
+            prefix = "⚠ "
+        elif is_low_confidence:
+            prefix = "? "
+        table.item(row, _SENSOR_COL_INDEX["Label"]).setText(prefix + label_text)
+        table.item(row, _SENSOR_COL_INDEX["Sensor ID"]).setText(s.id or "—")
+
+        source_class_text = _SOURCE_CLASS_DISPLAY.get(
+            classification.source_class, classification.source_class
+        )
+        table.item(row, _SENSOR_COL_INDEX["Source class"]).setText(source_class_text)
+        table.item(row, _SENSOR_COL_INDEX["Kind"]).setText(s.kind or "—")
+        table.item(row, _SENSOR_COL_INDEX["Source"]).setText(s.source or "—")
+        table.item(row, _SENSOR_COL_INDEX["Chip"]).setText(s.chip_name or "—")
+        table.item(row, _SENSOR_COL_INDEX["Driver type"]).setText(temp_type_label(s.temp_type))
+
+        # ── Value cell with optional alarm suffix ────────────────────
+        value_text = f"{s.value_c:.1f}"
+        alarm_active = self._is_alarm_active(s)
+        if alarm_active:
+            value_text += "  ⚠ ALARM"
+        value_item = table.item(row, _SENSOR_COL_INDEX["Value (°C)"])
+        value_item.setText(value_text)
+
+        # ── Trend cell ───────────────────────────────────────────────
+        rate = s.rate_c_per_s
+        if rate is not None and abs(rate) >= 0.1:
+            arrow = "↑" if rate > 0 else "↓"
+            sign = "+" if rate > 0 else ""
+            trend_text = f"{arrow} {sign}{rate:.1f} °C/s"
+        else:
+            trend_text = "—"
+        table.item(row, _SENSOR_COL_INDEX["Trend"]).setText(trend_text)
+
+        # ── Session min/max ──────────────────────────────────────────
+        if s.session_min_c is not None and s.session_max_c is not None:
+            sess_text = f"{s.session_min_c:.1f} - {s.session_max_c:.1f} °C"
+        else:
+            sess_text = "—"
+        table.item(row, _SENSOR_COL_INDEX["Session min/max"]).setText(sess_text)
+
+        table.item(row, _SENSOR_COL_INDEX["Age (ms)"]).setText(str(s.age_ms))
+
+        freshness_item = table.item(row, _SENSOR_COL_INDEX["Freshness"])
+        freshness_item.setText(s.freshness.value)
+        self._apply_freshness_color(freshness_item, s.freshness)
+
+        confidence_text = _CONFIDENCE_DISPLAY.get(
+            classification.confidence, classification.confidence
+        )
+        table.item(row, _SENSOR_COL_INDEX["Confidence"]).setText(confidence_text)
+
+        # ── Colour cues: dim hidden rows, paint quirks/alarms ────────
+        theme = active_theme()
+        row_color = theme.text_secondary if dimmed else theme.text_primary
+        for col_name in (
+            "Label",
+            "Sensor ID",
+            "Source class",
+            "Kind",
+            "Source",
+            "Chip",
+            "Driver type",
+            "Trend",
+            "Session min/max",
+            "Age (ms)",
+            "Confidence",
+        ):
+            table.item(row, _SENSOR_COL_INDEX[col_name]).setForeground(QColor(row_color))
+        # Re-apply freshness colour after the loop to preserve its warn/crit
+        # paint (the loop above would clobber it otherwise).
+        self._apply_freshness_color(freshness_item, s.freshness)
+
+        # Quirk / alarm chips override the row colour on the Label / Value
+        # cells so they stand out even in a dimmed hidden row.
+        if is_quirky:
+            table.item(row, _SENSOR_COL_INDEX["Label"]).setForeground(QColor(theme.status_warn))
+        if alarm_active:
+            value_item.setForeground(QColor(theme.status_crit))
+
+        # ── Tooltip on every cell (preserved from pre-DEC-117) ───────
+        tooltip = format_sensor_tooltip(
+            classification,
+            sensor_id=s.id,
+            chip_name=s.chip_name,
+            session_min=s.session_min_c,
+            session_max=s.session_max_c,
+            rate_c_per_s=s.rate_c_per_s,
+        )
+        for col in range(col_count - 1):  # skip Details widget cell
+            cell = table.item(row, col)
+            if cell is not None:
+                cell.setToolTip(tooltip)
+
+        # ── Per-row Details button ───────────────────────────────────
+        btn = QPushButton("Details")
+        btn.setObjectName(f"Diagnostics_SensorDetail_Btn_row{row}")
+        btn.setToolTip("Open the per-sensor detail dialog (DEC-117).")
+        # Bind a stable reference so re-renders don't lose the sensor.id;
+        # default args capture-by-value avoid the closure-late-binding pitfall.
+        btn.clicked.connect(lambda _checked=False, sid=s.id: self._open_sensor_detail(sid))
+        table.setCellWidget(row, _SENSOR_COL_INDEX["Details"], btn)
+
+    def _set_hidden_toggle_row(self, row: int, hidden_count: int) -> None:
+        """Render the single "▸/▾ N hidden sensors (click to …)" toggle row.
+
+        Spans every column so clicks anywhere along the row trigger the
+        toggle — no need to aim for a particular cell.
+        """
+        table = self._sensor_table
+        ncols = len(_SENSOR_COLUMNS)
+        for col in range(ncols):
+            cell = table.item(row, col)
+            if cell is None:
+                cell = QTableWidgetItem("")
+                table.setItem(row, col, cell)
+            else:
+                cell.setText("")
+        table.setSpan(row, 0, 1, ncols)
+        toggle = table.item(row, 0)
+        arrow = "▾" if self._hidden_group_expanded else "▸"
+        verb = "collapse" if self._hidden_group_expanded else "expand"
+        suffix = "" if hidden_count == 1 else "s"
+        toggle.setText(f"  {arrow} {hidden_count} hidden sensor{suffix} (click to {verb})")
+        toggle.setToolTip(
+            "Hidden sensors stay reachable here — they're not removed. "
+            "Right-click a hidden row to unhide it."
+        )
+        toggle.setForeground(QColor(active_theme().text_secondary))
+
+    def _recompute_sensor_summary(
+        self,
+        visible: list[SensorReading],
+        hidden: list[SensorReading],
+    ) -> None:
+        """Render the header summary line above the table.
+
+        Counts are derived from the full ``_all_sensors`` list (visible +
+        hidden) so the headline answer to "how many sensors does this
+        system have?" doesn't change when the user hides some.
+        """
+        all_sensors = visible + hidden
+        n = len(all_sensors)
+        if n == 0:
+            self._sensor_summary_label.setText("Sensors: —")
+            return
+
+        cpu = sum(1 for s in all_sensors if s.kind == "cpu_temp")
+        board = sum(1 for s in all_sensors if s.kind == "mb_temp")
+        gpu = sum(1 for s in all_sensors if s.kind == "gpu_temp")
+        disk = sum(1 for s in all_sensors if s.kind == "disk_temp")
+        stale = sum(1 for s in all_sensors if s.freshness != Freshness.FRESH)
+
+        board_vendor = ""
+        if self._diag.last_hw_diagnostics is not None:
+            board_vendor = self._diag.last_hw_diagnostics.board.vendor
+        low_conf = 0
+        for s in all_sensors:
             classification = classify_sensor(
                 chip_name=s.chip_name,
                 label=s.label,
                 temp_type=s.temp_type,
                 board_vendor=board_vendor,
             )
+            if classification.confidence == "low":
+                low_conf += 1
 
-            self._sensor_table.item(i, 0).setText(s.label or s.id)
-            self._sensor_table.item(i, 1).setText(s.kind)
-            self._sensor_table.item(i, 2).setText(s.chip_name or "—")
-            self._sensor_table.item(i, 3).setText(f"{s.value_c:.1f}")
-            self._sensor_table.item(i, 4).setText(str(s.age_ms))
+        parts = [f"{n} total"]
+        if cpu:
+            parts.append(f"{cpu} CPU")
+        if board:
+            parts.append(f"{board} board")
+        if gpu:
+            parts.append(f"{gpu} GPU")
+        if disk:
+            parts.append(f"{disk} disk")
+        if stale:
+            parts.append(f"{stale} stale")
+        if low_conf:
+            parts.append(f"{low_conf} low-confidence")
+        if hidden:
+            parts.append(f"{len(hidden)} hidden")
+        self._sensor_summary_label.setText("Sensors: " + " · ".join(parts))
 
-            freshness_item = self._sensor_table.item(i, 5)
-            freshness_item.setText(s.freshness.value)
-            self._apply_freshness_color(freshness_item, s.freshness)
+    @staticmethod
+    def _is_alarm_active(s: SensorReading) -> bool:
+        """True when the daemon reported an asserted crit_alarm or when the
+        live value has crossed the reported crit threshold (DEC-117).
 
-            confidence_text = _CONFIDENCE_DISPLAY.get(
-                classification.confidence, classification.confidence
+        The two paths are deliberately separate: ``crit_alarm`` is the chip's
+        latched bit (sampled at daemon discovery), while a ``value_c >= crit_c``
+        comparison catches the case where temperature has just crossed the
+        crit threshold but the alarm bit hasn't been re-read yet.
+        """
+        t = s.thresholds
+        if t is None:
+            return False
+        if t.crit_alarm is True:
+            return True
+        return t.crit_c is not None and s.value_c >= t.crit_c
+
+    def _open_sensor_detail(self, sensor_id: str) -> None:
+        """Open the :class:`SensorDetailDialog` for ``sensor_id``.
+
+        Reuses an existing dialog if one is already open (the user usually
+        wants to compare a few sensors in a row — re-opening with new
+        content is faster than tearing down and rebuilding the widget).
+        """
+        sensor = next((s for s in self._all_sensors if s.id == sensor_id), None)
+        if sensor is None:
+            return
+        board = None
+        if self._diag.last_hw_diagnostics is not None:
+            board = self._diag.last_hw_diagnostics.board
+        if self._sensor_detail_dialog is None:
+            self._sensor_detail_dialog = SensorDetailDialog(sensor, board, parent=self)
+            self._sensor_detail_dialog.finished.connect(self._on_sensor_detail_closed)
+        else:
+            self._sensor_detail_dialog.set_sensor(sensor, board)
+        self._sensor_detail_dialog.show()
+        self._sensor_detail_dialog.raise_()
+        self._sensor_detail_dialog.activateWindow()
+
+    @Slot(int)
+    def _on_sensor_detail_closed(self, _result: int) -> None:
+        """Drop the cached dialog reference when the user closes it so the
+        next ``_open_sensor_detail`` rebuilds with fresh data and avoids
+        showing a stale board snapshot."""
+        self._sensor_detail_dialog = None
+
+    def _on_sensor_cell_double_clicked(self, row: int, _column: int) -> None:
+        """Resolve the row to a sensor.id and either open the detail dialog
+        or flip the hidden-group expander when the row IS the toggle."""
+        sensor = self._row_to_sensor(row)
+        if sensor is None:
+            # Double-clicking the toggle row — treat as the toggle.
+            if self._is_hidden_toggle_row(row):
+                self._hidden_group_expanded = not self._hidden_group_expanded
+                self._render_sensors_table()
+            return
+        self._open_sensor_detail(sensor.id)
+
+    def _on_sensor_context_menu(self, pos: QPoint) -> None:
+        """Right-click menu on a sensor row: open detail + hide/unhide."""
+        row = self._sensor_table.indexAt(pos).row()
+        if row < 0:
+            return
+        # If this is the toggle row, only offer the toggle action — there's
+        # no associated sensor to hide.
+        if self._is_hidden_toggle_row(row):
+            menu = QMenu(self)
+            toggle_action = QAction(
+                "Collapse hidden group" if self._hidden_group_expanded else "Expand hidden group",
+                self,
             )
-            self._sensor_table.item(i, 6).setText(confidence_text)
+            toggle_action.triggered.connect(self._toggle_hidden_group)
+            menu.addAction(toggle_action)
+            menu.exec(self._sensor_table.viewport().mapToGlobal(pos))
+            return
 
-            tooltip = format_sensor_tooltip(
-                classification,
-                sensor_id=s.id,
-                chip_name=s.chip_name,
-                session_min=s.session_min_c,
-                session_max=s.session_max_c,
-                rate_c_per_s=s.rate_c_per_s,
-            )
-            for col in range(col_count):
-                self._sensor_table.item(i, col).setToolTip(tooltip)
+        sensor = self._row_to_sensor(row)
+        if sensor is None:
+            return
+        menu = QMenu(self)
+        detail_action = QAction("Open detail…", self)
+        detail_action.triggered.connect(lambda: self._open_sensor_detail(sensor.id))
+        menu.addAction(detail_action)
+
+        hidden_ids = self._hidden_sensor_ids()
+        if sensor.id in hidden_ids:
+            unhide_action = QAction("Unhide sensor", self)
+            unhide_action.triggered.connect(lambda: self._set_sensor_hidden(sensor.id, False))
+            menu.addAction(unhide_action)
+        else:
+            hide_action = QAction("Hide sensor", self)
+            hide_action.triggered.connect(lambda: self._set_sensor_hidden(sensor.id, True))
+            menu.addAction(hide_action)
+
+        menu.exec(self._sensor_table.viewport().mapToGlobal(pos))
+
+    def _row_to_sensor(self, row: int) -> SensorReading | None:
+        """Resolve a table row index back to the underlying ``SensorReading``.
+
+        Returns ``None`` when the row is the toggle separator or otherwise
+        out of bounds. Reads the Sensor ID cell to do the lookup so the
+        method survives column reordering.
+        """
+        if row < 0 or row >= self._sensor_table.rowCount():
+            return None
+        if self._is_hidden_toggle_row(row):
+            return None
+        cell = self._sensor_table.item(row, _SENSOR_COL_INDEX["Sensor ID"])
+        if cell is None:
+            return None
+        sensor_id = cell.text()
+        if not sensor_id or sensor_id == "—":
+            return None
+        return next((s for s in self._all_sensors if s.id == sensor_id), None)
+
+    def _is_hidden_toggle_row(self, row: int) -> bool:
+        """True iff the given row hosts the toggle separator (cell-span row).
+
+        Detected via Qt's row-span — the toggle row spans all columns,
+        normal data rows do not.
+        """
+        if row < 0 or row >= self._sensor_table.rowCount():
+            return False
+        return self._sensor_table.columnSpan(row, 0) == len(_SENSOR_COLUMNS)
+
+    def _toggle_hidden_group(self) -> None:
+        """Slot for the toggle-row click / context-menu entry."""
+        self._hidden_group_expanded = not self._hidden_group_expanded
+        self._render_sensors_table()
+
+    def _set_sensor_hidden(self, sensor_id: str, hidden: bool) -> None:
+        """Add or remove ``sensor_id`` from the Diagnostics hide-list and
+        re-render the table. Other surfaces (dashboard chart, curves) are
+        intentionally untouched — the user must explicitly click the
+        Mirror-to-dashboard button to propagate the choice."""
+        current = list(self._hidden_sensor_ids())
+        changed = False
+        if hidden and sensor_id not in current:
+            current.append(sensor_id)
+            changed = True
+        elif not hidden and sensor_id in current:
+            current.remove(sensor_id)
+            changed = True
+        if not changed:
+            return
+        self._set_hidden_sensor_ids(current)
+        self._render_sensors_table()
+
+    def _mirror_hidden_to_dashboard(self) -> None:
+        """One-shot push of the Diagnostics hide-list into the dashboard's
+        :class:`SeriesSelectionModel` (DEC-117).
+
+        Translates each ``sensor.id`` into the ``sensor:<id>`` key format
+        the dashboard chart uses. No-op when no series-selection model was
+        wired in.
+        """
+        if self._series_selection is None:
+            return
+        for sensor_id in self._hidden_sensor_ids():
+            self._series_selection.set_visible(f"sensor:{sensor_id}", False)
+
+    # ── End DEC-117 Sensors-tab helpers ──────────────────────────────
 
     def _on_fans(self, fans: list) -> None:
         # Build fan_ids from the ORIGINAL fans list so PWM-only calculation

@@ -1,5 +1,64 @@
 # Changelog
 
+## [1.20.0] — 2026-06-03
+
+Expanded Diagnostics > Sensors tab into a 14-column diagnostic table with
+a per-sensor detail dialog, inline quirk chips, and a local hide-list
+(**DEC-117**). Pairs with **control-ofc-daemon v1.9.0**, which adds an
+optional `thresholds` object to every `SensorEntry` in `/sensors` and
+`/poll`.
+
+### Added
+- **Diagnostics > Sensors grew from 7 → 14 columns**, all visible by default:
+  Label · Sensor ID · Source class · Kind · Source · Chip · Driver type ·
+  Value · Trend · Session min/max · Age · Freshness · Confidence · Details.
+  Information the GUI already had — source class, smoothed rate, session
+  min/max, temp_type label — now lives on-screen instead of in hover
+  tooltips only.
+- **Header summary line** above the table: `Sensors: N total · X CPU ·
+  Y board · Z GPU · W disk · K stale · J low-confidence · M hidden`.
+  Lets users answer "is anything wrong?" at a glance.
+- **Inline quirk/advisory chips**. The Label cell prefixes `⚠ ` for
+  bogus-quirk sensors (e.g. the documented ASUS NCT6776F CPUTIN case)
+  and `? ` for low-confidence classifications. The Value cell suffixes
+  `⚠ ALARM` (in `status_crit`) when the daemon reports `crit_alarm` OR
+  the live value has crossed the reported `crit_c`.
+- **Per-sensor Sensor Detail dialog** (`Diagnostics_SensorDetail_Dialog`).
+  Opens via the per-row "Details" button, row double-click, or
+  right-click → "Open detail…". Shows the full classification
+  description and every classification note (not truncated like the
+  tooltip), board context, a Thresholds section with a headroom-to-crit
+  indicator, and a clickable kernel.org driver doc link.
+- **Sensor hide-list** persisted as
+  `AppSettings.diagnostics_hidden_sensor_ids`. Right-click a row →
+  "Hide sensor". Hidden sensors collapse into a `▸ N hidden sensors`
+  toggle row at the bottom — they're never silently removed. The
+  Diagnostics hide-list is **local to this tab**; the **Mirror hidden
+  to dashboard** button in the header pushes it into the shared
+  `SeriesSelectionModel` as a one-shot.
+- **`thresholds` field on every `SensorReading`**. Parsed from the new
+  daemon-side `thresholds` object on `SensorEntry`. Includes `max_c`,
+  `min_c`, `crit_c`, `crit_hyst_c`, `emergency_c`, `emergency_hyst_c`,
+  `lcrit_c`, `offset_c`, `alarm`, `max_alarm`, `crit_alarm`, `fault`.
+  Older daemons (pre-DEC-117) omit the key and `parse_sensors` defaults
+  it to `None` — no breaking change.
+
+### Changed
+- `parse_sensors` now hand-parses the nested `thresholds` object (the
+  previous `_filter_fields`-only pattern dropped nested dataclasses).
+  Empty/malformed threshold objects collapse to `None`. A non-list
+  `sensors` key still raises (pre-existing safety contract).
+- `_build_sensors_tab` rebuilt around a single `_SENSOR_COLUMNS` table
+  so header labels, tooltips, and column ordering can't drift. Tests
+  look up columns by header text rather than by hard-coded index.
+
+### Tests
+- 67 new tests across `tests/test_diagnostics_sensors_tab.py`,
+  `tests/test_sensor_detail_dialog.py`, and
+  `tests/test_sensor_thresholds_parser.py`. Existing
+  `tests/test_diagnostics_enumeration.py` refactored to look up columns
+  by header text (`_col(page, "…")`).
+
 ## [1.19.1] — 2026-06-03
 
 Follow-up to the DEC-115 collapsible Hardware Readiness card (**DEC-116**),

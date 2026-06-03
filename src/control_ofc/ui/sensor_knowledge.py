@@ -4,6 +4,10 @@ Maps (chip_name, label, temp_type) -> rich, truthful descriptions for
 display in tooltips and sensor panels. Separate from hwmon_guidance.py
 which handles PWM writing quirks.
 
+Also exposes :func:`temp_type_label` and :func:`kernel_doc_url_for_chip`
+helpers that the Diagnostics > Sensors detail dialog and table column
+both rely on, so the two surfaces can't drift on the labels.
+
 Classification is based on verified Linux kernel documentation:
 - k10temp: https://docs.kernel.org/hwmon/k10temp.html
 - sbtsi_temp: https://docs.kernel.org/hwmon/sbtsi_temp.html
@@ -629,6 +633,69 @@ def lookup_board_override(
             and override.label_pattern.lower() in lower_label
         ):
             return override
+    return None
+
+
+_TEMP_TYPE_LABELS: dict[int, str] = {
+    1: "CPU embedded diode (1)",
+    2: "3904 transistor (2)",
+    3: "thermal diode (3)",
+    4: "thermistor (4)",
+    5: "AMD TSI (5)",
+    6: "Intel PECI (6)",
+    7: "AMD SB-TSI (7)",
+}
+
+
+def temp_type_label(temp_type: int | None) -> str:
+    """Render the sysfs ``tempN_type`` integer as a human label.
+
+    Values follow the kernel hwmon ABI
+    (`Documentation/hwmon/sysfs-interface`). Returns ``"—"`` when the
+    sensor exposes no type file or the value is outside the documented set
+    so the Diagnostics column never silently shows a misleading category.
+    """
+    if temp_type is None:
+        return "—"
+    return _TEMP_TYPE_LABELS.get(temp_type, f"unknown ({temp_type})")
+
+
+# Chip-family → kernel.org doc URL. Used by the Sensor Detail dialog to
+# render a "Driver documentation" link. Keys are normalised lowercase chip
+# name *prefixes*; lookup uses the first matching prefix so families like
+# ``it87`` cover all ``it8xxx`` variants.
+_CHIP_DOC_URL_PREFIXES: list[tuple[str, str]] = [
+    ("k10temp", "https://docs.kernel.org/hwmon/k10temp.html"),
+    ("coretemp", "https://docs.kernel.org/hwmon/coretemp.html"),
+    ("sbtsi_temp", "https://docs.kernel.org/hwmon/sbtsi_temp.html"),
+    ("nct6775", "https://docs.kernel.org/hwmon/nct6775.html"),
+    ("nct6683", "https://docs.kernel.org/hwmon/nct6683.html"),
+    ("nct668", "https://docs.kernel.org/hwmon/nct6683.html"),
+    ("nct679", "https://docs.kernel.org/hwmon/nct6775.html"),
+    ("nct67", "https://docs.kernel.org/hwmon/nct6775.html"),
+    ("it87", "https://docs.kernel.org/hwmon/it87.html"),
+    ("it8", "https://docs.kernel.org/hwmon/it87.html"),
+    ("asus_ec_sensors", "https://docs.kernel.org/hwmon/asus_ec_sensors.html"),
+    ("asus_wmi_sensors", "https://docs.kernel.org/hwmon/asus_wmi_sensors.html"),
+    ("gigabyte_wmi", "https://docs.kernel.org/hwmon/gigabyte_wmi.html"),
+    ("amdgpu", "https://docs.kernel.org/gpu/amdgpu/thermal.html"),
+    ("nvme", "https://docs.kernel.org/hwmon/nvme.html"),
+]
+
+
+def kernel_doc_url_for_chip(chip_name: str) -> str | None:
+    """Return the kernel.org hwmon doc URL for ``chip_name``, or ``None``.
+
+    Match is by case-insensitive prefix so e.g. ``nct6798`` resolves to
+    the nct6775 family page. Returns ``None`` for unknown chips so callers
+    can suppress the link rather than render a broken one.
+    """
+    if not chip_name:
+        return None
+    lower = chip_name.lower()
+    for prefix, url in _CHIP_DOC_URL_PREFIXES:
+        if lower.startswith(prefix):
+            return url
     return None
 
 

@@ -49,6 +49,12 @@ class AppSettings:
     # user has acknowledged but cannot or will not change.
     acknowledged_kernel_warnings: list[str] = field(default_factory=list)
 
+    # DEC-117: sensor IDs the user has hidden in the Diagnostics > Sensors
+    # table. Local to that page only (the dashboard chart uses its own
+    # SeriesSelectionModel-backed list). Hidden sensors collapse into a
+    # group row at the bottom of the table, not silently removed.
+    diagnostics_hidden_sensor_ids: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -78,6 +84,7 @@ class AppSettings:
             hide_unused_fan_headers=data.get("hide_unused_fan_headers", True),
             show_hardware_guidance=data.get("show_hardware_guidance", True),
             acknowledged_kernel_warnings=list(data.get("acknowledged_kernel_warnings", []) or []),
+            diagnostics_hidden_sensor_ids=list(data.get("diagnostics_hidden_sensor_ids", []) or []),
         )
 
 

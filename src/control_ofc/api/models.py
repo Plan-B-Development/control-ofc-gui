@@ -158,6 +158,55 @@ class DaemonStatus:
 
 
 @dataclass
+class SensorThresholds:
+    """Curated hwmon temperature-threshold sysfs attributes (DEC-117).
+
+    Mirrors the daemon's :class:`SensorThresholdsResponse`. Every field is
+    optional because driver coverage varies wildly across motherboards —
+    k10temp exposes essentially none, coretemp typically exposes
+    ``max``/``crit``, amdgpu exposes ``crit``/``emergency``, and the
+    nct6775/nct6683 families expose ``max``/``crit``/``alarm``. Alarm flags
+    are snapshotted at daemon discovery time, not refreshed every poll.
+    """
+
+    max_c: float | None = None
+    min_c: float | None = None
+    crit_c: float | None = None
+    crit_hyst_c: float | None = None
+    emergency_c: float | None = None
+    emergency_hyst_c: float | None = None
+    lcrit_c: float | None = None
+    offset_c: float | None = None
+    alarm: bool | None = None
+    max_alarm: bool | None = None
+    crit_alarm: bool | None = None
+    fault: bool | None = None
+
+    def is_empty(self) -> bool:
+        """True when no attribute was reported by the daemon.
+
+        The daemon omits the entire ``thresholds`` JSON object when no
+        attribute was readable, so an instance with this method returning
+        True normally means a malformed/partial payload — the GUI treats
+        it the same as "no thresholds" for rendering purposes.
+        """
+        return (
+            self.max_c is None
+            and self.min_c is None
+            and self.crit_c is None
+            and self.crit_hyst_c is None
+            and self.emergency_c is None
+            and self.emergency_hyst_c is None
+            and self.lcrit_c is None
+            and self.offset_c is None
+            and self.alarm is None
+            and self.max_alarm is None
+            and self.crit_alarm is None
+            and self.fault is None
+        )
+
+
+@dataclass
 class SensorReading:
     id: str = ""
     kind: str = ""
@@ -170,6 +219,10 @@ class SensorReading:
     session_max_c: float | None = None
     chip_name: str = ""
     temp_type: int | None = None
+    # DEC-117: curated hwmon threshold attributes. ``None`` when the daemon
+    # predates DEC-117 or when the chip exposes no attribute of interest
+    # for this sensor.
+    thresholds: SensorThresholds | None = None
 
     @property
     def freshness(self) -> Freshness:
@@ -603,7 +656,33 @@ def parse_status(data: dict) -> DaemonStatus:
 
 
 def parse_sensors(data: dict) -> list[SensorReading]:
-    return [SensorReading(**_filter_fields(SensorReading, s)) for s in data.get("sensors", [])]
+    sensors = data.get("sensors", [])
+    if not isinstance(sensors, list):
+        # Preserve the pre-DEC-117 contract: a non-list ``sensors`` field is
+        # a malformed daemon payload, not "no sensors". The polling worker
+        # wraps this in DaemonError handling so a clear error surfaces to
+        # the user rather than an empty list. Tests pin this behaviour.
+        raise TypeError(f"expected 'sensors' to be a list, got {type(sensors).__name__}")
+    return [_parse_sensor_reading(s) for s in sensors]
+
+
+def _parse_sensor_reading(raw: dict) -> SensorReading:
+    """Parse a single ``SensorEntry`` JSON payload into a ``SensorReading``.
+
+    Handles the DEC-117 nested ``thresholds`` object: the dict-comprehension
+    ``_filter_fields`` pattern can't construct a nested dataclass on its own,
+    so we hand-parse the threshold sub-payload and inject the result.
+    """
+    if not isinstance(raw, dict):
+        return SensorReading()
+    fields_only = _filter_fields(SensorReading, raw)
+    thresholds_raw = fields_only.pop("thresholds", None)
+    thresholds: SensorThresholds | None = None
+    if isinstance(thresholds_raw, dict):
+        thresholds = SensorThresholds(**_filter_fields(SensorThresholds, thresholds_raw))
+        if thresholds.is_empty():
+            thresholds = None
+    return SensorReading(thresholds=thresholds, **fields_only)
 
 
 def parse_fans(data: dict) -> list[FanReading]:

@@ -139,6 +139,14 @@ Expected fields:
 - age_ms
 - chip_name — hwmon driver name from sysfs (e.g. `k10temp`, `nct6798`, `it8689`). Always present; set to `"amdgpu"` for GPU sources.
 - temp_type (optional, integer) — thermistor type code from `tempN_type` sysfs. Values: 3 = diode, 4 = thermistor, 5 = AMD TSI, 6 = Intel PECI. Absent when the driver does not expose type information.
+- thresholds (optional object) — DEC-117 curated subset of hwmon temperature-threshold sysfs attributes. The daemon reads these once at discovery and re-reads them on `POST /hwmon/rescan`. Implausible values (<-50 °C, >200 °C) and the `it87`-family `tempN_max == 0` placeholder are filtered at the daemon side. The whole object is omitted when no attribute was readable for this sensor (k10temp typically exposes none). When present, every sub-field is also omitted-when-None so the on-wire shape is the minimal honest set. Sub-fields (all optional):
+  - `max_c`, `min_c` — typical upper/lower warning thresholds (°C)
+  - `crit_c`, `crit_hyst_c` — critical threshold and hysteresis (°C)
+  - `emergency_c`, `emergency_hyst_c` — emergency threshold and hysteresis (°C)
+  - `lcrit_c` — lower critical threshold (°C, cold-side)
+  - `offset_c` — userspace-applied calibration offset (°C)
+  - `alarm`, `max_alarm`, `crit_alarm` — chip-asserted alarm bits (bool); sampled at discovery only, not refreshed per poll cycle
+  - `fault` — chip-reported sensor fault (bool)
 
 ### GET /fans
 Use as the primary current fan state source.
