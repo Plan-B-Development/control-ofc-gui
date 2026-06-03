@@ -54,9 +54,17 @@ Kernel docs: https://docs.kernel.org/hwmon/k10temp.html
 | Other | `cpu_internal` | high | Generic fallback for any other k10temp label. |
 
 **Key quirk:** Tctl is not a physical temperature. It is a control value used by
-the platform to drive cooling decisions. On some AMD CPUs, Tctl = Tdie + offset
-(the offset varies by SKU). The GUI should always prefer Tdie when available and
-should never present Tctl as the "actual" CPU temperature.
+the platform to drive cooling decisions. The kernel
+[`k10temp.html`](https://docs.kernel.org/hwmon/k10temp.html) describes Tctl as
+*"a non-physical temperature on an arbitrary scale measured in degrees"* used
+to control cooling systems, distinct from Tdie which is *"the real measured
+temperature."* On some Threadripper / EPYC SKUs Tctl differs from Tdie by a
+platform-defined offset (e.g. historical reports of ~+27 °C on early Zen 2
+Threadripper); on most desktop Zen 3/4/5 SKUs the offset is zero so Tctl ≈ Tdie.
+The kernel doc does not publish an explicit `Tctl = Tdie + offset` formula —
+treat the offset as platform-dependent and SKU-specific. The GUI should always
+prefer Tdie when available and should never present Tctl as the "actual" CPU
+temperature.
 
 ### sbtsi_temp (AMD SB-TSI board-side interface)
 
@@ -136,8 +144,17 @@ Reference: `drivers/hwmon/nct6683.c`, `get_temp_type()` function.
 ### it87 family (ITE Super I/O)
 
 Kernel docs: https://docs.kernel.org/hwmon/it87.html
+Out-of-tree fork: https://github.com/frankcrawford/it87 (newer chip support)
 
-Covers: it8625, it8686, it8688, it8689, it8696, and other `it8xxx` variants.
+Covers `it8xxx` variants. The mainline kernel `it87` driver supports a fixed
+list of older chips (IT8603E, IT8620E, IT8628E, IT8705F/12F/16F/18F/20E/21F/26E/
+28E/71F/72F/76F/79E/81E/82E/83E/91E/92E, with IT8689E only recently merged).
+**Newer Gigabyte/MSI-era chips — IT8625E, IT8686E, IT8688E, IT8696E — are
+NOT in mainline** and require the out-of-tree
+[frankcrawford/it87](https://github.com/frankcrawford/it87) driver. The
+kernel.org doc URL above covers behaviour for the in-tree chips; the
+out-of-tree driver inherits the same sysfs schema but with an expanded chip
+ID table (see its `README` for the full supported list).
 
 The it87 driver provides minimal labeling. Most sensors appear as generic
 `tempN` channels with no semantic information. Classification is conservative:
@@ -182,7 +199,17 @@ Management Instrumentation) ACPI methods. Classification follows the same
 label-matching rules but at `medium_high` confidence (one step lower) because
 the WMI interface has known polling reliability issues on some boards.
 
-All classifications carry a standing note about potential WMI polling issues.
+The kernel doc explicitly calls out the PRIME X470-PRO firmware bug:
+*"Some ASUS motherboards include a fan speed control mechanism that will
+arbitrarily disable or slow down fan speed[s] under heavy CPU/GPU workloads.
+Upgrading to new BIOS version with method version greater than or equal to
+two should rectify the issue."* When users report stuck-fan or
+artificially-low fan behaviour on a supported ASUS WMI board, the
+durable fix is a BIOS update to a WMI method version ≥ 2, NOT a kernel
+workaround.
+
+All classifications carry a standing note about potential WMI polling issues
+and the BIOS-update remedy.
 
 ### gigabyte_wmi (Gigabyte WMI interface)
 
