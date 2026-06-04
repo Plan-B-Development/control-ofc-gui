@@ -44,7 +44,7 @@ from control_ofc.ui.hwmon_guidance import (
 from control_ofc.ui.theme import active_theme
 
 if TYPE_CHECKING:
-    from control_ofc.api.models import HardwareDiagnosticsResult
+    from control_ofc.api.models import GpuVerifyResult, HardwareDiagnosticsResult
 
 _HW_COMPAT_URL = (
     "https://github.com/Plan-B-Development/control-ofc-gui/blob/main/"
@@ -256,6 +256,67 @@ def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
         )
 
     return problems
+
+
+def gpu_verify_problems(result: GpuVerifyResult) -> list[dict]:
+    """GUI-authored "To fix" guidance for a GPU fan verify outcome (DEC-120).
+
+    Returns problem dicts (same shape as :func:`detect_readiness_problems` —
+    ``{key, label, fix, doc_url, doc_title, severity}``) for the failing
+    verdicts; an empty list when control verified or the result is purely
+    informational (``effective`` / ``zero_rpm_suppressed`` / ``rpm_unavailable``).
+    Every string is GUI-authored — the daemon's ``details`` are never rendered
+    (DEC-106). These are the *behavioural* failures the static readiness pass
+    cannot see: writes accepted but silently ignored, the fan not spinning, or a
+    BIOS reclaim.
+    """
+    arch_url = "https://wiki.archlinux.org/title/AMDGPU#Fan_control"
+    arch_title = "Arch Wiki: AMDGPU fan control"
+    specs = {
+        "curve_not_applied": {
+            "key": "gpu_verify_curve_not_applied",
+            "label": "GPU fan write had no effect",
+            "fix": (
+                "The GPU accepted the fan-control write but did not apply it. Add "
+                "'amdgpu.ppfeaturemask=0xffffffff' to the kernel command line and "
+                "reboot; if it is already set, this is usually an SMU firmware / "
+                "driver mismatch — check the GPU advisories above and your kernel "
+                "version."
+            ),
+        },
+        "no_rpm_effect": {
+            "key": "gpu_verify_no_rpm_effect",
+            "label": "GPU fan did not respond",
+            "fix": (
+                "The fan curve was applied but the fan RPM did not change. This "
+                "points to an SMU firmware issue or a known kernel regression for "
+                "this GPU — check the advisories above and consider a different "
+                "kernel. Confirm the fan is physically connected."
+            ),
+        },
+        "pwm_enable_reverted": {
+            "key": "gpu_verify_pwm_reverted",
+            "label": "BIOS/EC reclaimed GPU fan control",
+            "fix": (
+                "pwm1_enable reverted to automatic during the test. Disable any "
+                "vendor 'Smart Fan' / EC fan-control option in firmware setup, "
+                "then re-test."
+            ),
+        },
+        "write_failed": {
+            "key": "gpu_verify_write_failed",
+            "label": "GPU fan write was rejected",
+            "fix": (
+                "The driver/firmware rejected the fan write outright. Ensure "
+                "'amdgpu.ppfeaturemask=0xffffffff' is set and the amdgpu driver is "
+                "bound to this GPU (not vfio-pci), then re-test."
+            ),
+        },
+    }
+    spec = specs.get(result.result)
+    if spec is None:
+        return []
+    return [{**spec, "doc_url": arch_url, "doc_title": arch_title, "severity": "critical"}]
 
 
 def readiness_verdict(diag: HardwareDiagnosticsResult) -> tuple[str, str]:

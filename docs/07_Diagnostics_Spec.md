@@ -341,7 +341,10 @@ where it is read). Top-to-bottom:
   *BIOS interference detail* (per-header revert rows + footnote — **hidden
   entirely unless a header reports a non-zero revert count**, DEC-116),
   *Thermal safety & GPU*, *Guidance & documentation*, and *PWM control test*
-  (verify combo, Test PWM Control, Verify All Writable, progress + result).
+  (verify combo, Test PWM Control, Verify All Writable, progress + result, and
+  — DEC-120 — **Test GPU Fan Control** with its own result label, shown only
+  when a writable AMD GPU is present and the daemon supports the verify route,
+  ≥ 1.11.0).
 - **Always visible (outside the card):** the *Refresh Hardware Diagnostics*
   button below the card, and the live *Fan Status* table in the bottom
   splitter pane.
