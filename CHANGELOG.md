@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.21.0] — 2026-06-04
+
+Dashboard telemetry chart polish (**DEC-118**): smoother lines, a themed
+hover-tooltip plate, and a per-series "latest value" marker. GUI-only — no
+daemon or API changes; works with any daemon ≥ 1.9.0.
+
+### Added
+- **Per-series "latest value" markers.** Each visible series shows a dot at
+  its most recent reading (the right edge of the chart), coloured to match
+  the series — a current-value cue at a glance. Markers track the live value,
+  clear when a series is hidden, and are removed when a series drops out of
+  the chart.
+- **Themed hover-tooltip plate.** The crosshair readout now paints on a
+  background plate with a border, driven by two new theme tokens
+  (`chart_tooltip_bg`, `chart_tooltip_border`) so it stays legible over busy
+  gridlines/series and recolours live on a theme switch. Both tokens are
+  editable in Settings → Theme Editor → Charts and ship in the Solar Light
+  and Noctua Dark presets.
+
+### Changed
+- **Antialiased dashboard chart lines.** The dashboard's temperature and RPM
+  series now render antialiased via pyqtgraph's per-item `antialias=True`, so
+  only these curves are smoothed. The global pyqtgraph antialias config stays
+  `False` (DEC-068), leaving other charts and the curve editor untouched and
+  keeping the real-time render cost bounded.
+
 ## [1.20.0] — 2026-06-03
 
 Expanded Diagnostics > Sensors tab into a 14-column diagnostic table with

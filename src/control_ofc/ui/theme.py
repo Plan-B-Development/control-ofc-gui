@@ -103,6 +103,12 @@ class ThemeTokens:
             "#be5046",
         ]
     )
+    # chart_tooltip_bg / _border drive the hover-readout plate painted over
+    # the chart. Defaults match surface_2 / border_default so the chart
+    # tooltip reads consistently with the app's QToolTip styling and inherits
+    # the already-validated text_primary-on-surface_2 contrast (DEC-118).
+    chart_tooltip_bg: str = "#1f2b47"
+    chart_tooltip_border: str = "#2a3a5c"
 
     # ─── Sidebar / navigation ────────────────────────────────────────
     nav_bg: str = "#16213e"
@@ -324,6 +330,8 @@ def check_contrast_warnings(tokens: ThemeTokens) -> list[str]:
         ("nav_text_active", "nav_item_active", 3.0),
         # ─── Chart axis text on chart bg (AA-large: 3:1) ──────────
         ("chart_axis_text", "chart_bg", 3.0),
+        # ─── Chart hover-tooltip text on its plate (AA: 4.5:1) ────
+        ("text_primary", "chart_tooltip_bg", 4.5),
         # ─── Focus indicator (AA non-text: 3:1) ───────────────────
         ("focus_ring", "app_bg", 3.0),
     ]
