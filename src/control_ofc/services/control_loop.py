@@ -39,6 +39,7 @@ from control_ofc.services.profile_service import (
     CurveConfig,
     LogicalControl,
     ProfileService,
+    member_minimum_pct,
 )
 
 if TYPE_CHECKING:
@@ -524,9 +525,11 @@ class ControlLoopService(QObject):
                 status.targets_skipped += 1
                 return
 
-        # Apply tuning pipeline
-        desired_pwm = self._apply_tuning(control, desired_pwm)
-        status.control_outputs[control.id] = desired_pwm
+        # Apply the control-wide tuning pipeline. This output is used verbatim
+        # for every non-GPU member and for any control whose floor is already
+        # 0% (e.g. a GPU-only control), so the common path is unchanged.
+        control_output = self._apply_tuning(control, desired_pwm)
+        status.control_outputs[control.id] = control_output
 
         # Write to each member (skip if no members assigned)
         if not control.members:
@@ -534,8 +537,26 @@ class ControlLoopService(QObject):
 
         for member in control.members:
             target_id = member.target_id
-            if self._should_write(target_id, desired_pwm):
-                if self._write_target(target_id, desired_pwm):
+            # DEC-119: GPU members carry no GUI floor. In a *mixed* control
+            # (GPU grouped with chassis/CPU fans) the control-wide floor is
+            # non-zero, so recompute the GPU member's output with its own 0%
+            # floor and an independent step-rate tracker — letting it idle
+            # below the chassis/CPU floor without disturbing the trajectory the
+            # other members follow. Every non-GPU member, and every member of a
+            # 0-floor control, reuses ``control_output`` unchanged.
+            member_floor = member_minimum_pct(control, member)
+            if member_floor < control.minimum_pct:
+                output = self._apply_tuning(
+                    control,
+                    desired_pwm,
+                    floor=member_floor,
+                    state_key=self._member_state_key(control.id, target_id),
+                )
+            else:
+                output = control_output
+
+            if self._should_write(target_id, output):
+                if self._write_target(target_id, output):
                     status.targets_active += 1
                     # Track success (sync path — async path uses _on_write_completed)
                     if self._write_worker is None:
@@ -552,13 +573,43 @@ class ControlLoopService(QObject):
             else:
                 status.targets_active += 1  # still active, just suppressed
 
-    def _apply_tuning(self, control: LogicalControl, raw_output: float) -> float:
-        """Apply per-control tuning: offset, minimum, step rate, start/stop."""
+    @staticmethod
+    def _member_state_key(control_id: str, target_id: str) -> str:
+        """Step-rate tracker key for a per-member output branch (DEC-119).
+
+        Namespaced with ``::m::`` so it can never collide with a control's own
+        ``control.id`` key. Cleared alongside the control-wide state by
+        ``_reset_hysteresis`` (which clears the whole ``_target_states`` dict).
+        """
+        return f"{control_id}::m::{target_id}"
+
+    def _apply_tuning(
+        self,
+        control: LogicalControl,
+        raw_output: float,
+        *,
+        floor: float | None = None,
+        state_key: str | None = None,
+    ) -> float:
+        """Apply per-control tuning: offset, minimum, step rate, start/stop.
+
+        ``floor`` overrides the control-wide ``minimum_pct`` — used for the
+        per-member GPU floor of 0% (DEC-119). ``state_key`` selects which
+        step-rate tracker entry to read/write so a GPU member's independent
+        trajectory does not clobber the control-wide one. Both default to the
+        control-wide values, in which case this is byte-for-byte identical to
+        the original single-output pipeline.
+        """
+        if floor is None:
+            floor = control.minimum_pct
+        if state_key is None:
+            state_key = control.id
+
         output = raw_output + control.offset_pct
-        output = max(control.minimum_pct, output)
+        output = max(floor, output)
 
         # Step rate limiting
-        ts = self._target_states.get(control.id)
+        ts = self._target_states.get(state_key)
         last_output = ts.last_output if ts else None
         if last_output is not None:
             max_up = last_output + control.step_up_pct
@@ -574,9 +625,9 @@ class ControlLoopService(QObject):
         output = max(0.0, min(100.0, output))
 
         # Track for next cycle
-        if control.id not in self._target_states:
-            self._target_states[control.id] = TargetState()
-        self._target_states[control.id].last_output = output
+        if state_key not in self._target_states:
+            self._target_states[state_key] = TargetState()
+        self._target_states[state_key].last_output = output
 
         return output
 

@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.22.0] — 2026-06-04
+
+GPU fan floor removal and GPU detection hardening (**DEC-119**). Pairs with
+**daemon v1.10.0**; the diagnostics additions are an additive wire-contract
+change, so a new GUI works with any daemon ≥ 1.9.0 (it just shows less).
+
+### Changed
+- **GPU fans are never floored by the GUI, even in a mixed control.** The
+  per-control minimum PWM is now applied **per member**: a GPU fan grouped
+  with chassis/CPU fans idles to its own 0% floor in the same cycle that the
+  chassis/CPU members hold their 20% / 30% stall-protection floor. GPU-only
+  controls were already at 0%; non-GPU behaviour is unchanged. The GPU's PMFW
+  firmware owns its real idle minimum (the ~15% OD_RANGE clamp + zero-RPM).
+
+### Added
+- **Diagnostics now explain the GPU firmware minimum.** The Thermal safety &
+  GPU section shows the PMFW fan-speed range (e.g. "15% to 100%; values below
+  15% are clamped by the GPU firmware, not the daemon"), the `fan_minimum_pwm`
+  setting when present, and any kernel-regression advisories for the GPU.
+- **"GPU present but driver not bound" detection.** The diagnostics page now
+  reports an AMD GPU that exists in PCI space but has no `amdgpu` driver bound
+  (blacklist, KMS failure, or vfio-pci passthrough) — previously such a GPU
+  was completely invisible because it produces no hwmon node. The hint
+  distinguishes "module not loaded" from "loaded but unbound".
+- The control-card `Min: NN%` badge tooltip now notes, for mixed controls,
+  that GPU members are not floored (the GPU firmware manages their minimum).
+
 ## [1.21.0] — 2026-06-04
 
 Dashboard telemetry chart polish (**DEC-118**): smoother lines, a themed

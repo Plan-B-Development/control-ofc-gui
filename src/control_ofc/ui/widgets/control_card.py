@@ -16,11 +16,13 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.profile_service import (
+    CONTROL_ROLE_GPU,
     ControlMode,
     CurveConfig,
     LogicalControl,
     control_minimum_pct,
     infer_control_role,
+    infer_member_role,
 )
 from control_ofc.ui.widgets.card_metrics import CARD_HEIGHT, CARD_WIDTH
 
@@ -219,4 +221,15 @@ class ControlCard(QFrame):
             )
         else:
             tip = "Minimum PWM applied by this control."
+        # DEC-119: in a mixed control (GPU grouped with chassis/CPU fans) the
+        # floor above applies only to the non-GPU members. GPU members are
+        # never floored by the GUI — the GPU firmware owns their idle minimum.
+        members = control.members
+        has_gpu = any(infer_member_role(m) == CONTROL_ROLE_GPU for m in members)
+        has_non_gpu = any(infer_member_role(m) != CONTROL_ROLE_GPU for m in members)
+        if has_gpu and has_non_gpu:
+            tip += (
+                " GPU members in this control are not floored "
+                "(the GPU firmware manages their minimum)."
+            )
         self._min_pwm_label.setToolTip(tip)

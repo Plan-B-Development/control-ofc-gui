@@ -449,6 +449,39 @@ class GpuDiagnosticsInfo:
     ppfeaturemask: str | None = None
     ppfeaturemask_bit14_set: bool = False
     zero_rpm_available: bool = False
+    # DEC-119: PMFW OD_RANGE fan-speed bounds (percent). The firmware-enforced
+    # minimum (~15% on RDNA3+) is the real reason a PMFW GPU fan cannot be
+    # driven to 0% via the curve. None for non-PMFW GPUs / older daemons.
+    fan_speed_min_pct: int | None = None
+    fan_speed_max_pct: int | None = None
+    # DEC-119: best-effort PMFW ``fan_minimum_pwm`` setting (percent). None
+    # when absent/unparseable or the daemon predates the field.
+    fan_minimum_pwm: int | None = None
+    # DEC-119: whether the amdgpu driver is bound to this GPU's PCI device.
+    # Defaults True (an hwmon node implies a bound driver) for forward-compat.
+    amdgpu_driver_bound: bool = True
+    # DEC-119: kernel-regression advisories for this GPU, mirroring
+    # ``/capabilities.amd_gpu.kernel_warnings``. Hand-parsed in
+    # ``parse_hardware_diagnostics`` (nested dataclasses can't round-trip via
+    # ``**``). Empty when none apply or the daemon predates the field.
+    kernel_warnings: list[KernelWarning] = field(default_factory=list)
+
+
+@dataclass
+class AmdPciDeviceInfo:
+    """An AMD VGA-class PCI device and its bound driver (DEC-119).
+
+    Mirrors the daemon's ``AmdPciDeviceInfo``. Detected by scanning PCI space
+    independently of hwmon, so a GPU whose amdgpu driver failed to bind
+    (blacklist, KMS failure, vfio-pci passthrough) is still reported — that
+    case produces no hwmon node and an absent ``GpuDiagnosticsInfo``.
+    """
+
+    pci_bdf: str = ""
+    pci_device_id: int = 0
+    driver: str | None = None
+    amdgpu_bound: bool = False
+    hwmon_present: bool = False
 
 
 @dataclass
@@ -562,6 +595,14 @@ class HardwareDiagnosticsResult:
     # vendor quirks (e.g. MSI Z890 vs MSI X870E) without inferring platform
     # from board name.
     cpu_vendor: str = ""
+    # DEC-119: AMD VGA-class PCI devices and their driver binding, detected
+    # independently of hwmon. Lets the diagnostics page distinguish "no AMD
+    # GPU" from "AMD GPU present but amdgpu not bound". Empty when no AMD VGA
+    # device exists or the daemon predates the field.
+    amd_pci_devices: list[AmdPciDeviceInfo] = field(default_factory=list)
+    # DEC-119: whether the amdgpu kernel module is loaded. Paired with
+    # amd_pci_devices to distinguish a blacklisted module from a bind failure.
+    amdgpu_module_loaded: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -818,11 +859,19 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
     )
 
     gpu_raw = data.get("gpu")
-    gpu = (
-        GpuDiagnosticsInfo(**_filter_fields(GpuDiagnosticsInfo, _coalesce_pci_bdf(gpu_raw)))
-        if gpu_raw
-        else None
-    )
+    gpu = None
+    if isinstance(gpu_raw, dict) and gpu_raw:
+        gpu_norm = _coalesce_pci_bdf(gpu_raw)
+        # DEC-119: kernel_warnings is a list of dicts on the wire — pop it
+        # before `**`-unpacking so it doesn't land as raw dicts, then
+        # hand-parse into KernelWarning (mirrors parse_capabilities).
+        gpu_kw_raw = gpu_norm.pop("kernel_warnings", []) or []
+        gpu = GpuDiagnosticsInfo(**_filter_fields(GpuDiagnosticsInfo, gpu_norm))
+        gpu.kernel_warnings = [
+            KernelWarning(**_filter_fields(KernelWarning, kw))
+            for kw in gpu_kw_raw
+            if isinstance(kw, dict)
+        ]
 
     thermal_raw = data.get("thermal_safety", {})
     thermal = ThermalSafetyInfo(**_filter_fields(ThermalSafetyInfo, thermal_raw))
@@ -851,6 +900,15 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         if isinstance(mc, dict)
     ]
 
+    # DEC-119: AMD PCI driver-bound scan. Same wire convention — omitted when
+    # empty, so older daemons default to []. Only dict entries are accepted.
+    amd_pci_devices_raw = data.get("amd_pci_devices") or []
+    amd_pci_devices = [
+        AmdPciDeviceInfo(**_filter_fields(AmdPciDeviceInfo, d))
+        for d in amd_pci_devices_raw
+        if isinstance(d, dict)
+    ]
+
     return HardwareDiagnosticsResult(
         api_version=data.get("api_version", 1),
         hwmon=hwmon,
@@ -869,6 +927,8 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         kernel_detected_chips=kernel_detected_chips,
         module_collisions=module_collisions,
         cpu_vendor=str(data.get("cpu_vendor") or ""),
+        amd_pci_devices=amd_pci_devices,
+        amdgpu_module_loaded=bool(data.get("amdgpu_module_loaded", False)),
     )
 
 

@@ -246,6 +246,29 @@ def control_minimum_pct(members: list[ControlMember]) -> float:
     return role_minimum_pct(infer_control_role(members))
 
 
+def member_minimum_pct(control: LogicalControl, member: ControlMember) -> float:
+    """Effective minimum-PWM floor for a single member of ``control`` (DEC-119).
+
+    GPU members are never floored above 0 by the GUI: the GPU's PMFW firmware
+    enforces its own OD_RANGE minimum (~15% on RDNA3+), so a hard GUI floor is
+    redundant and, in a *mixed* control (a GPU fan grouped with chassis/CPU
+    fans), it would needlessly stop the GPU fan from idling. The user's intent
+    — "GPU does not need any hard floor" — is honoured here regardless of how
+    the control is composed.
+
+    Non-GPU members honour the control-wide ``minimum_pct`` (already the
+    strictest role floor across the control's members, set by
+    :func:`apply_role_floor`). Because that value is always ``>=`` a non-GPU
+    member's own role floor, this function only ever *lowers* the floor for
+    GPU members and is byte-for-byte identical to the pre-DEC-119 control-wide
+    behaviour for every non-GPU member and every homogeneous control.
+    """
+    role = infer_member_role(member)
+    if role == CONTROL_ROLE_GPU:
+        return role_minimum_pct(CONTROL_ROLE_GPU)  # 0.0 — no GUI floor for GPU
+    return max(control.minimum_pct, role_minimum_pct(role))
+
+
 @dataclass
 class LogicalControl:
     """A user-defined control group with mode and member list."""
