@@ -165,6 +165,24 @@ issue.
   method to a menu entry) and should ship in a minor release rather than a
   patch audit-remediation release.
 
+### 14. Intel GPU writable fan control (blocked on the kernel — DEC-121)
+
+Intel discrete GPUs (Arc) are supported for read-only monitoring only
+(temperature + fan RPM). There is no writable fan-control interface for them
+on Linux: neither the `xe` nor the `i915` driver exposes a `pwm` attribute or
+a fan-write callback, and fan speed is managed autonomously by on-card
+firmware. This is a kernel/firmware limitation, not a daemon one — the
+daemon's `intel_gpu_detect` model is intentionally read-only.
+
+**When to build:** if Intel ever exposes a writable fan interface upstream
+in `xe`/`i915`, the read-only model would be extended to surface those Intel
+GPU fans as controllable curve members (mirroring the AMD PMFW path). Until
+then they are never offered as writable members.
+
+The model-name table currently maps only the Arc **B580** (`0xE20B`); all
+other Intel discrete GPUs display as the generic "Intel D-GPU". Extend the
+table only with authoritatively-verified device-ID → name pairs.
+
 ## Resolved Gaps (previously listed as future work)
 
 | Gap | Resolution | Version |

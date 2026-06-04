@@ -329,7 +329,7 @@ class SensorSeriesPanel(QFrame):
             self._fan_items.clear()
 
             for f in fans:
-                if f.source == "amd_gpu":
+                if f.source in ("amd_gpu", "intel_gpu"):
                     group_key = "fans_gpu"
                 elif "hwmon" in f.source:
                     group_key = "fans_hwmon"

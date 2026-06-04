@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.24.0] — 2026-06-04
+
+Intel discrete GPU (Arc) monitoring (**DEC-121**) — Battlemage (Arc B-series,
+`xe` driver) and Alchemist (Arc A-series, `i915`) discrete GPUs are now
+recognised. Pairs with **daemon v1.12.0**; an additive wire-contract change, so
+a new GUI works with any daemon (an older one simply reports no Intel GPU).
+
+### Added
+- **Intel GPU temperature + fan-RPM monitoring.** Temps are grouped as GPU
+  telemetry (package / VRAM / memory-controller / PCIe, per the kernel ABI), the
+  GPU fan appears in the dashboard fan table and diagnostics, and an Intel GPU
+  temperature is selectable as a curve **sensor** to drive other fans.
+- **Diagnostics → Device Discovery** now shows an "Intel GPU" line, and
+  Diagnostics → Fans reports the Intel GPU's read-only, firmware-managed state.
+- Demo mode includes an Intel Arc B580 so the UI is exercisable without hardware.
+
+### Notes
+- **Intel GPU fan control is read-only.** There is no fan-control interface in
+  the Linux `xe`/`i915` drivers — the card's fan is managed autonomously by
+  on-card firmware. Intel GPU fans are therefore shown as read-only, are never
+  offered as controllable curve members, and are never written. (Verified
+  against the kernel hwmon ABI and linux-firmware.)
+- Only the Arc **B580** (`0xE20B`) maps to a specific model name today; other
+  Intel discrete GPUs display as "Intel D-GPU" until an authoritative
+  device-ID → name mapping is confirmed.
+
 ## [1.23.0] — 2026-06-04
 
 GPU fan active verification (**DEC-120**) — a "Test GPU Fan Control" diagnostic

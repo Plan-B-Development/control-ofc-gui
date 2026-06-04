@@ -82,6 +82,10 @@ def classify_sensor(
     if chip_name == "amdgpu":
         return _classify_amdgpu(label, lower_label)
 
+    # -- xe / i915: Intel discrete GPU sensors (DEC-121) --------------
+    if chip_name in ("xe", "i915"):
+        return _classify_intel_gpu(chip_name, label)
+
     # -- nvme: Disk sensors -------------------------------------------
     if chip_name == "nvme":
         return SensorClassification(
@@ -198,6 +202,49 @@ def _classify_amdgpu(label: str, lower_label: str) -> SensorClassification:
     return SensorClassification(
         source_class="gpu_other",
         display_description=f"GPU temperature ({label})",
+        confidence="high",
+    )
+
+
+def _classify_intel_gpu(chip_name: str, label: str) -> SensorClassification:
+    """Classify Intel discrete GPU temperature sensors (DEC-121).
+
+    The xe/i915 drivers expose unlabelled ``tempN_input`` files, so the GUI
+    sees generic labels like ``temp2``. The index→meaning mapping is taken
+    verbatim from the kernel ABI doc
+    ``Documentation/ABI/testing/sysfs-driver-intel-xe-hwmon`` (verified): on
+    ``xe`` temps start at ``temp2`` (package), ``temp3`` VRAM,
+    ``temp4`` memory-controller average, ``temp5`` GPU PCIe, ``temp6+`` VRAM
+    channels. The i915 driver exposes a single ``temp1`` package sensor.
+    """
+    # xe: map the documented temp index to its meaning.
+    xe_map = {
+        "temp2": ("gpu_package", "GPU package temperature"),
+        "temp3": ("gpu_memory", "GPU VRAM temperature"),
+        "temp4": ("gpu_memory", "GPU memory controller temperature"),
+        "temp5": ("gpu_other", "GPU PCIe temperature"),
+    }
+    if chip_name == "xe":
+        if label in xe_map:
+            source_class, desc = xe_map[label]
+            return SensorClassification(
+                source_class=source_class, display_description=desc, confidence="high"
+            )
+        if label.startswith("temp"):
+            return SensorClassification(
+                source_class="gpu_memory",
+                display_description="GPU VRAM channel temperature",
+                confidence="medium_high",
+            )
+    elif chip_name == "i915" and label == "temp1":
+        return SensorClassification(
+            source_class="gpu_package",
+            display_description="GPU package temperature",
+            confidence="high",
+        )
+    return SensorClassification(
+        source_class="gpu_other",
+        display_description=f"Intel GPU temperature ({label})",
         confidence="high",
     )
 

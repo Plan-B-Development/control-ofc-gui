@@ -246,6 +246,14 @@ def _fan_control_method(fan: FanReading, state: AppState | None) -> str:
             "read_only": "read-only",
             "none": "no fan control",
         }.get(method, "unknown")
+    if fan.source == "intel_gpu":
+        # Intel discrete GPU fans are always read-only (firmware-managed,
+        # DEC-121). Report read-only regardless of capability presence — the
+        # source itself is authoritative here.
+        if state and state.capabilities and state.capabilities.intel_gpu.present:
+            method = state.capabilities.intel_gpu.fan_control_method
+            return {"read_only": "read-only", "none": "no fan control"}.get(method, "read-only")
+        return "read-only"
     if fan.source == "hwmon":
         if not state:
             return "unknown"
@@ -808,6 +816,11 @@ class DiagnosticsPage(QWidget):
 
         self._amd_gpu_label = _transparent_label("AMD GPU: \u2014", "Diagnostics_Label_amdGpu")
         device_layout.addWidget(self._amd_gpu_label)
+
+        self._intel_gpu_label = _transparent_label(
+            "Intel GPU: \u2014", "Diagnostics_Label_intelGpu"
+        )
+        device_layout.addWidget(self._intel_gpu_label)
 
         self._features_label = _transparent_label("Features: \u2014", "Diagnostics_Label_features")
         self._features_label.setWordWrap(True)
@@ -1546,6 +1559,19 @@ class DiagnosticsPage(QWidget):
         else:
             self._amd_gpu_label.setText("AMD GPU: Not detected")
 
+        # Intel discrete GPU (DEC-121) — read-only monitoring, firmware-managed
+        # fan. Consistent with the other device-discovery lines, show the
+        # not-detected state too.
+        igpu = caps.intel_gpu
+        if igpu.present:
+            igpu_parts = [igpu.display_label]
+            if igpu.pci_id:
+                igpu_parts.append(f"PCI {igpu.pci_id}")
+            igpu_parts.append(f"fan: {igpu.fan_control_method} (firmware-managed)")
+            self._intel_gpu_label.setText(f"Intel GPU: {', '.join(igpu_parts)}")
+        else:
+            self._intel_gpu_label.setText("Intel GPU: Not detected")
+
     def _refresh_hwmon_and_features(self, caps: Capabilities) -> None:
         """Render the Overview hwmon + Features lines, using runtime
         ``writable_headers`` when ``HardwareDiagnosticsResult`` is available.
@@ -2199,6 +2225,14 @@ class DiagnosticsPage(QWidget):
                     parts.append(f"GPU: {gpu.display_label}")
                     if gpu.pci_id:
                         parts.append(f"PCI: {gpu.pci_id}")
+            elif fan.source == "intel_gpu":
+                caps = self._state.capabilities
+                if caps and caps.intel_gpu.present:
+                    igpu = caps.intel_gpu
+                    parts.append(f"GPU: {igpu.display_label}")
+                    if igpu.pci_id:
+                        parts.append(f"PCI: {igpu.pci_id}")
+                    parts.append("Fan: read-only (firmware-managed)")
         return "\n".join(parts)
 
     def _format_rpm_cell(self, fan, presence: FanPresence) -> str:
@@ -2601,6 +2635,17 @@ class DiagnosticsPage(QWidget):
                     "  The amdgpu module is loaded but did not bind this device — check "
                     "for vfio-pci passthrough or an early KMS failure (see dmesg)."
                 )
+
+        # DEC-121: Intel discrete GPU diagnostics — read-only, firmware-managed.
+        if diag.intel_gpu:
+            ig = diag.intel_gpu
+            lines.append(
+                f"Intel GPU: {ig.model_name or 'Intel D-GPU'} "
+                f"(PCI {ig.pci_bdf}, driver {ig.driver})"
+            )
+            lines.append(f"  Fan control: {ig.fan_control_method} (firmware-managed)")
+            if ig.fan_control_note:
+                lines.append(f"  {ig.fan_control_note}")
 
         if lines:
             self._gpu_diag_label.setText("\n".join(lines))

@@ -105,6 +105,12 @@ def _dispatch_write(
     if target_id.startswith("amd_gpu:"):
         client.set_gpu_fan_speed(target_id.removeprefix("amd_gpu:"), pwm_int, **kw)
         return True
+    if target_id.startswith("intel_gpu:"):
+        # Intel discrete GPU fans are read-only (firmware-managed, DEC-121).
+        # They are never offered as controllable members, so this is normally
+        # unreachable — the explicit no-op makes the read-only contract
+        # intentional rather than an accidental fallthrough.
+        return False
     if target_id.startswith("hwmon:"):
         if not lease_id:
             return False

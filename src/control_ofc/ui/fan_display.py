@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from control_ofc.api.models import FanReading
 
+# Discrete-GPU fan sources. AMD (amd_gpu) and Intel (intel_gpu, DEC-121) fans
+# are always shown (zero-RPM idle is normal) and dedup hwmon shadows by BDF.
+GPU_FAN_SOURCES = ("amd_gpu", "intel_gpu")
+
 
 def filter_displayable_fans(
     fans: list[FanReading],
@@ -22,7 +26,7 @@ def filter_displayable_fans(
 
     def is_displayable(fan: FanReading) -> bool:
         # GPU fans are always displayable -- zero-RPM idle is normal behavior
-        if fan.source == "amd_gpu":
+        if fan.source in GPU_FAN_SOURCES:
             return True
         # When auto-hide is disabled, show all fans
         if not hide_unused:
@@ -38,10 +42,15 @@ def filter_displayable_fans(
 
     displayable = [f for f in fans if is_displayable(f)]
 
-    # De-duplicate: suppress hwmon fans already represented by amd_gpu.
-    # Identity link: PCI BDF embedded in the amd_gpu fan ID (e.g.
-    # "amd_gpu:0000:03:00.0") also appears in the hwmon fan ID.
-    gpu_bdfs = {f.id.removeprefix("amd_gpu:") for f in displayable if f.source == "amd_gpu"}
+    # De-duplicate: suppress hwmon fans already represented by a GPU fan.
+    # Identity link: the PCI BDF embedded in the GPU fan ID (e.g.
+    # "amd_gpu:0000:03:00.0" / "intel_gpu:0000:03:00.0") also appears in the
+    # hwmon fan ID. (In practice DEC-102 already excludes amdgpu hwmon and
+    # xe/i915 expose no PWM header, but the dedup is kept as a belt-and-braces
+    # guard against any shadow header.)
+    gpu_bdfs = {
+        f.id.split(":", 1)[1] for f in displayable if f.source in GPU_FAN_SOURCES and ":" in f.id
+    }
     if gpu_bdfs:
         displayable = [
             f

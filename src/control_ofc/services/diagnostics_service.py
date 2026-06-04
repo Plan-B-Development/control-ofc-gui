@@ -287,8 +287,26 @@ class DiagnosticsService(QObject):
         else:
             lines.append("  No AMD discrete GPU detected by daemon.")
 
-        # GPU fan state from fans list
-        gpu_fans = [f for f in self._state.fans if f.source == "amd_gpu"]
+        # Intel discrete GPU (DEC-121) — read-only monitoring.
+        igpu = caps.intel_gpu
+        lines.append("")
+        lines.append("Intel GPU:")
+        lines.append(f"  Detected: {'Yes' if igpu.present else 'No'}")
+        if igpu.present:
+            lines.append(f"  Model: {igpu.model_name or 'Unknown'}")
+            lines.append(f"  Display label: {igpu.display_label}")
+            if igpu.pci_id:
+                lines.append(f"  PCI ID: {igpu.pci_id}")
+            if igpu.driver:
+                lines.append(f"  Driver: {igpu.driver}")
+            lines.append(f"  Fan control method: {igpu.fan_control_method}")
+            lines.append(f"  Fan RPM available: {'Yes' if igpu.fan_rpm_available else 'No'}")
+            lines.append("  Fan write supported: No (firmware-managed, no kernel write path)")
+        else:
+            lines.append("  No Intel discrete GPU detected by daemon.")
+
+        # GPU fan state from fans list (AMD + Intel discrete fans)
+        gpu_fans = [f for f in self._state.fans if f.source in ("amd_gpu", "intel_gpu")]
         if gpu_fans:
             lines.append("")
             lines.append("GPU Fan State:")

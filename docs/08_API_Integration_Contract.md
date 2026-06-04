@@ -77,6 +77,14 @@ Notable fields:
   side without parser changes. The GUI surfaces `high` and `critical`
   entries as a one-time popup gated by
   `app_settings.acknowledged_kernel_warnings`.
+- `devices.intel_gpu` (DEC-121, daemon ≥ 1.12.0) describes an Intel **discrete**
+  GPU (Arc — `xe`/`i915`). Read-only monitoring: fields are `present`,
+  `model_name`, `display_label`, `pci_id`/`pci_bdf`, `pci_device_id`, `driver`
+  (`"xe"`/`"i915"`), `fan_control_method` (always `"read_only"` or `"none"` —
+  there is no userspace fan write path), `fan_rpm_available`, and `is_discrete`.
+  There is deliberately **no** `fan_write_supported`/PMFW/overdrive/zero-RPM/
+  kernel-warning field — Intel GPU fans are firmware-managed and never writable.
+  Omitted/`present:false` on daemons that predate the field (parser-tolerant).
 
 ### Per-call timeouts (DEC-098 / DEC-099)
 
@@ -135,9 +143,9 @@ Expected fields:
 - kind
 - label
 - value_c
-- source
+- source — `"hwmon"`, `"amd_gpu"`, or `"intel_gpu"` (DEC-121; Intel discrete GPU temps via the `xe`/`i915` hwmon node, kind `gpu_temp`).
 - age_ms
-- chip_name — hwmon driver name from sysfs (e.g. `k10temp`, `nct6798`, `it8689`). Always present; set to `"amdgpu"` for GPU sources.
+- chip_name — hwmon driver name from sysfs (e.g. `k10temp`, `nct6798`, `it8689`). Always present; `"amdgpu"` for AMD GPU sources and `"xe"`/`"i915"` for Intel GPU sources.
 - temp_type (optional, integer) — thermistor type code from `tempN_type` sysfs. Values: 3 = diode, 4 = thermistor, 5 = AMD TSI, 6 = Intel PECI. Absent when the driver does not expose type information.
 - thresholds (optional object) — DEC-117 curated subset of hwmon temperature-threshold sysfs attributes. The daemon reads these once at discovery and re-reads them on `POST /hwmon/rescan`. Implausible values (<-50 °C, >200 °C) and the `it87`-family `tempN_max == 0` placeholder are filtered at the daemon side. The whole object is omitted when no attribute was readable for this sensor (k10temp typically exposes none). When present, every sub-field is also omitted-when-None so the on-wire shape is the minimal honest set. Sub-fields (all optional):
   - `max_c`, `min_c` — typical upper/lower warning thresholds (°C)
@@ -159,6 +167,8 @@ Expected fields:
 - stall_detected (optional bool) — daemon-asserted; set when commanded PWM ≥5% but measured RPM is zero for ≥2 cycles. Surfaced by the GUI as an `error`-level warning.
 
 Note: fans do **not** include `label` or `kind` from the daemon. Display names come from: user alias (GUI-owned) > hwmon header label (for hwmon fans) > fan id.
+
+Fan `source` is `"openfan"`, `"hwmon"`, `"amd_gpu"`, or `"intel_gpu"`. GPU fan IDs embed the PCI BDF: `amd_gpu:{bdf}` and `intel_gpu:{bdf}`. Intel GPU fans (DEC-121) are **read-only** — `rpm` is reported (from `fan1_input`) but `last_commanded_pwm` is always absent; the GUI must never issue a write to an `intel_gpu:` target.
 
 ### GET /hwmon/headers
 Use to discover:
@@ -306,6 +316,12 @@ and the GUI parser defaults safely:
   duplicated so the diagnostics support bundle is self-contained. Omitted
   (→ `[]`) when none apply. Hand-parsed by the GUI (nested objects can't
   round-trip through the flat dataclass unpack).
+- `intel_gpu: object | null` (DEC-121, daemon ≥ 1.12.0) — Intel discrete GPU
+  diagnostics: `pci_bdf`/`pci_id`, `pci_device_id`, `pci_revision`, `model_name`,
+  `driver` (`"xe"`/`"i915"`), `fan_control_method` (`"read_only"`/`"none"`),
+  `fan_rpm_available`, and `fan_control_note` (a daemon-supplied, display-ready
+  explanation of why fan control is unavailable). `null` when no Intel GPU is
+  present or the daemon predates the field.
 
 ### GET /events (SSE) — daemon-only, not consumed by GUI
 The daemon exposes a Server-Sent Events stream at `GET /events` for other clients
@@ -530,6 +546,15 @@ According to the provided daemon notes:
 - Daemon disables `fan_zero_rpm_enable` before writing PMFW curve, re-enables on reset
 - Profile engine defers when GUI active (DEC-071)
 - Daemon restores fan curve to automatic on shutdown
+
+### Intel GPU (read-only, DEC-121)
+- **No write path exists.** The Linux `xe`/`i915` drivers expose only read-only
+  `fanN_input` RPM and temperatures; fan control is managed autonomously by
+  on-card firmware. There is no `/gpu/.../fan/pwm` equivalent for Intel.
+- `fan_control_method` is always `"read_only"` (fan present) or `"none"`.
+- The GUI must not offer Intel GPU fans as controllable curve members and must
+  never write to an `intel_gpu:` target; the GPU's temperatures remain usable as
+  curve *sensors*.
 
 The GUI must reflect these constraints honestly.
 
