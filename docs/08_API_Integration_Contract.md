@@ -273,6 +273,40 @@ defaults to `""`):
   excluded because its kernel driver registers with `.no_hwmon = true` —
   it appears as a thermal zone only, not under `/sys/class/hwmon`.
 
+Additional optional fields added in DEC-119 (daemon ≥ 1.10.0). All use
+`#[serde(default)]` / `skip_serializing_if`, so older daemons emit nothing
+and the GUI parser defaults safely:
+
+- Top-level `amd_pci_devices: list[AmdPciDeviceInfo]` — AMD VGA-class PCI
+  devices and their driver binding, detected by scanning
+  `/sys/bus/pci/devices` **independently of hwmon**. Each entry has
+  `pci_bdf`, `pci_device_id`, `driver: str | None` (bound driver basename,
+  e.g. `"amdgpu"` / `"vfio-pci"`, or absent when unbound), `amdgpu_bound:
+  bool`, and `hwmon_present: bool`. This is the only place a GPU whose
+  `amdgpu` driver failed to bind (blacklist, KMS failure, passthrough)
+  appears — such a device produces no hwmon node, so the `gpu` field is
+  `null`. Omitted (→ `[]`) when no AMD VGA device exists.
+- Top-level `amdgpu_module_loaded: bool` — whether `/sys/module/amdgpu`
+  exists. Paired with `amd_pci_devices` to distinguish "module not loaded"
+  (blacklist / missing module) from "loaded but unbound" (passthrough / KMS
+  failure). Defaults `false`.
+- `gpu.fan_speed_min_pct` / `gpu.fan_speed_max_pct: int | None` — PMFW
+  `fan_curve` `OD_RANGE` fan-speed bounds (percent, typically `15` / `100`
+  on RDNA3+). The firmware-enforced minimum is the real reason a PMFW GPU
+  fan cannot be driven below ~15% via the curve; surfaced so it is not
+  mistaken for a GUI/daemon clamp. `null` for non-PMFW GPUs.
+- `gpu.fan_minimum_pwm: int | None` — best-effort percent parse of the
+  `gpu_od/fan_ctrl/fan_minimum_pwm` attribute. `null` when absent /
+  unparseable.
+- `gpu.amdgpu_driver_bound: bool` — whether `amdgpu` is bound to this GPU's
+  PCI device (cross-referenced from `amd_pci_devices`). Defaults `true` (an
+  hwmon node implies a bound driver).
+- `gpu.kernel_warnings: list[KernelWarning]` — the same advisory catalogue
+  as `/capabilities.amd_gpu.kernel_warnings` (id / severity / message),
+  duplicated so the diagnostics support bundle is self-contained. Omitted
+  (→ `[]`) when none apply. Hand-parsed by the GUI (nested objects can't
+  round-trip through the flat dataclass unpack).
+
 ### GET /events (SSE) — daemon-only, not consumed by GUI
 The daemon exposes a Server-Sent Events stream at `GET /events` for other clients
 (custom integrations, future tooling, etc.).

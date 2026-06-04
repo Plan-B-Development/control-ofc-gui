@@ -182,6 +182,34 @@ migrates v3-or-older profiles on load: any control whose members
 include a CPU/PUMP header gets `minimum_pct ← max(minimum_pct, 30)`;
 chassis-only controls are raised to 20%.
 
+#### Per-member flooring — GPU members are never floored (DEC-119)
+`minimum_pct` is a single control-wide value, but the floor is applied
+**per member** at write time via `profile_service.member_minimum_pct`:
+- **GPU members (`source == "amd_gpu"`)** are floored at **0%** — always,
+  regardless of how the control is composed. The GPU's PMFW firmware owns
+  its idle minimum (the OD_RANGE ~15% clamp; zero-RPM via the per-member
+  `fan_zero_rpm` toggle), so a GUI floor would be redundant and would stop
+  the fan from idling.
+- **Non-GPU members** honour the control-wide `minimum_pct` exactly as
+  before (it is already the strictest role floor across the control's
+  members), so no non-GPU behaviour changes.
+
+This matters only for a **mixed control** — a GPU fan grouped with
+chassis/CPU fans. There, the control loop writes the GPU member down to its
+0% floor in the **same cycle** that the chassis/CPU members hold their 20% /
+30% floor, each tracking an independent step-rate trajectory. A GPU-only
+control was already at 0% (its `minimum_pct` is 0). The **daemon profile
+engine applies the identical per-member rule** when a profile runs headless,
+so a mixed-control GPU idles to 0% whether or not the GUI is connected
+(DEC-096 consistency); the PMFW write path then clamps to the firmware
+OD_RANGE (~15%) and honours the per-member `fan_zero_rpm` idle stop. The control card's
+`Min: NN%` badge shows the non-GPU floor; its tooltip notes that GPU members
+in a mixed control are not floored. The curve editor's lower bound is
+unchanged (it still clamps to the strictest non-GPU floor for shared
+curves), so the per-member GPU freedom is most visible in manual mode and
+via `stop_pct`; for full low-end GPU control, keep the GPU fan in its own
+control.
+
 ### Daemon thermal-emergency override (daemon-owned)
 The daemon owns one absolute backstop independent of the GUI: at
 ≥105°C on the hottest CpuTemp sensor, all fans are forced to 100%

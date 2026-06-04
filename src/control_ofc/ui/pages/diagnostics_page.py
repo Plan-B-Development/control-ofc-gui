@@ -2421,9 +2421,10 @@ class DiagnosticsPage(QWidget):
         self._thermal_label.setText(thermal_line(diag.thermal_safety) or "")
 
         # GPU diagnostics
+        lines: list[str] = []
         if diag.gpu:
             gpu = diag.gpu
-            lines = [f"GPU: {gpu.model_name or 'AMD D-GPU'} (PCI {gpu.pci_bdf})"]
+            lines.append(f"GPU: {gpu.model_name or 'AMD D-GPU'} (PCI {gpu.pci_bdf})")
             lines.append(f"  Fan control: {gpu.fan_control_method}")
             lines.append(f"  Overdrive: {'enabled' if gpu.overdrive_enabled else 'disabled'}")
             if gpu.ppfeaturemask:
@@ -2448,6 +2449,42 @@ class DiagnosticsPage(QWidget):
             lines.append(
                 f"  Zero-RPM: {'available' if gpu.zero_rpm_available else 'not available'}"
             )
+            # DEC-119: firmware-enforced OD_RANGE fan-speed minimum. This is the
+            # real reason a PMFW GPU fan won't go to 0% via the curve — surface
+            # it so the floor isn't mistaken for a GUI/daemon clamp.
+            if gpu.fan_speed_min_pct is not None and gpu.fan_speed_max_pct is not None:
+                lines.append(
+                    f"  Firmware fan-speed range: {gpu.fan_speed_min_pct}% to "
+                    f"{gpu.fan_speed_max_pct}% (values below {gpu.fan_speed_min_pct}% are "
+                    "clamped by the GPU firmware, not the daemon)"
+                )
+            if gpu.fan_minimum_pwm is not None:
+                lines.append(f"  Firmware fan_minimum_pwm: {gpu.fan_minimum_pwm}%")
+            # DEC-119: per-GPU kernel-regression advisories, mirrored from
+            # /capabilities so the diagnostics export is self-contained.
+            for kw in gpu.kernel_warnings:
+                lines.append(f"  Advisory [{kw.severity}]: {kw.message}")
+
+        # DEC-119: driver-bound status. Rendered even when there is no hwmon
+        # GPU above, because an unbound/blacklisted/passed-through GPU produces
+        # no hwmon node and would otherwise be completely invisible here.
+        for dev in diag.amd_pci_devices:
+            if dev.amdgpu_bound:
+                continue
+            drv = dev.driver or "none"
+            lines.append(f"AMD GPU {dev.pci_bdf} present but amdgpu is NOT bound (driver: {drv}).")
+            if not diag.amdgpu_module_loaded:
+                lines.append(
+                    "  The amdgpu kernel module is not loaded — check for a modprobe "
+                    "blacklist or add amdgpu to your initramfs."
+                )
+            else:
+                lines.append(
+                    "  The amdgpu module is loaded but did not bind this device — check "
+                    "for vfio-pci passthrough or an early KMS failure (see dmesg)."
+                )
+
+        if lines:
             self._gpu_diag_label.setText("\n".join(lines))
             self._gpu_diag_label.setVisible(True)
         else:
