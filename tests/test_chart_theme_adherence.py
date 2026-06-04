@@ -144,3 +144,34 @@ class TestRangeControlIsDiscoverable:
         qtbot.addWidget(chart)
 
         assert chart._range_combo.toolTip() != ""
+
+
+class TestAxisTitleColor:
+    """The axis *title* colour follows ``text_secondary``.
+
+    pyqtgraph sets the title colour as a side effect of ``setTextPen`` (it
+    writes ``labelStyle['color']`` and regenerates the label), so the title
+    already tracks the theme. These tests pin that behaviour so a future
+    reorder — e.g. calling ``setLabel`` after ``setTextPen`` — can't silently
+    drop the title back to the pyqtgraph default colour (DEC-118).
+    """
+
+    def _label_color(self, chart: TimelineChart, axis_name: str) -> str:
+        plot = chart._plot_widget.getPlotItem()
+        axis = plot.getAxis(axis_name)
+        return QColor(axis.labelStyle.get("color", "")).name().lower()
+
+    def test_axis_title_follows_text_secondary(self, qtbot):
+        chart = TimelineChart(HistoryStore())
+        qtbot.addWidget(chart)
+        expected = QColor(chart._theme.text_secondary).name().lower()
+        for axis_name in ("left", "bottom", "right"):
+            assert self._label_color(chart, axis_name) == expected, axis_name
+
+    def test_set_theme_updates_axis_title_color(self, qtbot):
+        chart = TimelineChart(HistoryStore())
+        qtbot.addWidget(chart)
+        custom = ThemeTokens(name="Title", text_secondary="#abcdef")
+        chart.set_theme(custom)
+        for axis_name in ("left", "bottom", "right"):
+            assert self._label_color(chart, axis_name) == "#abcdef", axis_name

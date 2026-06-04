@@ -63,6 +63,10 @@ class TimelineChart(QWidget):
         self._time_range_s = 300  # default 5 minutes
         self._temp_items: dict[str, pg.PlotDataItem] = {}
         self._rpm_items: dict[str, pg.PlotCurveItem] = {}
+        # Single-point "latest value" markers, keyed like the series dicts but
+        # kept separate so they never confuse series item-type/count
+        # assertions or the hover readout (DEC-118).
+        self._latest_items: dict[str, pg.ScatterPlotItem] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -152,7 +156,15 @@ class TimelineChart(QWidget):
         plot.addItem(self._crosshair_v, ignoreBounds=True)
         self._crosshair_v.hide()
 
-        self._hover_label = pg.TextItem(anchor=(0, 0), color=t.text_primary)
+        # Themed hover plate: TextItem natively paints a background (fill) and
+        # border, keeping the readout legible over busy gridlines/series
+        # instead of floating bare on the plot (DEC-118).
+        self._hover_label = pg.TextItem(
+            anchor=(0, 0),
+            color=t.text_primary,
+            fill=pg.mkBrush(t.chart_tooltip_bg),
+            border=pg.mkPen(t.chart_tooltip_border),
+        )
         self._hover_label.setZValue(100)
         plot.addItem(self._hover_label, ignoreBounds=True)
         self._hover_label.hide()
@@ -196,6 +208,11 @@ class TimelineChart(QWidget):
             self._crosshair_v.setPen(pg.mkPen(tokens.chart_crosshair, width=1))
         if hasattr(self, "_hover_label") and self._hover_label is not None:
             self._hover_label.setColor(tokens.text_primary)
+            # TextItem has no fill/border setter; assign the brush/pen it
+            # paints from and force a repaint (DEC-118).
+            self._hover_label.fill = pg.mkBrush(tokens.chart_tooltip_bg)
+            self._hover_label.border = pg.mkPen(tokens.chart_tooltip_border)
+            self._hover_label.update()
 
         # Existing series previously rendered with the old palette get
         # recoloured here so the chart isn't visually two-toned until the
@@ -207,6 +224,9 @@ class TimelineChart(QWidget):
         for key, item in self._rpm_items.items():
             if key not in self._color_overrides:
                 item.setPen(pg.mkPen(self.color_for_key(key), width=1))
+        for key, dot in self._latest_items.items():
+            if key not in self._color_overrides:
+                self._style_dot(dot, self.color_for_key(key))
 
     def cleanup(self) -> None:
         """Disconnect signals and tear down the secondary ViewBox safely.
@@ -224,6 +244,15 @@ class TimelineChart(QWidget):
             with contextlib.suppress(RuntimeError, TypeError):
                 self._proxy.disconnect()
             self._proxy = None
+        # Drop latest-value markers from the scene before the ViewBox/scene
+        # teardown so none dangle on a freed scene (DEC-118). Idempotent: the
+        # dict is cleared, so a second cleanup() call is a no-op.
+        for dot in self._latest_items.values():
+            scene = dot.scene()
+            if scene is not None:
+                with contextlib.suppress(RuntimeError):
+                    scene.removeItem(dot)
+        self._latest_items.clear()
         if self._rpm_vb is not None:
             plot = self._plot_widget.getPlotItem()
             if plot is not None:
@@ -275,6 +304,32 @@ class TimelineChart(QWidget):
             self._temp_items[key].setPen(pen)
         if key in self._rpm_items:
             self._rpm_items[key].setPen(pen)
+        if key in self._latest_items:
+            self._style_dot(self._latest_items[key], color)
+
+    def _style_dot(self, dot: pg.ScatterPlotItem, color: str) -> None:
+        """Colour a latest-value marker to match its series."""
+        dot.setBrush(pg.mkBrush(color))
+        dot.setPen(pg.mkPen(color))
+
+    def _update_latest_dot(
+        self, key: str, x_last: float, y_last: float, color: str, parent
+    ) -> None:
+        """Create or move the single 'latest value' marker for a series.
+
+        The marker emphasises the current reading at the right edge of the
+        chart. It lives in ``self._latest_items`` (never in the series dicts)
+        and is added to the same view as its series — the main plot for temps,
+        the secondary RPM ViewBox for fans (DEC-118).
+        """
+        dot = self._latest_items.get(key)
+        if dot is None:
+            dot = pg.ScatterPlotItem(size=7)
+            dot.setZValue(50)
+            parent.addItem(dot)
+            self._latest_items[key] = dot
+        self._style_dot(dot, color)
+        dot.setData([float(x_last)], [float(y_last)])
 
     def _is_temp_key(self, key: str) -> bool:
         return key.startswith("sensor:")
@@ -315,6 +370,8 @@ class TimelineChart(QWidget):
                     self._temp_items[key].setData([], [])
                 if key in self._rpm_items:
                     self._rpm_items[key].setData([], [])
+                if key in self._latest_items:
+                    self._latest_items[key].setData([], [])
                 continue
 
             series = self._history.get_series(key)
@@ -344,30 +401,40 @@ class TimelineChart(QWidget):
                         skipFiniteCheck=True,
                         autoDownsample=True,
                         downsampleMethod="peak",
+                        # Per-item AA smooths only the dashboard series; the
+                        # global config flag stays False (DEC-068, DEC-118).
+                        antialias=True,
                     )
                     plot.addItem(item)
                     item.setClipToView(True)
                     self._temp_items[key] = item
                 else:
                     self._temp_items[key].setData(x, y)
+                self._update_latest_dot(key, x[-1], y[-1], color, plot)
             elif self._is_rpm_key(key) and self._rpm_vb:
                 active_rpm_keys.add(key)
                 if key not in self._rpm_items:
                     # PlotCurveItem for secondary ViewBox (PlotDataItem does
-                    # not render correctly on a bare ViewBox)
-                    item = pg.PlotCurveItem(x, y, pen=pen)
+                    # not render correctly on a bare ViewBox). Per-item AA as
+                    # above (DEC-068, DEC-118).
+                    item = pg.PlotCurveItem(x, y, pen=pen, antialias=True)
                     self._rpm_vb.addItem(item)
                     self._rpm_items[key] = item
                 else:
                     self._rpm_items[key].setData(x, y)
+                self._update_latest_dot(key, x[-1], y[-1], color, self._rpm_vb)
 
         # Remove stale items
         for key in list(self._temp_items):
             if key not in all_keys:
                 plot.removeItem(self._temp_items.pop(key))
+                if key in self._latest_items:
+                    plot.removeItem(self._latest_items.pop(key))
         for key in list(self._rpm_items):
             if key not in all_keys and self._rpm_vb:
                 self._rpm_vb.removeItem(self._rpm_items.pop(key))
+                if key in self._latest_items:
+                    self._rpm_vb.removeItem(self._latest_items.pop(key))
 
         plot.setXRange(-self._time_range_s, 0, padding=0.02)
 

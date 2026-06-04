@@ -75,6 +75,8 @@ _TOKEN_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
             ("chart_point_selected", "Selected point ring"),
             ("chart_point_hover", "Hover point ring"),
             ("chart_crosshair", "Hover crosshair"),
+            ("chart_tooltip_bg", "Hover tooltip background"),
+            ("chart_tooltip_border", "Hover tooltip border"),
         ],
     ),
     (

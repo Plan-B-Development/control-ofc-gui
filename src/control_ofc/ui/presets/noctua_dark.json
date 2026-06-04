@@ -41,6 +41,8 @@
     "#7ec8e3",
     "#a88556"
   ],
+  "chart_tooltip_bg": "#2a2018",
+  "chart_tooltip_border": "#3b2e1f",
   "nav_bg": "#221a15",
   "nav_text": "#c5a275",
   "nav_text_active": "#e6dcc0",
