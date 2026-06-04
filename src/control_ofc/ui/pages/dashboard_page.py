@@ -30,7 +30,7 @@ from control_ofc.api.models import (
     OperationMode,
     SensorReading,
 )
-from control_ofc.constants import DEFAULT_SOCKET_PATH
+from control_ofc.constants import DEFAULT_SOCKET_PATH, EXPECTED_API_VERSION
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.daemon_service_check import (
@@ -331,6 +331,12 @@ class DashboardPage(QWidget):
         self._hwmon_banner.setObjectName("Dashboard_Banner_hwmon")
         content_layout.addWidget(self._hwmon_banner)
 
+        # API-version-skew banner — shown when the daemon's reported api_version
+        # differs from EXPECTED_API_VERSION (out-of-lockstep package upgrade).
+        self._api_version_banner = ErrorBanner()
+        self._api_version_banner.setObjectName("Dashboard_Banner_api_version")
+        content_layout.addWidget(self._api_version_banner)
+
         # Row 1: Summary cards + profile quick switch
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(12)
@@ -515,6 +521,32 @@ class DashboardPage(QWidget):
             )
         else:
             self._hwmon_banner.hide_banner()
+
+        # API-version-skew guard: the GUI and daemon are independently packaged
+        # (AUR), so a user can upgrade one without the other. The depends>= floor
+        # only guards the minimum daemon version, not a future-incompatible one,
+        # and gives no signal when the GUI is older than the daemon. Re-evaluated
+        # on every reconnect (capabilities re-fetch after a daemon restart).
+        if caps.api_version != EXPECTED_API_VERSION:
+            import logging
+
+            msg = (
+                f"Daemon API v{caps.api_version} differs from this GUI's expected "
+                f"v{EXPECTED_API_VERSION}. Align your control-ofc-daemon and "
+                "control-ofc-gui package versions \u2014 some features may misbehave."
+            )
+            self._api_version_banner.show_warning(msg, auto_dismiss_ms=0)
+            self._state.add_warning(
+                level="warning", source="api", message=msg, key="api_version_skew"
+            )
+            logging.getLogger(__name__).warning(
+                "API version skew: daemon reports api_version=%d, GUI expects %d",
+                caps.api_version,
+                EXPECTED_API_VERSION,
+            )
+        else:
+            self._api_version_banner.hide_banner()
+            self._state.remove_warning("api_version_skew")
 
     def _on_status_updated(self, status: DaemonStatus) -> None:
         for sub in status.subsystems:

@@ -224,6 +224,43 @@ class FakeDaemonClient:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _neutralize_modals(monkeypatch):
+    """Stop any modal dialog from blocking the test run.
+
+    Per pytest-qt's note on modal dialogs, ``QDialog.exec()`` and the static
+    ``QMessageBox`` / ``QFileDialog`` / ``QInputDialog`` helpers spin a nested
+    event loop and block until the user responds — in a headless test that is
+    forever (this is what hung the suite on the delete-profile confirmation).
+    We patch each blocking entry point on its shared Qt class: every UI module
+    does ``from PySide6.QtWidgets import QMessageBox`` (etc.), so they all
+    reference the same class object and one patch covers every importer.
+
+    Defaults are deliberately **safe**: confirmations are *declined*, file
+    pickers return "cancelled", and ``exec()`` returns ``Rejected``. A test
+    that unexpectedly pops a modal therefore fails by NOT performing the action
+    rather than hanging or silently doing something destructive. Tests that
+    exercise the accept path override the relevant method explicitly (e.g.
+    ``monkeypatch.setattr(QMessageBox, "question", lambda *a, **k:
+    QMessageBox.StandardButton.Yes)``) — that wins because it is applied after
+    this fixture.
+    """
+    from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
+
+    sb = QMessageBox.StandardButton
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: sb.No, raising=False)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: sb.Ok, raising=False)
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: sb.Ok, raising=False)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: sb.Ok, raising=False)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: ("", ""), raising=False)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""), raising=False)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "", raising=False)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("", False), raising=False)
+    monkeypatch.setattr(
+        QDialog, "exec", lambda self, *a, **k: QDialog.DialogCode.Rejected, raising=False
+    )
+
+
 @pytest.fixture()
 def fake_client():
     return FakeDaemonClient()

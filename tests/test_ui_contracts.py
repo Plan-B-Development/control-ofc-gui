@@ -54,12 +54,18 @@ class TestControlsContracts:
 
         assert profile_service.active_id == target_id
 
-    def test_delete_removes_profile(self, qtbot, window, profile_service):
+    def test_delete_removes_profile(self, qtbot, window, profile_service, monkeypatch):
         """Delete profile via handler → combo count decreases."""
         controls = window.controls_page
         combo = controls._profile_combo
         initial_count = combo.count()
         assert initial_count > 0
+
+        # The autouse modal guard declines confirmations by default; opt into
+        # "Yes" to exercise the actual deletion path.
+        from PySide6.QtWidgets import QMessageBox
+
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
 
         # Call delete directly since it's now in a menu
         controls._on_delete_profile()
