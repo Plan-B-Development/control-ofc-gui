@@ -40,6 +40,7 @@ from control_ofc.api.models import (
     DaemonStatus,
     FanReading,
     Freshness,
+    GpuVerifyResult,
     HardwareDiagnosticsResult,
     HwmonCapability,
     HwmonHeader,
@@ -79,6 +80,7 @@ from control_ofc.ui.widgets.readiness_report import (
     build_fix_guidance_html,
     build_readiness_report_html,
     chip_rows,
+    gpu_verify_problems,
     header_summary_line,
     module_rows,
     readiness_verdict,
@@ -456,6 +458,86 @@ class _VerifyWorker(QObject):
             self._client = None
 
 
+class _GpuVerifyWorker(QObject):
+    """Runs in a QThread — executes the blocking ~6s ``verify_gpu_fan`` call off
+    the UI thread (DEC-120), mirroring :class:`_VerifyWorker`."""
+
+    verify_ok = Signal(object)  # GpuVerifyResult
+    # category ('unavailable' | 'error' | 'unsupported'), message
+    verify_error = Signal(str, str)
+
+    def __init__(self, socket_path: str) -> None:
+        super().__init__()
+        self._socket_path = socket_path
+        self._client: DaemonClient | None = None
+
+    def _ensure_client(self) -> DaemonClient:
+        from control_ofc.api.client import DaemonClient as _DaemonClient
+
+        if self._client is None:
+            self._client = _DaemonClient(socket_path=self._socket_path)
+        return self._client
+
+    @Slot(str)
+    def do_verify(self, gpu_id: str) -> None:
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            result = self._ensure_client().verify_gpu_fan(gpu_id)
+            self.verify_ok.emit(result)
+        except DaemonTimeout:
+            self.verify_error.emit(
+                "unavailable",
+                "GPU verify timed out (>10s). The daemon may have completed the "
+                "test — re-check the fan and re-run if needed.",
+            )
+        except DaemonUnavailable:
+            self.verify_error.emit("unavailable", "Daemon unavailable during GPU verify")
+        except DaemonError as e:
+            # An old daemon predating the route answers 404 not_found — signal
+            # 'unsupported' so the page hides the control for the session.
+            if getattr(e, "status", None) == 404 or getattr(e, "code", "") == "not_found":
+                self.verify_error.emit(
+                    "unsupported",
+                    "This daemon version does not support GPU fan verification.",
+                )
+            else:
+                self.verify_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("GPU verify worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.verify_error.emit("unavailable", "Connection lost during GPU verify")
+
+    def shutdown(self) -> None:
+        if self._client is not None:
+            with contextlib.suppress(Exception):
+                self._client.close()
+            self._client = None
+
+
+def _daemon_version_at_least(version: str, minimum: tuple[int, int, int]) -> bool:
+    """Best-effort semantic ``>=`` for the ``daemon_version`` string (DEC-120).
+
+    Tolerates pre-release / build suffixes (``1.11.0-rc1``, ``1.11.0+git``) and
+    short forms (``1.11``). An unparseable or empty version compares as *below*
+    ``minimum`` so the GPU verify control stays hidden until a known-supporting
+    daemon is connected.
+    """
+    core = version.strip().split("-", 1)[0].split("+", 1)[0]
+    nums: list[int] = []
+    for part in core.split(".")[:3]:
+        try:
+            nums.append(int(part))
+        except ValueError:
+            break
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums[:3]) >= minimum
+
+
 class _HwDiagWorker(QObject):
     """Runs in a QThread — executes the blocking GET /diagnostics/hardware call
     off the UI thread. The daemon performs several sysfs/procfs reads to build
@@ -524,6 +606,10 @@ class DiagnosticsPage(QWidget):
     # (running on its own QThread) so the ~6s hardware probe never blocks the UI.
     _verify_request = Signal(str, str)
 
+    # DEC-120: Main-thread signal that kicks the GPU verify worker (its own
+    # QThread) with the GPU PCI BDF so the ~6s probe never blocks the UI.
+    _gpu_verify_request = Signal(str)
+
     # Main-thread signal that kicks the hardware-diagnostics worker (its own
     # QThread) so the blocking GET /diagnostics/hardware never freezes the UI.
     _hw_diag_request = Signal()
@@ -576,6 +662,16 @@ class DiagnosticsPage(QWidget):
         # the right id from both ok and error paths (the error signal does not
         # carry the header_id).
         self._verify_active_header: str | None = None
+
+        # DEC-120: lazy-created GPU verify worker + thread; the BDF of the GPU
+        # whose verify control is currently shown; the active control-loop pause
+        # key (``amd_gpu:{bdf}``); and a session flag that hides the control if
+        # the connected daemon turns out not to support the route (404).
+        self._gpu_verify_thread: QThread | None = None
+        self._gpu_verify_worker: _GpuVerifyWorker | None = None
+        self._gpu_verify_bdf: str | None = None
+        self._gpu_verify_active_key: str | None = None
+        self._gpu_verify_unsupported = False
 
         # DEC-101 (2E): batch verification state. ``_verify_all_queue`` is
         # the remaining headers to test (FIFO); ``_verify_all_results`` is
@@ -1170,10 +1266,32 @@ class DiagnosticsPage(QWidget):
         self._verify_result_label.setWordWrap(True)
         self._verify_result_label.setVisible(False)
 
+        # DEC-120: GPU fan-control verification lives beside the hwmon verify so
+        # all "does fan control actually work?" tests are in one place. The
+        # button is hidden until a writable AMD GPU is present and the daemon
+        # supports the route (>= 1.11.0) — see _update_gpu_verify_availability.
+        gpu_verify_row = QHBoxLayout()
+        self._gpu_verify_btn = QPushButton("Test GPU Fan Control")
+        self._gpu_verify_btn.setObjectName("Diagnostics_Btn_verifyGpu")
+        self._gpu_verify_btn.setToolTip(
+            "Briefly drive the GPU fan to a test speed and confirm it responds "
+            "(~6s, no lease). Detects ppfeaturemask / SMU / BIOS silent failures."
+        )
+        self._gpu_verify_btn.clicked.connect(self._run_gpu_verify)
+        self._gpu_verify_btn.setVisible(False)
+        gpu_verify_row.addWidget(self._gpu_verify_btn)
+        gpu_verify_row.addStretch()
+
+        self._gpu_verify_result_label = _transparent_label("", "Diagnostics_Label_verifyGpuResult")
+        self._gpu_verify_result_label.setWordWrap(True)
+        self._gpu_verify_result_label.setVisible(False)
+
         section = CollapsibleSection("PWM control test", "Diagnostics_Section_pwmTest")
         section.add_layout(verify_row)
         section.add_widget(self._verify_all_progress_label)
         section.add_widget(self._verify_result_label)
+        section.add_layout(gpu_verify_row)
+        section.add_widget(self._gpu_verify_result_label)
         return section
 
     def _build_fan_status_pane(self) -> QWidget:
@@ -2490,6 +2608,10 @@ class DiagnosticsPage(QWidget):
         else:
             self._gpu_diag_label.setVisible(False)
 
+        # DEC-120: toggle the GPU fan-control verify button now that we know the
+        # GPU's write path and the daemon version.
+        self._update_gpu_verify_availability(diag)
+
         # Guidance from chip knowledge base (HTML with clickable links)
         guidance_parts: list[str] = []
         seen_prefixes: set[str] = set()
@@ -2840,6 +2962,184 @@ class DiagnosticsPage(QWidget):
             self.verify_completed.emit(header)
         self._verify_active_header = None
 
+    # ── DEC-120: GPU fan-control verification ────────────────────────
+
+    def _update_gpu_verify_availability(self, diag: HardwareDiagnosticsResult) -> None:
+        """Show the GPU verify control only when a writable AMD GPU is present
+        AND the connected daemon supports the route (>= 1.11.0). Called from
+        ``_populate_hw_diagnostics`` so it tracks the latest diagnostics + caps.
+        Captures the GPU BDF used for the verify call."""
+        gpu = diag.gpu
+        writable = bool(gpu and gpu.fan_control_method not in ("read_only", "none", ""))
+        caps = getattr(self._state, "capabilities", None) if self._state else None
+        daemon_ver = caps.daemon_version if caps else ""
+        version_ok = _daemon_version_at_least(daemon_ver, (1, 11, 0))
+
+        self._gpu_verify_bdf = gpu.pci_bdf if (gpu and writable) else None
+        show = bool(self._gpu_verify_bdf) and version_ok and not self._gpu_verify_unsupported
+        self._gpu_verify_btn.setVisible(show)
+        if not show:
+            self._gpu_verify_result_label.setVisible(False)
+
+    def _run_gpu_verify(self) -> None:
+        """Run the GPU fan-control verification on the detected GPU."""
+        bdf = self._gpu_verify_bdf
+        if not bdf:
+            self._gpu_verify_result_label.setText("No GPU with a writable fan-control path.")
+            self._gpu_verify_result_label.setVisible(True)
+            return
+        if not self._client:
+            self._gpu_verify_result_label.setText("Cannot verify: no daemon connection")
+            self._gpu_verify_result_label.setVisible(True)
+            return
+
+        self._gpu_verify_btn.setEnabled(False)
+        self._gpu_verify_btn.setText("Testing...")
+        self._gpu_verify_result_label.setVisible(False)
+
+        # Pause the GUI control loop's writes to this GPU so the daemon's 6s
+        # verify wait is not stomped by our own 1Hz tick. The key matches the
+        # control loop's GPU dispatch key (``amd_gpu:{bdf}``); the loop's 9s
+        # safety auto-resume bounds a hung verify (DEC-120).
+        self._gpu_verify_active_key = f"amd_gpu:{bdf}"
+        self.verify_started.emit(self._gpu_verify_active_key)
+
+        if self._ensure_gpu_verify_worker():
+            self._gpu_verify_request.emit(bdf)
+            return
+
+        # No socket path (demo / test client): fall back to a synchronous call
+        # if the client exposes verify_gpu_fan, mirroring the hw-diag fallback.
+        verify = getattr(self._client, "verify_gpu_fan", None)
+        if verify is None:
+            self._gpu_verify_result_label.setText("GPU verify unavailable: no socket path")
+            self._gpu_verify_result_label.setVisible(True)
+            self._gpu_verify_btn.setEnabled(True)
+            self._gpu_verify_btn.setText("Test GPU Fan Control")
+            self._emit_gpu_verify_completed()
+            return
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            result = verify(bdf)
+        except (DaemonError, DaemonTimeout, DaemonUnavailable, OSError, ConnectionError) as e:
+            self._on_gpu_verify_error("error", getattr(e, "message", str(e)))
+        else:
+            self._on_gpu_verify_ok(result)
+
+    def _ensure_gpu_verify_worker(self) -> bool:
+        """Create the GPU verify worker + thread on first use. Returns False if
+        no socket path is available to construct the worker."""
+        if self._gpu_verify_worker is not None:
+            return True
+        socket_path = getattr(self._client, "socket_path", None) if self._client else None
+        if not socket_path:
+            return False
+
+        self._gpu_verify_thread = QThread(self)
+        self._gpu_verify_worker = _GpuVerifyWorker(socket_path)
+        self._gpu_verify_worker.moveToThread(self._gpu_verify_thread)
+
+        self._gpu_verify_request.connect(
+            self._gpu_verify_worker.do_verify, Qt.ConnectionType.QueuedConnection
+        )
+        self._gpu_verify_worker.verify_ok.connect(
+            self._on_gpu_verify_ok, Qt.ConnectionType.QueuedConnection
+        )
+        self._gpu_verify_worker.verify_error.connect(
+            self._on_gpu_verify_error, Qt.ConnectionType.QueuedConnection
+        )
+
+        self._gpu_verify_thread.start()
+        return True
+
+    @Slot(object)
+    def _on_gpu_verify_ok(self, result: GpuVerifyResult) -> None:
+        self._show_gpu_verify_result(result)
+        self._gpu_verify_btn.setEnabled(True)
+        self._gpu_verify_btn.setText("Test GPU Fan Control")
+        self._emit_gpu_verify_completed()
+
+    @Slot(str, str)
+    def _on_gpu_verify_error(self, category: str, message: str) -> None:
+        if category == "unsupported":
+            # Old daemon without the route — hide the control for this session.
+            self._gpu_verify_unsupported = True
+            self._gpu_verify_btn.setVisible(False)
+            self._gpu_verify_result_label.setVisible(False)
+        elif category == "unavailable":
+            self._gpu_verify_result_label.setText(message or "Daemon unavailable during GPU verify")
+            self._gpu_verify_result_label.setVisible(True)
+        else:
+            self._gpu_verify_result_label.setText(f"GPU verify error: {message}")
+            self._gpu_verify_result_label.setVisible(True)
+        self._gpu_verify_btn.setEnabled(True)
+        self._gpu_verify_btn.setText("Test GPU Fan Control")
+        self._emit_gpu_verify_completed()
+
+    def _show_gpu_verify_result(self, result: GpuVerifyResult) -> None:
+        """Display a GPU fan verify outcome (DEC-120). All guidance is
+        GUI-authored (DEC-106) — the daemon's prose is not rendered."""
+        summary_map = {
+            "effective": (
+                "GPU fan control is working — the fan responded to the test.",
+                "SuccessChip",
+            ),
+            "zero_rpm_suppressed": (
+                "GPU fan control works; the fan is in zero-RPM idle "
+                "(normal — it spins up under load).",
+                "SuccessChip",
+            ),
+            "rpm_unavailable": (
+                "Write confirmed via curve read-back, but this GPU exposes no "
+                "fan-RPM sensor to corroborate.",
+                "WarningChip",
+            ),
+            "curve_not_applied": ("The GPU ignored the fan-control write.", "CriticalChip"),
+            "no_rpm_effect": (
+                "The fan curve was applied but the fan did not respond.",
+                "CriticalChip",
+            ),
+            "pwm_enable_reverted": (
+                "The BIOS/EC reclaimed GPU fan control during the test.",
+                "CriticalChip",
+            ),
+            "write_failed": (
+                "The GPU fan write was rejected by the driver/firmware.",
+                "CriticalChip",
+            ),
+        }
+        summary, css_class = summary_map.get(
+            result.result, (f"GPU verify: {result.result}", "CardMeta")
+        )
+        lines = [f"Result: {summary}"]
+        init = result.initial_state
+        final = result.final_state
+        if init.rpm is not None and final.rpm is not None:
+            lines.append(f"RPM: {init.rpm} → {final.rpm}")
+        if result.test_speed_pct:
+            lines.append(
+                f"Test: drove the fan to {result.test_speed_pct}%, waited {result.wait_seconds}s"
+            )
+        for prob in gpu_verify_problems(result):
+            lines.append(f"• To fix: {prob['fix']}")
+        if result.restore_failed:
+            lines.append(
+                "Note: the GPU fan could not be restored to its prior state — "
+                "set it manually if needed."
+            )
+        self._gpu_verify_result_label.setText("\n".join(lines))
+        self._set_class(self._gpu_verify_result_label, css_class)
+        self._gpu_verify_result_label.setVisible(True)
+
+    def _emit_gpu_verify_completed(self) -> None:
+        """Resume the control loop's writes for the GPU that was under verify
+        (DEC-120). Both ok and error paths call this."""
+        key = self._gpu_verify_active_key
+        if key:
+            self.verify_completed.emit(key)
+        self._gpu_verify_active_key = None
+
     def set_theme(self, _tokens) -> None:
         """Force a re-render of theme-coloured cells after a theme change.
 
@@ -2887,6 +3187,16 @@ class DiagnosticsPage(QWidget):
                 self._hw_diag_thread.wait(1000)
             self._hw_diag_thread = None
             self._hw_diag_worker = None
+        if self._gpu_verify_worker is not None:
+            self._gpu_verify_worker.shutdown()
+        if self._gpu_verify_thread is not None:
+            self._gpu_verify_thread.quit()
+            if not self._gpu_verify_thread.wait(2000):
+                log.warning("GPU verify thread did not stop within 2s, terminating")
+                self._gpu_verify_thread.terminate()
+                self._gpu_verify_thread.wait(1000)
+            self._gpu_verify_thread = None
+            self._gpu_verify_worker = None
 
     def _show_verify_result(self, result: HwmonVerifyResult) -> None:
         """Display the result of a PWM verification test.

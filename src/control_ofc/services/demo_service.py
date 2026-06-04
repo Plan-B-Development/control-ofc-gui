@@ -18,6 +18,8 @@ from control_ofc.api.models import (
     FanReading,
     FeatureFlags,
     GpuDiagnosticsInfo,
+    GpuVerifyResult,
+    GpuVerifyState,
     HardwareDiagnosticsResult,
     HwmonCapability,
     HwmonChipInfo,
@@ -169,7 +171,7 @@ class DemoService:
     def capabilities(self) -> Capabilities:
         return Capabilities(
             api_version=1,
-            daemon_version="0.1.0-demo",
+            daemon_version="1.11.0-demo",
             ipc_transport="demo",
             openfan=OpenfanCapability(
                 present=True, channels=8, rpm_support=True, write_support=True
@@ -203,7 +205,7 @@ class DemoService:
     def status(self) -> DaemonStatus:
         return DaemonStatus(
             api_version=1,
-            daemon_version="0.1.0-demo",
+            daemon_version="1.11.0-demo",
             overall_status="healthy",
             subsystems=[
                 SubsystemStatus(name="openfan", status="ok", age_ms=500, reason=""),
@@ -322,6 +324,22 @@ class DemoService:
         """Simulate a PWM write in demo mode."""
         if fan_id in self._fan_pwm:
             self._fan_pwm[fan_id] = max(0, min(100, pwm_percent))
+
+    def verify_gpu_fan(self, gpu_id: str) -> GpuVerifyResult:
+        """Synthetic GPU fan verify (DEC-120) for demo / screenshot use — never
+        touches hardware. Reports a healthy ``effective`` outcome: an idle
+        zero-RPM fan that spins up when the test curve is applied."""
+        return GpuVerifyResult(
+            gpu_id=gpu_id,
+            result="effective",
+            initial_state=GpuVerifyState(applied_speed_pct=None, rpm=0, zero_rpm_enabled=True),
+            final_state=GpuVerifyState(applied_speed_pct=75, rpm=1650, zero_rpm_enabled=False),
+            test_speed_pct=75,
+            wait_seconds=6,
+            fan_control_method="pmfw_curve",
+            details="GPU fan control verified (demo).",
+            restore_failed=False,
+        )
 
     @staticmethod
     def fan_aliases() -> dict[str, str]:

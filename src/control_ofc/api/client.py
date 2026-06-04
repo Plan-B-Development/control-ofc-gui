@@ -14,6 +14,7 @@ from control_ofc.api.models import (
     FanReading,
     GpuFanResetResult,
     GpuFanSetResult,
+    GpuVerifyResult,
     HardwareDiagnosticsResult,
     HwmonHeader,
     HwmonSetPwmResult,
@@ -33,6 +34,7 @@ from control_ofc.api.models import (
     parse_fans,
     parse_gpu_fan_reset,
     parse_gpu_fan_set,
+    parse_gpu_verify_result,
     parse_hardware_diagnostics,
     parse_hwmon_headers,
     parse_hwmon_set_pwm,
@@ -328,3 +330,20 @@ class DaemonClient:
         """POST /gpu/{gpu_id}/fan/reset — reset GPU fan to automatic mode."""
         data = self._post(f"/gpu/{gpu_id}/fan/reset", json={}, timeout=timeout)
         return parse_gpu_fan_reset(data)
+
+    def verify_gpu_fan(self, gpu_id: str) -> GpuVerifyResult:
+        """POST /gpu/{gpu_id}/fan/verify — test GPU fan-control effectiveness (~6s).
+
+        No lease (GPU writes never require one, DEC-045). The daemon drives a
+        test speed, waits ``GPU_VERIFY_WAIT_SECONDS = 6 s``, reads back the
+        applied curve + RPM, restores the prior state, and classifies the
+        outcome. We send a 12 s per-call timeout to clear the 6 s wait plus
+        round-trip overhead, matching ``verify_hwmon_pwm``. The GUI must keep
+        its ``VERIFY_PAUSE_SAFETY_MS`` strictly above the 6 s wait. See DEC-120.
+        """
+        data = self._post(
+            f"/gpu/{gpu_id}/fan/verify",
+            json={},
+            timeout=12.0,
+        )
+        return parse_gpu_verify_result(data)

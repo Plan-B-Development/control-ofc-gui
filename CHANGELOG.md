@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.23.0] — 2026-06-04
+
+GPU fan active verification (**DEC-120**) — a "Test GPU Fan Control" diagnostic
+at parity with the motherboard-fan "Test PWM Control". Pairs with **daemon
+v1.11.0**; an additive wire-contract change, so the control is shown only when
+the connected daemon supports it (≥ 1.11.0) and a writable AMD GPU is present.
+
+### Added
+- **"Test GPU Fan Control" in Diagnostics → Fans.** Briefly drives the GPU fan
+  to a test speed (biased upward so cooling is never reduced), waits ~6 s, reads
+  back the applied PMFW curve / `pwm1` plus RPM, restores the prior state, and
+  reports whether control actually works. Detects the silent failures static
+  checks miss: `ppfeaturemask` bit 14 unset, an SMU firmware/driver mismatch, or
+  a BIOS overdrive lock — each with GUI-authored "To fix" guidance.
+- Verdicts distinguish a genuine no-effect from a normal zero-RPM idle and from
+  the firmware OD_RANGE clamp, so a healthy idle GPU is never flagged as broken.
+
+### Notes
+- No lease is required (GPU writes never are). The control is hidden on daemons
+  older than 1.11.0, and on a read-only GPU (no PMFW `fan_curve` and no
+  `pwm1`+`pwm1_enable`).
+
 ## [1.22.0] — 2026-06-04
 
 GPU fan floor removal and GPU detection hardening (**DEC-119**). Pairs with

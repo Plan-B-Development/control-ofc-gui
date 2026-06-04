@@ -5,7 +5,8 @@ This page covers the **Hardware Readiness** card on the Diagnostics → Fans tab
 > **Quick navigation**
 > - The Hardware Readiness card lives at **Diagnostics → Fans**, top pane.
 > - Click **Refresh Hardware Diagnostics** at the bottom of the card to fetch current state from the daemon.
-> - Click **Test PWM Control** to run a 3-second write test against a selected motherboard header.
+> - Click **Test PWM Control** to run a ~6-second write test against a selected motherboard header.
+> - Click **Test GPU Fan Control** to verify an AMD GPU fan actually responds (~6 s, no lease).
 
 For the chip and driver matrix, see [Hardware Compatibility](../docs/19_Hardware_Compatibility.md). For vendor-by-vendor BIOS notes, see the [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md). For sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
 
@@ -30,7 +31,7 @@ When you fetch hardware diagnostics, the card populates with:
 
 For motherboard hwmon headers it is often unclear whether a write actually reaches the fan. The board may accept the write at the sysfs level but the embedded controller (EC) or BIOS overrides it within milliseconds — the classic "Linux says PWM=50%, fan still runs at 100%" problem.
 
-**Test PWM Control** writes a known-distinct PWM value to a chosen header, waits ~3 seconds, then reads back what actually happened. The result is one of:
+**Test PWM Control** writes a known-distinct PWM value to a chosen header, waits ~6 seconds, then reads back what actually happened. The result is one of:
 
 | Result | Meaning |
 |--------|---------|
@@ -47,6 +48,24 @@ The result panel also shows the initial → final RPM and `pwm_enable` values, p
 Test PWM Control requires a held hwmon lease. The GUI normally takes the lease automatically when fan control starts. If you see `Cannot verify: no hwmon lease held`, activate any profile (or open Controls → activate) so the lease is acquired, then try again.
 
 While the test is running, the GUI's 1 Hz control loop pauses writes to the header under test so its own ticks do not interfere with the daemon's verify wait. A 5-second safety timer guarantees writes resume even if the test hangs.
+
+## Test GPU Fan Control
+
+AMD GPU fan control fails *silently* far more often than motherboard headers: the driver accepts a `fan_curve` write but the firmware ignores it (missing `amdgpu.ppfeaturemask` bit `0x4000`), an SMU firmware/driver mismatch swallows it, or a BIOS overdrive lock blocks it. The static **GPU diagnostics** row can show that the *configuration* looks right while fan control still does not work.
+
+**Test GPU Fan Control** (Diagnostics → Fans — shown only when a writable AMD GPU is present and the daemon is ≥ 1.11.0) briefly drives the GPU fan to a test speed — always *upward*, so it never reduces cooling on a hot GPU — waits ~6 seconds, reads back the applied PMFW `fan_curve` (or legacy `pwm1`) and the `fan1_input` RPM, then restores the previous state. No lease is required. The result is one of:
+
+| Result | Meaning & fix |
+|--------|---------------|
+| **GPU fan control is working** | The fan responded to the test. Nothing to do |
+| **Zero-RPM idle (normal)** | The curve applied but the fan stays stopped because the GPU is below its zero-RPM stop temperature. Expected — the fan spins up under load |
+| **No RPM sensor to corroborate** | The write was confirmed via curve read-back, but this GPU exposes no `fan1_input` to measure RPM |
+| **The GPU ignored the write** | Accepted at sysfs but not applied. Add `amdgpu.ppfeaturemask=0xffffffff` to the kernel command line and reboot; if it is already set, suspect an SMU firmware/driver mismatch or a BIOS overdrive lock (see the GPU advisories in the diagnostics card) |
+| **Fan did not respond** | The curve applied but RPM did not change with zero-RPM disabled — an SMU firmware issue or a known kernel regression for this GPU. Confirm the fan is physically connected and check your kernel version |
+| **BIOS/EC reclaimed control** (legacy `pwm1` GPUs) | `pwm1_enable` reverted to automatic — disable any vendor "Smart Fan" / EC fan-control option in firmware setup |
+| **Write was rejected** | The driver/firmware refused the write. Ensure `amdgpu.ppfeaturemask=0xffffffff` is set and that `amdgpu` (not `vfio-pci`) is bound to the GPU |
+
+The firmware **OD_RANGE minimum** (commonly ~15%) and zero-RPM idle are reported as informational outcomes, never as failures — a healthy idle GPU is never flagged as broken. Failure verdicts add their fix to the card's **To fix** block. If the control is not shown at all, the GPU has no write path (read-only — see "GPU fan control says feature_unavailable" below) or the daemon is older than 1.11.0.
 
 ## Per-header pwm_enable reclaim count
 

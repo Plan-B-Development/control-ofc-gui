@@ -561,6 +561,38 @@ class HwmonVerifyResult:
 
 
 @dataclass
+class GpuVerifyState:
+    """Snapshot of GPU fan state during a verify (DEC-120). Fields are
+    path-dependent: ``zero_rpm_enabled`` is set on the PMFW path,
+    ``pwm_enable`` on the legacy ``pwm1`` path. ``applied_speed_pct`` is the
+    read-back commanded speed (flat curve value for PMFW, ``pwm1`` percent for
+    legacy)."""
+
+    applied_speed_pct: int | None = None
+    rpm: int | None = None
+    pwm_enable: int | None = None
+    zero_rpm_enabled: bool | None = None
+
+
+@dataclass
+class GpuVerifyResult:
+    """Result of ``POST /gpu/{gpu_id}/fan/verify`` (DEC-120). ``result`` is one
+    of: ``effective``, ``curve_not_applied``, ``no_rpm_effect``,
+    ``zero_rpm_suppressed``, ``rpm_unavailable``, ``write_failed``, or
+    ``pwm_enable_reverted`` (legacy path)."""
+
+    gpu_id: str = ""
+    result: str = ""
+    initial_state: GpuVerifyState = field(default_factory=GpuVerifyState)
+    final_state: GpuVerifyState = field(default_factory=GpuVerifyState)
+    test_speed_pct: int = 0
+    wait_seconds: int = 0
+    fan_control_method: str = ""
+    details: str = ""
+    restore_failed: bool = False
+
+
+@dataclass
 class HardwareDiagnosticsResult:
     api_version: int = 1
     hwmon: HwmonDiagnostics = field(default_factory=HwmonDiagnostics)
@@ -945,6 +977,23 @@ def parse_hwmon_verify_result(data: dict) -> HwmonVerifyResult:
         final_state=_parse_state(final_raw),
         test_pwm_percent=data.get("test_pwm_percent", 0),
         wait_seconds=data.get("wait_seconds", 0),
+        details=data.get("details", ""),
+        restore_failed=bool(data.get("restore_failed", False)),
+    )
+
+
+def parse_gpu_verify_result(data: dict) -> GpuVerifyResult:
+    def _parse_state(raw: dict) -> GpuVerifyState:
+        return GpuVerifyState(**_filter_fields(GpuVerifyState, raw or {}))
+
+    return GpuVerifyResult(
+        gpu_id=data.get("gpu_id", ""),
+        result=data.get("result", ""),
+        initial_state=_parse_state(data.get("initial_state") or {}),
+        final_state=_parse_state(data.get("final_state") or {}),
+        test_speed_pct=data.get("test_speed_pct", 0),
+        wait_seconds=data.get("wait_seconds", 0),
+        fan_control_method=data.get("fan_control_method", ""),
         details=data.get("details", ""),
         restore_failed=bool(data.get("restore_failed", False)),
     )

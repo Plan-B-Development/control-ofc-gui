@@ -416,6 +416,39 @@ the daemon preserves `fan_zero_rpm_enable` so the GPU stops the fan at
 its idle threshold (DEC-095). The default for omitted/legacy v3
 profiles is false, so pre-1.6.0 behaviour is unchanged.
 
+### GPU fan verify
+- `POST /gpu/{gpu_id}/fan/verify` — empty body, **no lease** (DEC-120, daemon v1.11.0+)
+
+Probes whether a GPU fan-control write actually takes effect, catching the
+silent failures static diagnostics miss (`ppfeaturemask` bit 14 unset, SMU
+firmware/driver mismatch, BIOS overdrive lock). The daemon drives a test speed
+biased **upward** (idle/low → 75%, already-high → 100%, clamped to OD_RANGE so
+cooling is never reduced), sleeps `GPU_VERIFY_WAIT_SECONDS = 6 s` (matching the
+hwmon verify), reads back the applied PMFW `fan_curve` (or legacy `pwm1`) plus
+`fan1_input` RPM and `fan_zero_rpm_enable`, then restores the prior state
+(re-applies the last commanded speed if the GPU was being driven, else resets to
+auto + re-enables zero-RPM). The GUI sends a **12 s** per-call timeout
+(`verify_gpu_fan`, `client.py`) and pauses the control loop for the
+`amd_gpu:{bdf}` key for the duration.
+
+Response (daemon `GpuVerifyResponse` ↔ GUI `GpuVerifyResult`) — **no
+`api_version`**, symmetric with `HwmonVerifyResponse`:
+- `gpu_id: str`
+- `result: str` — `"effective"`, `"curve_not_applied"`, `"no_rpm_effect"`,
+  `"zero_rpm_suppressed"`, `"rpm_unavailable"`, `"write_failed"`, or
+  `"pwm_enable_reverted"` (legacy `pwm1` path only)
+- `initial_state`, `final_state` — `{applied_speed_pct, rpm, pwm_enable,
+  zero_rpm_enabled}`, each sub-field optional
+- `test_speed_pct: int`, `wait_seconds: int`, `fan_control_method: str`,
+  `details: str`
+- `restore_failed: bool` — omitted when false (`skip_serializing_if`)
+
+Errors: `400 feature_unavailable` (read-only GPU — no PMFW `fan_curve` and no
+legacy `pwm1`+`pwm1_enable`), `404 not_found` (unknown `gpu_id`). OD_RANGE
+clamping and zero-RPM idle are reported as informational verdicts, not errors.
+Old daemons predating the route answer `404`, which the GUI treats as
+"unsupported" and hides the control.
+
 ### Hwmon rescan
 - `POST /hwmon/rescan` — re-enumerate hwmon devices
 
