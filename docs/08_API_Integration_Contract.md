@@ -1,6 +1,6 @@
 # 08 — API Integration Contract
 
-**Last updated:** 2026-06-01 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Last updated:** 2026-06-04 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
 
 ## Purpose
 This file defines how the GUI should consume the current daemon/API safely and predictably.
@@ -313,6 +313,38 @@ header's discovered `is_writable` flag is false — the kernel exposes
 its `pwmN` file read-only and writes would otherwise EACCES into a
 1 Hz 503 storm. The GUI should treat this as a misconfigured profile
 member (drop the member, not retry the write).
+
+### Hwmon PWM verify
+- `POST /hwmon/{header_id}/verify` — `{"lease_id": "..."}`
+
+Probes whether a `pwmN` write actually moves the fan, to detect BIOS/EC
+interference. The daemon writes a test PWM, sleeps
+`VERIFY_WAIT_SECONDS = 6 s` (raised from 3 s in DEC-101 — slow-spinning
+fans need settle time), reads back `pwmN` / `pwmN_enable` / `fanN_input`,
+then restores the caller's prior PWM. A lease is **required** — same as
+the PWM write. The GUI sends a **12 s** per-call timeout
+(`verify_hwmon_pwm`, `client.py`) to cover the worst-case ~7.5 s
+round-trip; the control-loop pause-safety auto-resume
+(`control_loop.VERIFY_PAUSE_SAFETY_MS`, 9 s) must stay above the daemon
+wait. See the "Per-call timeouts (DEC-098 / DEC-099)" note above.
+
+Response (daemon `HwmonVerifyResponse` ↔ GUI `HwmonVerifyResult`):
+- `header_id: str`
+- `result: str` — `"effective"`, `"pwm_enable_reverted"`,
+  `"pwm_value_clamped"`, `"no_rpm_effect"`, or `"rpm_unavailable"`
+- `initial_state`, `final_state` — `{pwm_enable, pwm_raw, pwm_percent,
+  rpm}`, each sub-field optional
+- `test_pwm_percent: int`, `wait_seconds: int`, `details: str`
+- `restore_failed: bool` — omitted when false (`skip_serializing_if`);
+  when true, the header was left at the test value because the
+  restore-to-original write failed, so the caller should write the
+  desired PWM explicitly rather than trust the verify call to have
+  restored it.
+
+Errors: `403 lease_required` (missing/invalid/expired lease — including a
+lease that expires between validation and the readback write), `404
+not_found` (unknown header), `503 hardware_unavailable` (no hwmon headers
+or controller absent).
 
 ### Profile activation
 - `POST /profile/activate` — `{"profile_path": "/path/to/profile.json"}` or `{"profile_id": "quiet"}`
