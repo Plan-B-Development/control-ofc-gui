@@ -331,6 +331,68 @@ amdgpu.ppfeaturemask=0xffffffff
 The daemon's hardware diagnostics endpoint reports the current
 ppfeaturemask value and whether bit 14 is set.
 
+## Intel discrete GPU (Arc) monitoring
+
+Intel **discrete** GPUs (Arc) are supported for **read-only** monitoring
+only — temperatures and fan RPM. Added in GUI v1.24.0 / daemon v1.12.0
+(DEC-121).
+
+### Drivers
+
+| GPU family | Kernel driver | Hwmon chip name |
+|---|---|---|
+| Arc B-series "Battlemage" (and later Xe2) | `xe` | `xe` |
+| Arc A-series "Alchemist" | `i915` | `i915` |
+
+Both drivers register their hwmon node **only for discrete GPUs** (the
+kernel gates it on `IS_DGFX(...)` in
+[`drivers/gpu/drm/xe/xe_hwmon.c`](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/xe/xe_hwmon.c)
+and the equivalent `i915_hwmon.c`). The daemon therefore treats an hwmon
+chip named `xe` or `i915` as unambiguously a discrete Intel GPU.
+**Integrated** Intel graphics (Xe / UHD) expose no such hwmon node and are
+not affected by this feature.
+
+### Supported (read-only)
+
+- **Temperature monitoring** — surfaced as sensor source `"intel_gpu"`,
+  kind `gpu_temp`. See `20_Sensor_Interpretation_Guide.md` for the
+  per-index meaning of the `xe` / `i915` channels.
+- **Fan RPM monitoring** — the `xe` driver exposes `fan1_input`,
+  `fan2_input`, `fan3_input` (all read-only RPM); the GUI surfaces one fan
+  entity per GPU (`fan1`) as fan ID `intel_gpu:{pci_bdf}`. `i915` fan RPM
+  reporting (`fan1_input`) was added in Linux **6.12**.
+
+### Not supported — fan control
+
+There is **no user-controllable fan interface** for Intel GPUs on Linux.
+Neither `xe` nor `i915` exposes a `pwm` attribute or a fan-write callback —
+Intel GPU fan speed is managed autonomously by on-card firmware (a
+linux-firmware blob, e.g. `fan_control_8086_e20b_8086_1100.bin` for the Arc
+B580; fan reads go through a firmware "pcode" mailbox). Userspace cannot
+override it. This is a kernel/firmware reality, not a daemon limitation.
+
+Consequently the daemon always reports `fan_control_method` of `"read_only"`
+(fan present) or `"none"`. Intel GPU fans are never writable and are never
+offered as controllable curve members. The GPU's **temperatures** remain
+usable as curve *sensors* to drive other fans.
+
+There is no Intel kernel parameter to enable fan control — note that
+`amdgpu.ppfeaturemask` is an AMD-only concept and does not apply to Intel.
+
+### Model names
+
+Only the Arc **B580** (PCI device ID `0xE20B`, vendor `0x8086`) is
+authoritatively name-mapped. All other Intel discrete GPUs display as the
+generic "Intel D-GPU" until an authoritative device-ID → name mapping is
+confirmed.
+
+### Sources
+
+- [intel-xe-hwmon sysfs ABI](https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-driver-intel-xe-hwmon)
+- [intel-i915-hwmon sysfs ABI](https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-driver-intel-i915-hwmon)
+- [`drivers/gpu/drm/xe/xe_hwmon.c`](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/xe/xe_hwmon.c)
+- [`include/drm/intel/pciids.h`](https://github.com/torvalds/linux/blob/master/include/drm/intel/pciids.h)
+
 ## ACPI Resource Conflicts
 
 Some BIOS implementations claim I/O port ranges used by Super I/O chips

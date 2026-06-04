@@ -598,6 +598,13 @@ class ControlsPage(QWidget):
                     h = header_by_id.get(fan.id)
                     if h is not None and not h.is_writable:
                         continue
+                # DEC-121: Intel discrete GPU fans have no kernel write path
+                # (firmware-managed). Never offer them as controllable members.
+                # Unlike an AMD read-only GPU (a fixable ppfeaturemask state),
+                # this is permanent. The GPU's temperature sensors remain
+                # available as curve sensors.
+                if fan.source == "intel_gpu":
+                    continue
                 label = self._state.fan_display_name(fan.id)
                 if fan.source == "amd_gpu" and not gpu_writable:
                     label = f"{label} (read-only)"

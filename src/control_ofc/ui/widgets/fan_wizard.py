@@ -121,6 +121,10 @@ class FanConfigWizard(QWizard):
             # Skip amdgpu hwmon entries — GPU fans use PMFW, not hwmon pwm1
             if fan.source == "hwmon" and "amdgpu" in fan.id:
                 continue
+            # Skip Intel discrete GPU fans — read-only (firmware-managed,
+            # DEC-121), so they cannot be stopped for identification.
+            if fan.source == "intel_gpu":
+                continue
             targets.append(
                 {
                     "id": fan.id,
@@ -223,6 +227,9 @@ class FanConfigWizard(QWizard):
             elif target["source"] == "amd_gpu":
                 gpu_id = fan_id.removeprefix("amd_gpu:")
                 self._client.set_gpu_fan_speed(gpu_id, 0)
+            elif target["source"] == "intel_gpu":
+                # Read-only (firmware-managed, DEC-121) — cannot be stopped.
+                return "Intel GPU fans are read-only and cannot be stopped"
             else:
                 # hwmon — need lease
                 if self._lease_service and self._lease_service.is_held:
@@ -249,6 +256,8 @@ class FanConfigWizard(QWizard):
             elif target["source"] == "amd_gpu":
                 gpu_id = fan_id.removeprefix("amd_gpu:")
                 self._client.set_gpu_fan_speed(gpu_id, restore_pct)
+            elif target["source"] == "intel_gpu":
+                return  # read-only (DEC-121) — nothing to restore
             else:
                 if self._lease_service and self._lease_service.is_held:
                     self._client.set_hwmon_pwm(fan_id, restore_pct, self._lease_service.lease_id)

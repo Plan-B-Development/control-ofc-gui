@@ -25,6 +25,8 @@ from control_ofc.api.models import (
     HwmonChipInfo,
     HwmonDiagnostics,
     HwmonHeader,
+    IntelGpuCapability,
+    IntelGpuDiagnosticsInfo,
     KernelModuleInfo,
     LeaseState,
     OpenfanCapability,
@@ -52,6 +54,9 @@ _DEMO_FANS: list[dict] = [
     {"id": "hwmon:it8696:pci0:pwm1:CHA_FAN1", "source": "hwmon", "label": "CPU Fan"},
     {"id": "hwmon:it8696:pci0:pwm3:CHA_FAN3", "source": "hwmon", "label": "CPU OPT / Pump"},
     {"id": "amd_gpu:0000:2d:00.0", "source": "amd_gpu", "label": "RX 7900 XTX Fan"},
+    # Intel discrete GPU (DEC-121) — read-only fan; demonstrates the
+    # "(read-only)" treatment and firmware-managed messaging.
+    {"id": "intel_gpu:0000:03:00.0", "source": "intel_gpu", "label": "Arc B580 Fan"},
 ]
 
 _DEMO_SENSORS: list[dict] = [
@@ -82,6 +87,21 @@ _DEMO_SENSORS: list[dict] = [
         "label": "junction",
         "source": "amd_gpu",
         "chip_name": "amdgpu",
+    },
+    # Intel Arc (Battlemage) via the xe driver — temps start at temp2 (DEC-121).
+    {
+        "id": "hwmon:xe:0000:03:00.0:temp2",
+        "kind": "GpuTemp",
+        "label": "temp2",
+        "source": "intel_gpu",
+        "chip_name": "xe",
+    },
+    {
+        "id": "hwmon:xe:0000:03:00.0:temp3",
+        "kind": "GpuTemp",
+        "label": "temp3",
+        "source": "intel_gpu",
+        "chip_name": "xe",
     },
     {
         "id": "hwmon:it8696:it87.2624:temp1",
@@ -171,7 +191,7 @@ class DemoService:
     def capabilities(self) -> Capabilities:
         return Capabilities(
             api_version=1,
-            daemon_version="1.11.0-demo",
+            daemon_version="1.12.0-demo",
             ipc_transport="demo",
             openfan=OpenfanCapability(
                 present=True, channels=8, rpm_support=True, write_support=True
@@ -192,6 +212,17 @@ class DemoService:
                 overdrive_enabled=True,
                 gpu_zero_rpm_available=True,
             ),
+            intel_gpu=IntelGpuCapability(
+                present=True,
+                model_name="Intel Arc B580",
+                display_label="Arc B580",
+                pci_id="0000:03:00.0",
+                pci_device_id=0xE20B,
+                driver="xe",
+                fan_control_method="read_only",
+                fan_rpm_available=True,
+                is_discrete=True,
+            ),
             aio_hwmon=UnsupportedCapability(present=False, status="unsupported"),
             aio_usb=UnsupportedCapability(present=False, status="unsupported"),
             features=FeatureFlags(
@@ -205,7 +236,7 @@ class DemoService:
     def status(self) -> DaemonStatus:
         return DaemonStatus(
             api_version=1,
-            daemon_version="1.11.0-demo",
+            daemon_version="1.12.0-demo",
             overall_status="healthy",
             subsystems=[
                 SubsystemStatus(name="openfan", status="ok", age_ms=500, reason=""),
@@ -245,12 +276,15 @@ class DemoService:
         for f in _DEMO_FANS:
             pwm = self._fan_pwm.get(f["id"], 40)
             base_rpm = int(pwm * 18 + random.gauss(0, 15))
+            # Intel discrete GPU fans are read-only (DEC-121): the daemon never
+            # commands them, so report no last_commanded_pwm (matches reality).
+            read_only = f["source"] == "intel_gpu"
             fans.append(
                 FanReading(
                     id=f["id"],
                     source=f["source"],
                     rpm=max(0, base_rpm),
-                    last_commanded_pwm=pwm,
+                    last_commanded_pwm=None if read_only else pwm,
                     age_ms=random.randint(100, 800),
                 )
             )
@@ -296,6 +330,20 @@ class DemoService:
                 ppfeaturemask="0xffffffff",
                 ppfeaturemask_bit14_set=True,
                 zero_rpm_available=True,
+            ),
+            intel_gpu=IntelGpuDiagnosticsInfo(
+                pci_bdf="0000:03:00.0",
+                pci_device_id=0xE20B,
+                pci_revision=0x00,
+                model_name="Intel Arc B580",
+                driver="xe",
+                fan_control_method="read_only",
+                fan_rpm_available=True,
+                fan_control_note=(
+                    "Intel GPU fan control is managed autonomously by on-card firmware and is "
+                    "not exposed to Linux userspace (the xe/i915 drivers register no PWM "
+                    "interface). Temperature and fan RPM are read-only."
+                ),
             ),
             thermal_safety=ThermalSafetyInfo(
                 state="normal",

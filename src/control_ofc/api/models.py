@@ -90,6 +90,30 @@ class AmdGpuCapability:
 
 
 @dataclass
+class IntelGpuCapability:
+    """Intel discrete GPU (Arc) capability (DEC-121).
+
+    Monitoring-only: Intel GPU fan control is firmware-managed with no
+    userspace write path, so ``fan_control_method`` is always ``"read_only"``
+    (fan present) or ``"none"``, and there is deliberately no
+    ``fan_write_supported`` field — Intel GPU fans are never offered as
+    writable controls. Mirrors the read-only subset of ``AmdGpuCapability``
+    (no PMFW/overdrive/zero-RPM/kernel-warning fields). Older daemons that
+    predate the field yield ``present=False`` via the parser's tolerance.
+    """
+
+    present: bool = False
+    model_name: str | None = None
+    display_label: str = "Intel D-GPU"
+    pci_id: str | None = None
+    pci_device_id: int | None = None
+    driver: str | None = None  # "xe" or "i915"
+    fan_control_method: str = "none"  # "read_only" | "none" — never writable
+    fan_rpm_available: bool = False
+    is_discrete: bool = False
+
+
+@dataclass
 class UnsupportedCapability:
     present: bool = False
     status: str = "unsupported"
@@ -117,6 +141,7 @@ class Capabilities:
     openfan: OpenfanCapability = field(default_factory=OpenfanCapability)
     hwmon: HwmonCapability = field(default_factory=HwmonCapability)
     amd_gpu: AmdGpuCapability = field(default_factory=AmdGpuCapability)
+    intel_gpu: IntelGpuCapability = field(default_factory=IntelGpuCapability)
     aio_hwmon: UnsupportedCapability = field(default_factory=UnsupportedCapability)
     aio_usb: UnsupportedCapability = field(default_factory=UnsupportedCapability)
     features: FeatureFlags = field(default_factory=FeatureFlags)
@@ -468,6 +493,25 @@ class GpuDiagnosticsInfo:
 
 
 @dataclass
+class IntelGpuDiagnosticsInfo:
+    """Intel discrete GPU diagnostics (DEC-121).
+
+    Read-only by nature — no ppfeaturemask/overdrive/PMFW/kernel-warning
+    fields. ``fan_control_note`` is a daemon-supplied, user-facing explanation
+    of why fan control is unavailable (firmware-managed).
+    """
+
+    pci_bdf: str = ""
+    pci_device_id: int = 0
+    pci_revision: int = 0
+    model_name: str | None = None
+    driver: str = ""  # "xe" or "i915"
+    fan_control_method: str = "none"
+    fan_rpm_available: bool = False
+    fan_control_note: str = ""
+
+
+@dataclass
 class AmdPciDeviceInfo:
     """An AMD VGA-class PCI device and its bound driver (DEC-119).
 
@@ -597,6 +641,9 @@ class HardwareDiagnosticsResult:
     api_version: int = 1
     hwmon: HwmonDiagnostics = field(default_factory=HwmonDiagnostics)
     gpu: GpuDiagnosticsInfo | None = None
+    # DEC-121: Intel discrete GPU diagnostics. None when no Intel GPU present
+    # or the daemon predates the field.
+    intel_gpu: IntelGpuDiagnosticsInfo | None = None
     thermal_safety: ThermalSafetyInfo = field(default_factory=ThermalSafetyInfo)
     kernel_modules: list[KernelModuleInfo] = field(default_factory=list)
     acpi_conflicts: list[AcpiConflictInfo] = field(default_factory=list)
@@ -691,6 +738,12 @@ def parse_capabilities(data: dict) -> Capabilities:
     amd_gpu = AmdGpuCapability(**_filter_fields(AmdGpuCapability, amd_gpu_raw))
     amd_gpu.kernel_warnings = kernel_warnings
 
+    # DEC-121: Intel discrete GPU — additive, read-only. No nested lists to
+    # hand-parse; `_coalesce_pci_bdf` normalises pci_bdf↔pci_id like amd_gpu.
+    intel_gpu = IntelGpuCapability(
+        **_filter_fields(IntelGpuCapability, _coalesce_pci_bdf(devices.get("intel_gpu", {})))
+    )
+
     return Capabilities(
         api_version=data.get("api_version", 1),
         daemon_version=data.get("daemon_version", ""),
@@ -698,6 +751,7 @@ def parse_capabilities(data: dict) -> Capabilities:
         openfan=OpenfanCapability(**_filter_fields(OpenfanCapability, devices.get("openfan", {}))),
         hwmon=HwmonCapability(**_filter_fields(HwmonCapability, devices.get("hwmon", {}))),
         amd_gpu=amd_gpu,
+        intel_gpu=intel_gpu,
         aio_hwmon=UnsupportedCapability(
             **_filter_fields(UnsupportedCapability, devices.get("aio_hwmon", {}))
         ),
@@ -905,6 +959,14 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
             if isinstance(kw, dict)
         ]
 
+    # DEC-121: Intel discrete GPU diagnostics (additive, read-only).
+    intel_gpu_raw = data.get("intel_gpu")
+    intel_gpu = None
+    if isinstance(intel_gpu_raw, dict) and intel_gpu_raw:
+        intel_gpu = IntelGpuDiagnosticsInfo(
+            **_filter_fields(IntelGpuDiagnosticsInfo, _coalesce_pci_bdf(intel_gpu_raw))
+        )
+
     thermal_raw = data.get("thermal_safety", {})
     thermal = ThermalSafetyInfo(**_filter_fields(ThermalSafetyInfo, thermal_raw))
 
@@ -945,6 +1007,7 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         api_version=data.get("api_version", 1),
         hwmon=hwmon,
         gpu=gpu,
+        intel_gpu=intel_gpu,
         thermal_safety=thermal,
         kernel_modules=[
             KernelModuleInfo(**_filter_fields(KernelModuleInfo, m))

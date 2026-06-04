@@ -231,6 +231,39 @@ but those cannot be reliably mapped to the Linux sysfs channels.
 GPU sensors are high confidence because the amdgpu kernel driver defines
 exact label semantics. Junction is the hottest point on the die.
 
+### xe / i915 (Intel discrete GPU driver)
+
+Read-only temperatures from Intel **discrete** GPUs (Arc). Surfaced as
+sensor source `intel_gpu`, kind `gpu_temp`. The `xe` and `i915` drivers do
+**not** expose `tempN_label` sysfs files, so labels arrive as the generic
+`tempN` channel name; the meaning is positional, taken from the kernel ABI
+docs.
+
+`xe` (Arc B-series "Battlemage" and later Xe2) — note temperatures start at
+`temp2` (there is no `temp1`):
+
+| Index | Meaning |
+|---|---|
+| `temp2` | GPU package |
+| `temp3` | VRAM |
+| `temp4` | Memory controller (average) |
+| `temp5` | GPU PCIe |
+| `temp6`–`temp21` | Per-VRAM-channel |
+
+`i915` (Arc A-series "Alchemist"):
+
+| Index | Meaning |
+|---|---|
+| `temp1` | Package temperature |
+
+All Intel GPU temperatures are read-only. Fan control is firmware-managed
+and has no kernel write path — see `19_Hardware_Compatibility.md` § Intel
+discrete GPU (Arc) monitoring.
+
+References:
+- https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-driver-intel-xe-hwmon
+- https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-driver-intel-i915-hwmon
+
 ### nvme (NVMe drive controller)
 
 All readings classify as `disk_composite` at `high` confidence. NVMe drives
@@ -403,5 +436,7 @@ precedence.
 - asus_ec_sensors: https://docs.kernel.org/hwmon/asus_ec_sensors.html
 - asus_wmi_sensors: https://docs.kernel.org/hwmon/asus_wmi_sensors.html
 - amdgpu: https://docs.kernel.org/gpu/amdgpu/thermal.html
+- intel-xe-hwmon: https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-driver-intel-xe-hwmon
+- intel-i915-hwmon: https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-driver-intel-i915-hwmon
 - NVMe specification: https://nvmexpress.org/specifications/
 - hwmon sysfs interface: https://docs.kernel.org/hwmon/sysfs-interface.html

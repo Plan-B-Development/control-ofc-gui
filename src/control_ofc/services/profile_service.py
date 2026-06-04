@@ -151,7 +151,7 @@ class ControlMode(Enum):
 class ControlMember:
     """A physical fan output assigned to a logical control."""
 
-    source: str = ""  # "openfan" | "hwmon" | "amd_gpu"
+    source: str = ""  # "openfan" | "hwmon" | "amd_gpu" | "intel_gpu"
     member_id: str = ""  # stable daemon ID (e.g. "openfan:ch00", "hwmon:nct6775:pwm1")
     member_label: str = ""  # cached display name
     # Per-GPU-member zero-RPM toggle (v4). When True, the daemon preserves the
@@ -212,7 +212,11 @@ def _label_indicates_cpu_or_pump(label: str) -> bool:
 
 def infer_member_role(member: ControlMember) -> str:
     """Classify a single member into one of the three role buckets."""
-    if member.source == "amd_gpu":
+    # Intel discrete GPU fans are read-only and never offered as controllable
+    # members (DEC-121); the branch is defensive against a hand-edited/legacy
+    # profile so such a member still classifies as GPU (0% floor, harmless —
+    # the control loop no-ops the write).
+    if member.source in ("amd_gpu", "intel_gpu"):
         return CONTROL_ROLE_GPU
     if member.source == "hwmon" and _label_indicates_cpu_or_pump(member.member_label):
         return CONTROL_ROLE_CPU_PUMP
