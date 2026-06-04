@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.25.0] — 2026-06-05
+
+### Added
+- **API-version-skew guard.** The GUI now compares the daemon's reported
+  `api_version` against the contract version it was built against and shows a
+  non-fatal dashboard banner (plus an explicit flag in the diagnostics support
+  bundle) when they differ — so an out-of-lockstep package upgrade is visible
+  instead of producing silent field-mismatch behavior. (**DEC-123**)
+
+### Fixed
+- **Daemon-disconnect robustness.** A daemon that dies mid-response (restart,
+  OOM, SIGKILL) raises an httpx `RemoteProtocolError` / `ReadError` /
+  `WriteError` that the API client did not map, so it escaped the polling and
+  control-loop worker slots uncaught — freezing the dashboard or killing the
+  write worker with no reconnect. These are now mapped to the retryable
+  "daemon unavailable" path (clean disconnect + auto-reconnect), and a
+  last-resort exception hook logs any future uncaught worker-slot error into
+  the support bundle. (**DEC-122**)
+
+### Internal
+- Test suite no longer hangs on modal dialogs: an autouse fixture neutralizes
+  blocking `QMessageBox` / `QFileDialog` / `QInputDialog` / `QDialog.exec`
+  calls with safe (declining) defaults, and `pytest-timeout` is configured as a
+  thread-method backstop.
+
 ## [1.24.0] — 2026-06-04
 
 Intel discrete GPU (Arc) monitoring (**DEC-121**) — Battlemage (Arc B-series,

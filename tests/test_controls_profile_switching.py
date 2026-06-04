@@ -244,7 +244,7 @@ class TestProfileActivationUpdatesComboLabel:
 class TestDeleteProfileSwitchesToActive:
     """Deleting the viewed (non-active) profile switches the combo to the active profile."""
 
-    def test_delete_profile_switches_to_active(self, controls_page, profile_service):
+    def test_delete_profile_switches_to_active(self, controls_page, profile_service, monkeypatch):
         active = profile_service.active_profile
         assert active is not None
 
@@ -253,6 +253,12 @@ class TestDeleteProfileSwitchesToActive:
         controls_page._refresh_profile_combo(selected_id=victim.id)
         _select_profile_by_id(controls_page, victim.id)
         assert _combo_profile_id(controls_page) == victim.id
+
+        # The autouse modal guard declines confirmations by default; opt into
+        # "Yes" here to exercise the actual deletion path.
+        from PySide6.QtWidgets import QMessageBox
+
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
 
         # Delete it.
         controls_page._on_delete_profile()

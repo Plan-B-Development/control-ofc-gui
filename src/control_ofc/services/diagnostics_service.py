@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
+from control_ofc.constants import EXPECTED_API_VERSION
 from control_ofc.services.app_state import AppState
 
 if TYPE_CHECKING:
@@ -178,7 +179,10 @@ class DiagnosticsService(QObject):
         if self._state.capabilities:
             caps = self._state.capabilities
             lines.append(f"Daemon version: {caps.daemon_version}")
-            lines.append(f"API version: {caps.api_version}")
+            api_line = f"API version: {caps.api_version}"
+            if caps.api_version != EXPECTED_API_VERSION:
+                api_line += f"  [!] MISMATCH — GUI expects v{EXPECTED_API_VERSION}"
+            lines.append(api_line)
 
         status = self._state.daemon_status
         if status:
@@ -544,6 +548,8 @@ class DiagnosticsService(QObject):
                 bundle["capabilities"] = {
                     "daemon_version": caps.daemon_version,
                     "api_version": caps.api_version,
+                    "expected_api_version": EXPECTED_API_VERSION,
+                    "api_version_skew": caps.api_version != EXPECTED_API_VERSION,
                     "openfan_present": caps.openfan.present,
                     "openfan_channels": caps.openfan.channels,
                     "hwmon_present": caps.hwmon.present,

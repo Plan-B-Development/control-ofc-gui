@@ -1,6 +1,6 @@
 [project]
 name = "control-ofc-gui"
-version = "1.24.0"
+version = "1.25.0"
 description = "Desktop fan control GUI for the Control-OFC daemon"
 requires-python = ">=3.12"
 license = "MIT"
@@ -16,6 +16,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-qt>=4.3",
+    "pytest-timeout>=2.3",
     "ruff>=0.4",
     "pip-audit>=2.7",
     "mutmut>=2.5",
@@ -34,6 +35,14 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Backstop against a wedged test (e.g. an unpatched modal dialog blocking on
+# exec()). The autouse `_neutralize_modals` fixture in tests/conftest.py is the
+# real guard; this is a last-resort cap. `thread` method is required — a
+# blocked native Qt event loop won't honour SIGALRM (the `signal` method).
+# Configured as ini options (not addopts) so a run without pytest-timeout
+# installed degrades to a warning rather than failing to start.
+timeout = 60
+timeout_method = "thread"
 
 [tool.setuptools.package-data]
 # Ship bundled theme presets inside the wheel so first-run install can

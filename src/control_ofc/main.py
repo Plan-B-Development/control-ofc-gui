@@ -40,6 +40,41 @@ logging.basicConfig(
 
 log = logging.getLogger(__name__)
 
+# Wired up in main() once the diagnostics service exists, so the last-resort
+# exception hook can drop a breadcrumb into the support bundle. Stays None in
+# tests (which never call main()) and until diagnostics is constructed.
+_diagnostics: DiagnosticsService | None = None
+
+
+def _set_uncaught_diagnostics(diag: DiagnosticsService) -> None:
+    """Register the diagnostics service used by ``_handle_uncaught``."""
+    global _diagnostics
+    _diagnostics = diag
+
+
+def _handle_uncaught(exc_type, exc, tb) -> None:
+    """Last-resort hook for exceptions that escape a Qt slot or worker thread.
+
+    Daemon-disconnect handling proper lives in the API client (transport errors
+    → ``DaemonUnavailable``) and the polling / control-loop workers. This net
+    exists so a *future* uncaught exception surfaces in the log and the support
+    bundle instead of silently killing a worker thread — PySide6 routes
+    unhandled slot exceptions through ``sys.excepthook``. ``KeyboardInterrupt``
+    and ``SystemExit`` are delegated to the default hook so Ctrl+C and clean
+    exits are unaffected. Must never raise.
+    """
+    if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+        sys.__excepthook__(exc_type, exc, tb)
+        return
+    log.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
+    if _diagnostics is not None:
+        try:
+            _diagnostics.log_event(
+                "error", "gui", f"Uncaught exception: {exc_type.__name__}: {exc}"
+            )
+        except Exception:
+            log.debug("Failed to record uncaught exception in diagnostics", exc_info=True)
+
 
 def _resolve_startup_theme(theme_name: str) -> ThemeTokens:
     """Return the persisted theme by name, or the default dark theme.
@@ -73,6 +108,27 @@ def _resolve_startup_theme(theme_name: str) -> ThemeTokens:
 
 def main() -> None:
     ensure_dirs()
+
+    # Defense-in-depth: a last-resort exception hook so nothing fails silently
+    # on a worker thread, plus routing Qt's own log messages into Python
+    # logging. The primary daemon-disconnect handling is in the API client and
+    # the polling / control-loop workers (see _handle_uncaught). Installed
+    # before QApplication so even early startup errors are captured.
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+
+    sys.excepthook = _handle_uncaught
+    _qt_log_levels = {
+        QtMsgType.QtDebugMsg: logging.DEBUG,
+        QtMsgType.QtInfoMsg: logging.INFO,
+        QtMsgType.QtWarningMsg: logging.WARNING,
+        QtMsgType.QtCriticalMsg: logging.ERROR,
+        QtMsgType.QtFatalMsg: logging.CRITICAL,
+    }
+
+    def _qt_message_handler(mode, _context, message) -> None:
+        logging.getLogger("Qt").log(_qt_log_levels.get(mode, logging.INFO), message)
+
+    qInstallMessageHandler(_qt_message_handler)
 
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName(APP_NAME)
@@ -128,6 +184,9 @@ def main() -> None:
         profile_service=profile_service,
     )
     diagnostics.log_event("info", "gui", f"GUI started v{APP_VERSION}")
+    # Now that diagnostics exists, let the last-resort exception hook record an
+    # uncaught error into the support bundle (set after the early hook install).
+    _set_uncaught_diagnostics(diagnostics)
 
     profile_load_errors = profile_service.load()
     for path, reason in profile_load_errors:
