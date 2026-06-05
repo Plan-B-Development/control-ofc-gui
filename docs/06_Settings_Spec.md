@@ -100,6 +100,9 @@ These belong to the GUI:
 - groups
 - profiles
 - local UI state
+- per-card size overrides (`controls_card_sizes` — set via the Controls-page
+  resize grips, not via a Settings control; reset per card by double-clicking
+  its grip. DEC-129)
 
 ### Daemon-owned settings
 These belong to the daemon runtime/config:

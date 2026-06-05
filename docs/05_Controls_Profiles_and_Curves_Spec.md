@@ -275,6 +275,37 @@ Cards are **content-aware**, not a fixed pixel box (DEC-128):
   (`ControlsPage.set_theme` → `Card.apply_card_size`).
 - **Curve cards**: header, sensor, preview, footer.
 - **Fan Role cards**: name, members, curve, output, actions (same width + floor).
+- **Tight rows** — row spacing 2px, vertical margins 4px; surplus card height
+  pools in a stretch above the Fan Role action row (Curve cards give it to
+  the preview), so rows never read as double-spaced (DEC-129).
+
+### Per-card user resize (DEC-129)
+Every card has a bottom-right **resize grip** (`ui/widgets/card_resize.py`):
+- **Drag** resizes that card live; sizes snap to an **absolute lattice**
+  (multiples of `card_metrics.SNAP_STEP_PX = 20`) so nearby sizes land on
+  exactly the same value — the affordance that makes equal-sized cards easy.
+- **Clamping** — width ≥ `MIN_USER_CARD_WIDTH_PX` (220); height ≥ the card
+  layout's `minimumSize()` rounded up to the lattice, so a shrink can never
+  clip rows. With an override the card is fixed in *both* dimensions;
+  without one, DEC-128 fixed-width + min-height semantics apply unchanged.
+- **Reset** — double-click the grip to restore the theme-derived size.
+- **Persistence** — `AppSettings.controls_card_sizes` (`id → [w, h]`),
+  re-applied on grid rebuilds; theme/tier changes and content growth
+  *re-clamp* an override but never clear it; saved sizes are pruned of ids
+  that no longer exist in any known profile.
+- **Gesture isolation** — the grip consumes its own mouse events, so a
+  resize drag can never start the container's reorder drag (its event
+  filter watches the card only) or the card's click-to-select.
+
+### Curve preview (owner-drawn, DEC-129)
+`CurvePreview` paints the graph polyline (or the linear/flat text summary)
+in `paintEvent` with a **constant font-derived size hint** (~3 text lines)
+and an Expanding policy. The previous QLabel+QPixmap preview re-rendered at
+its own size in `resizeEvent`, and a QLabel's hint is its pixmap — a
+render→hint→grant→render ratchet that inflated graph cards into ~570px
+towers. With the owner-drawn widget the default card shows a modest
+sparkline, and extra height granted by a user resize grows the graph
+intentionally.
 
 ### Section layout (Fan Roles / Curves)
 The two sections share a vertical `QSplitter` (`Controls_Splitter_sections`)

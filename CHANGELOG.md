@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.29.0] — 2026-06-05
+
+### Added
+- **Drag-resizable Controls cards with snap.** Every Fan Role and Curve card
+  now has a bottom-right grip: drag it to resize that card, with sizes
+  snapping live to a shared 20px grid so several cards are easy to make
+  *exactly* the same size. Double-click the grip to reset a card to its
+  theme-derived size. Per-card sizes persist across restarts and profile
+  switches, survive theme/font/density changes (re-clamped, never cleared),
+  and are pruned automatically when their role/curve is deleted. (**DEC-129**)
+
+### Changed
+- **Tighter card rows.** Card text rows sit closer together (row spacing 6→2,
+  vertical margins 8→4), surplus card height now pools above the action row
+  instead of being spread between text lines, and the default card height
+  floor is retuned to match (188→132px at 10pt) — cards are visibly denser
+  with no clipped text at any font size. (**DEC-129**)
+
+### Fixed
+- **Graph-curve cards no longer balloon into towers.** The curve preview was
+  a pixmap-backed label whose size hint grew every time it was re-rendered
+  at its new size, ratcheting graph cards to 500+px tall with the graph
+  dominating the card. The preview is now owner-drawn with a constant
+  ~3-text-line hint: default cards show a modest sparkline, and the graph
+  only grows when the user makes the card bigger. (**DEC-129**)
+
 ## [1.28.0] — 2026-06-05
 
 ### Added

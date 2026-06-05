@@ -57,7 +57,10 @@ v1 GUI does not yet write to them — no on-disk log, no `last_session.json`
 snapshot, no `support_bundle_work/` staging directory. Support bundles are
 generated on demand and written to a user-selected export location.
 Aliases and group memberships are persisted inside `app_settings.json`
-rather than separate `aliases.json` / `groups.json` files.
+rather than separate `aliases.json` / `groups.json` files. Per-card size
+overrides for the Controls page live there too (`controls_card_sizes`,
+keyed by control/curve id → `[width, height]`; pruned of ids absent from
+every known profile whenever a size is saved — DEC-129).
 
 Use platform-aware path helpers rather than hardcoding these paths.
 

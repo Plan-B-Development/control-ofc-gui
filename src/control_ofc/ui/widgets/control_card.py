@@ -26,7 +26,16 @@ from control_ofc.services.profile_service import (
     infer_member_role,
 )
 from control_ofc.ui.theme import active_theme
-from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE, card_dimensions
+from control_ofc.ui.widgets.card_metrics import (
+    DEFAULT_CARD_SIZE,
+    MIN_USER_CARD_WIDTH_PX,
+    card_dimensions,
+)
+from control_ofc.ui.widgets.card_resize import CardResizeGrip, snap_size
+
+# QWIDGETSIZE_MAX — not exported by this PySide6 build; used to undo a fixed
+# height when a user size override is cleared (DEC-129).
+_QWIDGETSIZE_MAX = 16777215
 
 
 class ControlCard(QFrame):
@@ -40,12 +49,18 @@ class ControlCard(QFrame):
     # dragging. Neither mutates the saved profile.
     manual_toggled = Signal(str, bool, int)  # control_id, active, pct
     manual_value_changed = Signal(str, int)  # control_id, pct
+    # DEC-129 per-card user resize: resized fires on grip release with the
+    # snapped size actually applied; size_reset fires on grip double-click
+    # after the card has restored its theme-derived default.
+    resized = Signal(str, int, int)  # control_id, width, height
+    size_reset = Signal(str)  # control_id
 
     def __init__(
         self,
         control: LogicalControl,
         curves: list[CurveConfig],
         card_size: str = DEFAULT_CARD_SIZE,
+        user_size: tuple[int, int] | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -55,10 +70,18 @@ class ControlCard(QFrame):
         # Fixed width keeps the grid columns aligned; height is a floor so the
         # card grows to fit scaled text rather than clipping rows (DEC-128).
         self._card_size_tier = card_size
+        # DEC-129: persisted per-card override; None = theme-derived sizing.
+        self._user_size: tuple[int, int] | None = None
+        # Grip exists before the first resizeEvent (any setFixedWidth below
+        # triggers one) so resizeEvent can always reposition it.
+        self._grip = CardResizeGrip(self)
+        self._grip.setObjectName(f"ControlCard_Grip_{control.id}")
+        self._grip.resize_finished.connect(self._on_grip_resized)
+        self._grip.reset_requested.connect(self._on_grip_reset)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(2)
 
         # Row 1: Name + status chip
         row1 = QHBoxLayout()
@@ -127,6 +150,13 @@ class ControlCard(QFrame):
         row4.addWidget(self._manual_pct_label)
         layout.addLayout(row4)
 
+        # Surplus vertical space (card taller than its rows — e.g. the DEC-128
+        # floor or a DEC-129 user resize) pools here instead of being
+        # distributed between the text rows, which read as bloated line
+        # spacing. Rows stay tight at the top; actions stay pinned at the
+        # bottom.
+        layout.addStretch(1)
+
         # Row 5: Bottom row — RPM left, Delete + Edit right
         actions = QHBoxLayout()
         actions.setSpacing(4)
@@ -165,7 +195,7 @@ class ControlCard(QFrame):
 
         self._update_no_members_state(control)
         self._update_min_pwm_badge(control)
-        self.apply_card_size(active_theme().base_font_size_pt, card_size)
+        self.apply_card_size(active_theme().base_font_size_pt, card_size, user_size)
 
     # ─── Public API ──────────────────────────────────────────────────
 
@@ -173,18 +203,85 @@ class ControlCard(QFrame):
     def control(self) -> LogicalControl:
         return self._control
 
-    def apply_card_size(self, base_pt: int, tier: str = DEFAULT_CARD_SIZE) -> None:
+    @property
+    def user_size(self) -> tuple[int, int] | None:
+        """The persisted per-card size override, or None for theme sizing."""
+        return self._user_size
+
+    def apply_card_size(
+        self,
+        base_pt: int,
+        tier: str = DEFAULT_CARD_SIZE,
+        user_size: tuple[int, int] | None = None,
+    ) -> None:
         """Size the card from the theme base font size and a density tier.
 
-        Width is fixed so the flow grid stays column-aligned; height is a
-        minimum floor (no maximum), so a card with scaled-up text or more
-        members grows taller instead of clipping rows (DEC-128).
+        Without a user override: width is fixed so the flow grid stays
+        column-aligned; height is a minimum floor (no maximum), so a card
+        with scaled-up text or more members grows taller instead of clipping
+        rows (DEC-128).
+
+        With a user override (DEC-129): both dimensions are fixed to the
+        snapped override, re-clamped to the current content minimum at every
+        re-apply — so a theme/tier change or content growth clamps the
+        override but never clears it. Passing ``user_size=None`` keeps any
+        existing override; clearing is explicit via :meth:`clear_user_size`.
         """
         self._card_size_tier = tier
-        width, height = card_dimensions(base_pt, tier)
-        self.setFixedWidth(width)
-        self.setMinimumHeight(height)
+        if user_size is not None:
+            self._user_size = self._snap_to_content(*user_size)
+        if self._user_size is not None:
+            width, height = self._snap_to_content(*self._user_size)
+            self.setFixedWidth(width)
+            self.setFixedHeight(height)
+        else:
+            width, height = card_dimensions(base_pt, tier)
+            self.setFixedWidth(width)
+            # Undo a previous override's fixed height before re-flooring.
+            self.setMaximumHeight(_QWIDGETSIZE_MAX)
+            self.setMinimumHeight(height)
         self.updateGeometry()
+
+    def set_user_size(self, width: int, height: int) -> tuple[int, int]:
+        """Apply a live user resize (grip drag), snapped and clamped.
+
+        Returns the size actually applied so the grip can report it on
+        release.
+        """
+        applied = self._snap_to_content(width, height)
+        self._user_size = applied
+        self.setFixedWidth(applied[0])
+        self.setFixedHeight(applied[1])
+        self.updateGeometry()
+        return applied
+
+    def clear_user_size(self) -> None:
+        """Drop the per-card override and restore theme-derived sizing."""
+        self._user_size = None
+        self.apply_card_size(active_theme().base_font_size_pt, self._card_size_tier)
+
+    def _snap_to_content(self, width: int, height: int) -> tuple[int, int]:
+        """Snap to the shared lattice, clamped so rows can never clip."""
+        return snap_size(
+            width,
+            height,
+            MIN_USER_CARD_WIDTH_PX,
+            self.layout().minimumSize().height(),
+        )
+
+    def _on_grip_resized(self, width: int, height: int) -> None:
+        self.resized.emit(self._control.id, width, height)
+
+    def _on_grip_reset(self) -> None:
+        self.clear_user_size()
+        self.size_reset.emit(self._control.id)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # Keep the resize grip pinned to the bottom-right corner, above the
+        # card content (it floats outside the layout).
+        self._grip.move(self.width() - self._grip.width(), self.height() - self._grip.height())
+        self._grip.raise_()
 
     def mousePressEvent(self, event) -> None:
         self.selected.emit(self._control.id)
@@ -255,6 +352,10 @@ class ControlCard(QFrame):
         self._curve_label.setText(f"Curve: {mode_text}")
         self._update_no_members_state(control)
         self._update_min_pwm_badge(control)
+        if self._user_size is not None:
+            # Content may have grown (e.g. more members): re-clamp the user
+            # override so a previously-valid size can't start clipping rows.
+            self.apply_card_size(active_theme().base_font_size_pt, self._card_size_tier)
 
     def update_output_preview(
         self, curve_name: str, sensor_name: str, sensor_value: float, output_pct: float

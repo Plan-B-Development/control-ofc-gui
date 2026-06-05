@@ -29,17 +29,20 @@ def flat_curve():
 
 
 class TestPreview:
+    """The preview is owner-drawn (DEC-129): it paints the curve in
+    paintEvent and exposes the painted text via summary_text()."""
+
     def test_graph_preview_renders(self, qtbot, graph_curve):
         card = CurveCard(graph_curve)
         qtbot.addWidget(card)
-        pixmap = card._preview.pixmap()
-        assert pixmap is not None
-        assert not pixmap.isNull()
+        assert card._preview.curve is graph_curve
+        assert card._preview.summary_text() == ""  # graphs paint a polyline
+        assert not card._preview.grab().isNull()  # paint pass succeeds
 
     def test_flat_shows_text_summary(self, qtbot, flat_curve):
         card = CurveCard(flat_curve)
         qtbot.addWidget(card)
-        assert "Flat: 50%" in card._preview.text()
+        assert "Flat: 50%" in card._preview.summary_text()
 
     def test_linear_shows_text_summary(self, qtbot):
         curve = CurveConfig(
@@ -51,7 +54,7 @@ class TestPreview:
         )
         card = CurveCard(curve)
         qtbot.addWidget(card)
-        text = card._preview.text()
+        text = card._preview.summary_text()
         assert "30" in text
         assert "80" in text
 
@@ -59,21 +62,21 @@ class TestPreview:
         curve = CurveConfig(type=CurveType.GRAPH, points=[CurvePoint(50.0, 50.0)])
         card = CurveCard(curve)
         qtbot.addWidget(card)
-        assert card._preview is not None
+        assert not card._preview.grab().isNull()
 
     def test_empty_points_no_crash(self, qtbot):
         curve = CurveConfig(type=CurveType.GRAPH, points=[])
         card = CurveCard(curve)
         qtbot.addWidget(card)
-        assert card._preview is not None
+        assert not card._preview.grab().isNull()
 
     def test_update_redraws(self, qtbot, graph_curve):
         card = CurveCard(graph_curve)
         qtbot.addWidget(card)
         graph_curve.points.append(CurvePoint(90.0, 100.0))
         card.update_curve(graph_curve)
-        pixmap = card._preview.pixmap()
-        assert pixmap is not None
+        assert card._preview.curve is graph_curve
+        assert len(card._preview.curve.points) == 4
 
 
 class TestCurveCardContent:
