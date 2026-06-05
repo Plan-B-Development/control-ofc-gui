@@ -37,17 +37,32 @@ _TIER_SCALE: dict[str, float] = {
 # Baseline dimensions at the reference 10pt base font, "comfortable" tier.
 # Width must hold the Fan Role bottom action row (RPM + Manual/Delete/Edit)
 # without squashing the buttons; height is a comfortable floor — content grows
-# it further when needed.
+# it further when needed. DEC-129 retuned the height floor to the measured
+# content height of the tightened cards (ControlCard 119px / CurveCard 127px
+# at 10pt with theme QSS) plus a little headroom — the old 188 floor left
+# ~55px of surplus that the layouts spread between text rows, reading as
+# bloated line spacing.
 _REF_PT = 10
 _BASE_WIDTH = 280
-_BASE_HEIGHT = 188
-# Per-point growth so cards track the theme's text size across the 7-16 range.
+_BASE_HEIGHT = 132
+# Per-point growth so cards track the theme's text size across the 7-16 range
+# (measured content growth is ~9-10px/pt; 192 ≥ the 187px content at 16pt).
 _WIDTH_PER_PT = 11
-_HEIGHT_PER_PT = 14
+_HEIGHT_PER_PT = 10
 
 # Font range mirrors theme.ThemeTokens.base_font_size_pt (7-16).
 _MIN_PT = 7
 _MAX_PT = 16
+
+# DEC-129: per-card user resize. Drag sizes snap to an absolute lattice —
+# multiples of SNAP_STEP_PX, not offsets from the drag start — so two cards
+# resized near the same size land on *exactly* the same size. The width floor
+# is a constant just under the smallest DEC-128 width (compact tier at 7pt
+# ≈ 227px) so a user shrink can't get meaningfully worse than the smallest
+# size the tier system already ships; the height floor is per-card content
+# (the card layout's minimumSize), enforced in snap_size's clamp.
+SNAP_STEP_PX = 20
+MIN_USER_CARD_WIDTH_PX = 220
 
 
 def card_dimensions(base_pt: int, tier: str = DEFAULT_CARD_SIZE) -> tuple[int, int]:

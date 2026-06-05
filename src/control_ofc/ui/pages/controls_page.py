@@ -487,12 +487,19 @@ class ControlsPage(QWidget):
 
         tier = self._card_size_tier()
         for control in profile.controls:
-            card = ControlCard(control, profile.curves, card_size=tier)
+            card = ControlCard(
+                control,
+                profile.curves,
+                card_size=tier,
+                user_size=self._stored_card_size(control.id),
+            )
             card.selected.connect(self._on_control_selected)
             card.delete_requested.connect(self._on_delete_control)
             card.edit_role_requested.connect(self._on_edit_role)
             card.manual_toggled.connect(self._on_card_manual_toggled)
             card.manual_value_changed.connect(self._on_card_manual_value)
+            card.resized.connect(self._on_card_user_resized)
+            card.size_reset.connect(self._on_card_size_reset)
             # Rebuilt cards default to enabled; honour the last-known write
             # capability so a profile switch can't silently re-enable a card
             # the daemon reported as non-writable.
@@ -716,11 +723,17 @@ class ControlsPage(QWidget):
 
         tier = self._card_size_tier()
         for curve in profile.curves:
-            card = CurveCard(curve, card_size=tier)
+            card = CurveCard(
+                curve,
+                card_size=tier,
+                user_size=self._stored_card_size(curve.id),
+            )
             card.edit_requested.connect(self._on_edit_curve)
             card.delete_requested.connect(self._on_delete_curve)
             card.rename_requested.connect(self._on_rename_curve)
             card.duplicate_requested.connect(self._on_duplicate_curve)
+            card.resized.connect(self._on_card_user_resized)
+            card.size_reset.connect(self._on_card_size_reset)
             self._curve_cards[curve.id] = card
             self._curves_flow.add_card(card, curve.id)
 
@@ -1001,13 +1014,59 @@ class ControlsPage(QWidget):
             return getattr(self._settings_service.settings, "card_size", DEFAULT_CARD_SIZE)
         return DEFAULT_CARD_SIZE
 
+    # ─── Per-card user sizes (DEC-129) ───────────────────────────────
+
+    def _stored_card_size(self, card_id: str) -> tuple[int, int] | None:
+        """Persisted [w, h] override for a control/curve id, if any."""
+        if self._settings_service is None:
+            return None
+        raw = self._settings_service.settings.controls_card_sizes.get(card_id)
+        if isinstance(raw, (list, tuple)) and len(raw) == 2:
+            try:
+                return (int(raw[0]), int(raw[1]))
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _on_card_user_resized(self, card_id: str, width: int, height: int) -> None:
+        """Grip drag finished: persist the snapped size for this card."""
+        if self._settings_service is None:
+            return
+        sizes = dict(self._settings_service.settings.controls_card_sizes)
+        sizes[card_id] = [width, height]
+        self._prune_card_sizes(sizes)
+        self._settings_service.update(controls_card_sizes=sizes)
+
+    def _on_card_size_reset(self, card_id: str) -> None:
+        """Grip double-click: the card already restored its theme size —
+        drop the persisted override."""
+        if self._settings_service is None:
+            return
+        sizes = dict(self._settings_service.settings.controls_card_sizes)
+        if sizes.pop(card_id, None) is not None:
+            self._settings_service.update(controls_card_sizes=sizes)
+
+    def _prune_card_sizes(self, sizes: dict[str, list[int]]) -> None:
+        """Drop overrides for ids that no longer exist in *any* known profile.
+
+        Keyed across all profiles (not just the active one) so switching
+        profiles never sheds the inactive profile's card sizes.
+        """
+        known: set[str] = set()
+        for profile in self._profile_service.profiles:
+            known.update(c.id for c in profile.controls)
+            known.update(c.id for c in profile.curves)
+        for stale in [card_id for card_id in sizes if card_id not in known]:
+            del sizes[stale]
+
     def set_theme(self, tokens) -> None:
         """Forward theme updates to child widgets and re-apply card sizing.
 
         A theme change can alter the base font size, so every card re-derives
         its width + minimum height from the new base size and the current
-        density tier (DEC-128). Curve cards additionally re-render their
-        preview in the new accent colour.
+        density tier (DEC-128). Cards with a DEC-129 user size keep it
+        (re-clamped to the new content minimum, never cleared). Curve cards
+        additionally repaint their preview in the new accent colour.
         """
         self._curve_editor.set_theme(tokens)
         base_pt = getattr(tokens, "base_font_size_pt", 10)

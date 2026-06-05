@@ -49,6 +49,12 @@ class AppSettings:
     # fall back to "comfortable" at render time (card_metrics.card_dimensions).
     card_size: str = "comfortable"
 
+    # DEC-129: per-card user size overrides on the Controls page, keyed by
+    # control/curve id → [width, height] (snapped to the shared lattice).
+    # Absent key = theme-derived sizing (DEC-128). Pruned of ids that no
+    # longer exist in any known profile whenever a size is saved.
+    controls_card_sizes: dict[str, list[int]] = field(default_factory=dict)
+
     # DEC-098: kernel-warning IDs the user has already dismissed for this
     # GPU. Keyed by warning.id (not session-scoped). Persisting prevents the
     # popup from re-firing on every restart for a known-bad-kernel that the
@@ -90,6 +96,7 @@ class AppSettings:
             hide_unused_fan_headers=data.get("hide_unused_fan_headers", True),
             show_hardware_guidance=data.get("show_hardware_guidance", True),
             card_size=data.get("card_size", "comfortable"),
+            controls_card_sizes=data.get("controls_card_sizes", {}),
             acknowledged_kernel_warnings=list(data.get("acknowledged_kernel_warnings", []) or []),
             diagnostics_hidden_sensor_ids=list(data.get("diagnostics_hidden_sensor_ids", []) or []),
         )
