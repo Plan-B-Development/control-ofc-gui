@@ -19,6 +19,9 @@ packaging/src/
 packaging/pkg/
 packaging/*.pkg.tar*
 packaging/*.tar.gz
+# .SRCINFO is regenerated in-CI for the AUR clone (.github/workflows/release.yml);
+# never tracked here.
+packaging/.SRCINFO
 
 # Local-only project admin files (never push to GitHub)
 CLAUDE.md
