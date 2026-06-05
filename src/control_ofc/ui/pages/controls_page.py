@@ -30,6 +30,7 @@ from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError
 from control_ofc.services.app_state import AppState
 from control_ofc.services.profile_service import (
+    CONTROL_ROLE_GPU,
     ControlMode,
     CurveConfig,
     CurvePoint,
@@ -38,6 +39,7 @@ from control_ofc.services.profile_service import (
     ProfileService,
     apply_role_floor,
     control_minimum_pct,
+    infer_member_role,
 )
 from control_ofc.ui.fan_presence import (
     PRESENCE_BADGE,
@@ -86,6 +88,11 @@ class ControlsPage(QWidget):
         self._curve_cards: dict[str, CurveCard] = {}
         self._selected_control_id: str | None = None
         self._has_unsaved: bool = False
+        # Last-known write capability. Cards are disabled when the daemon
+        # reports no writable backend; tracked here so a rebuild (profile
+        # switch) and a later capability change both honour the latest value
+        # instead of stranding cards disabled (see _on_capabilities_updated).
+        self._cards_writable: bool = True
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(12, 8, 12, 8)
@@ -480,6 +487,12 @@ class ControlsPage(QWidget):
             card.selected.connect(self._on_control_selected)
             card.delete_requested.connect(self._on_delete_control)
             card.edit_role_requested.connect(self._on_edit_role)
+            card.manual_toggled.connect(self._on_card_manual_toggled)
+            card.manual_value_changed.connect(self._on_card_manual_value)
+            # Rebuilt cards default to enabled; honour the last-known write
+            # capability so a profile switch can't silently re-enable a card
+            # the daemon reported as non-writable.
+            card.setEnabled(self._cards_writable)
             self._control_cards[control.id] = card
             self._controls_flow.add_card(card, control.id)
 
@@ -925,8 +938,13 @@ class ControlsPage(QWidget):
             self._unsaved_label.style().unpolish(self._unsaved_label)
             self._unsaved_label.style().polish(self._unsaved_label)
 
-    def update_control_outputs(self, outputs: dict[str, float]) -> None:
+    def update_control_outputs(
+        self,
+        outputs: dict[str, float],
+        member_outputs: dict[str, dict[str, float]] | None = None,
+    ) -> None:
         profile = self._get_current_profile()
+        member_outputs = member_outputs or {}
         for control_id, output in outputs.items():
             card = self._control_cards.get(control_id)
             if not card:
@@ -944,7 +962,33 @@ class ControlsPage(QWidget):
                                 sensor_name = s.label
                                 sensor_value = s.value_c
                                 break
-            card.set_output(output, sensor_name, sensor_value)
+            gpu_output = self._divergent_gpu_output(
+                card.control, output, member_outputs.get(control_id, {})
+            )
+            card.set_output(output, sensor_name, sensor_value, gpu_output_pct=gpu_output)
+
+    @staticmethod
+    def _divergent_gpu_output(
+        control, control_output: float, members: dict[str, float]
+    ) -> float | None:
+        """GPU member's applied output when it diverges from the control-wide
+        value (DEC-119), else None.
+
+        Only mixed controls (a GPU grouped with chassis/CPU fans) can diverge:
+        the GPU member is re-tuned with a 0% floor and may idle below the
+        control-wide floor. A GPU-only control's headline already *is* the GPU
+        value, so it is never annotated.
+        """
+        if not members:
+            return None
+        if not any(infer_member_role(m) != CONTROL_ROLE_GPU for m in control.members):
+            return None
+        for m in control.members:
+            if infer_member_role(m) == CONTROL_ROLE_GPU:
+                gpu_out = members.get(m.target_id)
+                if gpu_out is not None and abs(gpu_out - control_output) > 1.0:
+                    return gpu_out
+        return None
 
     def set_theme(self, tokens) -> None:
         """Forward theme updates to child widgets that hold theme state."""
@@ -955,10 +999,33 @@ class ControlsPage(QWidget):
     def _on_capabilities_updated(self, caps) -> None:
         if not hasattr(caps, "features") or caps.features is None:
             return
-        can_write = caps.features.openfan_write_supported or caps.features.hwmon_write_supported
-        if not can_write:
-            for card in self._control_cards.values():
-                card.setEnabled(False)
+        # Idempotent both ways: capabilities re-fire on every refresh and every
+        # reconnect, so an incomplete snapshot must not leave cards stranded
+        # disabled once write support returns.
+        self._cards_writable = bool(
+            caps.features.openfan_write_supported or caps.features.hwmon_write_supported
+        )
+        for card in self._control_cards.values():
+            card.setEnabled(self._cards_writable)
+
+    def _on_card_manual_toggled(self, control_id: str, active: bool, pct: int) -> None:
+        """Per-card Manual toggle (1A): pin/release one control's fans.
+
+        Transient — never touches the saved profile. The loop clears all
+        per-control manual state on profile change, so the card toggles
+        (recreated on rebuild) stay in sync automatically.
+        """
+        if self._control_loop is None:
+            return
+        if active:
+            self._control_loop.set_control_manual(control_id, float(pct))
+        else:
+            self._control_loop.clear_control_manual(control_id)
+
+    def _on_card_manual_value(self, control_id: str, pct: int) -> None:
+        """Live slider drag while a card is in transient manual mode."""
+        if self._control_loop is not None:
+            self._control_loop.set_control_manual(control_id, float(pct))
 
     def _on_sensor_values_updated(self, sensors) -> None:
         """Called ~1Hz. Rebuild sensor dropdown only when the sensor list changes."""

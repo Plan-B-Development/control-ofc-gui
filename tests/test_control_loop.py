@@ -311,6 +311,164 @@ class TestReevaluateNow:
         assert mock_client.set_openfan_pwm.call_args[0][1] == 50
 
 
+def _two_openfan_controls():
+    """Profile: control A (curve) on ch00, control B (curve) on ch01."""
+    curve = CurveConfig(
+        id="cv",
+        name="CV",
+        type=CurveType.GRAPH,
+        sensor_id="cpu_temp",
+        points=[CurvePoint(30, 20), CurvePoint(70, 80)],
+    )
+    a = LogicalControl(
+        id="A",
+        name="A",
+        mode=ControlMode.CURVE,
+        curve_id="cv",
+        members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+    )
+    b = LogicalControl(
+        id="B",
+        name="B",
+        mode=ControlMode.CURVE,
+        curve_id="cv",
+        members=[ControlMember(source="openfan", member_id="openfan:ch01")],
+    )
+    return Profile(id="t2", name="T2", controls=[a, b], curves=[curve])
+
+
+class TestPerControlManual:
+    """Per-card transient manual override (Decision 1A): pins one control's
+    members to a fixed PWM without freezing the others and without touching
+    the saved profile."""
+
+    def _two_fans(self, state):
+        state.fans = [
+            FanReading(
+                id="openfan:ch00", source="openfan", rpm=800, last_commanded_pwm=40, age_ms=500
+            ),
+            FanReading(
+                id="openfan:ch01", source="openfan", rpm=800, last_commanded_pwm=40, age_ms=500
+            ),
+        ]
+
+    def test_set_control_manual_writes_fixed_pwm(self, state, profile_service, qtbot):
+        self._two_fans(state)
+        profile_service._profiles["t2"] = _two_openfan_controls()
+        profile_service.set_active("t2")
+        mock_client = MagicMock()
+        loop = ControlLoopService(state, profile_service, client=mock_client)
+        loop._running = True
+
+        loop.set_control_manual("A", 75.0)
+
+        assert loop.is_control_manual("A") is True
+        writes = {c.args[0]: c.args[1] for c in mock_client.set_openfan_pwm.call_args_list}
+        assert writes[0] == 75  # control A pinned to the manual value
+
+    def test_manual_control_isolated_from_curve_control(self, state, profile_service, qtbot):
+        """A second, curve-driven control keeps evaluating while A is manual."""
+        self._two_fans(state)
+        profile_service._profiles["t2"] = _two_openfan_controls()
+        profile_service.set_active("t2")
+        mock_client = MagicMock()
+        loop = ControlLoopService(state, profile_service, client=mock_client)
+        loop._running = True
+
+        loop.set_control_manual("A", 75.0)
+
+        writes = {c.args[0]: c.args[1] for c in mock_client.set_openfan_pwm.call_args_list}
+        assert writes[0] == 75  # A: manual
+        assert writes[1] == 50  # B: curve at 50 deg C → 50%, unaffected
+        assert loop.is_control_manual("B") is False
+
+    def test_clear_control_manual_returns_to_curve(self, state, profile_service, qtbot):
+        self._two_fans(state)
+        profile_service._profiles["t2"] = _two_openfan_controls()
+        profile_service.set_active("t2")
+        mock_client = MagicMock()
+        loop = ControlLoopService(state, profile_service, client=mock_client)
+        loop._running = True
+
+        loop.set_control_manual("A", 75.0)
+        loop.clear_control_manual("A")
+
+        assert loop.is_control_manual("A") is False
+        # The last write to channel 0 must be the curve output (50), not 75.
+        ch0_writes = [
+            c.args[1] for c in mock_client.set_openfan_pwm.call_args_list if c.args[0] == 0
+        ]
+        assert ch0_writes[-1] == 50
+
+    def test_profile_change_clears_manual(self, state, profile_service, qtbot):
+        profile_service._profiles["t2"] = _two_openfan_controls()
+        profile_service.set_active("t2")
+        loop = ControlLoopService(state, profile_service)
+        loop._running = True
+        loop.set_control_manual("A", 75.0)
+
+        loop._on_profile_changed("New Profile")
+
+        assert loop.is_control_manual("A") is False
+        assert loop._manual_controls == {}
+
+    def test_global_override_takes_precedence(self, state, profile_service, qtbot):
+        """The Fan Wizard's global override short-circuits the whole cycle,
+        so a per-control manual write must not fire while it is active."""
+        self._two_fans(state)
+        profile_service._profiles["t2"] = _two_openfan_controls()
+        profile_service.set_active("t2")
+        mock_client = MagicMock()
+        loop = ControlLoopService(state, profile_service, client=mock_client)
+        loop._running = True
+
+        loop.set_manual_override(True)  # global wizard mode
+        loop.set_control_manual("A", 75.0)  # would write, but global gate wins
+
+        mock_client.set_openfan_pwm.assert_not_called()
+
+
+class TestMemberOutputs:
+    """DEC-119: per-member outputs let the card report a GPU member that idles
+    below the control-wide value in a mixed control."""
+
+    def test_mixed_gpu_member_diverges(self, state, profile_service, qtbot):
+        curve = CurveConfig(
+            id="cv",
+            name="CV",
+            type=CurveType.FLAT,
+            sensor_id="cpu_temp",
+            flat_output_pct=10.0,
+        )
+        ctrl = LogicalControl(
+            id="mixed",
+            name="Mixed",
+            mode=ControlMode.CURVE,
+            curve_id="cv",
+            minimum_pct=20.0,  # chassis floor applies to non-GPU members only
+            members=[
+                ControlMember(source="openfan", member_id="openfan:ch00"),
+                ControlMember(source="amd_gpu", member_id="amd_gpu:0000:03:00.0"),
+            ],
+        )
+        profile_service._profiles["mx"] = Profile(
+            id="mx", name="MX", controls=[ctrl], curves=[curve]
+        )
+        profile_service.set_active("mx")
+        loop = ControlLoopService(state, profile_service, client=MagicMock())
+        loop._running = True
+
+        captured: list = []
+        loop.status_changed.connect(captured.append)
+        loop._cycle()
+
+        status = captured[-1]
+        members = status.member_outputs["mixed"]
+        assert members["openfan:ch00"] == pytest.approx(20.0)  # chassis floored up
+        assert members["amd_gpu:0000:03:00.0"] == pytest.approx(10.0)  # GPU not floored
+        assert status.control_outputs["mixed"] == pytest.approx(20.0)
+
+
 class TestPrerequisites:
     def test_disconnected_fails(self, state, profile_service, qtbot):
         state.connection = ConnectionState.DISCONNECTED

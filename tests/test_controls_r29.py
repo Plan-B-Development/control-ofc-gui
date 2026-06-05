@@ -64,7 +64,7 @@ class TestSharedCardSizing:
 
 
 class TestControlCardBottomRow:
-    """Fan Role bottom row: RPM left, Delete left-of-Edit, Edit far right."""
+    """Fan Role bottom row: RPM left, then Manual, Delete, Edit on the right."""
 
     def test_bottom_row_widget_order(self, qtbot):
         control = LogicalControl(id="r1", name="Test", mode=ControlMode.CURVE)
@@ -82,10 +82,11 @@ class TestControlCardBottomRow:
             if item.widget():
                 widgets.append(item.widget().objectName())
 
-        # RPM label first, then Delete, then Edit
+        # RPM label first, then the Manual toggle (1A), then Delete, then Edit
         assert widgets[0] == "ControlCard_Label_rpm_r1"
-        assert widgets[1] == "ControlCard_Btn_delete_r1"
-        assert widgets[2] == "ControlCard_Btn_edit_r1"
+        assert widgets[1] == "ControlCard_Btn_manual_r1"
+        assert widgets[2] == "ControlCard_Btn_delete_r1"
+        assert widgets[3] == "ControlCard_Btn_edit_r1"
 
 
 class TestCardMetaTypography:

@@ -210,3 +210,49 @@ class TestControlCardFlowContainer:
         assert profile.controls[0].name == "Third"
         assert profile.controls[1].name == "First"
         assert profile.controls[2].name == "Second"
+
+
+class TestManualOverrideWiring:
+    """A card's Manual toggle must drive the control loop's per-control API."""
+
+    @staticmethod
+    def _page_with_one_control(qtbot, app_state, profile_service, mock_loop):
+        from control_ofc.services.profile_service import ControlMember
+
+        page = ControlsPage(
+            state=app_state, profile_service=profile_service, control_loop=mock_loop
+        )
+        qtbot.addWidget(page)
+        curve = CurveConfig(id="c1", name="C", type=CurveType.FLAT, flat_output_pct=40.0)
+        ctrl = LogicalControl(
+            id="lc1",
+            name="LC",
+            mode=ControlMode.CURVE,
+            curve_id="c1",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        page._refresh_controls_grid(Profile(id="p", name="P", controls=[ctrl], curves=[curve]))
+        return page
+
+    def test_toggle_on_calls_set_control_manual(self, qtbot, app_state, profile_service):
+        from unittest.mock import MagicMock
+
+        mock_loop = MagicMock()
+        page = self._page_with_one_control(qtbot, app_state, profile_service, mock_loop)
+
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        mock_loop.set_control_manual.assert_called_once()
+        assert mock_loop.set_control_manual.call_args[0][0] == "lc1"
+
+    def test_toggle_off_calls_clear_control_manual(self, qtbot, app_state, profile_service):
+        from unittest.mock import MagicMock
+
+        mock_loop = MagicMock()
+        page = self._page_with_one_control(qtbot, app_state, profile_service, mock_loop)
+
+        btn = page._control_cards["lc1"]._manual_btn
+        btn.setChecked(True)
+        btn.setChecked(False)
+
+        mock_loop.clear_control_manual.assert_called_once_with("lc1")
