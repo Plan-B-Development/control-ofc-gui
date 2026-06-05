@@ -25,7 +25,8 @@ from control_ofc.services.profile_service import (
     infer_control_role,
     infer_member_role,
 )
-from control_ofc.ui.widgets.card_metrics import CARD_HEIGHT, CARD_WIDTH
+from control_ofc.ui.theme import active_theme
+from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE, card_dimensions
 
 
 class ControlCard(QFrame):
@@ -40,16 +41,24 @@ class ControlCard(QFrame):
     manual_toggled = Signal(str, bool, int)  # control_id, active, pct
     manual_value_changed = Signal(str, int)  # control_id, pct
 
-    def __init__(self, control: LogicalControl, curves: list[CurveConfig], parent=None) -> None:
+    def __init__(
+        self,
+        control: LogicalControl,
+        curves: list[CurveConfig],
+        card_size: str = DEFAULT_CARD_SIZE,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.setProperty("class", "Card")
         self._control = control
         self._last_output_pct: float | None = None
-        self.setFixedSize(CARD_WIDTH, CARD_HEIGHT)
+        # Fixed width keeps the grid columns aligned; height is a floor so the
+        # card grows to fit scaled text rather than clipping rows (DEC-128).
+        self._card_size_tier = card_size
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(2)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         # Row 1: Name + status chip
         row1 = QHBoxLayout()
@@ -93,12 +102,12 @@ class ControlCard(QFrame):
         curve_row.addWidget(self._min_pwm_label)
         layout.addLayout(curve_row)
 
-        # Row 4: Output + sensor context (auto) \u2014 morphs into an inline manual
+        # Row 4: Output + sensor context (auto) — morphs into an inline manual
         # slider when the Manual toggle is on. The two share the row; exactly
-        # one is visible, so the fixed card size is preserved.
+        # one is visible, so the row height stays constant.
         row4 = QHBoxLayout()
         row4.setSpacing(4)
-        self._output_label = QLabel("\u2014")
+        self._output_label = QLabel("—")
         self._output_label.setObjectName(f"ControlCard_Label_output_{control.id}")
         self._output_label.setStyleSheet("background: transparent;")
         self._output_label.setProperty("class", "CardMeta")
@@ -146,7 +155,7 @@ class ControlCard(QFrame):
         del_btn.clicked.connect(lambda: self.delete_requested.emit(self._control.id))
         actions.addWidget(del_btn)
 
-        edit_btn = QPushButton("Edit\u2026")
+        edit_btn = QPushButton("Edit…")
         edit_btn.setObjectName(f"ControlCard_Btn_edit_{control.id}")
         edit_btn.setToolTip("Edit fan role: members, curve, overrides")
         edit_btn.clicked.connect(lambda: self.edit_role_requested.emit(self._control.id))
@@ -156,12 +165,26 @@ class ControlCard(QFrame):
 
         self._update_no_members_state(control)
         self._update_min_pwm_badge(control)
+        self.apply_card_size(active_theme().base_font_size_pt, card_size)
 
     # ─── Public API ──────────────────────────────────────────────────
 
     @property
     def control(self) -> LogicalControl:
         return self._control
+
+    def apply_card_size(self, base_pt: int, tier: str = DEFAULT_CARD_SIZE) -> None:
+        """Size the card from the theme base font size and a density tier.
+
+        Width is fixed so the flow grid stays column-aligned; height is a
+        minimum floor (no maximum), so a card with scaled-up text or more
+        members grows taller instead of clipping rows (DEC-128).
+        """
+        self._card_size_tier = tier
+        width, height = card_dimensions(base_pt, tier)
+        self.setFixedWidth(width)
+        self.setMinimumHeight(height)
+        self.updateGeometry()
 
     def mousePressEvent(self, event) -> None:
         self.selected.emit(self._control.id)
@@ -188,7 +211,7 @@ class ControlCard(QFrame):
             self._output_label.setText(f"Now: {output_pct:.0f}% (Manual){gpu_suffix}")
         elif sensor_name and sensor_value is not None:
             self._output_label.setText(
-                f"Now: {output_pct:.0f}%{gpu_suffix} \u2022 {sensor_name} {sensor_value:.1f}\u00b0C"
+                f"Now: {output_pct:.0f}%{gpu_suffix} • {sensor_name} {sensor_value:.1f}°C"
             )
         else:
             self._output_label.setText(f"Now: {output_pct:.0f}%{gpu_suffix}")
@@ -238,7 +261,7 @@ class ControlCard(QFrame):
     ) -> None:
         """Update the output line from a curve edit without a full control loop cycle."""
         self._output_label.setText(
-            f"Preview: {output_pct:.0f}% \u2022 {sensor_name} {sensor_value:.1f}\u00b0C"
+            f"Preview: {output_pct:.0f}% • {sensor_name} {sensor_value:.1f}°C"
         )
 
     # ─── Internals ───────────────────────────────────────────────────

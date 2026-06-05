@@ -261,8 +261,27 @@ Both Fan Roles and Curves sections use `DraggableFlowContainer`, which provides:
 - **Snap-back** — cards dropped outside the valid area return to original position
 
 ### Card sizing
-- **Curve cards**: fixed 220×160px — header, sensor, preview, footer
-- **Fan Role cards**: fixed 220×160px (unified sizing) — name, members, curve, output, actions
+Cards are **content-aware**, not a fixed pixel box (DEC-128):
+- **Fixed width + minimum-height floor** — each card sets a fixed *width* (so
+  the flow grid forms aligned columns) and a *minimum* height (no maximum), so
+  a card grows taller to fit scaled text rather than clipping its rows. The
+  previous fixed 220×160px box clipped rows once the theme font grew.
+- **Theme-scaled** — width and minimum height are derived from the theme's
+  `base_font_size_pt` (7–16) by `card_metrics.card_dimensions()`, so cards
+  honour the current text size automatically.
+- **Density tier** — a `card_size` preference (compact / comfortable / large,
+  default comfortable; Settings → Themes) multiplies the computed size. Live
+  cards re-size when the theme/font or tier changes
+  (`ControlsPage.set_theme` → `Card.apply_card_size`).
+- **Curve cards**: header, sensor, preview, footer.
+- **Fan Role cards**: name, members, curve, output, actions (same width + floor).
+
+### Section layout (Fan Roles / Curves)
+The two sections share a vertical `QSplitter` (`Controls_Splitter_sections`)
+configured with **equal stretch factors and equal seeded sizes**, so the split
+defaults to ~50/50 and stays proportional as the window resizes, while the
+divider remains user-draggable (DEC-128, D3). The inner curves/editor splitter
+(`Controls_Splitter_curvesEditor`) is unchanged.
 
 ### Order model
 - **Source of truth**: `Profile.curves` and `Profile.controls` lists

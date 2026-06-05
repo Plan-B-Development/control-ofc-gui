@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QComboBox, QLineEdit, QSplitter
 
 from control_ofc.services.profile_service import CurveConfig, CurveType, Profile
@@ -42,16 +41,23 @@ class TestSearchRemoval:
 
 
 class TestFixedSizeCards:
-    """D. Curve cards have consistent fixed size."""
+    """D. Curve cards have a fixed width and a minimum-height floor (DEC-128)."""
 
-    def test_card_fixed_max_and_min(self, qtbot):
+    def test_card_fixed_width_and_min_height(self, qtbot):
+        from control_ofc.ui.theme import active_theme
+        from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE, card_dimensions
         from control_ofc.ui.widgets.curve_card import CurveCard
 
         curve = CurveConfig(id="test", name="Test", type=CurveType.FLAT)
         card = CurveCard(curve)
         qtbot.addWidget(card)
-        assert card.maximumSize() == QSize(220, 160)
-        assert card.minimumSize() == QSize(220, 160)
+        w, h = card_dimensions(active_theme().base_font_size_pt, DEFAULT_CARD_SIZE)
+        # Width is fixed (aligned columns); height is a floor content can grow
+        # past, never a hard cap (DEC-128).
+        assert card.minimumWidth() == w
+        assert card.maximumWidth() == w
+        assert card.minimumHeight() == h
+        assert card.maximumHeight() > h
 
 
 class TestCurveReorder:

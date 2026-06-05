@@ -43,6 +43,12 @@ class AppSettings:
     hide_unused_fan_headers: bool = True  # Auto-hide fan headers with 0 RPM
     show_hardware_guidance: bool = True  # Show hardware readiness guidance in diagnostics
 
+    # DEC-128: Controls-page card density tier — "compact" | "comfortable" |
+    # "large". Cards auto-scale with the theme font size; this tier multiplies
+    # that size so the user can trade density for readability. Unknown values
+    # fall back to "comfortable" at render time (card_metrics.card_dimensions).
+    card_size: str = "comfortable"
+
     # DEC-098: kernel-warning IDs the user has already dismissed for this
     # GPU. Keyed by warning.id (not session-scoped). Persisting prevents the
     # popup from re-firing on every restart for a known-bad-kernel that the
@@ -83,6 +89,7 @@ class AppSettings:
             hide_igpu_sensors=data.get("hide_igpu_sensors", True),
             hide_unused_fan_headers=data.get("hide_unused_fan_headers", True),
             show_hardware_guidance=data.get("show_hardware_guidance", True),
+            card_size=data.get("card_size", "comfortable"),
             acknowledged_kernel_warnings=list(data.get("acknowledged_kernel_warnings", []) or []),
             diagnostics_hidden_sensor_ids=list(data.get("diagnostics_hidden_sensor_ids", []) or []),
         )

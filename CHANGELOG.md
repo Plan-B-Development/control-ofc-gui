@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.28.0] — 2026-06-05
+
+### Added
+- **Resizable, readable Controls cards.** Fan Role and Curve cards now derive
+  their size from the theme's text size and a new **Card size** preference
+  (Compact / Comfortable / Large, default Comfortable — Settings → Themes),
+  instead of a fixed 220×160px box. Each card now has a fixed width (so the
+  grid stays column-aligned) and a *minimum* height that grows to fit the
+  content, so rows and buttons no longer cram or clip at larger font sizes.
+  Cards re-size live when the font or card-size tier changes. (**DEC-128**)
+
+### Changed
+- **Fan Roles / Curves split defaults to 50/50.** The Controls page section
+  splitter now uses equal stretch + equal seeded sizes, so the two sections
+  each take ~half the height and stay proportional as the window resizes; the
+  divider is still user-draggable. (**DEC-128**)
+
+### Fixed
+- **Applying a theme no longer crashes the Controls page.** `CurveEditor.set_theme`
+  called a non-existent `self._redraw()`, raising `AttributeError` on every
+  theme/font change once the Controls page forwarded `set_theme`; it now
+  re-renders via `_refresh_plot()` (a safe no-op when no graph curve is open).
+
 ## [1.27.0] — 2026-06-05
 
 ### Added

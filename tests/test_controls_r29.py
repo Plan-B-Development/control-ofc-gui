@@ -6,12 +6,11 @@ transparent label backgrounds, cross-section alignment.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QSplitter
 
 from control_ofc.services.profile_service import ControlMode, CurveConfig, CurveType, LogicalControl
 from control_ofc.ui.pages.controls_page import ControlsPage
-from control_ofc.ui.widgets.card_metrics import CARD_HEIGHT, CARD_WIDTH
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
 
@@ -41,26 +40,39 @@ class TestCurvesEditorSplitter:
 
 
 class TestSharedCardSizing:
-    """CurveCard and ControlCard use the same shared dimensions."""
+    """CurveCard and ControlCard share width + minimum-height at a given tier."""
+
+    @staticmethod
+    def _expected():
+        from control_ofc.ui.theme import active_theme
+        from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE, card_dimensions
+
+        return card_dimensions(active_theme().base_font_size_pt, DEFAULT_CARD_SIZE)
 
     def test_curve_card_uses_shared_size(self, qtbot):
         curve = CurveConfig(id="c1", name="Test", type=CurveType.FLAT)
         card = CurveCard(curve)
         qtbot.addWidget(card)
-        assert card.size() == QSize(CARD_WIDTH, CARD_HEIGHT)
+        w, h = self._expected()
+        assert card.minimumWidth() == card.maximumWidth() == w
+        assert card.minimumHeight() == h
 
     def test_control_card_uses_shared_size(self, qtbot):
         control = LogicalControl(name="Role", mode=ControlMode.CURVE)
         card = ControlCard(control, [])
         qtbot.addWidget(card)
-        assert card.size() == QSize(CARD_WIDTH, CARD_HEIGHT)
+        w, h = self._expected()
+        assert card.minimumWidth() == card.maximumWidth() == w
+        assert card.minimumHeight() == h
 
     def test_cards_are_same_size(self, qtbot):
         curve_card = CurveCard(CurveConfig(id="c", name="C", type=CurveType.FLAT))
         control_card = ControlCard(LogicalControl(name="R", mode=ControlMode.CURVE), [])
         qtbot.addWidget(curve_card)
         qtbot.addWidget(control_card)
-        assert curve_card.size() == control_card.size()
+        assert curve_card.minimumWidth() == control_card.minimumWidth()
+        assert curve_card.maximumWidth() == control_card.maximumWidth()
+        assert curve_card.minimumHeight() == control_card.minimumHeight()
 
 
 class TestControlCardBottomRow:

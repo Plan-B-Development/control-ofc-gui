@@ -49,6 +49,7 @@ from control_ofc.ui.fan_presence import (
 )
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 from control_ofc.ui.qt_util import block_signals
+from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
 from control_ofc.ui.widgets.curve_editor import CurveEditor
@@ -215,10 +216,12 @@ class ControlsPage(QWidget):
         self._curves_section.setMinimumHeight(120)
         self._splitter.addWidget(self._curves_section)
 
-        # Splitter sizing
+        # Splitter sizing — equal stretch + equal seeded sizes so the Fan
+        # Roles / Curves split stays ~50/50 as the window resizes, while the
+        # divider remains user-draggable (DEC-128, D3=A).
         self._splitter.setStretchFactor(0, 1)
-        self._splitter.setStretchFactor(1, 2)
-        self._splitter.setSizes([250, 450])
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([350, 350])
         main_layout.addWidget(self._splitter, 1)
 
         # No-controls guidance (shown when curves section is hidden)
@@ -482,8 +485,9 @@ class ControlsPage(QWidget):
         self._controls_flow.clear_cards()
         self._control_cards.clear()
 
+        tier = self._card_size_tier()
         for control in profile.controls:
-            card = ControlCard(control, profile.curves)
+            card = ControlCard(control, profile.curves, card_size=tier)
             card.selected.connect(self._on_control_selected)
             card.delete_requested.connect(self._on_delete_control)
             card.edit_role_requested.connect(self._on_edit_role)
@@ -710,8 +714,9 @@ class ControlsPage(QWidget):
         self._curves_flow.clear_cards()
         self._curve_cards.clear()
 
+        tier = self._card_size_tier()
         for curve in profile.curves:
-            card = CurveCard(curve)
+            card = CurveCard(curve, card_size=tier)
             card.edit_requested.connect(self._on_edit_curve)
             card.delete_requested.connect(self._on_delete_curve)
             card.rename_requested.connect(self._on_rename_curve)
@@ -990,11 +995,28 @@ class ControlsPage(QWidget):
                     return gpu_out
         return None
 
+    def _card_size_tier(self) -> str:
+        """Current card-size density tier from settings (default comfortable)."""
+        if self._settings_service is not None:
+            return getattr(self._settings_service.settings, "card_size", DEFAULT_CARD_SIZE)
+        return DEFAULT_CARD_SIZE
+
     def set_theme(self, tokens) -> None:
-        """Forward theme updates to child widgets that hold theme state."""
+        """Forward theme updates to child widgets and re-apply card sizing.
+
+        A theme change can alter the base font size, so every card re-derives
+        its width + minimum height from the new base size and the current
+        density tier (DEC-128). Curve cards additionally re-render their
+        preview in the new accent colour.
+        """
         self._curve_editor.set_theme(tokens)
+        base_pt = getattr(tokens, "base_font_size_pt", 10)
+        tier = self._card_size_tier()
+        for card in self._control_cards.values():
+            card.apply_card_size(base_pt, tier)
         for card in self._curve_cards.values():
             card.set_theme(tokens)
+            card.apply_card_size(base_pt, tier)
 
     def _on_capabilities_updated(self, caps) -> None:
         if not hasattr(caps, "features") or caps.features is None:

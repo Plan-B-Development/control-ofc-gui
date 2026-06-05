@@ -250,7 +250,11 @@ class CurveEditor(QWidget):
         """Update theme tokens and re-render the plot with new colours."""
         self._theme = tokens
         self._setup_plot()
-        self._redraw()
+        # _refresh_plot() redraws the curve line/points in the new accent
+        # colour, and safely no-ops when no graph curve is loaded. (The prior
+        # call to a non-existent self._redraw() raised AttributeError on every
+        # theme change once the Controls page forwarded set_theme — DEC-128.)
+        self._refresh_plot()
 
     def set_min_output(self, min_pct: float) -> None:
         """Set the role-derived floor for editable curve outputs.
