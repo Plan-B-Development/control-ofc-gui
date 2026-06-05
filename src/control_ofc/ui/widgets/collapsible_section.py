@@ -25,9 +25,9 @@ Design notes:
 - An optional *persistent area* sits between the header and the collapsible
   content: widgets added via ``add_persistent_widget`` stay visible even when
   the section is collapsed, so a section can fold its detail away while keeping
-  a one-line summary (and any critical alerts) on screen. The Fans-tab
-  Hardware Readiness card uses this so the readiness verdict survives a
-  collapse.
+  a one-line summary (and any critical alerts) on screen. (DEC-124 retired the
+  readiness card's use of this — its verdict + alerts are now always-visible
+  siblings — but the feature remains available to other sections.)
 """
 
 from __future__ import annotations
@@ -143,8 +143,8 @@ class CollapsibleSection(QWidget):
         """Expand or collapse the section.
 
         Idempotent — calling with the current state is a no-op. Used by the
-        Fans tab to auto-expand a section when it holds a real problem the
-        user must not miss.
+        Troubleshooting tab to auto-expand a section when it holds a real problem
+        the user must not miss.
         """
         if self._header.isChecked() != expanded:
             # setChecked emits toggled(), which runs _on_header_toggled.

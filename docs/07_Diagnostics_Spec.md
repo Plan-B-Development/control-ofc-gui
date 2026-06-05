@@ -1,6 +1,6 @@
 # 07 — Diagnostics Spec
 
-**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Last updated:** 2026-06-05 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
 
 ## Purpose
 Diagnostics helps the user understand:
@@ -285,12 +285,14 @@ All labels inside Card frames use `background: transparent` inline style. This p
 ### No inline font-size overrides
 All font sizing is inherited from the global theme stylesheet via CSS classes. Changing the theme text size changes Diagnostics page text consistently.
 
-## Implementation: Hardware Readiness (v1.1.0)
+## Implementation: Hardware Readiness (v1.1.0; dedicated Troubleshooting tab in v1.26.0 — DEC-124)
 
 ### Overview
-The Fans tab includes a "Hardware Readiness" card above the existing fan status
-table. It fetches data from `GET /diagnostics/hardware` (daemon v1.2.0+) and
-presents a unified view of hardware compatibility and driver status.
+The **Troubleshooting** tab (a dedicated Diagnostics tab inserted right after
+Fans, DEC-124) presents the "Hardware Readiness" health report. It fetches data
+from `GET /diagnostics/hardware` (daemon v1.2.0+) and presents a unified view of
+hardware compatibility and driver status. The sibling **Fans** tab now shows
+only the live Fan Status table.
 
 ### Card contents
 1. **Summary line** — total headers, writable count, warnings if all read-only
@@ -311,57 +313,50 @@ presents a unified view of hardware compatibility and driver status.
    documentation links from the chip-family knowledge base
    (`hwmon_guidance.py`). Shown per unique chip prefix.
 
-### Layout: progressive disclosure (DEC-112, card-level collapse DEC-115/DEC-116)
-The card is itself a single collapsible section (DEC-115): a top-level
-`CollapsibleSection` titled "Hardware Readiness", **expanded by default**. Its
-**persistent area** stays visible even when the card is folded; its
-**collapsible body** holds the detail and folds away so the live fan table can
-rise. The body's readiness data is *further* grouped into nested collapsible
-sub-sections so a problem board does not become a wall of text (the exact case
-where it is read). Top-to-bottom:
+### Layout: flattened health report (DEC-124, supersedes the DEC-115/DEC-116 card layout)
+On its own **Troubleshooting** tab nothing competes with a fan table for
+vertical space, so the readiness content is a flat, always-readable health
+report rather than the deep accordion-in-accordion card of DEC-115/DEC-116.
+Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
 
-- **Persistent (visible even when the card is collapsed):** the readiness
-  **verdict banner** (DEC-113) + "Open Full Report" button, and the
-  **blocking-alert stack** — module collisions, module conflicts, and the
-  BIOS-interference headline (DEC-116: only the *blocking* alerts — those that
-  mean "do not write PWM until resolved" or report active EC contention — stay
-  persistent). Each alert is individually visibility-gated, so the stack
-  collapses to nothing on a healthy system. Per NN/g accordion guidance,
-  essential warnings are kept *outside* collapsed panels — here, in the
-  persistent area.
-- **Collapsible body — informational alerts** (DEC-116): the **dual-chip**
-  setup warning, **vendor quirks**, and **ACPI conflicts**. These are advisory,
-  not blocking, so they live in the foldable body — collapsing the card clears
-  them. They are still visible by default because a problem board force-expands
-  the card, and the persistent verdict banner still flags the issue when folded.
-- **Collapsible body — summary:** the readiness summary line and board
-  identity.
-- **Collapsible body — detail sub-sections** (`CollapsibleSection`, all
-  collapsed by default): *Detected hardware* (chip + kernel-module tables),
-  *BIOS interference detail* (per-header revert rows + footnote — **hidden
-  entirely unless a header reports a non-zero revert count**, DEC-116),
-  *Thermal safety & GPU*, *Guidance & documentation*, and *PWM control test*
-  (verify combo, Test PWM Control, Verify All Writable, progress + result, and
-  — DEC-120 — **Test GPU Fan Control** with its own result label, shown only
-  when a writable AMD GPU is present and the daemon supports the verify route,
-  ≥ 1.11.0).
-- **Always visible (outside the card):** the *Refresh Hardware Diagnostics*
-  button below the card, and the live *Fan Status* table in the bottom
-  splitter pane.
+- **Header action row** — the "Hardware Readiness" title, *Open Full Report ↗*
+  (pop-out), and *Refresh Hardware Diagnostics*.
+- **Verdict banner** (DEC-113) — always visible, traffic-light coloured.
+- **Blocking-alert stack** — module collisions, module conflicts, and the
+  BIOS-interference headline (those that mean "do not write PWM until resolved"
+  or report active EC contention). Each is individually visibility-gated, so the
+  stack collapses to nothing on a healthy system, and is always on screen when
+  present — never behind a collapse.
+- **Issue checklist** (DEC-124) — one row per detected problem
+  (`detect_readiness_problems`): a severity badge (`CriticalChip` /
+  `WarningChip`), the problem label, its one-line fix, and a clickable doc link.
+  A healthy system shows a single `✓ No issues detected` line. This promotes the
+  former buried "To fix" block into a first-class, always-visible checklist (per
+  NN/g progressive disclosure + PatternFly status-and-severity guidance).
+- **Informational alerts** (DEC-116): the **dual-chip** setup warning, **vendor
+  quirks**, and **ACPI conflicts** — advisory, shown only when present.
+- **Summary + board identity** — the readiness summary line and board identity.
+- **Five flat detail sub-sections** (`CollapsibleSection`, all collapsed by
+  default): *Detected hardware* (chip + kernel-module tables), *BIOS
+  interference detail* (per-header revert rows + footnote — **hidden entirely
+  unless a header reports a non-zero revert count**, DEC-116), *Thermal safety &
+  GPU*, *Guidance & documentation* (chip BIOS tips / known issues + doc link),
+  and *PWM control test* (verify combo, Test PWM Control, Verify All Writable,
+  progress + result, and — DEC-120 — **Test GPU Fan Control** with its own
+  result label, shown only when a writable AMD GPU is present and the daemon
+  supports the verify route, ≥ 1.11.0).
 
-Default expand state is static (not persisted across launches): the card opens
-expanded. `_populate_hw_diagnostics` **force-expands the card** whenever
-`readiness_verdict` reports a problem (any non-`SuccessChip` verdict), and the
-card never auto-collapses — so a user who folds a healthy card is respected,
-but a problem board always shows its detail and "To fix" guidance. The
-*BIOS interference detail* sub-section is **hidden whenever there is no
-interference to report** and is revealed + **auto-expanded** only on a non-zero
-revert count (DEC-116) — so it never presents an empty header to expand into
-nothing. The verify controls and their result labels share one sub-section, so
-reaching the buttons necessarily expands the section that shows the outcome.
-Because the verdict + the **blocking** alerts are persistent and the card
-force-expands on a problem, **safety warnings are never hidden behind a
-collapse**; an explicit collapse only folds away the advisory detail (DEC-116).
+The sibling **Fans** tab holds only the live *Fan Status* table.
+
+Because the verdict, the blocking-alert stack, and the issue checklist are all
+**always visible** (no outer collapse), safety warnings can never be hidden
+behind a collapse — a strict strengthening of the DEC-116 rule. The five detail
+sub-sections still open on demand; the *BIOS interference detail* sub-section is
+**hidden whenever there is no interference to report** and is revealed +
+**auto-expanded** only on a non-zero revert count (DEC-116) — so it never
+presents an empty header to expand into nothing. The verify controls and their
+result labels share one sub-section, so reaching the buttons necessarily expands
+the section that shows the outcome.
 
 `CollapsibleSection` (`ui/widgets/collapsible_section.py`) is a first-party
 widget (DEC-112 D1): a flat `QPushButton` header (chevron rendered in the
@@ -371,30 +366,34 @@ toggling a content container. Multiple sections may be open at once (unlike
 `QToolBox`). The toggle is instant (no animation) for deterministic tests. A
 section may also carry a **persistent area** (`add_persistent_widget`,
 DEC-115) — widgets between the header and the content that stay visible
-regardless of collapse state; the Hardware Readiness card uses it for the
-verdict + alert stack. Because Qt's `QWidget.isHidden()` reflects a widget's
+regardless of collapse state. (DEC-124 retired the readiness card's use of this:
+the verdict + alerts are now always-visible siblings, not a persistent area; the
+feature remains available to other sections.) Because Qt's `QWidget.isHidden()`
+reflects a widget's
 *own* show/hide flag rather than an ancestor's collapsed state, the
 visibility-gated labels keep working unchanged inside the sections.
 
 ### Readiness verdict, auto-fetch, "To fix", and pop-out report (DEC-113)
 - **Verdict banner** — a prominent, always-visible one-line status at the top
-  of the card, computed by `readiness_report.readiness_verdict(diag)`:
+  of the report, computed by `readiness_report.readiness_verdict(diag)`:
   `✓ System ready — N headers, M writable · thermal safety <state>`
   (`SuccessChip`) or `⚠ K issue(s) need attention …` (`WarningChip` /
-  `CriticalChip`). It fills the otherwise-empty collapsed view with an
-  at-a-glance answer. Problem detection lives in one place
-  (`detect_readiness_problems`) so the verdict and the "To fix" guidance can
-  never disagree; **info-level vendor quirks are FYI notes and are not counted
-  as problems**.
-- **Auto-fetch** — opening the Fans tab fetches `/diagnostics/hardware` once
-  per session (guarded), so the verdict is populated without a manual
-  *Refresh* click.
-- **"To fix" guidance** — `build_fix_guidance_html(diag)` renders a remediation
-  bullet per detected problem (ACPI, module collision, GPU `ppfeaturemask`,
-  dual-chip, all-read-only, …) with a clickable doc link and a shared
-  `REMEDIATION_DISCLAIMER`. It is **GUI-authored only** (no daemon strings), so
-  it is safe as rich text with external links — sidestepping the DEC-106
-  escaping requirement. The dual-chip warning carries the same disclaimer.
+  `CriticalChip`). It leads the report with an at-a-glance answer. Problem
+  detection lives in one place (`detect_readiness_problems`) so the verdict and
+  the issue checklist can never disagree; **info-level vendor quirks are FYI
+  notes and are not counted as problems**.
+- **Auto-fetch** — opening the Troubleshooting tab fetches `/diagnostics/hardware`
+  once per session (guarded), so the verdict + checklist populate without a
+  manual *Refresh* click.
+- **Issue checklist (inline "To fix")** — the always-visible checklist (above)
+  renders one row per detected problem (ACPI, module collision, GPU
+  `ppfeaturemask`, dual-chip, all-read-only, …) with its one-line fix and a
+  clickable doc link, from `detect_readiness_problems(diag)`. Both it and the
+  pop-out's "To fix" block (`build_fix_guidance_html`, carrying the shared
+  `REMEDIATION_DISCLAIMER`) derive from that one problem list, so they can never
+  disagree. Content is **GUI-authored only** (no daemon strings), so it is safe
+  as rich text with external links — sidestepping the DEC-106 escaping
+  requirement.
 - **Pop-out report** — *Open Full Report ↗* opens `ReadinessReportDialog`, a
   themed, resizable `QTextBrowser` window with the complete report (summary,
   detected-hardware table, thermal/GPU, and the "To fix" block). Daemon strings

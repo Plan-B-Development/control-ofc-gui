@@ -22,7 +22,7 @@ and per-bootloader steps for the kernel parameter.
 
 If you have already installed the daemon, the quickest way to discover
 what your specific system needs is to launch the GUI and open
-**Diagnostics → Fans → Hardware Readiness** — it inspects your hardware
+**Diagnostics → Troubleshooting → Hardware Readiness** — it inspects your hardware
 and recommends the exact AUR packages or kernel parameters required.
 
 ## Installation

@@ -107,31 +107,34 @@ class TestDiagnosticsResizableColumns:
 
 
 # ---------------------------------------------------------------------------
-# 2. Draggable splitter in Fans tab
+# 2. Draggable splitter in the Troubleshooting tab (hardware tables)
 # ---------------------------------------------------------------------------
 
 
-class TestFansTabSplitter:
-    """Fans tab uses a vertical splitter between Hardware Readiness and Fan table."""
+class TestHwTablesSplitter:
+    """DEC-124 removed the old Fans-tab readiness splitter. The remaining
+    draggable diagnostics splitter nests the chip + kernel-module tables
+    (Diagnostics_Splitter_hwTables) inside the Detected-hardware section on the
+    Troubleshooting tab."""
 
     def test_splitter_exists(self, qtbot):
         page, _ = _make_page(qtbot)
-        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_fans")
+        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_hwTables")
         assert splitter is not None
 
     def test_splitter_vertical(self, qtbot):
         page, _ = _make_page(qtbot)
-        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_fans")
+        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_hwTables")
         assert splitter.orientation() == Qt.Orientation.Vertical
 
     def test_splitter_not_collapsible(self, qtbot):
         page, _ = _make_page(qtbot)
-        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_fans")
+        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_hwTables")
         assert splitter.childrenCollapsible() is False
 
     def test_splitter_has_two_children(self, qtbot):
         page, _ = _make_page(qtbot)
-        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_fans")
+        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_hwTables")
         assert splitter.count() == 2
 
 

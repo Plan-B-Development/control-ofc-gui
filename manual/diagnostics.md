@@ -2,7 +2,7 @@
 
 The Diagnostics page exposes the health and status of every subsystem. It is your primary tool for troubleshooting connection issues, stale sensors, lease conflicts, and hardware detection problems.
 
-> **Looking for help with a specific motherboard or fan controller?** Start with the [Hardware Troubleshooting](hardware-troubleshooting.md) page — it covers the Hardware Readiness card, Test PWM Control, vendor quirks, and what to do when fans report 0 RPM or refuse to change speed.
+> **Looking for help with a specific motherboard or fan controller?** Start with the [Hardware Troubleshooting](hardware-troubleshooting.md) page — it covers the Hardware Readiness checks on the **Troubleshooting** tab, Test PWM Control, vendor quirks, and what to do when fans report 0 RPM or refuse to change speed.
 
 ![Diagnostics — Overview Tab](../screenshots/auto/04_diagnostics_overview.png)
 
@@ -70,26 +70,36 @@ Hover any row to see a tooltip explaining the chip's source class, description, 
 
 ![Diagnostics — Fans Tab](../screenshots/auto/08_diagnostics_fans.png)
 
-The Fans tab is split vertically:
-
-- **Top pane: Hardware Readiness** — chip detection, driver status, kernel modules, ACPI conflicts, vendor quirk guidance, and a **Test PWM Control** button for verifying that motherboard headers actually move fans. It opens with a **readiness verdict** at the top — a green *✓ System ready* line, or an amber/red *⚠ N issues need attention* — populated automatically the first time you open the tab. To stay readable on problem boards, the rest is grouped with **progressive disclosure**: the verdict and any critical alerts are always shown, while **Detected hardware**, **BIOS interference detail**, **Thermal safety & GPU**, **Guidance & documentation**, and **PWM control test** collapse by default and expand on click. (BIOS interference detail expands automatically when the BIOS has been reclaiming fan control, so a real problem is never hidden.)
-  - When there are problems, **Guidance & documentation** holds a **To fix** list — concrete remediation steps with a short safety disclaimer and a clickable link to the relevant documentation for each issue.
-  - **Open Full Report ↗** opens the complete readiness report in its own resizable window (handy when there is a lot of detail); every link in it is clickable.
-  - Covered in detail on the [Hardware Troubleshooting](hardware-troubleshooting.md) page.
-- **Bottom pane: Fans table** — every controllable fan output reported by the daemon.
+The Fans tab is a single live view of every controllable fan output the daemon reports. (Hardware-health checks — chip detection, driver state, BIOS interference, and PWM verification — live on the separate [Troubleshooting](#troubleshooting-tab) tab.)
 
 The fan table has the following columns:
 
 | Column | Meaning |
 |--------|---------|
 | **ID** | Display name (user alias if set, otherwise hardware label or fan ID) |
-| **Source** | Connection type: openfan, hwmon, or amd_gpu |
-| **Control method** | How this fan can be controlled: `openfan`, `hwmon` (with PWM-only or full read/write), `amd_gpu` (PMFW or legacy pwm1), `read_only`, or `unknown`. Read-only entries cannot be commanded — Test PWM Control in the Hardware Readiness pane explains why |
+| **Source** | Connection type: openfan, hwmon, amd_gpu, or intel_gpu |
+| **Control method** | How this fan can be controlled: `openfan`, `hwmon` (with PWM-only or full read/write), `amd_gpu` (PMFW or legacy pwm1), `read_only`, or `unknown`. Read-only entries cannot be commanded — **Test PWM Control** on the [Troubleshooting](#troubleshooting-tab) tab explains why |
 | **RPM** | Hardware-measured speed (dash if not available). Writable hwmon headers reading 0 RPM are annotated `(no fan detected)` so you don't accidentally assign a curve to an empty header |
 | **PWM (%)** | Last commanded speed percentage (dash if not set) |
 | **Freshness** | Data freshness indicator, same as the sensors table |
 
 Hover any cell for a tooltip explaining what the value means and, for read-only fans, why the GUI cannot drive them.
+
+## Troubleshooting Tab
+
+![Diagnostics — Troubleshooting Tab](../screenshots/auto/08b_diagnostics_troubleshooting.png)
+
+The Troubleshooting tab is the **Hardware Readiness** health report — it answers *"is my fan-control hardware healthy, and if not, how do I fix it?"*. It fetches `/diagnostics/hardware` automatically the first time you open the tab (or on demand via **Refresh Hardware Diagnostics**).
+
+It leads with the answer and keeps the detail one click away:
+
+- **Verdict banner** — a green *✓ System ready* line, or an amber/red *⚠ N issue(s) need attention* — always on screen.
+- **Issue checklist** — one row per detected problem, each with a severity badge (**CRITICAL** / **WARNING**), a one-line **fix**, and a clickable link to the relevant documentation. A healthy system shows a single *✓ No issues detected* line. This is the fastest path from "something is wrong" to "here is what to change".
+- **Alerts** — blocking alerts (driver-module collisions, active BIOS interference) and informational notices (dual-chip setup, vendor quirks, ACPI conflicts) appear here when relevant. Safety-critical alerts are always visible — never hidden behind a collapse.
+- **Detail sections** (collapsed by default, expand on click): **Detected hardware** (chip + kernel-module tables), **BIOS interference detail** (shown only when the BIOS has been reclaiming fan control), **Thermal safety & GPU**, **Guidance & documentation**, and **PWM control test** — the **Test PWM Control** / **Verify All Writable** buttons, plus **Test GPU Fan Control** when a writable AMD GPU is present.
+- **Open Full Report ↗** opens the complete readiness report in its own resizable window; every link in it is clickable.
+
+This tab is covered in depth on the [Hardware Troubleshooting](hardware-troubleshooting.md) page.
 
 ## Lease Tab
 

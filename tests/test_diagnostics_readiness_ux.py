@@ -1,5 +1,5 @@
-"""Integration tests for the Fans-tab readiness UX: verdict banner, auto-fetch,
-'To fix' links, and the pop-out report (DEC-113)."""
+"""Integration tests for the Troubleshooting-tab readiness UX: verdict banner,
+auto-fetch, issue-checklist links, and the pop-out report (DEC-113, DEC-124)."""
 
 from __future__ import annotations
 
@@ -93,26 +93,36 @@ class TestVerdictBanner:
         assert page._readiness_verdict_label.property("class") in ("WarningChip", "CriticalChip")
 
 
-class TestFixGuidanceLabel:
-    def test_hidden_when_healthy(self, qtbot):
+class TestIssueChecklist:
+    """DEC-124: the inline "To fix" label is retired; remediation is promoted
+    into the always-visible issue checklist (full coverage lives in
+    test_diagnostics_troubleshooting_tab.py — this is a page-level smoke test)."""
+
+    def test_no_issues_line_when_healthy(self, qtbot):
         page = _page(qtbot)
         page._populate_hw_diagnostics(_healthy())
-        assert page._fix_guidance_label.isHidden()
+        assert not page._no_issues_label.isHidden()
+        assert page._issue_rows == []
 
-    def test_visible_with_links_when_problem(self, qtbot):
+    def test_rows_with_links_when_problem(self, qtbot):
         page = _page(qtbot)
         page._populate_hw_diagnostics(_problem())
-        assert not page._fix_guidance_label.isHidden()
-        assert "To fix" in page._fix_guidance_label.text()
-        assert "at your own risk" in page._fix_guidance_label.text()
-        assert 'href="' in page._fix_guidance_label.text()
+        assert page._no_issues_label.isHidden()
+        assert page._issue_rows  # at least one issue row
+        fix_labels = [
+            lbl
+            for lbl in page.findChildren(QLabel)
+            if lbl.objectName().startswith("Diagnostics_IssueFix_")
+        ]
+        assert fix_labels
+        assert all(lbl.openExternalLinks() for lbl in fix_labels)
+        assert any('href="' in lbl.text() for lbl in fix_labels)
 
 
 class TestClickableLinks:
     def test_rich_alert_labels_open_external_links(self, qtbot):
         page = _page(qtbot)
         for name in (
-            "Diagnostics_Label_fixGuidance",
             "Diagnostics_Label_moduleCollisions",
             "Diagnostics_Label_revertCounts",
         ):
@@ -143,20 +153,22 @@ class TestReportButton:
 
 
 class TestAutoFetch:
-    def test_fetches_once_on_fans_tab(self, qtbot):
+    def test_fetches_once_on_troubleshooting_tab(self, qtbot):
         client = _MockClient(_healthy())
         page = _page(qtbot, client=client)
-        # Simulate opening the Fans tab (index 2).
-        page._on_diag_tab_changed(2)
+        # Simulate opening the Troubleshooting tab (index 3, DEC-124).
+        page._on_diag_tab_changed(3)
         assert client.calls == 1
         assert page._diag.last_hw_diagnostics is not None
         # Switching away and back must not re-fetch.
         page._on_diag_tab_changed(0)
-        page._on_diag_tab_changed(2)
+        page._on_diag_tab_changed(3)
         assert client.calls == 1
 
-    def test_non_fans_tab_does_not_fetch(self, qtbot):
+    def test_non_troubleshooting_tab_does_not_fetch(self, qtbot):
         client = _MockClient(_healthy())
         page = _page(qtbot, client=client)
+        # The Fans tab (index 2) no longer triggers the fetch.
+        page._on_diag_tab_changed(2)
         page._on_diag_tab_changed(0)
         assert client.calls == 0

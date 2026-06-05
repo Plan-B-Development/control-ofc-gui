@@ -1,18 +1,18 @@
 # Hardware Troubleshooting
 
-This page covers the **Hardware Readiness** card on the Diagnostics → Fans tab and the situations it helps diagnose: chip detection, kernel driver state, BIOS interference, ACPI conflicts, vendor quirks, and verifying that fan headers actually respond to PWM writes.
+This page covers the **Hardware Readiness** report on the Diagnostics → Troubleshooting tab and the situations it helps diagnose: chip detection, kernel driver state, BIOS interference, ACPI conflicts, vendor quirks, and verifying that fan headers actually respond to PWM writes.
 
 > **Quick navigation**
-> - The Hardware Readiness card lives at **Diagnostics → Fans**, top pane.
-> - Click **Refresh Hardware Diagnostics** at the bottom of the card to fetch current state from the daemon.
+> - The Hardware Readiness report lives at **Diagnostics → Troubleshooting**.
+> - Click **Refresh Hardware Diagnostics** in the tab header to fetch current state from the daemon.
 > - Click **Test PWM Control** to run a ~6-second write test against a selected motherboard header.
 > - Click **Test GPU Fan Control** to verify an AMD GPU fan actually responds (~6 s, no lease).
 
 For the chip and driver matrix, see [Hardware Compatibility](../docs/19_Hardware_Compatibility.md). For vendor-by-vendor BIOS notes, see the [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md). For sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
 
-## What the Hardware Readiness card shows
+## What the Hardware Readiness report shows
 
-When you fetch hardware diagnostics, the card populates with:
+When you fetch hardware diagnostics, the report populates with:
 
 | Section | What it tells you |
 |---------|-------------------|
@@ -53,19 +53,19 @@ While the test is running, the GUI's 1 Hz control loop pauses writes to the head
 
 AMD GPU fan control fails *silently* far more often than motherboard headers: the driver accepts a `fan_curve` write but the firmware ignores it (missing `amdgpu.ppfeaturemask` bit `0x4000`), an SMU firmware/driver mismatch swallows it, or a BIOS overdrive lock blocks it. The static **GPU diagnostics** row can show that the *configuration* looks right while fan control still does not work.
 
-**Test GPU Fan Control** (Diagnostics → Fans — shown only when a writable AMD GPU is present and the daemon is ≥ 1.11.0) briefly drives the GPU fan to a test speed — always *upward*, so it never reduces cooling on a hot GPU — waits ~6 seconds, reads back the applied PMFW `fan_curve` (or legacy `pwm1`) and the `fan1_input` RPM, then restores the previous state. No lease is required. The result is one of:
+**Test GPU Fan Control** (Diagnostics → Troubleshooting — shown only when a writable AMD GPU is present and the daemon is ≥ 1.11.0) briefly drives the GPU fan to a test speed — always *upward*, so it never reduces cooling on a hot GPU — waits ~6 seconds, reads back the applied PMFW `fan_curve` (or legacy `pwm1`) and the `fan1_input` RPM, then restores the previous state. No lease is required. The result is one of:
 
 | Result | Meaning & fix |
 |--------|---------------|
 | **GPU fan control is working** | The fan responded to the test. Nothing to do |
 | **Zero-RPM idle (normal)** | The curve applied but the fan stays stopped because the GPU is below its zero-RPM stop temperature. Expected — the fan spins up under load |
 | **No RPM sensor to corroborate** | The write was confirmed via curve read-back, but this GPU exposes no `fan1_input` to measure RPM |
-| **The GPU ignored the write** | Accepted at sysfs but not applied. Add `amdgpu.ppfeaturemask=0xffffffff` to the kernel command line and reboot; if it is already set, suspect an SMU firmware/driver mismatch or a BIOS overdrive lock (see the GPU advisories in the diagnostics card) |
+| **The GPU ignored the write** | Accepted at sysfs but not applied. Add `amdgpu.ppfeaturemask=0xffffffff` to the kernel command line and reboot; if it is already set, suspect an SMU firmware/driver mismatch or a BIOS overdrive lock (see the GPU advisories in the Troubleshooting tab) |
 | **Fan did not respond** | The curve applied but RPM did not change with zero-RPM disabled — an SMU firmware issue or a known kernel regression for this GPU. Confirm the fan is physically connected and check your kernel version |
 | **BIOS/EC reclaimed control** (legacy `pwm1` GPUs) | `pwm1_enable` reverted to automatic — disable any vendor "Smart Fan" / EC fan-control option in firmware setup |
 | **Write was rejected** | The driver/firmware refused the write. Ensure `amdgpu.ppfeaturemask=0xffffffff` is set and that `amdgpu` (not `vfio-pci`) is bound to the GPU |
 
-The firmware **OD_RANGE minimum** (commonly ~15%) and zero-RPM idle are reported as informational outcomes, never as failures — a healthy idle GPU is never flagged as broken. Failure verdicts add their fix to the card's **To fix** block. If the control is not shown at all, the GPU has no write path (read-only — see "GPU fan control says feature_unavailable" below) or the daemon is older than 1.11.0.
+The firmware **OD_RANGE minimum** (commonly ~15%) and zero-RPM idle are reported as informational outcomes, never as failures — a healthy idle GPU is never flagged as broken. Failure verdicts add their fix to the **issue checklist**. If the control is not shown at all, the GPU has no write path (read-only — see "GPU fan control says feature_unavailable" below) or the daemon is older than 1.11.0.
 
 ## Intel Arc GPUs are monitor-only
 
@@ -83,7 +83,7 @@ Only the Arc **B580** currently maps to a specific model name; other Intel discr
 
 Some boards (most commonly Gigabyte AM5 with Smart Fan 6) repeatedly reset `pwm_enable` from manual back to automatic. Each reset is a "reclaim" — the daemon sets it back, but the EC keeps stealing it.
 
-The Hardware Readiness card surfaces a per-header count with a severity ramp:
+The Hardware Readiness report surfaces a per-header count with a severity ramp:
 
 | Reclaim count | Colour | Meaning |
 |---------------|--------|---------|
@@ -91,13 +91,13 @@ The Hardware Readiness card surfaces a per-header count with a severity ramp:
 | **1–9** | Amber (WARN) | Occasional reclaim; control still working but the EC is fighting back |
 | **≥10** | Red (HIGH) | Persistent contention; expect fan speed to drift even though the GUI keeps writing |
 
-The card headline takes the highest severity across all headers, so if any single header is in HIGH state the whole card alerts you to it.
+The verdict takes the highest severity across all headers, so if any single header is in HIGH state the whole report alerts you to it.
 
-The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically — control still works in the WARN/HIGH cases, but BIOS Smart Fan 6 should be set to "Manual" for the affected headers (see the vendor guidance the card auto-shows for Gigabyte + IT8696E systems).
+The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically — control still works in the WARN/HIGH cases, but BIOS Smart Fan 6 should be set to "Manual" for the affected headers (see the vendor guidance the report auto-shows for Gigabyte + IT8696E systems).
 
 ## Vendor quirks
 
-When the daemon reports a board vendor and chip combination that matches a known workaround pattern, the Hardware Readiness card automatically renders the relevant guidance — BIOS settings to change, kernel modules to install, or known-issue notes. Currently surfaced quirks include:
+When the daemon reports a board vendor and chip combination that matches a known workaround pattern, the Hardware Readiness report automatically renders the relevant guidance — BIOS settings to change, kernel modules to install, or known-issue notes. Currently surfaced quirks include:
 
 - **Gigabyte + IT8696E** — Smart Fan 6 BIOS setup notes for AM5 800-series AORUS boards
 - **NCT6798 / NCT6799 on ASUS** — typical driver-loaded paths and ASUS WMI sensor helpers
@@ -143,7 +143,7 @@ If you see an `(unverified)` suffix on a header label, treat the assignment as a
 
 ### "All my hwmon headers show as read-only"
 
-Open Diagnostics → Fans, look at the **Hardware Readiness** card:
+Open Diagnostics → Troubleshooting, look at the **Hardware Readiness** report:
 
 - If the chips table shows the expected chip but **status is "not loaded"**, the kernel module is missing. The chip column lists which module to install (e.g., `it87-dkms-git` on AUR for Gigabyte AM5 boards).
 - If the status is "loaded" but **writable_headers is 0**, run **Test PWM Control** on a header. A `pwm_enable_reverted` result means the BIOS is overriding control — fix it in BIOS Smart Fan settings.
@@ -151,7 +151,7 @@ Open Diagnostics → Fans, look at the **Hardware Readiness** card:
 
 ### "Some of my fan headers are missing — only 5 of 8 show up"
 
-Open Diagnostics → Fans. If the **dual-chip warning banner** at the top of the Hardware Readiness card is visible, your motherboard is one of the dual-IO Gigabyte boards (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) where the secondary ITE chip silently failed to enumerate.
+Open Diagnostics → Troubleshooting. If the **dual-chip warning banner** at the top of the Hardware Readiness report is visible, your motherboard is one of the dual-IO Gigabyte boards (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) where the secondary ITE chip silently failed to enumerate.
 
 This usually means one of:
 
@@ -169,11 +169,11 @@ If the warning persists after these steps, see the upstream tracker thread at [f
 
 ### "Fans run at full speed regardless of profile"
 
-The thermal safety logic forces 100% PWM if no CPU sensor is found for 5 cycles, or if any CPU sensor reports ≥105°C. Check the **Thermal safety** row of the Hardware Readiness card. If it reports "no CPU sensor", install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`).
+The thermal safety logic forces 100% PWM if no CPU sensor is found for 5 cycles, or if any CPU sensor reports ≥105°C. Check the **Thermal safety** row of the Hardware Readiness report. If it reports "no CPU sensor", install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`).
 
 ### "GPU fan control says feature_unavailable"
 
-Open Diagnostics → Fans, look at the **GPU diagnostics** row. If `amdgpu.ppfeaturemask` is missing bit `0x4000` (`PP_OVERDRIVE_MASK`), the kernel will not expose PMFW fan curves on RDNA3+ GPUs (RX 7000 / 9000 series). Add `amdgpu.ppfeaturemask=0xffffffff` to your kernel command line and reboot. See the [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) doc for the full kernel-parameter explanation.
+Open Diagnostics → Troubleshooting, look at the **GPU diagnostics** row. If `amdgpu.ppfeaturemask` is missing bit `0x4000` (`PP_OVERDRIVE_MASK`), the kernel will not expose PMFW fan curves on RDNA3+ GPUs (RX 7000 / 9000 series). Add `amdgpu.ppfeaturemask=0xffffffff` to your kernel command line and reboot. See the [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) doc for the full kernel-parameter explanation.
 
 ### "A popup said my kernel has a known regression — should I worry?"
 

@@ -214,7 +214,7 @@ to return `0xFFFF`, after which the `it87` driver silently skips it.
 
 The historic note that the secondary IT8792E was read-only on some AM4
 Gigabyte boards still applies; verify per-header writability via the
-PWM Verify action on the Diagnostics → Fans tab before assigning fans
+PWM Verify action on the Diagnostics → Troubleshooting tab before assigning fans
 to it in a profile.
 
 ### 4. ASRock AM4 — generally smooth

@@ -77,9 +77,9 @@ from control_ofc.ui.widgets.event_log_view import EventLogView
 from control_ofc.ui.widgets.readiness_report import (
     ReadinessReportDialog,
     board_identity_line,
-    build_fix_guidance_html,
     build_readiness_report_html,
     chip_rows,
+    detect_readiness_problems,
     gpu_verify_problems,
     header_summary_line,
     module_rows,
@@ -713,12 +713,15 @@ class DiagnosticsPage(QWidget):
         self._tabs.addTab(self._build_overview_tab(), "Overview")
         self._tabs.addTab(self._build_sensors_tab(), "Sensors")
         self._tabs.addTab(self._build_fans_tab(), "Fans")
+        self._tabs.addTab(self._build_troubleshooting_tab(), "Troubleshooting")
         self._tabs.addTab(self._build_lease_tab(), "Lease")
         self._tabs.addTab(self._build_logs_tab(), "Event Log")
         layout.addWidget(self._tabs, 1)
-        # DEC-113: auto-fetch hardware diagnostics the first time the Fans tab
-        # (index 2) is shown, so the readiness verdict populates without a click.
-        self._fans_tab_index = 2
+        # DEC-124: the Hardware Readiness content lives in its own Troubleshooting
+        # tab (index 3, immediately after Fans). Auto-fetch hardware diagnostics
+        # the first time that tab is shown, so the verdict + issue checklist
+        # populate without the user clicking Refresh.
+        self._troubleshooting_tab_index = 3
         self._tabs.currentChanged.connect(self._on_diag_tab_changed)
 
         # Action buttons
@@ -898,81 +901,44 @@ class DiagnosticsPage(QWidget):
         return container
 
     def _build_fans_tab(self) -> QWidget:
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.setObjectName("Diagnostics_Splitter_fans")
-        splitter.setChildrenCollapsible(False)
+        """Build the Diagnostics ▸ Fans tab: the live Fan Status table only.
 
-        # ─── Top pane: Hardware Readiness card (scrollable) ───────────
-        # DEC-115/DEC-116: the whole card is a single collapsible section. Its
-        # persistent area (verdict + the critical/blocking-alert stack) stays
-        # visible even when the card is collapsed; the body — informational
-        # alerts, summary, board identity, and the five detail sub-sections —
-        # folds away so the live fan table can rise. Safety warnings are never
-        # hidden: blocking alerts are persistent and the card force-expands on
-        # a problem (_populate_hw_diagnostics).
+        DEC-124: the Hardware Readiness content moved to its own Troubleshooting
+        tab, so this tab is a single-purpose live view of every fan — no
+        splitter and no readiness card competing for vertical space.
+        """
+        return self._build_fan_status_pane()
+
+    def _build_troubleshooting_tab(self) -> QWidget:
+        """Build the Diagnostics ▸ Troubleshooting tab (DEC-124).
+
+        A flattened hardware-readiness health report. Top to bottom: an
+        always-visible verdict banner, the blocking-alert stack, an issue
+        checklist (one row per detected problem, with its fix and a doc link),
+        the informational alerts, the readiness summary + board identity, and
+        five on-demand detail sections. The deep accordion-in-accordion card of
+        DEC-115/DEC-116 is retired — on a dedicated tab nothing competes with a
+        fan table for space, so the verdict and every blocking alert are always
+        on screen (a strict strengthening of DEC-116's "never hide an essential
+        warning" rule).
+        """
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        hw_container = QWidget()
-        hw_container_layout = QVBoxLayout(hw_container)
-        hw_container_layout.setSpacing(12)
-        hw_container_layout.addWidget(self._build_readiness_card())
 
-        # Refresh button — always visible below the card so it works whether
-        # or not the card is collapsed.
-        fetch_btn = QPushButton("Refresh Hardware Diagnostics")
-        fetch_btn.setObjectName("Diagnostics_Btn_fetchHwDiag")
-        fetch_btn.clicked.connect(self._fetch_hardware_diagnostics)
-        hw_container_layout.addWidget(fetch_btn)
-
-        # Pin to the top so a collapsed card doesn't leave the pane stretched
-        # with empty space inside the resizable scroll area.
-        hw_container_layout.addStretch()
-        scroll.setWidget(hw_container)
-        splitter.addWidget(scroll)
-
-        # ─── Bottom pane: live Fan Status table ───────────────────────
-        splitter.addWidget(self._build_fan_status_pane())
-
-        # Give the readiness pane enough initial height to show the verdict,
-        # any critical alerts, and the section headers without scrolling on a
-        # typical board, while leaving the fan table a usable share. The
-        # splitter stays user-adjustable and the top pane scrolls when the
-        # card is expanded.
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([370, 390])
-        return splitter
-
-    def _build_readiness_card(self) -> QFrame:
-        """Build the Hardware Readiness card as a single collapsible section.
-
-        DEC-115/DEC-116: the section's *persistent* area holds the
-        always-visible verdict banner + the critical/blocking-alert stack; its
-        collapsible *body* holds the informational alerts, readiness summary,
-        board identity, and the five detail sub-sections. Collapsing folds the
-        body away (clearing the informational alerts) while the verdict and any
-        blocking alerts stay on screen.
-        """
         self._hw_ready_frame = QFrame()
         self._hw_ready_frame.setProperty("class", "Card")
         self._hw_ready_frame.setObjectName("Diagnostics_Frame_hwReadiness")
         card_layout = QVBoxLayout(self._hw_ready_frame)
+        card_layout.setSpacing(10)
 
-        self._hw_ready_section = CollapsibleSection(
-            "Hardware Readiness", "Diagnostics_Section_hwReadiness", expanded=True
+        # ── Header action row: title + report pop-out + refresh ──────────
+        header_row = QHBoxLayout()
+        title = _transparent_label(
+            "Hardware Readiness", "Diagnostics_Label_hwReadinessTitle", bold=True
         )
-        card_layout.addWidget(self._hw_ready_section)
-
-        # ── Persistent: verdict banner + full-report pop-out (DEC-113) ──
-        # A prominent one-line verdict fills the collapsed view with a useful
-        # at-a-glance answer; the button opens the full report in its own
-        # window. Both stay visible when the card is collapsed.
-        verdict_row = QHBoxLayout()
-        self._readiness_verdict_label = _transparent_label(
-            "Checking hardware readiness…", "Diagnostics_Label_readinessVerdict", bold=True
-        )
-        self._readiness_verdict_label.setWordWrap(True)
-        verdict_row.addWidget(self._readiness_verdict_label, 1)
+        title.setProperty("class", "PageSubtitle")
+        header_row.addWidget(title)
+        header_row.addStretch()
 
         self._open_report_btn = QPushButton("Open Full Report ↗")
         self._open_report_btn.setObjectName("Diagnostics_Btn_openReport")
@@ -982,45 +948,158 @@ class DiagnosticsPage(QWidget):
         )
         self._open_report_btn.clicked.connect(self._open_readiness_report)
         self._open_report_btn.setEnabled(False)
-        verdict_row.addWidget(self._open_report_btn, 0, Qt.AlignmentFlag.AlignTop)
-        self._hw_ready_section.add_persistent_layout(verdict_row)
+        header_row.addWidget(self._open_report_btn)
 
-        # ── Alerts: critical persistent, informational demoted (DEC-116) ──
-        # Per NN/g progressive-disclosure guidance, essential warnings stay
-        # OUTSIDE the collapsible body so a folded card still surfaces them:
-        # blocking alerts (module collisions/conflicts, active BIOS-revert)
-        # are persistent. Informational alerts (dual-chip setup, vendor quirks,
-        # ACPI) live in the body so collapsing actually clears them — they stay
-        # visible by default because a problem board force-expands the card.
-        # Both stacks collapse to nothing on a healthy system.
+        fetch_btn = QPushButton("Refresh Hardware Diagnostics")
+        fetch_btn.setObjectName("Diagnostics_Btn_fetchHwDiag")
+        fetch_btn.clicked.connect(self._fetch_hardware_diagnostics)
+        header_row.addWidget(fetch_btn)
+        card_layout.addLayout(header_row)
+
+        # ── Always-visible verdict banner (DEC-113) ──────────────────────
+        self._readiness_verdict_label = _transparent_label(
+            "Checking hardware readiness…", "Diagnostics_Label_readinessVerdict", bold=True
+        )
+        self._readiness_verdict_label.setWordWrap(True)
+        card_layout.addWidget(self._readiness_verdict_label)
+
+        # ── Alerts + issue checklist (DEC-124) ───────────────────────────
+        # With no outer collapse on this dedicated tab, every alert is shown
+        # only when its condition is real and hidden otherwise — a healthy board
+        # shows none. Blocking alerts (module collision/conflict, active
+        # BIOS-revert headline) sit above the checklist; informational ones
+        # (dual-chip, vendor quirk, ACPI) sit below it. The checklist promotes
+        # the former buried "To fix" guidance into a first-class list.
         persistent_alerts, demoted_alerts = self._create_alert_labels()
         for alert in persistent_alerts:
-            self._hw_ready_section.add_persistent_widget(alert)
+            card_layout.addWidget(alert)
 
-        # ── Collapsible body: demoted alerts, then summary + board ──────
+        card_layout.addWidget(self._build_issue_list())
+
         for alert in demoted_alerts:
-            self._hw_ready_section.add_widget(alert)
+            card_layout.addWidget(alert)
 
+        # ── Readiness summary + board identity ───────────────────────────
         self._hw_ready_summary = _transparent_label(
             "Fetching hardware diagnostics…", "Diagnostics_Label_hwReadySummary"
         )
         self._hw_ready_summary.setWordWrap(True)
-        self._hw_ready_section.add_widget(self._hw_ready_summary)
+        card_layout.addWidget(self._hw_ready_summary)
 
         self._board_info_label = _transparent_label("", "Diagnostics_Label_boardInfo")
         self._board_info_label.setWordWrap(True)
         self._board_info_label.setProperty("class", "CardMeta")
         self._board_info_label.setVisible(False)
-        self._hw_ready_section.add_widget(self._board_info_label)
+        card_layout.addWidget(self._board_info_label)
 
-        # ── Collapsible body: the five detail sub-sections ──────────────
-        self._hw_ready_section.add_widget(self._build_detected_hw_section())
-        self._hw_ready_section.add_widget(self._build_bios_section())
-        self._hw_ready_section.add_widget(self._build_thermal_gpu_section())
-        self._hw_ready_section.add_widget(self._build_guidance_section())
-        self._hw_ready_section.add_widget(self._build_pwm_test_section())
+        # ── Five flat, on-demand detail sections ─────────────────────────
+        card_layout.addWidget(self._build_detected_hw_section())
+        card_layout.addWidget(self._build_bios_section())
+        card_layout.addWidget(self._build_thermal_gpu_section())
+        card_layout.addWidget(self._build_guidance_section())
+        card_layout.addWidget(self._build_pwm_test_section())
 
-        return self._hw_ready_frame
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(12)
+        container_layout.addWidget(self._hw_ready_frame)
+        container_layout.addStretch()
+        scroll.setWidget(container)
+        return scroll
+
+    def _build_issue_list(self) -> QWidget:
+        """Build the issue-checklist container (DEC-124).
+
+        Populated by :meth:`_render_issue_list` from
+        :func:`detect_readiness_problems`: one row per problem (severity badge +
+        label + fix + doc link), or a single "no issues" line when healthy.
+        """
+        self._issue_list_frame = QWidget()
+        self._issue_list_frame.setObjectName("Diagnostics_Frame_issueList")
+        self._issue_list_layout = QVBoxLayout(self._issue_list_frame)
+        self._issue_list_layout.setContentsMargins(0, 0, 0, 0)
+        self._issue_list_layout.setSpacing(8)
+
+        self._no_issues_label = _transparent_label(
+            "✓ No issues detected — fan-control hardware looks ready.",
+            "Diagnostics_Label_noIssues",
+        )
+        self._no_issues_label.setWordWrap(True)
+        self._no_issues_label.setProperty("class", "SuccessChip")
+        self._no_issues_label.setVisible(False)
+        self._issue_list_layout.addWidget(self._no_issues_label)
+
+        # Per-problem rows are created on each populate; tracked so a re-render
+        # can clear the previous set before rebuilding.
+        self._issue_rows: list[QWidget] = []
+        return self._issue_list_frame
+
+    def _render_issue_list(self, problems: list[dict]) -> None:
+        """Render the issue checklist from detected readiness problems (DEC-124).
+
+        Each problem dict is ``{key, label, fix, doc_url, doc_title, severity}``
+        — all GUI-authored, so safe to render as rich text. Clears any prior
+        rows, then shows either the "no issues" line (healthy) or one row per
+        problem. Idempotent, so a theme refresh (which re-populates from the
+        cached result) rebuilds cleanly.
+        """
+        for row in self._issue_rows:
+            self._issue_list_layout.removeWidget(row)
+            row.deleteLater()
+        self._issue_rows.clear()
+
+        if not problems:
+            self._no_issues_label.setVisible(True)
+            return
+        self._no_issues_label.setVisible(False)
+        for problem in problems:
+            row = self._make_issue_row(problem)
+            self._issue_rows.append(row)
+            self._issue_list_layout.addWidget(row)
+
+    def _make_issue_row(self, problem: dict) -> QWidget:
+        """Build one issue-checklist row: severity badge + label + fix + link.
+
+        All strings come from :func:`detect_readiness_problems` (GUI-authored,
+        no daemon input), so the fix/link line is safe as rich text.
+        """
+        severity = problem.get("severity", "warn")
+        chip = "CriticalChip" if severity == "critical" else "WarningChip"
+        key = problem.get("key", "issue")
+
+        row = QFrame()
+        row.setObjectName(f"Diagnostics_IssueRow_{key}")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(10)
+
+        badge = _transparent_label(severity.upper(), f"Diagnostics_IssueBadge_{key}", bold=True)
+        badge.setProperty("class", chip)
+        badge.setFixedWidth(70)
+        row_layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        label = _transparent_label(problem["label"], f"Diagnostics_IssueLabel_{key}", bold=True)
+        label.setWordWrap(True)
+        text_col.addWidget(label)
+
+        link_html = (
+            f'<a href="{problem["doc_url"]}" '
+            f'style="color:{active_theme().status_info}">{escape(problem["doc_title"])} ↗</a>'
+        )
+        detail = _transparent_label(
+            f"{escape(problem['fix'])}<br>{link_html}", f"Diagnostics_IssueFix_{key}"
+        )
+        detail.setWordWrap(True)
+        detail.setTextFormat(Qt.TextFormat.RichText)
+        detail.setOpenExternalLinks(True)
+        detail.setProperty("class", "CardMeta")
+        text_col.addWidget(detail)
+
+        row_layout.addLayout(text_col, 1)
+        return row
 
     def _create_alert_labels(self) -> tuple[list[QWidget], list[QWidget]]:
         """Create the readiness alert labels (each setVisible-gated).
@@ -1200,7 +1279,12 @@ class DiagnosticsPage(QWidget):
         return section
 
     def _build_guidance_section(self) -> CollapsibleSection:
-        """Collapsible: 'To fix' guidance, chip guidance, and doc links."""
+        """Collapsible: chip BIOS-tips / known-issues guidance and doc links.
+
+        DEC-124: the per-problem "To fix" steps moved up into the always-visible
+        issue checklist; this section keeps the chip knowledge-base guidance and
+        the hardware-compatibility doc link.
+        """
         # Guidance detail (rich text with clickable driver doc links).
         self._guidance_label = _transparent_label("", "Diagnostics_Label_guidance")
         self._guidance_label.setWordWrap(True)
@@ -1217,17 +1301,7 @@ class DiagnosticsPage(QWidget):
         self._docs_link_label.setProperty("class", "CardMeta")
         self._docs_link_label.setVisible(False)
 
-        # "To fix" guidance — GUI-authored remediation steps (DEC-113). No
-        # daemon strings, so safe as rich text with external links enabled.
-        self._fix_guidance_label = _transparent_label("", "Diagnostics_Label_fixGuidance")
-        self._fix_guidance_label.setWordWrap(True)
-        self._fix_guidance_label.setTextFormat(Qt.TextFormat.RichText)
-        self._fix_guidance_label.setOpenExternalLinks(True)
-        self._fix_guidance_label.setProperty("class", "WarningChip")
-        self._fix_guidance_label.setVisible(False)
-
         section = CollapsibleSection("Guidance & documentation", "Diagnostics_Section_guidance")
-        section.add_widget(self._fix_guidance_label)
         section.add_widget(self._guidance_label)
         section.add_widget(self._docs_link_label)
         return section
@@ -1308,7 +1382,7 @@ class DiagnosticsPage(QWidget):
         return section
 
     def _build_fan_status_pane(self) -> QWidget:
-        """Bottom splitter pane: the live Fan Status table."""
+        """The live Fan Status table — the body of the Diagnostics ▸ Fans tab."""
         fan_pane = QWidget()
         fan_pane_layout = QVBoxLayout(fan_pane)
         fan_pane_layout.setContentsMargins(0, 4, 0, 0)
@@ -2321,12 +2395,14 @@ class DiagnosticsPage(QWidget):
             self._hw_ready_summary.setText(f"Diagnostics error: {message}")
 
     def _on_diag_tab_changed(self, index: int) -> None:
-        """Auto-fetch hardware diagnostics the first time the Fans tab is shown.
+        """Auto-fetch hardware diagnostics the first time the Troubleshooting
+        tab is shown.
 
         Fires once per session (guarded by ``_hw_diag_auto_fetched``) so the
-        readiness verdict is populated without the user clicking Refresh.
+        readiness verdict + issue checklist populate without the user clicking
+        Refresh (DEC-124).
         """
-        if index != self._fans_tab_index or self._hw_diag_auto_fetched:
+        if index != self._troubleshooting_tab_index or self._hw_diag_auto_fetched:
             return
         self._hw_diag_auto_fetched = True
         if self._client and self._diag.last_hw_diagnostics is None:
@@ -2702,26 +2778,18 @@ class DiagnosticsPage(QWidget):
                     self._verify_combo.addItem(f"{label} ({h.id})", h.id)
         self._verify_btn.setEnabled(self._verify_combo.count() > 0)
 
-        # DEC-113: readiness verdict banner, "To fix" guidance, and enable the
-        # full-report pop-out now that a diagnostics result is available.
+        # DEC-113/DEC-124: readiness verdict banner + enable the full-report
+        # pop-out now that a diagnostics result is available.
         verdict_text, verdict_cls = readiness_verdict(diag)
         self._readiness_verdict_label.setText(verdict_text)
         self._set_class(self._readiness_verdict_label, verdict_cls)
 
-        # DEC-115: a problem board force-expands the whole card so the detail
-        # and "To fix" guidance are visible by default. The persistent verdict
-        # + alert stack already stay visible regardless; this never
-        # auto-collapses, so a manual collapse on a healthy system is kept.
-        # SuccessChip ⟺ no problems (see readiness_verdict).
-        if verdict_cls != "SuccessChip":
-            self._hw_ready_section.set_expanded(True)
-
-        fix_html = build_fix_guidance_html(diag)
-        if fix_html:
-            self._fix_guidance_label.setText(fix_html)
-            self._fix_guidance_label.setVisible(True)
-        else:
-            self._fix_guidance_label.setVisible(False)
+        # DEC-124: render the always-visible issue checklist (the promoted
+        # "To fix" content) from the same GUI-authored problem list the verdict
+        # and the pop-out report derive from. Healthy → a single "no issues"
+        # line; a problem → one row per issue, so the detail is never hidden
+        # behind a collapse.
+        self._render_issue_list(detect_readiness_problems(diag))
 
         self._open_report_btn.setEnabled(True)
         # If the pop-out is already open, refresh it with the new data.
@@ -3318,8 +3386,8 @@ class DiagnosticsPage(QWidget):
 
         # DEC-101 (2F): when a clamped/no-rpm result coincides with a known
         # dual-chip board missing one of its chips, append a pointer to the
-        # Fans-tab dual-chip notice. The hint is None on boards that don't
-        # match the criteria so the existing wording is unaffected.
+        # Troubleshooting-tab dual-chip notice. The hint is None on boards that
+        # don't match the criteria so the existing wording is unaffected.
         dual_hint = dual_chip_verify_hint(result.result, expected_chips, detected_chip_names)
         if dual_hint:
             lines.append("")

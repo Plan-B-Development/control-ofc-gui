@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.26.0] — 2026-06-05
+
+### Changed
+- **Diagnostics: new Troubleshooting tab.** The Diagnostics **Fans** tab now
+  shows only the live Fan Status table; all Hardware Readiness content moved to a
+  dedicated **Troubleshooting** tab (immediately after Fans). It is redesigned as
+  a flattened health report — an always-visible verdict banner, an issue
+  checklist (one row per detected problem with its one-line fix and a doc link,
+  or "✓ No issues detected" when healthy), then on-demand detail sections —
+  replacing the deep collapsible card. Safety warnings (the verdict and blocking
+  alerts) are now always on screen rather than behind a collapse. (**DEC-124**)
+
 ## [1.25.0] — 2026-06-05
 
 ### Added
