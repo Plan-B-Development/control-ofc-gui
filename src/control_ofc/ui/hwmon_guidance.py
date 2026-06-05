@@ -1514,6 +1514,6 @@ def dual_chip_verify_hint(
         "If you also have fan headers missing from the list (your board has "
         f"{len(expected_chips)} ITE chips but only "
         f"{len(expected_chips) - len(missing)} were enumerated), see the "
-        "dual-chip notice on the Fans tab — fixing the enumeration may also "
+        "dual-chip notice on the Troubleshooting tab — fixing the enumeration may also "
         "make this header behave."
     )

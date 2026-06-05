@@ -336,8 +336,8 @@ def readiness_verdict(diag: HardwareDiagnosticsResult) -> tuple[str, str]:
     critical = any(p["severity"] == "critical" for p in problems)
     cls = "CriticalChip" if critical else "WarningChip"
     return (
-        f"⚠ {n} {phrase} attention — review the alerts below, "
-        f"expand 'Guidance & documentation', or open the full report",
+        f"⚠ {n} {phrase} attention — see the checklist below, "
+        f"or open the full report for the complete detail",
         cls,
     )
 

@@ -510,13 +510,13 @@ class DashboardPage(QWidget):
         if not hw.present:
             self._hwmon_banner.show_info(
                 "No motherboard fan headers detected. "
-                "Check Diagnostics \u2192 Fans for driver and BIOS guidance.",
+                "Check Diagnostics \u2192 Troubleshooting for driver and BIOS guidance.",
                 auto_dismiss_ms=0,
             )
         elif hw.present and not hw.write_support:
             self._hwmon_banner.show_warning(
                 "Motherboard fan headers detected but all are read-only. "
-                "Check BIOS fan settings or driver status in Diagnostics \u2192 Fans.",
+                "Check BIOS fan settings or driver status in Diagnostics \u2192 Troubleshooting.",
                 auto_dismiss_ms=0,
             )
         else:

@@ -110,7 +110,7 @@ second chip is an undriveable IT8883, MMIO cannot help — see issue
 
 The control-ofc daemon detects this case (DEC-101): when DMI matches
 a known dual-chip board but only one ITE chip enumerated, the
-Diagnostics → Fans tab surfaces a warning banner with the exact
+Diagnostics → Troubleshooting tab surfaces a warning banner with the exact
 remediation steps. See `21_AMD_Motherboard_Fan_Control_Guide.md` §
 Gigabyte → Reported examples for the X870E AORUS MASTER worked
 example.

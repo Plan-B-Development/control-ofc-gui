@@ -85,7 +85,7 @@ A dedicated wizard page that walks first-time users through the complete hardwar
 7. **Summary report** — show what works, what doesn't, recommended next steps, and offer to export as a support bundle
 
 **Why deferred:**
-- The existing Diagnostics → Fans → Hardware Readiness card already covers steps 1-6 in a single scrollable view with auto-populated guidance
+- The existing Diagnostics → Troubleshooting → Hardware Readiness report already covers steps 1-6 in a single scrollable view with auto-populated guidance
 - Most users only need this once during initial setup
 - The knowledge base (17 chip entries, 12 vendor quirks) provides the same information inline
 - A wizard adds a new page, new service, and significant test surface for a one-time workflow

@@ -212,7 +212,8 @@ class TestParseHardwareDiagnostics:
 
 
 class TestDiagnosticsPageHardwareReadiness:
-    def test_fans_tab_has_hw_readiness_frame(self, app):
+    def test_troubleshooting_tab_has_hw_readiness_frame(self, app):
+        # DEC-124: the readiness card moved from Fans to the Troubleshooting tab.
         page = DiagnosticsPage()
         frame = page.findChild(type(page._hw_ready_frame), "Diagnostics_Frame_hwReadiness")
         assert frame is not None
