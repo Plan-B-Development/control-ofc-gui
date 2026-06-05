@@ -89,6 +89,12 @@ jobs:
           useradd -m builder
           install -d -o builder -g builder /home/builder/build
           cp packaging/PKGBUILD /home/builder/build/PKGBUILD
+          # The PKGBUILD's `install=` file is read by makepkg at parse time and
+          # must sit next to the PKGBUILD — it is NOT pulled from the source
+          # tarball. package()-referenced files (.desktop, .service, .conf,
+          # scripts) DO come from the extracted tarball, so only *.install needs
+          # copying here.
+          cp packaging/*.install /home/builder/build/ 2>/dev/null || true
           chown -R builder:builder /home/builder/build
           # --nodeps:        makedepends are pre-installed above; the only runtime
           #                  dep outside the base image is the AUR package
