@@ -529,3 +529,26 @@ class TestRoleAwareMinOutput:
         editor.set_curve(flat)
         editor.set_min_output(30.0)
         assert editor._flat_output_spin.minimum() == 30.0
+
+
+class TestCurveEditorSetTheme:
+    """set_theme must re-render without raising.
+
+    Regression: set_theme called a non-existent self._redraw(), so every theme
+    change raised AttributeError once the Controls page began forwarding
+    set_theme to the editor (DEC-128).
+    """
+
+    def test_set_theme_without_curve_does_not_raise(self, editor):
+        from control_ofc.ui.theme import ThemeTokens
+
+        # No graph curve loaded — must be a safe no-op, not AttributeError.
+        editor.set_theme(ThemeTokens(accent_primary="#abcdef"))
+
+    def test_set_theme_with_curve_redraws(self, editor, curve_5pt):
+        from control_ofc.ui.theme import ThemeTokens
+
+        editor.set_curve(curve_5pt)
+        editor.set_theme(ThemeTokens(accent_primary="#11ff22"))
+        # The plot line exists (re-created/updated with the new accent colour).
+        assert editor._line_plot is not None

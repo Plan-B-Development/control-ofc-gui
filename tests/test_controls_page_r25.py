@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QPushButton
 
 from control_ofc.services.profile_service import (
@@ -161,17 +160,22 @@ class TestCurveOrderStability:
         assert rebuilt == ["c3", "c1", "c2"]
 
 
-class TestControlCardFixedSize:
-    """Fan Role cards have consistent fixed size."""
+class TestControlCardSizing:
+    """Fan Role cards: fixed width, minimum-height floor (DEC-128)."""
 
-    def test_control_card_fixed_size(self, qtbot):
+    def test_control_card_width_fixed_height_floored(self, qtbot):
         control = LogicalControl(name="Test Role", mode=ControlMode.CURVE)
         card = ControlCard(control, [])
         qtbot.addWidget(card)
-        from control_ofc.ui.widgets.card_metrics import CARD_HEIGHT, CARD_WIDTH
+        from control_ofc.ui.theme import active_theme
+        from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE, card_dimensions
 
-        assert card.maximumSize() == QSize(CARD_WIDTH, CARD_HEIGHT)
-        assert card.minimumSize() == QSize(CARD_WIDTH, CARD_HEIGHT)
+        w, h = card_dimensions(active_theme().base_font_size_pt, DEFAULT_CARD_SIZE)
+        assert card.minimumWidth() == w
+        assert card.maximumWidth() == w
+        assert card.minimumHeight() == h
+        # Height is a floor, not a cap — content can grow the card taller.
+        assert card.maximumHeight() > h
 
 
 class TestControlCardFlowContainer:

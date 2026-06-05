@@ -324,6 +324,28 @@ class SettingsPage(QWidget):
         typo_row.addWidget(self._font_size_spin)
         layout.addLayout(typo_row)
 
+        # Card size (Controls page) — multiplies the auto-scaling driven by the
+        # font size above, so the user can trade card density for readability
+        # (DEC-128). Applied together with the theme via the button below.
+        card_row = QHBoxLayout()
+        card_row.setSpacing(8)
+        card_row.addWidget(QLabel("Card size:"))
+        self._card_size_combo = QComboBox()
+        self._card_size_combo.setObjectName("Settings_Combo_cardSize")
+        self._card_size_combo.setToolTip(
+            "Density of the Fan Role and Curve cards on the Controls page.\n"
+            "Cards also scale automatically with the font size."
+        )
+        for label, value in (
+            ("Compact", "compact"),
+            ("Comfortable", "comfortable"),
+            ("Large", "large"),
+        ):
+            self._card_size_combo.addItem(label, value)
+        card_row.addWidget(self._card_size_combo)
+        card_row.addStretch()
+        layout.addLayout(card_row)
+
         # Theme editor widget
         from control_ofc.ui.widgets.theme_editor import ThemeEditorWidget
 
@@ -395,6 +417,10 @@ class SettingsPage(QWidget):
         self._startup_delay_spin.setValue(s.daemon_startup_delay_secs)
         self._hide_igpu_cb.setChecked(s.hide_igpu_sensors)
         self._hide_unused_fans_cb.setChecked(s.hide_unused_fan_headers)
+
+        # Card size lives on the Themes tab but is persisted in AppSettings.
+        card_idx = self._card_size_combo.findData(s.card_size)
+        self._card_size_combo.setCurrentIndex(card_idx if card_idx >= 0 else 1)
 
         # Directory overrides (show override or default as placeholder)
         self._profiles_dir_label.setText(s.profiles_dir_override or str(profiles_dir()))
@@ -570,7 +596,11 @@ class SettingsPage(QWidget):
         tokens.font_family = self._font_combo.currentData() or ""
         tokens.base_font_size_pt = self._font_size_spin.value()
         self._theme_name_label.setText(f"Current theme: {tokens.name}")
-        self._settings_svc.update(theme_name=tokens.name)
+        # Persist the card-size tier before emitting so the Controls page reads
+        # the new value when set_theme re-applies card sizing (DEC-128).
+        self._settings_svc.update(
+            theme_name=tokens.name, card_size=self._card_size_combo.currentData()
+        )
         self.theme_changed.emit(tokens)
         self._set_status(f"Theme '{tokens.name}' applied to application")
 

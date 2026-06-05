@@ -19,8 +19,8 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.profile_service import CurveConfig, CurveType
-from control_ofc.ui.theme import default_dark_theme
-from control_ofc.ui.widgets.card_metrics import CARD_HEIGHT, CARD_WIDTH
+from control_ofc.ui.theme import active_theme, default_dark_theme
+from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE, card_dimensions
 
 
 class CurveCard(QFrame):
@@ -31,16 +31,18 @@ class CurveCard(QFrame):
     rename_requested = Signal(str)
     duplicate_requested = Signal(str)
 
-    def __init__(self, curve: CurveConfig, parent=None) -> None:
+    def __init__(self, curve: CurveConfig, card_size: str = DEFAULT_CARD_SIZE, parent=None) -> None:
         super().__init__(parent)
         self.setProperty("class", "Card")
         self._curve = curve
         self._theme = default_dark_theme()
-        self.setFixedSize(CARD_WIDTH, CARD_HEIGHT)
+        # Fixed width keeps the grid columns aligned; height is a floor so the
+        # card grows to fit scaled text rather than clipping rows (DEC-128).
+        self._card_size_tier = card_size
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(2)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         # Row 1: Name + type badge + actions
         header = QHBoxLayout()
@@ -101,6 +103,21 @@ class CurveCard(QFrame):
         footer.addWidget(self._status_label)
         layout.addLayout(footer)
 
+        self.apply_card_size(active_theme().base_font_size_pt, card_size)
+
+    def apply_card_size(self, base_pt: int, tier: str = DEFAULT_CARD_SIZE) -> None:
+        """Size the card from the theme base font size and a density tier.
+
+        Width is fixed so the flow grid stays column-aligned; height is a
+        minimum floor (no maximum), so scaled-up text grows the card instead
+        of clipping the preview/footer (DEC-128).
+        """
+        self._card_size_tier = tier
+        width, height = card_dimensions(base_pt, tier)
+        self.setFixedWidth(width)
+        self.setMinimumHeight(height)
+        self.updateGeometry()
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if self._curve.type == CurveType.GRAPH and len(self._curve.points) >= 2:
@@ -117,7 +134,7 @@ class CurveCard(QFrame):
 
     def update_sensor_display(self, label: str, value_c: float | None = None) -> None:
         if value_c is not None:
-            self._sensor_label.setText(f"{label} \u2014 {value_c:.1f}\u00b0C")
+            self._sensor_label.setText(f"{label} — {value_c:.1f}°C")
         else:
             self._sensor_label.setText(label if label else "No sensor")
 
@@ -150,8 +167,8 @@ class CurveCard(QFrame):
     def _render_preview(self, curve: CurveConfig) -> None:
         if curve.type == CurveType.LINEAR:
             self._preview.setText(
-                f"{curve.start_temp_c:.0f}\u00b0C\u2192{curve.end_temp_c:.0f}\u00b0C: "
-                f"{curve.start_output_pct:.0f}%\u2192{curve.end_output_pct:.0f}%"
+                f"{curve.start_temp_c:.0f}°C→{curve.end_temp_c:.0f}°C: "
+                f"{curve.start_output_pct:.0f}%→{curve.end_output_pct:.0f}%"
             )
             self._preview.setStyleSheet("background: transparent;")
             self._preview.setProperty("class", "PageSubtitle")
