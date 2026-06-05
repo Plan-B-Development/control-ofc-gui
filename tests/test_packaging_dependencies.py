@@ -81,7 +81,7 @@ def test_pkgbuild_pkgver_matches_pyproject_version():
 
     assert pyproject_ver == pkgbuild_ver, (
         f"version drift between pyproject.toml ({pyproject_ver!r}) and "
-        f"packaging/PKGBUILD ({pkgbuild_ver!r}). The release-aur workflow "
-        f"verifies pkgver against the git tag — they must be in sync at "
-        f"commit time so the tag-driven publish succeeds."
+        f"packaging/PKGBUILD ({pkgbuild_ver!r}). The release workflow "
+        f"(.github/workflows/release.yml) verifies pkgver against the git tag — "
+        f"they must be in sync at commit time so the tag-driven publish succeeds."
     )

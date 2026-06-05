@@ -1,0 +1,136 @@
+name: Release
+
+# Fires when a release tag (vX.Y.Z) is pushed. Three jobs run off the one tag:
+#
+#   github-release — create the GitHub Release, body extracted from CHANGELOG.md
+#                    so every release has consistent, version-matched notes.
+#   build-test     — build the Arch package in a clean container. Gates the AUR
+#                    push: a PKGBUILD that does not build is never published.
+#   aur-publish    — push PKGBUILD + a freshly generated .SRCINFO to the AUR.
+#                    Checksums are recomputed in-CI (updpkgsums) against the live
+#                    tag tarball, so the in-repo sha256sums no longer has to be
+#                    correct at tag time — this removes the old chicken-and-egg
+#                    "fix: update PKGBUILD checksum" follow-up commit entirely.
+#
+# One-time setup (already done for this repo): an SSH keypair whose public half
+# is on the AUR account and whose private half is the `AUR_SSH_PRIVATE_KEY`
+# repository secret.
+#
+# Release flow:
+#   1. bump packaging/PKGBUILD pkgver (+ pkgrel=1) and pyproject version
+#   2. add a "## [X.Y.Z]" section to CHANGELOG.md
+#   3. commit on main
+#   4. git tag vX.Y.Z && git push origin main vX.Y.Z
+# The tag push does the rest. scripts/release-aur.sh remains as a manual
+# break-glass fallback if CI is unavailable.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository at tag
+        uses: actions/checkout@v4
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          # Body of the "## [X.Y.Z]" section, up to (not including) the next
+          # "## [" heading. The version header line itself is dropped — the
+          # GitHub Release title already carries the version.
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" { flag=1; next }
+            /^## \[/ { flag=0 }
+            flag { print }
+          ' CHANGELOG.md > release-notes.md
+          # Drop leading blank lines.
+          sed -i -e '/./,$!d' release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error file=CHANGELOG.md::No '## [${version}]' section found in CHANGELOG.md. Add it before tagging."
+            exit 1
+          fi
+          echo "Release notes for ${version}:"
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3.0.0
+        with:
+          body_path: release-notes.md
+
+  build-test:
+    name: Build package (clean room)
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install build prerequisites
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git scdoc namcap \
+            python-build python-installer python-wheel python-setuptools
+
+      - name: Checkout repository at tag
+        uses: actions/checkout@v4
+
+      - name: Build package as unprivileged user
+        run: |
+          set -euo pipefail
+          # makepkg refuses to run as root; build as a throwaway user.
+          useradd -m builder
+          install -d -o builder -g builder /home/builder/build
+          cp packaging/PKGBUILD /home/builder/build/PKGBUILD
+          chown -R builder:builder /home/builder/build
+          # --nodeps:        makedepends are pre-installed above; the only runtime
+          #                  dep outside the base image is the AUR package
+          #                  control-ofc-daemon, which pacman cannot resolve and
+          #                  which building the wheel does not need.
+          # --skipchecksums: the in-repo sha256sums is (re)computed at publish
+          #                  time by updpkgsums; here we only prove it builds.
+          runuser -u builder -- bash -lc '
+            set -euo pipefail
+            cd /home/builder/build
+            makepkg --nodeps --skipchecksums --cleanbuild --noconfirm
+            echo "::group::namcap PKGBUILD"; namcap PKGBUILD || true; echo "::endgroup::"
+            echo "::group::namcap package"; namcap ./*.pkg.tar.zst || true; echo "::endgroup::"
+          '
+
+  aur-publish:
+    name: Publish to AUR
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - name: Checkout repository at tag
+        uses: actions/checkout@v4
+
+      - name: Verify PKGBUILD pkgver matches tag
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          pkgbuild_ver="$(grep -E '^pkgver=' packaging/PKGBUILD | cut -d= -f2)"
+          if [[ "$pkgbuild_ver" != "$version" ]]; then
+            echo "::error file=packaging/PKGBUILD::pkgver is '$pkgbuild_ver' but tag is 'v${version}'. Bump packaging/PKGBUILD before tagging."
+            exit 1
+          fi
+          echo "PKGBUILD pkgver matches tag: $pkgbuild_ver"
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
+        with:
+          pkgname: control-ofc-gui
+          pkgbuild: packaging/PKGBUILD
+          updpkgsums: true
+          commit_username: github-actions[bot]
+          commit_email: 41898282+github-actions[bot]@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ github.ref_name }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519
