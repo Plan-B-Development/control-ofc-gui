@@ -67,6 +67,18 @@ AMD GPU fan control fails *silently* far more often than motherboard headers: th
 
 The firmware **OD_RANGE minimum** (commonly ~15%) and zero-RPM idle are reported as informational outcomes, never as failures — a healthy idle GPU is never flagged as broken. Failure verdicts add their fix to the card's **To fix** block. If the control is not shown at all, the GPU has no write path (read-only — see "GPU fan control says feature_unavailable" below) or the daemon is older than 1.11.0.
 
+## Intel Arc GPUs are monitor-only
+
+If you have an Intel Arc discrete GPU (Battlemage / Arc B-series on the `xe` driver, or Alchemist / Arc A-series on `i915`), Control-OFC **monitors** it but cannot control its fan:
+
+- Its package / VRAM / memory-controller / PCIe temperatures appear in the dashboard chart and Diagnostics → Sensors, and any of them can be selected as a **curve sensor** to drive *other* fans.
+- Its fan shows up in the dashboard fan table and Diagnostics → Fans with control method **read-only (firmware-managed)**.
+- It is **never** offered as a controllable curve member and is never written to.
+
+This is by design, not a bug or a missing driver. The Linux `xe`/`i915` hwmon interface exposes the GPU fan's RPM (`fan1_input`) as read-only and provides **no PWM/write attribute** — the card's fan is governed autonomously by an on-card firmware blob (shipped in `linux-firmware` as `fan_control_*.bin`). There is no kernel-side knob for Control-OFC, or any other Linux tool, to set its speed. So no lease, PMFW curve, `ppfeaturemask`, or overdrive setting applies to an Intel GPU, and there is no "Test GPU Fan Control" for it.
+
+Only the Arc **B580** currently maps to a specific model name; other Intel discrete GPUs display as "Intel D-GPU" until an authoritative device-ID → name mapping is confirmed for them.
+
 ## Per-header pwm_enable reclaim count
 
 Some boards (most commonly Gigabyte AM5 with Smart Fan 6) repeatedly reset `pwm_enable` from manual back to automatic. Each reset is a "reclaim" — the daemon sets it back, but the EC keeps stealing it.

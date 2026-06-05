@@ -366,4 +366,4 @@ plane uses `coretemp` exclusively.
 
 - `19_Hardware_Compatibility.md` — technical reference (per-driver tables)
 - `21_AMD_Motherboard_Fan_Control_Guide.md` — AMD companion
-- `22_AMD_Sensor_Deep_Dive.md` — AMD CPU sensor semantics
+- `22_AMD_Sensor_Interpretation_Deep_Dive.md` — AMD CPU sensor semantics

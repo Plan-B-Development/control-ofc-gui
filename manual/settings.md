@@ -20,7 +20,7 @@ The Settings page manages application preferences, visual themes, and backup/res
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Show GPU zero-RPM warning** | On | When you add a GPU fan to a fan role, show an informational popup explaining that the GPU's zero-RPM idle mode will be temporarily disabled while the curve is controlling it |
-| **Chart default time range** | 30m | The initial time window shown on the Dashboard fan speed chart |
+| **Chart default time range** | 15m | The initial time window shown on the Dashboard telemetry chart (choices: 30s, 2m, 5m, 10m, 15m, 20m, 30m, 1h, 2h) |
 
 ### Behaviour
 

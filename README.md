@@ -1,6 +1,6 @@
 # Control-OFC GUI
 
-**Latest release:** v1.20.0 — 2026-06-03. Pairs with `control-ofc-daemon` ≥ v1.9.0. See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
+**Latest release:** v1.25.0 — 2026-06-05. Pairs with `control-ofc-daemon` ≥ v1.12.0. See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 Desktop fan control interface for Linux. Communicates with the [`control-ofc-daemon`](https://github.com/Plan-B-Development/control-ofc-daemon) service to monitor temperatures, manage fan speeds, and apply custom fan curves.
 
@@ -8,10 +8,12 @@ Desktop fan control interface for Linux. Communicates with the [`control-ofc-dae
 
 ## Features
 
-- **Dashboard** — real-time sensor temperatures, fan RPM, active profile, system health with per-sensor freshness indicators
-- **Controls** — profile switching, 5-point curve editing, fan roles with drag-and-drop, manual override
+- **Dashboard** — real-time sensor temperatures, fan RPM, active profile, system health with per-sensor freshness indicators; a dual-axis telemetry chart with latest-value markers and a hover tooltip
+- **Controls** — profile switching, graph/linear/flat curve editing, fan roles, manual override
+- **Multi-source fan control** — OpenFan Controller channels, motherboard hwmon headers (lease-managed), and AMD discrete GPU fans (PMFW `fan_curve` / legacy `pwm1`)
+- **GPU monitoring** — AMD and Intel Arc discrete GPU temperatures and fan RPM (Intel Arc fans are firmware-managed and read-only)
 - **Settings** — GUI preferences, daemon runtime config, full theme editor with contrast checking, import/export
-- **Diagnostics** — connection health, subsystem status, lease state, support bundle export
+- **Diagnostics** — connection health, subsystem status, 14-column sensor table, lease state, Test PWM Control / Test GPU Fan Control, hardware-readiness reporting, support bundle export
 - **Fan Wizard** — guided fan identification and labelling
 - **Demo mode** — full UI without hardware (`--demo`)
 
@@ -120,6 +122,7 @@ See the [architecture docs](docs/02_System_Architecture_and_Boundaries.md) and [
 - **[Hardware Troubleshooting](manual/hardware-troubleshooting.md)** — Hardware Readiness, Test PWM Control, vendor quirks
 - **[Hardware Compatibility](docs/19_Hardware_Compatibility.md)** — chip support matrix, kernel drivers, ACPI conflicts
 - **[AMD Motherboard Fan Control Guide](docs/21_AMD_Motherboard_Fan_Control_Guide.md)** — vendor-by-vendor BIOS notes (Gigabyte, ASUS, MSI, ASRock)
+- **[Intel Motherboard Fan Control Guide](docs/23_Intel_Motherboard_Fan_Control_Guide.md)** — Intel LGA1700/1851 Super-I/O fan control, per-vendor notes
 - **[Sensor Interpretation Guide](docs/20_Sensor_Interpretation_Guide.md)** — what each sensor name means and which to trust
 - **[AMD Sensor Interpretation Deep Dive](docs/22_AMD_Sensor_Interpretation_Deep_Dive.md)** — Tctl/Tdie, edge/junction, and common AMD-specific traps
 - **[Architecture](docs/00_README_START_HERE.md)** — design docs and specs
