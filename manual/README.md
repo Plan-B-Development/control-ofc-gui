@@ -2,6 +2,8 @@
 
 **Control-OFC** is a desktop fan control application for Linux. It communicates with the `control-ofc-daemon` service to monitor temperatures, manage fan speeds, and apply custom fan curves — all from a graphical interface.
 
+It controls fans on an OpenFan Controller, on motherboard hwmon headers, and on AMD discrete GPUs, and it additionally **monitors** AMD and Intel discrete GPU temperatures and fan RPM (Intel Arc fans are firmware-managed and read-only).
+
 This manual covers every page, setting, and feature of the application.
 
 ## Table of Contents

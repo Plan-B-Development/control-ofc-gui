@@ -87,6 +87,8 @@ The horizontal banner at the top of every page shows:
 | **Warning count** | Number of active warnings (click to view details) |
 | **DEMO badge** | Visible only in demo mode |
 
+> If the daemon's API version does not match the version this GUI was built for (an out-of-lockstep package upgrade), the Dashboard shows a warning banner asking you to align the `control-ofc-daemon` and `control-ofc-gui` package versions. This is non-fatal — the GUI keeps working — but some features may misbehave until the versions match.
+
 ## Navigation
 
 The left sidebar provides access to all four pages:

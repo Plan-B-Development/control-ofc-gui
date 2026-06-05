@@ -27,26 +27,42 @@ Two information cards:
 |-------|---------|
 | **OpenFan** | Whether an OpenFan Controller is detected, channel count, and write/RPM capability |
 | **hwmon** | Whether motherboard fan headers are detected, header count, and whether writes require a lease |
-| **AMD GPU** | Whether a discrete GPU is detected, its model, PCI address, and fan control method |
+| **AMD GPU** | Whether an AMD discrete GPU is detected, its model, PCI address, and fan control method (`pmfw` or legacy `pwm1`) |
+| **Intel GPU** | Whether an Intel Arc discrete GPU is detected, its model, and PCI address. Intel GPU fans are always reported `read_only (firmware-managed)` — the `xe`/`i915` drivers expose no fan-control path |
 | **Features** | Summary of write capabilities (OpenFan writes, hwmon writes) |
 
 ## Sensors Tab
 
 ![Diagnostics — Sensors Tab](../screenshots/auto/07_diagnostics_sensors.png)
 
-A table of every temperature sensor reported by the daemon:
+A 14-column diagnostic table of every temperature sensor reported by the daemon. A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · M hidden`.
 
 | Column | Meaning |
 |--------|---------|
-| **Label** | Human-readable sensor name (e.g., "CPU Tctl", "GPU Edge") |
-| **Kind** | Sensor category: CpuTemp, GpuTemp, MbTemp, DiskTemp, etc. |
-| **Chip** | Driver/chip name reporting this sensor (e.g., `k10temp`, `nct6798`, `amdgpu`) |
-| **Confidence** | How certain the GUI is about how to interpret this sensor: `high`, `medium`, `low`, or `unknown`. Lower confidence usually means the sensor's chip has known quirks (e.g., the ASUS NCT6776F `CPUTIN` reading is a board temperature, not the CPU) |
-| **Value** | Current temperature reading in degrees Celsius |
+| **Label** | Sensor label reported by the kernel driver (e.g., "Tctl", "edge"). Prefixed with `⚠ ` for a sensor with a documented bogus-quirk (e.g. the ASUS NCT6776F `CPUTIN` case) and `? ` for a low-confidence classification |
+| **Sensor ID** | Stable identifier (e.g. `hwmon:<chip>:<dev_id>:<label>`) — the id profiles use to bind a curve to this sensor |
+| **Source class** | Fine-grained classification from the sensor knowledge base (`cpu_die`, `vrm`, `board_thermistor`, `gpu_package`, …) |
+| **Kind** | Coarse daemon classification: CpuTemp, GpuTemp, MbTemp, or DiskTemp |
+| **Source** | Daemon source subsystem: `hwmon`, `amd_gpu`, or `intel_gpu` |
+| **Chip** | Kernel driver / chip providing the reading (e.g., `k10temp`, `nct6798`, `amdgpu`, `xe`) |
+| **Driver type** | The sysfs `tempN_type` (diode, thermistor, AMD TSI, Intel PECI) where the driver exposes it |
+| **Value (°C)** | Current temperature in °C. Suffixed `⚠ ALARM` when the daemon reports a critical alarm or the live value has crossed the reported critical threshold |
+| **Trend** | Smoothed rate of change, suppressed below ±0.1 °C/s |
+| **Session min/max** | Lowest and highest values observed since the daemon started |
 | **Age (ms)** | Time since the daemon last read this sensor |
 | **Freshness** | "fresh" (under 2s), "stale" (2-10s), or "invalid" (over 10s) |
+| **Confidence** | How certain the GUI is about how to interpret this sensor: `high`, `medium`, `low`, or `unknown`. Lower confidence usually means the sensor's chip has known quirks (e.g., the ASUS NCT6776F `CPUTIN` reading is a board temperature, not the CPU) |
+| **Details** | A per-row button that opens the **Sensor Detail** dialog |
 
 Stale sensors appear in yellow. Invalid sensors appear in red. This helps identify hardware that has stopped responding.
+
+### Sensor Detail dialog
+
+Open it via the per-row **Details** button, a row double-click, or right-click → **Open detail…**. It shows the full classification description and every classification note (not truncated like the hover tooltip), board context, a **Thresholds** section with a headroom-to-critical indicator, and a clickable kernel.org driver documentation link.
+
+### Hiding sensors
+
+Right-click a row → **Hide sensor** to remove a sensor you don't care about (a duplicate, or a chip that always reads garbage). Hidden sensors are never silently dropped — they collapse into a `▸ N hidden sensors` toggle row at the bottom that you can expand again. This hide-list is **local to this tab**; the **Mirror hidden to dashboard** button in the header pushes the current hide-list into the shared dashboard series selection as a one-shot.
 
 Hover any row to see a tooltip explaining the chip's source class, description, and any known driver quirks. For deeper sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
 

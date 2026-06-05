@@ -71,16 +71,26 @@ Each physical fan can only belong to one role. If you try to add a fan that is a
 
 ### Tuning Parameters
 
-Fan roles support advanced tuning that modifies the curve output:
+Each fan role carries a set of tuning parameters that the control loop applies to the raw curve output before it is written to the hardware. These are stored in the profile and applied automatically — there is **no dedicated UI to hand-edit them**; they use sensible role-aware defaults (and **Minimum** in particular is set automatically from the role — see below).
 
-| Parameter | Description |
-|-----------|-------------|
-| **Step up** | Maximum increase per second (limits how fast fans ramp up) |
-| **Step down** | Maximum decrease per second (limits how fast fans ramp down) |
-| **Start %** | Kickstart value when a fan resumes from 0% (helps overcome motor stiction) |
-| **Stop %** | Below this output, snap to 0% (enables zero-RPM idle) |
-| **Offset** | Fixed percentage added to the curve output |
+| Parameter | Effect |
+|-----------|--------|
+| **Step up** | Maximum increase per cycle (limits how fast fans ramp up). Default: no limit |
+| **Step down** | Maximum decrease per cycle (limits how fast fans ramp down). Default: no limit |
+| **Start %** | Kickstart value when a fan resumes from 0% (helps overcome motor stiction). Default: 0% |
+| **Stop %** | Below this output, snap to 0% (enables zero-RPM idle). Default: 0% |
+| **Offset** | Fixed percentage added to the curve output. Default: 0% |
 | **Minimum** | Hard floor — output never goes below this value |
+
+#### Role-aware minimum (stall protection)
+
+The **Minimum** floor is chosen automatically from the role inferred for the fan group, so chassis and CPU/pump fans don't stall, while GPU fans are free to idle at 0%:
+
+- **30%** for CPU / pump-labelled hwmon members
+- **20%** for chassis / OpenFan members
+- **0%** for GPU members — and in a *mixed* group, the GPU member idles to its own 0% floor in the same cycle the chassis/CPU members hold their floor (the GPU's firmware owns its real ~15% minimum)
+
+The daemon does **not** enforce these per-role floors itself; they are GUI-owned policy baked into the profile.
 
 ## Curves
 
