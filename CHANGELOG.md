@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.30.0] — 2026-06-06
+
+2026-06-05 audit remediation, GUI half. Pairs with **daemon v1.13.0** (which
+adds `thermal_state` to `GET /status`; older daemons keep working — the GUI
+defaults the field to `"normal"`).
+
+### Added
+- **Thermal-override stand-down.** While the daemon reports a thermal
+  override (`thermal_state` of `emergency`, `recovery`, or
+  `no_sensor_fallback` — any non-`normal` value), the control loop pauses
+  every fan write and shows one clear error warning instead of fighting the
+  daemon's safety scan. Previously a genuine 105°C emergency degenerated
+  into a lease tug-of-war: the daemon force-took the hwmon lease each tick,
+  the GUI re-took it and wrote curve PWM, and fans flapped between curve
+  values and the forced 100%. The lease service now stands down without
+  raising the misleading "fans returning to BIOS control" warning, and on
+  recovery the loop resets hysteresis and resumes cleanly. (**DEC-132**)
+
+### Fixed
+- **Write-retry decay for failing targets.** After 3 consecutive write
+  failures on a target (vanished header, 404 member), the loop now retries
+  every 15 s instead of every second — no more one failing IPC call and
+  journal line per second forever. Recovery is immediate on success, profile
+  change, or re-evaluation. (**DEC-136**)
+- **Malformed daemon payloads no longer bypass backoff.** A 200 response
+  with a malformed body (or a raw transport error from the fallback legs)
+  previously escaped the poll worker's error handling and hit the Qt
+  excepthook once per second; it now counts as a failed cycle with normal
+  backoff/disconnect handling. (audit P3-1)
+
+### Changed
+- **Docs no longer claim GPU fans are forced during thermal emergencies.**
+  The daemon's 105°C emergency and 40% no-sensor fallback force OpenFan +
+  writable hwmon fans only; GPU fans are deliberately excluded — AMD PMFW
+  firmware owns GPU thermal protection (junction-temp throttling, firmware
+  fan ramp) independently of OS control. There is no GPU emergency
+  threshold. Amended across docs/05, /06, /08, /09, /14, /18, /19 and the
+  architecture notes (which also still claimed hwmon fans were *not* forced —
+  stale since the R43 auto-lease). (**DEC-130**)
+- `api/models.py`'s calibration types are annotated as deferred-feature
+  scaffolding for the (still-deferred) calibration UI. (audit P3-3)
+
 ## [1.29.0] — 2026-06-05
 
 ### Added
