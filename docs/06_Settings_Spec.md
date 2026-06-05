@@ -58,7 +58,7 @@ not match any installed theme the GUI falls back to Default Dark and
 logs the miss.
 
 ### C. Safety display
-Safety is daemon-owned and **not editable by the GUI**. The daemon reports `min_pwm_percent: 0` for all hwmon headers (no per-header floors). Thermal safety is temperature-triggered: 105°C → force 100% PWM, hold until temperature falls below 80°C, then apply a 60% PWM recovery floor for one cycle before resuming active control; 40% fallback if no CPU sensor for 5 cycles. The GUI reads safety metadata from `GET /capabilities` under `limits` and uses it for:
+Safety is daemon-owned and **not editable by the GUI**. The daemon reports `min_pwm_percent: 0` for all hwmon headers (no per-header floors). Thermal safety is temperature-triggered: 105°C → force all OpenFan and writable hwmon fans to 100% PWM, hold until temperature falls below 80°C, then apply a 60% PWM recovery floor for one cycle before resuming active control; 40% fallback if no CPU sensor for 5 cycles. GPU fans are excluded — PMFW firmware owns GPU thermal protection (DEC-130). The GUI reads safety metadata from `GET /capabilities` under `limits` and uses it for:
 - curve validation (reject curves that violate floors)
 - display in Controls and Diagnostics
 - stale-data timeout thresholds for warning presentation

@@ -212,10 +212,15 @@ control.
 
 ### Daemon thermal-emergency override (daemon-owned)
 The daemon owns one absolute backstop independent of the GUI: at
-≥105°C on the hottest CpuTemp sensor, all fans are forced to 100%
-(see `daemon/src/safety.rs`, DEC-022). This is non-editable and
-fires regardless of profile content. The 60% recovery floor and
-40% no-sensor fallback are likewise hardcoded.
+≥105°C on the hottest CpuTemp sensor, all OpenFan channels and writable
+hwmon headers are forced to 100% (see `daemon/src/safety.rs`, DEC-022).
+This is non-editable and fires regardless of profile content. The 60%
+recovery floor and 40% no-sensor fallback are likewise hardcoded.
+GPU fans are deliberately excluded (DEC-130): there is no GPU emergency
+threshold — AMD PMFW firmware owns GPU thermal protection independently
+of OS fan control. While any override is active the daemon reports
+`thermal_state != "normal"` in `GET /status` and the GUI control loop
+stands down (DEC-132).
 
 Per-header safety floors are **not** enforced by the daemon — the
 hwmon controller treats `min_pwm_percent: 0` for every header. The

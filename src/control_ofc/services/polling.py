@@ -132,12 +132,19 @@ class _PollWorker(QObject):
                 self._poll_count += 1
             self._consecutive_failures = 0
 
-        except DaemonError as e:
+        except (DaemonError, ConnectionError, OSError, KeyError, ValueError, TypeError) as e:
+            # P3-1: parse-shaped exceptions (KeyError/ValueError/TypeError from
+            # a malformed-but-200 payload) and raw transport errors from the
+            # fallback legs / capabilities() / hwmon_lease_status() previously
+            # escaped this handler and landed in the Qt excepthook once per
+            # second with no backoff. Treat them all as a failed cycle.
             self._consecutive_failures += 1
             if self._consecutive_failures <= 3:
-                log.warning("Poll failed: %s", e)
+                log.warning("Poll failed: %s: %s", type(e).__name__, e)
             elif self._consecutive_failures == 4:
-                log.warning("Poll failed: %s (suppressing repeated failures)", e)
+                log.warning(
+                    "Poll failed: %s: %s (suppressing repeated failures)", type(e).__name__, e
+                )
             self._poll_count += 1
             self.disconnected.emit()
             # Drop client so it reconnects next attempt
