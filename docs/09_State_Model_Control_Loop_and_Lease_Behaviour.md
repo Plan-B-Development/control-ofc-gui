@@ -133,6 +133,33 @@ Hwmon writes require a lease.
 If lease acquisition fails:
 - show the reason/owner hint if available
 - disable hwmon automatic control
+
+## Daemon thermal-override stand-down (DEC-132)
+
+During a thermal override (105°C emergency, recovery floor, or the 40%
+no-CPU-sensor fallback) the daemon's safety scan force-takes the hwmon lease
+as `thermal-safety` on **every** 1 Hz tick and rewrites the forced PWM.
+Fighting it from the GUI — re-taking the lease, writing curve values —
+produced alternating curve/forced PWM writes and lease churn during the exact
+window that matters.
+
+The GUI therefore stands down:
+1. `GET /status` exposes `thermal_state`
+   (`normal | recovery | emergency | no_sensor_fallback`).
+2. While it is not `normal`, `ControlLoopService._cycle` issues **no writes**
+   (OpenFan, hwmon, or GPU) and raises a single edge-triggered error warning
+   (key `thermal_standdown`) explaining the pause.
+3. `LeaseService.pause_for_thermal_override()` drops local lease state
+   *without* emitting `lease_lost` (the loss is deliberate) and stops the
+   renew timer/retry chain. A lease loss that does arrive mid-transition is
+   logged quietly instead of raising the "fans returning to BIOS control"
+   warning.
+4. On return to `normal` the warning clears, hysteresis state resets (fans
+   are physically at the forced value, not at the GUI's last anchors), and
+   the next hwmon write lazily re-acquires the lease.
+
+Older daemons (≤1.12) never send `thermal_state`; the GUI defaults it to
+`normal` and behaves exactly as before.
 - keep OpenFan control running if possible
 - do not misrepresent hwmon targets as being under active control
 

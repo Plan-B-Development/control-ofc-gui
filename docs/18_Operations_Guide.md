@@ -175,10 +175,11 @@ sudo journalctl -u control-ofc-daemon -f
 
 The daemon enforces a single thermal safety rule (non-negotiable, not configurable):
 - **Trigger**: hottest CPU temperature reaches 105°C
-- **Action**: Force all fans to 100% PWM
+- **Action**: Force all OpenFan channels and writable hwmon headers to 100% PWM. GPU fans are excluded — there is no GPU emergency threshold; AMD PMFW firmware protects the GPU independently (DEC-130)
 - **Hold**: Until temperature drops below 80°C
 - **Recovery**: Apply a 60% PWM recovery floor for one cycle, then resume active profile control
-- **Fallback**: Force 40% PWM if no CPU sensor is reachable for 5 consecutive poll cycles
+- **Fallback**: Force 40% PWM (OpenFan + hwmon) if no CPU sensor is reachable for 5 consecutive poll cycles
+- **Visibility**: `GET /status` reports `thermal_state` (`normal` / `recovery` / `emergency` / `no_sensor_fallback`); the GUI pauses its own fan control and shows a warning while any override is active (DEC-132)
 
 There are no per-header PWM floors. The daemon reports `min_pwm_percent: 0` for every hwmon header. Any safety-floor enforcement is the GUI's responsibility (curve validation, profile constraints) — the daemon never refuses a write on the basis of a per-header floor.
 

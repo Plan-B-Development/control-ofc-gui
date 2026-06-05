@@ -175,6 +175,12 @@ class DaemonStatus:
     counters: StatusCounters = field(default_factory=StatusCounters)
     uptime_seconds: int | None = None
     gui_last_seen_seconds_ago: int | None = None
+    # Daemon thermal safety override state (DEC-132): "normal" | "recovery"
+    # | "emergency" | "no_sensor_fallback". While not "normal" the daemon is
+    # forcing OpenFan+hwmon PWM and force-taking the hwmon lease, so the
+    # control loop stands down. Defaults to "normal" for older daemons that
+    # don't send the field.
+    thermal_state: str = "normal"
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +393,13 @@ class ProfileDeactivateResult:
 # ---------------------------------------------------------------------------
 # Sensor history
 # ---------------------------------------------------------------------------
+
+
+# NOTE: deferred-feature scaffolding. CalPoint / CalibrationResult /
+# parse_calibration_result model `POST /fans/openfan/{ch}/calibrate`, whose
+# built-in UI flow is deferred (docs/08_API_Integration_Contract.md §
+# calibration) — no DaemonClient method or widget consumes them yet. Kept
+# (with tests) so the calibration UI can land against a parsed contract.
 
 
 @dataclass
@@ -779,6 +792,8 @@ def parse_status(data: dict) -> DaemonStatus:
         counters=StatusCounters(**_filter_fields(StatusCounters, data.get("counters", {}))),
         uptime_seconds=data.get("uptime_seconds"),
         gui_last_seen_seconds_ago=data.get("gui_last_seen_seconds_ago"),
+        # DEC-132: absent on pre-1.13 daemons — treat as "normal".
+        thermal_state=data.get("thermal_state", "normal"),
     )
 
 

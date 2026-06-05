@@ -37,7 +37,7 @@
 ## Known Limitations
 
 ### 1. No runtime hwmon/GPU hotplug detection
-Devices are only discovered at daemon startup. If a USB device is plugged in after the daemon starts, it is invisible until the daemon is restarted. The `POST /hwmon/rescan` endpoint re-enumerates PWM headers but does not update GPU detection.
+Sensor descriptors are discovered at startup and cached (DEC-133); `POST /hwmon/rescan` now also refreshes the cached sensor set (labels, types, thresholds), and the loop self-refreshes on read-failure streaks or while no CpuTemp sensor is cached. PWM-control headers and GPU detection are still captured only at daemon startup — a device plugged in later needs a daemon restart for *control* (its sensors appear after a rescan).
 
 ### 2. No GPU-specific thermal safety rule
 The thermal safety rule monitors CPU Tctl only (105C trigger). GPU temperatures rely on PMFW firmware protection. If a daemon-level GPU thermal rule is needed, it would require reading GPU junction temp from the cache and adding a separate threshold.
@@ -187,6 +187,12 @@ table only with authoritatively-verified device-ID → name pairs.
 
 | Gap | Resolution | Version |
 |-----|-----------|---------|
+| Emergency ↔ GUI lease ping-pong (alternating curve/forced PWM during 105°C events) | `thermal_state` in GET /status + GUI control-loop/lease stand-down (DEC-132) | GUI v1.30.0 / daemon v1.13.0 |
+| Per-tick sensor re-discovery (~340 sysfs ops/s; asus_wmi_sensors polling risk) | Descriptor cache + triggered re-discovery (DEC-133) | daemon v1.13.0 |
+| GPU GUI-priority lapse on slow ramps (coalesced writes didn't count as liveness; engine used exact-match suppression) | record_gui_write on coalesced returns + shared 5% threshold (DEC-131) | daemon v1.13.0 |
+| Calibration could park a fan on mid-sweep write failure; dead duplicate sweep implementation | Handler delegates to single tested helper; restore on every exit path (DEC-134) | daemon v1.13.0 |
+| profile_engine_loop 5-jobs-in-one (threshold drift between inline phases) | Decomposed: safety tick + WriteBackend per backend; GPU structurally outside safety (DEC-135) | daemon v1.13.0 |
+| Control loop retried failing targets at 1 Hz forever | 15 s retry decay after 3 consecutive failures (DEC-136) | GUI v1.30.0 |
 | hwmon headless writes | Auto-lease in profile engine | v0.5.1 (R43) |
 | Thermal safety hwmon | force_take_lease in safety rule | v0.5.1 (R43) |
 | Serial auto-reconnect | Reconnect mode in poll loop | v0.5.1 (R43) |

@@ -23,7 +23,7 @@ The Control-OFC daemon (`control-ofc-daemon`) is a Rust service that provides ha
 **Key architectural themes:**
 - Daemon owns all hardware access — GUI never touches hardware directly
 - Dual control model: imperative (GUI drives) or profile (daemon drives autonomously)
-- Thermal safety rule: CPU Tctl 105°C → force 100% fans, hold until 80°C
+- Thermal safety rule: CPU Tctl 105°C → force OpenFan+hwmon fans to 100% (GPU excluded — DEC-130), hold until 80°C
 - Lease-based exclusive write access for hwmon
 - Atomic state persistence for restart/reboot recovery
 
@@ -341,7 +341,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 
 | Condition | Detection | Response | User impact | Gaps |
 |-----------|-----------|----------|-------------|------|
-| CPU Tctl ≥ 105°C | Profile engine polls cache | Force all fans 100% | Fans max until 80°C | hwmon fans not forced (no auto-lease) |
+| CPU Tctl ≥ 105°C | Profile engine polls cache | Force all OpenFan+hwmon fans 100% (auto-lease via force_take, R43) | Fans max until 80°C | GPU fans excluded by design — PMFW self-protects (DEC-130) |
 | CPU Tctl ≤ 80°C (after emergency) | Safety rule evaluate() | Release + 60% recovery for 1 cycle | Fans drop to 60%, then profile resumes | None |
 | Serial device not found | Retry loop (5×, exponential backoff) | Daemon starts without OpenFan | GUI shows "not connected" | Auto-reconnect at runtime not implemented |
 | Serial timeout (no response) | Per-read serialport timeout (500ms) | Returns `SerialError::Timeout` | Write skipped for this cycle | No automatic retry of failed commands |

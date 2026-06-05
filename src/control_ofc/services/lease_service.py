@@ -213,6 +213,33 @@ class LeaseService(QObject):
             self.lease_lost.emit(reason)
             return False
 
+    def pause_for_thermal_override(self) -> None:
+        """Stand down while the daemon's thermal safety override runs (DEC-132).
+
+        The daemon force-takes the hwmon lease as ``thermal-safety`` on every
+        override tick (emergency, recovery, no-sensor fallback) — renewing or
+        re-taking from here would just churn the lease back and forth against
+        the safety scan and briefly let curve writes land between forced
+        writes. Drop local lease state WITHOUT emitting ``lease_lost`` (the
+        loss is deliberate and the control loop is already paused with a
+        thermal warning) and stop the renew machinery. The first hwmon write
+        after the override clears re-acquires lazily via :meth:`acquire`.
+
+        Idempotent — the control loop calls this every stand-down cycle so a
+        late in-flight take/renew completion cannot re-arm the renew timer
+        mid-override.
+        """
+        if self._lease_id is None and not self._renew_timer.isActive():
+            return
+        log.info("Lease stand-down: daemon thermal override active — pausing renewals")
+        if self._diag is not None:
+            self._diag.log_event(
+                "info", "lease", "Lease stand-down: daemon thermal override active"
+            )
+        self._lease_id = None
+        self._renew_timer.stop()
+        self._renew_retry_count = 0
+
     def release(self) -> None:
         """Release the hwmon lease if held.
 

@@ -622,8 +622,13 @@ class TestWriteFailureRecovery:
         ext = [w for w in state._external_warnings if "openfan:ch00" in w.get("message", "")]
         assert len(ext) == 1, "expected warning after 3 failures"
 
-        # Clear error injection and run 3 successful cycles
+        # Clear error injection and run 3 successful cycles.
+        # P2-4: crossing the 3-failure threshold armed the retry-decay
+        # deadline (WRITE_RETRY_DECAY_S) — expire it so the recovery probe
+        # runs now instead of 15s later. The first success pops the
+        # deadline, so the remaining cycles are unsuppressed.
         fake_client.clear_errors()
+        loop._write_retry_after["openfan:ch00"] = 0.0
         # Reset last_commanded_pwm so writes aren't suppressed
         state.fans[0].last_commanded_pwm = None
         loop._cycle()

@@ -130,11 +130,20 @@ Use for:
 - queue depth
 - dropped counters
 - last error summary
+- daemon thermal override state
 
 This endpoint feeds:
 - header status strip
 - diagnostics overview
 - warning banners
+- the control loop's thermal stand-down gate (DEC-132)
+
+`thermal_state` (daemon ≥1.13.0, additive — `api_version` unchanged) is one of
+`"normal" | "recovery" | "emergency" | "no_sensor_fallback"`. While it is not
+`"normal"` the daemon is forcing all OpenFan+hwmon PWM (GPU fans excluded —
+DEC-130) and force-taking the hwmon lease as `thermal-safety`; the GUI pauses
+its control loop and lease machinery and shows a single thermal warning.
+Older daemons omit the field — the GUI defaults it to `"normal"`.
 
 ### GET /sensors
 Use as the primary sensor snapshot source.
@@ -348,7 +357,7 @@ The GUI uses PWM writes exclusively for V1 control-loop behaviour.
 RPM targeting. The V1 GUI does not use this endpoint — it is not part of the
 current control-loop or UI surface.*
 
-The calibration endpoint runs a long-running sweep (steps × hold_seconds) that sets PWM from 0→100%, reads RPM at each step, and returns a mapping. Safety: aborts on thermal limit (85°C), restores pre-calibration PWM on completion or abort.
+The calibration endpoint runs a long-running sweep (steps × hold_seconds) that sets PWM from 0→100%, reads RPM at each step, and returns a mapping. Safety: aborts on thermal limit (85°C), restores pre-calibration PWM on every exit path — completion, thermal abort, or a failed PWM write mid-sweep (DEC-134).
 
 ### Hwmon lease endpoints
 - `POST /hwmon/lease/take`

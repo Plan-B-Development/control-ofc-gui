@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -78,6 +79,30 @@ OUTCOME_TIMEOUT = "timeout"
 OUTCOME_UNAVAILABLE = "unavailable"  # connection refused / socket gone
 OUTCOME_VALIDATION = "validation"  # 4xx — request shape problem
 OUTCOME_OTHER = "other"  # 5xx other than connection / unspecified failure
+
+# Human-readable stand-down warnings per daemon thermal state (DEC-132).
+# Any unknown non-"normal" value gets a generic fallback in
+# `_check_thermal_standdown` so a future daemon state still pauses writes.
+_THERMAL_STANDDOWN_MESSAGES = {
+    "emergency": (
+        "THERMAL EMERGENCY: daemon forcing all OpenFan+hwmon fans to 100% — "
+        "GUI fan control paused until temperatures recover"
+    ),
+    "recovery": (
+        "Thermal emergency released: daemon applying its recovery floor — "
+        "GUI fan control resumes when the daemon reports normal"
+    ),
+    "no_sensor_fallback": (
+        "Daemon cannot read any CPU temperature sensor and is forcing a safe "
+        "fan floor — GUI fan control paused"
+    ),
+}
+
+# How long the control loop waits before retrying writes to a target that
+# has failed 3+ consecutive times (P2-4 retry decay). Without this, a
+# permanently failing target (vanished header, 404) produced one failing
+# IPC write + journal line every second indefinitely.
+WRITE_RETRY_DECAY_S = 15.0
 
 
 def _dispatch_write(
@@ -286,6 +311,19 @@ class ControlLoopService(QObject):
         # Maps target_id -> generation token. A safety timer auto-resumes after
         # VERIFY_PAUSE_SAFETY_MS so a hung verify cannot pin a header forever.
         self._paused_headers: dict[str, int] = {}
+
+        # DEC-132: latched while the daemon reports a thermal override
+        # (emergency / recovery / no_sensor_fallback). Gates every write in
+        # `_cycle` and pauses the lease machinery — the daemon force-takes
+        # the hwmon lease each override tick, so fighting it just flaps PWM
+        # between curve values and the forced safety value.
+        self._thermal_standdown = False
+
+        # P2-4 retry decay: monotonic deadline per target before which write
+        # attempts are suppressed. Set when a target crosses the 3-failure
+        # warning threshold; cleared on success / profile change / explicit
+        # re-evaluation.
+        self._write_retry_after: dict[str, float] = {}
 
         # Background write worker (P0-G1: avoid blocking main thread).
         # Only created when socket_path is explicitly provided (production).
@@ -514,10 +552,21 @@ class ControlLoopService(QObject):
 
     def _reset_hysteresis(self) -> None:
         self._target_states.clear()
+        # P2-4: every hysteresis reset (profile change, explicit re-evaluate,
+        # thermal-override exit) is a fresh start — drop retry-decay
+        # deadlines so the new configuration gets an immediate attempt.
+        self._write_retry_after.clear()
 
     def _cycle(self) -> None:
         """One control loop iteration."""
         status = ControlLoopStatus(running=True)
+
+        # DEC-132: stand down while the daemon's thermal safety override is
+        # forcing PWM. Checked before prerequisites so the thermal warning —
+        # not a generic "Prerequisites not met" — explains the paused loop.
+        if self._check_thermal_standdown(status):
+            self.status_changed.emit(status)
+            return
 
         if not self._prerequisites_met():
             status.warnings.append("Prerequisites not met")
@@ -538,6 +587,56 @@ class ControlLoopService(QObject):
             self._evaluate_control(control, profile, sensors, fans, status)
 
         self.status_changed.emit(status)
+
+    def _check_thermal_standdown(self, status: ControlLoopStatus) -> bool:
+        """DEC-132: pause all writes while the daemon forces safety PWM.
+
+        Returns ``True`` while the daemon's ``thermal_state`` is anything
+        other than ``"normal"`` (emergency / recovery / no_sensor_fallback /
+        future states). On the entry edge a single error warning + event is
+        raised; on the exit edge hysteresis is reset — the fans are
+        physically at the forced value, not at our last anchors — and the
+        warning is cleared. While standing down the lease machinery is
+        re-paused every cycle because the daemon's safety scan force-takes
+        the hwmon lease on each of its ticks.
+        """
+        if self._state.mode == OperationMode.DEMO:
+            return False
+        ds = self._state.daemon_status
+        thermal = (ds.thermal_state if ds is not None else "normal") or "normal"
+        if thermal == "normal":
+            if self._thermal_standdown:
+                self._thermal_standdown = False
+                self._reset_hysteresis()
+                self._state.remove_warning("thermal_standdown")
+                log.info("Daemon thermal override cleared — resuming fan control")
+                if self._diag is not None:
+                    self._diag.log_event(
+                        "info",
+                        "control_loop",
+                        "Daemon thermal override cleared — fan control resumed",
+                    )
+            return False
+
+        message = _THERMAL_STANDDOWN_MESSAGES.get(
+            thermal,
+            f"Daemon thermal override active ({thermal}) — GUI fan control paused",
+        )
+        if not self._thermal_standdown:
+            self._thermal_standdown = True
+            log.error("Daemon thermal override (%s) — control loop standing down", thermal)
+            self._state.add_warning(
+                level="error",
+                source="control_loop",
+                message=message,
+                key="thermal_standdown",
+            )
+            if self._diag is not None:
+                self._diag.log_event("error", "control_loop", message)
+        if self._lease is not None:
+            self._lease.pause_for_thermal_override()
+        status.warnings.append(f"Daemon thermal override active ({thermal})")
+        return True
 
     def _prerequisites_met(self) -> bool:
         """Check if conditions allow automatic control."""
@@ -568,6 +667,9 @@ class ControlLoopService(QObject):
             for member in control.members:
                 target_id = member.target_id
                 status.member_outputs.setdefault(control.id, {})[target_id] = manual_pct
+                if self._retry_suppressed(target_id):
+                    status.targets_skipped += 1
+                    continue
                 if self._should_write(target_id, manual_pct):
                     if self._write_target(target_id, manual_pct):
                         status.targets_active += 1
@@ -629,6 +731,9 @@ class ControlLoopService(QObject):
                 output = control_output
             status.member_outputs.setdefault(control.id, {})[target_id] = output
 
+            if self._retry_suppressed(target_id):
+                status.targets_skipped += 1
+                continue
             if self._should_write(target_id, output):
                 if self._write_target(target_id, output):
                     status.targets_active += 1
@@ -767,6 +872,25 @@ class ControlLoopService(QObject):
                 return abs(desired_pwm - fan.last_commanded_pwm) >= PWM_WRITE_THRESHOLD_PCT
         return True  # Fan not in state yet — allow first write
 
+    def _retry_suppressed(self, target_id: str) -> bool:
+        """P2-4 retry decay: suppress writes to a repeatedly failing target.
+
+        Once a target crosses the 3-failure warning threshold,
+        `_on_write_completed` arms a ``WRITE_RETRY_DECAY_S`` deadline; until
+        it passes, every cycle skips the target instead of issuing another
+        doomed IPC write (and journal line) per second. When the deadline
+        lapses one probe write is allowed — on failure the deadline re-arms,
+        on success the failure bookkeeping clears as usual.
+        """
+        deadline = self._write_retry_after.get(target_id)
+        if deadline is None:
+            return False
+        if time.monotonic() >= deadline:
+            # Deadline passed — allow one probe write this cycle.
+            self._write_retry_after.pop(target_id, None)
+            return False
+        return True
+
     def _on_write_completed(self, target_id: str, outcome: str) -> None:
         """Handle write result from background worker (runs on main thread).
 
@@ -791,6 +915,8 @@ class ControlLoopService(QObject):
             outcomes[outcome] = outcomes.get(outcome, 0) + 1
 
         if success:
+            # P2-4: a successful write ends any retry-decay suppression.
+            self._write_retry_after.pop(target_id, None)
             count = self._write_failure_counts.get(target_id, 0)
             was_warned = count >= 3
             if count > 0:
@@ -814,6 +940,12 @@ class ControlLoopService(QObject):
             count = self._write_failure_counts.get(target_id, 0) + 1
             self._write_failure_counts[target_id] = count
             crossed_threshold = count == 3
+            if count >= 3:
+                # P2-4: past the warning threshold, decay the retry cadence —
+                # one probe write every WRITE_RETRY_DECAY_S instead of a
+                # failing IPC write every second. Re-armed on each further
+                # failure (including failed probes).
+                self._write_retry_after[target_id] = time.monotonic() + WRITE_RETRY_DECAY_S
             if count >= 3 and self._state:
                 # Pick the message based on the dominant outcome for a more
                 # useful warning than the previous generic one.
@@ -850,6 +982,14 @@ class ControlLoopService(QObject):
 
     def _on_lease_lost(self, reason: str) -> None:
         """Handle lease loss — transition to READ_ONLY for safety (P0-G2)."""
+        if self._thermal_standdown:
+            # DEC-132: the daemon's safety scan force-takes the lease on
+            # every override tick — this loss is expected, the loop is
+            # already paused, and a thermal warning is already displayed.
+            # Don't claim "fans returning to BIOS control" on top of it.
+            log.info("Lease lost during daemon thermal override (expected): %s", reason)
+            self._state.set_mode(OperationMode.READ_ONLY)
+            return
         log.error("Lease lost: %s — transitioning to READ_ONLY", reason)
         self._state.set_mode(OperationMode.READ_ONLY)
         self._state.add_warning(
