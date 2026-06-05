@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "note": "CANONICAL cross-stack evaluator parity vectors (DEC-126). Keep byte-identical with control-ofc-daemon/daemon/tests/fixtures/parity_vectors.json. Expected values are a hand-authored oracle, derived from neither implementation. curve_eval compares the stateless curve interpolation (float, tol 0.01); tuning_sequence drives the real headless/GUI entry points over a temp sequence and compares the integer wire PWM per member.",
+  "curve_eval": [
+    {
+      "name": "graph_mid_segment",
+      "curve": {"id": "g", "name": "G", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
+      "temp": 45.0,
+      "expected_pct": 35.0
+    },
+    {
+      "name": "graph_below_first",
+      "curve": {"id": "g", "name": "G", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
+      "temp": 20.0,
+      "expected_pct": 20.0
+    },
+    {
+      "name": "graph_above_last",
+      "curve": {"id": "g", "name": "G", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
+      "temp": 90.0,
+      "expected_pct": 100.0
+    },
+    {
+      "name": "graph_exact_point",
+      "curve": {"id": "g", "name": "G", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
+      "temp": 60.0,
+      "expected_pct": 50.0
+    },
+    {
+      "name": "graph_nonmonotonic_above_last",
+      "curve": {"id": "nm", "name": "NM", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 70.0, "output_pct": 80.0}, {"temp_c": 50.0, "output_pct": 40.0}]},
+      "temp": 60.0,
+      "expected_pct": 40.0
+    },
+    {
+      "name": "linear_mid",
+      "curve": {"id": "l", "name": "L", "type": "linear", "sensor_id": "cpu", "start_temp_c": 30.0, "start_output_pct": 20.0, "end_temp_c": 70.0, "end_output_pct": 80.0},
+      "temp": 50.0,
+      "expected_pct": 50.0
+    },
+    {
+      "name": "linear_below_start",
+      "curve": {"id": "l", "name": "L", "type": "linear", "sensor_id": "cpu", "start_temp_c": 30.0, "start_output_pct": 20.0, "end_temp_c": 70.0, "end_output_pct": 80.0},
+      "temp": 20.0,
+      "expected_pct": 20.0
+    },
+    {
+      "name": "linear_above_end",
+      "curve": {"id": "l", "name": "L", "type": "linear", "sensor_id": "cpu", "start_temp_c": 30.0, "start_output_pct": 20.0, "end_temp_c": 70.0, "end_output_pct": 80.0},
+      "temp": 90.0,
+      "expected_pct": 80.0
+    },
+    {
+      "name": "flat",
+      "curve": {"id": "f", "name": "F", "type": "flat", "sensor_id": "cpu", "flat_output_pct": 42.0},
+      "temp": 55.0,
+      "expected_pct": 42.0
+    }
+  ],
+  "tuning_sequence": [
+    {
+      "name": "deadband_hold_release",
+      "sensor_id": "cpu",
+      "profile": {
+        "id": "p_deadband", "name": "Deadband", "version": 4, "description": "",
+        "controls": [{"id": "c", "name": "C", "mode": "curve", "curve_id": "cv", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch00", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0}],
+        "curves": [{"id": "cv", "name": "CV", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 60.0, "output_pct": 30.0}, {"temp_c": 70.0, "output_pct": 50.0}]}]
+      },
+      "temps": [70.0, 69.0, 67.5],
+      "expected": [{"member_id": "openfan:ch00", "pwm": [50, 50, 45]}]
+    },
+    {
+      "name": "step_rate_clamp",
+      "sensor_id": "cpu",
+      "profile": {
+        "id": "p_step", "name": "Step", "version": 4, "description": "",
+        "controls": [{"id": "c", "name": "C", "mode": "curve", "curve_id": "cv", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch00", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 5.0, "step_down_pct": 5.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0}],
+        "curves": [{"id": "cv", "name": "CV", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 40.0, "output_pct": 20.0}, {"temp_c": 80.0, "output_pct": 100.0}]}]
+      },
+      "temps": [40.0, 80.0, 80.0, 80.0],
+      "expected": [{"member_id": "openfan:ch00", "pwm": [20, 25, 30, 35]}]
+    },
+    {
+      "name": "start_stop_threshold",
+      "sensor_id": "cpu",
+      "profile": {
+        "id": "p_startstop", "name": "StartStop", "version": 4, "description": "",
+        "controls": [{"id": "c", "name": "C", "mode": "curve", "curve_id": "cv", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch00", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 20.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 30.0, "stop_pct": 15.0}],
+        "curves": [{"id": "cv", "name": "CV", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 10.0}, {"temp_c": 80.0, "output_pct": 90.0}]}]
+      },
+      "temps": [30.0, 80.0, 80.0],
+      "expected": [{"member_id": "openfan:ch00", "pwm": [0, 30, 50]}]
+    },
+    {
+      "name": "mixed_gpu_member_floor",
+      "sensor_id": "cpu",
+      "profile": {
+        "id": "p_mixed", "name": "Mixed", "version": 4, "description": "",
+        "controls": [{"id": "c", "name": "C", "mode": "curve", "curve_id": "cv", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch00", "member_label": "", "fan_zero_rpm": false}, {"source": "amd_gpu", "member_id": "amd_gpu:0000:03:00.0", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 20.0, "start_pct": 0.0, "stop_pct": 0.0}],
+        "curves": [{"id": "cv", "name": "CV", "type": "flat", "sensor_id": "cpu", "flat_output_pct": 10.0}]
+      },
+      "temps": [50.0, 50.0],
+      "expected": [{"member_id": "openfan:ch00", "pwm": [20, 20]}, {"member_id": "amd_gpu:0000:03:00.0", "pwm": [10, 10]}]
+    }
+  ]
+}

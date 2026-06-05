@@ -233,6 +233,10 @@ class ControlLoopStatus:
     last_error: str = ""
     warnings: list[str] = field(default_factory=list)
     control_outputs: dict[str, float] = field(default_factory=dict)  # control_id -> output %
+    # Per-member applied output (DEC-119). control_id -> {target_id -> output %}.
+    # In a mixed control a GPU member can sit below the control-wide value
+    # (0% floor), so the card needs the member-level number to be truthful.
+    member_outputs: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 class ControlLoopService(QObject):
@@ -268,6 +272,13 @@ class ControlLoopService(QObject):
         # totals.
         self._write_outcome_counts: dict[str, dict[str, int]] = {}
         self._manual_override = False
+        # Per-control transient manual override (Decision 1A). Maps control.id
+        # to a fixed PWM percent. Distinct from the global ``_manual_override``
+        # (which the Fan Wizard uses to freeze *all* automation): an entry here
+        # pins one control's members to a fixed value while every other control
+        # keeps evaluating its curve. Not persisted to the profile; cleared on
+        # profile change.
+        self._manual_controls: dict[str, float] = {}
         self._running = False
         self._is_shutdown = False
 
@@ -372,6 +383,37 @@ class ControlLoopService(QObject):
             return False
         return self._write_target(target_id, pwm_percent)
 
+    def set_control_manual(self, control_id: str, pwm_percent: float) -> None:
+        """Pin one control's members to a fixed PWM (transient, per-card 1A).
+
+        Unlike ``set_manual_override`` (which freezes every control), this only
+        affects ``control_id``; all other controls keep evaluating their curves.
+        Re-cycles immediately so the fans jump to the value without waiting for
+        the next timer tick. Not persisted to the active profile.
+        """
+        self._manual_controls[control_id] = max(0.0, min(100.0, pwm_percent))
+        if self._running:
+            self._cycle()
+
+    def clear_control_manual(self, control_id: str) -> None:
+        """Return one control to curve evaluation, clearing its transient manual.
+
+        Drops the control's hysteresis/step-rate trackers (its own key and any
+        ``::m::`` per-member keys) so the resumed curve re-anchors cleanly
+        instead of stepping from a stale last-output.
+        """
+        if self._manual_controls.pop(control_id, None) is None:
+            return
+        prefix = f"{control_id}::m::"
+        for key in [k for k in self._target_states if k == control_id or k.startswith(prefix)]:
+            self._target_states.pop(key, None)
+        if self._running:
+            self._cycle()
+
+    def is_control_manual(self, control_id: str) -> bool:
+        """True when ``control_id`` is currently under transient manual override."""
+        return control_id in self._manual_controls
+
     def pause_writes_for_header(self, header_id: str) -> None:
         """Pause writes to ``header_id`` until ``resume_writes_for_header`` is
         called or the safety timer fires (A1).
@@ -424,6 +466,7 @@ class ControlLoopService(QObject):
         (which is suppressed when the profile name is unchanged).
         """
         self._reset_hysteresis()
+        self._manual_controls.clear()
         if self._manual_override:
             self._manual_override = False
             log.info("Manual override cleared by profile re-evaluate")
@@ -461,6 +504,7 @@ class ControlLoopService(QObject):
 
     def _on_profile_changed(self, _name: str) -> None:
         self._reset_hysteresis()
+        self._manual_controls.clear()
         if self._manual_override:
             self._manual_override = False
             log.info("Profile changed -- exiting manual override")
@@ -514,6 +558,29 @@ class ControlLoopService(QObject):
         status: ControlLoopStatus,
     ) -> None:
         """Evaluate one logical control and write to its members."""
+        # Transient per-card manual override (Decision 1A): pin this control's
+        # members to a fixed PWM, skipping curve evaluation and the tuning
+        # pipeline entirely. Only this control is affected — every other control
+        # continues down the normal path below.
+        manual_pct = self._manual_controls.get(control.id)
+        if manual_pct is not None:
+            status.control_outputs[control.id] = manual_pct
+            for member in control.members:
+                target_id = member.target_id
+                status.member_outputs.setdefault(control.id, {})[target_id] = manual_pct
+                if self._should_write(target_id, manual_pct):
+                    if self._write_target(target_id, manual_pct):
+                        status.targets_active += 1
+                        if self._write_worker is None:
+                            self._on_write_completed(target_id, OUTCOME_OK)
+                    else:
+                        status.targets_skipped += 1
+                        if self._write_worker is None:
+                            self._on_write_completed(target_id, OUTCOME_OTHER)
+                else:
+                    status.targets_active += 1
+            return
+
         # Determine raw desired PWM
         if control.mode == ControlMode.MANUAL:
             desired_pwm = control.manual_output_pct
@@ -560,6 +627,7 @@ class ControlLoopService(QObject):
                 )
             else:
                 output = control_output
+            status.member_outputs.setdefault(control.id, {})[target_id] = output
 
             if self._should_write(target_id, output):
                 if self._write_target(target_id, output):

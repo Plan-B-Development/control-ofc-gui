@@ -6,12 +6,13 @@ Editing members/curve/overrides happens in a dialog, not on the card.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSlider,
     QVBoxLayout,
 )
 
@@ -33,11 +34,17 @@ class ControlCard(QFrame):
     selected = Signal(str)
     delete_requested = Signal(str)
     edit_role_requested = Signal(str)
+    # Transient per-card manual override (Decision 1A): toggled carries the
+    # active flag + the slider value at toggle time; value_changed fires while
+    # dragging. Neither mutates the saved profile.
+    manual_toggled = Signal(str, bool, int)  # control_id, active, pct
+    manual_value_changed = Signal(str, int)  # control_id, pct
 
     def __init__(self, control: LogicalControl, curves: list[CurveConfig], parent=None) -> None:
         super().__init__(parent)
         self.setProperty("class", "Card")
         self._control = control
+        self._last_output_pct: float | None = None
         self.setFixedSize(CARD_WIDTH, CARD_HEIGHT)
 
         layout = QVBoxLayout(self)
@@ -86,12 +93,30 @@ class ControlCard(QFrame):
         curve_row.addWidget(self._min_pwm_label)
         layout.addLayout(curve_row)
 
-        # Row 4: Output + sensor context
+        # Row 4: Output + sensor context (auto) \u2014 morphs into an inline manual
+        # slider when the Manual toggle is on. The two share the row; exactly
+        # one is visible, so the fixed card size is preserved.
+        row4 = QHBoxLayout()
+        row4.setSpacing(4)
         self._output_label = QLabel("\u2014")
         self._output_label.setObjectName(f"ControlCard_Label_output_{control.id}")
         self._output_label.setStyleSheet("background: transparent;")
         self._output_label.setProperty("class", "CardMeta")
-        layout.addWidget(self._output_label)
+        row4.addWidget(self._output_label)
+        self._manual_slider = QSlider(Qt.Orientation.Horizontal)
+        self._manual_slider.setObjectName(f"ControlCard_Slider_manual_{control.id}")
+        self._manual_slider.setRange(0, 100)
+        self._manual_slider.setValue(50)
+        self._manual_slider.setVisible(False)
+        self._manual_slider.valueChanged.connect(self._on_manual_slider_changed)
+        row4.addWidget(self._manual_slider, 1)
+        self._manual_pct_label = QLabel("50%")
+        self._manual_pct_label.setObjectName(f"ControlCard_Label_manualPct_{control.id}")
+        self._manual_pct_label.setStyleSheet("background: transparent;")
+        self._manual_pct_label.setProperty("class", "CardMeta")
+        self._manual_pct_label.setVisible(False)
+        row4.addWidget(self._manual_pct_label)
+        layout.addLayout(row4)
 
         # Row 5: Bottom row — RPM left, Delete + Edit right
         actions = QHBoxLayout()
@@ -104,6 +129,16 @@ class ControlCard(QFrame):
         actions.addWidget(self._rpm_label)
 
         actions.addStretch()
+
+        self._manual_btn = QPushButton("Manual")
+        self._manual_btn.setObjectName(f"ControlCard_Btn_manual_{control.id}")
+        self._manual_btn.setCheckable(True)
+        self._manual_btn.setToolTip(
+            "Temporarily set this role's fans to a fixed speed.\n"
+            "Not saved to the profile; clears on profile change."
+        )
+        self._manual_btn.toggled.connect(self._on_manual_toggled)
+        actions.addWidget(self._manual_btn)
 
         del_btn = QPushButton("Delete")
         del_btn.setObjectName(f"ControlCard_Btn_delete_{control.id}")
@@ -133,25 +168,60 @@ class ControlCard(QFrame):
         super().mousePressEvent(event)
 
     def set_output(
-        self, output_pct: float, sensor_name: str = "", sensor_value: float | None = None
+        self,
+        output_pct: float,
+        sensor_name: str = "",
+        sensor_value: float | None = None,
+        gpu_output_pct: float | None = None,
     ) -> None:
         if not self._control.members:
             return
+        self._last_output_pct = output_pct
+        if self._manual_btn.isChecked():
+            # Transient manual mode owns the row (slider) and the status chip.
+            return
+        # DEC-119: in a mixed control the GPU member can sit below the
+        # control-wide value, so surface its real output rather than letting the
+        # headline misreport it.
+        gpu_suffix = f" (GPU {gpu_output_pct:.0f}%)" if gpu_output_pct is not None else ""
         if self._control.mode == ControlMode.MANUAL:
-            self._output_label.setText(f"Now: {output_pct:.0f}% (Manual)")
+            self._output_label.setText(f"Now: {output_pct:.0f}% (Manual){gpu_suffix}")
         elif sensor_name and sensor_value is not None:
             self._output_label.setText(
-                f"Now: {output_pct:.0f}% \u2022 {sensor_name} {sensor_value:.1f}\u00b0C"
+                f"Now: {output_pct:.0f}%{gpu_suffix} \u2022 {sensor_name} {sensor_value:.1f}\u00b0C"
             )
         else:
-            self._output_label.setText(f"Now: {output_pct:.0f}%")
-        self._status_chip.setText("Applied")
-        self._status_chip.setProperty("class", "SuccessChip")
-        self._status_chip.style().unpolish(self._status_chip)
-        self._status_chip.style().polish(self._status_chip)
+            self._output_label.setText(f"Now: {output_pct:.0f}%{gpu_suffix}")
+        self._apply_chip("Applied", "SuccessChip")
 
     def set_rpm(self, rpm_text: str) -> None:
         self._rpm_label.setText(rpm_text)
+
+    def _apply_chip(self, text: str, cls: str) -> None:
+        """Set the status chip text + style class and repolish."""
+        self._status_chip.setText(text)
+        self._status_chip.setProperty("class", cls)
+        self._status_chip.style().unpolish(self._status_chip)
+        self._status_chip.style().polish(self._status_chip)
+
+    def _on_manual_toggled(self, checked: bool) -> None:
+        """Reveal/hide the inline slider and signal the transient manual state."""
+        if checked and self._last_output_pct is not None:
+            # Start manual at the current speed so the fan doesn't jump.
+            self._manual_slider.blockSignals(True)
+            self._manual_slider.setValue(round(self._last_output_pct))
+            self._manual_slider.blockSignals(False)
+            self._manual_pct_label.setText(f"{self._manual_slider.value()}%")
+        self._manual_slider.setVisible(checked)
+        self._manual_pct_label.setVisible(checked)
+        self._output_label.setVisible(not checked)
+        self._apply_chip("Manual", "WarningChip") if checked else self._apply_chip("", "")
+        self.manual_toggled.emit(self._control.id, checked, self._manual_slider.value())
+
+    def _on_manual_slider_changed(self, value: int) -> None:
+        self._manual_pct_label.setText(f"{value}%")
+        if self._manual_btn.isChecked():
+            self.manual_value_changed.emit(self._control.id, value)
 
     def update_control(self, control: LogicalControl, curves: list[CurveConfig]) -> None:
         self._control = control
@@ -189,6 +259,8 @@ class ControlCard(QFrame):
         return "None"
 
     def _update_no_members_state(self, control: LogicalControl) -> None:
+        # No fans assigned -> nothing to drive manually.
+        self._manual_btn.setEnabled(bool(control.members))
         if not control.members:
             self._output_label.setText("Assign outputs to enable")
             self._status_chip.setText("No members")

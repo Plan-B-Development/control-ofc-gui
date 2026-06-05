@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.27.0] — 2026-06-05
+
+### Added
+- **Inline per-card manual override (Controls tab).** Each Fan Role card now has
+  a **Manual** toggle + inline slider that temporarily pins that role's fans to a
+  fixed speed — without opening the Edit dialog, without freezing any other
+  card's curve, and without touching the saved profile (clears on profile
+  change). Backed by a new per-control `set_control_manual` / `clear_control_manual`
+  loop API, distinct from the Fan Wizard's global override. (**DEC-127**)
+- **Cross-stack evaluator parity harness.** A shared, byte-identical
+  `parity_vectors.json` is now asserted against both the GUI evaluator and the
+  daemon's headless evaluator (curve interpolation + the full deadband / step /
+  start-stop / mixed-GPU tuning pipeline), pinning GUI-driven and headless
+  behaviour together so they can't silently drift. (**DEC-126**)
+
+### Changed
+- **Truthful "Now" for mixed GPU controls.** When a control groups a GPU fan with
+  chassis/CPU fans, the card now shows `Now: N% (GPU M%)` whenever the GPU member
+  idles below the control-wide value, instead of reporting only the chassis
+  number. (**DEC-119**)
+
+### Fixed
+- **Control cards could get stuck disabled.** A transient or incomplete daemon
+  capabilities snapshot (e.g. an OpenFan-only box mid-reconnect) disabled the
+  control cards with no path back; they now re-enable as soon as write support
+  returns, and a profile rebuild honours the latest capability.
+
 ## [1.26.0] — 2026-06-05
 
 ### Changed

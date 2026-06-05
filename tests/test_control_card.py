@@ -194,3 +194,94 @@ class TestControlCardMinPwmBadge:
         card.update_output_preview("Balanced", "CPU", 45.0, 55.0)
         assert "Preview" in card._output_label.text()
         assert "55" in card._output_label.text()
+
+
+def _card_with_member(qtbot, curves):
+    from control_ofc.services.profile_service import ControlMember
+
+    ctrl = LogicalControl(
+        id="m_ctrl",
+        name="Manual Role",
+        curve_id="c1",
+        members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+    )
+    c = ControlCard(ctrl, curves)
+    qtbot.addWidget(c)
+    return c
+
+
+class TestControlCardManual:
+    """Inline per-card transient manual override (Decision 1A)."""
+
+    def test_toggle_reveals_slider_and_emits(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        toggles: list[tuple[str, bool, int]] = []
+        c.manual_toggled.connect(lambda cid, active, pct: toggles.append((cid, active, pct)))
+
+        c._manual_btn.setChecked(True)
+
+        assert not c._manual_slider.isHidden()
+        assert c._output_label.isHidden()
+        assert c._status_chip.text() == "Manual"
+        assert toggles and toggles[-1][0] == "m_ctrl" and toggles[-1][1] is True
+
+    def test_toggle_off_restores_output(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        toggles: list[tuple[str, bool, int]] = []
+        c.manual_toggled.connect(lambda cid, active, pct: toggles.append((cid, active, pct)))
+
+        c._manual_btn.setChecked(True)
+        c._manual_btn.setChecked(False)
+
+        assert c._manual_slider.isHidden()
+        assert not c._output_label.isHidden()
+        assert toggles[-1][1] is False
+
+    def test_slider_drag_emits_value(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c._manual_btn.setChecked(True)
+        values: list[tuple[str, int]] = []
+        c.manual_value_changed.connect(lambda cid, pct: values.append((cid, pct)))
+
+        c._manual_slider.setValue(73)
+
+        assert ("m_ctrl", 73) in values
+        assert c._manual_pct_label.text() == "73%"
+
+    def test_toggle_seeds_slider_from_last_output(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c.set_output(62.0, sensor_name="CPU", sensor_value=40.0)
+
+        c._manual_btn.setChecked(True)
+
+        # Manual starts at the current speed so the fan doesn't jump.
+        assert c._manual_slider.value() == 62
+
+    def test_manual_chip_survives_status_update(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c._manual_btn.setChecked(True)
+
+        # A loop status tick must not overwrite the Manual chip with "Applied".
+        c.set_output(20.0, sensor_name="CPU", sensor_value=40.0)
+
+        assert c._status_chip.text() == "Manual"
+
+    def test_manual_button_disabled_without_members(self, card):
+        # The default `card` fixture has no members.
+        assert not card._manual_btn.isEnabled()
+
+
+class TestControlCardGpuOutput:
+    """DEC-119: card surfaces a divergent GPU member output."""
+
+    def test_gpu_suffix_shown_when_divergent(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c.set_output(20.0, sensor_name="CPU", sensor_value=40.0, gpu_output_pct=10.0)
+        text = c._output_label.text()
+        assert "GPU 10%" in text
+        assert "20%" in text
+
+    def test_no_gpu_suffix_when_absent(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c.set_output(20.0, sensor_name="CPU", sensor_value=40.0)
+        assert "GPU" not in c._output_label.text()

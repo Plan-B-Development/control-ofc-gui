@@ -271,7 +271,9 @@ class MainWindow(QWidget):
 
     def _on_control_loop_status(self, status) -> None:
         if status.control_outputs:
-            self.controls_page.update_control_outputs(status.control_outputs)
+            self.controls_page.update_control_outputs(
+                status.control_outputs, getattr(status, "member_outputs", None)
+            )
 
     def _open_diagnostics(self) -> None:
         from control_ofc.constants import PAGE_DIAGNOSTICS
