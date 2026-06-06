@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.32.0] — 2026-06-06
+## [1.32.0] — 2026-06-07
 
 2026-Q2 it87/SIO knowledgebase refresh (DEC-144). Pairs with **daemon
 v1.14.0**. Data/text only — no control-loop, lease, or safety-path changes.
