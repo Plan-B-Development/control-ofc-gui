@@ -571,6 +571,10 @@ class DashboardPage(QWidget):
         if sensors:
             self._show_content()
 
+        # Re-read the iGPU auto-hide setting each poll so the toggle applies
+        # live, mirroring hide_unused_fan_headers in _on_fans_updated (F9).
+        if self._settings_service:
+            self._sensor_panel.hide_igpu = self._settings_service.settings.hide_igpu_sensors
         # Update sensor panel first (applies iGPU filtering)
         self._sensor_panel.update_sensors(sensors)
 

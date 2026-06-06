@@ -10,8 +10,8 @@ from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import ConnectionState, OperationMode
-from control_ofc.constants import PAGE_DASHBOARD, POLL_INTERVAL_MS
-from control_ofc.services.app_settings_service import AppSettingsService
+from control_ofc.constants import POLL_INTERVAL_MS
+from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.control_loop import ControlLoopService
 from control_ofc.services.demo_service import DemoService
@@ -29,6 +29,16 @@ from control_ofc.ui.status_banner import StatusBanner
 from control_ofc.ui.widgets.error_banner import ErrorBanner
 
 log = logging.getLogger(__name__)
+
+
+def _resolve_startup_page(settings: AppSettings, page_count: int) -> int:
+    """Resolve the page index to show on startup, clamped to the page count.
+
+    Honours ``default_startup_page`` when "restore last page" is off instead of
+    always returning the dashboard (F3).
+    """
+    idx = settings.last_page_index if settings.restore_last_page else settings.default_startup_page
+    return max(0, min(idx, page_count - 1))
 
 
 class MainWindow(QWidget):
@@ -109,7 +119,9 @@ class MainWindow(QWidget):
             settings_service=self._settings_service,
         )
         self.settings_page = SettingsPage(
-            state=self._state, settings_service=self._settings_service
+            state=self._state,
+            settings_service=self._settings_service,
+            client=self._client,
         )
         self.diagnostics_page = DiagnosticsPage(
             state=self._state,
@@ -159,13 +171,9 @@ class MainWindow(QWidget):
 
         # --- Restore persisted window state ---
         s = self._settings_service.settings
-        if s.restore_last_page:
-            idx = max(0, min(s.last_page_index, self.page_stack.count() - 1))
-            self.page_stack.setCurrentIndex(idx)
-            self.sidebar.select_page(idx)
-        else:
-            self.page_stack.setCurrentIndex(PAGE_DASHBOARD)
-            self.sidebar.select_page(PAGE_DASHBOARD)
+        idx = _resolve_startup_page(s, self.page_stack.count())
+        self.page_stack.setCurrentIndex(idx)
+        self.sidebar.select_page(idx)
         geo = s.window_geometry
         if len(geo) == 4:
             self.setGeometry(geo[0], geo[1], geo[2], geo[3])

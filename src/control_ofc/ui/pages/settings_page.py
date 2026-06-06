@@ -55,7 +55,6 @@ class SettingsPage(QWidget):
     """Application settings, theme import/export, and backup/restore."""
 
     theme_changed = Signal(ThemeTokens)
-    settings_changed = Signal()
 
     def __init__(
         self,
@@ -126,10 +125,6 @@ class SettingsPage(QWidget):
         self._demo_disconnect_cb.setObjectName("Settings_Check_demoDisconnect")
         layout.addWidget(self._demo_disconnect_cb)
 
-        self._remember_profile_cb = QCheckBox("Remember last active profile")
-        self._remember_profile_cb.setObjectName("Settings_Check_rememberProfile")
-        layout.addWidget(self._remember_profile_cb)
-
         # GPU zero-RPM warning
         self._gpu_zero_rpm_warn_cb = QCheckBox(
             "Show GPU zero-RPM warning when adding GPU fan to role"
@@ -146,7 +141,9 @@ class SettingsPage(QWidget):
         row2.addWidget(QLabel("Chart default time range:"))
         self._chart_range_combo = QComboBox()
         self._chart_range_combo.setObjectName("Settings_Combo_chartRange")
-        for label in ["10s", "30s", "1m", "5m", "30m", "1h", "2h", "4h", "12h"]:
+        from control_ofc.ui.widgets.timeline_chart import TIME_RANGES
+
+        for label, _seconds in TIME_RANGES:
             self._chart_range_combo.addItem(label)
         row2.addWidget(self._chart_range_combo)
         row2.addStretch()
@@ -408,9 +405,8 @@ class SettingsPage(QWidget):
             self._startup_page_combo.setCurrentIndex(idx)
         self._restore_page_cb.setChecked(s.restore_last_page)
         self._demo_disconnect_cb.setChecked(s.demo_on_disconnect)
-        self._remember_profile_cb.setChecked(s.remember_last_profile)
         self._chart_range_combo.setCurrentIndex(
-            min(s.chart_default_range_index, self._chart_range_combo.count() - 1)
+            max(0, min(s.chart_default_range_index, self._chart_range_combo.count() - 1))
         )
         self._gpu_zero_rpm_warn_cb.setChecked(s.show_gpu_zero_rpm_warning)
         self._wizard_spindown_spin.setValue(s.wizard_spindown_seconds)
@@ -449,7 +445,6 @@ class SettingsPage(QWidget):
             default_startup_page=self._startup_page_combo.currentData(),
             restore_last_page=self._restore_page_cb.isChecked(),
             demo_on_disconnect=self._demo_disconnect_cb.isChecked(),
-            remember_last_profile=self._remember_profile_cb.isChecked(),
             chart_default_range_index=self._chart_range_combo.currentIndex(),
             show_gpu_zero_rpm_warning=self._gpu_zero_rpm_warn_cb.isChecked(),
             wizard_spindown_seconds=self._wizard_spindown_spin.value(),
@@ -477,11 +472,9 @@ class SettingsPage(QWidget):
             except DaemonError as e:
                 log.warning("Failed to sync startup delay to daemon: %s", e.message)
                 self._set_status("Application settings saved (startup delay not synced to daemon)")
-                self.settings_changed.emit()
                 return
 
         self._set_status("Application settings saved")
-        self.settings_changed.emit()
 
     # ─── Directory picker handlers ─────────────────────────────────
 
@@ -657,44 +650,85 @@ class SettingsPage(QWidget):
         if not path:
             return
         try:
-            # Read and validate
             raw = json.loads(Path(path).read_text())
             if not isinstance(raw, dict):
                 self._set_export_result("Import failed: invalid file format", "CriticalChip")
                 return
 
             export_ver = raw.get("export_version")
-            if export_ver is not None and export_ver > 1:
-                self._set_export_result(
-                    f"Import failed: unsupported export version {export_ver} (max supported: 1)",
-                    "CriticalChip",
-                )
-                return
+            if export_ver is not None:
+                if isinstance(export_ver, bool) or not isinstance(export_ver, (int, float)):
+                    self._set_export_result(
+                        "Import failed: unrecognized export version", "CriticalChip"
+                    )
+                    return
+                if export_ver > 1:
+                    self._set_export_result(
+                        f"Import failed: unsupported export version {export_ver} "
+                        "(max supported: 1)",
+                        "CriticalChip",
+                    )
+                    return
 
-            # Auto-backup current settings before import
+            # Auto-backup current settings before applying anything.
             backup_path = self._create_backup()
 
-            # Apply settings portion
-            if "settings" in raw:
-                imported = self._settings_svc.import_settings_from_dict(raw["settings"])
+            # Merge imported settings onto the current ones so machine-specific
+            # state (window geometry, data-dir overrides, …) is preserved and
+            # only portable preferences are overwritten (DEC-140). Stripping the
+            # machine keys from the *incoming* data means even a legacy full
+            # export can never move the window or wipe local overrides.
+            incoming = raw.get("settings")
+            if isinstance(incoming, dict):
+                from control_ofc.services.app_settings_service import MACHINE_SPECIFIC_KEYS
+
+                merged = self._settings_svc.settings.to_dict()
+                merged.update({k: v for k, v in incoming.items() if k not in MACHINE_SPECIFIC_KEYS})
+                imported = self._settings_svc.import_settings_from_dict(merged)
                 self._settings_svc.apply_imported(imported)
                 self._load_current_settings()
+                # Apply live side effects, mirroring a manual Save (F11):
+                # data-dir overrides and the daemon startup delay.
+                set_path_overrides(
+                    profiles_dir=imported.profiles_dir_override,
+                    themes_dir=imported.themes_dir_override,
+                    export_dir=imported.export_default_dir,
+                )
+                if self._client:
+                    from control_ofc.api.errors import DaemonError
 
-            # Apply profiles if present
+                    try:
+                        self._client.set_startup_delay(imported.daemon_startup_delay_secs)
+                    except DaemonError as e:
+                        log.warning("Failed to sync startup delay on import: %s", e.message)
+
+            # Apply profiles if present.
             skipped = 0
-            if "profiles" in raw:
-                skipped += self._import_profiles(raw["profiles"])
+            profiles = raw.get("profiles")
+            if isinstance(profiles, dict):
+                skipped += self._import_profiles(profiles)
 
-            # Apply custom themes if present
-            if "themes" in raw and isinstance(raw["themes"], dict):
-                skipped += self._import_themes(raw["themes"])
+            # Apply custom themes if present.
+            themes = raw.get("themes")
+            if isinstance(themes, dict):
+                skipped += self._import_themes(themes)
 
             backup_msg = f" (backup: {backup_path.name})" if backup_path else ""
             skip_msg = f" ({skipped} invalid item(s) skipped)" if skipped else ""
             css = "WarningChip" if skipped else "SuccessChip"
-            self._set_export_result(f"Settings imported and applied{backup_msg}{skip_msg}", css)
-            self.settings_changed.emit()
-        except (json.JSONDecodeError, OSError, KeyError, ValueError, TypeError) as e:
+            self._set_export_result(
+                f"Settings imported{backup_msg}{skip_msg} — "
+                "some changes take effect on next launch",
+                css,
+            )
+        except (
+            json.JSONDecodeError,
+            OSError,
+            KeyError,
+            ValueError,
+            TypeError,
+            AttributeError,
+        ) as e:
             self._set_export_result(f"Import failed: {e}", "CriticalChip")
 
     def _build_full_export(self) -> dict:
@@ -702,7 +736,8 @@ class SettingsPage(QWidget):
         export: dict = {
             "export_version": 1,
             "exported_at": datetime.now().isoformat(),
-            "settings": self._settings_svc.settings.to_dict(),
+            # Portable subset only — machine/session state stays local (DEC-140).
+            "settings": self._settings_svc.settings.portable_dict(),
         }
         # Include profiles
         from control_ofc.paths import profiles_dir
@@ -799,7 +834,7 @@ class SettingsPage(QWidget):
 
         Returns the number of themes that failed validation.
         """
-        from control_ofc.ui.theme import _migrate_tokens
+        from control_ofc.ui.theme import _apply_token_dict, _migrate_tokens
 
         td = themes_dir()
         td.mkdir(parents=True, exist_ok=True)
@@ -813,11 +848,9 @@ class SettingsPage(QWidget):
                 continue
             try:
                 migrated = _migrate_tokens(data)
-                # Verify the migrated data can construct a ThemeTokens.
-                tokens = ThemeTokens()
-                for k, v in migrated.items():
-                    if hasattr(tokens, k):
-                        setattr(tokens, k, v)
+                # Strict validation: any invalid colour/value raises and the
+                # whole theme is skipped (DEC-142).
+                _apply_token_dict(ThemeTokens(), migrated, strict=True)
             except (KeyError, TypeError, ValueError) as exc:
                 log.warning("Skipping theme '%s': validation failed: %s", name, exc)
                 skipped.append(name)

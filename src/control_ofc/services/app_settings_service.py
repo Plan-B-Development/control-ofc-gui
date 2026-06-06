@@ -7,9 +7,115 @@ import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from control_ofc.colors import is_valid_color
 from control_ofc.paths import app_settings_path, atomic_write
 
 log = logging.getLogger(__name__)
+
+# Settings keys excluded from the portable (shareable) export — machine/session
+# state and hardware-id-keyed maps that should not travel between machines. The
+# importer also strips these from incoming files, so a shared config can never
+# move another user's window or wipe local data-dir overrides (DEC-140).
+MACHINE_SPECIFIC_KEYS = frozenset(
+    {
+        "window_geometry",
+        "last_page_index",
+        "controls_card_sizes",
+        "card_sensor_bindings",
+        "series_colors",
+        "diagnostics_hidden_sensor_ids",
+        "acknowledged_kernel_warnings",
+        "profiles_dir_override",
+        "themes_dir_override",
+        "export_default_dir",
+    }
+)
+
+_CARD_SIZES = frozenset({"compact", "comfortable", "large"})
+
+# Window-geometry sanity bound — rejects corruption and absurd off-screen values.
+_GEOM_MAX = 32000
+
+
+# --- Untrusted-input coercion helpers (DEC-137) -----------------------------
+# Every helper takes an arbitrary JSON value plus the field default and returns
+# a well-typed, in-range value. None of them raise: a bad value becomes the
+# default (or, for collections, drops only the offending entries).
+
+
+def _as_bool(value: object, default: bool) -> bool:
+    """Accept only real booleans; reject 0/1 and everything else."""
+    return value if isinstance(value, bool) else default
+
+
+def _as_int(value: object, default: int, lo: int | None = None, hi: int | None = None) -> int:
+    """Coerce to int (rejecting bool/float/str), then clamp to [lo, hi]."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default
+    if lo is not None:
+        value = max(lo, value)
+    if hi is not None:
+        value = min(hi, value)
+    return value
+
+
+def _as_str(value: object, default: str, maxlen: int = 512) -> str:
+    return value[:maxlen] if isinstance(value, str) else default
+
+
+def _as_str_dict(value: object, default: dict[str, str]) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return dict(default)
+    return {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def _as_str_list(value: object, default: list[str]) -> list[str]:
+    if not isinstance(value, list):
+        return list(default)
+    return [v for v in value if isinstance(v, str)]
+
+
+def _as_color_dict(value: object, default: dict[str, str]) -> dict[str, str]:
+    """Keep only str -> valid-hex-colour entries (drops injection/garbage)."""
+    if not isinstance(value, dict):
+        return dict(default)
+    return {k: v for k, v in value.items() if isinstance(k, str) and is_valid_color(v)}
+
+
+def _as_enum(value: object, allowed: frozenset[str], default: str) -> str:
+    return value if isinstance(value, str) and value in allowed else default
+
+
+def _as_geometry(value: object, default: list[int]) -> list[int]:
+    """Require exactly 4 sane ints [x, y, w, h]; else the default."""
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return list(default)
+    if any(isinstance(n, bool) or not isinstance(n, int) for n in value):
+        return list(default)
+    x, y, w, h = value
+    if not (-_GEOM_MAX <= x <= _GEOM_MAX and -_GEOM_MAX <= y <= _GEOM_MAX):
+        return list(default)
+    if not (1 <= w <= _GEOM_MAX and 1 <= h <= _GEOM_MAX):
+        return list(default)
+    return [x, y, w, h]
+
+
+def _as_card_sizes(value: object, default: dict[str, list[int]]) -> dict[str, list[int]]:
+    """Keep only str -> [width, height] entries of two positive ints."""
+    if not isinstance(value, dict):
+        return dict(default)
+    result: dict[str, list[int]] = {}
+    for key, dims in value.items():
+        if not isinstance(key, str):
+            continue
+        if not isinstance(dims, (list, tuple)) or len(dims) != 2:
+            continue
+        if any(
+            isinstance(n, bool) or not isinstance(n, int) or not (0 < n <= _GEOM_MAX) for n in dims
+        ):
+            continue
+        result[key] = [dims[0], dims[1]]
+    return result
 
 
 @dataclass
@@ -20,7 +126,6 @@ class AppSettings:
     default_startup_page: int = 0  # PAGE_DASHBOARD
     restore_last_page: bool = True
     demo_on_disconnect: bool = False
-    remember_last_profile: bool = True
     chart_default_range_index: int = 4  # 15m in TimelineChart
     theme_name: str = "Default Dark"
     fan_aliases: dict[str, str] = field(default_factory=dict)
@@ -72,34 +177,52 @@ class AppSettings:
 
     @staticmethod
     def from_dict(data: dict) -> AppSettings:
+        """Build settings from an untrusted dict (on-disk file or import).
+
+        Never raises: every field is type-checked and coerced, out-of-range
+        values are clamped, and malformed entries fall back to the field
+        default. This is the trust boundary for both the persisted settings
+        file and user-supplied import files (DEC-137).
+        """
+        if not isinstance(data, dict):
+            return AppSettings()
         return AppSettings(
-            version=data.get("version", 1),
-            default_startup_page=data.get("default_startup_page", 0),
-            restore_last_page=data.get("restore_last_page", True),
-            demo_on_disconnect=data.get("demo_on_disconnect", False),
-            remember_last_profile=data.get("remember_last_profile", True),
-            chart_default_range_index=data.get("chart_default_range_index", 4),
-            theme_name=data.get("theme_name", "Default Dark"),
-            fan_aliases=data.get("fan_aliases", {}),
-            hidden_chart_series=data.get("hidden_chart_series", []),
-            card_sensor_bindings=data.get("card_sensor_bindings", {}),
-            show_gpu_zero_rpm_warning=data.get("show_gpu_zero_rpm_warning", True),
-            series_colors=data.get("series_colors", {}),
-            last_page_index=data.get("last_page_index", 0),
-            window_geometry=data.get("window_geometry", [100, 100, 1200, 800]),
-            profiles_dir_override=data.get("profiles_dir_override", ""),
-            themes_dir_override=data.get("themes_dir_override", ""),
-            export_default_dir=data.get("export_default_dir", ""),
-            wizard_spindown_seconds=data.get("wizard_spindown_seconds", 8),
-            daemon_startup_delay_secs=data.get("daemon_startup_delay_secs", 0),
-            hide_igpu_sensors=data.get("hide_igpu_sensors", True),
-            hide_unused_fan_headers=data.get("hide_unused_fan_headers", True),
-            show_hardware_guidance=data.get("show_hardware_guidance", True),
-            card_size=data.get("card_size", "comfortable"),
-            controls_card_sizes=data.get("controls_card_sizes", {}),
-            acknowledged_kernel_warnings=list(data.get("acknowledged_kernel_warnings", []) or []),
-            diagnostics_hidden_sensor_ids=list(data.get("diagnostics_hidden_sensor_ids", []) or []),
+            version=_as_int(data.get("version"), 1, lo=1),
+            default_startup_page=_as_int(data.get("default_startup_page"), 0, lo=0, hi=99),
+            restore_last_page=_as_bool(data.get("restore_last_page"), True),
+            demo_on_disconnect=_as_bool(data.get("demo_on_disconnect"), False),
+            chart_default_range_index=_as_int(
+                data.get("chart_default_range_index"), 4, lo=0, hi=99
+            ),
+            theme_name=_as_str(data.get("theme_name"), "Default Dark"),
+            fan_aliases=_as_str_dict(data.get("fan_aliases"), {}),
+            hidden_chart_series=_as_str_list(data.get("hidden_chart_series"), []),
+            card_sensor_bindings=_as_str_dict(data.get("card_sensor_bindings"), {}),
+            show_gpu_zero_rpm_warning=_as_bool(data.get("show_gpu_zero_rpm_warning"), True),
+            series_colors=_as_color_dict(data.get("series_colors"), {}),
+            last_page_index=_as_int(data.get("last_page_index"), 0, lo=0, hi=99),
+            window_geometry=_as_geometry(data.get("window_geometry"), [100, 100, 1200, 800]),
+            profiles_dir_override=_as_str(data.get("profiles_dir_override"), ""),
+            themes_dir_override=_as_str(data.get("themes_dir_override"), ""),
+            export_default_dir=_as_str(data.get("export_default_dir"), ""),
+            wizard_spindown_seconds=_as_int(data.get("wizard_spindown_seconds"), 8, lo=5, hi=12),
+            daemon_startup_delay_secs=_as_int(
+                data.get("daemon_startup_delay_secs"), 0, lo=0, hi=30
+            ),
+            hide_igpu_sensors=_as_bool(data.get("hide_igpu_sensors"), True),
+            hide_unused_fan_headers=_as_bool(data.get("hide_unused_fan_headers"), True),
+            show_hardware_guidance=_as_bool(data.get("show_hardware_guidance"), True),
+            card_size=_as_enum(data.get("card_size"), _CARD_SIZES, "comfortable"),
+            controls_card_sizes=_as_card_sizes(data.get("controls_card_sizes"), {}),
+            acknowledged_kernel_warnings=_as_str_list(data.get("acknowledged_kernel_warnings"), []),
+            diagnostics_hidden_sensor_ids=_as_str_list(
+                data.get("diagnostics_hidden_sensor_ids"), []
+            ),
         )
+
+    def portable_dict(self) -> dict:
+        """Return ``to_dict()`` minus machine-specific keys (shareable export)."""
+        return {k: v for k, v in self.to_dict().items() if k not in MACHINE_SPECIFIC_KEYS}
 
 
 class AppSettingsService:
@@ -119,7 +242,7 @@ class AppSettingsService:
                 data = json.loads(path.read_text())
                 self._settings = AppSettings.from_dict(data)
                 log.info("Loaded app settings from %s", path)
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError, OSError) as e:
                 log.warning("Failed to load app settings from %s: %s — using defaults", path, e)
                 self._settings = AppSettings()
         else:

@@ -179,7 +179,7 @@ class TestControlsContracts:
 
 class TestSettingsContracts:
     def test_save_app_settings_persists(self, qtbot, window, settings_service):
-        """Change combo, click save → settings_service updated + settings_changed signal."""
+        """Change combo, click Save → settings_service updated (signal removed)."""
         settings_page = window.settings_page
 
         # Change startup page combo to a different value
@@ -189,8 +189,7 @@ class TestSettingsContracts:
         expected_page = combo.currentData()
 
         save_btn = window.findChild(QPushButton, "Settings_Btn_saveApp")
-        with qtbot.waitSignal(settings_page.settings_changed, timeout=1000):
-            qtbot.mouseClick(save_btn, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(save_btn, Qt.MouseButton.LeftButton)
 
         assert settings_service.settings.default_startup_page == expected_page
 
