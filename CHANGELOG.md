@@ -2,84 +2,38 @@
 
 ## [1.31.0] — 2026-06-06
 
+Settings hardening: the Application tab and Import/Export now do what they claim,
+and a corrupt or shared settings/theme file can no longer break the app.
+
 ### Fixed
-- **Fresh installs no longer start with every temperature series hidden.**
-  On first discovery the sensor panel built its rows before the dashboard
-  registered the series keys in the selection model, so `is_visible()` was
-  False and every row started unchecked — and the group-summary text update
-  fired `itemChanged`, whose group branch synced that unchecked state back
-  into the model as a persisted hide. Rows now default to checked unless a
-  series was *explicitly* hidden (`SeriesSelectionModel.is_hidden`), and the
-  cosmetic group-summary updates are signal-blocked so a `setText` can never
-  write check-states into the model again. Found while re-capturing manual
-  screenshots from a pristine config; regression-tested.
-- **"Chart default time range" now actually applies.** The Settings value
-  (default 15m) was persisted and editable but had no consumer — the
-  dashboard chart always opened at its hardcoded 5m. The dashboard now
-  applies `chart_default_range_index` to the chart at startup
-  (`TimelineChart.set_range_index`, out-of-range values ignored).
-  Regression-tested.
-- **Settings import can no longer brick the app.** A crafted or corrupt import
-  (e.g. a `window_geometry` of strings) used to be written straight to disk and
-  then crash `setGeometry` on every subsequent launch. `AppSettings.from_dict`
-  is now a validating trust boundary: it never raises, type-checks and clamps
-  every field, drops invalid `series_colors`, and falls back to defaults for
-  garbage — a bad file now degrades gracefully instead of locking you out (DEC-137).
-- **Malformed or hostile themes can no longer break the stylesheet.** Theme
-  colour tokens are validated as hex (`#RGB`/`#RGBA`/`#RRGGBB`/`#RRGGBBAA`) and
-  `base_font_size_pt` is clamped on both load and import. An on-disk theme with
-  a bad token loads with that token defaulted; a theme *import* containing any
-  invalid colour is skipped with a clear message (DEC-142).
-- **"Default startup page" is now honoured** when "restore last selected page"
-  is off — previously it always opened the dashboard (DEC-141).
-- **"Chart default time range" labels now match the chart.** The Settings
-  dropdown is built from the chart's own range list, so the label you pick is
-  the range the dashboard actually opens (the two lists had silently drifted,
-  e.g. picking "30m" opened 15m) (DEC-141).
-- **iGPU auto-hide applies live.** Toggling "auto-hide iGPU sensors" now takes
-  effect on the next poll instead of only after a restart (DEC-141).
-- **Importing settings no longer wipes local machine state.** Import now merges
-  onto your current settings (preserving window geometry and data-dir overrides)
-  and applies directory overrides and the daemon startup delay immediately,
-  matching a manual Save (DEC-140).
+- Settings import can no longer brick the app — `AppSettings.from_dict` now
+  validates and clamps every field instead of writing bad values (which crashed
+  `setGeometry` on the next launch) straight to disk (DEC-137).
+- Malformed or hostile themes no longer break the stylesheet: colour tokens are
+  validated as hex and the base font size is clamped, on load and import (DEC-142).
+- "Default startup page" is honoured when "restore last selected page" is off (DEC-141).
+- "Chart default time range" labels now match the chart and its 15m default
+  (the Settings list had drifted, e.g. "30m" opened 15m) (DEC-141).
+- "Auto-hide iGPU sensors" applies live instead of only after a restart (DEC-141).
+- Importing settings no longer wipes local window geometry / data-dir overrides;
+  imports merge and apply directory + startup-delay changes immediately (DEC-140).
+- Fresh installs no longer start with every temperature series hidden.
 
 ### Added
-- **"Start in demo mode when daemon is unavailable" now works.** At launch the
-  GUI probes the daemon (`GET /status`); if it is unreachable and the option is
-  enabled, the GUI starts in demo mode. A slow daemon (timeout) is treated as
-  present and never silently dropped to demo (DEC-139).
-- **Portable settings export.** Settings → Export now writes a shareable file —
-  preferences, fan aliases, and all profiles/themes — excluding machine-specific
-  state (window geometry, data-dir paths, sensor/card bindings, series colours,
-  dismissed warnings). The full snapshot remains available in the diagnostics
-  support bundle (DEC-140).
+- "Start in demo mode when daemon is unavailable" now works, via a launch-time
+  daemon probe (a slow daemon stays live, never silently dropped to demo) (DEC-139).
+- Portable settings export — shareable preferences/aliases/profiles/themes;
+  machine-specific state stays local (the full snapshot remains in the
+  diagnostics support bundle) (DEC-140).
 
 ### Removed
-- **"Remember last active profile" setting.** It controlled nothing — the daemon
-  owns active-profile persistence — so the dead toggle was removed. Older
-  settings files that still contain the key continue to load (DEC-138).
+- Dead "Remember last active profile" setting (the daemon owns active-profile
+  persistence); older settings files still load (DEC-138).
 
 ### Documentation
-- **2026-06-06 documentation & manual audit remediation.** README release
-  line corrected (was stuck at v1.25.0) and the dead `DECISIONS.md` link
-  removed; every published reference to gitignored local files
-  (`DECISIONS.md`, `scripts/`, `docs/audit/`) re-pointed at `CHANGELOG.md`;
-  hardware-troubleshooting's no-sensor failsafe corrected (40% safe floor,
-  not 100%) and the DEC-132 thermal stand-down documented for users;
-  `manual/controls.md` and `manual/fan-wizard.md` rewritten against the
-  v1.30 UI (Manage Profiles… menu, inline Manual override, Actions menus,
-  drag-resize/snap, real wizard flow incl. the 30% restore fallback);
-  Card size setting documented; dashboard manual matched to the shipped UI
-  (Apply button, Label/PWM% columns, double-click rename,
-  GUI-evaluates-curves); man page FILES (`app_settings.json`) and
-  ENVIRONMENT (XDG, not `OPENFAN_PROFILE`) corrected; CONTRIBUTING gates
-  now include `compileall`; spec-pack contradictions swept
-  (one-role-per-fan ×4, fixed-size cards, theme-editor deferral, AMD-only
-  GPU, demo data model) and per-file "Last updated" stamps replaced with a
-  CHANGELOG-pointing status line; all 16 manual screenshots re-captured on
-  the current UI from a pristine demo config with warmed-up history; stale
-  April-era root `screenshots/` orphans removed and the About dialog shot
-  wired into Getting Started.
+- Settings spec, API contract, and the user manual updated for the above, plus
+  the 2026-06-06 README/manual/man-page audit remediation (manual rewritten
+  against the shipped UI, screenshots re-captured, stale references corrected).
 
 ## [1.30.0] — 2026-06-06
 
