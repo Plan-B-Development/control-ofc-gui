@@ -16,6 +16,7 @@ This manual covers every page, setting, and feature of the application.
 6. [Fan Wizard](fan-wizard.md) — Guided fan identification and labelling
 7. [Profiles and Curves Reference](profiles-and-curves.md) — How profiles, fan roles, and curves work together
 8. [Hardware Troubleshooting](hardware-troubleshooting.md) — Hardware Readiness, vendor quirks, Test PWM Control, and why some fans appear read-only
+9. [Driver Setup](driver-setup.md) — Beginner walkthrough for installing the out-of-tree motherboard fan drivers (DKMS), verifying them, and rolling back
 
 ## Reference Docs
 

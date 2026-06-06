@@ -808,10 +808,16 @@ class TestDualChipWarningBannerDec101:
         label = page.findChild(QLabel, "Diagnostics_Label_dualChipWarning")
         assert not label.isHidden()
         text = label.text()
-        # Must name the missing chip, the board, and the mmio=on remediation.
+        # Must name the missing chip, the board, and the remediation —
+        # driver update first (DEC-144), with mmio=on retained as the
+        # legacy-build fallback.
         assert "it87952" in text.lower() or "IT87952E" in text
         assert "X870E AORUS MASTER" in text
+        assert "it87-dkms-git" in text
         assert "mmio=on" in text
+        assert text.find("it87-dkms-git") < text.find("mmio=on"), (
+            "DEC-144: the driver update must precede the legacy mmio=on step"
+        )
         assert "modprobe" in text.lower() or "modprobe.d" in text.lower()
         # Must not crash on the WarningChip class assignment.
         assert label.property("class") == "WarningChip"

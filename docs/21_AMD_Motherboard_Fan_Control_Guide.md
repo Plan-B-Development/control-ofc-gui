@@ -59,6 +59,11 @@ fan control path, which is Super I/O / EC based.
 
 ## Arch/CachyOS setup
 
+> **New to Linux fan-control drivers?** The user manual ships a
+> step-by-step beginner walkthrough — prerequisites, install, verify,
+> rollback — at [`manual/driver-setup.md`](../manual/driver-setup.md).
+> This section is the condensed reference version.
+
 ### Base packages
 
 Install at minimum:
@@ -102,6 +107,23 @@ sudo pacman -S linux-cachyos-headers
 References:
 - https://archlinux.org/packages/extra/any/dkms/
 - https://archlinux.org/packages/core/x86_64/linux-headers/
+
+> **CachyOS-LTS / non-standard kernel paths:** the it87 DKMS config has a
+> known module-install-path quirk on CachyOS-LTS and openSUSE Tumbleweed —
+> the module builds but lands in a directory the kernel does not search
+> (frankcrawford/it87
+> [issue #94](https://github.com/frankcrawford/it87/issues/94)). If
+> `modprobe it87` reports "module not found" right after a successful
+> DKMS build, check `dkms status` and compare the install path against
+> `/lib/modules/$(uname -r)/`.
+
+> **Update before troubleshooting:** both `it87-dkms-git` and
+> `nct6687d-dkms-git` are `-git` packages — every reinstall builds the
+> current upstream snapshot. A large share of historical workarounds
+> (e.g. `mmio=on`, the 0xd450 collision) are already fixed upstream, so
+> updating the driver is the first remediation, not the last. Note the
+> AUR page's displayed version string is stale `-git` metadata; what
+> installs is the current upstream HEAD at build time.
 
 ### Common out-of-tree drivers
 
@@ -160,7 +182,9 @@ remediation below still applies.
 
 - If your board genuinely has **NCT6687-R** (rare on AM4 400-series),
   blacklist `nct6775` instead.
-- Bazzite ships the `nct6687` blacklist by default for this reason.
+- Bazzite #4498 *requests* a default `nct6687` blacklist but, as of
+  writing, does not ship one — do not assume your distro handles this
+  for you.
 
 The Diagnostics page surfaces this as a CRITICAL `module_collisions`
 banner when both modules are loaded simultaneously, and discourages PWM
@@ -202,9 +226,15 @@ out-of-tree `it87-dkms-git` driver.
 
 If only N of the expected fan headers appear in `sensors`, the
 diagnostics page reports a dual-chip enumeration gap. The standard
-remediation (DEC-101) applies here too:
+remediation (DEC-101, re-ordered by DEC-144 now that current driver
+builds default MMIO on) applies here too:
 
 ```bash
+# 1. Update the driver — 2026-03+ snapshots default mmio=on and merge
+#    the ISA-bridge MMIO path that fixes secondary-chip enumeration:
+yay -S it87-dkms-git
+
+# 2. Only on older (pre-2026-03) builds:
 sudo tee /etc/modprobe.d/it87.conf <<<'options it87 mmio=on'
 ```
 
@@ -272,12 +302,19 @@ Most AM4 500-series AORUS boards (X570 AORUS MASTER / PRO / PRO WIFI
 IT8688E. Both require the out-of-tree `it87-dkms-git` driver.
 
 The well-documented dual-chip enumeration trap applies here too: if
-only N of the expected headers appear in `sensors`, set
-`options it87 mmio=on` in `/etc/modprobe.d/it87.conf`, then reboot.
-Do not run `sensors-detect` after boot (frankcrawford/it87 issue #70).
+only N of the expected headers appear in `sensors`, update
+`it87-dkms-git` first (2026-03+ builds default `mmio=on` and merge the
+ISA-bridge MMIO path); on older builds set `options it87 mmio=on` in
+`/etc/modprobe.d/it87.conf`. Then reboot. Do not run `sensors-detect`
+after boot (frankcrawford/it87 issue #70).
 
-X570 AORUS PRO sleep/resume can re-trigger the trap
-(frankcrawford/it87 issue #99) — the same `mmio=on` fix resolves it.
+X570-generation boards can also lose **IT8792E fan control after
+suspend/resume** (frankcrawford/it87 issue #99) — still reproducible
+on current driver builds as of 2026-05, with **no confirmed upstream
+fix** (an earlier revision of this guide claimed `mmio=on` resolves
+it; the issue thread now contradicts that). The daemon re-asserts
+`pwm_enable` after resume; if headers stay stuck, a reboot is the
+reliable reset.
 
 ### ASRock (mostly NCT6798D)
 
@@ -325,17 +362,22 @@ Most AM5 600-series Gigabyte AORUS boards ship the **IT8689E** (X670E
 AORUS MASTER, X670E AORUS PRO X) or the **IT8696E** (newer X670 /
 B650 boards). Many pair with a secondary **IT87952E**.
 
-**Critical: IT8689E Rev 1 dead end.** The IT8689E silicon shipped on
-X670E AORUS MASTER (and some other AM5 600-series Gigabyte boards)
-silently ACCEPTS PWM writes with zero effect on fan speed. The chip
-cannot be controlled from Linux on this hardware revision. There is
-no software workaround as of 2026-Q2; frankcrawford/it87 issue #96
-tracks the dead end. If your board is affected, options are:
+**Critical: IT8689E Rev 1 — EC override, BIOS flat-curve fix.** The
+IT8689E silicon shipped on X670E AORUS MASTER (and some other AM5
+600-series Gigabyte boards) silently ACCEPTS PWM writes with zero
+effect on fan speed **while a normal BIOS fan curve is active** — the
+EC's vector-curve control overrides the chip's manual-mode register.
+This was long believed to be a hard dead end; the issue #96 thread
+(2026-03) and the driver README now document a working fix:
+**configure a FLAT 7-point BIOS curve (PWM 40/40/40/40/40/40 with the
+final point at 100)**. With the EC curve degenerate, driver manual
+control works again. If the flat-curve workaround is not viable on
+your BIOS revision, fallback options remain:
 
 - Use a different fan header on the secondary IT87952E if your board
   has one.
 - Attach affected fans to an external controller (OpenFanController).
-- Hold fans at a fixed speed via a degenerate BIOS fan curve.
+- Hold fans at a fixed speed via the BIOS curve itself.
 
 IT8689E Rev 2 (B650 Eagle AX, etc.) is OK as long as a degenerate
 fan curve disables the EC's own evaluation.
@@ -405,10 +447,13 @@ The notable additions specific to this generation:
 ### MSI nct6687d auto-allowlist
 
 The `nct6687d` driver (v2.x) ships an **auto-enabled board allowlist
-of 33 AM5 800-series MSI boards** across B840 / B850 / X870 / Z890
+of AM5 800-series MSI boards** across B840 / B850 / X870 / Z890
 chipsets. On listed boards, the `msi_alt1` register layout is selected
-automatically without a module parameter. The source of truth is
-`nct6687.c::msi_alt1_dmi_table` in the Fred78290/nct6687d repository.
+automatically without a module parameter. The list keeps growing
+(B850 GAMING PRO WIFI6E and MAG B860M Mortar WiFi were added in
+2026-05/06) — the source of truth is `nct6687.c::msi_alt1_dmi_table`
+in the Fred78290/nct6687d repository; check it rather than trusting
+any point-in-time count.
 
 If your MSI X870 / B850 board is NOT on the allowlist and system fans
 don't respond to PWM writes, manually enable:
@@ -434,10 +479,13 @@ applies.
 
 X870 AORUS STEALTH ICE pairs the primary **IT8696E** (controllable
 via `it87-dkms-git`) with a SECONDARY **IT8883** chip that has NO
-Linux driver as of 2026-Q2 (frankcrawford/it87 issue #81). Fans wired
-through IT8883 are uncontrollable from Linux. Use only the
-primary-chip fan headers or move IT8883-attached fans to an external
-controller.
+Linux driver as of 2026-06 (frankcrawford/it87 issue #81, still open;
+dmesg on this board shows DEVIDs `0x8696` + `0x8883`). Fans wired
+through IT8883 — including the water-pump header — are uncontrollable
+from Linux. On current (2026-04+) driver builds the primary IT8696E
+headers, including ones that previously refused control on this
+board, are fully controllable. Use only the primary-chip fan headers
+or move IT8883-attached fans to an external controller.
 
 The daemon does NOT enroll this board in the dual-chip warning table
 (it would always fire a permanent "missing chip" banner with no
@@ -688,18 +736,27 @@ the correct driver loaded.
 
 #### MMIO requirement
 
-The out-of-tree `it87` driver enables MMIO (Memory-Mapped I/O) by default,
-which is necessary for fan control on newer Gigabyte motherboards. If you
-are using an older version of the driver, ensure MMIO is enabled. Do not
-disable it unless you have a specific reason.
+The out-of-tree `it87` driver enables MMIO (Memory-Mapped I/O) by default
+since the 2026-03 builds ([PR #95](https://github.com/frankcrawford/it87/pull/95);
+`mmio=off` is the opt-out), which is necessary for fan control on newer
+Gigabyte motherboards. If you are using an older version of the driver,
+ensure MMIO is enabled with `options it87 mmio=on`. Do not disable it
+unless you have a specific reason — the one documented reason is the
+**IT8665E** (X399-era, e.g. ASUS ROG Zenith Extreme): the MMIO default
+breaks its PWM writes
+([issue #106](https://github.com/frankcrawford/it87/issues/106)), and
+`options it87 mmio=off` is the remediation there.
 
 #### IT8689E manual control limitation
 
-Some Gigabyte boards with IT8689E chips do not allow manual PWM control
-at all, even though fan RPMs are visible. This is a known issue documented
-by the `it87` project maintainer.
+Some Gigabyte boards with IT8689E chips (Rev 1 silicon) do not respond to
+manual PWM control while a normal BIOS fan curve is active, even though
+fan RPMs are visible — the EC's vector-curve control overrides the chip's
+manual-mode register. This is documented by the `it87` project maintainer
+(issue #96 and the driver README).
 
-For affected boards, a BIOS flat-curve workaround is documented:
+For affected boards, the BIOS flat-curve workaround **restores driver
+manual control**:
 
 | Point | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -753,9 +810,10 @@ Reference: https://github.com/frankcrawford/it87
 
 - **Gigabyte X670E Aorus Master (IT8689E rev 1):** PWM writes have no
   effect on some systems even though Windows tools can control the fans.
-  This is the IT8689E manual-control limitation documented in the
-  upstream `TODOS` — a different chip and different problem from the
-  X870E AORUS MASTER below.
+  This is the IT8689E manual-control limitation — a different chip and
+  different problem from the X870E AORUS MASTER below. As of 2026-03 the
+  upstream thread documents the BIOS flat-curve workaround (7 points:
+  PWM 40×6, final 100) as restoring driver manual control.
   Reference: https://github.com/frankcrawford/it87/issues/96
 
 - **Gigabyte X870E AORUS MASTER (IT8696E rev 0 + IT87952E):** PWM fan
@@ -765,18 +823,22 @@ Reference: https://github.com/frankcrawford/it87
   is IT8696E rev 0 (primary) plus IT87952E (secondary), both
   controllable. The board exposes **8 writable PWM headers total**:
   5 on IT8696E (CPU_FAN, SYS_FAN1, SYS_FAN2, SYS_FAN3, CPU_OPT) and
-  3 on IT87952E (likely SYS_FAN4, SYS_FAN5_PUMP, SYS_FAN6_PUMP — the
-  pwm-to-silkscreen mapping on the secondary chip is unverified;
-  the GUI marks these labels with `(unverified)` until silkscreen
-  tracing confirms).
+  3 on IT87952E (community-reported as SYS_FAN5_PUMP, SYS_FAN6_PUMP,
+  SYS_FAN4 in that pwm order — frankcrawford/it87
+  [issue #103](https://github.com/frankcrawford/it87/issues/103),
+  single-owner report; the GUI marks these labels with `(unverified)`
+  until silkscreen tracing confirms).
 
-  **Secondary chip enumeration may need `mmio=on`.** On some boots
-  only the IT8696E primary chip appears (5 of 8 headers). When this
-  happens, create `/etc/modprobe.d/it87.conf` with
-  `options it87 mmio=on`, reboot, and verify both chips are listed
-  under `/sys/class/hwmon/`. Avoid running `sensors-detect` afterwards
-  — it can disturb the SuperIO state and cause the secondary chip to
-  fail enumeration on the next reboot. See frankcrawford/it87 issue
+  **Secondary chip enumeration:** on some boots only the IT8696E
+  primary chip appears (5 of 8 headers). When this happens, update
+  `it87-dkms-git` first — 2026-03+ builds default `mmio=on` and merge
+  the ISA-bridge MMIO path (PR #95/#102) that fixes secondary-chip
+  enumeration *and control*. On older builds create
+  `/etc/modprobe.d/it87.conf` with `options it87 mmio=on`. Reboot and
+  verify both chips are listed under `/sys/class/hwmon/`. Avoid
+  running `sensors-detect` afterwards — it can disturb the SuperIO
+  state and cause the secondary chip to fail enumeration on the next
+  reboot. See frankcrawford/it87 issue
   [#70](https://github.com/frankcrawford/it87/issues/70) and DEC-101
   for the diagnostics surfaced by the GUI.
 
@@ -784,8 +846,10 @@ Reference: https://github.com/frankcrawford/it87
   daemon's `pwm_enable` watchdog (v1.3.0+) handles this transparently.
   To eliminate the reclaim entirely set Smart Fan 6 to
   *Manual / Full Speed* for every header in BIOS. No upstream
-  `lm_sensors` config exists for this board yet (as of 2026-04); the
-  GUI ships a fallback label table (see GUI v1.8.0).
+  `lm_sensors` config exists for this board (the upstream `configs/`
+  tree is unchanged since 2023); the GUI ships a fallback label table
+  aligned with the issue #103 community mapping (GUI v1.8.0,
+  re-aligned v1.32.0).
 
 - **Gigabyte B550M DS3H:** `gigabyte_wmi` driver provides temp1-temp6
   with no semantic labels.
@@ -899,9 +963,15 @@ limitations.
 
 3. **Fan control headers present but writes have no effect:**
    - Run the PWM verification test from the diagnostics page.
+   - Update the out-of-tree driver first — `-git` packages rebuild the
+     current upstream snapshot, and many historical write failures are
+     fixed there.
    - Check for module conflicts (two drivers claiming the same device).
    - For MSI X870/B850: try `msi_fan_brute_force=1`.
-   - For Gigabyte IT8689E: try the BIOS flat-curve workaround.
+   - For Gigabyte IT8689E: apply the BIOS flat-curve workaround
+     (restores driver manual control on Rev 1 silicon).
+   - For IT8665E (X399-era): current builds break PWM writes with MMIO
+     on — set `options it87 mmio=off` (frankcrawford/it87 issue #106).
    - For ASRock: try nct6686d or asrock-nct6683 alternative drivers.
 
 4. **Fan control works for some headers but not others:**
@@ -945,6 +1015,17 @@ for the full table and mitigation guidance.
 
 ### Out-of-tree drivers
 - frankcrawford/it87: https://github.com/frankcrawford/it87
+  - PR #95 (MMIO default on, 2026-03): https://github.com/frankcrawford/it87/pull/95
+  - PR #102 (ISA-bridge MMIO/H2RAM merge, 2026-04): https://github.com/frankcrawford/it87/pull/102
+  - issue #64 (secondary-chip fan control, closed 2025-12): https://github.com/frankcrawford/it87/issues/64
+  - issue #89 (X870E AORUS ELITE X3D dual-chip report): https://github.com/frankcrawford/it87/issues/89
+  - issue #92 (B650 GAMING X AX V2 ACPI bind failure): https://github.com/frankcrawford/it87/issues/92
+  - issue #94 (DKMS module-path quirk, CachyOS-LTS/Tumbleweed): https://github.com/frankcrawford/it87/issues/94
+  - issue #96 (IT8689E Rev 1 + BIOS flat-curve fix): https://github.com/frankcrawford/it87/issues/96
+  - issue #99 (IT8792 suspend/resume, open): https://github.com/frankcrawford/it87/issues/99
+  - issue #103 (X870E AORUS MASTER label mapping): https://github.com/frankcrawford/it87/issues/103
+  - issue #106 (IT8665E mmio-default regression): https://github.com/frankcrawford/it87/issues/106
+  - issue #108 (`-Werror=unused-function` build failure): https://github.com/frankcrawford/it87/issues/108
 - Fred78290/nct6687d: https://github.com/Fred78290/nct6687d
 - s25g5d4/nct6686d: https://github.com/s25g5d4/nct6686d
 - branchmispredictor/asrock-nct6683: https://github.com/branchmispredictor/asrock-nct6683
