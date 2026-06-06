@@ -16,14 +16,22 @@ It should not become a dumping ground for operational controls that belong in Co
 ## Page sections
 
 ### A. Application
-Suggested settings:
-- default startup page
+Implemented settings:
+- default startup page — honoured on launch when "restore last selected page" is off (F3)
 - restore last selected page
-- start in demo mode when daemon unavailable
-- remember last active profile locally
-- chart default time range
-- chart refresh behaviour preferences
-- log verbosity for GUI logging if applicable
+- start in demo mode when daemon unavailable — **launch-only**: the daemon is
+  probed once at startup (`GET /status`, ~1.5 s) and demo mode is entered if it
+  is unreachable; a mid-session disconnect keeps the normal reconnect path (DEC-139)
+- chart default time range — labels are driven by the chart's own `TIME_RANGES`,
+  so the Settings label always matches what the dashboard opens (F6)
+- GPU zero-RPM warning toggle
+- Fan Wizard spin-down seconds
+- daemon startup delay (pushed to the daemon on save and on import)
+- auto-hide iGPU sensors / auto-hide unused fan headers (applied live)
+- configurable data directories (profiles / themes / export)
+
+*Removed:* "remember last active profile" — the daemon owns active-profile
+persistence (`daemon_state.json`), so a GUI-side toggle controlled nothing (DEC-138).
 
 ### B. Themes
 V1 requirements:
@@ -120,21 +128,44 @@ These belong to the daemon runtime/config:
 - separate GUI settings from daemon settings visually
 
 ## Validation rules
-- port fields must validate as ports
 - interval fields must validate against daemon-reported ranges where available
 - importing malformed config/theme files must fail clearly with recoverable messaging
+- **`AppSettings.from_dict` is the trust boundary (DEC-137):** it never raises.
+  Every field is type-checked and coerced — wrong types fall back to the field
+  default, numeric fields are clamped to their widget ranges (e.g. startup delay
+  0–30 s, wizard spin-down 5–12 s), `card_size` is an enum, `window_geometry`
+  must be four sane ints, and `series_colors` keeps only valid hex entries. A
+  non-dict payload yields all-defaults rather than a crash on the next launch.
+- **Theme tokens are hex-only (DEC-142):** colour tokens (and every
+  `chart_series` entry) must match `#RGB`/`#RGBA`/`#RRGGBB`/`#RRGGBBAA`;
+  `base_font_size_pt` is clamped to 7–16 and `font_family` coerced to a string.
+  Loading an on-disk theme drops invalid tokens to the default; *importing* a
+  theme rejects the whole theme if any colour is invalid (skip-and-warn).
 
 ## Persistence expectations
 - settings changes should save predictably
 - write-through to daemon settings should show success/failure state
-- imported settings should offer preview/confirmation if destructive
+- **Import auto-backs-up first:** the current `app_settings.json` is copied to
+  `config/backups/` before an import is applied.
+- **Export is portable (DEC-140):** the Settings → Export file carries only
+  shareable preferences plus all profiles/themes. Machine/session state and
+  hardware-id-keyed maps (`window_geometry`, `last_page_index`, data-dir
+  overrides, `series_colors`, `card_sensor_bindings`, `controls_card_sizes`,
+  `diagnostics_hidden_sensor_ids`, `acknowledged_kernel_warnings`) are excluded;
+  `fan_aliases` and `hidden_chart_series` are kept portable. The full snapshot
+  still lives in the diagnostics support bundle.
+- **Import merges, preserving local machine state:** imported values overlay the
+  current settings, and machine-specific keys are stripped from the incoming
+  data, so importing a shared (or legacy full) file never moves your window or
+  wipes your local data-dir overrides.
 
 ## Theme import/export format
 Use a simple, explicit text format such as JSON or TOML for V1.
 It should include:
 - theme name
 - version
-- token map
+- token map (colour tokens are hex strings — `#RGB`/`#RGBA`/`#RRGGBB`/`#RRGGBBAA`;
+  `base_font_size_pt` is an int clamped to 7–16; see Validation rules)
 - optional metadata such as author/description
 
 ## Nice-to-have later

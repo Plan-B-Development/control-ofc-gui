@@ -40,6 +40,41 @@ logging.basicConfig(
 
 log = logging.getLogger(__name__)
 
+
+def _resolve_demo_mode(cli_demo: bool, demo_on_disconnect: bool, daemon_reachable: bool) -> bool:
+    """Decide whether to start in demo mode (DEC-139).
+
+    Demo is forced by ``--demo``; otherwise it is the fallback when the user
+    enabled "start in demo mode when daemon is unavailable" and the daemon did
+    not answer a launch-time probe.
+    """
+    if cli_demo:
+        return True
+    return demo_on_disconnect and not daemon_reachable
+
+
+def _probe_daemon(socket_path: str, timeout: float = 1.5) -> bool:
+    """Return True if the daemon answers a cheap GET /status within *timeout*.
+
+    A connection failure (socket missing/refused) means the daemon is not
+    running → not reachable. A timeout or server error means it is present but
+    slow; we treat that as reachable so a sluggish daemon never silently drops
+    the user into demo mode and disables real control.
+    """
+    from control_ofc.api.errors import DaemonError, DaemonUnavailable
+
+    client = DaemonClient(socket_path=socket_path, timeout=timeout)
+    try:
+        client.status()
+        return True
+    except DaemonUnavailable:
+        return False
+    except DaemonError:
+        return True
+    finally:
+        client.close()
+
+
 # Wired up in main() once the diagnostics service exists, so the last-resort
 # exception hook can drop a breadcrumb into the support bundle. Stays None in
 # tests (which never call main()) and until diagnostics is constructed.
@@ -168,7 +203,14 @@ def main() -> None:
     args = parser.parse_args()
 
     socket_path = args.socket
-    demo_mode = args.demo
+    # DEC-139: when the user opted into demo-on-disconnect, probe the daemon
+    # once at launch and fall back to demo mode if it is unreachable.
+    daemon_reachable = True
+    if not args.demo and s.demo_on_disconnect:
+        daemon_reachable = _probe_daemon(socket_path)
+        if not daemon_reachable:
+            log.info("Daemon unreachable at startup — starting in demo mode (demo_on_disconnect)")
+    demo_mode = _resolve_demo_mode(args.demo, s.demo_on_disconnect, daemon_reachable)
 
     # Core services
     state = AppState()

@@ -10,10 +10,9 @@ The Settings page manages application preferences, visual themes, and backup/res
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Default startup page** | Dashboard | Which page the application opens to on launch |
+| **Default startup page** | Dashboard | Which page the application opens to on launch, used when "Restore last selected page" is off |
 | **Restore last selected page on startup** | On | Instead of using the default, return to whichever page you were on when you last closed the app |
-| **Start in demo mode when daemon is unavailable** | Off | Automatically enter demo mode with synthetic data if the daemon cannot be reached at startup |
-| **Remember last active profile** | On | Restore the previously active profile on next launch |
+| **Start in demo mode when daemon is unavailable** | Off | At startup the GUI probes the daemon; if it cannot be reached (and this is on) the GUI starts in demo mode with synthetic data. A slow-to-respond daemon is treated as present. Applies at launch only — a mid-session disconnect uses the normal reconnect path |
 
 ### Display
 
@@ -89,24 +88,26 @@ This tab provides full backup and restore of all application state.
 
 ### What Gets Exported
 
-A single JSON file containing:
+A single **portable** JSON file with your shareable configuration:
 
-- All application settings (startup, display, behaviour, data directories)
-- Fan aliases
-- Chart preferences (hidden series, sensor bindings, colours)
+- Application preferences (startup, display, behaviour)
+- Fan aliases and hidden chart series
 - All saved profiles
 - All custom themes
+
+Machine-specific state is deliberately **excluded** so the file is safe to share or move between machines: window geometry, last page, data-directory overrides, per-series chart colours, card/sensor bindings, hidden diagnostics sensors, and dismissed kernel warnings. A full snapshot of everything (for same-machine debugging) lives in the Diagnostics **support bundle** instead.
 
 ### Import Behaviour
 
 When importing:
 
-1. A timestamped **backup** of your current settings is created automatically
-2. Settings are applied and the UI refreshes
-3. Profiles from the export are written to disk (you are asked before overwriting existing ones)
-4. Custom themes from the export are copied to your themes directory
+1. The file is validated; a malformed or unsupported file is rejected with a clear message and nothing changes
+2. A timestamped **backup** of your current settings is created automatically
+3. Imported preferences are **merged** onto your current settings — your local machine-specific state (window size, data-directory overrides) is preserved, and directory overrides plus the daemon startup delay are applied immediately
+4. Profiles from the export are written to disk (you are asked before overwriting existing ones); invalid profiles are skipped and counted
+5. Custom themes are copied to your themes directory; a theme containing an invalid colour is skipped
 
-This makes it safe to experiment — you can always restore from the auto-backup.
+This makes it safe to experiment — you can always restore from the auto-backup. Some preferences (theme, chart range, aliases) take effect on the next launch.
 
 ---
 

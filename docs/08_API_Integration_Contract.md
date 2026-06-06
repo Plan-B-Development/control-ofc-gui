@@ -639,4 +639,8 @@ Profile *storage* remains GUI-owned — the daemon loads profiles from configure
 ## Config management
 
 - `POST /config/profile-search-dirs` — add directories to the daemon's profile search path (persisted to `runtime.toml` per ADR-002)
-- `POST /config/startup-delay` — set the daemon startup delay in seconds (persisted to `runtime.toml`, takes effect on next restart)
+- `POST /config/startup-delay` — set the daemon startup delay in seconds (persisted to `runtime.toml`, takes effect on next restart). The GUI pushes this best-effort on **both** Settings → Save and Settings → Import; a `DaemonError` is logged and surfaced in the save status, never fatal (Settings page wires the daemon client as of the 2026-06 audit, F2/F11).
+
+## GUI startup behaviour
+
+- **Demo-on-disconnect (DEC-139):** when the user enables "start in demo mode when daemon is unavailable", `main.py` probes the daemon once at launch with `GET /status` (~1.5 s timeout) on a throwaway client. Only `DaemonUnavailable` (socket missing/refused) triggers the demo fallback; a timeout or server error is treated as "present but slow" so a sluggish daemon never silently disables real control. This is launch-only — a mid-session disconnect uses the normal READ_ONLY/reconnect path.

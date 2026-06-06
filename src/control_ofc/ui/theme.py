@@ -227,13 +227,16 @@ def default_dark_theme() -> ThemeTokens:
 
 
 def load_theme(path: Path) -> ThemeTokens:
-    """Load a theme from JSON, migrating old token names if present."""
+    """Load a theme from JSON, migrating old token names and validating values.
+
+    Invalid colour tokens, out-of-range font sizes, and bad ``font_family``
+    values are dropped/clamped to the dataclass default so a hand-edited or
+    corrupt on-disk theme can never break the stylesheet (DEC-142).
+    """
     data = json.loads(path.read_text())
     migrated = _migrate_tokens(data)
     tokens = ThemeTokens()
-    for k, v in migrated.items():
-        if hasattr(tokens, k):
-            setattr(tokens, k, v)
+    _apply_token_dict(tokens, migrated, strict=False)
     return tokens
 
 
@@ -252,6 +255,66 @@ def _migrate_tokens(data: dict) -> dict:
     if result.get("version", 1) < 2:
         result["version"] = 2
     return result
+
+
+# Theme string fields that are NOT colour tokens (skip hex validation).
+_NON_COLOR_STR_FIELDS = frozenset({"name", "font_family"})
+_FONT_SIZE_MIN = 7
+_FONT_SIZE_MAX = 16
+
+
+def _coerce_base_font_size(value: object, default: int) -> int:
+    """Clamp a base font size into the supported range; non-ints fall back."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default
+    return max(_FONT_SIZE_MIN, min(_FONT_SIZE_MAX, value))
+
+
+def _apply_token_dict(tokens: ThemeTokens, data: dict, *, strict: bool) -> None:
+    """Apply a (migrated) token dict onto *tokens*, validating every value.
+
+    Colour tokens — and each ``chart_series`` entry — must pass
+    :func:`control_ofc.colors.is_valid_color`; ``base_font_size_pt`` is clamped
+    to 7-16 and ``name``/``font_family`` coerced to strings. With
+    ``strict=True`` (theme *import*) the first invalid colour raises
+    ``ValueError`` so the caller skips the whole theme; with ``strict=False``
+    (loading an on-disk theme) the offending token is dropped and the dataclass
+    default kept, so a hand-edited or corrupt file can never break the
+    stylesheet (DEC-142).
+    """
+    from control_ofc.colors import is_valid_color
+
+    for key, value in data.items():
+        if not hasattr(tokens, key):
+            continue
+        if key == "version":
+            if isinstance(value, int) and not isinstance(value, bool):
+                tokens.version = value
+            continue
+        if key == "base_font_size_pt":
+            tokens.base_font_size_pt = _coerce_base_font_size(value, tokens.base_font_size_pt)
+            continue
+        if key in _NON_COLOR_STR_FIELDS:
+            if isinstance(value, str):
+                setattr(tokens, key, value[:256])
+            continue
+        if key == "chart_series":
+            if not isinstance(value, list):
+                if strict:
+                    raise ValueError("chart_series must be a list of colours")
+                continue
+            cleaned = [c for c in value if is_valid_color(c)]
+            if strict and len(cleaned) != len(value):
+                raise ValueError("chart_series contains an invalid colour")
+            if cleaned:
+                tokens.chart_series = cleaned
+            continue
+        # Everything else is a colour token.
+        if is_valid_color(value):
+            setattr(tokens, key, value)
+        elif strict:
+            raise ValueError(f"invalid colour for token {key!r}: {value!r}")
+        # non-strict: drop the invalid colour, keep the default
 
 
 def save_theme(tokens: ThemeTokens, path: Path) -> None:

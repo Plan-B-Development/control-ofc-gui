@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.31.0] — 2026-06-06
 
 ### Fixed
 - **Fresh installs no longer start with every temperature series hidden.**
@@ -19,6 +19,45 @@
   applies `chart_default_range_index` to the chart at startup
   (`TimelineChart.set_range_index`, out-of-range values ignored).
   Regression-tested.
+- **Settings import can no longer brick the app.** A crafted or corrupt import
+  (e.g. a `window_geometry` of strings) used to be written straight to disk and
+  then crash `setGeometry` on every subsequent launch. `AppSettings.from_dict`
+  is now a validating trust boundary: it never raises, type-checks and clamps
+  every field, drops invalid `series_colors`, and falls back to defaults for
+  garbage — a bad file now degrades gracefully instead of locking you out (DEC-137).
+- **Malformed or hostile themes can no longer break the stylesheet.** Theme
+  colour tokens are validated as hex (`#RGB`/`#RGBA`/`#RRGGBB`/`#RRGGBBAA`) and
+  `base_font_size_pt` is clamped on both load and import. An on-disk theme with
+  a bad token loads with that token defaulted; a theme *import* containing any
+  invalid colour is skipped with a clear message (DEC-142).
+- **"Default startup page" is now honoured** when "restore last selected page"
+  is off — previously it always opened the dashboard (DEC-141).
+- **"Chart default time range" labels now match the chart.** The Settings
+  dropdown is built from the chart's own range list, so the label you pick is
+  the range the dashboard actually opens (the two lists had silently drifted,
+  e.g. picking "30m" opened 15m) (DEC-141).
+- **iGPU auto-hide applies live.** Toggling "auto-hide iGPU sensors" now takes
+  effect on the next poll instead of only after a restart (DEC-141).
+- **Importing settings no longer wipes local machine state.** Import now merges
+  onto your current settings (preserving window geometry and data-dir overrides)
+  and applies directory overrides and the daemon startup delay immediately,
+  matching a manual Save (DEC-140).
+
+### Added
+- **"Start in demo mode when daemon is unavailable" now works.** At launch the
+  GUI probes the daemon (`GET /status`); if it is unreachable and the option is
+  enabled, the GUI starts in demo mode. A slow daemon (timeout) is treated as
+  present and never silently dropped to demo (DEC-139).
+- **Portable settings export.** Settings → Export now writes a shareable file —
+  preferences, fan aliases, and all profiles/themes — excluding machine-specific
+  state (window geometry, data-dir paths, sensor/card bindings, series colours,
+  dismissed warnings). The full snapshot remains available in the diagnostics
+  support bundle (DEC-140).
+
+### Removed
+- **"Remember last active profile" setting.** It controlled nothing — the daemon
+  owns active-profile persistence — so the dead toggle was removed. Older
+  settings files that still contain the key continue to load (DEC-138).
 
 ### Documentation
 - **2026-06-06 documentation & manual audit remediation.** README release

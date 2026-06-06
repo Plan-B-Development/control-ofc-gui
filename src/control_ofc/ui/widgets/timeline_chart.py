@@ -298,6 +298,13 @@ class TimelineChart(QWidget):
 
     def set_series_color(self, key: str, color: str) -> None:
         """Set a user colour override for a series and update the graph immediately."""
+        from control_ofc.colors import is_valid_color
+
+        # Defence-in-depth: never feed an unvalidated colour to mkPen. Stored
+        # overrides are already sanitised in AppSettings.from_dict and the UI
+        # picker yields hex, so this only guards a hostile/corrupt value.
+        if not is_valid_color(color):
+            return
         self._color_overrides[key] = color
         pen = pg.mkPen(color, width=1)
         if key in self._temp_items:
