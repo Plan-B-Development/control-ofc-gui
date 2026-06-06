@@ -495,6 +495,15 @@ class TimelineChart(QWidget):
         else:
             self._hover_label.hide()
 
+    def set_range_index(self, index: int) -> None:
+        """Apply a startup default time range (Settings → chart_default_range_index).
+
+        Out-of-range indices are ignored so a stale persisted value can never
+        break the chart.
+        """
+        if 0 <= index < len(TIME_RANGES):
+            self._range_combo.setCurrentIndex(index)
+
     def _on_range_changed(self, index: int) -> None:
         if 0 <= index < len(TIME_RANGES):
             self._time_range_s = TIME_RANGES[index][1]

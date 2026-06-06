@@ -1,6 +1,6 @@
 # 19 — Hardware Compatibility Guide
 
-**Last updated:** 2026-06-01 (v1.15.0 — added Intel platform mapping table, DEC-110)
+**Status:** Reference guide, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) records release-by-release changes and wins where this document disagrees with it.
 
 **See also:** `21_AMD_Motherboard_Fan_Control_Guide.md` for comprehensive
 vendor-by-vendor setup and troubleshooting guidance.

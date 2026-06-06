@@ -1,6 +1,6 @@
 # 12 — Implementation Plan and Module Structure
 
-**Last updated:** 2026-06-01 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour. 2026-06-01 audit pass removed references to telemetry features de-scoped in v0.72.0, dropped the unused `persistence/*` module placeholder, and corrected the packaging direction to AUR.)
+**Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 ## Purpose
 Give Claude a practical build sequence that reduces rework.
@@ -152,7 +152,7 @@ and owns its own schema-version handling. There is no separate
 4. Keep API models typed and explicit.
 5. Keep read-only mode and disconnected mode intentional.
 6. Defer tray work.
-7. Defer full theme editor.
+7. Defer full theme editor. *(Superseded — it shipped later: Settings → Themes per-token editor with contrast checking.)*
 8. Prefer a stable, boring architecture over cleverness.
 
 ## Charting recommendation

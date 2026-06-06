@@ -1,6 +1,6 @@
 # 01 — Product Overview
 
-**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 ## Product name
 **Control-OFC**  
@@ -38,7 +38,7 @@ The app should be portable enough to:
 ## Non-goals for V1
 1. No direct hardware access from the GUI.
 2. No tray-first workflow.
-3. No full theme editor UI.
+3. No full theme editor UI. *(Shipped later anyway — Settings → Themes now has a per-token editor with contrast checking.)*
 4. No multi-sensor blending in curve logic.
 5. No user-customisable dashboard layout.
 6. No GUI-side profile *roaming* across machines (per-host JSON only; daemon-side activation and persistence is supported via `POST /profile/activate`).
@@ -70,7 +70,7 @@ A flexible logical grouping such as:
 - Radiator
 - Case
 
-A fan may belong to one, many, or no groups.
+Shipped as **fan roles**: a fan may be assigned to at most one role, or none — never more than one (the member picker disables fans already assigned elsewhere).
 
 ### Profile
 A whole-of-system operating mode. Only one profile is active at a time. A profile includes:
@@ -107,7 +107,7 @@ The GUI consumes daemon/API endpoints for:
 The GUI must treat these as first-class sensor categories:
 - CPU
 - Motherboard
-- GPU (AMD only)
+- GPU (AMD discrete; Intel Arc discrete GPUs are monitored read-only)
 - Liquid
 - Ambient
 - Disk
@@ -147,10 +147,10 @@ Diagnostics must expose:
 - export support bundle
 
 ## User actions expected in diagnostics
-- reload config
-- reconnect controller
 - export support bundle
 - copy last errors
+- refresh hardware diagnostics
+- test PWM / GPU fan write effectiveness
 
 ## Visual tone
 The UI is a technical utility. Operation screens must feel:

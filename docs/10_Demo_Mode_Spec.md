@@ -1,6 +1,6 @@
 # 10 — Demo Mode Spec
 
-**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 ## Purpose
 Demo mode allows the GUI to be:
@@ -32,28 +32,24 @@ When demo mode is active:
 6. Avoid requiring the daemon or hardware.
 
 ## Demo data model
-Provide a believable synthetic environment including:
-- OpenFan present
-- 10 OpenFan channels
-- several hwmon headers
-- CPU / GPU / motherboard / disk / ambient / liquid sensors
+Provide a believable synthetic environment. As shipped, demo mode includes:
+- OpenFan present, with 8 named channels in use
+- two writable hwmon headers (ITE chip: CPU Fan, CPU OPT / Pump)
+- an AMD discrete GPU (RX 7900 XTX) with a controllable fan, plus an Intel Arc B580 with a read-only fan
+- CPU / GPU (AMD + Intel) / motherboard / NVMe disk sensors
 - built-in profiles
-- a few fan groups
 - realistic RPM and temperature motion over time
 
-## Suggested demo targets
-- Front Intake 1
-- Front Intake 2
-- Rear Exhaust
-- Top Exhaust 1
-- Top Exhaust 2
-- CPU Fan
-- CPU OPT / Pump
-- GPU Adjacent Intake
-- Radiator Push 1
-- Radiator Push 2
+## Demo targets (as shipped)
+- Front Intake 1 / Front Intake 2 (OpenFan)
+- Rear Exhaust, Top Exhaust 1 / Top Exhaust 2 (OpenFan)
+- GPU Adjacent Intake (OpenFan)
+- Radiator Push 1 / Radiator Push 2 (OpenFan)
+- CPU Fan, CPU OPT / Pump (hwmon)
+- RX 7900 XTX Fan (AMD GPU)
+- Arc B580 Fan (Intel GPU, read-only)
 
-## Suggested demo groups
+## Suggested demo roles
 - Intake
 - Exhaust
 - CPU

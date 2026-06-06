@@ -1,6 +1,6 @@
 # 21 — AMD Motherboard Fan Control Guide
 
-**Last updated:** 2026-04-28 (v1.8.0 — added X870E AORUS MASTER worked example)
+**Status:** Reference guide, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) records release-by-release changes and wins where this document disagrees with it.
 
 ## Purpose
 

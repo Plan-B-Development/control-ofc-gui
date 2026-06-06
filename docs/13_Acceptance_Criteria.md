@@ -1,6 +1,6 @@
 # 13 — Acceptance Criteria
 
-**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Status:** Historical V1 acceptance checklist. The checkboxes were never maintained as a live tracker — treat the items as the V1 requirement set, not a status report; release-by-release reality is tracked in [CHANGELOG.md](../CHANGELOG.md). Items below have been amended only where they contradicted shipped architecture (one-role-per-fan, card sizing, diagnostics actions).
 
 ## Global acceptance criteria
 
@@ -30,9 +30,9 @@
 - [ ] Curves edit in % output
 - [ ] Single-sensor selection works
 - [ ] User can create and manage fan groups
-- [ ] A fan can belong to multiple groups
+- [ ] A fan belongs to at most one fan role (member picker disables fans assigned elsewhere)
 - [ ] Manual override exists and has a clear Return to Automatic action
-- [ ] Curve and Fan Role cards use unified fixed sizing (220×160, from `card_metrics.CARD_WIDTH`/`CARD_HEIGHT`)
+- [ ] Curve and Fan Role cards derive their size from the theme text size and the Card size tier (Compact / Comfortable / Large — DEC-128), and can be drag-resized on a 20px snap grid with double-click-to-reset (DEC-129)
 - [ ] Cards use FlowLayout with responsive wrapping
 - [ ] Cards support drag-to-reorder with visual drop indicator
 - [ ] New cards append to end of section
@@ -70,7 +70,7 @@
 - [ ] Diagnostics shows sensor health
 - [ ] Diagnostics shows controller/device discovery
 - [ ] Diagnostics shows lease state with user-facing explanation
-- [ ] Diagnostics offers reload, reconnect, export support bundle, and copy last errors
+- [ ] Diagnostics offers hardware-diagnostics refresh, PWM/GPU write tests, export support bundle, and copy last errors
 - [ ] Export support bundle produces a structured output
 - [ ] Subsystem age_ms values include reason text and explanatory note (R34)
 - [ ] Daemon uptime displayed when available (R34)

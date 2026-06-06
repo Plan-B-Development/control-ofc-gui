@@ -1,6 +1,6 @@
 # 14 — Risks, Gaps, and Future Work
 
-**Last updated:** 2026-05-13 (DEC-108 audit follow-up wave folded in: lease worker thread, fsync-before-rename atomic writes, `set_pwm_all` coalescing, write-worker shutdown reorder, profile-path-traversal IPC tests, profile-search-dir registration log-level demotion. Prior 2026-05-07 wave: DEC-098 legacy-PWM gate + kernel_warnings, DEC-099 spawn_blocking + per-channel mutex, DEC-100 verify restore_failed + GPU reset records gui_active + lease retry-timer suspend + ZRP restore script + SSE admission retry. 2026-04-25 AORUS BIOS Smart Fan note retained; 2026-04-22 contract-mismatch sweep retained)
+**Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record (including which audit/remediation waves landed when) and wins where this document disagrees with it.
 
 ## Current Feature Status Matrix
 

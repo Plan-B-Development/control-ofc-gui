@@ -1,6 +1,6 @@
 # 07 — Diagnostics Spec
 
-**Last updated:** 2026-06-05 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 ## Purpose
 Diagnostics helps the user understand:

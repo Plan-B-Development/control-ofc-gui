@@ -55,14 +55,18 @@ Below the chart, a table lists every detected fan with:
 
 | Column | Meaning |
 |--------|---------|
-| **Name** | User-assigned alias (from Fan Wizard) or hardware ID |
-| **Source** | Where the fan is connected: OpenFan, hwmon, or AMD GPU |
+| **Label** | User-assigned alias (from the Fan Wizard) or hardware label/ID — double-click a row to rename |
+| **Source** | Where the fan is connected: OpenFan, hwmon, AMD GPU, or Intel GPU |
 | **RPM** | Hardware-measured rotational speed |
-| **PWM** | Last commanded speed percentage |
+| **PWM%** | Last commanded speed percentage |
 
 ## Profile Selector
 
-The dropdown in the top-right corner lists all available profiles. Selecting a profile here activates it immediately — the daemon begins evaluating curves and writing fan speeds.
+The dropdown in the top-right corner lists all available profiles. Pick one and click **Apply** to activate it. While the GUI is running, the GUI itself evaluates the active profile's curves and writes fan speeds through the daemon; the daemon's own profile engine only takes over once no GUI has been active for 30 seconds (for example, after you close the app). See [GUI vs Daemon Priority](profiles-and-curves.md#gui-vs-daemon-priority).
+
+## Thermal Safety States
+
+If the daemon engages its thermal failsafe (a CPU sensor at ≥ 105°C, or no CPU sensor found), the daemon forces OpenFan and writable hwmon fans itself and the GUI deliberately pauses its own fan control until the daemon reports normal again. A "Daemon thermal override active" warning appears (warning count and the Diagnostics event log) while this is happening. See ["Fans run at full speed regardless of profile"](hardware-troubleshooting.md#fans-run-at-full-speed-regardless-of-profile) for the full behaviour.
 
 ## Disconnected / No Hardware States
 

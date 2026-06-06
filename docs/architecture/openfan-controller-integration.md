@@ -4,7 +4,7 @@
 > daemon v0.2.0. The serial protocol described below is firmware-side and
 > has not changed since — the wire format, baud rate, command ABI, and
 > calibration sweep mechanics remain accurate. Daemon-side details (error
-> codes, endpoint paths, lock granularity) have evolved through v1.6.2;
+> codes, endpoint paths, lock granularity) have evolved through many releases since;
 > see `daemon.md` § Module Map and the daemon `CHANGELOG.md` for current
 > behaviour.
 

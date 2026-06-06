@@ -1,6 +1,6 @@
 # 02 — System Architecture and Boundaries
 
-**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 ## Top-level architecture
 
@@ -137,8 +137,8 @@ control_ofc/
       empty_state.py
       flow_layout.py          # Qt FlowLayout — responsive card wrapping
       draggable_flow.py       # DraggableFlowContainer — drag-to-reorder
-      curve_card.py            # 220×160 fixed-size curve card
-      control_card.py          # 260×180 fixed-size fan role card
+      curve_card.py            # curve card (theme-derived size, user-resizable — DEC-128/129)
+      control_card.py          # fan role card (theme-derived size, user-resizable — DEC-128/129)
   assets/
     ...
 ```

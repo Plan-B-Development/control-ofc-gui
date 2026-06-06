@@ -100,7 +100,9 @@ The left sidebar provides access to all four pages:
 | **Settings** | Application preferences, themes, backup/restore |
 | **Diagnostics** | Daemon health, sensor freshness, lease status, logs |
 
-An **About** button at the bottom of the sidebar shows version and credit information.
+An **About** button at the bottom of the sidebar shows version and credit information:
+
+![About dialog](../screenshots/auto/11_about_dialog.png)
 
 ---
 

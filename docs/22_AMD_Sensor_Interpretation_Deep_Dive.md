@@ -1,6 +1,6 @@
 # 22 — AMD Sensor Interpretation Deep Dive
 
-**Last updated:** 2026-04-22 (v1.5.0)
+**Status:** Reference guide, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) records release-by-release changes and wins where this document disagrees with it.
 
 ## Purpose
 
