@@ -8,7 +8,7 @@ This page covers the **Hardware Readiness** report on the Diagnostics → Troubl
 > - Click **Test PWM Control** to run a ~6-second write test against a selected motherboard header.
 > - Click **Test GPU Fan Control** to verify an AMD GPU fan actually responds (~6 s, no lease).
 
-For the chip and driver matrix, see [Hardware Compatibility](../docs/19_Hardware_Compatibility.md). For vendor-by-vendor BIOS notes, see the [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md). For sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
+If the report tells you a **driver is missing**, the step-by-step install walkthrough (prerequisites, DKMS, verify, rollback) is on the [Driver Setup](driver-setup.md) page. For the chip and driver matrix, see [Hardware Compatibility](../docs/19_Hardware_Compatibility.md). For vendor-by-vendor BIOS notes, see the [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md). For sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
 
 ## What the Hardware Readiness report shows
 
@@ -135,7 +135,7 @@ The GUI fills in the gap with a **per-board label resolver** that picks names in
 The fallback table currently covers the **Gigabyte X870E AORUS MASTER** as a worked example:
 
 - IT8696E primary chip — 5 verified silkscreen labels: `CPU_FAN`, `SYS_FAN1`, `SYS_FAN2`, `SYS_FAN3`, `CPU_OPT`
-- IT87952E secondary chip — 3 best-guess labels suffixed `(unverified)` until silkscreen tracing on a physical board confirms them
+- IT87952E secondary chip — 3 community-reported labels (`SYS_FAN5_PUMP`, `SYS_FAN6_PUMP`, `SYS_FAN4`, from [frankcrawford/it87 issue #103](https://github.com/frankcrawford/it87/issues/103)) suffixed `(unverified)` until silkscreen tracing on a physical board confirms them
 
 If you see an `(unverified)` suffix on a header label, treat the assignment as a hint, not a fact. The Fan Wizard is the safe way to confirm — it stops one fan at a time so you can see exactly which physical fan corresponds to which header.
 
@@ -155,17 +155,20 @@ Open Diagnostics → Troubleshooting. If the **dual-chip warning banner** at the
 
 This usually means one of:
 
-- The `it87` driver was loaded without `mmio=on`, and the secondary chip's DEVID read returned `0xFFFF` because the SuperIO bridge was left in configuration mode by an earlier process.
-- A previous run of `sensors-detect` poked the SuperIO bridge into a state the driver can't recover from until reboot.
+- The installed `it87` driver build is too old. Current (2026-03+) `it87-dkms-git` builds reach the secondary chip through an MMIO path that is on by default, and both enumerate **and** control it; older builds need the `mmio=on` module parameter set manually.
+- The SuperIO bridge was left in configuration mode by an earlier process (most commonly a previous run of `sensors-detect`), so the secondary chip's DEVID read returned `0xFFFF`.
 
-The fix:
+The fix, in order:
 
-1. Create `/etc/modprobe.d/it87.conf` containing: `options it87 mmio=on`
-2. Avoid running `sensors-detect` after boot.
-3. Reboot.
-4. Click **Refresh Hardware Diagnostics** — the chips table should now list both ITE chips and `total_headers` should match what the board physically exposes.
+1. Update the driver: reinstall `it87-dkms-git` (a `-git` package reinstall builds the current upstream snapshot — see [Driver Setup](driver-setup.md)).
+2. Only on older (pre-2026-03) builds: create `/etc/modprobe.d/it87.conf` containing `options it87 mmio=on`.
+3. Avoid running `sensors-detect` after boot.
+4. Reboot.
+5. Click **Refresh Hardware Diagnostics** — the chips table should now list both ITE chips and `total_headers` should match what the board physically exposes.
 
 If the warning persists after these steps, see the upstream tracker thread at [frankcrawford/it87 issue #70](https://github.com/frankcrawford/it87/issues/70) for board-specific notes.
+
+> One exception to "MMIO is good": on **IT8665E** boards (X399 era, e.g. ASUS ROG Zenith Extreme) the new MMIO default *breaks* PWM writes — set `options it87 mmio=off` there instead ([issue #106](https://github.com/frankcrawford/it87/issues/106)).
 
 ### "Fans run at full speed regardless of profile"
 
@@ -195,4 +198,4 @@ If you acknowledge a popup it is remembered in the `acknowledged_kernel_warnings
 
 ---
 
-Previous: [Profiles and Curves Reference](profiles-and-curves.md) | Back to [Table of Contents](README.md)
+Previous: [Profiles and Curves Reference](profiles-and-curves.md) | Next: [Driver Setup](driver-setup.md) | Back to [Table of Contents](README.md)

@@ -115,9 +115,11 @@ def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
                 "key": "dual_chip",
                 "label": "Super-I/O chip not enumerated",
                 "fix": (
-                    "Create /etc/modprobe.d/it87.conf with "
-                    "'options it87 mmio=on', avoid running sensors-detect after "
-                    "boot, then reboot (full steps in the alert above)."
+                    "Update it87-dkms-git first (2026-03+ builds enumerate and "
+                    "control the secondary chip by default); on older builds "
+                    "create /etc/modprobe.d/it87.conf with "
+                    "'options it87 mmio=on'. Avoid running sensors-detect "
+                    "after boot, then reboot (full steps in the alert above)."
                 ),
                 "doc_url": "https://github.com/frankcrawford/it87/issues/70",
                 "doc_title": "frankcrawford/it87 issue #70",
@@ -161,7 +163,9 @@ def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
     if diag.acpi_conflicts:
         has_it87 = any(c.conflicts_with_driver == "it87" for c in diag.acpi_conflicts)
         fix = (
-            "Add 'options it87 ignore_resource_conflict=1' to "
+            "Update it87-dkms-git first (2026-03+ builds sidestep most port "
+            "claims via MMIO); if the bind still fails, add "
+            "'options it87 ignore_resource_conflict=1' to "
             "/etc/modprobe.d/it87.conf (preferred for ITE chips), or add "
             "'acpi_enforce_resources=lax' to the kernel command line."
             if has_it87

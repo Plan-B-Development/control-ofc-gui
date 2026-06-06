@@ -76,7 +76,9 @@ class FallbackLabel:
 HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
     # ── Gigabyte X870E AORUS MASTER ────────────────────────────────
     # IT8696E primary chip. Mapping verified against the vendor user
-    # manual and the bakman2 / nathan818fr community references.
+    # manual and the bakman2 / nathan818fr community references;
+    # independently corroborated by the owner-posted sensors.d config in
+    # frankcrawford/it87 issue #103 (DEC-144).
     BoardKey(
         vendor="Gigabyte Technology Co., Ltd.",
         board_glob="X870E AORUS MASTER",
@@ -88,19 +90,20 @@ HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
         "pwm4": FallbackLabel("SYS_FAN3", verified=True),
         "pwm5": FallbackLabel("CPU_OPT", verified=True),
     },
-    # IT87952E secondary chip. Mapping is a best-guess extrapolation
-    # from the X570 AORUS MASTER's IT8792E pattern (SYS_FAN5_PUMP /
-    # SYS_FAN6_PUMP / SYS_FAN4) and from the X870E AORUS MASTER user
-    # manual's fan-header layout. Marked unverified — silkscreen
-    # tracing required to confirm pwmN→header.
+    # IT87952E secondary chip. DEC-144: aligned with the owner-reported
+    # mapping in frankcrawford/it87 issue #103 (sensors.d config posted
+    # 2026-04: fan1=SYS_FAN5_PUMP, fan2=SYS_FAN6_PUMP, fan3=SYS_FAN4 —
+    # the same ordering as the X570/X470/B550 IT8792E upstream configs).
+    # Still marked unverified: single-owner report, not independently
+    # confirmed; silkscreen tracing required to lock pwmN→header.
     BoardKey(
         vendor="Gigabyte Technology Co., Ltd.",
         board_glob="X870E AORUS MASTER",
         chip="it87952",
     ): {
-        "pwm1": FallbackLabel("SYS_FAN4", verified=False),
-        "pwm2": FallbackLabel("SYS_FAN5_PUMP", verified=False),
-        "pwm3": FallbackLabel("SYS_FAN6_PUMP", verified=False),
+        "pwm1": FallbackLabel("SYS_FAN5_PUMP", verified=False),
+        "pwm2": FallbackLabel("SYS_FAN6_PUMP", verified=False),
+        "pwm3": FallbackLabel("SYS_FAN4", verified=False),
     },
     # ── DEC-105: AM4 400-series boards with upstream lm-sensors configs ─
     # Each entry below is taken VERBATIM from a config file in

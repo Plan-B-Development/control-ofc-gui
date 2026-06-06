@@ -667,7 +667,8 @@ class HardwareDiagnosticsResult:
     # `skip_serializing_if = "Vec::is_empty"` on the wire). The
     # diagnostics page compares this against `hwmon.chips_detected[]
     # .chip_name` to render a missing-chip warning banner with the
-    # `mmio=on` modprobe.d remediation steps.
+    # dual-chip remediation steps (driver update first; `mmio=on`
+    # modprobe.d line on pre-2026-03 builds — DEC-144).
     expected_chips: list[str] = field(default_factory=list)
     # DEC-101: best-effort kernel-level chip detection (parsed from
     # /dev/kmsg by the daemon). Populated when the kernel ring buffer

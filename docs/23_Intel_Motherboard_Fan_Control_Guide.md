@@ -55,7 +55,7 @@ temperature path (which is always `coretemp` on Intel).
 | Intel Platform | Typical Boards | Common Linux Driver Path | Notes |
 |---|---|---|---|
 | **LGA1700 600-series** (Z690, B660, H670, H610) | ASUS ROG STRIX / TUF GAMING / PRIME Z690; MSI MAG/MEG/MPG Z690; Gigabyte Z690 AORUS; ASRock Z690 Steel Legend/Taichi/Extreme | `nct6775` (mainline) on NCT6798D / NCT6796D-E boards; `nct6683` then `nct6687d-dkms-git` on MSI Z690 (plain NCT6687D — auto-detect, no module parameter); `it87-dkms-git` on Gigabyte IT8689E + IT87952E dual-chip; `asus_ec_sensors` (mainline) for extra ASUS Z690 sensors | Strong mainline coverage. Z690 has the only LGA1700-era ASRock board with an upstream lm-sensors config (Z690 Extreme). |
-| **LGA1700 700-series** (Z790, B760, H770, H610 refresh) | ASUS ROG STRIX Z790-E/-H/-I; MSI MAG Z790 TOMAHAWK / MPG Z790 EDGE WIFI; Gigabyte Z790 AORUS ELITE/MASTER/XTREME; ASRock Z790 Steel Legend/Taichi | Same chip distribution as Z690. MSI Z790 ships plain NCT6687D — auto-detect. Gigabyte Z790 AORUS dual-chip (IT8689E + IT87952E) needs `mmio=on`. | Kernel `asus_ec_sensors` allowlist extends to ROG STRIX Z790-E/-H/-I WIFI II. |
+| **LGA1700 700-series** (Z790, B760, H770, H610 refresh) | ASUS ROG STRIX Z790-E/-H/-I; MSI MAG Z790 TOMAHAWK / MPG Z790 EDGE WIFI; Gigabyte Z790 AORUS ELITE/MASTER/XTREME; ASRock Z790 Steel Legend/Taichi | Same chip distribution as Z690. MSI Z790 ships plain NCT6687D — auto-detect. Gigabyte Z790 AORUS dual-chip (IT8689E + IT87952E): 2026-03+ `it87-dkms-git` builds work by default (older builds need `mmio=on`). | Kernel `asus_ec_sensors` allowlist extends to ROG STRIX Z790-E/-H/-I WIFI II. |
 | **LGA1851 800-series** (Z890, B860, H810) | MSI MAG/MEG/MPG Z890; ASUS ROG STRIX Z890; Gigabyte Z890 AORUS; ASRock Z890 Taichi/Steel Legend | MSI Z890 ships NCT6687DR — **requires `msi_alt1=1`** module parameter (auto-enabled in nct6687d v2.x for boards on the upstream allowlist). Gigabyte Z890 AORUS uses IT8696E + IT87952E (same as AMD X870E generation). | Newest platform — many specifics still settling. Treat upstream support as evolving. |
 
 The `coretemp` mainline driver covers CPU temperature reporting on all of
@@ -80,9 +80,10 @@ This provides `sensors`, `sensors-detect`, `pwmconfig`, and `fancontrol`.
 > **Heads-up — `sensors-detect`:** On Gigabyte dual-chip boards, do not run
 > `sensors-detect` after boot. It can leave the SuperIO bridge in
 > configuration mode and the secondary chip will silently fail to
-> enumerate on the next driver reload. The remedy is the
-> `options it87 mmio=on` modprobe.d line + a reboot. See
-> frankcrawford/it87 issue #70.
+> enumerate on the next driver reload. The remedy is updating
+> `it87-dkms-git` (2026-03+ builds default `mmio=on`) — or, on older
+> builds, the `options it87 mmio=on` modprobe.d line — plus a reboot.
+> See frankcrawford/it87 issue #70.
 
 ### DKMS for out-of-tree drivers
 
@@ -209,10 +210,16 @@ MASTER family. Boards in the daemon's `GIGABYTE_DUAL_CHIP_BOARDS` table
 that are LGA1700: Z690 AORUS PRO, Z790 AORUS ELITE AX, Z790 AORUS
 MASTER, Z790 AORUS XTREME.
 
-**Dual-chip remediation:**
+**Dual-chip remediation (in order):**
 
 ```bash
+# 1. Update the driver — 2026-03+ builds default mmio=on and merge the
+#    ISA-bridge MMIO path that fixes secondary-chip enumeration/control:
+yay -S it87-dkms-git
+
+# 2. Only on older (pre-2026-03) builds:
 echo 'options it87 mmio=on' | sudo tee /etc/modprobe.d/it87.conf
+
 sudo systemctl reboot
 # Then in the GUI: Diagnostics → Refresh Hardware Diagnostics
 ```
@@ -232,7 +239,8 @@ sudo systemctl reboot
 generation). Requires `it87-dkms-git`.
 
 **Secondary chip:** **IT87952E** on the higher-tier Z890 AORUS SKUs.
-Same dual-chip topology and same `mmio=on` remediation as Z690/Z790.
+Same dual-chip topology and same remediation as Z690/Z790 (driver
+update first; `mmio=on` only on pre-2026-03 builds).
 
 **BIOS tips:** SmartFan 6 "Full Speed" + degenerate-curve fallback.
 
@@ -313,8 +321,9 @@ plane uses `coretemp` exclusively.
    scope platform-specific guidance — if your CPU vendor is reported as
    empty, the platform-scoped quirks won't fire.
 3. **Look for the dual-chip warning** on Gigabyte LGA1700/LGA1851
-   AORUS boards — a missing IT87952E almost always points at the
-   `mmio=on` modparam.
+   AORUS boards — a missing IT87952E almost always points at an
+   outdated `it87-dkms-git` build (2026-03+ builds default `mmio=on`;
+   older builds need the modparam set explicitly).
 4. **Watch for BIOS reclaim:** the GUI's pwm_enable watchdog will
    detect EC firmware overwriting manual mode. The fix is BIOS-side:
    Full Speed (Gigabyte), Disable Smart Fan (MSI, ASRock), Q-Fan

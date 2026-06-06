@@ -87,8 +87,9 @@ A dedicated wizard page that walks first-time users through the complete hardwar
 **Why deferred:**
 - The existing Diagnostics → Troubleshooting → Hardware Readiness report already covers steps 1-6 in a single scrollable view with auto-populated guidance
 - Most users only need this once during initial setup
-- The knowledge base (17 chip entries, 12 vendor quirks) provides the same information inline
+- The knowledge base (`CHIP_GUIDANCE_DB` / `VENDOR_QUIRKS_DB` in `hwmon_guidance.py`) provides the same information inline
 - A wizard adds a new page, new service, and significant test surface for a one-time workflow
+- DEC-144 additionally ships a beginner-oriented, copy-paste driver setup walkthrough as a manual page ([`manual/driver-setup.md`](../manual/driver-setup.md)) — prerequisites, install, verify, rollback, with the standard remediation disclaimer. This satisfies the documentation-level share of the wizard's goals without the new UI surface, consistent with DEC-092's original reasoning.
 
 **When to build:**
 - If user feedback shows the diagnostics page is insufficient for first-time setup

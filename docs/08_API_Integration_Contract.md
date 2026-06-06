@@ -234,7 +234,9 @@ and the GUI parser defaults to `[]`:
   no `E` suffix (matches the `chip_name` format under
   `hwmon.chips_detected`). Empty for boards not in the lookup. The GUI
   uses `set(expected_chips) − set(detected_chip_names)` to drive a
-  Fans-tab warning banner with the `mmio=on` modprobe.d remediation.
+  Fans-tab warning banner with the dual-chip remediation (driver update
+  first; the `mmio=on` modprobe.d line only on pre-2026-03 driver
+  builds — DEC-144).
 - `kernel_detected_chips: list[str]` — best-effort kernel-level chip
   detection parsed from `/dev/kmsg` `it87:` lines. Populated when the
   kernel ring buffer is readable (Arch default

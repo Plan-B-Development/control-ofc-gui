@@ -236,13 +236,23 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "If 'Full Speed' is unavailable, configure a degenerate BIOS fan curve: "
             "set all 7 points to PWM 40 / Temp 0-90-90-90-90-90-90 with the final "
             "point at PWM 100 / Temp 90. This disables the EC's own curve evaluation.",
-            "Prefer driver-local 'ignore_resource_conflict=1' over the system-wide "
-            "'acpi_enforce_resources=lax' kernel parameter if ACPI conflicts arise.",
+            "ACPI conflicts: keep the driver current first — 2026-03+ builds default "
+            "MMIO on, which sidesteps the port claim on this chip generation "
+            "(frankcrawford/it87 issue #92). If the bind still fails, prefer the "
+            "driver-local 'ignore_resource_conflict=1' over the system-wide "
+            "'acpi_enforce_resources=lax' kernel parameter.",
         ],
         known_issues=[
-            "Out-of-tree driver required — not in mainline kernel.",
-            "IT8689E Rev 1 (e.g. X670E Aorus Master): PWM writes are silently accepted "
-            "but have zero effect on fan speed. No known software workaround.",
+            "Out-of-tree driver required for fan control. Mainline gains IT8689E "
+            "*sensor* support in kernel 7.1 (commit 66b8eaf, 2026-03-31) — no "
+            "released stable kernel ships it yet, and Gigabyte fan control still "
+            "needs the DKMS build.",
+            "IT8689E Rev 1 (e.g. X670E Aorus Master): the EC's vector-curve control "
+            "overrides the chip's manual-mode register, so PWM writes are silently "
+            "accepted with zero effect while a normal BIOS curve is active. Upstream "
+            "now documents a working fix (frankcrawford/it87 issue #96, 2026-03): a "
+            "flat 7-point BIOS curve (PWM 40/40/40/40/40/40 with the final point at "
+            "100) restores driver manual control.",
             "IT8689E Rev 2 (e.g. B650 Eagle AX): BIOS overrides PWM values unless "
             "'Full Speed' or degenerate fan curve is configured.",
             "Some Gigabyte boards have a separate fan-control chip — Linux can read "
@@ -287,19 +297,89 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         in_mainline=False,
         driver_package="it87-dkms-git (AUR)",
         driver_url="https://github.com/frankcrawford/it87",
-        notes="ITE IT8625E — requires out-of-tree driver.",
+        notes=(
+            "ITE IT8625E — requires out-of-tree driver. Mainlining is in "
+            "flight (lore v2 patch series) but not landed as of 2026-06 "
+            "(kernel 7.1-rc)."
+        ),
     ),
-    # DEC-106 (D4.A): IT8883 is a new ITE chip that ships on Gigabyte
-    # X870 AORUS STEALTH ICE as the secondary Super-I/O (alongside
-    # IT8696E). As of 2026-Q2 there is NO Linux driver — neither
-    # frankcrawford/it87 nor mainline `it87` enumerates it. This entry
-    # exists so the GUI can name the chip and explain the situation
-    # rather than rendering "Unknown chip" and leaving users guessing.
-    # Tracking: frankcrawford/it87 issue #81. Re-evaluate when a driver
-    # ships.
+    # DEC-144: IT87952E — the secondary Super-I/O on dual-chip Gigabyte
+    # AORUS boards (X870E/X670E/Z690/Z790/Z890 generations). Mainline
+    # gained the chip ID in kernel 6.4 (torvalds/linux d44cb4c), so the
+    # in-kernel driver can *enumerate* it — but secondary-chip fan
+    # control on these boards comes from the DKMS build's ISA-bridge
+    # MMIO/H2RAM access path (frankcrawford/it87 PR #102, issue #64).
+    ChipGuidance(
+        chip_prefix="it87952",
+        driver_name="it87",
+        in_mainline=True,
+        driver_package="linux (built-in); control needs it87-dkms-git (AUR)",
+        driver_url="https://github.com/frankcrawford/it87",
+        known_issues=[
+            "Mainline kernel ≥ 6.4 enumerates IT87952E (sensors/RPM), but on "
+            "dual-chip Gigabyte boards fan CONTROL of this secondary chip needs "
+            "the frankcrawford/it87 DKMS build — its ISA-bridge MMIO/H2RAM path "
+            "(merged 2026-04, PR #102) plus the smartfan-enable handling "
+            "(issue #64, closed 2025-12) made these headers writable.",
+            "Older DKMS builds (pre-2026-03) need 'options it87 mmio=on'; "
+            "current builds default MMIO on (PR #95).",
+        ],
+        notes=(
+            "ITE IT87952E — secondary chip on dual-IO Gigabyte AORUS boards. "
+            "Enumeration is mainline ≥ 6.4; reliable fan control comes from a "
+            "current it87-dkms-git build."
+        ),
+    ),
+    # DEC-144: IT8665E (X399/TR4-era boards, e.g. ASUS ROG Zenith Extreme)
+    # is NOT in the mainline it87 enum — it needs the DKMS build. Current
+    # master (2026-03+) defaults mmio=on, and that default BREAKS IT8665E
+    # PWM writes (maintainer-confirmed broken legacy FEAT_MMIO path,
+    # frankcrawford/it87 issue #106, open). `mmio=off` is the remediation.
+    ChipGuidance(
+        chip_prefix="it8665",
+        driver_name="it87",
+        in_mainline=False,
+        driver_package="it87-dkms-git (AUR)",
+        driver_url="https://github.com/frankcrawford/it87",
+        known_issues=[
+            "2026-03+ DKMS builds default mmio=on, which BREAKS IT8665E fan "
+            "control: PWM writes are mangled (writing 180 stores ~4). "
+            "Maintainer-confirmed regression in the legacy FEAT_MMIO path "
+            "(frankcrawford/it87 issue #106 — open, no fix merged as of "
+            "2026-06).",
+            "Remediation: disable MMIO for this chip — create "
+            "/etc/modprobe.d/it87.conf with 'options it87 mmio=off' and "
+            "reboot.",
+        ],
+        notes=(
+            "ITE IT8665E — X399/TR4-era boards (e.g. ASUS ROG Zenith "
+            "Extreme). Requires the out-of-tree driver; run it with "
+            "mmio=off on current builds (issue #106)."
+        ),
+    ),
+    # DEC-144: IT8622E is in the mainline it87 enum (verified against
+    # torvalds/linux drivers/hwmon/it87.c v6.17 `enum chips`) — no DKMS
+    # build required. Listed so boards with this chip resolve to honest
+    # "built-in" guidance instead of the generic it87 fallthrough.
+    ChipGuidance(
+        chip_prefix="it8622",
+        driver_name="it87",
+        in_mainline=True,
+        driver_package="linux (built-in)",
+        driver_url="https://www.kernel.org/doc/html/latest/hwmon/it87.html",
+        notes="ITE IT8622E — supported in the mainline kernel it87 driver.",
+    ),
+    # DEC-106 (D4.A), refreshed DEC-144: IT8883 is a new ITE chip that
+    # ships on Gigabyte X870 AORUS STEALTH ICE as the secondary Super-I/O
+    # (alongside IT8696E; dmesg shows DEVIDs 0x8696 + 0x8883). Re-checked
+    # 2026-06: still NO Linux driver — zero matches in frankcrawford/it87
+    # master and mainline `it87`. This entry exists so the GUI can name
+    # the chip and explain the situation rather than rendering "Unknown
+    # chip" and leaving users guessing. Tracking: frankcrawford/it87
+    # issue #81 (open). Re-evaluate when a driver ships.
     ChipGuidance(
         chip_prefix="it8883",
-        driver_name="(none — chip unsupported on Linux as of 2026-Q2)",
+        driver_name="(none — chip unsupported on Linux as of 2026-06)",
         in_mainline=False,
         driver_package="(no driver available)",
         driver_url="https://github.com/frankcrawford/it87/issues/81",
@@ -307,14 +387,17 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "No Linux driver currently supports this chip — fan headers "
             "and sensors wired through IT8883 are not visible to Linux.",
             "Some Gigabyte X870 boards (X870 AORUS STEALTH ICE) pair this "
-            "chip as a secondary alongside IT8696E. The primary IT8696E "
-            "headers work via it87-dkms-git; IT8883-attached headers do not.",
-            "Tracking upstream: frankcrawford/it87 issue #81.",
+            "chip as a secondary alongside IT8696E. On current (2026-04+) "
+            "it87-dkms-git builds the primary IT8696E headers — including "
+            "ones that previously refused control — are fully controllable; "
+            "IT8883-attached headers (e.g. the water-pump header) remain "
+            "unreachable.",
+            "Tracking upstream: frankcrawford/it87 issue #81 (open as of 2026-06).",
         ],
         notes=(
-            "ITE IT8883 — preliminary entry (DEC-106 / D4.A). No driver "
-            "available as of 2026-Q2. Users with this chip should not "
-            "expect Linux fan control on its headers."
+            "ITE IT8883 — preliminary entry (DEC-106 / D4.A, refreshed "
+            "DEC-144). No driver available as of 2026-06. Users with this "
+            "chip should not expect Linux fan control on its headers."
         ),
     ),
     ChipGuidance(
@@ -464,11 +547,13 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         severity="critical",
         summary="Gigabyte SmartFan 6 + IT8689E — BIOS actively overrides fan control",
         details=[
-            "IT8689E Rev 1 (e.g. X670E Aorus Master): PWM writes are silently "
-            "accepted with zero hardware effect. No known software workaround — "
-            "consider using a different fan header or external fan controller. "
-            "Tracking upstream: frankcrawford/it87 issue #96 (open with no "
-            "resolution as of 2026-Q2).",
+            "IT8689E Rev 1 (e.g. X670E Aorus Master): the EC's vector-curve "
+            "control overrides the chip's manual-mode register, so PWM writes "
+            "are silently accepted with zero hardware effect while a normal "
+            "BIOS fan curve is active. Upstream now documents a working fix "
+            "(frankcrawford/it87 issue #96, 2026-03): configure a FLAT "
+            "7-point BIOS curve — PWM 40/40/40/40/40/40 with the final point "
+            "at 100 — and driver manual control works again.",
             "IT8689E Rev 2 (e.g. B650 Eagle AX): BIOS overrides unless a "
             "degenerate fan curve is configured in BIOS Smart Fan settings.",
             "Workaround: In BIOS → Smart Fan 6, set all temperature points to "
@@ -615,9 +700,15 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         severity="info",
         summary="Gigabyte ITE — prefer driver-local conflict resolution over system-wide",
         details=[
-            "If ACPI I/O port conflicts are detected, prefer the driver-local "
-            "'ignore_resource_conflict=1' parameter for the it87 module over "
-            "the system-wide 'acpi_enforce_resources=lax' kernel parameter.",
+            "Keep it87-dkms-git current before reaching for parameters: "
+            "2026-03+ builds default MMIO on, which sidesteps the ACPI I/O "
+            "port claim on newer ITE chips (frankcrawford/it87 issue #81 "
+            "discussion), and master carries a built-in DMI ACPI-exemption "
+            "table (it87_acpi_ignore) for known-safe boards.",
+            "If ACPI I/O port conflicts still block the bind, prefer the "
+            "driver-local 'ignore_resource_conflict=1' parameter for the "
+            "it87 module over the system-wide 'acpi_enforce_resources=lax' "
+            "kernel parameter.",
             "Add 'options it87 ignore_resource_conflict=1' to "
             "/etc/modprobe.d/it87.conf to persist across reboots.",
             "Note: this is still inherently risky as ACPI and the driver may "
@@ -777,10 +868,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "AM4 400-series AORUS boards (X470 AORUS ULTRA GAMING, X470 "
             "AORUS GAMING 5/7 WIFI, B450 AORUS PRO/PRO-CF) pair the primary "
             "IT8686E with a secondary IT8792E for additional fan headers.",
-            "If the diagnostics page reports a missing chip, follow the "
-            "dual-chip remediation: 'options it87 mmio=on' in "
-            "/etc/modprobe.d/it87.conf, then reboot. Avoid running "
-            "sensors-detect after boot.",
+            "If the diagnostics page reports a missing chip, update "
+            "it87-dkms-git first — 2026-03+ builds default mmio=on and merge "
+            "the ISA-bridge MMIO path that fixes secondary-chip enumeration "
+            "(frankcrawford/it87 PR #95/#102). On older builds set "
+            "'options it87 mmio=on' in /etc/modprobe.d/it87.conf. Then "
+            "reboot. Avoid running sensors-detect after boot.",
             "The secondary IT8792E was historically read-only on some "
             "Gigabyte AM4 boards; verify per-header writability before "
             "assigning fans to it in profiles.",
@@ -798,13 +891,18 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "with a secondary IT8792E for additional fan headers. "
             "Single-chip variants (B550M AORUS PRO) ship only the IT8688E.",
             "If the diagnostics page reports a missing secondary chip, "
-            "follow the dual-chip remediation: 'options it87 mmio=on' in "
-            "/etc/modprobe.d/it87.conf, then reboot. Avoid running "
-            "sensors-detect after boot — it can leave the SuperIO bridge "
-            "in configuration mode (frankcrawford/it87 issue #70).",
-            "X570 AORUS PRO sleep/resume can re-trigger the dual-chip "
-            "enumeration trap (frankcrawford/it87 issue #99) — `mmio=on` "
-            "is the same fix.",
+            "update it87-dkms-git first — 2026-03+ builds default mmio=on "
+            "and merge the ISA-bridge MMIO path that fixes secondary-chip "
+            "enumeration (frankcrawford/it87 PR #95/#102). On older builds "
+            "set 'options it87 mmio=on' in /etc/modprobe.d/it87.conf. Then "
+            "reboot. Avoid running sensors-detect after boot — it can leave "
+            "the SuperIO bridge in configuration mode (frankcrawford/it87 "
+            "issue #70).",
+            "X570-generation boards can lose IT8792E fan control after "
+            "suspend/resume (frankcrawford/it87 issue #99) — still "
+            "reproducible on current driver builds as of 2026-05, with no "
+            "confirmed upstream fix. The daemon re-asserts pwm_enable after "
+            "resume; if headers stay stuck, a reboot is the reliable reset.",
         ],
     ),
     VendorQuirk(
@@ -924,12 +1022,46 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         details=[
             "Gigabyte X870 AORUS STEALTH ICE pairs the primary IT8696E "
             "(supported via it87-dkms-git) with a SECONDARY IT8883 chip "
-            "that has NO Linux driver as of 2026-Q2. Fan headers wired "
-            "through IT8883 are uncontrollable from Linux.",
-            "Tracking upstream: frankcrawford/it87 issue #81.",
+            "that has NO Linux driver as of 2026-06 (dmesg shows DEVIDs "
+            "0x8696 + 0x8883). Fan headers wired through IT8883 are "
+            "uncontrollable from Linux.",
+            "On current (2026-04+) it87-dkms-git builds the primary "
+            "IT8696E headers — including ones that previously refused "
+            "control on this board — are fully controllable.",
+            "Tracking upstream: frankcrawford/it87 issue #81 (open).",
             "Practical advice: use only the primary-chip fan headers, or "
-            "attach IT8883-wired fans to an OpenFanController / external "
-            "controller.",
+            "attach IT8883-wired fans (e.g. the water pump) to an "
+            "OpenFanController / external controller.",
+        ],
+    ),
+    # ── DEC-144: B650 GAMING X AX V2 ACPI bind failure ──────────────
+    # frankcrawford/it87 issue #92: this board's firmware claims the
+    # Super-I/O ports via ACPI, so `modprobe it87` fails with "Device or
+    # resource busy". The driver's built-in DMI ACPI-exemption table
+    # (it87_acpi_ignore) does NOT include this board as of 2026-06, so
+    # the driver-local parameter remains the documented remediation.
+    VendorQuirk(
+        vendor_pattern="gigabyte",
+        chip_prefix="it8689",
+        severity="medium",
+        platform="amd",
+        board_pattern="B650 GAMING X AX V2",
+        summary="Gigabyte B650 GAMING X AX V2 — ACPI conflict can block the it87 bind",
+        details=[
+            "This board's firmware claims the Super-I/O I/O ports via ACPI, "
+            "so `modprobe it87` can fail with 'Device or resource busy' "
+            "(frankcrawford/it87 issue #92; IT8689E rev 2 at 0x0a40).",
+            "Update it87-dkms-git first: 2026-03+ builds default MMIO on, "
+            "which per the same issue sidesteps the port conflict on this "
+            "chip.",
+            "If the bind still fails (or on older builds), use the "
+            "driver-local parameter: 'options it87 "
+            "ignore_resource_conflict=1' in /etc/modprobe.d/it87.conf — "
+            "preferred over the system-wide acpi_enforce_resources=lax.",
+            "The driver's built-in DMI ACPI-exemption table does NOT "
+            "include this board as of 2026-06, so do not assume a driver "
+            "update alone removes the need for the parameter when MMIO is "
+            "disabled.",
         ],
     ),
     # ── DEC-110: Intel platform quirks (LGA1700 / LGA1851) ─────────
@@ -1039,9 +1171,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "IT87952E for additional fan headers — same dual-chip "
             "topology as the AMD X670E AORUS family.",
             "If the diagnostics page reports a missing secondary chip, "
-            "follow the dual-chip remediation: `options it87 mmio=on` "
-            "in /etc/modprobe.d/it87.conf, then reboot. Avoid running "
-            "sensors-detect after boot (frankcrawford/it87 issue #70).",
+            "update it87-dkms-git first (2026-03+ builds default mmio=on "
+            "and fix secondary-chip enumeration and control via the "
+            "ISA-bridge MMIO path — PR #95/#102). On older builds set "
+            "`options it87 mmio=on` in /etc/modprobe.d/it87.conf. Then "
+            "reboot. Avoid running sensors-detect after boot "
+            "(frankcrawford/it87 issue #70).",
             "BIOS: Gigabyte SmartFan 6 actively overrides PWM unless "
             "fan mode is set to 'Full Speed' or a degenerate curve is "
             "configured. The pwm_enable watchdog detects and "
@@ -1063,11 +1198,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "Gigabyte Intel Z890 AORUS boards (Z890 AORUS MASTER, Z890 "
             "AORUS PRO, Z890 AORUS ELITE) ship the same IT8696E + "
             "IT87952E topology as their AMD X870E counterparts.",
-            "Apply the same `options it87 mmio=on` remediation if the "
-            "secondary chip fails to enumerate. The daemon's "
-            "expected_chips lookup currently covers AMD Z690/Z790 "
-            "AORUS topologies; Z890 entries are added per-board as "
-            "they are verified upstream.",
+            "Apply the same dual-chip remediation if the secondary chip "
+            "fails to enumerate: update it87-dkms-git first (2026-03+ "
+            "builds default mmio=on); on older builds set "
+            "`options it87 mmio=on`. The daemon's expected_chips lookup "
+            "covers the Z690/Z790 AORUS topologies; Z890 entries are "
+            "added per-board as they are verified upstream.",
             "BIOS: SmartFan 6 'Full Speed' setting is required for "
             "Linux to keep manual fan control; otherwise the EC "
             "reclaims pwm_enable within seconds.",
@@ -1337,9 +1473,12 @@ def verification_guidance(
         if "gigabyte" in vendor_lower and chip_lower.startswith("it8689"):
             return (
                 "PWM writes were accepted but fan speed did not change. On Gigabyte "
-                "IT8689E Rev 1 boards (e.g. X670E Aorus Master), this is a known "
-                "hardware limitation with no software workaround. Consider using a "
-                "different fan header or an external fan controller."
+                "IT8689E Rev 1 boards (e.g. X670E Aorus Master), the EC's vector-curve "
+                "control overrides manual mode while a normal BIOS fan curve is active. "
+                "Fix: configure a FLAT 7-point BIOS curve (PWM 40/40/40/40/40/40 with "
+                "the final point at 100) — driver manual control then works "
+                "(frankcrawford/it87 issue #96). Alternatively use a different fan "
+                "header or an external fan controller."
             )
         if "asrock" in vendor_lower and chip_lower.startswith("nct6"):
             return (
@@ -1406,7 +1545,8 @@ def dual_chip_warning_html(
           enumerated the full set — nothing to warn about)
 
     When some expected chips are missing, returns an HTML string with the
-    remediation steps (`mmio=on` modparam + post-boot warnings) suitable
+    remediation steps (driver update first; `mmio=on` modparam on
+    pre-2026-03 builds; post-boot warnings — DEC-144) suitable
     for display in a `Qt.RichText` label. The wording is deliberately
     explicit about *which* chip is missing so users can correlate with
     their hardware docs.
@@ -1445,25 +1585,33 @@ def dual_chip_warning_html(
     missing_pretty = ", ".join(f"<b>{_pretty_chip(c)}</b>" for c in missing)
     chip_summary = (
         f"expected {expected_pretty}; missing {missing_pretty}.<br><br>"
-        f"<b>Most likely cause:</b> the it87 driver's secondary-chip scan "
-        f"failed because the SuperIO bridge was left in configuration mode "
-        f"by an earlier process (typically a previous run of "
-        f"<code>sensors-detect</code>), or the <code>mmio=on</code> module "
-        f"parameter is not set.<br><br>"
+        f"<b>Most likely cause:</b> an outdated it87 driver build, or the "
+        f"SuperIO bridge left in configuration mode by an earlier process "
+        f"(typically a previous run of <code>sensors-detect</code>). Current "
+        f"<code>it87-dkms-git</code> builds (2026-03 onwards) reach the "
+        f"secondary chip through the ISA-bridge MMIO path by default and "
+        f"both enumerate <i>and</i> control it; older builds need the "
+        f"<code>mmio=on</code> module parameter.<br><br>"
         f"<b>To fix:</b><br>"
-        f"&nbsp;&nbsp;1. Create <code>/etc/modprobe.d/it87.conf</code> with: "
+        f"&nbsp;&nbsp;1. Update the driver (<code>yay -S it87-dkms-git</code> "
+        f"rebuilds the current upstream snapshot against your kernel).<br>"
+        f"&nbsp;&nbsp;2. Only on older (pre-2026-03) builds: create "
+        f"<code>/etc/modprobe.d/it87.conf</code> with: "
         f"<code>options it87 mmio=on</code><br>"
-        f"&nbsp;&nbsp;2. Avoid running <code>sensors-detect</code> after boot "
+        f"&nbsp;&nbsp;3. Avoid running <code>sensors-detect</code> after boot "
         f"(it can leave the SuperIO bridge in a bad state).<br>"
-        f"&nbsp;&nbsp;3. Reboot the machine.<br>"
-        f"&nbsp;&nbsp;4. Click <i>Refresh Hardware Diagnostics</i> to re-check.<br>"
+        f"&nbsp;&nbsp;4. Reboot the machine.<br>"
+        f"&nbsp;&nbsp;5. Click <i>Refresh Hardware Diagnostics</i> to re-check.<br>"
         f"<i>⚠ {REMEDIATION_DISCLAIMER}</i><br><br>"
         f"<b>Still missing after reboot?</b> The frankcrawford/it87 "
         f'<a href="https://github.com/frankcrawford/it87/issues/70">issue #70</a> '
         f"thread documents the same failure mode on similar boards. See also "
         f"the project's "
         f'<a href="https://github.com/Plan-B-Development/control-ofc-gui/blob/main/'
-        f'docs/19_Hardware_Compatibility.md">Hardware Compatibility Guide</a>.'
+        f'docs/19_Hardware_Compatibility.md">Hardware Compatibility Guide</a> '
+        f"and the manual's "
+        f'<a href="https://github.com/Plan-B-Development/control-ofc-gui/blob/main/'
+        f'manual/driver-setup.md">Driver Setup guide</a>.'
     )
     return heading + chip_summary
 

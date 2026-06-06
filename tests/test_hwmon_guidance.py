@@ -232,7 +232,11 @@ class TestNewVendorQuirks:
         quirks = lookup_vendor_quirks("Gigabyte Technology Co., Ltd.", "it8720")
         assert len(quirks) == 1
         assert quirks[0].severity == "info"
-        assert "ignore_resource_conflict" in quirks[0].details[0]
+        # DEC-144 re-ordered the remediation: driver update is bullet 1,
+        # the driver-local parameter follows it.
+        flat = " ".join(quirks[0].details)
+        assert "ignore_resource_conflict" in flat
+        assert flat.find("it87-dkms-git") < flat.find("ignore_resource_conflict")
 
     def test_gigabyte_it87_force_id_warning(self):
         quirks = lookup_vendor_quirks("Gigabyte Technology Co., Ltd.", "it8720")

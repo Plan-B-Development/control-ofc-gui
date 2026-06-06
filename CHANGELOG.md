@@ -1,5 +1,55 @@
 # Changelog
 
+## [1.32.0] — 2026-06-06
+
+2026-Q2 it87/SIO knowledgebase refresh (DEC-144). Pairs with **daemon
+v1.14.0**. Data/text only — no control-loop, lease, or safety-path changes.
+
+### Added
+- **Driver Setup manual page** (`manual/driver-setup.md`) — beginner
+  walkthrough from "no driver" to "verified working headers": identify the
+  chip, DKMS prerequisites (incl. the CachyOS-LTS module-path quirk,
+  it87 #94), install, verify with Test PWM Control, BIOS recap,
+  module-parameter table, full rollback. Opens with the standard remediation
+  disclaimer plus explicit as-is/no-liability language. Linked from the
+  manual TOC, Getting Started, Hardware Troubleshooting, docs/21, and the
+  dual-chip warning banner.
+- Chip knowledge: **IT87952E** (mainline ≥ 6.4 enumerates it; dual-chip fan
+  *control* needs the DKMS MMIO path), **IT8665E** (DKMS + **`mmio=off`**
+  escape hatch — the new upstream MMIO default mangles its PWM writes,
+  it87 #106), **IT8622E** (mainline, no DKMS needed).
+- Vendor quirk: **Gigabyte B650 GAMING X AX V2** ACPI bind failure
+  (`ignore_resource_conflict=1`, it87 #92 — the promised upstream DMI
+  exemption is not in master).
+
+### Changed
+- **Dual-chip remediation re-ordered everywhere** (warning banner, readiness
+  "To fix", vendor quirks, docs 19/21/23, manual): update `it87-dkms-git`
+  first — 2026-03+ builds default `mmio=on` (PR #95) and merge the
+  ISA-bridge MMIO path (PR #102) that makes secondary-chip fans
+  *controllable*, not merely enumerable (it87 #64). `mmio=on` is now
+  documented as the pre-2026-03 fallback only.
+- **IT8689E Rev 1 is no longer framed as a dead end** — the upstream-
+  documented flat 7-point BIOS curve (PWM 40×6, final 100) restores driver
+  manual control (it87 #96, 2026-03).
+- X870E AORUS MASTER secondary-chip (IT87952E) fallback labels re-aligned to
+  the owner-posted it87 #103 mapping (pwm1=SYS_FAN5_PUMP, pwm2=SYS_FAN6_PUMP,
+  pwm3=SYS_FAN4); still `(unverified)` pending silkscreen tracing.
+- IT8883 / X870 AORUS STEALTH ICE notes refreshed (re-checked 2026-06: still
+  no driver, it87 #81; primary IT8696E headers now fully controllable on
+  current builds).
+
+### Fixed
+- docs/19 ITE table: IT87952E was listed as not-in-mainline (it has been in
+  mainline since kernel 6.4); IT8689E now carries the "sensors in 7.1,
+  unreleased; DKMS for control" annotation.
+- docs/21: retracted the claim that `mmio=on` resolves the IT8792
+  suspend/resume control loss (it87 #99 — still reproducible on current
+  builds, no confirmed fix); corrected the claim that Bazzite ships the
+  nct6687 blacklist (requested in #4498, not shipped).
+- Replaced the brittle "33 boards" nct6687d allowlist count with unversioned
+  wording (the upstream list grew twice in 2026-05/06).
+
 ## [1.31.0] — 2026-06-06
 
 Settings hardening: the Application tab and Import/Export now do what they claim,

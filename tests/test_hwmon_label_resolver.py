@@ -345,8 +345,29 @@ class TestResolverPriority:
             board_name="X870E AORUS MASTER",
             sensors_paths=[],
         )
-        assert label.startswith("SYS_FAN4")
+        # DEC-144: pwm1 → SYS_FAN5_PUMP per the frankcrawford/it87
+        # issue #103 owner-posted config (same ordering as the upstream
+        # X470/B550 IT8792E configs); stays unverified until silkscreen
+        # tracing confirms.
+        assert label.startswith("SYS_FAN5_PUMP")
         assert label.endswith("(unverified)")
+
+    def test_x870e_secondary_mapping_matches_issue_103_order(self):
+        # DEC-144 regression lock: the full it87952 pwm→label ordering
+        # from issue #103 (fan1=SYS_FAN5_PUMP, fan2=SYS_FAN6_PUMP,
+        # fan3=SYS_FAN4). A silent re-shuffle back to the pre-DEC-144
+        # SYS_FAN4-first extrapolation must fail here.
+        expected = {1: "SYS_FAN5_PUMP", 2: "SYS_FAN6_PUMP", 3: "SYS_FAN4"}
+        for idx, name in expected.items():
+            label = resolve_hwmon_header_label(
+                sysfs_label="",
+                chip_name="it87952",
+                pwm_index=idx,
+                board_vendor="Gigabyte Technology Co., Ltd.",
+                board_name="X870E AORUS MASTER",
+                sensors_paths=[],
+            )
+            assert label == f"{name} (unverified)"
 
     def test_unknown_board_returns_raw_pwm_name(self):
         label = resolve_hwmon_header_label(
