@@ -69,6 +69,12 @@ The dropdown lists the built-in **Default Dark** theme plus any custom themes sa
 | **Font** | Choose from any system font, or "(System Default)" |
 | **Size** | Base font size from 7pt to 16pt (default 10pt) |
 
+### Cards
+
+| Setting | Description |
+|---------|-------------|
+| **Card size** | Density of the Fan Role and Curve cards on the Controls page: **Compact**, **Comfortable** (default), or **Large**. Cards already scale automatically with the font size — this preference multiplies that scaling. Takes effect with **Apply Theme to Application** |
+
 ### Theme Editor
 
 The colour token editor lets you customise individual colour values for backgrounds, text, accents, status indicators, and borders. Each token controls a specific aspect of the UI.

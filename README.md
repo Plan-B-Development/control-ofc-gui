@@ -1,6 +1,6 @@
 # Control-OFC GUI
 
-**Latest release:** v1.25.0 — 2026-06-05. Pairs with `control-ofc-daemon` ≥ v1.12.0. See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
+**Latest release:** v1.30.0 — 2026-06-06. Pairs with `control-ofc-daemon` ≥ v1.13.0. See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 Desktop fan control interface for Linux. Communicates with the [`control-ofc-daemon`](https://github.com/Plan-B-Development/control-ofc-daemon) service to monitor temperatures, manage fan speeds, and apply custom fan curves.
 
@@ -127,7 +127,6 @@ See the [architecture docs](docs/02_System_Architecture_and_Boundaries.md) and [
 - **[AMD Sensor Interpretation Deep Dive](docs/22_AMD_Sensor_Interpretation_Deep_Dive.md)** — Tctl/Tdie, edge/junction, and common AMD-specific traps
 - **[Architecture](docs/00_README_START_HERE.md)** — design docs and specs
 - **[API Contract](docs/08_API_Integration_Contract.md)** — daemon endpoint reference
-- **[Decisions](DECISIONS.md)** — architecture decision records
 - **[Changelog](CHANGELOG.md)** — version history
 - **[Contributing](CONTRIBUTING.md)** — build, test, and PR guidelines
 

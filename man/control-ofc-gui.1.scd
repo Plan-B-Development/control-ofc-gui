@@ -30,7 +30,7 @@ the daemon.
 
 # FILES
 
-_~/.config/control-ofc/settings.json_
+_~/.config/control-ofc/app_settings.json_
 	GUI application preferences.
 
 _~/.config/control-ofc/profiles/_
@@ -44,9 +44,9 @@ _/run/control-ofc/control-ofc.sock_
 
 # ENVIRONMENT
 
-*OPENFAN_PROFILE*
-	Profile name to activate at startup (fallback if no --profile passed
-	to the daemon).
+*XDG_CONFIG_HOME*
+	Base directory for configuration. The GUI stores its data under
+	$XDG_CONFIG_HOME/control-ofc (default: ~/.config/control-ofc).
 
 # SEE ALSO
 

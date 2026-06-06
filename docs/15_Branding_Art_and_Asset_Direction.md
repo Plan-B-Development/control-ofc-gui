@@ -1,6 +1,6 @@
 # 15 — Branding, Art, and Asset Direction
 
-**Last updated:** 2026-05-07 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 ## Purpose
 Define the visual direction for Control-OFC: icon, typography, and palette.

@@ -33,6 +33,17 @@ class SeriesSelectionModel(QObject):
     def is_visible(self, key: str) -> bool:
         return key in self._known_keys and key not in self._hidden_keys
 
+    def is_hidden(self, key: str) -> bool:
+        """True only if the key was explicitly hidden (persisted or user-toggled).
+
+        Unlike :meth:`is_visible`, an unknown key is *not* hidden — new series
+        default to visible. UI that builds rows before the dashboard registers
+        keys via :meth:`update_known_keys` must use this, not ``is_visible``,
+        or first-discovery rows start unchecked and get synced back into the
+        model as hidden.
+        """
+        return key in self._hidden_keys
+
     def set_visible(self, key: str, visible: bool) -> None:
         changed = False
         if visible and key in self._hidden_keys:

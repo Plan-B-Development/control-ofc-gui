@@ -28,4 +28,4 @@ For deeper hardware and sensor topics, see:
 
 ## Screenshots
 
-All screenshots in this manual are captured automatically from the application running in demo mode (see `scripts/build_manual.sh`). The `screenshots/auto/` directory holds the canonical set referenced from these pages.
+All screenshots in this manual are captured automatically from the application running in demo mode, so they always show a reproducible setup. The `screenshots/auto/` directory holds the canonical set referenced from these pages.

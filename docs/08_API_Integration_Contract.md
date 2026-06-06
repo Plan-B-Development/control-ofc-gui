@@ -1,6 +1,6 @@
 # 08 — API Integration Contract
 
-**Last updated:** 2026-06-04 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour.)
+**Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 ## Purpose
 This file defines how the GUI should consume the current daemon/API safely and predictably.
@@ -67,7 +67,7 @@ Notable fields:
   vary per device.
 - `devices.amd_gpu.pci_id` (legacy) and `devices.amd_gpu.pci_bdf` (canonical)
   both carry the same PCI BDF address during the transition window; GUI
-  parsers accept either name (see DECISIONS.md DEC-042 and the 2026-04-22
+  parsers accept either name (see DEC-042 and the 2026-04-22
   contract-mismatch resolution).
 - `devices.amd_gpu.kernel_warnings` (DEC-098, daemon ≥ 1.6.1) is a list of
   `{id, severity, message}` entries describing kernel-version regressions

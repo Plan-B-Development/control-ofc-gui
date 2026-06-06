@@ -19,6 +19,24 @@ def test_hide_key():
     assert not model.is_visible("sensor:cpu")
 
 
+def test_is_hidden_unknown_key_is_not_hidden():
+    """Unknown keys default to visible — is_hidden must not treat them as hidden."""
+    model = SeriesSelectionModel()
+    assert not model.is_hidden("sensor:never-seen")
+
+
+def test_is_hidden_tracks_explicit_hides_and_persistence():
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu"])
+    model.set_visible("sensor:cpu", False)
+    assert model.is_hidden("sensor:cpu")
+
+    restored = SeriesSelectionModel()
+    restored.load_hidden(model.to_dict()["hidden_keys"])
+    assert restored.is_hidden("sensor:cpu")
+    assert not restored.is_hidden("sensor:gpu")
+
+
 def test_toggle():
     model = SeriesSelectionModel()
     model.update_known_keys(["sensor:cpu"])

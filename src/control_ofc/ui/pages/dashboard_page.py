@@ -379,6 +379,10 @@ class DashboardPage(QWidget):
         self._chart = TimelineChart(
             self._history, selection=self._selection, color_overrides=color_overrides
         )
+        if self._settings_service:
+            # Startup default only — changing the Range combo afterwards is
+            # session-local; the Settings value is re-applied on next launch.
+            self._chart.set_range_index(self._settings_service.settings.chart_default_range_index)
         self._chart.setMinimumHeight(150)
         self._v_splitter.addWidget(self._chart)
 

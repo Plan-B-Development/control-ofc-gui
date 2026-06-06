@@ -1,6 +1,6 @@
 # 11 — Persistence, Config, and File Layout
 
-**Last updated:** 2026-06-01 (Spec doc — updated infrequently; refer to DECISIONS.md and CHANGELOG.md for current behaviour. 2026-06-01 audit pass corrected the suggested file layout to drop files that never shipped — `gui.log`, `last_session.json`, `support_bundle_work/`.)
+**Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 ## Purpose
 Define what the GUI owns and how it should persist that data.
@@ -56,8 +56,9 @@ The XDG state and cache directories are created by `ensure_dirs()` but the
 v1 GUI does not yet write to them — no on-disk log, no `last_session.json`
 snapshot, no `support_bundle_work/` staging directory. Support bundles are
 generated on demand and written to a user-selected export location.
-Aliases and group memberships are persisted inside `app_settings.json`
-rather than separate `aliases.json` / `groups.json` files. Per-card size
+Aliases are persisted inside `app_settings.json` rather than a separate
+`aliases.json`; fan roles and their memberships are stored inside each
+profile's JSON, not as a separate `groups.json`. Per-card size
 overrides for the Controls page live there too (`controls_card_sizes`,
 keyed by control/curve id → `[width, height]`; pruned of ids absent from
 every known profile whenever a size is saved — DEC-129).
@@ -102,7 +103,7 @@ Store:
 - group label
 - member fan ids
 
-A fan can belong to multiple groups.
+Each fan belongs to at most one fan role.
 
 ## Alias persistence model
 Store:

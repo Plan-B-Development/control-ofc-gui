@@ -12,18 +12,19 @@ pip install -e ".[dev]"
 
 ## Quality Gates
 
-All three must pass before merging:
+All four must pass before merging:
 
 ```bash
 ruff format --check src/ tests/
 ruff check src/ tests/
+python -m compileall -q src/
 pytest
 ```
 
 Run all at once:
 
 ```bash
-ruff format --check src/ tests/ && ruff check src/ tests/ && pytest
+ruff format --check src/ tests/ && ruff check src/ tests/ && python -m compileall -q src/ && pytest
 ```
 
 ## Running

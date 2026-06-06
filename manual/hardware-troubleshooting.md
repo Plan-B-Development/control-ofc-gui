@@ -169,7 +169,14 @@ If the warning persists after these steps, see the upstream tracker thread at [f
 
 ### "Fans run at full speed regardless of profile"
 
-The thermal safety logic forces 100% PWM if no CPU sensor is found for 5 cycles, or if any CPU sensor reports ≥105°C. Check the **Thermal safety** row of the Hardware Readiness report. If it reports "no CPU sensor", install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`).
+The daemon's thermal failsafe has two distinct triggers, with different fan speeds:
+
+- **Emergency (100%):** any CPU sensor reports ≥ 105°C. All OpenFan and writable hwmon fans are forced to 100% and held there until the hottest CPU sensor falls below 80°C, then run at 60% during recovery. GPU fans are deliberately excluded — the GPU's own firmware handles GPU thermal protection.
+- **No-sensor fallback (40%):** no CPU sensor has been seen for 5 consecutive poll cycles. OpenFan and writable hwmon fans are set to a 40% safe floor — so fans sitting at a uniform ~40% (rather than 100%) usually mean a missing CPU sensor, not an overheat.
+
+While either override is active the GUI **stands down on purpose**: the control loop pauses all fan writes, hwmon lease renewals pause, and a "Daemon thermal override active" warning appears (Dashboard warning count and the Diagnostics event log). Control resumes automatically once the daemon reports a normal thermal state — fans pinned during an override are the daemon protecting the system, not a stuck profile.
+
+Check the **Thermal safety** row of the Hardware Readiness report. If it reports "no CPU sensor", install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`).
 
 ### "GPU fan control says feature_unavailable"
 

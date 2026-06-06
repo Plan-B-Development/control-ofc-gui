@@ -2,7 +2,7 @@
 
 > **Snapshot, not source of truth.** This document was generated from a code
 > inspection on 2026-03-25 against daemon v0.2.0. The daemon has since
-> evolved through dozens of releases (current: v1.6.2 as of 2026-05-07) —
+> evolved through dozens of releases since —
 > the structural narrative below is still accurate at the architectural
 > level, but specific claims about endpoints, error codes, or module shape
 > may be stale. For current authoritative documentation:

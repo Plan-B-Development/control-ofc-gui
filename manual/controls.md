@@ -12,94 +12,114 @@ The control model has three layers:
 2. **Fan Role** — A logical group of physical fans that share the same behaviour (e.g., "Case Intake" groups your three front fans together).
 3. **Curve** — A temperature-to-speed mapping that defines how fast fans should spin at any given temperature.
 
-A profile contains one or more fan roles, and each fan role references a curve from the profile's curve library.
+A profile contains one or more fan roles, and each fan role references a curve from the profile's curve library. The [Profiles and Curves Reference](profiles-and-curves.md) explains the model in depth.
 
 ## Profile Bar
 
 The top bar manages profiles:
 
-| Action | What it does |
-|--------|-------------|
-| **Profile dropdown** | Select which profile to view and edit |
-| **New** | Create a blank profile |
-| **Duplicate** | Copy the current profile under a new name |
-| **Rename** | Change the current profile's name |
-| **Delete** | Remove the current profile |
-| **Activate** | Make this profile the active one (starts controlling fans) |
+| Control | What it does |
+|---------|-------------|
+| **Profile dropdown** | Selects which profile to view and edit. The active profile is marked with `*` |
+| **Activate** | Saves the selected profile, then makes it the active one — the control loop starts evaluating it, and the daemon is told so it can take over headlessly later |
+| **Save** | Writes the profile's changes to disk (`Ctrl+S`) |
+| **Manage Profiles…** | Menu with **New Profile**, **Rename Profile**, **Duplicate Profile**, and **Delete Profile** |
 
-An "unsaved changes" indicator appears when you have modified a profile but not yet saved.
+Next to Save, a status chip shows **"Unsaved changes"** whenever you have modified the profile without saving, and confirms afterwards with "Settings saved" / "Profile activated". Activation failures are shown in red ("Activation failed: …") — the GUI never falsely marks a profile active.
+
+Deleting a profile asks for confirmation and cannot be undone; deleting the currently active profile deactivates it on the daemon first.
 
 ## Fan Roles (Top Section)
 
-Each fan role appears as a card showing its name, mode, assigned curve, current output percentage, and member fans.
+The section header has two buttons: **Fan Wizard** (identify and label your physical fans — see [Fan Wizard](fan-wizard.md)) and **+ Fan Role**, which offers two kinds of role:
 
-![Fan Role Dialog — Curve Mode](../screenshots/auto/12_fan_role_dialog_curve.png)
+- **Single Output Fan Role** — one physical output
+- **Group Fan Role (Multi-Fan)** — several outputs acting together
+
+Each fan role appears as a card:
+
+| Card element | Meaning |
+|--------------|---------|
+| **Title row** | Role name plus a status chip: **Applied** (curve output being written), **Manual** (inline override active), or **No members** |
+| **Members** | The physical outputs in the role — "Members: Front Intake 1, Front Intake 2, +1 more" |
+| **Curve** | The assigned curve and its type, or "Curve: Manual" for fixed-speed roles. A **Min: N%** badge appears when a stall-protection floor applies (see [role-aware minimums](profiles-and-curves.md#role-aware-minimum-stall-protection)) |
+| **Now** | Live output and the driving sensor: "Now: 65% • Tctl 45.0°C". Mixed roles with a GPU member also show the GPU's own value ("(GPU 0%)") when it idles below the rest |
+| **Bottom row** | Measured RPM on the left; **Manual**, **Delete**, and **Edit…** buttons on the right |
+
+### Inline Manual Override
+
+The **Manual** button on each card is a toggle: switch it on and a slider replaces the output line, pinning that role's fans to a fixed speed. This is a *temporary* override:
+
+- it pauses curve evaluation for **that role only** — every other card keeps following its curve
+- it is **not saved** to the profile
+- it clears when you toggle it off or switch profiles
+
+Use it for quick experiments ("what does 80% sound like?") without touching the saved profile. To make a role *permanently* fixed-speed, set its mode to Manual in the Edit dialog instead.
 
 ### Editing a Fan Role
 
-Click any fan role card to open the edit dialog:
+Click **Edit…** to open the role dialog:
+
+![Fan Role Dialog — Curve Mode](../screenshots/auto/12_fan_role_dialog_curve.png)
 
 | Field | Description |
 |-------|-------------|
-| **Name** | A human-readable label for this group (e.g., "Case Intake", "CPU Cooler") |
-| **Mode** | **Curve** (automatic, temperature-driven) or **Manual** (fixed speed) |
-| **Curve** | Which curve to follow (only shown in Curve mode) |
-| **Manual Output** | Fixed speed percentage with a slider (only shown in Manual mode) |
-| **Members** | Which physical fan outputs belong to this group |
+| **Name** | Human-readable label ("Case Intake", "CPU Cooler") |
+| **Mode** | **Curve** (automatic, temperature-driven) or **Manual** (fixed speed, stored in the profile) |
+| **Curve** | Which curve to follow (Curve mode only) |
+| **Manual Output** | Fixed percentage with slider and spinbox (Manual mode only) |
+| **Members** | Read-only summary, with an **Edit Members** button |
 
 ![Fan Role Dialog — Manual Mode](../screenshots/auto/13_fan_role_dialog_manual.png)
 
+When the role contains an AMD GPU fan, a **GPU fan idle behaviour** section appears with a per-GPU **Allow zero-RPM idle** checkbox: leave it checked to let the GPU's firmware stop the fan at idle (it spins up with the curve), or uncheck it so the fan tracks the curve continuously.
+
 ### Managing Members
 
-Click **Edit Members** to open the member assignment dialog. It shows two lists:
+**Edit Members** shows two lists — available outputs and selected members — with **>** / **<** buttons to move fans between them. Entries are tagged by source (`[openfan]`, `[hwmon]`, `[amd_gpu]`).
 
-- **Available Outputs** — Fan outputs not yet assigned to any role
-- **Selected Members** — Fans currently in this role
+Each physical fan can belong to **only one role**: outputs already assigned elsewhere appear greyed out with "(Assigned to: …)" so you can see which role owns them. Read-only GPU fans are marked "(read-only)".
 
-Move fans between lists with Add/Remove buttons. Each physical fan output can only belong to one role at a time.
+### Arranging and Resizing Cards
 
-### Creating and Removing Roles
-
-- Click **+ Fan Role** to add a new empty role
-- Right-click a role card for options: Copy, Duplicate, Delete
+- **Drag a card** to reorder it within its section (a drop indicator shows the insertion point); the order is saved with the profile.
+- **Drag the grip** in a card's bottom-right corner to resize it — sizes snap to a shared 20px grid, so making several cards exactly the same size is easy. **Double-click the grip** to reset the card to its theme-derived size. Per-card sizes persist across restarts and profile switches.
+- The baseline card size follows the theme font size and the **Card size** preference (Compact / Comfortable / Large) in [Settings → Themes](settings.md#cards).
 
 ## Curves (Bottom Section)
 
-The curve library appears in the lower half. Each curve card shows its name, type, sensor target, and a mini preview of the curve shape.
+The curve library lives in the lower half (the divider between the two sections is draggable). **+ Curve** offers the three curve types:
 
-### Curve Types
-
-| Type | Description | Use Case |
+| Type | Description | Use case |
 |------|-------------|----------|
-| **Graph** (Freeform) | Multiple draggable points defining a custom temperature-to-speed curve | Full control over the response shape |
-| **Linear** | Two-point ramp: start temp/speed to end temp/speed | Simple "ramp up between X and Y" |
-| **Flat** | Constant output regardless of temperature | Pumps, AIO coolers, always-on fans |
+| **Graph Curve** | Multiple draggable points defining a custom temperature-to-speed shape | Full control over the response |
+| **Linear Curve** | Two-point ramp: start temp/speed to end temp/speed | Simple "ramp up between X and Y" |
+| **Flat Curve** | Constant output regardless of temperature | Pumps, AIO coolers, always-on fans |
 
-### Editing Curves
+Each curve card shows the curve's name and type, the bound sensor with its live reading, a preview (a sparkline for graph curves; a summary like "35°C→80°C: 30%→100%" or "Flat: 65%" for the others), and which roles use it ("Used by: …" with an **Assigned** / **Unassigned** chip). The card's **Actions** menu has **Edit**, **Rename**, **Duplicate**, and **Delete**.
 
-Click a curve card to open its editor:
+### Editing a Graph Curve
 
-- **Graph curves** open an inline visual editor with draggable points and a numeric table
-- **Linear and Flat curves** open a parameter dialog
+**Actions → Edit** on a graph curve opens the inline editor below the curve grid:
+
+- **Drag points** on the graph, or type exact values in the numeric table beside it. **Double-click** empty graph space (or click **+ Add Point**) to add a point; **Remove Point** or the `Delete` key removes the selected one (a curve keeps at least 2 points)
+- The **sensor selector** chooses which temperature drives the curve; a live readout shows the current evaluation ("45.0°C → 62%")
+- **Presets** (Linear, Quiet, Aggressive) load a starting shape you can refine
+- **Undo / redo** with `Ctrl+Z` / `Ctrl+Shift+Z`
+- The valid range is 0–120°C and 0–100% output; if a role using this curve has a stall-protection minimum, the editor stops you dragging points below that floor
+- Click **Close Editor** when done — edits update the card preview immediately and mark the profile unsaved
+
+### Editing a Linear or Flat Curve
+
+These open a small parameter dialog instead:
 
 ![Curve Edit Dialog](../screenshots/auto/14_curve_edit_dialog.png)
 
-Each curve has a **sensor selector** — this determines which temperature reading drives the curve. For example, a CPU cooler curve should be driven by the CPU temperature sensor.
+Linear curves take a name, a sensor, and start/end temperature and output values; flat curves take just a name and an output percentage (no sensor needed).
 
-### Creating and Removing Curves
+## Empty States
 
-- Click **+ Curve** to add a new curve to the library
-- Right-click a curve card for options: Edit Parameters, Duplicate, Delete
-
-## Manual Override
-
-When a fan role is set to Manual mode, the control loop stops evaluating its curve and instead writes a fixed PWM percentage. This is useful for:
-
-- Testing specific fan speeds
-- Temporarily overriding curve behaviour
-- Running fans at a constant speed (e.g., for a pump)
-
-Switching back to Curve mode or changing profiles exits manual override.
+A new profile shows "No fan roles configured. Click + Fan Role to create one." The Curves section stays hidden until at least one fan role exists — curves are always assigned *to* roles, so the page walks you through creating a role first.
 
 ---
 

@@ -1,5 +1,47 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Fresh installs no longer start with every temperature series hidden.**
+  On first discovery the sensor panel built its rows before the dashboard
+  registered the series keys in the selection model, so `is_visible()` was
+  False and every row started unchecked — and the group-summary text update
+  fired `itemChanged`, whose group branch synced that unchecked state back
+  into the model as a persisted hide. Rows now default to checked unless a
+  series was *explicitly* hidden (`SeriesSelectionModel.is_hidden`), and the
+  cosmetic group-summary updates are signal-blocked so a `setText` can never
+  write check-states into the model again. Found while re-capturing manual
+  screenshots from a pristine config; regression-tested.
+- **"Chart default time range" now actually applies.** The Settings value
+  (default 15m) was persisted and editable but had no consumer — the
+  dashboard chart always opened at its hardcoded 5m. The dashboard now
+  applies `chart_default_range_index` to the chart at startup
+  (`TimelineChart.set_range_index`, out-of-range values ignored).
+  Regression-tested.
+
+### Documentation
+- **2026-06-06 documentation & manual audit remediation.** README release
+  line corrected (was stuck at v1.25.0) and the dead `DECISIONS.md` link
+  removed; every published reference to gitignored local files
+  (`DECISIONS.md`, `scripts/`, `docs/audit/`) re-pointed at `CHANGELOG.md`;
+  hardware-troubleshooting's no-sensor failsafe corrected (40% safe floor,
+  not 100%) and the DEC-132 thermal stand-down documented for users;
+  `manual/controls.md` and `manual/fan-wizard.md` rewritten against the
+  v1.30 UI (Manage Profiles… menu, inline Manual override, Actions menus,
+  drag-resize/snap, real wizard flow incl. the 30% restore fallback);
+  Card size setting documented; dashboard manual matched to the shipped UI
+  (Apply button, Label/PWM% columns, double-click rename,
+  GUI-evaluates-curves); man page FILES (`app_settings.json`) and
+  ENVIRONMENT (XDG, not `OPENFAN_PROFILE`) corrected; CONTRIBUTING gates
+  now include `compileall`; spec-pack contradictions swept
+  (one-role-per-fan ×4, fixed-size cards, theme-editor deferral, AMD-only
+  GPU, demo data model) and per-file "Last updated" stamps replaced with a
+  CHANGELOG-pointing status line; all 16 manual screenshots re-captured on
+  the current UI from a pristine demo config with warmed-up history; stale
+  April-era root `screenshots/` orphans removed and the About dialog shot
+  wired into Getting Started.
+
 ## [1.30.0] — 2026-06-06
 
 2026-06-05 audit remediation, GUI half. Pairs with **daemon v1.13.0** (which

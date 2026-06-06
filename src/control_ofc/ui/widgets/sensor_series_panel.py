@@ -253,11 +253,17 @@ class SensorSeriesPanel(QFrame):
                 item.setToolTip(0, self._build_sensor_tooltip(s))
                 item.setData(0, Qt.ItemDataRole.UserRole, series_key)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                # Default-visible: at first discovery the key is not yet in the
+                # selection model (the dashboard registers it after this
+                # rebuild), so is_visible() would be False here and the row
+                # would start unchecked — and the group's next itemChanged
+                # would sync that unchecked state into the model, permanently
+                # hiding every new series. Only an *explicit* hide unchecks.
                 item.setCheckState(
                     0,
-                    Qt.CheckState.Checked
-                    if self._selection.is_visible(series_key)
-                    else Qt.CheckState.Unchecked,
+                    Qt.CheckState.Unchecked
+                    if self._selection.is_hidden(series_key)
+                    else Qt.CheckState.Checked,
                 )
 
                 self._set_color_swatch(item, series_key)
@@ -283,14 +289,18 @@ class SensorSeriesPanel(QFrame):
             group_key = _SENSOR_KIND_GROUPS.get(s.kind, ("other", "Other"))[0]
             groups.setdefault(group_key, []).append(s)
 
-        for group_key, group_sensors in groups.items():
-            group_item = self._group_items.get(group_key)
-            if group_item:
-                count = len(group_sensors)
-                max_val = max(s.value_c for s in group_sensors)
-                label = _GROUP_LABELS.get(group_key, group_key)
-                group_item.setText(0, f"{label} ({count})")
-                group_item.setText(1, f"max {max_val:.1f}\u00b0C")
+        # Cosmetic text-only updates \u2014 block signals so the group row's
+        # itemChanged doesn't fire and sync child check-states into the
+        # selection model as a side effect of a setText().
+        with block_signals(self._tree):
+            for group_key, group_sensors in groups.items():
+                group_item = self._group_items.get(group_key)
+                if group_item:
+                    count = len(group_sensors)
+                    max_val = max(s.value_c for s in group_sensors)
+                    label = _GROUP_LABELS.get(group_key, group_key)
+                    group_item.setText(0, f"{label} ({count})")
+                    group_item.setText(1, f"max {max_val:.1f}\u00b0C")
 
     def _build_sensor_tooltip(self, s: SensorReading) -> str:
         """Build a rich tooltip using the sensor knowledge base."""
@@ -348,11 +358,12 @@ class SensorSeriesPanel(QFrame):
                 item.setToolTip(0, f"ID: {f.id}")
                 item.setData(0, Qt.ItemDataRole.UserRole, series_key)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                # Default-visible at first discovery — see _rebuild_sensor_items.
                 item.setCheckState(
                     0,
-                    Qt.CheckState.Checked
-                    if self._selection.is_visible(series_key)
-                    else Qt.CheckState.Unchecked,
+                    Qt.CheckState.Unchecked
+                    if self._selection.is_hidden(series_key)
+                    else Qt.CheckState.Checked,
                 )
 
                 self._set_color_swatch(item, series_key)

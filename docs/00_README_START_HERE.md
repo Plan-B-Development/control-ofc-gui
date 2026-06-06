@@ -1,6 +1,6 @@
 # Control-OFC GUI — Claude Documentation Pack
 
-**Last updated:** 2026-05-07 (audit-pass-2 doc-correctness wave; reading-order list updated; helper-article cross-references refreshed.)
+**Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 This pack is the **working source of truth** for building the Linux-first desktop GUI for **Control-OFC**, the GUI for controlling the **OpenFanController** system through the daemon/API.
 
@@ -27,7 +27,7 @@ This pack is the **working source of truth** for building the Linux-first deskto
 20. `22_AMD_Sensor_Interpretation_Deep_Dive.md` — what sensor readings actually mean and confidence levels
 21. `23_Intel_Motherboard_Fan_Control_Guide.md` — Intel LGA1700 / LGA1851 companion to the AMD guide (DEC-110)
 
-> Slots 16 (`16_User_Decisions_and_API_Notes_Reference.md`) and 17 ("Documentation Audit / Traceability Matrix") are intentionally absent from the published pack. Doc 16 is a local-only running log (gitignored). Doc 17's traceability function is now performed by `DECISIONS.md` + per-release `CHANGELOG.md` + the audit logs under `docs/audit/`.
+> Slots 16 (`16_User_Decisions_and_API_Notes_Reference.md`) and 17 ("Documentation Audit / Traceability Matrix") are intentionally absent from the published pack. Doc 16 is a local-only running log (gitignored). Doc 17's traceability function is now performed by the per-release `CHANGELOG.md` entries.
 
 ## Key decisions already made
 - Linux-first desktop app
@@ -39,14 +39,14 @@ This pack is the **working source of truth** for building the Linux-first deskto
 - Default theme is **dark**
 - Branding is restrained and professional; the working UI feels technically credible
 - One **profile** is active at a time
-- Fans may belong to **multiple groups**
+- Each fan belongs to **at most one fan role** (the member picker disables fans already assigned elsewhere)
 - Fan curves use **one sensor** in V1
 - Simple hysteresis (deadband) is included in V1 control loop
 - There must be a **demo mode** for testing without hardware
 - Polling history is kept for the **last 2 hours**
 - Diagnostics is a first-class page, not an afterthought
 - V1 uses a **fixed dashboard**
-- Full palette editing is **not** in V1, but theme import/export should exist from the start
+- Theme import/export existed from the start; a full theme editor (per-token palette editing with contrast checking) shipped in a later release
 
 ## Highest-impact architectural decision
 The daemon supports **two control modes**:
