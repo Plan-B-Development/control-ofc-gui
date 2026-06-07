@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- Release workflow: `actions/checkout` bumped v4 → v6 (Node 24, ahead of
+  GitHub's 2026-06-16 forced default), and all release-workflow actions
+  are now pinned to full commit SHAs with version comments (immutable
+  supply-chain posture; the AUR deploy action holds the publishing key).
+
 ## [1.33.0] — 2026-06-07
 
 End-to-end "working sensors & fan control" user guidance (DEC-145). Pairs
