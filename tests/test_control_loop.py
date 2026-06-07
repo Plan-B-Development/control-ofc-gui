@@ -169,7 +169,7 @@ class TestWriteSuppression:
             ),
         ]
         loop = ControlLoopService(state, profile_service)
-        assert loop._should_write("openfan:ch00", 40.5) is False
+        assert loop._should_write("openfan:ch00", 40.5, {f.id: f for f in state.fans}) is False
 
     def test_meaningful_change_allowed(self, state, profile_service, qtbot):
         state.fans = [
@@ -178,7 +178,7 @@ class TestWriteSuppression:
             ),
         ]
         loop = ControlLoopService(state, profile_service)
-        assert loop._should_write("openfan:ch00", 42.0) is True
+        assert loop._should_write("openfan:ch00", 42.0, {f.id: f for f in state.fans}) is True
 
     def test_no_prior_pwm_allows_write(self, state, profile_service, qtbot):
         state.fans = [
@@ -187,7 +187,7 @@ class TestWriteSuppression:
             ),
         ]
         loop = ControlLoopService(state, profile_service)
-        assert loop._should_write("openfan:ch00", 50.0) is True
+        assert loop._should_write("openfan:ch00", 50.0, {f.id: f for f in state.fans}) is True
 
 
 class TestManualOverride:

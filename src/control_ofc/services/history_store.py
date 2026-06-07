@@ -54,25 +54,40 @@ class HistoryStore:
         return list(self._series.keys())
 
     def prefill_sensor(self, sensor_id: str, points: list[HistoryPoint]) -> None:
-        """Pre-fill history from daemon's ring buffer (e.g. on first connect).
+        """Pre-fill history from the daemon's ring buffer (first connect and
+        every reconnect).
 
         Converts daemon wall-clock timestamps (ms since epoch) to monotonic
-        offsets relative to now, so they integrate with the existing time-based
-        pruning.
+        offsets relative to now, then MERGES into any existing live series:
+        the combined points are sorted ascending and exact-timestamp
+        duplicates dropped (DEC-146 P2-1). A plain append corrupted reconnects
+        — daemon history (older timestamps) landed after newer live readings,
+        drawing zigzag chart artifacts and breaking the hover lookup, which
+        uses ``np.searchsorted`` and requires sorted input. Live appends are
+        monotonic already, so the sorted invariant holds permanently after
+        this merge. Overlapping re-prefills may add near-duplicate points
+        (conversion jitter defeats exact-ts dedupe); they are bounded
+        (≤ one daemon ring per reconnect), sorted, and age out with pruning.
         """
         if not points:
             return
         key = f"sensor:{sensor_id}"
         now_mono = time.monotonic()
         now_wall_ms = int(time.time() * 1000)
-        series = self._series.get(key)
-        if series is None:
-            series = deque()
-            self._series[key] = series
-        for p in points:
-            age_ms = now_wall_ms - p.ts
-            mono_ts = now_mono - (age_ms / 1000.0)
-            series.append(TimestampedReading(timestamp=mono_ts, value=p.v))
+        incoming = (
+            TimestampedReading(timestamp=now_mono - ((now_wall_ms - p.ts) / 1000.0), value=p.v)
+            for p in points
+        )
+        existing = self._series.get(key)
+        merged: list[TimestampedReading] = list(existing) if existing else []
+        merged.extend(incoming)
+        merged.sort(key=lambda r: r.timestamp)
+        deduped: deque[TimestampedReading] = deque()
+        for r in merged:
+            if deduped and r.timestamp == deduped[-1].timestamp:
+                continue
+            deduped.append(r)
+        self._series[key] = deduped
         self._prune(key)
 
     def clear(self) -> None:

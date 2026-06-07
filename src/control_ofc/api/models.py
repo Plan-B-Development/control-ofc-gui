@@ -324,15 +324,6 @@ class SetPwmResult:
 
 
 @dataclass
-class SetPwmAllResult:
-    pwm_percent: int = 0
-    channels_affected: int = 0
-    # True when the daemon short-circuited the serial command because every
-    # channel already held this value. Mirrors SetPwmResult.coalesced.
-    coalesced: bool = False
-
-
-@dataclass
 class HwmonSetPwmResult:
     header_id: str = ""
     pwm_percent: int = 0
@@ -851,14 +842,6 @@ def parse_set_pwm(data: dict) -> SetPwmResult:
         channel=data.get("channel", 0),
         pwm_percent=data.get("pwm_percent", 0),
         coalesced=data.get("coalesced", False),
-    )
-
-
-def parse_set_pwm_all(data: dict) -> SetPwmAllResult:
-    return SetPwmAllResult(
-        pwm_percent=data.get("pwm_percent", 0),
-        channels_affected=data.get("channels_affected", 0),
-        coalesced=bool(data.get("coalesced", False)),
     )
 
 

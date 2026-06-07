@@ -2,11 +2,35 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Reconnecting no longer corrupts the dashboard chart (DEC-146 P2-1).**
+  Every reconnect re-ran the daemon-history prefill, appending ~4 minutes
+  of older points after newer live readings; the unsorted series drew
+  zigzag artifacts and broke the hover readout (`np.searchsorted` requires
+  sorted input). `prefill_sensor` now merge-sorts and dedupes into the
+  existing series, restoring the sorted invariant for first connect,
+  blips, and long gaps alike.
+
 ### Changed
 - Release workflow: `actions/checkout` bumped v4 → v6 (Node 24, ahead of
   GitHub's 2026-06-16 forced default), and all release-workflow actions
   are now pinned to full commit SHAs with version comments (immutable
   supply-chain posture; the AUR deploy action holds the publishing key).
+- Capabilities, hwmon headers, and the daemon's active profile now
+  re-fetch every 5 minutes (DEC-146 P3-1) instead of only on first poll /
+  reconnect — daemon-side hardware or profile changes no longer leave the
+  GUI stale until the next reconnect.
+- Session min/max sensor statistics and the GPU-write session flag now
+  reset on a true reconnect (DEC-146 P3-2), matching their documented
+  semantics — a daemon restart invalidates both.
+
+### Removed
+- Dead API surface (DEC-146 P3-3/P3-4): the unused set-all PWM parser
+  (`SetPwmAllResult`/`parse_set_pwm_all` — the GUI writes per-channel
+  only; noted in docs/08), `ControlLoopService.write_manual_pwm`,
+  `DaemonClient.default_timeout`, and the never-read `fans` parameter
+  threaded through curve evaluation. The duplicated per-member write
+  bookkeeping is now a single `_dispatch_member_write` helper (RC-1).
 
 ## [1.33.0] — 2026-06-07
 

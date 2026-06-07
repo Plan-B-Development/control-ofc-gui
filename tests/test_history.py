@@ -131,17 +131,23 @@ def test_pruning_removes_old_entries():
 # ---------------------------------------------------------------------------
 
 
-def test_prefill_sensor_appends_to_existing_series():
-    """prefill_sensor on a series that already has live readings must APPEND
-    (not replace, not duplicate). The existing readings are higher-timestamp
-    than the prefill, so a correct append leaves both visible."""
-    store = HistoryStore()
-    # Seed with one live reading first.
-    store.record_sensors([SensorReading(id="cpu", value_c=55.0)])
-    initial = store.get_series("sensor:cpu")
-    assert len(initial) == 1, "precondition: one live reading"
+# DEC-146 P2-1 upgraded prefill from plain append to merge-sort-dedupe; the
+# tests below pin the merged ordering (the chart's np.searchsorted hover
+# lookup requires sorted series — unsorted reconnect prefill was a real bug).
 
-    # Now prefill with daemon history — should append, not replace.
+
+def test_prefill_sensor_merges_with_existing_series_sorted():
+    """prefill_sensor on a series that already has live readings must MERGE:
+    every value present exactly once and timestamps strictly ascending. The
+    pre-DEC-146 append left older daemon points AFTER newer live readings,
+    drawing zigzag chart artifacts and corrupting hover lookups."""
+    from itertools import pairwise
+
+    store = HistoryStore()
+    # Seed with one live reading first (newest timestamp).
+    store.record_sensors([SensorReading(id="cpu", value_c=55.0)])
+
+    # Prefill with older daemon history — must merge BEFORE the live reading.
     now_ms = int(time.time() * 1000)
     points = [
         HistoryPoint(ts=now_ms - 3000, v=40.0),
@@ -149,12 +155,57 @@ def test_prefill_sensor_appends_to_existing_series():
     ]
     store.prefill_sensor("cpu", points)
     series = store.get_series("sensor:cpu")
-    # Three entries total: 2 prefilled + 1 from record_sensors.
-    assert len(series) == 3, f"expected 3 entries after append, got {len(series)}"
-    # All three values must be present (order not important here — order
-    # depends on whether prefill happens before or after the live reading).
-    values = sorted(r.value for r in series)
-    assert values == [40.0, 42.0, 55.0]
+    assert len(series) == 3, f"expected 3 entries after merge, got {len(series)}"
+    timestamps = [r.timestamp for r in series]
+    assert timestamps == sorted(timestamps), "series must be sorted ascending"
+    assert all(b > a for a, b in pairwise(timestamps)), "timestamps must be strictly increasing"
+    # Order is now deterministic: prefill (older) before the live reading.
+    assert [r.value for r in series] == [40.0, 42.0, 55.0]
+
+
+def test_prefill_sensor_double_prefill_dedupes_exact_timestamps():
+    """A repeated prefill with identical points converted at the same instant
+    must not duplicate entries — exact-timestamp collisions keep one copy."""
+    from unittest.mock import patch
+
+    store = HistoryStore()
+    points = [
+        HistoryPoint(ts=2_000_000 - 3000, v=40.0),
+        HistoryPoint(ts=2_000_000 - 2000, v=42.0),
+    ]
+    # Freeze both clocks so the wall→monotonic conversion is identical for
+    # both prefill calls (time.time()*1000 == 2_000_000 ms).
+    with patch("time.monotonic", lambda: 1000.0), patch("time.time", lambda: 2000.0):
+        store.prefill_sensor("cpu", points)
+        store.prefill_sensor("cpu", points)
+        series = store.get_series("sensor:cpu")
+    assert len(series) == 2, f"duplicate prefill must dedupe, got {len(series)}"
+    assert [r.value for r in series] == [40.0, 42.0]
+
+
+def test_prefill_sensor_backfills_gap_between_old_and_live():
+    """Reconnect shape: the series holds pre-disconnect readings (old) plus a
+    fresh live reading; daemon history covering the disconnect gap must land
+    BETWEEN them, keeping the series sorted."""
+    from collections import deque
+
+    from control_ofc.services.history_store import TimestampedReading
+
+    store = HistoryStore()
+    base = time.monotonic()
+    store._series["sensor:cpu"] = deque(
+        [
+            TimestampedReading(timestamp=base - 10.0, value=30.0),  # pre-disconnect
+            TimestampedReading(timestamp=base, value=55.0),  # fresh live reading
+        ]
+    )
+    now_ms = int(time.time() * 1000)
+    # Daemon history covering the disconnect gap (~5 s ago).
+    store.prefill_sensor("cpu", [HistoryPoint(ts=now_ms - 5000, v=44.0)])
+    series = store.get_series("sensor:cpu")
+    assert [r.value for r in series] == [30.0, 44.0, 55.0]
+    timestamps = [r.timestamp for r in series]
+    assert timestamps == sorted(timestamps)
 
 
 def test_prune_boundary_keeps_entry_exactly_at_cutoff():

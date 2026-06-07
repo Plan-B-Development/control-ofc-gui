@@ -28,7 +28,6 @@ from control_ofc.api.models import (
     OperationMode,
     parse_capabilities,
 )
-from control_ofc.constants import API_TIMEOUT_S
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import (
     KERNEL_MODULE_FILTER,
@@ -236,7 +235,6 @@ def _make_client_with_fake_http() -> tuple[DaemonClient, _FakeHttpClient]:
     fake = _FakeHttpClient()
     client._client = fake
     client._socket_path = "/tmp/test-fake.sock"
-    client._default_timeout = API_TIMEOUT_S
     return client, fake
 
 
@@ -303,7 +301,6 @@ class TestPostRaisesCorrectExceptionType:
         client = DaemonClient.__new__(DaemonClient)
         client._client = _RaisingHttpClient(httpx.ReadTimeout("read timed out"))
         client._socket_path = "/tmp/x.sock"
-        client._default_timeout = API_TIMEOUT_S
         with pytest.raises(DaemonTimeout) as exc_info:
             client._post("/foo", json={})
         # Must NOT be a DaemonUnavailable — the categories are distinct.
@@ -315,7 +312,6 @@ class TestPostRaisesCorrectExceptionType:
         client = DaemonClient.__new__(DaemonClient)
         client._client = _RaisingHttpClient(httpx.ConnectError("refused"))
         client._socket_path = "/tmp/x.sock"
-        client._default_timeout = API_TIMEOUT_S
         with pytest.raises(DaemonUnavailable) as exc_info:
             client._post("/foo", json={})
         assert not isinstance(exc_info.value, DaemonTimeout)

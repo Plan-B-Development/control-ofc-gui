@@ -71,16 +71,10 @@ class DaemonClient:
         transport = httpx.HTTPTransport(uds=socket_path)
         self._client = httpx.Client(transport=transport, base_url=BASE_URL, timeout=timeout)
         self._socket_path = socket_path
-        self._default_timeout = timeout
 
     @property
     def socket_path(self) -> str:
         return self._socket_path
-
-    @property
-    def default_timeout(self) -> float:
-        """Default per-call timeout in seconds (for callers that need to know)."""
-        return self._default_timeout
 
     def close(self) -> None:
         self._client.close()
