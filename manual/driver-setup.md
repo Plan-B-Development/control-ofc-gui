@@ -1,12 +1,12 @@
 # Driver Setup (Beginner Walkthrough)
 
-This page walks a **new Linux user** from "my motherboard fans don't show up" to "verified working fan headers", one copy-paste step at a time. It targets **Arch Linux and CachyOS** (the platforms Control-OFC is packaged for); the concepts carry to other distributions but the commands will differ.
+This page walks a **new Linux user** from "my motherboard fans don't show up" to "verified working fan headers", one copy-paste step at a time. It also covers the one [kernel parameter](#amd-gpu-fan-control-prerequisite-rdna3) that AMD RDNA3+ GPU fan control needs, and [what to do when Secure Boot blocks a driver](#secure-boot-and-dkms-modules). It targets **Arch Linux and CachyOS** (the platforms Control-OFC is packaged for); the concepts carry to other distributions but the commands will differ.
 
 If you already know your way around DKMS and modprobe, the condensed reference lives in the [AMD](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) and [Intel](../docs/23_Intel_Motherboard_Fan_Control_Guide.md) fan-control guides.
 
 > ## ⚠ Read this first
 >
-> These steps change kernel parameters or driver/module configuration. Apply them at your own risk and back up your configuration first — an incorrect kernel parameter can stop the system booting.
+> These steps change kernel parameters, driver/module configuration, or firmware (UEFI/BIOS) settings. Apply them at your own risk and back up your configuration first — an incorrect kernel parameter can stop the system booting.
 >
 > All commands on this page are provided **as-is, without warranty of any kind**. You run them at your own risk. The Control-OFC project and its contributors are **not responsible** for hardware, firmware, or data damage, boot failures, or any other consequence of following this guide. The drivers installed here are **third-party, out-of-tree kernel modules** maintained by their respective upstream projects, not by Control-OFC.
 >
@@ -102,6 +102,10 @@ cat /sys/class/hwmon/hwmon*/name
 sensors
 ```
 
+(`sensors` comes from the `lm_sensors` package — `sudo pacman -S lm_sensors` if the command is missing.)
+
+If `modprobe` fails with *Key was rejected by service* (or a lockdown "unsigned module" error), Secure Boot is blocking the unsigned module — see [Secure Boot and DKMS modules](#secure-boot-and-dkms-modules) below.
+
 Boot-time loading is already handled for you: the `control-ofc-daemon` package ships `/etc/modules-load.d/control-ofc.conf`, which loads the common Super-I/O modules at boot.
 
 Then verify end-to-end in the GUI:
@@ -109,6 +113,35 @@ Then verify end-to-end in the GUI:
 1. **Diagnostics → Troubleshooting → Refresh Hardware Diagnostics** — the chips table should show your chip as *loaded* and the header count should match what the board physically has.
 2. Run **Test PWM Control** on a *non-critical chassis fan* header (not CPU/pump). A **"PWM control is working correctly"** result is the finish line.
 3. If the test reports the BIOS reverting control, go to Step 5.
+
+## Secure Boot and DKMS modules
+
+With UEFI **Secure Boot** enabled, the kernel only loads modules signed by a key it trusts. Out-of-tree DKMS modules are unsigned by default, so the install *builds* fine but the module is rejected at **load** time ([Ubuntu wiki: UEFI/SecureBoot/DKMS](https://wiki.ubuntu.com/UEFI/SecureBoot/DKMS)) — a classic dead end, because `dkms status` says *installed* while `modprobe` fails with one of:
+
+```text
+modprobe: ERROR: could not insert 'it87': Key was rejected by service
+modprobe: ERROR: could not insert 'it87': Required key not available
+Lockdown: modprobe: unsigned module loading is restricted
+```
+
+(The "Key was rejected by service" wording in the wild: [Arch forums thread](https://bbs.archlinux.org/viewtopic.php?id=283289) — an NVIDIA module in that case, but the kernel emits the same error for any unsigned module.)
+
+Check whether Secure Boot is the cause:
+
+```bash
+bootctl status | grep -i "secure boot"   # systemd tool, present on every Arch/CachyOS install
+# or
+mokutil --sb-state                       # needs the mokutil package
+```
+
+Two ways out — read the trade-offs before picking:
+
+1. **Disable Secure Boot in firmware setup** (the straightforward path, and the first remediation most distro documentation lists for unsigned modules): reboot into UEFI setup and disable Secure Boot, usually under *Boot* or *Security*. Understand what you are trading away first:
+   - Secure Boot exists to block tampered boot components — disabling it **reduces boot-chain security**.
+   - **Dual-booting Windows with BitLocker?** Toggling Secure Boot can make BitLocker demand its **recovery key** on the next Windows boot. [Have your recovery key ready](https://support.microsoft.com/en-us/windows/find-your-bitlocker-recovery-key-6b71ad27-0b89-ea08-f143-056f5ab347d6) *before* changing the setting.
+2. **Sign the modules (advanced):** DKMS can automatically sign every module it builds — set `mok_signing_key` / `mok_certificate` in `/etc/dkms/framework.conf` ([dkms README](https://github.com/dkms-project/dkms)) and enroll the certificate with your firmware. Enrollment mechanics (sbctl-managed keys, or shim + `mokutil`) are distribution-specific — follow [Arch Wiki: Signed kernel modules](https://wiki.archlinux.org/title/Signed_kernel_modules) and, on CachyOS, the [CachyOS Secure Boot guide](https://wiki.cachyos.org/configuration/secure_boot_setup/).
+
+> **CachyOS caveat (as of June 2026):** `linux-cachyos` kernels are built with IMA disabled, which prevents MOK certificates from being trusted for module signing — **MOK-signed DKMS modules fail to load even after correct enrollment** ([linux-cachyos #862](https://github.com/CachyOS/linux-cachyos/issues/862), open at the time of writing, with a proposed fix in PR #863). Until that lands, **disabling Secure Boot is the only reliable way** to run these drivers on CachyOS kernels.
 
 ## Step 5 — BIOS settings (the half people skip)
 
@@ -158,8 +191,38 @@ BIOS changes are rolled back in BIOS setup (restore Smart Fan / Q-Fan to its def
 - **Kernel updates:** DKMS rebuilds the module automatically when a new kernel + matching headers are installed. If fans disappear right after a kernel update, the usual cause is missing/mismatched headers — re-check Step 2.
 - **Driver updates:** `-git` AUR packages only pick up upstream fixes when *reinstalled* (`yay -S it87-dkms-git`). Do this before troubleshooting any fan-control regression. (If a current build *fails to compile*, see upstream [issue #108](https://github.com/frankcrawford/it87/issues/108) for a known `-Werror=unused-function` toolchain failure.)
 
+## AMD GPU fan control prerequisite (RDNA3+)
+
+The rest of this page is about motherboard headers; AMD GPU fan control has exactly one prerequisite of its own. RDNA3 and newer cards (RX 7000 / RX 9000 series) only accept fan-curve writes through the PMFW interface, which the kernel locks behind an *overdrive* feature bit. Pre-RDNA3 cards (RX 6000 and older) need none of this.
+
+Check first — the readiness report's **GPU diagnostics** row (Diagnostics → Troubleshooting) says whether the bit is set, or from a terminal:
+
+```bash
+cat /sys/module/amdgpu/parameters/ppfeaturemask
+```
+
+If bit 14 (`0x4000`, `PP_OVERDRIVE_MASK` — [kernel amdgpu module-parameters documentation](https://docs.kernel.org/gpu/amdgpu/module-parameters.html)) is not set, add this to the kernel command line:
+
+```text
+amdgpu.ppfeaturemask=0xffffffff
+```
+
+That value is what the daemon's diagnostics, this GUI, and most distro guides standardise on; any narrower mask also works as long as bit 14 is set — [CoolerControl documents OR-ing `0x4000` into your current mask](https://docs.coolercontrol.org/hardware-support.html) as the minimal alternative. Background: [Hardware Compatibility § ppfeaturemask](../docs/19_Hardware_Compatibility.md).
+
+How to add a kernel parameter, per bootloader — the same steps as `man control-ofc-daemon`; see also the [Arch Wiki](https://wiki.archlinux.org/title/Kernel_parameters) and, for Limine, the [CachyOS boot-manager guide](https://wiki.cachyos.org/configuration/boot_manager_configuration/):
+
+| Bootloader | Edit | Then run |
+|---|---|---|
+| **GRUB** | append to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub` | `sudo grub-mkconfig -o /boot/grub/grub.cfg` |
+| **systemd-boot** | append to the `options` line of the active entry under `/boot/loader/entries/` | — |
+| **rEFInd** | append to the options in `/boot/refind_linux.conf` (or the kernel argument list in `refind.conf`) | — |
+| **Limine** (as set up on CachyOS) | append to `KERNEL_CMDLINE` in `/etc/default/limine` | `sudo limine-mkinitcpio` |
+
+Reboot, confirm the parameter took effect with `cat /proc/cmdline`, then run **Test GPU Fan Control** (Diagnostics → Troubleshooting) to verify end-to-end. A wrong kernel command line can prevent the system from booting — the warning at the top of this page applies here in full.
+
 ## Where to go next
 
+- [Setup Checklist](setup-checklist.md) — the ordered end-to-end setup path this page slots into
 - [Hardware Troubleshooting](hardware-troubleshooting.md) — readiness report, dual-chip warning, Test PWM Control results
 - [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) — full chip/driver matrix with sources
 - [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) / [Intel Guide](../docs/23_Intel_Motherboard_Fan_Control_Guide.md) — vendor-by-vendor depth

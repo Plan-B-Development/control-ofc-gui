@@ -291,9 +291,13 @@ class DashboardPage(QWidget):
 
         next_msg = QLabel(
             "1. Check that the daemon is running: systemctl status control-ofc-daemon\n"
-            "2. Verify serial-port group membership: 'uucp' on Arch / CachyOS, "
-            "'dialout' on Debian / Ubuntu / Fedora\n"
-            "3. Open Diagnostics for detailed subsystem health"
+            "2. Missing motherboard sensor driver? Open Diagnostics → Troubleshooting "
+            "and run Refresh Hardware Diagnostics — the readiness report names the "
+            "exact kernel module or AUR package your board needs (the manual's Setup "
+            "Checklist page has the full ordered walkthrough)\n"
+            "3. Using an OpenFan controller? The daemon service accesses serial ports "
+            "itself — it ships with the 'uucp' group on Arch / CachyOS; Debian / "
+            "Ubuntu installs may need a 'dialout' drop-in (see the daemon docs)"
         )
         next_msg.setWordWrap(True)
         next_msg.setProperty("class", "PageSubtitle")

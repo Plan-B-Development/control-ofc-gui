@@ -6,17 +6,20 @@ It controls fans on an OpenFan Controller, on motherboard hwmon headers, and on 
 
 This manual covers every page, setting, and feature of the application.
 
+> All guidance in this manual is informational and provided **as-is, without warranty of any kind**. Changes you make to your system are **at your own risk**, and the project and its contributors accept no liability for them (MIT License — see the LICENSE file shipped with the package).
+
 ## Table of Contents
 
 1. [Getting Started](getting-started.md) — Installation, first launch, and connecting to the daemon
-2. [Dashboard](dashboard.md) — Real-time overview of fans, sensors, and system health
-3. [Controls](controls.md) — Profiles, fan roles, curves, and manual override
-4. [Settings](settings.md) — Application preferences, themes, and backup/restore
-5. [Diagnostics](diagnostics.md) — Daemon health, device status, lease info, and logs
-6. [Fan Wizard](fan-wizard.md) — Guided fan identification and labelling
-7. [Profiles and Curves Reference](profiles-and-curves.md) — How profiles, fan roles, and curves work together
-8. [Hardware Troubleshooting](hardware-troubleshooting.md) — Hardware Readiness, vendor quirks, Test PWM Control, and why some fans appear read-only
-9. [Driver Setup](driver-setup.md) — Beginner walkthrough for installing the out-of-tree motherboard fan drivers (DKMS), verifying them, and rolling back
+2. [Setup Checklist](setup-checklist.md) — Ordered path from fresh install to verified fan control: sensors → readiness → drivers/BIOS → verify → first profile
+3. [Dashboard](dashboard.md) — Real-time overview of fans, sensors, and system health
+4. [Controls](controls.md) — Profiles, fan roles, curves, and manual override
+5. [Settings](settings.md) — Application preferences, themes, and backup/restore
+6. [Diagnostics](diagnostics.md) — Daemon health, device status, lease info, and logs
+7. [Fan Wizard](fan-wizard.md) — Guided fan identification and labelling
+8. [Profiles and Curves Reference](profiles-and-curves.md) — How profiles, fan roles, and curves work together
+9. [Hardware Troubleshooting](hardware-troubleshooting.md) — Hardware Readiness, missing sensors, vendor quirks, Test PWM Control, and why some fans appear read-only
+10. [Driver Setup](driver-setup.md) — Beginner walkthrough for the out-of-tree motherboard fan drivers (DKMS), Secure Boot, the AMD GPU kernel parameter, verification, and rollback
 
 ## Reference Docs
 
@@ -30,3 +33,5 @@ For deeper hardware and sensor topics, see:
 ## Screenshots
 
 All screenshots in this manual are captured automatically from the application running in demo mode, so they always show a reproducible setup. The `screenshots/auto/` directory holds the canonical set referenced from these pages.
+
+The screenshots are not included in the packaged copy under `/usr/share/doc/control-ofc-gui/` — view this manual [on GitHub](https://github.com/Plan-B-Development/control-ofc-gui/tree/main/manual) for the rendered images.

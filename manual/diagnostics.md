@@ -185,4 +185,4 @@ This file is useful for reporting issues. Review it before sharing — it may co
 
 ---
 
-Previous: [Settings](/manual/settings.md) | Next: [Fan Wizard](/manual/fan-wizard.md)
+Previous: [Settings](settings.md) | Next: [Fan Wizard](fan-wizard.md)

@@ -1,6 +1,6 @@
 # Hardware Troubleshooting
 
-This page covers the **Hardware Readiness** report on the Diagnostics → Troubleshooting tab and the situations it helps diagnose: chip detection, kernel driver state, BIOS interference, ACPI conflicts, vendor quirks, and verifying that fan headers actually respond to PWM writes.
+This page covers the **Hardware Readiness** report on the Diagnostics → Troubleshooting tab and the situations it helps diagnose: chip detection, kernel driver state, missing sensors, BIOS interference, ACPI conflicts, vendor quirks, and verifying that fan headers actually respond to PWM writes.
 
 > **Quick navigation**
 > - The Hardware Readiness report lives at **Diagnostics → Troubleshooting**.
@@ -139,6 +139,19 @@ The fallback table currently covers the **Gigabyte X870E AORUS MASTER** as a wor
 
 If you see an `(unverified)` suffix on a header label, treat the assignment as a hint, not a fact. The Fan Wizard is the safe way to confirm — it stops one fan at a time so you can see exactly which physical fan corresponds to which header.
 
+## Sensors missing or fewer than expected
+
+Fan control depends on sensors: curves need temperatures, and the daemon's thermal safety needs a CPU sensor. If the Dashboard or Diagnostics → Sensors shows nothing — or less than you expect — work down this list:
+
+- **No CPU temperature** — the CPU modules (`k10temp` for AMD, `coretemp` for Intel) are mainline and auto-load via device matching on essentially every distribution. If the readiness report's **Thermal safety** row says "no CPU sensor", try loading the module by hand (`sudo modprobe k10temp` or `sudo modprobe coretemp`) and check `sudo dmesg` for errors.
+- **No motherboard temperatures or fan RPMs** — Super-I/O chip modules cannot auto-load (the chips sit on ISA I/O ports with no bus-enumerable trigger), so the daemon package ships `/etc/modules-load.d/control-ofc.conf`, which loads `nct6775`, `it87`, `w83627ehf`, and `drivetemp` at boot. Loading a module for a chip that is not present is harmless. If your chip needs an out-of-tree driver instead, the readiness chips table says so — see [Driver Setup](driver-setup.md).
+- **No drive temperatures** — NVMe drives report temperatures through the kernel `nvme` driver automatically; SATA/SAS drives need `drivetemp` (already in the daemon's modules-load list above).
+- **`lm_sensors` is optional** — the daemon reads `/sys/class/hwmon` directly and does not use libsensors. Installing `lm_sensors` gives you the `sensors` CLI, which is handy for cross-checking what the kernel exposes.
+
+### About `sensors-detect`
+
+Prefer the readiness report first — it identifies your board's chips **without probing the hardware**. Treat `sudo sensors-detect` as a **last resort**, run at your own risk: its probing "can access chips in a way these chips do not like, causing problems ranging from SMBus lockup to permanent hardware damage (a rare case, thankfully)" — [sensors-detect(8)](https://man.archlinux.org/man/extra/lm_sensors/sensors-detect.8.en). If you do run it, accept its conservative defaults rather than answering yes to every probe, and **never run it after boot on a dual-chip Gigabyte board** — it can wedge the Super-I/O bridge so the secondary chip vanishes until reboot (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below).
+
 ## Common situations
 
 ### "All my hwmon headers show as read-only"
@@ -179,7 +192,7 @@ The daemon's thermal failsafe has two distinct triggers, with different fan spee
 
 While either override is active the GUI **stands down on purpose**: the control loop pauses all fan writes, hwmon lease renewals pause, and a "Daemon thermal override active" warning appears (Dashboard warning count and the Diagnostics event log). Control resumes automatically once the daemon reports a normal thermal state — fans pinned during an override are the daemon protecting the system, not a stuck profile.
 
-Check the **Thermal safety** row of the Hardware Readiness report. If it reports "no CPU sensor", install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`).
+Check the **Thermal safety** row of the Hardware Readiness report. If it reports "no CPU sensor", install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`). See [Sensors missing or fewer than expected](#sensors-missing-or-fewer-than-expected).
 
 ### "GPU fan control says feature_unavailable"
 

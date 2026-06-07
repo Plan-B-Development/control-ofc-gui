@@ -79,4 +79,4 @@ Labels are stored as `fan_aliases` in `app_settings.json` and persist across ses
 
 ---
 
-Previous: [Diagnostics](/manual/diagnostics.md) | Next: [Profiles and Curves Reference](/manual/profiles-and-curves.md)
+Previous: [Diagnostics](diagnostics.md) | Next: [Profiles and Curves Reference](profiles-and-curves.md)

@@ -158,4 +158,4 @@ This means you can close the GUI and your fans continue to be managed by the dae
 
 ---
 
-Previous: [Fan Wizard](/manual/fan-wizard.md) | Next: [Hardware Troubleshooting](/manual/hardware-troubleshooting.md)
+Previous: [Fan Wizard](fan-wizard.md) | Next: [Hardware Troubleshooting](hardware-troubleshooting.md)

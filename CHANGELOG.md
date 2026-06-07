@@ -1,5 +1,66 @@
 # Changelog
 
+## [1.33.0] — 2026-06-07
+
+End-to-end "working sensors & fan control" user guidance (DEC-145). Pairs
+with **daemon v1.14.1**. Docs, packaging, and one dashboard copy change —
+no control-loop, lease, or safety-path changes.
+
+### Added
+- **Setup Checklist manual page** (`manual/setup-checklist.md`) — the
+  ordered path from fresh install to verified fan control: install →
+  verify sensors → readiness check → branch table (mainline / DKMS / BIOS /
+  AMD GPU / OpenFan / Intel Arc) → stop competing fan software → Test PWM /
+  GPU Fan Control → first profile, plus a "when to redo what" table (kernel
+  update, BIOS update, stale `-git` driver, kernel-cmdline change). TOC
+  item 2; linked from Getting Started, the README, the post-install
+  message, and Driver Setup. Opens with the full informational-only /
+  at-your-own-risk / no-liability disclaimer block.
+- **Driver Setup § Secure Boot and DKMS modules** — the "builds fine,
+  `modprobe` fails `Key was rejected by service`" dead end: detection
+  (`bootctl status`, `mokutil --sb-state`), disable-vs-sign options with
+  the security trade-off and BitLocker recovery-key warning, DKMS
+  auto-signing pointers (`/etc/dkms/framework.conf`), and the dated CachyOS
+  caveat (linux-cachyos#862: IMA disabled → MOK-signed modules fail to
+  load; disabling Secure Boot is currently the only reliable CachyOS path).
+- **Driver Setup § AMD GPU fan control prerequisite (RDNA3+)** —
+  `amdgpu.ppfeaturemask=0xffffffff` (bit 14 / `PP_OVERDRIVE_MASK`,
+  kernel-doc cited), check commands, per-bootloader steps (GRUB,
+  systemd-boot, rEFInd, Limine) mirroring `man control-ofc-daemon`, and the
+  minimal OR-`0x4000` alternative (CoolerControl-cited).
+- **Hardware Troubleshooting § Sensors missing or fewer than expected** —
+  CPU modules auto-load, what the daemon's modules-load.d ships, NVMe/SATA
+  drive temperatures, `lm_sensors` is optional, and the unified
+  `sensors-detect` stance: readiness report first; last resort at your own
+  risk with the sensors-detect(8) risk quote; never post-boot on dual-chip
+  Gigabyte boards.
+- Packaging: `docs/19…23_*.md` now install to
+  `/usr/share/doc/control-ofc-gui/docs/`, so the manual's reference links
+  resolve in the installed copy (zero dead `../docs/…` links).
+
+### Changed
+- Dashboard "No Hardware Detected" guidance reordered: daemon check first,
+  then the missing-driver readiness route (the actual most common cause);
+  the serial-group note is reframed as a daemon-service fact — the daemon
+  ships its own serial access (`SupplementaryGroups=uucp` + `DeviceAllow`),
+  so users never need group surgery (DEC-049).
+- Disclaimer posture extended (DEC-145): manual-wide informational /
+  as-is / no-liability note in the manual TOC; the Driver Setup ⚠ block and
+  the in-app remediation disclaimer now also name firmware (UEFI/BIOS)
+  settings; Driver Setup Step 4 notes `sensors` needs the `lm_sensors`
+  package.
+- Manual footers normalised to relative links (absolute `/manual/…` links
+  broke in the installed `/usr/share/doc` copy).
+
+### Fixed
+- README pointed at the pre-1.26.0 "Diagnostics → Fans → Hardware
+  Readiness" location; the readiness report lives at **Diagnostics →
+  Troubleshooting** (DEC-124). Same drift fixed in docs/07's
+  dashboard-banner description.
+- aur-publish now ships `packaging/*.install` via the deploy action's
+  `assets` input — post-install message changes previously never reached
+  the AUR (only PKGBUILD + .SRCINFO were pushed).
+
 ## [1.32.0] — 2026-06-07
 
 2026-Q2 it87/SIO knowledgebase refresh (DEC-144). Pairs with **daemon

@@ -90,6 +90,7 @@ A dedicated wizard page that walks first-time users through the complete hardwar
 - The knowledge base (`CHIP_GUIDANCE_DB` / `VENDOR_QUIRKS_DB` in `hwmon_guidance.py`) provides the same information inline
 - A wizard adds a new page, new service, and significant test surface for a one-time workflow
 - DEC-144 additionally ships a beginner-oriented, copy-paste driver setup walkthrough as a manual page ([`manual/driver-setup.md`](../manual/driver-setup.md)) — prerequisites, install, verify, rollback, with the standard remediation disclaimer. This satisfies the documentation-level share of the wizard's goals without the new UI surface, consistent with DEC-092's original reasoning.
+- DEC-145 adds the ordered end-to-end setup path as a manual page ([`manual/setup-checklist.md`](../manual/setup-checklist.md)) — install → verify sensors → readiness → branch (driver / BIOS / GPU / OpenFan) → stop competing fan software → verify control → first profile, plus a "when to redo what" table. This closes the wizard's step-ordering share at the documentation level; the remaining delta to DEC-092 is only the interactive UI surface.
 
 **When to build:**
 - If user feedback shows the diagnostics page is insufficient for first-time setup

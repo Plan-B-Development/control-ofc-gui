@@ -37,6 +37,10 @@ def _state(*, enabled: bool, active: bool, can_check: bool = True) -> DaemonServ
     )
 
 
+def _all_label_text(page: DashboardPage) -> str:
+    return "\n".join(lab.text() for lab in page.findChildren(QLabel))
+
+
 class TestServiceHintVisibility:
     def test_hidden_initially(self, qtbot, app_state):
         page = DashboardPage(state=app_state)
@@ -122,13 +126,36 @@ class TestEnableCommandCopy:
 
 
 class TestDashboardCopyText:
-    def test_no_hardware_state_uses_uucp_and_dialout_groups(self, qtbot, app_state):
+    def test_no_hardware_state_keeps_uucp_and_dialout_groups(self, qtbot, app_state):
         # Regression: dashboard previously told Arch users to join the
         # 'dialout' group, which doesn't exist on Arch (correct group is
-        # 'uucp'). The fix surfaces both group names.
+        # 'uucp'). Both names must stay visible, now framed as a fact about
+        # the daemon service (DEC-145): the daemon unit ships
+        # SupplementaryGroups=uucp; Debian-family installs may need a
+        # 'dialout' drop-in.
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
-        labels = page.findChildren(QLabel)
-        text = "\n".join(lab.text() for lab in labels)
+        text = _all_label_text(page)
         assert "uucp" in text
         assert "dialout" in text
+
+    def test_no_hardware_state_routes_to_readiness_report(self, qtbot, app_state):
+        # DEC-145: the most common cause of "no hardware" is a missing
+        # Super-I/O kernel module, so the empty state must route users to
+        # the Troubleshooting readiness report rather than serial-group
+        # surgery.
+        page = DashboardPage(state=app_state)
+        qtbot.addWidget(page)
+        text = _all_label_text(page)
+        assert "Troubleshooting" in text
+        assert "Refresh Hardware Diagnostics" in text
+
+    def test_no_hardware_state_drops_user_directed_serial_advice(self, qtbot, app_state):
+        # DEC-145 regression: the old copy told the *user* to verify their
+        # own serial-group membership — irrelevant, since the GUI talks to a
+        # 0666 socket (DEC-049) and the daemon (root + SupplementaryGroups)
+        # owns serial access.
+        page = DashboardPage(state=app_state)
+        qtbot.addWidget(page)
+        text = _all_label_text(page)
+        assert "Verify serial-port group membership" not in text
