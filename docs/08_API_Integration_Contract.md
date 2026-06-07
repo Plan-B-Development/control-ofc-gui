@@ -165,6 +165,9 @@ Expected fields:
   - `alarm`, `max_alarm`, `crit_alarm` — chip-asserted alarm bits (bool); sampled at discovery only, not refreshed per poll cycle
   - `fault` — chip-reported sensor fault (bool)
 
+Entries are sorted by `id` — deterministic across daemon restarts and rescans
+(DEC-146; fans were already sorted, sensors now match).
+
 ### GET /fans
 Use as the primary current fan state source.
 Expected fields:
