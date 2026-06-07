@@ -56,7 +56,7 @@ class TestWriteSuppressionBoundary:
                 id="openfan:ch00", source="openfan", rpm=800, last_commanded_pwm=50.0, age_ms=500
             ),
         ]
-        assert loop._should_write("openfan:ch00", 50.99) is False
+        assert loop._should_write("openfan:ch00", 50.99, {f.id: f for f in state.fans}) is False
 
     def test_delta_at_threshold_triggers_write(self):
         """1.0% delta → write (>= 1)."""
@@ -67,7 +67,7 @@ class TestWriteSuppressionBoundary:
                 id="openfan:ch00", source="openfan", rpm=800, last_commanded_pwm=50.0, age_ms=500
             ),
         ]
-        assert loop._should_write("openfan:ch00", 51.0) is True
+        assert loop._should_write("openfan:ch00", 51.0, {f.id: f for f in state.fans}) is True
 
     def test_delta_above_threshold_triggers_write(self):
         """2.0% delta → write."""
@@ -78,7 +78,7 @@ class TestWriteSuppressionBoundary:
                 id="openfan:ch00", source="openfan", rpm=800, last_commanded_pwm=50.0, age_ms=500
             ),
         ]
-        assert loop._should_write("openfan:ch00", 52.0) is True
+        assert loop._should_write("openfan:ch00", 52.0, {f.id: f for f in state.fans}) is True
 
     def test_negative_delta_at_threshold_triggers_write(self):
         """1.0% delta downward → write."""
@@ -89,7 +89,7 @@ class TestWriteSuppressionBoundary:
                 id="openfan:ch00", source="openfan", rpm=800, last_commanded_pwm=50.0, age_ms=500
             ),
         ]
-        assert loop._should_write("openfan:ch00", 49.0) is True
+        assert loop._should_write("openfan:ch00", 49.0, {f.id: f for f in state.fans}) is True
 
     def test_no_prior_pwm_always_writes(self):
         """No last_commanded_pwm → always write (first command)."""
@@ -100,7 +100,7 @@ class TestWriteSuppressionBoundary:
                 id="openfan:ch00", source="openfan", rpm=800, last_commanded_pwm=None, age_ms=500
             ),
         ]
-        assert loop._should_write("openfan:ch00", 50.0) is True
+        assert loop._should_write("openfan:ch00", 50.0, {f.id: f for f in state.fans}) is True
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ class TestHysteresisDeadbandBoundary:
             type=CurveType.GRAPH,
             points=[CurvePoint(temp_c=30, output_pct=20), CurvePoint(temp_c=70, output_pct=80)],
         )
-        return loop._evaluate_curve_with_hysteresis("ctrl1", curve, _make_sensor(temp), {}, status)
+        return loop._evaluate_curve_with_hysteresis("ctrl1", curve, _make_sensor(temp), status)
 
     def test_at_transition_temp_holds(self):
         """Temp exactly at transition point → within deadband → holds."""

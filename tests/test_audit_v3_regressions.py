@@ -63,17 +63,13 @@ class TestHysteresisDeadbandAnchor:
             }
 
         # Step 1: evaluate at 40C — initial, anchor set at 40C
-        result = svc._evaluate_curve_with_hysteresis(
-            "ctrl1", flat_curve, make_sensor(40.0), {}, status
-        )
+        result = svc._evaluate_curve_with_hysteresis("ctrl1", flat_curve, make_sensor(40.0), status)
         assert result == 50.0
         ts = svc._target_states["ctrl1"]
         anchor_after_40 = ts.last_transition_temp
 
         # Step 2: evaluate at 42C — same output (50%), anchor should NOT move
-        result = svc._evaluate_curve_with_hysteresis(
-            "ctrl1", flat_curve, make_sensor(42.0), {}, status
-        )
+        result = svc._evaluate_curve_with_hysteresis("ctrl1", flat_curve, make_sensor(42.0), status)
         assert result == 50.0
         assert ts.last_transition_temp == anchor_after_40, (
             "Anchor moved on rising temp with same output — deadband defeated"
@@ -81,9 +77,7 @@ class TestHysteresisDeadbandAnchor:
 
         # Step 3: evaluate at 41C (1C drop from 42, within 2C deadband of anchor)
         # This SHOULD hold at 50% because we're within the deadband
-        result = svc._evaluate_curve_with_hysteresis(
-            "ctrl1", flat_curve, make_sensor(41.0), {}, status
-        )
+        result = svc._evaluate_curve_with_hysteresis("ctrl1", flat_curve, make_sensor(41.0), status)
         assert result == 50.0
 
     def test_real_transition_does_move_anchor(self):
@@ -126,12 +120,12 @@ class TestHysteresisDeadbandAnchor:
             }
 
         # Step 1: 30C → 20%
-        svc._evaluate_curve_with_hysteresis("ctrl2", step_curve, make_sensor(30.0), {}, status)
+        svc._evaluate_curve_with_hysteresis("ctrl2", step_curve, make_sensor(30.0), status)
         ts = svc._target_states["ctrl2"]
         anchor_30 = ts.last_transition_temp
 
         # Step 2: 50C → 50% (different output!) — anchor MUST move
-        svc._evaluate_curve_with_hysteresis("ctrl2", step_curve, make_sensor(50.0), {}, status)
+        svc._evaluate_curve_with_hysteresis("ctrl2", step_curve, make_sensor(50.0), status)
         assert ts.last_transition_temp != anchor_30, "Anchor did not move on real curve transition"
 
 

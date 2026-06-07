@@ -359,6 +359,10 @@ The GUI uses PWM writes exclusively for V1 control-loop behaviour.
 RPM targeting. The V1 GUI does not use this endpoint — it is not part of the
 current control-loop or UI surface.*
 
+*Similarly, `POST /fans/openfan/pwm` (set-all) is daemon surface the V1 GUI does
+not consume — the control loop writes per-channel only, and the client
+deliberately exposes no set-all method (DEC-146).*
+
 The calibration endpoint runs a long-running sweep (steps × hold_seconds) that sets PWM from 0→100%, reads RPM at each step, and returns a mapping. Safety: aborts on thermal limit (85°C), restores pre-calibration PWM on every exit path — completion, thermal abort, or a failed PWM write mid-sweep (DEC-134).
 
 ### Hwmon lease endpoints

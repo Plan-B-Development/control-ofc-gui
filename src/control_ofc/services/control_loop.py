@@ -415,12 +415,6 @@ class ControlLoopService(QObject):
             self._state.set_mode(OperationMode.AUTOMATIC)
             log.info("Manual override disabled, returning to automatic")
 
-    def write_manual_pwm(self, target_id: str, pwm_percent: float) -> bool:
-        """Write a manual PWM value (bypasses curve evaluation)."""
-        if not self._manual_override:
-            return False
-        return self._write_target(target_id, pwm_percent)
-
     def set_control_manual(self, control_id: str, pwm_percent: float) -> None:
         """Pin one control's members to a fixed PWM (transient, per-card 1A).
 
@@ -581,10 +575,10 @@ class ControlLoopService(QObject):
             return
 
         sensors = {s.id: s for s in self._state.sensors}
-        fans = {f.id: f for f in self._state.fans}
+        fans_by_id = {f.id: f for f in self._state.fans}
 
         for control in profile.controls:
-            self._evaluate_control(control, profile, sensors, fans, status)
+            self._evaluate_control(control, profile, sensors, fans_by_id, status)
 
         self.status_changed.emit(status)
 
@@ -653,7 +647,7 @@ class ControlLoopService(QObject):
         control: LogicalControl,
         profile: Profile,
         sensors: dict[str, SensorReading],
-        fans: dict[str, FanReading],
+        fans_by_id: dict[str, FanReading],
         status: ControlLoopStatus,
     ) -> None:
         """Evaluate one logical control and write to its members."""
@@ -667,20 +661,7 @@ class ControlLoopService(QObject):
             for member in control.members:
                 target_id = member.target_id
                 status.member_outputs.setdefault(control.id, {})[target_id] = manual_pct
-                if self._retry_suppressed(target_id):
-                    status.targets_skipped += 1
-                    continue
-                if self._should_write(target_id, manual_pct):
-                    if self._write_target(target_id, manual_pct):
-                        status.targets_active += 1
-                        if self._write_worker is None:
-                            self._on_write_completed(target_id, OUTCOME_OK)
-                    else:
-                        status.targets_skipped += 1
-                        if self._write_worker is None:
-                            self._on_write_completed(target_id, OUTCOME_OTHER)
-                else:
-                    status.targets_active += 1
+                self._dispatch_member_write(target_id, manual_pct, status, fans_by_id)
             return
 
         # Determine raw desired PWM
@@ -693,9 +674,7 @@ class ControlLoopService(QObject):
                 status.targets_skipped += 1
                 return
 
-            desired_pwm = self._evaluate_curve_with_hysteresis(
-                control.id, curve, sensors, fans, status
-            )
+            desired_pwm = self._evaluate_curve_with_hysteresis(control.id, curve, sensors, status)
             if desired_pwm is None:
                 status.targets_skipped += 1
                 return
@@ -730,27 +709,41 @@ class ControlLoopService(QObject):
             else:
                 output = control_output
             status.member_outputs.setdefault(control.id, {})[target_id] = output
+            self._dispatch_member_write(target_id, output, status, fans_by_id)
 
-            if self._retry_suppressed(target_id):
-                status.targets_skipped += 1
-                continue
-            if self._should_write(target_id, output):
-                if self._write_target(target_id, output):
-                    status.targets_active += 1
-                    # Track success (sync path — async path uses _on_write_completed)
-                    if self._write_worker is None:
-                        self._on_write_completed(target_id, OUTCOME_OK)
-                else:
-                    status.targets_skipped += 1
-                    # Track failure (sync path).  ``_write_target`` only returns
-                    # False on validation-shaped failures (no lease, unknown
-                    # target prefix) or sync-path DaemonError; counting these as
-                    # OUTCOME_OTHER keeps the legacy-bool semantics intact for
-                    # the fall-through tests that still invoke it.
-                    if self._write_worker is None:
-                        self._on_write_completed(target_id, OUTCOME_OTHER)
-            else:
-                status.targets_active += 1  # still active, just suppressed
+    def _dispatch_member_write(
+        self,
+        target_id: str,
+        output: float,
+        status: ControlLoopStatus,
+        fans_by_id: dict[str, FanReading],
+    ) -> None:
+        """Per-member write bookkeeping shared by the transient-manual and
+        curve paths (DEC-146 RC-1): retry suppression → 1% write suppression →
+        dispatch → active/skipped accounting, with the sync-path completion
+        shim (the async worker path reports through ``_on_write_completed``
+        from the worker instead).
+        """
+        if self._retry_suppressed(target_id):
+            status.targets_skipped += 1
+            return
+        if not self._should_write(target_id, output, fans_by_id):
+            status.targets_active += 1  # still active, just suppressed
+            return
+        if self._write_target(target_id, output):
+            status.targets_active += 1
+            # Track success (sync path — async path uses _on_write_completed)
+            if self._write_worker is None:
+                self._on_write_completed(target_id, OUTCOME_OK)
+        else:
+            status.targets_skipped += 1
+            # Track failure (sync path).  ``_write_target`` only returns
+            # False on validation-shaped failures (no lease, unknown
+            # target prefix) or sync-path DaemonError; counting these as
+            # OUTCOME_OTHER keeps the legacy-bool semantics intact for
+            # the fall-through tests that still invoke it.
+            if self._write_worker is None:
+                self._on_write_completed(target_id, OUTCOME_OTHER)
 
     @staticmethod
     def _member_state_key(control_id: str, target_id: str) -> str:
@@ -815,7 +808,6 @@ class ControlLoopService(QObject):
         control_id: str,
         curve: CurveConfig,
         sensors: dict[str, SensorReading],
-        fans: dict[str, FanReading],
         status: ControlLoopStatus,
     ) -> float | None:
         """Evaluate curve with hysteresis deadband. Returns desired PWM or None."""
@@ -864,13 +856,15 @@ class ControlLoopService(QObject):
 
         return desired
 
-    def _should_write(self, target_id: str, desired_pwm: float) -> bool:
-        for fan in self._state.fans:
-            if fan.id == target_id:
-                if fan.last_commanded_pwm is None:
-                    return True  # First write — always allow
-                return abs(desired_pwm - fan.last_commanded_pwm) >= PWM_WRITE_THRESHOLD_PCT
-        return True  # Fan not in state yet — allow first write
+    def _should_write(
+        self, target_id: str, desired_pwm: float, fans_by_id: dict[str, FanReading]
+    ) -> bool:
+        fan = fans_by_id.get(target_id)
+        if fan is None:
+            return True  # Fan not in state yet — allow first write
+        if fan.last_commanded_pwm is None:
+            return True  # First write — always allow
+        return abs(desired_pwm - fan.last_commanded_pwm) >= PWM_WRITE_THRESHOLD_PCT
 
     def _retry_suppressed(self, target_id: str) -> bool:
         """P2-4 retry decay: suppress writes to a repeatedly failing target.

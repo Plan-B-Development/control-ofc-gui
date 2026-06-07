@@ -538,3 +538,63 @@ class TestPollingServiceConstruction:
             assert state.connection == ConnectionState.DISCONNECTED
         finally:
             svc.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# DEC-146 P3-1: periodic capabilities refresh
+# ---------------------------------------------------------------------------
+
+
+class TestPeriodicCapabilitiesRefresh:
+    """Capabilities/headers/active-profile re-fetch every ``_caps_interval``
+    cycles, not only on the first poll (DEC-146 P3-1 — the daemon can gain or
+    lose hardware/profiles without a reconnect)."""
+
+    def test_capabilities_refetched_every_interval(self, qtbot):
+        mock_client = _make_mock_client()
+        worker = _make_worker(mock_client)
+        worker._caps_interval = 3  # shrink the 300 s production interval
+        for _ in range(7):
+            worker.poll()
+        # Cycles 0, 3, and 6 → three capability fetches.
+        assert mock_client.capabilities.call_count == 3
+        assert mock_client.hwmon_headers.call_count == 3
+
+    def test_non_interval_cycles_skip_capabilities(self, qtbot):
+        mock_client = _make_mock_client()
+        worker = _make_worker(mock_client)
+        worker._caps_interval = 1000
+        for _ in range(5):
+            worker.poll()
+        assert mock_client.capabilities.call_count == 1  # cycle 0 only
+
+
+# ---------------------------------------------------------------------------
+# DEC-146 P3-2: session stats reset on the true-reconnect edge
+# ---------------------------------------------------------------------------
+
+
+class TestSessionStatsResetOnReconnect:
+    """A true reconnect resets session-scoped state (the daemon may have
+    restarted, invalidating session min/max and ``gui_wrote_gpu_fan``); the
+    very first connect must not reset."""
+
+    def test_reconnect_resets_session_state(self):
+        state = AppState()
+        state.gui_wrote_gpu_fan = True
+        svc = _make_polling_service(state)
+        svc._was_connected = False  # we were connected before and lost it
+        with patch.object(state, "reset_session_stats", wraps=state.reset_session_stats) as spy:
+            svc._on_connected()
+        spy.assert_called_once()
+        assert state.gui_wrote_gpu_fan is False
+
+    def test_first_connect_does_not_reset(self):
+        state = AppState()
+        state.gui_wrote_gpu_fan = True  # set artificially to observe
+        svc = _make_polling_service(state)
+        svc._was_connected = None  # first-ever cycle
+        with patch.object(state, "reset_session_stats", wraps=state.reset_session_stats) as spy:
+            svc._on_connected()
+        spy.assert_not_called()
+        assert state.gui_wrote_gpu_fan is True
