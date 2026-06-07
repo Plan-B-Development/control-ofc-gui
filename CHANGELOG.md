@@ -1,6 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [1.34.0] — 2026-06-07
+
+2026-06 function/efficiency audit remediation (DEC-146) plus release-
+workflow hardening. Pairs with **daemon v1.14.2**. One user-visible bug
+fix (reconnect chart corruption), two behaviour additions (periodic
+capabilities refresh, session-stat reset on reconnect), dead-code
+removal, and the lease-release shutdown fix — no wire-shape, control-
+loop-semantics, or safety-path changes.
 
 ### Fixed
 - **Reconnecting no longer corrupts the dashboard chart (DEC-146 P2-1).**
