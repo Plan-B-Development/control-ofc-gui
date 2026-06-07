@@ -10,6 +10,13 @@
   sorted input). `prefill_sensor` now merge-sorts and dedupes into the
   existing series, restoring the sorted invariant for first connect,
   blips, and long gaps alike.
+- **Quitting the GUI no longer strands the hwmon lease (DEC-146 P3-10).**
+  The queued release was dropped when the worker loop quit (Qt processes
+  no further queued events after `quit()`), leaving the daemon lease
+  alive for its full 60 s TTL and blocking headless hwmon fan control
+  for that window. Shutdown now waits (bounded, 2 s) for the release to
+  complete before quitting — a hung daemon still cannot hang exit. The
+  new regression test fails on the old code.
 
 ### Changed
 - Release workflow: `actions/checkout` bumped v4 → v6 (Node 24, ahead of
