@@ -441,3 +441,89 @@ def test_worker_mode_shutdown_joins_thread_then_closes_client(mock_client, qtbot
     # explicitly should be idempotent after shutdown already invoked it.
     worker.close_client()
     assert worker._client is None
+
+
+# ---------------------------------------------------------------------------
+# DEC-146 P3-10: shutdown must deliver the queued release before quitting.
+# Qt drops queued slot invocations once quit() runs (only deferred deletions
+# are processed, per the QThread docs), so the pre-fix shutdown silently lost
+# the release and the daemon lease lived out its full 60 s TTL after GUI exit
+# — blocking headless hwmon writes for that window.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingLeaseClient:
+    """Stands in for the worker's private DaemonClient.
+
+    Records release calls (appended on the worker thread; the thread is
+    joined before tests assert) and can optionally block the release on an
+    externally-controlled event to simulate a hung daemon.
+    """
+
+    def __init__(self, socket_path: str) -> None:
+        self.socket_path = socket_path
+        self.release_calls: list[str] = []
+        self.release_block = None  # Optional[threading.Event]
+
+    def hwmon_lease_release(self, lease_id: str, timeout: float | None = None) -> None:
+        if self.release_block is not None:
+            self.release_block.wait()
+        self.release_calls.append(lease_id)
+
+    def close(self) -> None:
+        pass
+
+
+def test_worker_shutdown_waits_for_queued_release(mock_client, qtbot, monkeypatch):
+    """Worker-mode shutdown() must deliver the queued lease release to the
+    daemon before quitting the worker loop. Fails on the pre-DEC-146 code
+    (release dropped from the queue)."""
+    fake = _RecordingLeaseClient("/tmp/control-ofc-test.sock")
+    monkeypatch.setattr("control_ofc.services.lease_service.DaemonClient", lambda socket_path: fake)
+    svc = LeaseService(mock_client, socket_path="/tmp/control-ofc-test.sock")
+    svc._lease_id = "lease-1"
+    svc.shutdown()
+    assert fake.release_calls == ["lease-1"], (
+        "queued release must reach the daemon before the worker quits"
+    )
+
+
+def test_worker_shutdown_release_wait_is_bounded(mock_client, qtbot, monkeypatch):
+    """A hung daemon (release blocks) must not hang shutdown — the wait is
+    bounded by _RELEASE_WAIT_MS, after which quit/wait proceed."""
+    import threading
+    import time as _time
+
+    from control_ofc.services import lease_service as ls_mod
+
+    fake = _RecordingLeaseClient("/tmp/control-ofc-test.sock")
+    fake.release_block = threading.Event()  # stays unset past the wait bound
+    monkeypatch.setattr(ls_mod, "DaemonClient", lambda socket_path: fake)
+    monkeypatch.setattr(ls_mod, "_RELEASE_WAIT_MS", 100)
+    svc = LeaseService(mock_client, socket_path="/tmp/control-ofc-test.sock")
+    svc._lease_id = "lease-1"
+    # Unblock shortly after the bounded wait expires so the worker drains
+    # within the existing wait(2000) and terminate() is never reached.
+    threading.Timer(0.3, fake.release_block.set).start()
+    start = _time.monotonic()
+    svc.shutdown()
+    elapsed = _time.monotonic() - start
+    assert elapsed < 3.0, f"bounded release wait exceeded: {elapsed:.2f}s"
+    # Concurrency review G3: the release must still have been DELIVERED —
+    # it completed inside the worker-join window after the event unblocked.
+    assert fake.release_calls == ["lease-1"]
+
+
+def test_worker_shutdown_without_lease_skips_wait(mock_client, qtbot, monkeypatch):
+    """No lease held → no release queued → shutdown takes the fast path
+    (no bounded-wait spin) and issues no release call."""
+    import time as _time
+
+    fake = _RecordingLeaseClient("/tmp/control-ofc-test.sock")
+    monkeypatch.setattr("control_ofc.services.lease_service.DaemonClient", lambda socket_path: fake)
+    svc = LeaseService(mock_client, socket_path="/tmp/control-ofc-test.sock")
+    start = _time.monotonic()
+    svc.shutdown()
+    elapsed = _time.monotonic() - start
+    assert elapsed < 1.5, f"no-lease shutdown should be fast; took {elapsed:.2f}s"
+    assert fake.release_calls == []

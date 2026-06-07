@@ -23,7 +23,7 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QEventLoop, QObject, QThread, QTimer, Signal, Slot
 
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError
@@ -33,6 +33,13 @@ if TYPE_CHECKING:
     from control_ofc.services.diagnostics_service import DiagnosticsService
 
 log = logging.getLogger(__name__)
+
+# DEC-146 P3-10: upper bound on how long shutdown() waits for the worker's
+# queued lease release to complete before quitting the worker loop. The HTTP
+# call itself is bounded by LEASE_API_TIMEOUT_S (1.5 s); 2 s also absorbs a
+# renew already mid-flight on the worker. A hung daemon costs at most this
+# plus the existing thread-join timeout — exit can never hang indefinitely.
+_RELEASE_WAIT_MS = 2000
 
 
 class _LeaseWorker(QObject):
@@ -408,9 +415,34 @@ class LeaseService(QObject):
         the worker's event loop and wait for it to drain. Closing the
         worker's `DaemonClient` happens AFTER `wait()` so we never mutate
         worker state from the main thread while the worker is still alive.
+
+        DEC-146 P3-10: in worker mode the release is a QUEUED call, and Qt
+        processes no further queued events once ``quit()`` runs (only
+        deferred deletions, per QThread docs) — so shutdown previously
+        dropped the release and left the daemon lease alive for its full
+        60 s TTL, blocking headless hwmon writes after GUI exit. We now
+        spin a bounded local event loop until ``release_completed`` (or
+        ``_RELEASE_WAIT_MS``) before quitting, so a hung worker can never
+        hang exit. ``BlockingQueuedConnection`` was rejected for exactly
+        that reason: it has no timeout.
         """
+        # Connect the wait loop BEFORE queueing the release (concurrency
+        # review G1): queued emissions snapshot their receivers at emit time,
+        # so connecting first guarantees the release we are about to request
+        # is the one that can satisfy the wait — a fast worker completing
+        # between release() and a later connect would otherwise leave the
+        # loop spinning out its full timeout for nothing.
+        wait_loop: QEventLoop | None = None
+        if self._lease_id is not None and self._worker is not None:
+            wait_loop = QEventLoop()
+            self._worker.release_completed.connect(wait_loop.quit)
         self.release()
         if self._worker_thread is not None:
+            if wait_loop is not None and self._worker is not None:
+                QTimer.singleShot(_RELEASE_WAIT_MS, wait_loop.quit)
+                wait_loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+                with contextlib.suppress(RuntimeError):
+                    self._worker.release_completed.disconnect(wait_loop.quit)
             self._worker_thread.quit()
             if not self._worker_thread.wait(2000):
                 log.warning("Lease worker thread did not stop within 2s, terminating")
