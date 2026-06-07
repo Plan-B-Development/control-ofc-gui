@@ -57,11 +57,12 @@ control-ofc-gui --demo
 > **First-time daemon setup?** The daemon has its own prerequisites — kernel
 > modules for your motherboard's Super I/O chip, possibly an AUR DKMS driver
 > on newer Gigabyte / MSI / ASRock boards (2022+), and a kernel parameter
-> for RDNA3+ AMD GPU fan control. See the
-> [daemon prerequisites guide](https://github.com/Plan-B-Development/control-ofc-daemon#prerequisites)
-> before installing the daemon, or open **Diagnostics → Fans → Hardware
-> Readiness** in the GUI after install — it identifies your chip and
-> recommends the exact AUR package.
+> for RDNA3+ AMD GPU fan control. Follow the ordered
+> [Setup Checklist](manual/setup-checklist.md), see the
+> [daemon prerequisites guide](https://github.com/Plan-B-Development/control-ofc-daemon#prerequisites),
+> or open **Diagnostics → Troubleshooting** in the GUI after install — the
+> Hardware Readiness report identifies your chip and recommends the exact
+> AUR package.
 
 ## CLI
 
@@ -119,6 +120,7 @@ See the [architecture docs](docs/02_System_Architecture_and_Boundaries.md) and [
 ## Documentation
 
 - **[User Manual](manual/README.md)** — installation, features, and usage guide
+- **[Setup Checklist](manual/setup-checklist.md)** — ordered path from fresh install to verified sensors and fan control
 - **[Hardware Troubleshooting](manual/hardware-troubleshooting.md)** — Hardware Readiness, Test PWM Control, vendor quirks
 - **[Hardware Compatibility](docs/19_Hardware_Compatibility.md)** — chip support matrix, kernel drivers, ACPI conflicts
 - **[AMD Motherboard Fan Control Guide](docs/21_AMD_Motherboard_Fan_Control_Guide.md)** — vendor-by-vendor BIOS notes (Gigabyte, ASUS, MSI, ASRock)

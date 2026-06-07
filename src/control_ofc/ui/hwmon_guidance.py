@@ -14,9 +14,10 @@ from dataclasses import dataclass, field
 # Lives here (the lowest-level guidance module) so both the dual-chip warning
 # and the readiness "To fix" guidance can share it without a circular import.
 REMEDIATION_DISCLAIMER = (
-    "These steps change kernel parameters or driver/module configuration. "
-    "Apply them at your own risk and back up your configuration first — an "
-    "incorrect kernel parameter can stop the system booting."
+    "These steps change kernel parameters, driver/module configuration, or "
+    "firmware (UEFI/BIOS) settings. Apply them at your own risk and back up "
+    "your configuration first — an incorrect kernel parameter can stop the "
+    "system booting."
 )
 
 

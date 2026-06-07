@@ -134,6 +134,11 @@ jobs:
         with:
           pkgname: control-ofc-gui
           pkgbuild: packaging/PKGBUILD
+          # install= files live next to the PKGBUILD in the AUR repo; without
+          # shipping them here, .install text changes never reach the AUR (the
+          # action otherwise pushes only PKGBUILD + .SRCINFO). DEC-145.
+          assets: |
+            packaging/*.install
           updpkgsums: true
           commit_username: github-actions[bot]
           commit_email: 41898282+github-actions[bot]@users.noreply.github.com

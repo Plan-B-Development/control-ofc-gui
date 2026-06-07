@@ -123,4 +123,4 @@ A new profile shows "No fan roles configured. Click + Fan Role to create one." T
 
 ---
 
-Previous: [Dashboard](/manual/dashboard.md) | Next: [Settings](/manual/settings.md)
+Previous: [Dashboard](dashboard.md) | Next: [Settings](settings.md)

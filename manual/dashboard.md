@@ -74,4 +74,4 @@ If the daemon is not reachable, the Dashboard shows a disconnected overlay with 
 
 ---
 
-Previous: [Getting Started](/manual/getting-started.md) | Next: [Controls](/manual/controls.md)
+Previous: [Setup Checklist](setup-checklist.md) | Next: [Controls](controls.md)

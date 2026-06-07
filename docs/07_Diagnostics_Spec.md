@@ -424,7 +424,7 @@ Fintek F71882FG, F718xx; SMSC SCH5627, SCH5636.
 
 ### Dashboard banner
 An `ErrorBanner` widget on the live dashboard content shows:
-- Info banner when hwmon is not detected (suggests checking Diagnostics → Fans)
+- Info banner when hwmon is not detected (suggests checking Diagnostics → Troubleshooting)
 - Warning banner when hwmon is detected but all headers are read-only
 - Hidden when writable headers are available
 

@@ -25,6 +25,10 @@ what your specific system needs is to launch the GUI and open
 **Diagnostics → Troubleshooting → Hardware Readiness** — it inspects your hardware
 and recommends the exact AUR packages or kernel parameters required.
 
+For the complete ordered path — install → verify sensors → readiness check →
+drivers/BIOS/GPU branch → verify control → first profile — follow the
+[Setup Checklist](setup-checklist.md).
+
 New to Linux and told you need a driver? The [Driver Setup](driver-setup.md)
 page of this manual is a copy-paste beginner walkthrough — identify the
 chip, install the right DKMS package, verify it works, and roll it all
@@ -111,4 +115,4 @@ An **About** button at the bottom of the sidebar shows version and credit inform
 
 ---
 
-Next: [Dashboard](/manual/dashboard.md)
+Next: [Setup Checklist](setup-checklist.md)
