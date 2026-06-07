@@ -137,8 +137,12 @@ jobs:
           # install= files live next to the PKGBUILD in the AUR repo; without
           # shipping them here, .install text changes never reach the AUR (the
           # action otherwise pushes only PKGBUILD + .SRCINFO). DEC-145.
+          # The .gitignore is load-bearing: with assets set, the action stages
+          # `git add --all`, which would otherwise commit the source tarball
+          # updpkgsums downloads — aurweb rejects blobs > ~488 KiB.
           assets: |
             packaging/*.install
+            packaging/aur/.gitignore
           updpkgsums: true
           commit_username: github-actions[bot]
           commit_email: 41898282+github-actions[bot]@users.noreply.github.com

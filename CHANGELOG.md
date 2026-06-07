@@ -59,7 +59,10 @@ no control-loop, lease, or safety-path changes.
   dashboard-banner description.
 - aur-publish now ships `packaging/*.install` via the deploy action's
   `assets` input — post-install message changes previously never reached
-  the AUR (only PKGBUILD + .SRCINFO were pushed).
+  the AUR (only PKGBUILD + .SRCINFO were pushed). An AUR-side `.gitignore`
+  ships alongside: with `assets` set the action stages `git add --all`,
+  which would otherwise commit updpkgsums' downloaded source tarball —
+  aurweb rejects blobs over ~488 KiB.
 
 ## [1.32.0] — 2026-06-07
 
