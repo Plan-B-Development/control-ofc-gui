@@ -18,6 +18,7 @@ from control_ofc.api.models import (
     FanReading,
     FeatureFlags,
     GpuDiagnosticsInfo,
+    GpuFanResetResult,
     GpuVerifyResult,
     GpuVerifyState,
     HardwareDiagnosticsResult,
@@ -372,6 +373,16 @@ class DemoService:
         """Simulate a PWM write in demo mode."""
         if fan_id in self._fan_pwm:
             self._fan_pwm[fan_id] = max(0, min(100, pwm_percent))
+
+    def reset_gpu_fan(self, gpu_id: str) -> GpuFanResetResult:
+        """Synthetic GPU restore-to-automatic (DEC-147) for demo / screenshot
+        use — never touches hardware. Always reports a successful reset."""
+        return GpuFanResetResult(gpu_id=gpu_id, reset=True)
+
+    def hwmon_rescan(self) -> list[HwmonHeader]:
+        """Synthetic hwmon rescan (DEC-147) — returns the static demo header
+        set, mirroring a daemon whose re-enumeration found nothing new."""
+        return self.hwmon_headers()
 
     def verify_gpu_fan(self, gpu_id: str) -> GpuVerifyResult:
         """Synthetic GPU fan verify (DEC-120) for demo / screenshot use — never

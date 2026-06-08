@@ -20,7 +20,7 @@
 | Serial startup retry | IMPLEMENTED | 5x exponential backoff (1-16s) |
 | **Serial runtime reconnect** | **IMPLEMENTED (R43)** | After 5 consecutive errors, enters reconnect mode with backoff |
 | hwmon manual rescan | IMPLEMENTED | `POST /hwmon/rescan` endpoint |
-| GUI rescan button | ABSENT | Endpoint exists but not wired in GUI. The `DaemonClient.hwmon_rescan` wrapper was removed in v1.14.1 as dead code; restore from git when implementing the UI button. |
+| GUI rescan button | **IMPLEMENTED (DEC-147)** | Diagnostics ▸ Troubleshooting ▸ "Rescan Hardware" — restores the `DaemonClient.hwmon_rescan` wrapper, pushes fresh headers through `AppState`, chains a diagnostics refetch. New fan-*control* hardware still requires a daemon restart (daemon-side limit). |
 | udev stable symlink | TEMPLATE ONLY | `packaging/99-control-ofc.rules` — requires user VID/PID |
 | udev hotplug trigger | ABSENT | No automatic device-event service start |
 | Runtime hwmon hotplug | ABSENT | Devices added after startup are invisible |
@@ -152,20 +152,24 @@ cleanup surface for no significant gain over the bundle.
 **When to build:** unlikely. If we ever want a forensic trail
 across restarts, the daemon journal is the right place.
 
-### 11. GUI surface for `reset_gpu_fan` (deferred)
+### 11. GUI surface for `reset_gpu_fan` (RESOLVED — DEC-147)
 
-`DaemonClient.reset_gpu_fan` and its parser are implemented, but no GUI caller
-currently invokes them. During a session the user can set a static GPU speed but
-cannot ask the daemon to restore the GPU to the PMFW default curve without
-restarting the daemon. The daemon still resets GPU fans to automatic on
-shutdown (safety), so this is a convenience/UX gap rather than a correctness
-issue.
+Diagnostics ▸ Troubleshooting ▸ "Restore GPU Fan to Automatic" now wires
+`DaemonClient.reset_gpu_fan` to a user-facing action beside the GPU verify
+button: shown for any writable AMD GPU (no daemon version floor — the reset
+route predates every supported daemon), disabled with an explanatory tooltip
+while the GUI control loop manages an `amd_gpu:` target (the active profile
+would silently re-assert its curve), re-checked at click time, and clearing
+the session's `gui_wrote_gpu_fan` flag on success so the close-time
+auto-reset (M9) becomes a no-op until the next GUI GPU write. Before DEC-147
+the only caller was that close-time reset — mid-session the user could set a
+static GPU speed but not hand control back to PMFW without restarting the
+daemon.
 
-**When to build:**
-- When we add a "Restore to automatic" menu action in the fan wizard / fan role
-  editor for GPU fans. This is a small, self-contained feature (wire one API
-  method to a menu entry) and should ship in a minor release rather than a
-  patch audit-remediation release.
+**Remaining (optional) surface:** a secondary "Restore to automatic" action in
+the fan wizard / fan role editor for GPU fans. Deferred — that surface only
+exists when a profile with a GPU member is open, while the stuck-GPU scenario
+typically arises precisely when no control drives the GPU anymore.
 
 ### 14. Intel GPU writable fan control (blocked on the kernel — DEC-121)
 
@@ -189,6 +193,8 @@ table only with authoritatively-verified device-ID → name pairs.
 
 | Gap | Resolution | Version |
 |-----|-----------|---------|
+| GUI rescan button (endpoint existed, never wired) | Diagnostics ▸ Troubleshooting "Rescan Hardware" + restored `hwmon_rescan` wrapper + chained diagnostics refetch (DEC-147) | GUI Unreleased |
+| GUI surface for `reset_gpu_fan` (§11) | Diagnostics ▸ Troubleshooting "Restore GPU Fan to Automatic", gated against the GUI control loop (DEC-147) | GUI Unreleased |
 | Emergency ↔ GUI lease ping-pong (alternating curve/forced PWM during 105°C events) | `thermal_state` in GET /status + GUI control-loop/lease stand-down (DEC-132) | GUI v1.30.0 / daemon v1.13.0 |
 | Per-tick sensor re-discovery (~340 sysfs ops/s; asus_wmi_sensors polling risk) | Descriptor cache + triggered re-discovery (DEC-133) | daemon v1.13.0 |
 | GPU GUI-priority lapse on slow ramps (coalesced writes didn't count as liveness; engine used exact-match suppression) | record_gui_write on coalesced returns + shared 5% threshold (DEC-131) | daemon v1.13.0 |

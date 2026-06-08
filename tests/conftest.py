@@ -84,6 +84,7 @@ class FakeDaemonClient:
             "sensors",
             "fans",
             "hwmon_headers",
+            "hwmon_rescan",
             "hwmon_lease_status",
             "sensor_history",
             "set_openfan_pwm",
@@ -148,6 +149,11 @@ class FakeDaemonClient:
     def hwmon_headers(self) -> list:
         self._record("hwmon_headers")
         self._maybe_raise("hwmon_headers")
+        return []
+
+    def hwmon_rescan(self) -> list:
+        self._record("hwmon_rescan")
+        self._maybe_raise("hwmon_rescan")
         return []
 
     def hwmon_lease_status(self) -> LeaseState:

@@ -255,6 +255,19 @@ class DaemonClient:
         )
         return parse_hwmon_set_pwm(data)
 
+    def hwmon_rescan(self) -> list[HwmonHeader]:
+        """POST /hwmon/rescan — re-enumerate hwmon devices and return fresh headers.
+
+        The daemon also flags its sensor polling loop to rebuild the cached
+        descriptor set on the next tick (DEC-133), so newly loaded sensor
+        chips appear through the normal 1 Hz poll within ~2 s. PWM *control*
+        hardware added after daemon startup still requires a daemon restart.
+        Removed as dead code in v1.14.1; restored for the Diagnostics
+        "Rescan Hardware" button (DEC-147).
+        """
+        data = self._post("/hwmon/rescan")
+        return parse_hwmon_headers(data)
+
     def activate_profile(
         self,
         profile_path: str | None = None,

@@ -13,6 +13,7 @@ from PySide6.QtGui import QColor
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
     from control_ofc.services.app_settings_service import AppSettingsService
+    from control_ofc.services.control_loop import ControlLoopService
     from control_ofc.services.profile_service import ProfileService
 from PySide6.QtCore import QObject, QPoint, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction
@@ -40,6 +41,7 @@ from control_ofc.api.models import (
     DaemonStatus,
     FanReading,
     Freshness,
+    GpuFanResetResult,
     GpuVerifyResult,
     HardwareDiagnosticsResult,
     HwmonCapability,
@@ -89,6 +91,19 @@ from control_ofc.ui.widgets.readiness_report import (
 from control_ofc.ui.widgets.sensor_detail_dialog import SensorDetailDialog
 
 _TRANSPARENT = "background: transparent;"
+
+# DEC-147: GPU restore-to-automatic button tooltips. The gated variant shows
+# while the GUI control loop manages an amd_gpu: target — restoring then would
+# be silently undone on the next ≥5% curve delta, so the button is disabled
+# with the reason in the tooltip rather than left to fail mysteriously.
+_GPU_RESTORE_TOOLTIP_READY = (
+    "Hand the GPU fan back to the firmware's automatic curve (PMFW default) — "
+    "undoes a static speed set this session. No lease required."
+)
+_GPU_RESTORE_TOOLTIP_GATED = (
+    "The active profile is driving the GPU fan — remove it from its fan role "
+    "or deactivate the profile first."
+)
 
 log = logging.getLogger(__name__)
 
@@ -467,12 +482,16 @@ class _VerifyWorker(QObject):
 
 
 class _GpuVerifyWorker(QObject):
-    """Runs in a QThread — executes the blocking ~6s ``verify_gpu_fan`` call off
-    the UI thread (DEC-120), mirroring :class:`_VerifyWorker`."""
+    """Runs in a QThread — executes the blocking GPU fan calls off the UI
+    thread: the ~6s ``verify_gpu_fan`` probe (DEC-120) and the
+    ``reset_gpu_fan`` restore-to-automatic (DEC-147), mirroring
+    :class:`_VerifyWorker`."""
 
     verify_ok = Signal(object)  # GpuVerifyResult
     # category ('unavailable' | 'error' | 'unsupported'), message
     verify_error = Signal(str, str)
+    reset_ok = Signal(object)  # GpuFanResetResult
+    reset_error = Signal(str, str)  # category ('unavailable' | 'error'), message
 
     def __init__(self, socket_path: str) -> None:
         super().__init__()
@@ -519,6 +538,37 @@ class _GpuVerifyWorker(QObject):
             self._client = None
             self.verify_error.emit("unavailable", "Connection lost during GPU verify")
 
+    @Slot(str)
+    def do_reset(self, gpu_id: str) -> None:
+        """Restore the GPU fan to the firmware's automatic curve (DEC-147).
+
+        Unlike ``do_verify`` there is no ``unsupported`` category: the reset
+        route predates every supported daemon, so a 404 here means the GPU id
+        itself was not found — a real error, not a version gap.
+        """
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            result = self._ensure_client().reset_gpu_fan(gpu_id)
+            self.reset_ok.emit(result)
+        except DaemonTimeout:
+            self.reset_error.emit(
+                "unavailable",
+                "GPU restore timed out. The daemon may still have completed "
+                "the reset — check the fan behaviour and re-run if needed.",
+            )
+        except DaemonUnavailable:
+            self.reset_error.emit("unavailable", "Daemon unavailable during GPU restore")
+        except DaemonError as e:
+            self.reset_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("GPU restore worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.reset_error.emit("unavailable", "Connection lost during GPU restore")
+
     def shutdown(self) -> None:
         if self._client is not None:
             with contextlib.suppress(Exception):
@@ -551,10 +601,17 @@ class _HwDiagWorker(QObject):
     off the UI thread. The daemon performs several sysfs/procfs reads to build
     the report, so a synchronous fetch on a slow/contended daemon would freeze
     the GUI — notably the once-per-session auto-fetch when the Fans tab is first
-    shown."""
+    shown.
+
+    Also hosts the POST /hwmon/rescan call (DEC-147) — the daemon re-walks
+    ``/sys/class/hwmon`` synchronously to rebuild the header list, and the
+    rescan's natural follow-up is a diagnostics refetch on this same thread.
+    """
 
     fetch_ok = Signal(object)  # HardwareDiagnosticsResult
     fetch_error = Signal(str, str)  # category ('unavailable'|'error'), message
+    rescan_ok = Signal(object)  # list[HwmonHeader]
+    rescan_error = Signal(str, str)  # category ('unavailable'|'error'), message
 
     def __init__(self, socket_path: str) -> None:
         super().__init__()
@@ -589,6 +646,28 @@ class _HwDiagWorker(QObject):
             self._client = None
             self.fetch_error.emit("unavailable", "Connection lost during diagnostics fetch")
 
+    @Slot()
+    def do_rescan(self) -> None:
+        """Re-enumerate hwmon devices via POST /hwmon/rescan (DEC-147)."""
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            headers = self._ensure_client().hwmon_rescan()
+            self.rescan_ok.emit(headers)
+        except DaemonTimeout:
+            self.rescan_error.emit("unavailable", "Hardware rescan timed out")
+        except DaemonUnavailable:
+            self.rescan_error.emit("unavailable", "Daemon unavailable — cannot rescan hardware")
+        except DaemonError as e:
+            self.rescan_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Hwmon rescan worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.rescan_error.emit("unavailable", "Connection lost during hardware rescan")
+
     def shutdown(self) -> None:
         if self._client is not None:
             with contextlib.suppress(Exception):
@@ -618,9 +697,17 @@ class DiagnosticsPage(QWidget):
     # QThread) with the GPU PCI BDF so the ~6s probe never blocks the UI.
     _gpu_verify_request = Signal(str)
 
+    # DEC-147: Main-thread signal that kicks the GPU restore-to-automatic call
+    # on the GPU verify worker's thread (same client, same thread).
+    _gpu_reset_request = Signal(str)
+
     # Main-thread signal that kicks the hardware-diagnostics worker (its own
     # QThread) so the blocking GET /diagnostics/hardware never freezes the UI.
     _hw_diag_request = Signal()
+
+    # DEC-147: Main-thread signal that kicks the hwmon rescan call on the
+    # hardware-diagnostics worker's thread.
+    _rescan_request = Signal()
 
     # Public signals used by main_window to coordinate the GUI control loop —
     # the loop pauses writes to the header under verify so its 1Hz tick does
@@ -636,11 +723,16 @@ class DiagnosticsPage(QWidget):
         profile_service: ProfileService | None = None,
         client: DaemonClient | None = None,
         series_selection: SeriesSelectionModel | None = None,
+        control_loop: ControlLoopService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._state = state
         self._client = client
+        # DEC-147: used to gate "Restore GPU Fan to Automatic" while the GUI
+        # control loop manages an amd_gpu: target. None outside main_window
+        # (unit tests) or until demo mode assigns its late-created loop.
+        self._control_loop = control_loop
         self._settings_service = settings_service
         # DEC-117: Diagnostics > Sensors "Mirror hidden to dashboard" button
         # pushes the local diagnostics_hidden_sensor_ids list into the shared
@@ -752,6 +844,9 @@ class DiagnosticsPage(QWidget):
             self._state.sensors_updated.connect(self._on_sensors)
             self._state.fans_updated.connect(self._on_fans)
             self._state.lease_updated.connect(self._on_lease)
+            # DEC-147: profile changes flip who owns the GPU fan — re-gate
+            # the restore button (it is also re-checked on click).
+            self._state.active_profile_changed.connect(self._update_gpu_restore_gate)
 
     # ─── Tab builders ────────────────────────────────────────────────
 
@@ -950,11 +1045,31 @@ class DiagnosticsPage(QWidget):
         self._open_report_btn.setEnabled(False)
         header_row.addWidget(self._open_report_btn)
 
+        # DEC-147: daemon-side re-enumeration — distinct from the GUI-side
+        # "Refresh" fetch beside it. New sensors arrive via the normal poll
+        # after the daemon rebuilds its descriptor cache (DEC-133); a
+        # successful rescan chains a diagnostics refetch automatically.
+        self._rescan_btn = QPushButton("Rescan Hardware")
+        self._rescan_btn.setObjectName("Diagnostics_Btn_rescanHwmon")
+        self._rescan_btn.setToolTip(
+            "Ask the daemon to re-enumerate hwmon sensors and PWM headers — "
+            "use after loading a sensor kernel module. New fan-control "
+            "hardware still requires a daemon restart."
+        )
+        self._rescan_btn.clicked.connect(self._run_hwmon_rescan)
+        header_row.addWidget(self._rescan_btn)
+
         fetch_btn = QPushButton("Refresh Hardware Diagnostics")
         fetch_btn.setObjectName("Diagnostics_Btn_fetchHwDiag")
         fetch_btn.clicked.connect(self._fetch_hardware_diagnostics)
         header_row.addWidget(fetch_btn)
         card_layout.addLayout(header_row)
+
+        # DEC-147: rescan outcome, directly under the action that caused it.
+        self._rescan_result_label = _transparent_label("", "Diagnostics_Label_rescanResult")
+        self._rescan_result_label.setWordWrap(True)
+        self._rescan_result_label.setVisible(False)
+        card_layout.addWidget(self._rescan_result_label)
 
         # ── Always-visible verdict banner (DEC-113) ──────────────────────
         self._readiness_verdict_label = _transparent_label(
@@ -1367,11 +1482,29 @@ class DiagnosticsPage(QWidget):
         self._gpu_verify_btn.clicked.connect(self._run_gpu_verify)
         self._gpu_verify_btn.setVisible(False)
         gpu_verify_row.addWidget(self._gpu_verify_btn)
+
+        # DEC-147: hand the GPU fan back to the PMFW automatic curve, undoing
+        # a static speed set this session without a daemon restart. Shares the
+        # verify button's writable-GPU visibility (no daemon version floor —
+        # the reset route predates every supported daemon); disabled while the
+        # GUI control loop drives the GPU (see _update_gpu_restore_gate).
+        self._gpu_restore_btn = QPushButton("Restore GPU Fan to Automatic")
+        self._gpu_restore_btn.setObjectName("Diagnostics_Btn_restoreGpu")
+        self._gpu_restore_btn.setToolTip(_GPU_RESTORE_TOOLTIP_READY)
+        self._gpu_restore_btn.clicked.connect(self._run_gpu_restore)
+        self._gpu_restore_btn.setVisible(False)
+        gpu_verify_row.addWidget(self._gpu_restore_btn)
         gpu_verify_row.addStretch()
 
         self._gpu_verify_result_label = _transparent_label("", "Diagnostics_Label_verifyGpuResult")
         self._gpu_verify_result_label.setWordWrap(True)
         self._gpu_verify_result_label.setVisible(False)
+
+        self._gpu_restore_result_label = _transparent_label(
+            "", "Diagnostics_Label_restoreGpuResult"
+        )
+        self._gpu_restore_result_label.setWordWrap(True)
+        self._gpu_restore_result_label.setVisible(False)
 
         section = CollapsibleSection("PWM control test", "Diagnostics_Section_pwmTest")
         section.add_layout(verify_row)
@@ -1379,6 +1512,7 @@ class DiagnosticsPage(QWidget):
         section.add_widget(self._verify_result_label)
         section.add_layout(gpu_verify_row)
         section.add_widget(self._gpu_verify_result_label)
+        section.add_widget(self._gpu_restore_result_label)
         return section
 
     def _build_fan_status_pane(self) -> QWidget:
@@ -2351,10 +2485,18 @@ class DiagnosticsPage(QWidget):
             return
 
         # Synchronous fallback — no socket path (e.g. mock-client tests).
+        # getattr: a minimal client (e.g. the DEC-147 rescan chain running
+        # against a test fake) may not expose the diagnostics endpoint.
+        fetch = getattr(self._client, "hardware_diagnostics", None)
+        if fetch is None:
+            self._hw_ready_summary.setText(
+                "Cannot fetch: this client does not support hardware diagnostics"
+            )
+            return
         from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 
         try:
-            result = self._client.hardware_diagnostics()
+            result = fetch()
         except DaemonTimeout:
             self._on_hw_diag_error("unavailable", "Diagnostics fetch timed out")
         except DaemonUnavailable:
@@ -2888,9 +3030,12 @@ class DiagnosticsPage(QWidget):
         self._hw_diag_worker = _HwDiagWorker(socket_path)
         self._hw_diag_worker.moveToThread(self._hw_diag_thread)
 
-        # Main thread → worker thread via queued connection.
+        # Main thread → worker thread via queued connections.
         self._hw_diag_request.connect(
             self._hw_diag_worker.do_fetch, Qt.ConnectionType.QueuedConnection
+        )
+        self._rescan_request.connect(
+            self._hw_diag_worker.do_rescan, Qt.ConnectionType.QueuedConnection
         )
         # Worker thread → main thread via queued connections.
         self._hw_diag_worker.fetch_ok.connect(
@@ -2898,6 +3043,12 @@ class DiagnosticsPage(QWidget):
         )
         self._hw_diag_worker.fetch_error.connect(
             self._on_hw_diag_error, Qt.ConnectionType.QueuedConnection
+        )
+        self._hw_diag_worker.rescan_ok.connect(
+            self._on_rescan_ok, Qt.ConnectionType.QueuedConnection
+        )
+        self._hw_diag_worker.rescan_error.connect(
+            self._on_rescan_error, Qt.ConnectionType.QueuedConnection
         )
 
         self._hw_diag_thread.start()
@@ -3081,7 +3232,7 @@ class DiagnosticsPage(QWidget):
         """Show the GPU verify control only when a writable AMD GPU is present
         AND the connected daemon supports the route (>= 1.11.0). Called from
         ``_populate_hw_diagnostics`` so it tracks the latest diagnostics + caps.
-        Captures the GPU BDF used for the verify call."""
+        Captures the GPU BDF used for the verify and restore calls."""
         gpu = diag.gpu
         writable = bool(gpu and gpu.fan_control_method not in ("read_only", "none", ""))
         caps = getattr(self._state, "capabilities", None) if self._state else None
@@ -3093,6 +3244,15 @@ class DiagnosticsPage(QWidget):
         self._gpu_verify_btn.setVisible(show)
         if not show:
             self._gpu_verify_result_label.setVisible(False)
+
+        # DEC-147: the restore control needs only a writable GPU — the reset
+        # route predates every supported daemon, so no version floor applies.
+        show_restore = bool(self._gpu_verify_bdf)
+        self._gpu_restore_btn.setVisible(show_restore)
+        if show_restore:
+            self._update_gpu_restore_gate()
+        else:
+            self._gpu_restore_result_label.setVisible(False)
 
     def _run_gpu_verify(self) -> None:
         """Run the GPU fan-control verification on the detected GPU."""
@@ -3156,11 +3316,20 @@ class DiagnosticsPage(QWidget):
         self._gpu_verify_request.connect(
             self._gpu_verify_worker.do_verify, Qt.ConnectionType.QueuedConnection
         )
+        self._gpu_reset_request.connect(
+            self._gpu_verify_worker.do_reset, Qt.ConnectionType.QueuedConnection
+        )
         self._gpu_verify_worker.verify_ok.connect(
             self._on_gpu_verify_ok, Qt.ConnectionType.QueuedConnection
         )
         self._gpu_verify_worker.verify_error.connect(
             self._on_gpu_verify_error, Qt.ConnectionType.QueuedConnection
+        )
+        self._gpu_verify_worker.reset_ok.connect(
+            self._on_gpu_restore_ok, Qt.ConnectionType.QueuedConnection
+        )
+        self._gpu_verify_worker.reset_error.connect(
+            self._on_gpu_restore_error, Qt.ConnectionType.QueuedConnection
         )
 
         self._gpu_verify_thread.start()
@@ -3252,6 +3421,185 @@ class DiagnosticsPage(QWidget):
         if key:
             self.verify_completed.emit(key)
         self._gpu_verify_active_key = None
+
+    # ─── GPU restore-to-automatic + hwmon rescan (DEC-147) ──────────────
+
+    def _update_gpu_restore_gate(self, _profile_name: str | None = None) -> None:
+        """Enable/disable the GPU restore button against the control loop.
+
+        Disabled while the loop manages an ``amd_gpu:`` target (D2, DEC-147)
+        — restoring then would be silently undone on the next ≥5% curve
+        delta. Connected to ``active_profile_changed`` (the optional arg
+        swallows the signal's profile name) and re-run on every diagnostics
+        populate; ``_run_gpu_restore`` re-checks at click time so a stale
+        enabled state cannot slip a restore through.
+        """
+        loop = self._control_loop
+        managed = bool(loop is not None and loop.manages_gpu_target())
+        self._gpu_restore_btn.setEnabled(not managed)
+        self._gpu_restore_btn.setToolTip(
+            _GPU_RESTORE_TOOLTIP_GATED if managed else _GPU_RESTORE_TOOLTIP_READY
+        )
+
+    def _run_gpu_restore(self) -> None:
+        """Hand the GPU fan back to the firmware's automatic curve (DEC-147)."""
+        bdf = self._gpu_verify_bdf
+        if not bdf:
+            self._show_gpu_restore_message("No GPU with a writable fan-control path.")
+            return
+        if not self._client:
+            self._show_gpu_restore_message("Cannot restore: no daemon connection")
+            return
+        # Click-time gate re-check (D2): fan-role member edits don't emit a
+        # page-visible signal, so the button state may be stale.
+        loop = self._control_loop
+        if loop is not None and loop.manages_gpu_target():
+            self._update_gpu_restore_gate()
+            self._show_gpu_restore_message(f"Not restored: {_GPU_RESTORE_TOOLTIP_GATED}")
+            return
+
+        self._gpu_restore_btn.setEnabled(False)
+        self._gpu_restore_btn.setText("Restoring...")
+        self._gpu_restore_result_label.setVisible(False)
+
+        if self._ensure_gpu_verify_worker():
+            self._gpu_reset_request.emit(bdf)
+            return
+
+        # No socket path (demo / test client): fall back to a synchronous call
+        # if the client exposes reset_gpu_fan, mirroring _run_gpu_verify.
+        reset = getattr(self._client, "reset_gpu_fan", None)
+        if reset is None:
+            self._show_gpu_restore_message("GPU restore unavailable: no socket path")
+            self._finish_gpu_restore()
+            return
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            result = reset(bdf)
+        except (DaemonError, DaemonTimeout, DaemonUnavailable, OSError, ConnectionError) as e:
+            self._on_gpu_restore_error("error", getattr(e, "message", str(e)))
+        else:
+            self._on_gpu_restore_ok(result)
+
+    def _show_gpu_restore_message(self, text: str, css_class: str = "CardMeta") -> None:
+        """Show a restore outcome/refusal line under the GPU controls."""
+        self._gpu_restore_result_label.setText(text)
+        self._set_class(self._gpu_restore_result_label, css_class)
+        self._gpu_restore_result_label.setVisible(True)
+
+    def _finish_gpu_restore(self) -> None:
+        """Re-enable the restore button and re-evaluate its gate."""
+        self._gpu_restore_btn.setEnabled(True)
+        self._gpu_restore_btn.setText("Restore GPU Fan to Automatic")
+        self._update_gpu_restore_gate()
+
+    @Slot(object)
+    def _on_gpu_restore_ok(self, result: GpuFanResetResult) -> None:
+        if result.reset:
+            self._show_gpu_restore_message(
+                "GPU fan restored to automatic — the firmware's default curve "
+                "is back in control (zero-RPM idle is normal).",
+                "SuccessChip",
+            )
+            # D5: the close-time auto-reset (M9) is now redundant until the
+            # next GUI GPU write re-sets the flag.
+            if self._state is not None:
+                self._state.gui_wrote_gpu_fan = False
+            self._diag.log_event("info", "gpu", "GPU fan restored to automatic (user action)")
+        else:
+            self._show_gpu_restore_message(
+                "The daemon reported no restore was performed.", "WarningChip"
+            )
+            self._diag.log_event("warning", "gpu", "GPU fan restore: daemon reported no-op")
+        self._finish_gpu_restore()
+
+    @Slot(str, str)
+    def _on_gpu_restore_error(self, category: str, message: str) -> None:
+        if category == "unavailable":
+            self._show_gpu_restore_message(
+                message or "Daemon unavailable during GPU restore", "CriticalChip"
+            )
+        else:
+            self._show_gpu_restore_message(f"GPU restore error: {message}", "CriticalChip")
+        self._diag.log_event("error", "gpu", f"GPU fan restore failed: {message}")
+        self._finish_gpu_restore()
+
+    def _run_hwmon_rescan(self) -> None:
+        """Ask the daemon to re-enumerate hwmon devices (DEC-147)."""
+        if not self._client:
+            self._show_rescan_message("Cannot rescan: no daemon connection")
+            return
+
+        self._rescan_btn.setEnabled(False)
+        self._rescan_btn.setText("Rescanning...")
+        self._rescan_result_label.setVisible(False)
+
+        if self._ensure_hw_diag_worker():
+            self._rescan_request.emit()
+            return
+
+        # Synchronous fallback — no socket path (demo / mock-client tests).
+        rescan = getattr(self._client, "hwmon_rescan", None)
+        if rescan is None:
+            self._show_rescan_message("Rescan unavailable: this client does not support it")
+            self._finish_rescan()
+            return
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            headers = rescan()
+        except DaemonTimeout:
+            self._on_rescan_error("unavailable", "Hardware rescan timed out")
+        except DaemonUnavailable:
+            self._on_rescan_error("unavailable", "Daemon unavailable — cannot rescan hardware")
+        except DaemonError as e:
+            self._on_rescan_error("error", e.message)
+        else:
+            self._on_rescan_ok(headers)
+
+    def _show_rescan_message(self, text: str, css_class: str = "CardMeta") -> None:
+        """Show a rescan outcome line under the Hardware Readiness header row."""
+        self._rescan_result_label.setText(text)
+        self._set_class(self._rescan_result_label, css_class)
+        self._rescan_result_label.setVisible(True)
+
+    def _finish_rescan(self) -> None:
+        self._rescan_btn.setEnabled(True)
+        self._rescan_btn.setText("Rescan Hardware")
+
+    @Slot(object)
+    def _on_rescan_ok(self, headers: list[HwmonHeader]) -> None:
+        """Apply a successful rescan: push the fresh header list through
+        AppState (feeding the member picker, profile sanitization, and every
+        other ``headers_updated`` consumer), then chain a hardware-diagnostics
+        refetch so the readiness report reflects the post-rescan reality (D3).
+        """
+        if self._state is not None:
+            self._state.set_hwmon_headers(headers)
+        n = len(headers)
+        self._show_rescan_message(
+            f"Rescan complete — {n} PWM header(s) found. Sensors refresh on "
+            "the next poll cycle. New fan-control hardware still requires a "
+            "daemon restart.",
+            "SuccessChip",
+        )
+        self._diag.log_event("info", "hwmon", f"Hardware rescan: {n} PWM header(s) found")
+        self._finish_rescan()
+        self._fetch_hardware_diagnostics()
+
+    @Slot(str, str)
+    def _on_rescan_error(self, category: str, message: str) -> None:
+        """Surface a rescan failure. The previously known header set is kept —
+        a failed re-enumeration says nothing about the existing hardware."""
+        if category == "unavailable":
+            self._show_rescan_message(
+                message or "Daemon unavailable — cannot rescan hardware", "CriticalChip"
+            )
+        else:
+            self._show_rescan_message(f"Rescan error: {message}", "CriticalChip")
+        self._diag.log_event("error", "hwmon", f"Hardware rescan failed: {message}")
+        self._finish_rescan()
 
     def set_theme(self, _tokens) -> None:
         """Force a re-render of theme-coloured cells after a theme change.

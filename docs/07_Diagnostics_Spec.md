@@ -146,10 +146,13 @@ If the daemon does not expose a runtime reload endpoint, do not fake a daemon co
 - explain what was and was not reloaded
 
 ### Reconnect controller
-If the daemon does not expose a rescan/reconnect endpoint:
+The daemon exposes `POST /hwmon/rescan` (surfaced as *Rescan Hardware* on the
+Troubleshooting tab since DEC-147) for hwmon re-enumeration; serial-controller
+reconnection remains daemon-automatic (5× backoff + runtime reconnect mode),
+so no GUI reconnect button exists:
 - refresh status
-- explain that device rediscovery may require daemon restart
-- optionally provide a user-facing note to that effect
+- explain that new fan-control hardware may require a daemon restart
+- the rescan result line carries that note verbatim
 
 ### Export support bundle
 Create a structured bundle including:
@@ -320,7 +323,13 @@ report rather than the deep accordion-in-accordion card of DEC-115/DEC-116.
 Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
 
 - **Header action row** — the "Hardware Readiness" title, *Open Full Report ↗*
-  (pop-out), and *Refresh Hardware Diagnostics*.
+  (pop-out), *Rescan Hardware* (DEC-147: `POST /hwmon/rescan` — daemon-side
+  re-enumeration after loading a sensor kernel module; a result line under the
+  row reports the header count, notes that sensors refresh on the next poll
+  cycle, and repeats the daemon's caveat that new fan-*control* hardware still
+  requires a daemon restart; a successful rescan pushes the fresh header list
+  through `AppState.set_hwmon_headers` and chains a diagnostics refetch), and
+  *Refresh Hardware Diagnostics* (GUI-side refetch only).
 - **Verdict banner** (DEC-113) — always visible, traffic-light coloured.
 - **Blocking-alert stack** — module collisions, module conflicts, and the
   BIOS-interference headline (those that mean "do not write PWM until resolved"
@@ -344,7 +353,15 @@ Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
   and *PWM control test* (verify combo, Test PWM Control, Verify All Writable,
   progress + result, and — DEC-120 — **Test GPU Fan Control** with its own
   result label, shown only when a writable AMD GPU is present and the daemon
-  supports the verify route, ≥ 1.11.0).
+  supports the verify route, ≥ 1.11.0). Beside the GPU verify button sits
+  **Restore GPU Fan to Automatic** (DEC-147: `POST /gpu/{id}/fan/reset`) —
+  shown for any writable AMD GPU with **no** daemon version floor (the reset
+  route predates every supported daemon), and **disabled with an explanatory
+  tooltip while the GUI control loop manages an `amd_gpu:` target** (the
+  active profile would silently re-assert its curve within seconds). The
+  click handler re-checks that gate, a success clears the session's
+  `gui_wrote_gpu_fan` flag (making the close-time auto-reset a no-op until
+  the next GUI GPU write), and both outcomes land in the event log.
 
 The sibling **Fans** tab holds only the live *Fan Status* table.
 

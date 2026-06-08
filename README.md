@@ -13,7 +13,7 @@ Desktop fan control interface for Linux. Communicates with the [`control-ofc-dae
 - **Multi-source fan control** — OpenFan Controller channels, motherboard hwmon headers (lease-managed), and AMD discrete GPU fans (PMFW `fan_curve` / legacy `pwm1`)
 - **GPU monitoring** — AMD and Intel Arc discrete GPU temperatures and fan RPM (Intel Arc fans are firmware-managed and read-only)
 - **Settings** — GUI preferences, daemon runtime config, full theme editor with contrast checking, import/export
-- **Diagnostics** — connection health, subsystem status, 14-column sensor table, lease state, Test PWM Control / Test GPU Fan Control, hardware-readiness reporting, support bundle export
+- **Diagnostics** — connection health, subsystem status, 14-column sensor table, lease state, Test PWM Control / Test GPU Fan Control, Restore GPU Fan to Automatic, hardware rescan, hardware-readiness reporting, support bundle export
 - **Fan Wizard** — guided fan identification and labelling
 - **Demo mode** — full UI without hardware (`--demo`)
 

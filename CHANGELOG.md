@@ -1,5 +1,45 @@
 # Changelog
 
+## [Unreleased]
+
+GPU restore-to-auto + hardware rescan bundle (DEC-147). Two new
+Diagnostics ▸ Troubleshooting actions wired to daemon endpoints that
+already existed — GUI-only, no daemon or wire-contract changes; works
+with every supported daemon.
+
+### Added
+- **"Restore GPU Fan to Automatic" button** (Troubleshooting ▸ PWM control
+  test, beside the GPU verify button). Hands the GPU fan back to the
+  firmware's automatic curve (`POST /gpu/{id}/fan/reset`) mid-session —
+  previously a static GPU speed could only be undone by restarting the
+  daemon (the lone caller was the close-time auto-reset). Shown for any
+  writable AMD GPU with no daemon version floor; **disabled with an
+  explanatory tooltip while the GUI control loop manages a GPU fan** (an
+  active profile would silently re-assert its curve within seconds), with
+  a click-time re-check backstop. A successful restore clears the
+  session's GPU-write flag so the close-time auto-reset becomes a no-op,
+  and both outcomes land in the event log.
+- **"Rescan Hardware" button** (Troubleshooting header row). Asks the
+  daemon to re-enumerate hwmon devices (`POST /hwmon/rescan` — the
+  `DaemonClient.hwmon_rescan` wrapper removed as dead code in v1.14.1 is
+  restored) after loading a sensor kernel module, without a daemon
+  restart. Fresh headers flow through `AppState.set_hwmon_headers` (member
+  picker, profile sanitization, and every other consumer update together),
+  a hardware-diagnostics refetch is chained, and the result line reports
+  the header count plus the daemon's honest caveat: sensors refresh on the
+  next poll cycle, new fan-*control* hardware still requires a daemon
+  restart. A failed rescan never clobbers the existing header list.
+- `ControlLoopService.manages_gpu_target()` — true while the loop runs an
+  active profile containing an `amd_gpu:` member; backs the restore gate.
+- Demo-mode stubs for both actions (`DemoService.reset_gpu_fan`,
+  `DemoService.hwmon_rescan`).
+
+### Fixed
+- The Troubleshooting tab's synchronous diagnostics-fetch fallback no
+  longer raises `AttributeError` against minimal clients that lack
+  `hardware_diagnostics` — it degrades to an explanatory message
+  (hardening for the rescan → refetch chain).
+
 ## [1.34.0] — 2026-06-07
 
 2026-06 function/efficiency audit remediation (DEC-146) plus release-
