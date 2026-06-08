@@ -446,6 +446,29 @@ class ControlLoopService(QObject):
         """True when ``control_id`` is currently under transient manual override."""
         return control_id in self._manual_controls
 
+    def manages_gpu_target(self) -> bool:
+        """True when the loop is positioned to write to an ``amd_gpu:`` target —
+        running with an active profile that has at least one GPU member.
+
+        Used by Diagnostics to gate "Restore GPU Fan to Automatic" (DEC-147):
+        a restore while the loop drives the GPU would be silently undone on
+        the next ≥5% curve delta or transient-manual tick. Transient
+        sub-states (global manual override, thermal stand-down, disconnect)
+        are deliberately ignored — each can flip back mid-session, so the
+        gate answers "does the active profile own the GPU fan", not "did the
+        last cycle happen to write".
+        """
+        if not self._running:
+            return False
+        profile = self._profile_service.active_profile
+        if profile is None:
+            return False
+        return any(
+            member.target_id.startswith("amd_gpu:")
+            for control in profile.controls
+            for member in control.members
+        )
+
     def pause_writes_for_header(self, header_id: str) -> None:
         """Pause writes to ``header_id`` until ``resume_writes_for_header`` is
         called or the safety timer fires (A1).

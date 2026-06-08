@@ -112,10 +112,6 @@ can be exercised via `curl --unix-socket`:
 - `POST /fans/openfan/pwm` — set all OpenFan channels at once. The GUI's
   per-cycle control loop writes channels individually so per-target
   hysteresis and write-suppression apply uniformly across backends.
-- `POST /hwmon/rescan` — re-enumerate hwmon devices. The v1 GUI's
-  capabilities snapshot is taken once per session at 1 Hz polling; a
-  user-facing "Rescan hardware" button is intentionally deferred
-  (`docs/14_Risks_Gaps_and_Future_Work.md` §Device Lifecycle).
 - `POST /fans/openfan/{channel}/calibrate` — long-running PWM-to-RPM
   calibration sweep. The Fan Wizard provides a guided alternative for
   fan identification; full calibration as a built-in UI flow is deferred.
@@ -438,6 +434,11 @@ or controller absent).
 ### GPU fan writes
 - `POST /gpu/{gpu_id}/fan/pwm` — `{"speed_pct": 0..100}` — set GPU fan to static speed
 - `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM)
+  - GUI callers: the close-time auto-reset (M9 — skipped when a profile
+    stays active or the GUI never wrote the GPU fan) and Diagnostics ▸
+    Troubleshooting ▸ *Restore GPU Fan to Automatic* (DEC-147 — disabled
+    while the GUI control loop manages an `amd_gpu:` target; a success
+    clears the session's `gui_wrote_gpu_fan` flag).
 
 No lease required. Uses 5% minimum change threshold (DEC-070) to avoid SMU firmware churn.
 Profile engine defers GPU writes when GUI is active in last 30s (DEC-071).
@@ -485,6 +486,17 @@ Old daemons predating the route answer `404`, which the GUI treats as
 
 ### Hwmon rescan
 - `POST /hwmon/rescan` — re-enumerate hwmon devices
+  - Response: `{"api_version": N, "headers": [...], "count": N}` — same
+    header entry shape as `GET /hwmon/headers`.
+  - Called by Diagnostics ▸ Troubleshooting ▸ *Rescan Hardware* (DEC-147).
+    On success the GUI pushes the fresh list through
+    `AppState.set_hwmon_headers` and chains a `/diagnostics/hardware`
+    refetch.
+  - Daemon side effect: flags the sensor polling loop to rebuild its cached
+    descriptor set on the next tick (DEC-133), so newly loaded sensor chips
+    appear through normal polling within ~2 s. Does **not** replace the
+    running PWM controller — new fan-control hardware still requires a
+    daemon restart; the GUI repeats this caveat in the result line.
 
 ## Error model
 All errors use a standard nested envelope:

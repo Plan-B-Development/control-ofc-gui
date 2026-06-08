@@ -110,9 +110,10 @@ Boot-time loading is already handled for you: the `control-ofc-daemon` package s
 
 Then verify end-to-end in the GUI:
 
-1. **Diagnostics → Troubleshooting → Refresh Hardware Diagnostics** — the chips table should show your chip as *loaded* and the header count should match what the board physically has.
-2. Run **Test PWM Control** on a *non-critical chassis fan* header (not CPU/pump). A **"PWM control is working correctly"** result is the finish line.
-3. If the test reports the BIOS reverting control, go to Step 5.
+1. **Restart the daemon** so it adopts the new chip's PWM headers: `sudo systemctl restart control-ofc-daemon`. (A **Rescan Hardware** click on Diagnostics → Troubleshooting is enough when you only need the chip's *sensors* — fan-control headers are discovered at daemon startup only.)
+2. **Diagnostics → Troubleshooting → Refresh Hardware Diagnostics** — the chips table should show your chip as *loaded* and the header count should match what the board physically has.
+3. Run **Test PWM Control** on a *non-critical chassis fan* header (not CPU/pump). A **"PWM control is working correctly"** result is the finish line.
+4. If the test reports the BIOS reverting control, go to Step 5.
 
 ## Secure Boot and DKMS modules
 
