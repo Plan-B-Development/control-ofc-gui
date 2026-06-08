@@ -1,11 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [1.35.0] — 2026-06-08
 
 GPU restore-to-auto + hardware rescan bundle (DEC-147). Two new
 Diagnostics ▸ Troubleshooting actions wired to daemon endpoints that
-already existed — GUI-only, no daemon or wire-contract changes; works
-with every supported daemon.
+already existed — GUI-only, no daemon or wire-contract changes. Pairs
+with **daemon v1.14.2** (works with every supported daemon — both
+endpoints predate the v1 GUI).
 
 ### Added
 - **"Restore GPU Fan to Automatic" button** (Troubleshooting ▸ PWM control

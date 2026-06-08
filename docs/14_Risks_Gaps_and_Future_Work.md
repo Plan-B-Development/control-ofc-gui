@@ -193,8 +193,8 @@ table only with authoritatively-verified device-ID → name pairs.
 
 | Gap | Resolution | Version |
 |-----|-----------|---------|
-| GUI rescan button (endpoint existed, never wired) | Diagnostics ▸ Troubleshooting "Rescan Hardware" + restored `hwmon_rescan` wrapper + chained diagnostics refetch (DEC-147) | GUI Unreleased |
-| GUI surface for `reset_gpu_fan` (§11) | Diagnostics ▸ Troubleshooting "Restore GPU Fan to Automatic", gated against the GUI control loop (DEC-147) | GUI Unreleased |
+| GUI rescan button (endpoint existed, never wired) | Diagnostics ▸ Troubleshooting "Rescan Hardware" + restored `hwmon_rescan` wrapper + chained diagnostics refetch (DEC-147) | GUI v1.35.0 |
+| GUI surface for `reset_gpu_fan` (§11) | Diagnostics ▸ Troubleshooting "Restore GPU Fan to Automatic", gated against the GUI control loop (DEC-147) | GUI v1.35.0 |
 | Emergency ↔ GUI lease ping-pong (alternating curve/forced PWM during 105°C events) | `thermal_state` in GET /status + GUI control-loop/lease stand-down (DEC-132) | GUI v1.30.0 / daemon v1.13.0 |
 | Per-tick sensor re-discovery (~340 sysfs ops/s; asus_wmi_sensors polling risk) | Descriptor cache + triggered re-discovery (DEC-133) | daemon v1.13.0 |
 | GPU GUI-priority lapse on slow ramps (coalesced writes didn't count as liveness; engine used exact-match suppression) | record_gui_write on coalesced returns + shared 5% threshold (DEC-131) | daemon v1.13.0 |
