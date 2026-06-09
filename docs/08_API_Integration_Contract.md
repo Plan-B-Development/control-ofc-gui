@@ -134,6 +134,12 @@ This endpoint feeds:
 - warning banners
 - the control loop's thermal stand-down gate (DEC-132)
 
+`overall_status` and each subsystem `status` is one of `"ok" | "warn" | "crit"`
+(overall is the worst of all subsystems). The GUI treats `"ok"` as healthy and any
+other value as a warning; an absent/unparseable field falls back to `"unknown"`.
+Emitted by the daemon's `HealthStatus::Display` and pinned on both sides by
+`health_status_display_wire_strings` (daemon) and the dashboard health tests (GUI).
+
 `thermal_state` (daemon ≥1.13.0, additive — `api_version` unchanged) is one of
 `"normal" | "recovery" | "emergency" | "no_sensor_fallback"`. While it is not
 `"normal"` the daemon is forcing all OpenFan+hwmon PWM (GPU fans excluded —

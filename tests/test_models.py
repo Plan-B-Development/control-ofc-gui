@@ -98,6 +98,28 @@ def test_parse_status_missing_uptime_is_none():
     assert status.gui_last_seen_seconds_ago is None
 
 
+def test_parse_status_preserves_daemon_health_vocabulary():
+    # Source of truth: the daemon's HealthStatus::Display emits exactly
+    # "ok"/"warn"/"crit" (control-ofc-daemon daemon/src/health/staleness.rs;
+    # paired tripwire test `health_status_display_wire_strings`). See
+    # docs/08_API_Integration_Contract.md (GET /status). parse_status must keep
+    # them verbatim — the GUI distinguishes them from the "unknown" fallback.
+    data = {
+        "overall_status": "warn",
+        "subsystems": [
+            {"name": "openfan", "status": "ok", "age_ms": 100, "reason": ""},
+            {"name": "hwmon", "status": "warn", "age_ms": 3000, "reason": "readings stale"},
+        ],
+        "counters": {},
+    }
+    status = parse_status(data)
+    assert status.overall_status == "warn"
+    assert [s.status for s in status.subsystems] == ["ok", "warn"]
+    # "crit" is the third documented value — pin it too.
+    crit = parse_status({"overall_status": "crit", "subsystems": [], "counters": {}})
+    assert crit.overall_status == "crit"
+
+
 def test_parse_sensors():
     data = {
         "sensors": [

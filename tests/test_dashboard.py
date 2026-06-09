@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from control_ofc.api.models import (
     Capabilities,
@@ -15,6 +15,7 @@ from control_ofc.api.models import (
     OperationMode,
     SensorReading,
     SubsystemStatus,
+    parse_status,
 )
 from control_ofc.ui.main_window import MainWindow
 
@@ -104,6 +105,53 @@ class TestSubsystemHealth:
         dash = window.dashboard_page
         assert "error" in dash._sub_openfan_label.text()
         assert "permission denied" in dash._sub_openfan_label.text()
+
+    def test_subsystem_ok_is_not_flagged_as_warning(self, qtbot, window, app_state):
+        """ "ok" is the daemon's healthy sentinel — the dashboard must NOT raise a
+        WarningChip for it (dashboard_page _on_status_updated branches on
+        ``!= "ok"``). Exercised through the real parse_status → set_status path."""
+        status = parse_status(
+            {
+                "overall_status": "ok",
+                "subsystems": [
+                    {"name": "openfan", "status": "ok", "reason": ""},
+                    {"name": "hwmon", "status": "ok", "reason": ""},
+                ],
+                "counters": {},
+            }
+        )
+        app_state.set_status(status)
+
+        dash = window.dashboard_page
+        of = dash.findChild(QLabel, "Dashboard_Label_subOpenfan")
+        hw = dash.findChild(QLabel, "Dashboard_Label_subHwmon")
+        assert of.property("class") != "WarningChip"
+        assert hw.property("class") != "WarningChip"
+
+    def test_subsystem_warn_and_crit_flag_warning_chip(self, qtbot, window, app_state):
+        """Non-"ok" statuses (the daemon emits "warn"/"crit") surface as a
+        WarningChip with the status string shown to the operator. A daemon rename
+        of "ok" would make even healthy subsystems hit this path — the contract
+        is pinned here and by the daemon's `health_status_display_wire_strings`."""
+        status = parse_status(
+            {
+                "overall_status": "crit",
+                "subsystems": [
+                    {"name": "openfan", "status": "warn", "reason": "readings stale"},
+                    {"name": "hwmon", "status": "crit", "reason": "never received data"},
+                ],
+                "counters": {},
+            }
+        )
+        app_state.set_status(status)
+
+        dash = window.dashboard_page
+        of = dash.findChild(QLabel, "Dashboard_Label_subOpenfan")
+        hw = dash.findChild(QLabel, "Dashboard_Label_subHwmon")
+        assert of.property("class") == "WarningChip"
+        assert "warn" in of.text()
+        assert hw.property("class") == "WarningChip"
+        assert "crit" in hw.text()
 
 
 class TestDashboardContent:
