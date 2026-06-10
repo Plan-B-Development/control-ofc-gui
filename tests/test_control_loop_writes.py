@@ -459,7 +459,11 @@ class TestStatusCounters:
         loop._cycle()
 
         assert len(statuses) == 1
-        assert statuses[0].targets_active >= 1
+        # Single-member control → exactly one active target, none skipped.
+        # Exact counts pin the ``+= 1`` accumulators against ``+= 2`` / ``= 1``
+        # mutations that a ``>= 1`` assertion cannot distinguish.
+        assert statuses[0].targets_active == 1
+        assert statuses[0].targets_skipped == 0
 
     def test_skipped_on_failure(self, state, profile_service, fake_client, qtbot):
         fake_client.simulate_error(
@@ -477,7 +481,9 @@ class TestStatusCounters:
         loop._cycle()
 
         assert len(statuses) == 1
-        assert statuses[0].targets_skipped >= 1
+        # Single member, write fails → exactly one skipped, none active.
+        assert statuses[0].targets_skipped == 1
+        assert statuses[0].targets_active == 0
 
     def test_suppressed_counts_as_active(self, state, profile_service, fake_client, qtbot):
         """Write suppressed (delta < 1%) → still counts as active, zero client calls."""
@@ -501,7 +507,9 @@ class TestStatusCounters:
         loop._cycle()
 
         assert len(statuses) == 1
-        assert statuses[0].targets_active >= 1
+        # Suppressed write still counts as active (one member), none skipped.
+        assert statuses[0].targets_active == 1
+        assert statuses[0].targets_skipped == 0
         assert len(_openfan_calls(fake_client)) == 0
 
 
@@ -529,7 +537,9 @@ class TestDaemonUnavailableHandling:
         loop._cycle()  # must not raise
 
         assert len(statuses) == 1
-        assert statuses[0].targets_skipped >= 1
+        # Single member, unavailable → exactly one skipped, none active.
+        assert statuses[0].targets_skipped == 1
+        assert statuses[0].targets_active == 0
 
     def test_write_failure_accumulation_triggers_warning(
         self, state, profile_service, fake_client, qtbot
@@ -590,7 +600,9 @@ class TestDaemonUnavailableHandling:
         loop.status_changed.connect(lambda s: statuses.append(s))
         loop._cycle()  # must not raise
 
-        assert statuses[0].targets_skipped >= 1
+        # Single hwmon member, stale lease rejected → exactly one skipped.
+        assert statuses[0].targets_skipped == 1
+        assert statuses[0].targets_active == 0
 
 
 # ---------------------------------------------------------------------------

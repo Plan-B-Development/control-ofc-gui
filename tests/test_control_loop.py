@@ -158,6 +158,50 @@ class TestHysteresis:
         loop.set_manual_override(False)
         assert len(loop._target_states) == 0
 
+    def test_falling_exactly_at_transition_temp_holds(self, state, profile_service, qtbot):
+        """The deadband hold is ``current <= last_transition`` (inclusive). A
+        sensor reading exactly equal to the last transition temp must hold the
+        commanded PWM, pinning the boundary against a strict ``<`` mutation."""
+        profile = _make_profile_with_curve([(30, 20), (70, 80)])
+        profile_service._profiles["test"] = profile
+        profile_service.set_active("test")
+
+        loop = ControlLoopService(state, profile_service)
+        loop._cycle()
+        first_pwm = loop._target_states["test_control"].last_commanded_pwm
+        anchor = loop._target_states["test_control"].last_transition_temp
+        assert anchor == 50.0
+
+        # Re-read at exactly the anchor temperature → still within deadband.
+        state.sensors = [
+            SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=anchor, age_ms=500),
+        ]
+        loop._cycle()
+        assert loop._target_states["test_control"].last_commanded_pwm == first_pwm
+
+    def test_anchor_not_moved_by_subhalf_percent_change(self, state, profile_service, qtbot):
+        """The transition anchor only advances when the curve output changes by
+        >= 0.5%. A rising temperature that nudges output < 0.5% must NOT move
+        the anchor (pins ``abs(desired - last) >= 0.5`` against ``> 0.5`` and a
+        widened ``>= 1.5`` threshold). If the anchor wrongly followed, a later
+        small drop would escape the deadband."""
+        # 60 PWM-units across 40°C span = 1.5%/°C. A 0.3°C rise = 0.45% < 0.5%.
+        profile = _make_profile_with_curve([(30, 20), (70, 80)])
+        profile_service._profiles["test"] = profile
+        profile_service.set_active("test")
+
+        loop = ControlLoopService(state, profile_service)
+        loop._cycle()
+        anchor_before = loop._target_states["test_control"].last_transition_temp
+        assert anchor_before == 50.0
+
+        # +0.3°C → output rises ~0.45% (< 0.5) → anchor must stay at 50.0.
+        state.sensors = [
+            SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=50.3, age_ms=500),
+        ]
+        loop._cycle()
+        assert loop._target_states["test_control"].last_transition_temp == pytest.approx(50.0)
+
 
 class TestWriteSuppression:
     """1% PWM threshold prevents sub-perceptible churn."""
@@ -612,6 +656,29 @@ class TestDemoWrite:
         assert loop._write_target("openfan:ch00", 55.0) is True
         demo_service.set_fan_pwm.assert_called_once_with("openfan:ch00", 55)
 
+    def test_demo_mode_without_demo_service_falls_through(self, state, profile_service, qtbot):
+        """The demo-write branch requires BOTH DEMO mode AND a demo service
+        (``mode == DEMO and self._demo is not None``). In DEMO mode with no
+        demo service and no client, the write must fall through to the sync
+        path and return False — pinning the ``and`` against an ``or`` mutation
+        that would dereference ``None`` or wrongly route the write."""
+        state.mode = OperationMode.DEMO
+        loop = ControlLoopService(state, profile_service, client=None, demo_service=None)
+        # openfan needs no lease; with client=None the sync fallback returns False.
+        assert loop._write_target("openfan:ch00", 55.0) is False
+
+    def test_hwmon_write_without_lease_returns_false(self, state, profile_service, qtbot):
+        """A hwmon write with no lease held must return False from
+        ``_write_target`` (the caller counts it as skipped). Pins the
+        ``return False`` in the no-lease branch against ``return True``, which
+        the existing "set_hwmon_pwm not called" assertions cannot catch because
+        they only check the absence of a client call, not the return value."""
+        lease = MagicMock()
+        lease.is_held = False
+        lease.lease_id = None
+        loop = ControlLoopService(state, profile_service, client=MagicMock(), lease_service=lease)
+        assert loop._write_target("hwmon:nct6775:pwm1", 50.0) is False
+
 
 class TestStaleSensor:
     def test_invalid_sensor_skips(self, state, profile_service, qtbot):
@@ -635,8 +702,30 @@ class TestStaleSensor:
         profile_service.set_active("test")
 
         loop = ControlLoopService(state, profile_service)
+        statuses: list = []
+        loop.status_changed.connect(statuses.append)
         loop._cycle()
         assert "test_control" in loop._target_states
+        # A STALE (but not INVALID) sensor must still raise a "stale" warning
+        # while continuing to evaluate. Asserting the warning text pins the
+        # ``freshness == STALE`` branch against an inverted ``!= STALE``.
+        assert any("stale" in w.lower() for w in statuses[-1].warnings)
+
+    def test_fresh_sensor_emits_no_stale_warning(self, state, profile_service, qtbot):
+        """Counterpart to the stale case: a fresh sensor must NOT raise a stale
+        warning. Together these two tests trap an inverted staleness check."""
+        state.sensors = [
+            SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=50.0, age_ms=500),
+        ]
+        profile = _make_profile_with_curve([(30, 20), (70, 80)])
+        profile_service._profiles["test"] = profile
+        profile_service.set_active("test")
+
+        loop = ControlLoopService(state, profile_service)
+        statuses: list = []
+        loop.status_changed.connect(statuses.append)
+        loop._cycle()
+        assert not any("stale" in w.lower() for w in statuses[-1].warnings)
 
 
 class TestStartStop:
@@ -982,6 +1071,90 @@ class TestTuningPipeline:
         # 15% < stop_pct=20% -> snaps to 0%
         assert loop._target_states["tc"].last_output == pytest.approx(0.0)
 
+    def test_output_at_stop_threshold_does_not_snap(self, state, profile_service, qtbot):
+        """The stop snap is strictly ``output < stop_pct`` — output *equal* to
+        ``stop_pct`` must survive. Pins the boundary against ``<=`` (which would
+        wrongly zero a fan sitting exactly on its stop threshold)."""
+        curve = CurveConfig(
+            id="c", name="C", type=CurveType.FLAT, sensor_id="cpu_temp", flat_output_pct=20.0
+        )
+        control = LogicalControl(
+            id="tc",
+            name="T",
+            mode=ControlMode.CURVE,
+            curve_id="c",
+            stop_pct=20.0,
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        profile = Profile(id="tp", name="TP", controls=[control], curves=[curve])
+        profile_service._profiles["tp"] = profile
+        profile_service.set_active("tp")
+        loop = ControlLoopService(state, profile_service)
+        loop._cycle()
+        # output == stop_pct (20) → NOT snapped to 0
+        assert loop._target_states["tc"].last_output == pytest.approx(20.0)
+
+    def test_output_clamped_to_hundred(self, state, profile_service, qtbot):
+        """A curve+offset that exceeds 100% is clamped to 100% (pins the upper
+        ``min(100.0, output)`` bound against ``min(101.0, ...)``)."""
+        curve = CurveConfig(
+            id="c", name="C", type=CurveType.FLAT, sensor_id="cpu_temp", flat_output_pct=90.0
+        )
+        control = LogicalControl(
+            id="tc",
+            name="T",
+            mode=ControlMode.CURVE,
+            curve_id="c",
+            offset_pct=50.0,  # 90 + 50 = 140 → clamps to 100
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        profile = Profile(id="tp", name="TP", controls=[control], curves=[curve])
+        profile_service._profiles["tp"] = profile
+        profile_service.set_active("tp")
+        loop = ControlLoopService(state, profile_service)
+        loop._cycle()
+        assert loop._target_states["tc"].last_output == pytest.approx(100.0)
+
+    def test_start_threshold_kicks_fan_from_zero(self, state, profile_service, qtbot):
+        """When the previous output was 0 and the curve now asks for a small
+        positive value, ``start_pct`` bumps it up to overcome stiction. Pins the
+        whole start-kick branch (``output > 0 and last_output == 0 and
+        start_pct > 0``) and the ``max(output, start_pct)`` result."""
+        # Graph curve so output can move from 0 → small positive via temperature.
+        curve = CurveConfig(
+            id="c",
+            name="C",
+            type=CurveType.GRAPH,
+            sensor_id="cpu_temp",
+            points=[CurvePoint(40, 0), CurvePoint(80, 40)],
+        )
+        control = LogicalControl(
+            id="tc",
+            name="T",
+            mode=ControlMode.CURVE,
+            curve_id="c",
+            start_pct=35.0,
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        profile = Profile(id="tp", name="TP", controls=[control], curves=[curve])
+        profile_service._profiles["tp"] = profile
+        profile_service.set_active("tp")
+        loop = ControlLoopService(state, profile_service)
+
+        # Cycle 1 at 40°C → curve output 0 → last_output anchored at 0.
+        state.sensors = [
+            SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=40.0, age_ms=500),
+        ]
+        loop._cycle()
+        assert loop._target_states["tc"].last_output == pytest.approx(0.0)
+
+        # Cycle 2 at 50°C → curve output 10%, but start_pct=35 kicks it to 35%.
+        state.sensors = [
+            SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=50.0, age_ms=500),
+        ]
+        loop._cycle()
+        assert loop._target_states["tc"].last_output == pytest.approx(35.0)
+
     def test_control_output_in_status(self, state, profile_service, qtbot):
         curve = CurveConfig(
             id="c", name="C", type=CurveType.FLAT, sensor_id="cpu_temp", flat_output_pct=55.0
@@ -1049,3 +1222,114 @@ class TestDispatchWrite:
         c = MagicMock()
         _dispatch_write(c, "openfan:ch00", 50, "")
         c.set_openfan_pwm.assert_called_once_with(0, 50)
+
+    def test_intel_gpu_route_is_read_only_no_write(self):
+        """DEC-121: Intel discrete GPU fans are firmware-managed and read-only.
+        ``_dispatch_write`` must return False and issue no client call — this
+        pins the explicit no-op so it can never silently become a write path
+        (mutmut: ``intel_gpu`` branch ``return False`` -> ``return True``)."""
+        c = MagicMock()
+        assert _dispatch_write(c, "intel_gpu:0000:03:00.0", 60, "") is False
+        c.set_openfan_pwm.assert_not_called()
+        c.set_gpu_fan_speed.assert_not_called()
+        c.set_hwmon_pwm.assert_not_called()
+
+    def test_amd_gpu_id_has_prefix_stripped(self):
+        """The ``amd_gpu:`` prefix must be removed before the BDF reaches the
+        client (pins ``removeprefix('amd_gpu:')`` against a no-op mutation that
+        would forward the full ``amd_gpu:<bdf>`` string)."""
+        c = MagicMock()
+        _dispatch_write(c, "amd_gpu:0000:2d:00.0", 60, "")
+        # First positional arg must be the bare BDF, never the prefixed id.
+        assert c.set_gpu_fan_speed.call_args[0][0] == "0000:2d:00.0"
+
+
+class TestVerifyPauseTokenProgression:
+    """The verify-pause generation token must strictly increment by 1 per
+    pause. Stale safety callbacks rely on the *exact* value (token equality),
+    so an off-by-one or wrong-default silently breaks the "newer pause wins"
+    guarantee. The prior suite only asserted that two tokens *differ*, which a
+    ``+ 2`` / ``- 1`` / wrong-default mutation can satisfy."""
+
+    def test_first_pause_token_is_one(self, state, profile_service, qtbot):
+        loop = ControlLoopService(state, profile_service)
+        loop.pause_writes_for_header("hwmon:foo:bar:pwm1:pwm1")
+        assert loop._paused_headers["hwmon:foo:bar:pwm1:pwm1"] == 1
+
+    def test_each_pause_increments_token_by_exactly_one(self, state, profile_service, qtbot):
+        loop = ControlLoopService(state, profile_service)
+        h = "hwmon:foo:bar:pwm1:pwm1"
+        loop.pause_writes_for_header(h)
+        loop.pause_writes_for_header(h)
+        loop.pause_writes_for_header(h)
+        # 0 -> 1 -> 2 -> 3, never +2 (would give 5) or a non-1 default.
+        assert loop._paused_headers[h] == 3
+
+
+class TestTransientManualClamp:
+    """``set_control_manual`` clamps the requested PWM into [0, 100]. The prior
+    suite only fed in-range values (75.0), so the boundary clamp endpoints
+    (``max(0.0, ...)`` / ``min(100.0, ...)``) were never exercised."""
+
+    def test_negative_request_clamped_to_zero(self, state, profile_service, qtbot):
+        loop = ControlLoopService(state, profile_service)
+        loop.set_control_manual("ctrl", -25.0)
+        assert loop._manual_controls["ctrl"] == 0.0
+
+    def test_over_hundred_request_clamped_to_hundred(self, state, profile_service, qtbot):
+        loop = ControlLoopService(state, profile_service)
+        loop.set_control_manual("ctrl", 175.0)
+        assert loop._manual_controls["ctrl"] == 100.0
+
+
+class TestClearControlManualStateCleanup:
+    """``clear_control_manual`` drops the control's own hysteresis key AND its
+    per-member ``::m::`` keys, leaving every unrelated control's state intact.
+    Pins the comprehension filter (``k == control_id or k.startswith(prefix)``)
+    against ``and`` / ``!=`` / wrong-operator mutations that would either wipe
+    nothing or wipe everything."""
+
+    def test_clears_own_and_member_keys_only(self, state, profile_service, qtbot):
+        loop = ControlLoopService(state, profile_service)
+        loop._manual_controls["A"] = 50.0
+        from control_ofc.services.control_loop import TargetState
+
+        # Seed: control A's own key, A's per-member key, and an unrelated key.
+        loop._target_states["A"] = TargetState(last_output=10.0)
+        loop._target_states["A::m::amd_gpu:0000:03:00.0"] = TargetState(last_output=20.0)
+        loop._target_states["B"] = TargetState(last_output=30.0)
+
+        loop.clear_control_manual("A")
+
+        assert "A" not in loop._target_states
+        assert "A::m::amd_gpu:0000:03:00.0" not in loop._target_states
+        assert "B" in loop._target_states  # unrelated control untouched
+
+    def test_no_op_when_control_not_manual(self, state, profile_service, qtbot):
+        """Clearing a control that was never pinned must not touch state and
+        must return early (pins the ``pop(...) is None`` guard)."""
+        from control_ofc.services.control_loop import TargetState
+
+        loop = ControlLoopService(state, profile_service)
+        loop._target_states["A"] = TargetState(last_output=10.0)
+        loop.clear_control_manual("A")  # "A" not in _manual_controls
+        assert loop._target_states["A"].last_output == 10.0
+
+
+class TestCycleStatusRunningFlag:
+    """Every emitted ``ControlLoopStatus`` from a live cycle reports
+    ``running=True``. The dashboard relies on this to show the loop as active;
+    no prior test asserted the flag, so ``running=True`` -> ``running=False``
+    survived."""
+
+    def test_cycle_status_reports_running_true(self, state, profile_service, qtbot):
+        profile = _make_profile_with_curve([(30, 20), (70, 80)])
+        profile_service._profiles["test"] = profile
+        profile_service.set_active("test")
+
+        loop = ControlLoopService(state, profile_service, client=MagicMock())
+        captured: list = []
+        loop.status_changed.connect(captured.append)
+        loop._cycle()
+
+        assert captured[-1].running is True
