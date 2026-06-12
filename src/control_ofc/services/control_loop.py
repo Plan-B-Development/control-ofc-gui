@@ -363,7 +363,12 @@ class ControlLoopService(QObject):
 
         self._timer = QTimer(self)
         self._timer.setInterval(CONTROL_LOOP_INTERVAL_MS)
-        self._timer.timeout.connect(self._cycle)
+        # The periodic timer and fresh-sensor arrivals both route through
+        # `_tick`, which coalesces a stray queued `timeout` that survives a
+        # timer restart (Qt does not drain already-queued events) so each
+        # interval runs one `_cycle` (P3 double-cycle).
+        self._last_cycle_monotonic = 0.0
+        self._timer.timeout.connect(self._tick)
 
         # Reset hysteresis when profile changes
         self._state.active_profile_changed.connect(self._on_profile_changed)
@@ -570,15 +575,35 @@ class ControlLoopService(QObject):
         if self._write_worker:
             self._write_worker.shutdown()
 
-    def _on_sensors_updated(self, _sensors: list) -> None:
-        """Evaluate immediately when fresh sensor data arrives.
+    def _tick(self) -> None:
+        """Coalescing entry point for the periodic timer and sensor-update paths.
 
-        Restarts the timer to prevent a redundant timer-driven cycle within
-        the same interval.
+        A stray timer ``timeout`` queued before the restart in
+        ``_on_sensors_updated`` survives that restart (Qt does not drain an
+        already-queued event), so without coalescing it would fire a second
+        ``_cycle`` in the same interval. Suppress a trigger landing within half
+        the loop interval of the last one (P3 double-cycle). Deliberate one-shot
+        ``_cycle()`` calls (start, profile change, manual-override exit, tests)
+        bypass this and are intentionally not coalesced.
+        """
+        if not self._running or self._manual_override:
+            return
+        now = time.monotonic()
+        if (now - self._last_cycle_monotonic) * 1000.0 < CONTROL_LOOP_INTERVAL_MS / 2:
+            return
+        self._last_cycle_monotonic = now
+        self._cycle()
+
+    def _on_sensors_updated(self, _sensors: list) -> None:
+        """Evaluate promptly when fresh sensor data arrives (P1-G3).
+
+        Restart the timer so sensor arrivals drive the 1 Hz cadence, then go
+        through the coalescing ``_tick`` so a queued ``timeout`` cannot
+        double-cycle within the interval.
         """
         if self._running and not self._manual_override:
             self._timer.start()
-            self._cycle()
+            self._tick()
 
     def _on_profile_changed(self, _name: str) -> None:
         self._reset_hysteresis()

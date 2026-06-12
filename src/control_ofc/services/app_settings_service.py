@@ -252,10 +252,15 @@ class AppSettingsService:
         atomic_write(app_settings_path(), json.dumps(self._settings.to_dict(), indent=2) + "\n")
 
     def update(self, **kwargs: object) -> None:
-        """Update specific settings and save."""
-        for key, value in kwargs.items():
-            if hasattr(self._settings, key):
-                setattr(self._settings, key, value)
+        """Update specific settings and save.
+
+        Routes through ``AppSettings.from_dict`` so every value is coerced and
+        range-checked exactly like a fresh load (P2-A) — a wrong-typed value can
+        no longer persist in memory and then fail to reload next launch.
+        """
+        merged = self._settings.to_dict()
+        merged.update({k: v for k, v in kwargs.items() if hasattr(self._settings, k)})
+        self._settings = AppSettings.from_dict(merged)
         self.save()
 
     def export_settings(self, path: Path) -> None:

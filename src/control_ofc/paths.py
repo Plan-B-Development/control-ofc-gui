@@ -7,15 +7,43 @@ os.replace). See Dan Luu "Files are hard" and the POSIX rename(2) guarantee.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import tempfile
 from pathlib import Path
 
 _APP = "control-ofc"
 
+log = logging.getLogger(__name__)
+
 # Path overrides set by the user in Settings → Application.
 # Empty string = use XDG default.
 _overrides: dict[str, Path] = {}
+
+
+def _validated_override(name: str, value: str) -> Path | None:
+    """Validate a user-configured directory override (P2-G).
+
+    Accept only an absolute path with no ``..`` components that is not an
+    existing non-directory; reject (log + ignore) anything else so a
+    hand-edited ``app_settings.json`` cannot point the app at a traversing or
+    bogus location. A not-yet-existing absolute dir is allowed — callers create
+    it lazily.
+    """
+    p = Path(value)
+    if not p.is_absolute() or ".." in p.parts:
+        log.warning(
+            "Ignoring %s dir override (not an absolute, non-traversing path): %s", name, value
+        )
+        return None
+    try:
+        if p.exists() and not p.is_dir():
+            log.warning("Ignoring %s dir override (exists but is not a directory): %s", name, value)
+            return None
+    except OSError as e:
+        log.warning("Ignoring %s dir override (%s): %s", name, e, value)
+        return None
+    return p
 
 
 def set_path_overrides(
@@ -23,16 +51,23 @@ def set_path_overrides(
     themes_dir: str = "",
     export_dir: str = "",
 ) -> None:
-    """Apply user-configured directory overrides. Empty string clears the override."""
-    _overrides.pop("profiles", None)
-    _overrides.pop("themes", None)
-    _overrides.pop("export", None)
-    if profiles_dir:
-        _overrides["profiles"] = Path(profiles_dir)
-    if themes_dir:
-        _overrides["themes"] = Path(themes_dir)
-    if export_dir:
-        _overrides["export"] = Path(export_dir)
+    """Apply user-configured directory overrides. Empty string clears the override.
+
+    Each non-empty override is validated (absolute, non-traversing, not an
+    existing file); invalid values are logged and ignored (P2-G).
+    """
+    for key in ("profiles", "themes", "export"):
+        _overrides.pop(key, None)
+    for key, value in (
+        ("profiles", profiles_dir),
+        ("themes", themes_dir),
+        ("export", export_dir),
+    ):
+        if not value:
+            continue
+        validated = _validated_override(key, value)
+        if validated is not None:
+            _overrides[key] = validated
 
 
 def _xdg(env_var: str, fallback: str) -> Path:
