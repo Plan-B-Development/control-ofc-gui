@@ -76,6 +76,69 @@ def _make_profile_with_curve(temp_points, sensor_id="cpu_temp", target_id="openf
     return Profile(id="test", name="Test", controls=[control], curves=[curve])
 
 
+class TestTriggerLatch:
+    """DEC-149: trigger curves latch (their own idle..load hysteresis) and
+    bypass the 2°C deadband."""
+
+    def _trigger_profile(self):
+        curve = CurveConfig(
+            id="trg_curve",
+            name="Trigger",
+            type=CurveType.TRIGGER,
+            sensor_id="cpu_temp",
+            trigger_idle_temp_c=40.0,
+            trigger_load_temp_c=60.0,
+            trigger_idle_pct=30.0,
+            trigger_load_pct=80.0,
+        )
+        control = LogicalControl(
+            id="trg_control",
+            name="Trigger Control",
+            mode=ControlMode.CURVE,
+            curve_id="trg_curve",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        return Profile(id="trg", name="Trig", controls=[control], curves=[curve])
+
+    def test_latch_holds_load_across_band_and_bypasses_deadband(
+        self, state, profile_service, qtbot
+    ):
+        profile_service._profiles["trg"] = self._trigger_profile()
+        profile_service.set_active("trg")
+        loop = ControlLoopService(state, profile_service)
+        captured: list = []
+        loop.status_changed.connect(captured.append)
+
+        def pwm(temp):
+            state.sensors = [
+                SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=temp, age_ms=500)
+            ]
+            captured.clear()
+            loop._cycle()
+            return captured[-1].member_outputs["trg_control"]["openfan:ch00"]
+
+        assert pwm(50.0) == pytest.approx(30.0)  # cold-start in band -> idle
+        assert pwm(65.0) == pytest.approx(80.0)  # enter load
+        # In-band while cooling, the latch holds load. The deadband path would
+        # instead re-evaluate to idle (30) here — so this pins the bypass.
+        assert pwm(55.0) == pytest.approx(80.0)
+        assert pwm(40.0) == pytest.approx(30.0)  # drop to idle at the idle temp
+        assert pwm(50.0) == pytest.approx(30.0)  # latch holds idle climbing through band
+        assert pwm(60.0) == pytest.approx(80.0)  # re-enter load
+
+    def test_trigger_does_not_set_deadband_anchor(self, state, profile_service, qtbot):
+        profile_service._profiles["trg"] = self._trigger_profile()
+        profile_service.set_active("trg")
+        loop = ControlLoopService(state, profile_service)
+        state.sensors = [
+            SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=65.0, age_ms=500)
+        ]
+        loop._cycle()
+        ts = loop._target_states["trg_control"]
+        assert ts.trigger_latch is True
+        assert ts.last_transition_temp is None  # deadband anchor never written
+
+
 class TestHysteresis:
     """2 deg C deadband prevents fan oscillation."""
 

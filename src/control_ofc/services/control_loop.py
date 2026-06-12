@@ -38,6 +38,7 @@ from control_ofc.services.lease_service import LeaseService
 from control_ofc.services.profile_service import (
     ControlMode,
     CurveConfig,
+    CurveType,
     LogicalControl,
     ProfileService,
     member_minimum_pct,
@@ -246,6 +247,7 @@ class TargetState:
     last_transition_temp: float | None = None
     last_commanded_pwm: float | None = None
     last_output: float | None = None  # last tuned output for step rate limiting
+    trigger_latch: bool | None = None  # DEC-149: two-state latch (True=load); None until first eval
 
 
 @dataclass
@@ -697,7 +699,7 @@ class ControlLoopService(QObject):
                 status.targets_skipped += 1
                 return
 
-            desired_pwm = self._evaluate_curve_with_hysteresis(control.id, curve, sensors, status)
+            desired_pwm = self._curve_output_for_control(control.id, curve, sensors, status)
             if desired_pwm is None:
                 status.targets_skipped += 1
                 return
@@ -826,14 +828,30 @@ class ControlLoopService(QObject):
 
         return output
 
-    def _evaluate_curve_with_hysteresis(
+    def _curve_output_for_control(
         self,
         control_id: str,
         curve: CurveConfig,
         sensors: dict[str, SensorReading],
         status: ControlLoopStatus,
     ) -> float | None:
-        """Evaluate curve with hysteresis deadband. Returns desired PWM or None."""
+        """Route a curve to its evaluation path. Trigger curves use a stateful
+        two-state latch and bypass the 2°C deadband — they own their own
+        idle..load hysteresis band (DEC-149); every other type goes through the
+        deadband path."""
+        if curve.type == CurveType.TRIGGER:
+            return self._evaluate_trigger(control_id, curve, sensors, status)
+        return self._evaluate_curve_with_hysteresis(control_id, curve, sensors, status)
+
+    def _resolve_curve_sensor_temp(
+        self,
+        control_id: str,
+        curve: CurveConfig,
+        sensors: dict[str, SensorReading],
+        status: ControlLoopStatus,
+    ) -> float | None:
+        """Resolve the current temperature for a curve's sensor, or None if it
+        cannot be read. Shared by the deadband and trigger evaluation paths."""
         sensor_id = curve.sensor_id
         if not sensor_id:
             if sensors:
@@ -854,7 +872,45 @@ class ControlLoopService(QObject):
         if sensor.freshness == Freshness.STALE:
             status.warnings.append(f"Sensor {sensor_id} stale (age={sensor.age_ms}ms)")
 
-        current_temp = sensor.value_c
+        return sensor.value_c
+
+    def _evaluate_trigger(
+        self,
+        control_id: str,
+        curve: CurveConfig,
+        sensors: dict[str, SensorReading],
+        status: ControlLoopStatus,
+    ) -> float | None:
+        """Two-state latch (DEC-149): below the idle temp run the idle speed;
+        at/above the load temp run the load speed; within the idle..load band
+        hold the current state. Owns its own hysteresis, so it bypasses the 2°C
+        deadband. Latch lives in ``TargetState.trigger_latch`` (True=load), keyed
+        by control id. Must match the daemon's ``evaluate_trigger`` byte-for-byte
+        (parity tuning_sequence)."""
+        current_temp = self._resolve_curve_sensor_temp(control_id, curve, sensors, status)
+        if current_temp is None:
+            return None
+        ts = self._target_states.setdefault(control_id, TargetState())
+        if ts.trigger_latch is True:
+            # In the load state: fall back to idle only once temp reaches the idle temp.
+            is_load = current_temp > curve.trigger_idle_temp_c
+        else:
+            # Idle or cold-start: enter the load state at/above the load temp.
+            is_load = current_temp >= curve.trigger_load_temp_c
+        ts.trigger_latch = is_load
+        return curve.trigger_load_pct if is_load else curve.trigger_idle_pct
+
+    def _evaluate_curve_with_hysteresis(
+        self,
+        control_id: str,
+        curve: CurveConfig,
+        sensors: dict[str, SensorReading],
+        status: ControlLoopStatus,
+    ) -> float | None:
+        """Evaluate curve with hysteresis deadband. Returns desired PWM or None."""
+        current_temp = self._resolve_curve_sensor_temp(control_id, curve, sensors, status)
+        if current_temp is None:
+            return None
         ts = self._target_states.setdefault(control_id, TargetState())
 
         # Hysteresis deadband: hold the last commanded PWM when temperature falls

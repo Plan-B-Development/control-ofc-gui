@@ -91,16 +91,20 @@ V1 curve rules:
 - no live simulation required before apply
 
 ### Curve types
-The curve library supports four shapes, each serialised with a `type` field:
+The curve library supports five shapes, each serialised with a `type` field:
 - **graph** — piecewise-linear interpolation between user points
 - **stepped** — staircase: holds each point's output until the next point's
   temperature is reached (lower-point-wins, half-open segments), no
   interpolation (DEC-148, schema v5)
 - **linear** — a single 2-point ramp (start/end temperature → output)
 - **flat** — a constant output, temperature-independent
+- **trigger** — a two-state latch: below the idle temperature it runs the idle
+  speed, at/above the load temperature it runs the load speed, and within the
+  band it holds its current state (its own hysteresis, DEC-149, schema v6)
 
 Graph and Stepped share the point-table editor (same points model, different
-fill rule — straight vs staircase); Linear and Flat use a small parameter panel.
+fill rule — straight vs staircase); Linear, Flat, and Trigger use a small
+parameter panel.
 A profile that uses a curve type an older build doesn't recognise degrades
 safely (the GUI falls back to flat; the daemon to 50%).
 

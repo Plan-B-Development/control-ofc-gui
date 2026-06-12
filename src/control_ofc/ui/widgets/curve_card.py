@@ -66,7 +66,8 @@ class CurvePreview(QWidget):
         self.update()
 
     def summary_text(self) -> str:
-        """The text painted for linear/flat curves (empty for graph curves)."""
+        """The text painted for linear/flat/trigger curves (empty for the
+        point-based graph/stepped curves, which paint a sparkline/staircase)."""
         curve = self._curve
         if curve is None:
             return ""
@@ -77,6 +78,11 @@ class CurvePreview(QWidget):
             )
         if curve.type == CurveType.FLAT:
             return f"Flat: {curve.flat_output_pct:.0f}%"
+        if curve.type == CurveType.TRIGGER:
+            return (
+                f"Idle {curve.trigger_idle_pct:.0f}% <{curve.trigger_idle_temp_c:.0f}° / "
+                f"Load {curve.trigger_load_pct:.0f}% >{curve.trigger_load_temp_c:.0f}°"
+            )
         return ""
 
     def sizeHint(self) -> QSize:

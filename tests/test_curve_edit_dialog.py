@@ -39,6 +39,20 @@ def flat_curve():
     )
 
 
+@pytest.fixture()
+def trigger_curve():
+    return CurveConfig(
+        id="trg01",
+        name="Latch",
+        type=CurveType.TRIGGER,
+        sensor_id="hwmon:k10temp:0:Tctl",
+        trigger_idle_temp_c=40.0,
+        trigger_load_temp_c=60.0,
+        trigger_idle_pct=30.0,
+        trigger_load_pct=80.0,
+    )
+
+
 class TestLinearDialog:
     def test_linear_dialog_shows_correct_values(self, qtbot, linear_curve):
         dlg = CurveEditDialog(linear_curve, sensor_items=SENSOR_ITEMS)
@@ -80,6 +94,50 @@ class TestFlatDialog:
         dlg.apply_to_curve()
 
         assert flat_curve.flat_output_pct == 65.0
+
+
+class TestTriggerDialog:
+    def test_trigger_dialog_shows_correct_values(self, qtbot, trigger_curve):
+        dlg = CurveEditDialog(trigger_curve, sensor_items=SENSOR_ITEMS)
+        qtbot.addWidget(dlg)
+
+        assert dlg._param_spins["trigger_idle_temp_c"].value() == 40.0
+        assert dlg._param_spins["trigger_load_temp_c"].value() == 60.0
+        assert dlg._param_spins["trigger_idle_pct"].value() == 30.0
+        assert dlg._param_spins["trigger_load_pct"].value() == 80.0
+
+    def test_apply_to_curve_trigger(self, qtbot, trigger_curve):
+        dlg = CurveEditDialog(trigger_curve, sensor_items=SENSOR_ITEMS)
+        qtbot.addWidget(dlg)
+
+        dlg._param_spins["trigger_idle_temp_c"].setValue(35.0)
+        dlg._param_spins["trigger_load_temp_c"].setValue(65.0)
+        dlg._param_spins["trigger_idle_pct"].setValue(20.0)
+        dlg._param_spins["trigger_load_pct"].setValue(90.0)
+        dlg.apply_to_curve()
+
+        assert trigger_curve.trigger_idle_temp_c == 35.0
+        assert trigger_curve.trigger_load_temp_c == 65.0
+        assert trigger_curve.trigger_idle_pct == 20.0
+        assert trigger_curve.trigger_load_pct == 90.0
+
+    def test_accept_rejects_idle_at_or_above_load(self, qtbot, trigger_curve):
+        dlg = CurveEditDialog(trigger_curve, sensor_items=SENSOR_ITEMS)
+        qtbot.addWidget(dlg)
+
+        dlg._param_spins["trigger_idle_temp_c"].setValue(70.0)  # >= load
+        dlg._param_spins["trigger_load_temp_c"].setValue(60.0)
+        dlg.accept()
+        assert dlg.result() == 0  # QDialog.Rejected — validation blocked accept
+
+    def test_accept_allows_valid_thresholds(self, qtbot, trigger_curve):
+        dlg = CurveEditDialog(trigger_curve, sensor_items=SENSOR_ITEMS)
+        qtbot.addWidget(dlg)
+
+        dlg._param_spins["trigger_idle_temp_c"].setValue(40.0)
+        dlg._param_spins["trigger_load_temp_c"].setValue(60.0)
+        dlg.accept()
+        assert dlg.result() == 1  # QDialog.Accepted
 
 
 class TestSensorCombo:

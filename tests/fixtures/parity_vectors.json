@@ -91,6 +91,30 @@
       "curve": {"id": "s", "name": "S", "type": "stepped", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
       "temp": 90.0,
       "expected_pct": 100.0
+    },
+    {
+      "name": "trigger_below_idle_coldstart",
+      "curve": {"id": "t", "name": "T", "type": "trigger", "sensor_id": "cpu", "trigger_idle_temp_c": 40.0, "trigger_load_temp_c": 60.0, "trigger_idle_pct": 30.0, "trigger_load_pct": 80.0},
+      "temp": 35.0,
+      "expected_pct": 30.0
+    },
+    {
+      "name": "trigger_in_band_coldstart_is_idle",
+      "curve": {"id": "t", "name": "T", "type": "trigger", "sensor_id": "cpu", "trigger_idle_temp_c": 40.0, "trigger_load_temp_c": 60.0, "trigger_idle_pct": 30.0, "trigger_load_pct": 80.0},
+      "temp": 50.0,
+      "expected_pct": 30.0
+    },
+    {
+      "name": "trigger_at_load_temp_coldstart",
+      "curve": {"id": "t", "name": "T", "type": "trigger", "sensor_id": "cpu", "trigger_idle_temp_c": 40.0, "trigger_load_temp_c": 60.0, "trigger_idle_pct": 30.0, "trigger_load_pct": 80.0},
+      "temp": 60.0,
+      "expected_pct": 80.0
+    },
+    {
+      "name": "trigger_above_load_coldstart",
+      "curve": {"id": "t", "name": "T", "type": "trigger", "sensor_id": "cpu", "trigger_idle_temp_c": 40.0, "trigger_load_temp_c": 60.0, "trigger_idle_pct": 30.0, "trigger_load_pct": 80.0},
+      "temp": 70.0,
+      "expected_pct": 80.0
     }
   ],
   "tuning_sequence": [
@@ -137,6 +161,17 @@
       },
       "temps": [50.0, 50.0],
       "expected": [{"member_id": "openfan:ch00", "pwm": [20, 20]}, {"member_id": "amd_gpu:0000:03:00.0", "pwm": [10, 10]}]
+    },
+    {
+      "name": "trigger_latch_hysteresis",
+      "sensor_id": "cpu",
+      "profile": {
+        "id": "p_trigger", "name": "Trigger", "version": 6, "description": "",
+        "controls": [{"id": "c", "name": "C", "mode": "curve", "curve_id": "cv", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch00", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0}],
+        "curves": [{"id": "cv", "name": "CV", "type": "trigger", "sensor_id": "cpu", "trigger_idle_temp_c": 40.0, "trigger_load_temp_c": 60.0, "trigger_idle_pct": 30.0, "trigger_load_pct": 80.0}]
+      },
+      "temps": [50.0, 65.0, 55.0, 45.0, 40.0, 50.0, 60.0],
+      "expected": [{"member_id": "openfan:ch00", "pwm": [30, 80, 80, 80, 30, 30, 80]}]
     }
   ]
 }

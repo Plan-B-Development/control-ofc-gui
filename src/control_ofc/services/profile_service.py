@@ -2,13 +2,14 @@
 
 Profiles are GUI-owned. The daemon knows nothing about them.
 
-Data model (v5):
+Data model (v6):
 - Profile contains LogicalControls (fan groups with mode) and a CurveConfig library.
 - LogicalControl maps to physical outputs via ControlMember.
-- CurveConfig supports Graph, Stepped, Linear, and Flat types.
+- CurveConfig supports Graph, Stepped, Linear, Flat, and Trigger types.
 - v4 introduces role-aware ``minimum_pct`` defaults (20% chassis / 30% CPU+pump)
   enforced GUI-side, and the per-member ``fan_zero_rpm`` flag for GPU fans.
 - v5 adds the Stepped (staircase) curve type (DEC-148).
+- v6 adds the Trigger (two-state latch) curve type (DEC-149).
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ class CurveType(Enum):
     STEPPED = "stepped"
     LINEAR = "linear"
     FLAT = "flat"
+    TRIGGER = "trigger"
 
 
 @dataclass
@@ -65,6 +67,12 @@ class CurveConfig:
     # Flat type (constant output)
     flat_output_pct: float = 50.0
 
+    # Trigger type (two-state latch with its own idle..load hysteresis band)
+    trigger_idle_temp_c: float = 40.0
+    trigger_load_temp_c: float = 60.0
+    trigger_idle_pct: float = 30.0
+    trigger_load_pct: float = 80.0
+
     def interpolate(self, temp_c: float) -> float:
         """Return output percentage for the given temperature."""
         if self.type == CurveType.GRAPH:
@@ -73,6 +81,8 @@ class CurveConfig:
             return self._interpolate_stepped(temp_c)
         elif self.type == CurveType.LINEAR:
             return self._interpolate_linear(temp_c)
+        elif self.type == CurveType.TRIGGER:
+            return self._interpolate_trigger(temp_c)
         return self.flat_output_pct
 
     def _interpolate_graph(self, temp_c: float) -> float:
@@ -116,6 +126,18 @@ class CurveConfig:
         t = (temp_c - self.start_temp_c) / span
         return self.start_output_pct + t * (self.end_output_pct - self.start_output_pct)
 
+    def _interpolate_trigger(self, temp_c: float) -> float:
+        """Stateless (cold-start) trigger output: the load speed at/above the
+        load temperature, else the idle speed. The latching hysteresis — holding
+        the load state down through the idle..load band — is applied per-control
+        by the control loop (which owns cross-cycle state), NOT here, so
+        ``interpolate`` stays a pure function for previews and the ``curve_eval``
+        parity tier. Must match the daemon's ``evaluate_trigger_stateless``
+        (DEC-126 / DEC-149)."""
+        if temp_c >= self.trigger_load_temp_c:
+            return self.trigger_load_pct
+        return self.trigger_idle_pct
+
     def to_dict(self) -> dict:
         d: dict = {
             "id": self.id,
@@ -132,6 +154,11 @@ class CurveConfig:
             d["end_output_pct"] = self.end_output_pct
         elif self.type == CurveType.FLAT:
             d["flat_output_pct"] = self.flat_output_pct
+        elif self.type == CurveType.TRIGGER:
+            d["trigger_idle_temp_c"] = self.trigger_idle_temp_c
+            d["trigger_load_temp_c"] = self.trigger_load_temp_c
+            d["trigger_idle_pct"] = self.trigger_idle_pct
+            d["trigger_load_pct"] = self.trigger_load_pct
         return d
 
     @staticmethod
@@ -154,6 +181,10 @@ class CurveConfig:
             end_temp_c=data.get("end_temp_c", 80.0),
             end_output_pct=data.get("end_output_pct", 100.0),
             flat_output_pct=data.get("flat_output_pct", 50.0),
+            trigger_idle_temp_c=data.get("trigger_idle_temp_c", 40.0),
+            trigger_load_temp_c=data.get("trigger_load_temp_c", 60.0),
+            trigger_idle_pct=data.get("trigger_idle_pct", 30.0),
+            trigger_load_pct=data.get("trigger_load_pct", 80.0),
         )
 
 
@@ -353,7 +384,7 @@ class LogicalControl:
 # ---------------------------------------------------------------------------
 
 
-PROFILE_SCHEMA_VERSION = 5
+PROFILE_SCHEMA_VERSION = 6
 
 
 @dataclass

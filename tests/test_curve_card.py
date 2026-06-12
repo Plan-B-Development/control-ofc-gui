@@ -67,6 +67,20 @@ class TestPreview:
         assert card._preview.summary_text() == ""
         assert not card._preview.grab().isNull()
 
+    def test_trigger_shows_text_summary(self, qtbot):
+        curve = CurveConfig(
+            type=CurveType.TRIGGER,
+            trigger_idle_temp_c=40,
+            trigger_load_temp_c=60,
+            trigger_idle_pct=30,
+            trigger_load_pct=80,
+        )
+        card = CurveCard(curve)
+        qtbot.addWidget(card)
+        text = card._preview.summary_text()
+        assert "Idle 30%" in text
+        assert "Load 80%" in text
+
     def test_linear_shows_text_summary(self, qtbot):
         curve = CurveConfig(
             type=CurveType.LINEAR,

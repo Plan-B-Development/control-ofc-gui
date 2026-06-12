@@ -165,6 +165,38 @@ def test_stepped_curve_empty_returns_50():
 
 
 # ---------------------------------------------------------------------------
+# Trigger curve interpolation (DEC-149) — pure cold-start value
+# ---------------------------------------------------------------------------
+
+
+def test_trigger_curve_coldstart_below_load_is_idle():
+    """interpolate() is the stateless cold-start value: idle below the load
+    temp (the latching hysteresis is applied by the control loop, not here)."""
+    curve = CurveConfig(
+        type=CurveType.TRIGGER,
+        trigger_idle_temp_c=40.0,
+        trigger_load_temp_c=60.0,
+        trigger_idle_pct=30.0,
+        trigger_load_pct=80.0,
+    )
+    assert curve.interpolate(35.0) == 30.0  # below idle
+    assert curve.interpolate(50.0) == 30.0  # in band, cold-start = idle
+    assert curve.interpolate(59.9) == 30.0
+
+
+def test_trigger_curve_coldstart_at_or_above_load_is_load():
+    curve = CurveConfig(
+        type=CurveType.TRIGGER,
+        trigger_idle_temp_c=40.0,
+        trigger_load_temp_c=60.0,
+        trigger_idle_pct=30.0,
+        trigger_load_pct=80.0,
+    )
+    assert curve.interpolate(60.0) == 80.0  # at load temp (inclusive)
+    assert curve.interpolate(75.0) == 80.0
+
+
+# ---------------------------------------------------------------------------
 # Unknown curve type fallback
 # ---------------------------------------------------------------------------
 
@@ -275,6 +307,26 @@ def test_curve_config_roundtrip_stepped():
     assert restored.type == CurveType.STEPPED
     assert len(restored.points) == 2
     assert restored.sensor_id == "cpu"
+
+
+def test_curve_config_roundtrip_trigger():
+    curve = CurveConfig(
+        id="ct",
+        name="Trigger",
+        type=CurveType.TRIGGER,
+        trigger_idle_temp_c=35.0,
+        trigger_load_temp_c=65.0,
+        trigger_idle_pct=25.0,
+        trigger_load_pct=90.0,
+    )
+    data = curve.to_dict()
+    assert data["type"] == "trigger"
+    restored = CurveConfig.from_dict(data)
+    assert restored.type == CurveType.TRIGGER
+    assert restored.trigger_idle_temp_c == 35.0
+    assert restored.trigger_load_temp_c == 65.0
+    assert restored.trigger_idle_pct == 25.0
+    assert restored.trigger_load_pct == 90.0
 
 
 def test_curve_config_roundtrip_linear():
