@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.38.2] — 2026-06-12
+
+Packaging fix (from the 2026-06-12 code audit).
+
+### Fixed
+- **Daemon dependency floor corrected to `>=1.17.0`.** The GUI emits profile schema v7
+  (Stepped / Trigger / Mix / Sync curves); daemon versions below 1.17.0 cannot evaluate
+  those headlessly and silently fall back to a default percentage. The packaging dependency
+  floor was still `>=1.12.0`, so pacman could pair this GUI with a too-old daemon — now it
+  matches the README's stated pairing (audit P1-F).
+
 ## [1.38.1] — 2026-06-12
 
 Security and robustness fix for settings import (from the 2026-06-12 code audit).
