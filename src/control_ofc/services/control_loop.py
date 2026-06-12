@@ -106,6 +106,27 @@ _THERMAL_STANDDOWN_MESSAGES = {
 WRITE_RETRY_DECAY_S = 15.0
 
 
+def _combine_mix(function: str, values: list[float]) -> float:
+    """Combine child-curve outputs for a Mix curve (DEC-150), clamped 0-100.
+
+    ``values`` is non-empty (the caller drops unresolved children and skips the
+    Mix entirely when nothing resolves). Must stay byte-for-byte identical to the
+    daemon's ``combine_mix`` (parity ``tuning_sequence``). ``subtract`` is the
+    first input minus the sum of the rest, matching the ordered ``mix_curve_ids``.
+    """
+    if function == "min":
+        result = min(values)
+    elif function == "average":
+        result = sum(values) / len(values)
+    elif function == "sum":
+        result = sum(values)
+    elif function == "subtract":
+        result = values[0] - sum(values[1:])
+    else:  # "max" — also the default for an unrecognised function
+        result = max(values)
+    return max(0.0, min(100.0, result))
+
+
 def _dispatch_write(
     client: DaemonClient,
     target_id: str,
@@ -602,10 +623,57 @@ class ControlLoopService(QObject):
         sensors = {s.id: s for s in self._state.sensors}
         fans_by_id = {f.id: f for f in self._state.fans}
 
-        for control in profile.controls:
+        # Evaluate in stable topological order so a Sync control's target is
+        # already in ``status.control_outputs`` when the Sync mirrors it
+        # (DEC-151). Acyclic + Sync-free profiles keep their natural profile
+        # order; the algorithm is byte-identical to the daemon's
+        # ``topological_control_order`` so headless ordering matches.
+        for control in self._ordered_controls(profile):
             self._evaluate_control(control, profile, sensors, fans_by_id, status)
 
         self.status_changed.emit(status)
+
+    def _ordered_controls(self, profile: Profile) -> list[LogicalControl]:
+        """Return ``profile.controls`` in stable topological order for Sync
+        dependency resolution (DEC-151).
+
+        A control whose curve is a ``Sync`` depends on the control it targets,
+        so the target must be evaluated first. Independent controls keep their
+        original profile order (stable). A dependency cycle (author-time
+        prevented, defensively guarded here) is broken deterministically — the
+        Sync that closes it reads a not-yet-computed target and falls back at
+        eval time. Mirrors the daemon's ``topological_control_order`` DFS so the
+        two evaluators order controls identically (parity-critical)."""
+        by_id = {c.id: c for c in profile.controls}
+        ordered: list[LogicalControl] = []
+        emitted: set[str] = set()
+        on_path: set[str] = set()
+
+        def visit(control: LogicalControl) -> None:
+            if control.id in emitted or control.id in on_path:
+                return
+            on_path.add(control.id)
+            dep_id = self._sync_dependency(control, profile)
+            if dep_id is not None and dep_id != control.id and dep_id in by_id:
+                visit(by_id[dep_id])
+            on_path.discard(control.id)
+            if control.id not in emitted:
+                emitted.add(control.id)
+                ordered.append(control)
+
+        for control in profile.controls:
+            visit(control)
+        return ordered
+
+    @staticmethod
+    def _sync_dependency(control: LogicalControl, profile: Profile) -> str | None:
+        """The control id a Sync-driven control depends on, else None."""
+        if control.mode != ControlMode.CURVE:
+            return None
+        curve = profile.get_curve(control.curve_id)
+        if curve is None or curve.type != CurveType.SYNC:
+            return None
+        return curve.sync_control_id or None
 
     def _check_thermal_standdown(self, status: ControlLoopStatus) -> bool:
         """DEC-132: pause all writes while the daemon forces safety PWM.
@@ -699,7 +767,9 @@ class ControlLoopService(QObject):
                 status.targets_skipped += 1
                 return
 
-            desired_pwm = self._curve_output_for_control(control.id, curve, sensors, status)
+            desired_pwm = self._curve_output_for_control(
+                control.id, curve, sensors, profile, status
+            )
             if desired_pwm is None:
                 status.targets_skipped += 1
                 return
@@ -833,15 +903,115 @@ class ControlLoopService(QObject):
         control_id: str,
         curve: CurveConfig,
         sensors: dict[str, SensorReading],
+        profile: Profile,
         status: ControlLoopStatus,
     ) -> float | None:
-        """Route a curve to its evaluation path. Trigger curves use a stateful
-        two-state latch and bypass the 2°C deadband — they own their own
-        idle..load hysteresis band (DEC-149); every other type goes through the
-        deadband path."""
+        """Route a curve to its evaluation path.
+
+        - **Trigger** uses a stateful two-state latch and bypasses the 2°C
+          deadband — it owns its idle..load hysteresis band (DEC-149).
+        - **Mix** combines other curves' raw outputs and **Sync** mirrors
+          another control's tuned output (DEC-150/151); both are
+          multi-/cross-control and bypass the deadband, resolved via the
+          evaluation-context resolvers below.
+        - Every single-temperature type (graph/stepped/linear/flat) goes
+          through the deadband path."""
         if curve.type == CurveType.TRIGGER:
             return self._evaluate_trigger(control_id, curve, sensors, status)
+        if curve.type == CurveType.MIX:
+            return self._resolve_curve_output(curve, sensors, profile, set(), status)
+        if curve.type == CurveType.SYNC:
+            return self._resolve_sync_output(control_id, curve, status)
         return self._evaluate_curve_with_hysteresis(control_id, curve, sensors, status)
+
+    def _resolve_curve_output(
+        self,
+        curve: CurveConfig,
+        sensors: dict[str, SensorReading],
+        profile: Profile,
+        visited: set[str],
+        status: ControlLoopStatus,
+    ) -> float | None:
+        """Resolve a curve's raw output in the Mix evaluation context (DEC-150).
+
+        - **Mix** recurses over its children, combining their raw outputs.
+          ``visited`` carries the current resolution path for cycle detection —
+          a curve that reappears on its own path drops out (safe fallback) so a
+          hand-edited cycle degrades instead of recursing forever.
+        - **Sync** is not a valid Mix child (Mix does not nest Sync; the editor
+          prevents it) → contributes nothing.
+        - Every single-temperature type uses the **pure** ``interpolate`` at its
+          own sensor (pre-deadband, clamped 0-100) — this is the "raw
+          child-curve output" the Mix combines. Returns None when the value
+          cannot be resolved (missing/invalid sensor, unresolvable Mix). Must
+          stay byte-for-byte identical to the daemon's ``resolve_curve_output``.
+        """
+        if curve.type == CurveType.MIX:
+            return self._resolve_mix_output(curve, sensors, profile, visited, status)
+        if curve.type == CurveType.SYNC:
+            status.warnings.append(f"Mix child {curve.name!r} is a Sync curve — ignored")
+            return None
+        temp = self._resolve_curve_sensor_temp(curve.id, curve, sensors, status)
+        if temp is None:
+            return None
+        return max(0.0, min(100.0, curve.interpolate(temp)))
+
+    def _resolve_mix_output(
+        self,
+        curve: CurveConfig,
+        sensors: dict[str, SensorReading],
+        profile: Profile,
+        visited: set[str],
+        status: ControlLoopStatus,
+    ) -> float | None:
+        """Combine a Mix curve's children (DEC-150). Each child is evaluated at
+        its own sensor; unresolved children are dropped; the surviving values are
+        combined by ``mix_function`` and clamped 0-100. Returns None when the
+        curve is part of a cycle or no child resolves (control skipped — fans
+        hold)."""
+        if curve.id in visited:
+            status.warnings.append(f"Mix curve {curve.name!r} has a dependency cycle")
+            return None
+        child_visited = visited | {curve.id}
+        values: list[float] = []
+        for child_id in curve.mix_curve_ids:
+            child = profile.get_curve(child_id)
+            if child is None:
+                status.warnings.append(f"Mix curve {curve.name!r}: child {child_id!r} not found")
+                continue
+            value = self._resolve_curve_output(child, sensors, profile, child_visited, status)
+            if value is not None:
+                values.append(value)
+        if not values:
+            return None
+        return _combine_mix(curve.mix_function, values)
+
+    def _resolve_sync_output(
+        self,
+        control_id: str,
+        curve: CurveConfig,
+        status: ControlLoopStatus,
+    ) -> float | None:
+        """Mirror another control's current-tick tuned output (DEC-151).
+
+        Reads ``status.control_outputs[target]`` — populated for every control
+        already evaluated this cycle, which the topological ordering guarantees
+        is the Sync's target on an acyclic graph. Adds ``sync_offset_pct`` and
+        clamps 0-100; the Sync control's own tuning is applied afterwards by the
+        caller. Returns None (control skipped, fans hold) for an unset/self
+        target or one not yet computed (cycle / skipped / missing). Must match
+        the daemon's ``resolve_sync_output`` byte-for-byte."""
+        target_id = curve.sync_control_id
+        if not target_id or target_id == control_id:
+            status.warnings.append(f"Sync control {control_id}: no valid target")
+            return None
+        target_output = status.control_outputs.get(target_id)
+        if target_output is None:
+            status.warnings.append(
+                f"Sync control {control_id}: target {target_id!r} output unavailable"
+            )
+            return None
+        return max(0.0, min(100.0, target_output + curve.sync_offset_pct))
 
     def _resolve_curve_sensor_temp(
         self,

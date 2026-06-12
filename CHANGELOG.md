@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.38.0] — 2026-06-12
+
+Mix and Sync composite curve types — the final phase of the curve-library
+expansion (DEC-150/151), retiring the single-sensor rule (DEC-014 → DEC-152).
+Pairs with **daemon v1.17.0**; both evaluators learn dependency-graph evaluation
+with cycle detection in lockstep and the DEC-126 parity fixture stays
+byte-identical.
+
+### Added
+- **Mix curve type** in Controls ▸ Curves. A Mix combines other curves' outputs —
+  each evaluated at its own sensor — with **Max / Min / Average / Sum / Subtract**,
+  clamped 0–100. The classic "follow whichever of CPU/GPU is hotter" is `Max` of
+  two curves. Edited in a modal dialog (function + a checkable curve list); the
+  card shows a `Max of N curves` summary.
+- **Sync curve type** — mirrors another control's tuned output plus an offset
+  (e.g. "rear exhaust = CPU fans + 10%"), resolved same-tick via stable
+  topological control ordering. Edited in a modal dialog (control + offset); the
+  card shows a `Mirror control +N%` summary.
+- Author-time cycle prevention: the Mix/Sync dialogs offer only choices that
+  cannot form a dependency loop; both evaluators also guard cycles at eval time
+  (safe fallback — the fan holds).
+- Mix/Sync parity vectors: a multi-sensor Mix case and a Sync case whose mirror is
+  listed before its target (pinning the topological reorder).
+
+### Changed
+- Profile schema → **v7**. Additive: a v7 profile using a Mix/Sync curve still
+  loads on an older daemon/GUI, which falls back safely (daemon 50%, GUI flat).
+- **DEC-014 retired (DEC-152):** curves are no longer single-sensor only.
+  Composite curves may span sensors/controls, but only via explicit, named,
+  acyclic dependencies; simple curves and per-curve ownership (R31) are unchanged.
+
 ## [1.37.0] — 2026-06-12
 
 Trigger (two-state latch) curve type — second of three phased curve-library

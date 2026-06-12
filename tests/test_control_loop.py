@@ -139,6 +139,335 @@ class TestTriggerLatch:
         assert ts.last_transition_temp is None  # deadband anchor never written
 
 
+class TestMixCurve:
+    """DEC-150: Mix combines other curves' raw outputs (each at its own sensor),
+    clamps 0-100, and bypasses the 2 deg C deadband."""
+
+    def _flat_child(self, cid, sensor_id, out):
+        return CurveConfig(
+            id=cid, name=cid, type=CurveType.FLAT, sensor_id=sensor_id, flat_output_pct=out
+        )
+
+    def _mix_profile(self, function, children, mix_ids=None):
+        curves = list(children)
+        mix = CurveConfig(
+            id="mix",
+            name="MIX",
+            type=CurveType.MIX,
+            mix_function=function,
+            mix_curve_ids=mix_ids if mix_ids is not None else [c.id for c in children],
+        )
+        curves.append(mix)
+        control = LogicalControl(
+            id="c",
+            name="C",
+            mode=ControlMode.CURVE,
+            curve_id="mix",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        return Profile(id="mixp", name="MixP", controls=[control], curves=curves)
+
+    def _run(self, state, profile_service, profile):
+        profile_service._profiles[profile.id] = profile
+        profile_service.set_active(profile.id)
+        loop = ControlLoopService(state, profile_service)
+        captured: list = []
+        loop.status_changed.connect(captured.append)
+        loop._cycle()
+        return loop, captured[-1]
+
+    @pytest.mark.parametrize(
+        "function,expected",
+        [("max", 60), ("min", 20), ("average", 40), ("sum", 100), ("subtract", 0)],
+    )
+    def test_combine_functions(self, function, expected, state, profile_service, qtbot):
+        # Three FLAT children at 60/40/20 (all on the same present sensor — FLAT
+        # ignores the value). sum=120 clamps to 100; subtract = 60-40-20 = 0.
+        children = [
+            self._flat_child("a", "cpu_temp", 60),
+            self._flat_child("b", "cpu_temp", 40),
+            self._flat_child("c", "cpu_temp", 20),
+        ]
+        _loop, status = self._run(state, profile_service, self._mix_profile(function, children))
+        assert round(status.member_outputs["c"]["openfan:ch00"]) == expected
+
+    def test_mix_each_child_at_its_own_sensor(self, state, profile_service, qtbot):
+        # Two LINEAR children on two different sensors moving independently —
+        # the Mix must read each child at its own sensor, then combine (max).
+        state.sensors = [
+            SensorReading(id="cpu", kind="CpuTemp", label="CPU", value_c=50.0, age_ms=500),
+            SensorReading(id="gpu", kind="GpuTemp", label="GPU", value_c=70.0, age_ms=500),
+        ]
+        cpu = CurveConfig(
+            id="cpu_c",
+            name="cpu",
+            type=CurveType.LINEAR,
+            sensor_id="cpu",
+            start_temp_c=30,
+            start_output_pct=20,
+            end_temp_c=80,
+            end_output_pct=100,
+        )  # at 50 -> 52
+        gpu = CurveConfig(
+            id="gpu_c",
+            name="gpu",
+            type=CurveType.LINEAR,
+            sensor_id="gpu",
+            start_temp_c=30,
+            start_output_pct=20,
+            end_temp_c=80,
+            end_output_pct=100,
+        )  # at 70 -> 84
+        _loop, status = self._run(state, profile_service, self._mix_profile("max", [cpu, gpu]))
+        assert round(status.member_outputs["c"]["openfan:ch00"]) == 84  # max(52, 84)
+
+    def test_mix_bypasses_deadband(self, state, profile_service, qtbot):
+        # A Mix wrapping one graph child follows a falling temperature instead of
+        # holding it. The single-temperature deadband path would hold 50 at 69°C
+        # (see the deadband_hold_release parity vector); Mix bypasses it.
+        child = CurveConfig(
+            id="g",
+            name="g",
+            type=CurveType.GRAPH,
+            sensor_id="cpu_temp",
+            points=[CurvePoint(60, 30), CurvePoint(70, 50)],
+        )
+        profile = self._mix_profile("max", [child])
+        profile_service._profiles[profile.id] = profile
+        profile_service.set_active(profile.id)
+        loop = ControlLoopService(state, profile_service)
+        captured: list = []
+        loop.status_changed.connect(captured.append)
+
+        def pwm(temp):
+            state.sensors = [
+                SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=temp, age_ms=500)
+            ]
+            captured.clear()
+            loop._cycle()
+            return round(captured[-1].member_outputs["c"]["openfan:ch00"])
+
+        assert pwm(70.0) == 50
+        assert pwm(69.0) == 48  # deadband would hold 50; Mix bypasses it
+        assert pwm(67.5) == 45
+
+    def test_missing_child_uses_the_rest(self, state, profile_service, qtbot):
+        children = [self._flat_child("a", "cpu_temp", 60)]
+        profile = self._mix_profile("max", children, mix_ids=["a", "ghost"])
+        _loop, status = self._run(state, profile_service, profile)
+        assert round(status.member_outputs["c"]["openfan:ch00"]) == 60
+
+    def test_nested_mix(self, state, profile_service, qtbot):
+        # outer = max(a=70, inner); inner = min(b=40, c=80) = 40 -> outer = 70.
+        inner = CurveConfig(
+            id="inner",
+            name="inner",
+            type=CurveType.MIX,
+            mix_function="min",
+            mix_curve_ids=["b", "c"],
+        )
+        curves = [
+            self._flat_child("a", "cpu_temp", 70),
+            self._flat_child("b", "cpu_temp", 40),
+            self._flat_child("c", "cpu_temp", 80),
+            inner,
+            CurveConfig(
+                id="mix",
+                name="outer",
+                type=CurveType.MIX,
+                mix_function="max",
+                mix_curve_ids=["a", "inner"],
+            ),
+        ]
+        control = LogicalControl(
+            id="c",
+            name="C",
+            mode=ControlMode.CURVE,
+            curve_id="mix",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        profile = Profile(id="mixp", name="MixP", controls=[control], curves=curves)
+        _loop, status = self._run(state, profile_service, profile)
+        assert round(status.member_outputs["c"]["openfan:ch00"]) == 70
+
+    def test_self_cycle_skips_control(self, state, profile_service, qtbot):
+        mix = CurveConfig(
+            id="mix",
+            name="MIX",
+            type=CurveType.MIX,
+            mix_function="max",
+            mix_curve_ids=["mix"],  # references itself
+        )
+        control = LogicalControl(
+            id="c",
+            name="C",
+            mode=ControlMode.CURVE,
+            curve_id="mix",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        profile = Profile(id="mixp", name="MixP", controls=[control], curves=[mix])
+        _loop, status = self._run(state, profile_service, profile)
+        assert "c" not in status.member_outputs  # skipped, no write
+        assert status.targets_skipped == 1
+
+
+class TestSyncCurve:
+    """DEC-151: Sync mirrors another control's current-tick tuned output (+offset),
+    resolved via stable topological control ordering; cycles fall back safely."""
+
+    def _linear(self, cid, sensor_id):
+        return CurveConfig(
+            id=cid,
+            name=cid,
+            type=CurveType.LINEAR,
+            sensor_id=sensor_id,
+            start_temp_c=30,
+            start_output_pct=20,
+            end_temp_c=80,
+            end_output_pct=100,
+        )
+
+    def _run(self, state, profile_service, profile):
+        profile_service._profiles[profile.id] = profile
+        profile_service.set_active(profile.id)
+        loop = ControlLoopService(state, profile_service)
+        captured: list = []
+        loop.status_changed.connect(captured.append)
+        loop._cycle()
+        merged: dict = {}
+        for cmap in captured[-1].member_outputs.values():
+            merged.update(cmap)
+        return loop, captured[-1], {k: round(v) for k, v in merged.items()}
+
+    def test_mirror_with_offset_and_ordering(self, state, profile_service, qtbot):
+        # Mirror control is listed BEFORE its target — the topological sort must
+        # still evaluate the target first so the mirror reads its output. At
+        # cpu=50 the target curve gives 52; the mirror = 52 + 10 = 62.
+        sync = CurveConfig(
+            id="sy", name="SY", type=CurveType.SYNC, sync_control_id="ctgt", sync_offset_pct=10.0
+        )
+        mirror = LogicalControl(
+            id="cmir",
+            name="Mirror",
+            mode=ControlMode.CURVE,
+            curve_id="sy",
+            members=[ControlMember(source="openfan", member_id="openfan:ch01")],
+        )
+        target = LogicalControl(
+            id="ctgt",
+            name="Target",
+            mode=ControlMode.CURVE,
+            curve_id="cv",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        profile = Profile(
+            id="syncp",
+            name="SyncP",
+            controls=[mirror, target],  # mirror first — order must be corrected
+            curves=[self._linear("cv", "cpu_temp"), sync],
+        )
+        _loop, _status, out = self._run(state, profile_service, profile)
+        assert out == {"openfan:ch00": 52, "openfan:ch01": 62}
+
+    def test_mirror_negative_offset_clamps(self, state, profile_service, qtbot):
+        # target = 52, offset -60 -> -8 clamps to 0.
+        sync = CurveConfig(
+            id="sy", name="SY", type=CurveType.SYNC, sync_control_id="ctgt", sync_offset_pct=-60.0
+        )
+        mirror = LogicalControl(
+            id="cmir",
+            name="Mirror",
+            mode=ControlMode.CURVE,
+            curve_id="sy",
+            members=[ControlMember(source="openfan", member_id="openfan:ch01")],
+        )
+        target = LogicalControl(
+            id="ctgt",
+            name="Target",
+            mode=ControlMode.CURVE,
+            curve_id="cv",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        profile = Profile(
+            id="syncp",
+            name="SyncP",
+            controls=[target, mirror],
+            curves=[self._linear("cv", "cpu_temp"), sync],
+        )
+        _loop, _status, out = self._run(state, profile_service, profile)
+        assert out["openfan:ch01"] == 0
+
+    def test_mirror_of_manual_control(self, state, profile_service, qtbot):
+        sync = CurveConfig(
+            id="sy", name="SY", type=CurveType.SYNC, sync_control_id="ctgt", sync_offset_pct=5.0
+        )
+        mirror = LogicalControl(
+            id="cmir",
+            name="Mirror",
+            mode=ControlMode.CURVE,
+            curve_id="sy",
+            members=[ControlMember(source="openfan", member_id="openfan:ch01")],
+        )
+        target = LogicalControl(
+            id="ctgt",
+            name="Target",
+            mode=ControlMode.MANUAL,
+            manual_output_pct=30.0,
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        profile = Profile(id="syncp", name="SyncP", controls=[mirror, target], curves=[sync])
+        _loop, _status, out = self._run(state, profile_service, profile)
+        assert out == {"openfan:ch00": 30, "openfan:ch01": 35}
+
+    def test_missing_target_skips(self, state, profile_service, qtbot):
+        sync = CurveConfig(
+            id="sy", name="SY", type=CurveType.SYNC, sync_control_id="nope", sync_offset_pct=0.0
+        )
+        mirror = LogicalControl(
+            id="cmir",
+            name="Mirror",
+            mode=ControlMode.CURVE,
+            curve_id="sy",
+            members=[ControlMember(source="openfan", member_id="openfan:ch01")],
+        )
+        profile = Profile(id="syncp", name="SyncP", controls=[mirror], curves=[sync])
+        _loop, status, out = self._run(state, profile_service, profile)
+        assert out == {}
+        assert status.targets_skipped == 1
+
+    def test_two_cycle_both_skip(self, state, profile_service, qtbot):
+        # A mirrors B, B mirrors A. The topological sort breaks the cycle; both
+        # read a not-yet-computed target and skip (fans hold) — no crash.
+        sa = CurveConfig(id="sa", name="SA", type=CurveType.SYNC, sync_control_id="cb")
+        sb = CurveConfig(id="sb", name="SB", type=CurveType.SYNC, sync_control_id="ca")
+        ca = LogicalControl(
+            id="ca",
+            name="A",
+            mode=ControlMode.CURVE,
+            curve_id="sa",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        cb = LogicalControl(
+            id="cb",
+            name="B",
+            mode=ControlMode.CURVE,
+            curve_id="sb",
+            members=[ControlMember(source="openfan", member_id="openfan:ch01")],
+        )
+        profile = Profile(id="cyc", name="Cyc", controls=[ca, cb], curves=[sa, sb])
+        _loop, _status, out = self._run(state, profile_service, profile)
+        assert out == {}  # both skipped, neither fan written
+
+    def test_sync_free_profile_keeps_profile_order(self, state, profile_service, qtbot):
+        # No Sync curves anywhere -> ordering is a no-op (stable profile order).
+        c1 = LogicalControl(id="c1", name="One", mode=ControlMode.MANUAL, manual_output_pct=10)
+        c2 = LogicalControl(id="c2", name="Two", mode=ControlMode.MANUAL, manual_output_pct=20)
+        profile = Profile(id="p", name="P", controls=[c1, c2], curves=[])
+        loop = ControlLoopService(state, profile_service)
+        ordered = [c.id for c in loop._ordered_controls(profile)]
+        assert ordered == ["c1", "c2"]
+
+
 class TestHysteresis:
     """2 deg C deadband prevents fan oscillation."""
 

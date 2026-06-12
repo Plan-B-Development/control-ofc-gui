@@ -186,3 +186,74 @@ class TestNameAndButtons:
         save_btn = dlg.findChild(QPushButton, "CurveEditDialog_Btn_save")
         assert save_btn is not None
         assert save_btn.text() == "Save"
+
+
+class TestMixDialog:
+    """DEC-150: Mix has no sensor selector — it offers a function dropdown and a
+    checkable list of candidate curves."""
+
+    def _mix_curve(self):
+        return CurveConfig(
+            id="mx", name="Mix", type=CurveType.MIX, mix_function="max", mix_curve_ids=["a"]
+        )
+
+    def test_no_sensor_combo_for_mix(self, qtbot):
+        dlg = CurveEditDialog(self._mix_curve(), sensor_items=SENSOR_ITEMS, mix_candidates=[])
+        qtbot.addWidget(dlg)
+        assert dlg._sensor_combo is None
+
+    def test_checklist_preselects_current_children(self, qtbot):
+        from PySide6.QtCore import Qt
+
+        dlg = CurveEditDialog(
+            self._mix_curve(),
+            mix_candidates=[("a", "Curve A"), ("b", "Curve B")],
+        )
+        qtbot.addWidget(dlg)
+        states = {
+            dlg._mix_list.item(i).data(Qt.ItemDataRole.UserRole): dlg._mix_list.item(i).checkState()
+            for i in range(dlg._mix_list.count())
+        }
+        assert states["a"] == Qt.CheckState.Checked
+        assert states["b"] == Qt.CheckState.Unchecked
+
+    def test_apply_writes_function_and_checked_ids(self, qtbot):
+        from PySide6.QtCore import Qt
+
+        curve = self._mix_curve()
+        dlg = CurveEditDialog(curve, mix_candidates=[("a", "A"), ("b", "B")])
+        qtbot.addWidget(dlg)
+        dlg._mix_function_combo.setCurrentIndex(dlg._mix_function_combo.findData("average"))
+        dlg._mix_list.item(1).setCheckState(Qt.CheckState.Checked)  # add b
+        dlg.apply_to_curve()
+        assert curve.mix_function == "average"
+        assert curve.mix_curve_ids == ["a", "b"]
+
+
+class TestSyncDialog:
+    """DEC-151: Sync has no sensor selector — a control dropdown plus an offset."""
+
+    def _sync_curve(self):
+        return CurveConfig(
+            id="sy", name="Sync", type=CurveType.SYNC, sync_control_id="c2", sync_offset_pct=10.0
+        )
+
+    def test_no_sensor_combo_for_sync(self, qtbot):
+        dlg = CurveEditDialog(self._sync_curve(), sync_candidates=[("c1", "One"), ("c2", "Two")])
+        qtbot.addWidget(dlg)
+        assert dlg._sensor_combo is None
+
+    def test_control_combo_selects_current(self, qtbot):
+        dlg = CurveEditDialog(self._sync_curve(), sync_candidates=[("c1", "One"), ("c2", "Two")])
+        qtbot.addWidget(dlg)
+        assert dlg._sync_control_combo.currentData() == "c2"
+
+    def test_apply_writes_control_and_offset(self, qtbot):
+        curve = self._sync_curve()
+        dlg = CurveEditDialog(curve, sync_candidates=[("c1", "One"), ("c2", "Two")])
+        qtbot.addWidget(dlg)
+        dlg._sync_control_combo.setCurrentIndex(dlg._sync_control_combo.findData("c1"))
+        dlg._sync_offset_spin.setValue(-7.5)
+        dlg.apply_to_curve()
+        assert curve.sync_control_id == "c1"
+        assert curve.sync_offset_pct == -7.5

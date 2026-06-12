@@ -82,16 +82,18 @@ Groups are flexible user labels, not rigid system types.
 - Case
 
 ## Curve model
-V1 curve rules:
-- single sensor only
+Curve rules:
+- a **simple** curve reads one sensor; **composite** curves (Mix, Sync) span
+  several by depending on *named* curves/controls — explicitly and acyclically
+  (DEC-152, retiring the old single-sensor rule DEC-014)
 - edit in % output
-- 5 points by default
+- 5 points by default (point-based curves)
 - temperature on X-axis
 - fan output percentage on Y-axis
 - no live simulation required before apply
 
 ### Curve types
-The curve library supports five shapes, each serialised with a `type` field:
+The curve library supports seven shapes, each serialised with a `type` field:
 - **graph** — piecewise-linear interpolation between user points
 - **stepped** — staircase: holds each point's output until the next point's
   temperature is reached (lower-point-wins, half-open segments), no
@@ -101,10 +103,25 @@ The curve library supports five shapes, each serialised with a `type` field:
 - **trigger** — a two-state latch: below the idle temperature it runs the idle
   speed, at/above the load temperature it runs the load speed, and within the
   band it holds its current state (its own hysteresis, DEC-149, schema v6)
+- **mix** — combines the outputs of other curves (each at its own sensor) with a
+  function — `max` / `min` / `average` / `sum` / `subtract` — clamped 0–100
+  (DEC-150, schema v7)
+- **sync** — mirrors another *control's* tuned output, plus an offset, resolved
+  same-tick via stable topological control ordering (DEC-151, schema v7)
 
 Graph and Stepped share the point-table editor (same points model, different
 fill rule — straight vs staircase); Linear, Flat, and Trigger use a small
-parameter panel.
+parameter panel; Mix and Sync use a modal dialog (a function + a checkable curve
+list / a control + offset) with no sensor selector — they compose other curves
+or controls instead of reading a sensor directly.
+
+**Composite curves are explicit and acyclic.** Mix references other curves by id;
+Sync references a control by id. A dependency cycle is prohibited — the editor
+offers only cycle-free choices, and both evaluators guard a cycle at eval time
+(falling back to a safe value so the fan holds). Mix and Sync bypass the 2°C
+falling-temperature deadband (Mix is multi-sensor; Sync mirrors an
+already-resolved value); smoothing comes from the control's step-rate limit.
+
 A profile that uses a curve type an older build doesn't recognise degrades
 safely (the GUI falls back to flat; the daemon to 50%).
 
@@ -417,6 +434,9 @@ Each `CurveConfig` owns its own `points: list[CurvePoint]`. Points are stored pe
 
 ### Preview truthfulness
 When a curve is edited via the embedded editor, the corresponding curve card's mini-preview must update to reflect the curve's current graph shape. The preview is derived from the curve's own `points` data — not cached separately, not sourced from another curve, not left stale.
+
+### Composite curves (Mix/Sync, DEC-152)
+Mix and Sync intentionally depend on other curves/controls — but the dependency is **explicit and by id**, never silent shared state. A Mix owns its `mix_function` + `mix_curve_ids`; a Sync owns its `sync_control_id` + `sync_offset_pct`. Two Mix curves referencing the same child do not couple — editing one's function or input list never changes the other. The dependencies form a DAG: cycles are prevented at author time (the editor offers only cycle-free choices) and guarded at eval time (safe fallback). Composite card previews are self-contained — a Mix shows `Max of N curves`, a Sync shows `Mirror control +N%`, derived from the curve's own fields without resolving other curves'/controls' names (so the preview can never go stale against data the card was not given).
 
 ### Card metadata typography (R33)
 Card metadata labels (members, curve assignment, output, sensor, used-by, RPM) use the `.CardMeta` CSS class, which inherits the `small` font role (`base * 0.9`). This keeps metadata visually subordinate to body text. Card titles (`_name_label`) inherit the global body font size. The `.PageSubtitle` class is reserved for section headers and page-level subtitles, not card internals.

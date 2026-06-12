@@ -202,11 +202,34 @@ def test_trigger_curve_coldstart_at_or_above_load_is_load():
 
 
 def test_unknown_curve_type_falls_back_to_flat():
-    """Loading a config with an unknown curve type (e.g. old 'mix') falls back to flat."""
-    data = {"id": "old_mix", "name": "Old Mix", "type": "mix", "flat_output_pct": 42.0}
+    """Loading a config with an unknown curve type falls back to flat.
+
+    ``mix``/``sync`` became real types in v7 (DEC-150/151), so this uses a
+    genuinely-unrecognised value — the forward-compat path a future curve type
+    would hit on an older build.
+    """
+    data = {"id": "future", "name": "Future", "type": "spline", "flat_output_pct": 42.0}
     curve = CurveConfig.from_dict(data)
     assert curve.type == CurveType.FLAT
     assert curve.interpolate(50.0) == 42.0
+
+
+def test_mix_and_sync_are_known_types():
+    """``mix`` and ``sync`` round-trip as their own types (DEC-150/151) — no
+    longer the unknown-type fallback they were before v7."""
+    mix = CurveConfig.from_dict(
+        {"id": "m", "name": "M", "type": "mix", "mix_function": "average", "mix_curve_ids": ["a"]}
+    )
+    assert mix.type == CurveType.MIX
+    assert mix.mix_function == "average"
+    assert mix.mix_curve_ids == ["a"]
+
+    sync = CurveConfig.from_dict(
+        {"id": "s", "name": "S", "type": "sync", "sync_control_id": "c1", "sync_offset_pct": 7.0}
+    )
+    assert sync.type == CurveType.SYNC
+    assert sync.sync_control_id == "c1"
+    assert sync.sync_offset_pct == 7.0
 
 
 # ---------------------------------------------------------------------------
