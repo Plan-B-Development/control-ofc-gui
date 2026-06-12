@@ -1380,8 +1380,14 @@ class TestTuningPipeline:
         assert loop._target_states["tc"].last_output == pytest.approx(25.0)
 
     def test_step_up_rate_limiting(self, state, profile_service, qtbot):
+        """Output rise limited by step_up_pct per cycle."""
+        # Use a graph curve so we can force a large upward jump in demanded output.
         curve = CurveConfig(
-            id="c", name="C", type=CurveType.FLAT, sensor_id="cpu_temp", flat_output_pct=80.0
+            id="c",
+            name="C",
+            type=CurveType.GRAPH,
+            sensor_id="cpu_temp",
+            points=[CurvePoint(30, 20), CurvePoint(70, 80)],
         )
         control = LogicalControl(
             id="tc",
@@ -1396,15 +1402,19 @@ class TestTuningPipeline:
         profile_service.set_active("tp")
         loop = ControlLoopService(state, profile_service)
 
-        # First cycle: no prior output, goes to 80%
+        # First cycle at 30°C → 20% output (baseline; no prior output, no clamp).
+        state.sensors = [
+            SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=30.0, age_ms=500),
+        ]
         loop._cycle()
-        first = loop._target_states["tc"].last_output
+        assert loop._target_states["tc"].last_output == pytest.approx(20.0)
 
-        # Second cycle: step_up=5 means max +5 from previous
-        # But we're already at 80, curve says 80, so no change
+        # Raise temp to 70°C → curve says 80%, but step_up=5 caps the rise at 20+5.
+        state.sensors = [
+            SensorReading(id="cpu_temp", kind="CpuTemp", label="CPU", value_c=70.0, age_ms=500),
+        ]
         loop._cycle()
-        second = loop._target_states["tc"].last_output
-        assert second == first  # no change needed
+        assert loop._target_states["tc"].last_output == pytest.approx(25.0)
 
     def test_step_down_rate_limiting(self, state, profile_service, qtbot):
         """Output drop limited by step_down_pct per cycle."""
