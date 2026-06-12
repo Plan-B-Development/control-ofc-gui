@@ -66,6 +66,65 @@ class TestProfileImportValidation:
         with pytest.raises((TypeError, AttributeError)):
             Profile.from_dict(data)
 
+    def test_curve_with_too_many_points_raises(self):
+        """A crafted profile cannot smuggle an unbounded points list (P2-C)."""
+        from control_ofc.services.profile_service import MAX_CURVE_POINTS
+
+        data = {
+            "controls": [],
+            "curves": [
+                {
+                    "id": "c1",
+                    "type": "graph",
+                    "points": [
+                        {"temp_c": float(i), "output_pct": 50.0}
+                        for i in range(MAX_CURVE_POINTS + 1)
+                    ],
+                }
+            ],
+        }
+        with pytest.raises(ValueError, match="too many points"):
+            Profile.from_dict(data)
+
+    def test_curve_at_max_points_accepted(self):
+        """The cap is inclusive — exactly MAX_CURVE_POINTS is still valid."""
+        from control_ofc.services.profile_service import MAX_CURVE_POINTS
+
+        data = {
+            "controls": [],
+            "curves": [
+                {
+                    "id": "c1",
+                    "type": "graph",
+                    "points": [
+                        {"temp_c": float(i), "output_pct": 50.0} for i in range(MAX_CURVE_POINTS)
+                    ],
+                }
+            ],
+        }
+        profile = Profile.from_dict(data)
+        assert len(profile.curves[0].points) == MAX_CURVE_POINTS
+
+    @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+    def test_curve_with_nonfinite_point_raises(self, bad):
+        """NaN/inf point values are rejected (would corrupt curve math) — P2-C.
+
+        Python's json module parses Infinity/NaN by default, so these can reach
+        ``from_dict`` through an imported profile bundle.
+        """
+        data = {
+            "controls": [],
+            "curves": [
+                {
+                    "id": "c1",
+                    "type": "graph",
+                    "points": [{"temp_c": bad, "output_pct": 50.0}],
+                }
+            ],
+        }
+        with pytest.raises(ValueError, match="non-finite"):
+            Profile.from_dict(data)
+
 
 # ---------------------------------------------------------------------------
 # Theme validation (_migrate_tokens + ThemeTokens construction)
@@ -185,3 +244,70 @@ class TestSettingsPageImportValidation:
         assert skipped == 1
         assert (themes / "good.json").exists()
         assert not (themes / "bad.json").exists()
+
+    @pytest.mark.parametrize("evil_name", ["../evil", "../../evil", "a/b", "/abs_evil"])
+    def test_profile_with_traversal_name_skipped(self, tmp_path, qtbot, monkeypatch, evil_name):
+        """An untrusted profile key cannot escape the profiles dir (P1-B)."""
+        page, profiles, _themes = self._make_page(tmp_path, qtbot, monkeypatch)
+        data = {
+            "good": {
+                "id": "g1",
+                "name": "Good",
+                "version": 3,
+                "controls": [],
+                "curves": [],
+            },
+            evil_name: {
+                "id": "e1",
+                "name": "Evil",
+                "version": 3,
+                "controls": [],
+                "curves": [],
+            },
+        }
+        skipped = page._import_profiles(data)
+        assert skipped == 1
+        # The good sibling imported and is the ONLY file in the profiles dir.
+        assert sorted(p.name for p in profiles.glob("*.json")) == ["good.json"]
+        # Nothing escaped into the parent (covers the "../" cases).
+        assert list(tmp_path.glob("*.json")) == []
+
+    @pytest.mark.parametrize("evil_name", ["../evil", "a/b", "/abs_evil"])
+    def test_theme_with_traversal_name_skipped(self, tmp_path, qtbot, monkeypatch, evil_name):
+        """An untrusted theme key cannot escape the themes dir (P1-B)."""
+        page, _profiles, themes = self._make_page(tmp_path, qtbot, monkeypatch)
+        data = {
+            "good": {"name": "Good", "app_bg": "#001122", "version": 2},
+            evil_name: {"name": "Evil", "app_bg": "#001122", "version": 2},
+        }
+        skipped = page._import_themes(data)
+        assert skipped == 1
+        assert sorted(p.name for p in themes.glob("*.json")) == ["good.json"]
+        assert list(tmp_path.glob("*.json")) == []
+
+    def test_profile_import_uses_atomic_write(self, tmp_path, qtbot, monkeypatch):
+        """Imports route through atomic_write, not raw write_text (P2-B)."""
+        import control_ofc.ui.pages.settings_page as sp
+
+        page, profiles, _themes = self._make_page(tmp_path, qtbot, monkeypatch)
+        calls: list[str] = []
+        real = sp.atomic_write
+
+        def spy(path, content):
+            calls.append(path.name)
+            real(path, content)
+
+        monkeypatch.setattr(sp, "atomic_write", spy)
+        data = {
+            "good": {
+                "id": "g1",
+                "name": "Good",
+                "version": 3,
+                "controls": [],
+                "curves": [],
+            }
+        }
+        skipped = page._import_profiles(data)
+        assert skipped == 0
+        assert (profiles / "good.json").exists()
+        assert "good.json" in calls

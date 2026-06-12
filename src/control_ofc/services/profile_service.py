@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
@@ -27,6 +28,17 @@ from control_ofc.constants import DEFAULT_CURVE_POINTS
 from control_ofc.paths import atomic_write, profiles_dir
 
 log = logging.getLogger(__name__)
+
+
+# Upper bound on points in a single curve. Real curves have a handful of points;
+# this guards against a crafted profile exhausting memory / per-tick CPU during
+# validation and evaluation (audit P2-C). Generous — far above any real curve.
+MAX_CURVE_POINTS = 256
+
+
+def _is_finite(value: object) -> bool:
+    """True only for a real, finite number (rejects NaN/inf, bool, non-numbers)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +215,13 @@ class CurveConfig:
         except ValueError:
             log.warning("Unknown curve type '%s', falling back to flat", type_str)
             curve_type = CurveType.FLAT
-        points = [CurvePoint(**p) for p in data.get("points", [])]
+        raw_points = data.get("points", [])
+        if len(raw_points) > MAX_CURVE_POINTS:
+            raise ValueError(f"curve has too many points: {len(raw_points)} > {MAX_CURVE_POINTS}")
+        points = [CurvePoint(**p) for p in raw_points]
+        for p in points:
+            if not _is_finite(p.temp_c) or not _is_finite(p.output_pct):
+                raise ValueError("curve point has non-finite or non-numeric values")
         return CurveConfig(
             id=data.get("id", str(uuid.uuid4())[:8]),
             name=data.get("name", ""),

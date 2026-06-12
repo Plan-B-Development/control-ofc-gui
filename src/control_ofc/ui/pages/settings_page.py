@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from control_ofc.constants import PAGE_CONTROLS, PAGE_DASHBOARD, PAGE_DIAGNOSTICS, PAGE_SETTINGS
 from control_ofc.paths import (
     app_settings_path,
+    atomic_write,
     config_dir,
     export_default_dir,
     profiles_dir,
@@ -42,6 +43,28 @@ from control_ofc.services.app_state import AppState
 from control_ofc.ui.theme import ThemeTokens, load_theme, save_theme
 
 log = logging.getLogger(__name__)
+
+
+def _safe_import_name(name: str, dest_dir: Path) -> str | None:
+    """Validate an untrusted import key used as a ``<name>.json`` filename.
+
+    Imported profile/theme dict keys are attacker-controlled: a key like
+    ``"../../evil"`` would escape *dest_dir* (audit P1-B). Accept only a bare
+    filename, and require the resolved destination to stay inside *dest_dir*
+    (defense in depth). Returns *name* when safe, else ``None`` so the caller
+    skips it (counted in the existing "invalid item(s) skipped" total). POSIX
+    GUI only — backslash handling is out of scope.
+    """
+    if not name or name != Path(name).name:
+        return None
+    try:
+        dest = (dest_dir / f"{name}.json").resolve()
+        if not dest.is_relative_to(dest_dir.resolve()):
+            return None
+    except (OSError, ValueError):
+        return None
+    return name
+
 
 _PAGE_NAMES = {
     PAGE_DASHBOARD: "Dashboard",
@@ -799,6 +822,10 @@ class SettingsPage(QWidget):
                 log.warning("Skipping profile '%s': not a JSON object", name)
                 skipped.append(name)
                 continue
+            if _safe_import_name(name, pdir) is None:
+                log.warning("Skipping profile '%s': unsafe name (path traversal)", name)
+                skipped.append(name)
+                continue
             try:
                 Profile.from_dict(data)
             except (KeyError, TypeError, ValueError) as exc:
@@ -825,7 +852,7 @@ class SettingsPage(QWidget):
 
         for name, data in valid.items():
             dest = pdir / f"{name}.json"
-            dest.write_text(json.dumps(data, indent=2) + "\n")
+            atomic_write(dest, json.dumps(data, indent=2) + "\n")
         log.info("Imported %d profile(s)", len(valid))
         return len(skipped)
 
@@ -846,6 +873,10 @@ class SettingsPage(QWidget):
                 log.warning("Skipping theme '%s': not a JSON object", name)
                 skipped.append(name)
                 continue
+            if _safe_import_name(name, td) is None:
+                log.warning("Skipping theme '%s': unsafe name (path traversal)", name)
+                skipped.append(name)
+                continue
             try:
                 migrated = _migrate_tokens(data)
                 # Strict validation: any invalid colour/value raises and the
@@ -859,7 +890,7 @@ class SettingsPage(QWidget):
 
         for name, data in valid.items():
             dest = td / f"{name}.json"
-            dest.write_text(json.dumps(data, indent=2) + "\n")
+            atomic_write(dest, json.dumps(data, indent=2) + "\n")
         log.info("Imported %d theme(s)", len(valid))
         return len(skipped)
 
