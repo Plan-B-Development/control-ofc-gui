@@ -28,6 +28,21 @@ def flat_curve():
     return CurveConfig(id="f1", name="Test Flat", type=CurveType.FLAT, flat_output_pct=50.0)
 
 
+@pytest.fixture()
+def stepped_curve():
+    return CurveConfig(
+        id="s1",
+        name="Test Stepped",
+        type=CurveType.STEPPED,
+        sensor_id="cpu_temp",
+        points=[
+            CurvePoint(30.0, 20.0),
+            CurvePoint(50.0, 50.0),
+            CurvePoint(80.0, 100.0),
+        ],
+    )
+
+
 class TestPreview:
     """The preview is owner-drawn (DEC-129): it paints the curve in
     paintEvent and exposes the painted text via summary_text()."""
@@ -43,6 +58,14 @@ class TestPreview:
         card = CurveCard(flat_curve)
         qtbot.addWidget(card)
         assert "Flat: 50%" in card._preview.summary_text()
+
+    def test_stepped_preview_renders_staircase(self, qtbot, stepped_curve):
+        # Stepped paints a staircase polyline like a graph (no text summary).
+        card = CurveCard(stepped_curve)
+        qtbot.addWidget(card)
+        assert card._preview.curve is stepped_curve
+        assert card._preview.summary_text() == ""
+        assert not card._preview.grab().isNull()
 
     def test_linear_shows_text_summary(self, qtbot):
         curve = CurveConfig(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from control_ofc.services.profile_service import Profile
+from control_ofc.services.profile_service import PROFILE_SCHEMA_VERSION, Profile
 from control_ofc.ui.theme import ThemeTokens, _migrate_tokens
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ class TestProfileImportValidation:
     def test_empty_dict_produces_default_profile(self):
         profile = Profile.from_dict({})
         assert profile.name == ""
-        assert profile.version == 4
+        assert profile.version == PROFILE_SCHEMA_VERSION
         assert profile.controls == []
         assert profile.curves == []
 

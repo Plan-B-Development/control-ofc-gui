@@ -99,6 +99,16 @@ class TestAppendToEnd:
         assert ids_end[: len(ids_start)] == ids_start
         assert len(ids_end) == len(ids_start) + 3
 
+    def test_add_stepped_curve_seeds_points(self, qtbot, app_state, profile_service):
+        page = ControlsPage(state=app_state, profile_service=profile_service)
+        qtbot.addWidget(page)
+
+        page._on_add_curve(CurveType.STEPPED)
+        profile = page._get_current_profile()
+        new_curve = profile.curves[-1]
+        assert new_curve.type == CurveType.STEPPED
+        assert len(new_curve.points) >= 2  # seeded like a graph, not left empty (DEC-148)
+
 
 # ---------------------------------------------------------------------------
 # C. Order stability across refresh

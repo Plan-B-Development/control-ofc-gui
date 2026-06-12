@@ -90,6 +90,26 @@ V1 curve rules:
 - fan output percentage on Y-axis
 - no live simulation required before apply
 
+### Curve types
+The curve library supports four shapes, each serialised with a `type` field:
+- **graph** — piecewise-linear interpolation between user points
+- **stepped** — staircase: holds each point's output until the next point's
+  temperature is reached (lower-point-wins, half-open segments), no
+  interpolation (DEC-148, schema v5)
+- **linear** — a single 2-point ramp (start/end temperature → output)
+- **flat** — a constant output, temperature-independent
+
+Graph and Stepped share the point-table editor (same points model, different
+fill rule — straight vs staircase); Linear and Flat use a small parameter panel.
+A profile that uses a curve type an older build doesn't recognise degrades
+safely (the GUI falls back to flat; the daemon to 50%).
+
+**GPU compatibility.** Every curve type is supported on AMD GPU fans. The daemon
+collapses whatever a curve produces into a single output percentage per cycle
+and writes it as a flat PMFW curve, so the GPU never depends on the curve
+*shape* — graph, stepped, linear, and flat behave identically on a GPU fan
+(subject to the firmware's own 5%/OD-RANGE clamp).
+
 ### Curve editor behaviour
 - points are draggable
 - points are editable numerically

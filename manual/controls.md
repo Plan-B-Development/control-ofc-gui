@@ -88,19 +88,20 @@ Each physical fan can belong to **only one role**: outputs already assigned else
 
 ## Curves (Bottom Section)
 
-The curve library lives in the lower half (the divider between the two sections is draggable). **+ Curve** offers the three curve types:
+The curve library lives in the lower half (the divider between the two sections is draggable). **+ Curve** offers the four curve types:
 
 | Type | Description | Use case |
 |------|-------------|----------|
 | **Graph Curve** | Multiple draggable points defining a custom temperature-to-speed shape | Full control over the response |
+| **Stepped Curve** | The same draggable points as a graph, but the output *holds* each point's value until the next point's temperature is reached — a staircase, not a ramp | A fixed fan speed per temperature band, with fewer speed changes |
 | **Linear Curve** | Two-point ramp: start temp/speed to end temp/speed | Simple "ramp up between X and Y" |
 | **Flat Curve** | Constant output regardless of temperature | Pumps, AIO coolers, always-on fans |
 
-Each curve card shows the curve's name and type, the bound sensor with its live reading, a preview (a sparkline for graph curves; a summary like "35°C→80°C: 30%→100%" or "Flat: 65%" for the others), and which roles use it ("Used by: …" with an **Assigned** / **Unassigned** chip). The card's **Actions** menu has **Edit**, **Rename**, **Duplicate**, and **Delete**.
+Each curve card shows the curve's name and type, the bound sensor with its live reading, a preview (a sparkline for graph curves, a staircase for stepped curves; a summary like "35°C→80°C: 30%→100%" or "Flat: 65%" for the others), and which roles use it ("Used by: …" with an **Assigned** / **Unassigned** chip). The card's **Actions** menu has **Edit**, **Rename**, **Duplicate**, and **Delete**.
 
-### Editing a Graph Curve
+### Editing a Graph or Stepped Curve
 
-**Actions → Edit** on a graph curve opens the inline editor below the curve grid:
+**Actions → Edit** on a graph or stepped curve opens the inline editor below the curve grid (a stepped curve uses the same point editor — only its preview line renders as a staircase):
 
 - **Drag points** on the graph, or type exact values in the numeric table beside it. **Double-click** empty graph space (or click **+ Add Point**) to add a point; **Remove Point** or the `Delete` key removes the selected one (a curve keeps at least 2 points)
 - The **sensor selector** chooses which temperature drives the curve; a live readout shows the current evaluation ("45.0°C → 62%")
