@@ -246,6 +246,9 @@ class LeaseService(QObject):
         self._lease_id = None
         self._renew_timer.stop()
         self._renew_retry_count = 0
+        # Clear the in-flight flag so a renew pending at stand-down cannot block
+        # the next renew after the lease is re-acquired (P2-E).
+        self._renew_in_flight = False
 
     def release(self) -> None:
         """Release the hwmon lease if held.
@@ -325,11 +328,12 @@ class LeaseService(QObject):
     @Slot(bool, str, int, str)
     def _on_renew_completed(self, success: bool, lease_id: str, ttl: int, err: str) -> None:
         self._renew_in_flight = False
-        # If the lease was released (or fully lost) while a renew was in
-        # flight the response is stale — discard it. Without this guard a
-        # late success could spuriously set `_lease_id` back to a value
-        # that no longer represents an active lease on the daemon side.
-        if not self._lease_id:
+        # If the lease was released/lost OR re-acquired under a new id while a
+        # renew was in flight, the response is stale — discard it. Without this
+        # guard a late success could spuriously set `_lease_id` back to a value
+        # that no longer represents the active lease (P2-E: a stale completion
+        # for the previous lease_id must not clobber a freshly re-acquired one).
+        if not self._lease_id or lease_id != self._lease_id:
             return
         if success:
             self._on_renew_success(lease_id, ttl)

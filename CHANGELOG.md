@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.38.3] — 2026-06-12
+
+Robustness fixes and dependency pinning (from the 2026-06-12 code audit). No new features;
+pairs with the existing **daemon v1.17.0+**.
+
+### Fixed
+- **Settings persistence is type-safe (P2-A).** `AppSettingsService.update()` now coerces
+  every value through the same validation as a fresh load, so a wrong-typed value can no
+  longer persist in memory and then fail to reload next launch.
+- **Lease renewal can't clobber a re-acquired lease (P2-E).** A renew completing for a
+  previous lease id (after a thermal stand-down + re-acquire) is discarded instead of
+  overwriting the fresh id, and the in-flight flag is cleared on stand-down so renewals resume.
+- **Data-directory overrides are validated (P2-G).** A hand-edited override that is relative,
+  traversing (`..`), or points at an existing file is logged and ignored.
+- **One control-loop evaluation per interval (P3).** Fresh sensor data and the periodic timer
+  are coalesced, so a timer event already queued before a restart can no longer trigger a
+  redundant evaluation.
+
+### Changed
+- **Dependency bounds.** Runtime dependencies gain upper ceilings (`PySide6<7`, `httpx<1`,
+  `pyqtgraph<1`, `numpy<3`, `colorama<1`) and the numpy floor is corrected to `>=2.0`;
+  colorama is documented as a load-bearing pyqtgraph load-time transitive (DEC-103).
+
 ## [1.38.2] — 2026-06-12
 
 Packaging fix (from the 2026-06-12 code audit).
