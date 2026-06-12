@@ -334,20 +334,23 @@ class CurveEditor(QWidget):
         self._redo_stack.clear()
         self._selected_idx = None
 
-        is_graph = curve.type == CurveType.GRAPH
+        # Graph and Stepped share the point-table editor (same points model,
+        # different fill rule — straight vs staircase); Linear/Flat use the
+        # parameter panels.
+        is_graph_shaped = curve.type in (CurveType.GRAPH, CurveType.STEPPED)
         # Show/hide graph vs parameter editors
-        self._plot_widget.setVisible(is_graph)
-        self._add_btn.setVisible(is_graph)
-        self._remove_btn.setVisible(is_graph)
-        self._coord_label.setVisible(is_graph)
-        self._table.setVisible(is_graph)
-        self._preset_combo.setVisible(is_graph)
+        self._plot_widget.setVisible(is_graph_shaped)
+        self._add_btn.setVisible(is_graph_shaped)
+        self._remove_btn.setVisible(is_graph_shaped)
+        self._coord_label.setVisible(is_graph_shaped)
+        self._table.setVisible(is_graph_shaped)
+        self._preset_combo.setVisible(is_graph_shaped)
 
-        self._param_widget.setVisible(not is_graph)
+        self._param_widget.setVisible(not is_graph_shaped)
         self._linear_widget.setVisible(curve.type == CurveType.LINEAR)
         self._flat_widget.setVisible(curve.type == CurveType.FLAT)
 
-        if is_graph:
+        if is_graph_shaped:
             self._refresh_plot()
             self._refresh_table()
         elif curve.type == CurveType.LINEAR:
@@ -456,6 +459,22 @@ class CurveEditor(QWidget):
         x = np.array([p.temp_c for p in self._curve.points])
         y = np.array([p.output_pct for p in self._curve.points])
 
+        # Stepped curves trace the connecting line as a staircase (hold each
+        # point's output until the next point's temperature — lower-point-wins,
+        # matching ``_interpolate_stepped``); the scatter stays on real points.
+        if self._curve.type == CurveType.STEPPED:
+            sx: list[float] = []
+            sy: list[float] = []
+            for i, p in enumerate(self._curve.points):
+                if i > 0:
+                    sx.append(p.temp_c)
+                    sy.append(self._curve.points[i - 1].output_pct)
+                sx.append(p.temp_c)
+                sy.append(p.output_pct)
+            line_x, line_y = np.array(sx), np.array(sy)
+        else:
+            line_x, line_y = x, y
+
         t = self._theme
         plot = self._plot_widget.getPlotItem()
         if plot is None:
@@ -471,9 +490,9 @@ class CurveEditor(QWidget):
 
         # Line
         if self._line_plot is None:
-            self._line_plot = plot.plot(x, y, pen=pg.mkPen(t.accent_primary, width=2))
+            self._line_plot = plot.plot(line_x, line_y, pen=pg.mkPen(t.accent_primary, width=2))
         else:
-            self._line_plot.setData(x, y)
+            self._line_plot.setData(line_x, line_y)
 
         # Scatter (all points)
         if self._scatter is not None:
@@ -608,8 +627,12 @@ class CurveEditor(QWidget):
             self._coord_label.setText("")
 
     def _on_mouse_moved(self, pos) -> None:
-        # Passive hover: show interpolated value at cursor
-        if not self._drag_active and self._curve and self._curve.type == CurveType.GRAPH:
+        # Passive hover: show interpolated value at cursor (Graph/Stepped only)
+        graph_shaped = self._curve is not None and self._curve.type in (
+            CurveType.GRAPH,
+            CurveType.STEPPED,
+        )
+        if not self._drag_active and graph_shaped:
             plot = self._plot_widget.getPlotItem()
             if plot:
                 vb = plot.vb

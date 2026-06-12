@@ -7,6 +7,7 @@ import json
 import pytest
 
 from control_ofc.services.profile_service import (
+    PROFILE_SCHEMA_VERSION,
     ControlMember,
     ControlMode,
     CurveConfig,
@@ -116,6 +117,54 @@ def test_flat_curve_returns_constant():
 
 
 # ---------------------------------------------------------------------------
+# Stepped curve interpolation (DEC-148)
+# ---------------------------------------------------------------------------
+
+
+def test_stepped_curve_holds_lower_point():
+    """Stepped holds each point's output until the next point's temp — no ramp.
+    The same points a graph would interpolate to 35% at 40°C stay at the lower
+    point's 20% under the staircase rule."""
+    curve = CurveConfig(
+        type=CurveType.STEPPED,
+        points=[
+            CurvePoint(30.0, 20.0),
+            CurvePoint(50.0, 50.0),
+            CurvePoint(70.0, 80.0),
+        ],
+    )
+    assert curve.interpolate(40.0) == 20.0  # a graph curve would return 35.0
+    assert curve.interpolate(49.9) == 20.0
+    assert curve.interpolate(60.0) == 50.0
+
+
+def test_stepped_curve_node_is_half_open_lower():
+    """Exactly on a node returns that node's output: each segment is the
+    half-open interval [p_i, p_{i+1})."""
+    curve = CurveConfig(
+        type=CurveType.STEPPED,
+        points=[CurvePoint(30.0, 20.0), CurvePoint(50.0, 50.0), CurvePoint(70.0, 80.0)],
+    )
+    assert curve.interpolate(30.0) == 20.0
+    assert curve.interpolate(50.0) == 50.0
+    assert curve.interpolate(70.0) == 80.0
+
+
+def test_stepped_curve_below_and_above_range_clamp():
+    curve = CurveConfig(
+        type=CurveType.STEPPED,
+        points=[CurvePoint(30.0, 20.0), CurvePoint(70.0, 80.0)],
+    )
+    assert curve.interpolate(10.0) == 20.0
+    assert curve.interpolate(90.0) == 80.0
+
+
+def test_stepped_curve_empty_returns_50():
+    curve = CurveConfig(type=CurveType.STEPPED, points=[])
+    assert curve.interpolate(50.0) == 50.0
+
+
+# ---------------------------------------------------------------------------
 # Unknown curve type fallback
 # ---------------------------------------------------------------------------
 
@@ -211,6 +260,23 @@ def test_curve_config_roundtrip_graph():
     assert restored.sensor_id == "cpu"
 
 
+def test_curve_config_roundtrip_stepped():
+    curve = CurveConfig(
+        id="cs",
+        name="Stepped",
+        type=CurveType.STEPPED,
+        sensor_id="cpu",
+        points=[CurvePoint(30.0, 20.0), CurvePoint(80.0, 100.0)],
+    )
+    data = curve.to_dict()
+    assert data["type"] == "stepped"
+    assert "points" in data  # stepped serializes its points like a graph
+    restored = CurveConfig.from_dict(data)
+    assert restored.type == CurveType.STEPPED
+    assert len(restored.points) == 2
+    assert restored.sensor_id == "cpu"
+
+
 def test_curve_config_roundtrip_linear():
     curve = CurveConfig(
         id="c2",
@@ -264,7 +330,7 @@ def test_v1_profile_migration():
         ],
     }
     profile = Profile.from_dict(v1_data)
-    assert profile.version == 4
+    assert profile.version == PROFILE_SCHEMA_VERSION
     assert len(profile.controls) == 1
     assert len(profile.curves) == 1
     assert profile.controls[0].curve_id == profile.curves[0].id
@@ -295,7 +361,7 @@ def test_v1_profile_migration_group_target():
         ],
     }
     profile = Profile.from_dict(v1_data)
-    assert profile.version == 4
+    assert profile.version == PROFILE_SCHEMA_VERSION
     assert len(profile.controls) == 1
     assert profile.controls[0].name == "Group: all"
     # Group targets have no explicit members (they apply to all fans)
@@ -496,7 +562,7 @@ def test_from_dict_empty_dict_uses_defaults():
     assert p.name == ""
     assert p.controls == []
     assert p.curves == []
-    assert p.version == 4
+    assert p.version == PROFILE_SCHEMA_VERSION
     assert len(p.id) > 0  # auto-generated UUID
 
 
@@ -642,7 +708,7 @@ def test_v3_to_v4_migration_raises_cpu_pump_floor():
         "curves": [],
     }
     p = Profile.from_dict(v3)
-    assert p.version == 4
+    assert p.version == PROFILE_SCHEMA_VERSION
     assert p.controls[0].minimum_pct == 30.0
 
 
@@ -715,7 +781,7 @@ def test_fan_zero_rpm_default_false_when_missing():
 
 
 def test_load_resaves_when_migrating_from_v3(tmp_path, monkeypatch):
-    """Loading a v3 profile from disk must re-save it as v4."""
+    """Loading a v3 profile from disk must re-save it at the current schema version."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     profiles_dir = tmp_path / "control-ofc" / "profiles"
     profiles_dir.mkdir(parents=True, exist_ok=True)
@@ -736,6 +802,6 @@ def test_load_resaves_when_migrating_from_v3(tmp_path, monkeypatch):
     errors = svc.load()
     assert errors == []
 
-    # File on disk should now report version 4.
+    # File on disk should now report the current schema version.
     rewritten = json.loads(legacy.read_text())
-    assert rewritten["version"] == 4
+    assert rewritten["version"] == PROFILE_SCHEMA_VERSION

@@ -110,14 +110,22 @@ class CurvePreview(QWidget):
         x_range = max(x_max - x_min, 1.0)
         pad = 3
 
+        is_stepped = self._curve.type == CurveType.STEPPED
         path = QPainterPath()
+        prev_py = 0.0
         for i, p in enumerate(points):
             px = ((p.temp_c - x_min) / x_range) * (w - 2 * pad) + pad
             py = h - pad - (p.output_pct / 100.0) * (h - 2 * pad)
             if i == 0:
                 path.moveTo(px, py)
+            elif is_stepped:
+                # Staircase: hold the previous point's output until this
+                # point's temperature, then step (matches _interpolate_stepped).
+                path.lineTo(px, prev_py)
+                path.lineTo(px, py)
             else:
                 path.lineTo(px, py)
+            prev_py = py
 
         painter.setPen(QPen(QColor(self._theme.accent_primary), 2))
         painter.drawPath(path)

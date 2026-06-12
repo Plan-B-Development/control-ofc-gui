@@ -47,6 +47,21 @@ class TestCurveEditorBasics:
         assert len(editor._undo_stack) == 0
         assert len(editor._redo_stack) == 0
 
+    def test_stepped_curve_uses_graph_shaped_editor(self, editor):
+        """Stepped shares the graph point editor: plot + table populated, the
+        linear/flat parameter panel hidden (DEC-148)."""
+        from control_ofc.services.profile_service import CurveType
+
+        curve = CurveConfig(
+            type=CurveType.STEPPED,
+            points=[CurvePoint(30.0, 20.0), CurvePoint(80.0, 100.0)],
+        )
+        editor.set_curve(curve)
+        assert editor._table.rowCount() == 2  # graph-shaped branch populated it
+        assert not editor._plot_widget.isHidden()
+        assert not editor._table.isHidden()
+        assert editor._param_widget.isHidden()
+
 
 class TestTableEditing:
     def test_table_edit_updates_curve(self, editor, curve_5pt):

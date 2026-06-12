@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.36.0] — 2026-06-12
+
+Stepped (staircase) curve type — first of three phased additions to the curve
+library (DEC-148). Pairs with **daemon v1.15.0**: both evaluators learn
+`stepped` in lockstep and the DEC-126 parity fixture stays byte-identical.
+
+### Added
+- **Stepped curve type** in Controls ▸ Curves. A stepped curve holds each
+  point's output until the next point's temperature is reached (a
+  lower-point-wins staircase) instead of interpolating — fans run at a fixed
+  speed per temperature band rather than continuously ramping. Available from
+  the "+ Curve" menu; reuses the Graph point editor (draggable points + numeric
+  table), with the editor line and the card preview drawn as a staircase.
+- Stepped `curve_eval` vectors in the cross-stack parity fixture, pinning the
+  half-open boundary convention `[p_i, p_{i+1})` and the no-interpolation rule
+  byte-for-byte against the daemon.
+
+### Changed
+- Profile schema → **v5**. Additive: a v5 profile using a stepped curve still
+  loads on an older daemon/GUI, which falls back safely (daemon → 50%, GUI →
+  flat) rather than failing.
+
 ## [1.35.0] — 2026-06-08
 
 GPU restore-to-auto + hardware rescan bundle (DEC-147). Two new

@@ -2,12 +2,13 @@
 
 Profiles are GUI-owned. The daemon knows nothing about them.
 
-Data model (v4):
+Data model (v5):
 - Profile contains LogicalControls (fan groups with mode) and a CurveConfig library.
 - LogicalControl maps to physical outputs via ControlMember.
-- CurveConfig supports Graph, Linear, and Flat types.
+- CurveConfig supports Graph, Stepped, Linear, and Flat types.
 - v4 introduces role-aware ``minimum_pct`` defaults (20% chassis / 30% CPU+pump)
   enforced GUI-side, and the per-member ``fan_zero_rpm`` flag for GPU fans.
+- v5 adds the Stepped (staircase) curve type (DEC-148).
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ log = logging.getLogger(__name__)
 
 class CurveType(Enum):
     GRAPH = "graph"
+    STEPPED = "stepped"
     LINEAR = "linear"
     FLAT = "flat"
 
@@ -67,6 +69,8 @@ class CurveConfig:
         """Return output percentage for the given temperature."""
         if self.type == CurveType.GRAPH:
             return self._interpolate_graph(temp_c)
+        elif self.type == CurveType.STEPPED:
+            return self._interpolate_stepped(temp_c)
         elif self.type == CurveType.LINEAR:
             return self._interpolate_linear(temp_c)
         return self.flat_output_pct
@@ -83,6 +87,22 @@ class CurveConfig:
             if p0.temp_c <= temp_c <= p1.temp_c:
                 t = (temp_c - p0.temp_c) / (p1.temp_c - p0.temp_c) if p1.temp_c != p0.temp_c else 0
                 return p0.output_pct + t * (p1.output_pct - p0.output_pct)
+        return self.points[-1].output_pct
+
+    def _interpolate_stepped(self, temp_c: float) -> float:
+        """Staircase interpolation: hold each point's output until the next
+        point's temperature is reached (lower-point-wins). Shares the Graph
+        point model; only the fill rule differs. Must stay byte-for-byte
+        identical to the daemon's ``evaluate_stepped`` (DEC-126 / DEC-148)."""
+        if not self.points:
+            return 50.0
+        if temp_c <= self.points[0].temp_c:
+            return self.points[0].output_pct
+        if temp_c >= self.points[-1].temp_c:
+            return self.points[-1].output_pct
+        for i in range(len(self.points) - 1):
+            if self.points[i].temp_c <= temp_c < self.points[i + 1].temp_c:
+                return self.points[i].output_pct
         return self.points[-1].output_pct
 
     def _interpolate_linear(self, temp_c: float) -> float:
@@ -103,7 +123,7 @@ class CurveConfig:
             "type": self.type.value,
             "sensor_id": self.sensor_id,
         }
-        if self.type == CurveType.GRAPH:
+        if self.type in (CurveType.GRAPH, CurveType.STEPPED):
             d["points"] = [asdict(p) for p in self.points]
         elif self.type == CurveType.LINEAR:
             d["start_temp_c"] = self.start_temp_c
@@ -333,7 +353,7 @@ class LogicalControl:
 # ---------------------------------------------------------------------------
 
 
-PROFILE_SCHEMA_VERSION = 4
+PROFILE_SCHEMA_VERSION = 5
 
 
 @dataclass

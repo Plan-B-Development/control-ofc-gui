@@ -55,6 +55,42 @@
       "curve": {"id": "f", "name": "F", "type": "flat", "sensor_id": "cpu", "flat_output_pct": 42.0},
       "temp": 55.0,
       "expected_pct": 42.0
+    },
+    {
+      "name": "stepped_below_first",
+      "curve": {"id": "s", "name": "S", "type": "stepped", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
+      "temp": 20.0,
+      "expected_pct": 20.0
+    },
+    {
+      "name": "stepped_on_first_node",
+      "curve": {"id": "s", "name": "S", "type": "stepped", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
+      "temp": 30.0,
+      "expected_pct": 20.0
+    },
+    {
+      "name": "stepped_mid_segment_holds_lower",
+      "curve": {"id": "s", "name": "S", "type": "stepped", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
+      "temp": 45.0,
+      "expected_pct": 20.0
+    },
+    {
+      "name": "stepped_node_is_half_open_lower",
+      "curve": {"id": "s", "name": "S", "type": "stepped", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
+      "temp": 60.0,
+      "expected_pct": 50.0
+    },
+    {
+      "name": "stepped_second_segment_holds",
+      "curve": {"id": "s", "name": "S", "type": "stepped", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
+      "temp": 67.0,
+      "expected_pct": 50.0
+    },
+    {
+      "name": "stepped_above_last",
+      "curve": {"id": "s", "name": "S", "type": "stepped", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 60.0, "output_pct": 50.0}, {"temp_c": 80.0, "output_pct": 100.0}]},
+      "temp": 90.0,
+      "expected_pct": 100.0
     }
   ],
   "tuning_sequence": [
