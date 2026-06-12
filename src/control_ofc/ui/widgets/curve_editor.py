@@ -213,6 +213,28 @@ class CurveEditor(QWidget):
         flat_layout.addLayout(flat_row)
         param_layout.addWidget(self._flat_widget)
 
+        # Trigger params (two-state latch)
+        self._trigger_widget = QWidget()
+        trig_layout = QVBoxLayout(self._trigger_widget)
+        trig_layout.setContentsMargins(0, 0, 0, 0)
+        for field_name, label_text in [
+            ("idle_temp", "Idle Temperature (C):"),
+            ("load_temp", "Load Temperature (C):"),
+            ("idle_output", "Idle Output (%):"),
+            ("load_output", "Load Output (%):"),
+        ]:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label_text))
+            spin = QDoubleSpinBox()
+            spin.setObjectName(f"CurveEditor_Spin_trigger_{field_name}")
+            spin.setRange(0, 120 if "temp" in field_name else 100)
+            spin.setDecimals(1)
+            spin.valueChanged.connect(self._on_trigger_param_changed)
+            setattr(self, f"_trig_{field_name}", spin)
+            row.addWidget(spin)
+            trig_layout.addLayout(row)
+        param_layout.addWidget(self._trigger_widget)
+
         param_layout.addStretch()
         self._param_widget.hide()
         layout.addWidget(self._param_widget, 1)
@@ -349,6 +371,7 @@ class CurveEditor(QWidget):
         self._param_widget.setVisible(not is_graph_shaped)
         self._linear_widget.setVisible(curve.type == CurveType.LINEAR)
         self._flat_widget.setVisible(curve.type == CurveType.FLAT)
+        self._trigger_widget.setVisible(curve.type == CurveType.TRIGGER)
 
         if is_graph_shaped:
             self._refresh_plot()
@@ -359,6 +382,9 @@ class CurveEditor(QWidget):
         elif curve.type == CurveType.FLAT:
             self._param_type_label.setText("Flat Curve Parameters")
             self._load_flat_params(curve)
+        elif curve.type == CurveType.TRIGGER:
+            self._param_type_label.setText("Trigger Curve Parameters")
+            self._load_trigger_params(curve)
 
         # Restore sensor combo from this curve's own saved state
         self._last_sensor_ids = []  # force set_available_sensors to repopulate
@@ -876,4 +902,23 @@ class CurveEditor(QWidget):
         if not self._curve or self._curve.type != CurveType.FLAT:
             return
         self._curve.flat_output_pct = self._flat_output_spin.value()
+        self.curve_changed.emit()
+
+    def _load_trigger_params(self, curve: CurveConfig) -> None:
+        for spin, attr in [
+            (self._trig_idle_temp, "trigger_idle_temp_c"),
+            (self._trig_load_temp, "trigger_load_temp_c"),
+            (self._trig_idle_output, "trigger_idle_pct"),
+            (self._trig_load_output, "trigger_load_pct"),
+        ]:
+            with block_signals(spin):
+                spin.setValue(getattr(curve, attr))
+
+    def _on_trigger_param_changed(self) -> None:
+        if not self._curve or self._curve.type != CurveType.TRIGGER:
+            return
+        self._curve.trigger_idle_temp_c = self._trig_idle_temp.value()
+        self._curve.trigger_load_temp_c = self._trig_load_temp.value()
+        self._curve.trigger_idle_pct = self._trig_idle_output.value()
+        self._curve.trigger_load_pct = self._trig_load_output.value()
         self.curve_changed.emit()

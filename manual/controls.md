@@ -88,7 +88,7 @@ Each physical fan can belong to **only one role**: outputs already assigned else
 
 ## Curves (Bottom Section)
 
-The curve library lives in the lower half (the divider between the two sections is draggable). **+ Curve** offers the four curve types:
+The curve library lives in the lower half (the divider between the two sections is draggable). **+ Curve** offers the five curve types:
 
 | Type | Description | Use case |
 |------|-------------|----------|
@@ -96,8 +96,9 @@ The curve library lives in the lower half (the divider between the two sections 
 | **Stepped Curve** | The same draggable points as a graph, but the output *holds* each point's value until the next point's temperature is reached — a staircase, not a ramp | A fixed fan speed per temperature band, with fewer speed changes |
 | **Linear Curve** | Two-point ramp: start temp/speed to end temp/speed | Simple "ramp up between X and Y" |
 | **Flat Curve** | Constant output regardless of temperature | Pumps, AIO coolers, always-on fans |
+| **Trigger Curve** | A two-state latch: an idle speed below the idle temperature, a load speed above the load temperature, holding its state in between (its own hysteresis) | "Stay quiet, then ramp hard past X°" |
 
-Each curve card shows the curve's name and type, the bound sensor with its live reading, a preview (a sparkline for graph curves, a staircase for stepped curves; a summary like "35°C→80°C: 30%→100%" or "Flat: 65%" for the others), and which roles use it ("Used by: …" with an **Assigned** / **Unassigned** chip). The card's **Actions** menu has **Edit**, **Rename**, **Duplicate**, and **Delete**.
+Each curve card shows the curve's name and type, the bound sensor with its live reading, a preview (a sparkline for graph curves, a staircase for stepped curves; a summary like "35°C→80°C: 30%→100%", "Flat: 65%", or "Idle 30% <40° / Load 80% >60°" for the others), and which roles use it ("Used by: …" with an **Assigned** / **Unassigned** chip). The card's **Actions** menu has **Edit**, **Rename**, **Duplicate**, and **Delete**.
 
 ### Editing a Graph or Stepped Curve
 
@@ -110,13 +111,13 @@ Each curve card shows the curve's name and type, the bound sensor with its live 
 - The valid range is 0–120°C and 0–100% output; if a role using this curve has a stall-protection minimum, the editor stops you dragging points below that floor
 - Click **Close Editor** when done — edits update the card preview immediately and mark the profile unsaved
 
-### Editing a Linear or Flat Curve
+### Editing a Linear, Flat, or Trigger Curve
 
 These open a small parameter dialog instead:
 
 ![Curve Edit Dialog](../screenshots/auto/14_curve_edit_dialog.png)
 
-Linear curves take a name, a sensor, and start/end temperature and output values; flat curves take just a name and an output percentage (no sensor needed).
+Linear curves take a name, a sensor, and start/end temperature and output values; flat curves take just a name and an output percentage (no sensor needed); trigger curves take a sensor plus idle/load temperatures and speeds (the idle temperature must be below the load temperature).
 
 ## Empty States
 

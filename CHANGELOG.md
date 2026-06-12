@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.37.0] — 2026-06-12
+
+Trigger (two-state latch) curve type — second of three phased curve-library
+additions (DEC-149). Pairs with **daemon v1.16.0**; both evaluators learn the
+stateful latch in lockstep and the DEC-126 parity fixture stays byte-identical.
+
+### Added
+- **Trigger curve type** in Controls ▸ Curves. A trigger curve sits at a quiet
+  idle speed below the idle temperature and jumps to a fixed load speed at/above
+  the load temperature, holding its state within the band (its own hysteresis) —
+  ideal for "stay silent, then ramp hard past X°". Edited in the curve dialog
+  (idle/load temperature + speed, with a guard that idle must be below load); the
+  card shows an `Idle 30% <40° / Load 80% >60°` summary.
+- Trigger parity vectors: stateless cold-start cases plus a `tuning_sequence`
+  latch run that pins the square wave and confirms the trigger bypasses the 2°C
+  deadband (it owns its own band).
+
+### Changed
+- Profile schema → **v6**. Additive: a v6 profile using a trigger curve still
+  loads on an older daemon/GUI, which falls back safely (daemon 50%, GUI flat).
+
 ## [1.36.0] — 2026-06-12
 
 Stepped (staircase) curve type — first of three phased additions to the curve

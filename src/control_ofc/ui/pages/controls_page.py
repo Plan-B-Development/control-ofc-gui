@@ -767,7 +767,13 @@ class ControlsPage(QWidget):
 
     def _on_add_curve_menu(self) -> None:
         menu = QMenu(self)
-        for ct in [CurveType.GRAPH, CurveType.STEPPED, CurveType.LINEAR, CurveType.FLAT]:
+        for ct in [
+            CurveType.GRAPH,
+            CurveType.STEPPED,
+            CurveType.LINEAR,
+            CurveType.FLAT,
+            CurveType.TRIGGER,
+        ]:
             menu.addAction(f"{ct.value.title()} Curve", lambda t=ct: self._on_add_curve(t))
         btn = self._add_curve_btn
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
@@ -842,8 +848,8 @@ class ControlsPage(QWidget):
         if not curve:
             return
 
-        # Linear/Flat: open dialog. Graph/Stepped: use embedded editor.
-        if curve.type in (CurveType.LINEAR, CurveType.FLAT):
+        # Linear/Flat/Trigger: open dialog. Graph/Stepped: use embedded editor.
+        if curve.type in (CurveType.LINEAR, CurveType.FLAT, CurveType.TRIGGER):
             from control_ofc.ui.widgets.curve_edit_dialog import CurveEditDialog
 
             # Build sensor items from current state

@@ -1,4 +1,4 @@
-"""Curve edit dialog — for Linear and Flat curve parameter editing."""
+"""Curve edit dialog — for Linear, Flat, and Trigger curve parameter editing."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
 )
@@ -17,7 +18,7 @@ from control_ofc.services.profile_service import CurveConfig, CurveType
 
 
 class CurveEditDialog(QDialog):
-    """Modal dialog for editing Linear or Flat curve parameters."""
+    """Modal dialog for editing Linear, Flat, or Trigger curve parameters."""
 
     def __init__(
         self, curve: CurveConfig, sensor_items: list[tuple[str, str]] | None = None, parent=None
@@ -58,6 +59,8 @@ class CurveEditDialog(QDialog):
             self._build_linear_params(layout, curve)
         elif curve.type == CurveType.FLAT:
             self._build_flat_params(layout, curve)
+        elif curve.type == CurveType.TRIGGER:
+            self._build_trigger_params(layout, curve)
 
         layout.addStretch()
 
@@ -106,6 +109,33 @@ class CurveEditDialog(QDialog):
         row.addWidget(self._flat_spin)
         layout.addLayout(row)
 
+    def _build_trigger_params(self, layout, curve):
+        layout.addWidget(QLabel("Trigger Curve Parameters:"))
+        hint = QLabel(
+            "Below the idle temperature runs the idle speed; above the load "
+            "temperature runs the load speed; in between it holds its current state."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        fields = [
+            ("Idle Temperature (°C):", "trigger_idle_temp_c", 0, 120),
+            ("Load Temperature (°C):", "trigger_load_temp_c", 0, 120),
+            ("Idle Output (%):", "trigger_idle_pct", 0, 100),
+            ("Load Output (%):", "trigger_load_pct", 0, 100),
+        ]
+        self._param_spins = {}
+        for label, attr, lo, hi in fields:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            spin = QDoubleSpinBox()
+            spin.setRange(lo, hi)
+            spin.setDecimals(1)
+            spin.setValue(getattr(curve, attr))
+            spin.setObjectName(f"CurveEditDialog_Spin_{attr}")
+            row.addWidget(spin)
+            layout.addLayout(row)
+            self._param_spins[attr] = spin
+
     def apply_to_curve(self) -> None:
         """Apply dialog values back to the curve object."""
         self._curve.name = self._name_edit.text().strip() or self._curve.name
@@ -116,3 +146,21 @@ class CurveEditDialog(QDialog):
                 setattr(self._curve, attr, spin.value())
         elif self._curve.type == CurveType.FLAT and hasattr(self, "_flat_spin"):
             self._curve.flat_output_pct = self._flat_spin.value()
+        elif self._curve.type == CurveType.TRIGGER and hasattr(self, "_param_spins"):
+            for attr, spin in self._param_spins.items():
+                setattr(self._curve, attr, spin.value())
+
+    def accept(self) -> None:
+        """Validate trigger thresholds before closing (idle must be below load,
+        else the latch would oscillate every cycle)."""
+        if self._curve.type == CurveType.TRIGGER and hasattr(self, "_param_spins"):
+            idle = self._param_spins["trigger_idle_temp_c"].value()
+            load = self._param_spins["trigger_load_temp_c"].value()
+            if idle >= load:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Trigger Curve",
+                    "Idle temperature must be below load temperature.",
+                )
+                return
+        super().accept()
