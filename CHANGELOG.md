@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.38.1] — 2026-06-12
+
+Security and robustness fix for settings import (from the 2026-06-12 code audit).
+GUI-only — pairs with the existing **daemon v1.17.0**.
+
+### Fixed
+- **Path-traversal hardening on import.** Profile/theme import now rejects any entry
+  whose name is not a bare filename (contains a path separator or `..`); it is counted
+  as a skipped item rather than written. A crafted export bundle can no longer place a
+  `.json` file outside the profiles/themes directory. Import writes are now atomic.
+- **Bounded curve parsing.** Imported curves are capped at 256 points and reject
+  non-finite values, so a crafted profile can no longer exhaust memory during validation.
+
 ## [1.38.0] — 2026-06-12
 
 Mix and Sync composite curve types — the final phase of the curve-library
