@@ -10,11 +10,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from control_ofc.services.profile_service import (
+    ControlMode,
     CurveConfig,
     CurvePoint,
     CurveType,
+    LogicalControl,
     Profile,
     ProfileService,
+    mix_candidate_curves,
+    sync_candidate_controls,
 )
 
 
@@ -259,3 +263,102 @@ class TestControlsPageThemeAdherence:
         # Should not contain font-size: Npx (hardcoded pixel sizes)
         matches = re.findall(r"font-size:\s*\d+px", source)
         assert matches == [], f"Hardcoded font-size found in controls_page.py: {matches}"
+
+
+class TestCompositeCurveOwnership:
+    """DEC-152 (retires DEC-014): composite curves depend on their named sources
+    *explicitly and visibly* (by id, never by silent shared state), and a
+    dependency cycle is prohibited — the editor offers only cycle-free choices."""
+
+    def test_two_mixes_are_independent(self):
+        """Two Mix curves sharing a child do not couple — editing one's function
+        or input list never changes the other (the R31 ownership rule extended to
+        composites)."""
+        m1 = CurveConfig(
+            id="m1", name="M1", type=CurveType.MIX, mix_function="max", mix_curve_ids=["a"]
+        )
+        m2 = CurveConfig(
+            id="m2", name="M2", type=CurveType.MIX, mix_function="min", mix_curve_ids=["a", "b"]
+        )
+        m1.mix_function = "sum"
+        m1.mix_curve_ids.append("c")
+        assert m2.mix_function == "min"
+        assert m2.mix_curve_ids == ["a", "b"]
+
+    def test_mix_references_children_by_id_not_object(self):
+        """A Mix stores child ids (immutable strings), so mutating a child curve's
+        points cannot reach back into the Mix — the dependency is re-resolved by
+        id each evaluation, never cached as shared mutable state."""
+        a = CurveConfig(
+            id="a",
+            name="A",
+            type=CurveType.GRAPH,
+            points=[CurvePoint(30, 20), CurvePoint(70, 80)],
+        )
+        m = CurveConfig(id="m", name="M", type=CurveType.MIX, mix_curve_ids=["a"])
+        a.points[0] = CurvePoint(10, 10)
+        assert m.mix_curve_ids == ["a"]
+
+    def test_mix_candidates_exclude_self_sync_and_cycles(self):
+        a = CurveConfig(id="a", name="A", type=CurveType.FLAT)
+        b = CurveConfig(id="b", name="B", type=CurveType.FLAT)
+        m = CurveConfig(id="m", name="M", type=CurveType.MIX, mix_curve_ids=["a"])
+        sy = CurveConfig(id="sy", name="SY", type=CurveType.SYNC, sync_control_id="x")
+        # `back` already includes `m`, so offering it to `m` would close a cycle.
+        back = CurveConfig(id="back", name="Back", type=CurveType.MIX, mix_curve_ids=["m"])
+        prof = Profile(id="p", name="P", curves=[a, b, m, sy, back])
+        ids = {cid for cid, _ in mix_candidate_curves(prof, "m")}
+        assert ids == {"a", "b"}
+
+    def test_sync_candidates_exclude_users_and_cycles(self):
+        # `sy` is used by control `cuser`; `cmid` already syncs to `cuser`.
+        # Targeting either would close a control-dependency cycle.
+        sy = CurveConfig(id="sy", name="SY", type=CurveType.SYNC, sync_control_id="")
+        symid = CurveConfig(id="symid", name="Mid", type=CurveType.SYNC, sync_control_id="cuser")
+        cuser = LogicalControl(id="cuser", name="User", mode=ControlMode.CURVE, curve_id="sy")
+        cmid = LogicalControl(id="cmid", name="Mid", mode=ControlMode.CURVE, curve_id="symid")
+        cfree = LogicalControl(id="cfree", name="Free", mode=ControlMode.MANUAL)
+        prof = Profile(id="p", name="P", controls=[cuser, cmid, cfree], curves=[sy, symid])
+        ids = {cid for cid, _ in sync_candidate_controls(prof, "sy")}
+        assert ids == {"cfree"}
+
+    def test_composite_curves_round_trip_through_disk(self, tmp_path, monkeypatch):
+        """Mix/Sync fields survive save→load independently (per-curve ownership)."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        svc = ProfileService()
+        svc.load()
+        profile = Profile(
+            id="comp",
+            name="Comp",
+            curves=[
+                CurveConfig(id="a", name="A", type=CurveType.FLAT, flat_output_pct=40.0),
+                CurveConfig(
+                    id="m",
+                    name="M",
+                    type=CurveType.MIX,
+                    mix_function="average",
+                    mix_curve_ids=["a"],
+                ),
+                CurveConfig(
+                    id="s",
+                    name="S",
+                    type=CurveType.SYNC,
+                    sync_control_id="ctrl",
+                    sync_offset_pct=12.5,
+                ),
+            ],
+        )
+        svc._profiles["comp"] = profile
+        svc.save_profile(profile)
+
+        svc2 = ProfileService()
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        svc2.load()
+        loaded = svc2.get_profile("comp")
+        assert loaded is not None
+        m = loaded.get_curve("m")
+        s = loaded.get_curve("s")
+        assert m.type == CurveType.MIX and m.mix_function == "average" and m.mix_curve_ids == ["a"]
+        assert (
+            s.type == CurveType.SYNC and s.sync_control_id == "ctrl" and s.sync_offset_pct == 12.5
+        )

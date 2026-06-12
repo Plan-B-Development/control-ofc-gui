@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "CANONICAL cross-stack evaluator parity vectors (DEC-126). Keep byte-identical with control-ofc-daemon/daemon/tests/fixtures/parity_vectors.json. Expected values are a hand-authored oracle, derived from neither implementation. curve_eval compares the stateless curve interpolation (float, tol 0.01); tuning_sequence drives the real headless/GUI entry points over a temp sequence and compares the integer wire PWM per member.",
+  "note": "CANONICAL cross-stack evaluator parity vectors (DEC-126). Keep byte-identical with control-ofc-daemon/daemon/tests/fixtures/parity_vectors.json. Expected values are a hand-authored oracle, derived from neither implementation. curve_eval compares the stateless curve interpolation (float, tol 0.01); tuning_sequence drives the real headless/GUI entry points over a temp sequence and compares the integer wire PWM per member. A tuning_sequence case carries EITHER 'sensor_id'+'temps' (one sensor over N steps) OR 'sensor_temps' ({id:[..]} maps, equal length — for multi-sensor Mix cases). Multi-control cases (Sync) merge member outputs across all controls; the order controls appear in 'controls' may deliberately NOT match dependency order, to pin the topological sort.",
   "curve_eval": [
     {
       "name": "graph_mid_segment",
@@ -172,6 +172,37 @@
       },
       "temps": [50.0, 65.0, 55.0, 45.0, 40.0, 50.0, 60.0],
       "expected": [{"member_id": "openfan:ch00", "pwm": [30, 80, 80, 80, 30, 30, 80]}]
+    },
+    {
+      "name": "mix_max_two_sensors",
+      "sensor_temps": {"cpu": [50.0, 50.0], "gpu": [40.0, 70.0]},
+      "profile": {
+        "id": "p_mix", "name": "Mix", "version": 7, "description": "",
+        "controls": [{"id": "c", "name": "C", "mode": "curve", "curve_id": "mx", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch00", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0}],
+        "curves": [
+          {"id": "cv_cpu", "name": "CPU", "type": "linear", "sensor_id": "cpu", "start_temp_c": 30.0, "start_output_pct": 20.0, "end_temp_c": 80.0, "end_output_pct": 100.0},
+          {"id": "cv_gpu", "name": "GPU", "type": "linear", "sensor_id": "gpu", "start_temp_c": 30.0, "start_output_pct": 20.0, "end_temp_c": 80.0, "end_output_pct": 100.0},
+          {"id": "mx", "name": "MX", "type": "mix", "mix_function": "max", "mix_curve_ids": ["cv_cpu", "cv_gpu"]}
+        ]
+      },
+      "expected": [{"member_id": "openfan:ch00", "pwm": [52, 84]}]
+    },
+    {
+      "name": "sync_mirror_offset_ordering",
+      "sensor_id": "cpu",
+      "profile": {
+        "id": "p_sync", "name": "Sync", "version": 7, "description": "",
+        "controls": [
+          {"id": "cmir", "name": "Mirror", "mode": "curve", "curve_id": "sy", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch01", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0},
+          {"id": "ctgt", "name": "Target", "mode": "curve", "curve_id": "cv", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch00", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0}
+        ],
+        "curves": [
+          {"id": "cv", "name": "CV", "type": "linear", "sensor_id": "cpu", "start_temp_c": 30.0, "start_output_pct": 20.0, "end_temp_c": 80.0, "end_output_pct": 100.0},
+          {"id": "sy", "name": "SY", "type": "sync", "sync_control_id": "ctgt", "sync_offset_pct": 10.0}
+        ]
+      },
+      "temps": [50.0, 60.0],
+      "expected": [{"member_id": "openfan:ch00", "pwm": [52, 68]}, {"member_id": "openfan:ch01", "pwm": [62, 78]}]
     }
   ]
 }

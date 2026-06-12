@@ -69,11 +69,37 @@ def test_curve_eval_parity(case):
     assert result == pytest.approx(case["expected_pct"], abs=0.01)
 
 
+def _sensor_steps(vector: dict) -> list[list[SensorReading]]:
+    """Per-step sensor readings from either fixture shape (DEC-150).
+
+    A ``tuning_sequence`` case carries EITHER ``sensor_id`` + ``temps`` (one
+    sensor over N steps) OR ``sensor_temps`` (a ``{id: [temp_per_step]}`` map,
+    each list the same length — used by multi-sensor Mix cases). Both normalise
+    to a list of per-step ``[SensorReading, ...]``.
+    """
+    sensor_temps = vector.get("sensor_temps")
+    if sensor_temps:
+        ids = list(sensor_temps)
+        n = len(sensor_temps[ids[0]])
+        return [
+            [
+                SensorReading(
+                    id=sid, kind="CpuTemp", label=sid, value_c=sensor_temps[sid][i], age_ms=100
+                )
+                for sid in ids
+            ]
+            for i in range(n)
+        ]
+    sensor_id = vector["sensor_id"]
+    return [
+        [SensorReading(id=sensor_id, kind="CpuTemp", label="CPU", value_c=t, age_ms=100)]
+        for t in vector["temps"]
+    ]
+
+
 @pytest.mark.parametrize("vector", _VECTORS["tuning_sequence"], ids=_id)
 def test_tuning_sequence_parity(vector, qtbot):
     profile = Profile.from_dict(vector["profile"])
-    control_id = profile.controls[0].id
-    sensor_id = vector["sensor_id"]
 
     svc = ProfileService()
     svc._profiles[profile.id] = profile
@@ -90,13 +116,15 @@ def test_tuning_sequence_parity(vector, qtbot):
 
     tracked = [m["member_id"] for m in vector["expected"]]
     produced: dict[str, list[int]] = {mid: [] for mid in tracked}
-    for temp in vector["temps"]:
-        state.sensors = [
-            SensorReading(id=sensor_id, kind="CpuTemp", label="CPU", value_c=temp, age_ms=100)
-        ]
+    for readings in _sensor_steps(vector):
+        state.sensors = readings
         captured.clear()
         loop._cycle()
-        members = captured[-1].member_outputs[control_id]
+        # Merge member outputs across ALL controls — a Sync case has a target
+        # and a mirror control, each owning different members.
+        members: dict[str, float] = {}
+        for cmap in captured[-1].member_outputs.values():
+            members.update(cmap)
         for mid in tracked:
             produced[mid].append(round(members[mid]))
 

@@ -2,14 +2,16 @@
 
 Profiles are GUI-owned. The daemon knows nothing about them.
 
-Data model (v6):
+Data model (v7):
 - Profile contains LogicalControls (fan groups with mode) and a CurveConfig library.
 - LogicalControl maps to physical outputs via ControlMember.
-- CurveConfig supports Graph, Stepped, Linear, Flat, and Trigger types.
+- CurveConfig supports Graph, Stepped, Linear, Flat, Trigger, Mix, and Sync types.
 - v4 introduces role-aware ``minimum_pct`` defaults (20% chassis / 30% CPU+pump)
   enforced GUI-side, and the per-member ``fan_zero_rpm`` flag for GPU fans.
 - v5 adds the Stepped (staircase) curve type (DEC-148).
 - v6 adds the Trigger (two-state latch) curve type (DEC-149).
+- v7 adds the composite Mix (combine other curves) and Sync (mirror a control's
+  output) curve types, retiring the single-sensor rule DEC-014 (DEC-150/151/152).
 """
 
 from __future__ import annotations
@@ -38,6 +40,12 @@ class CurveType(Enum):
     LINEAR = "linear"
     FLAT = "flat"
     TRIGGER = "trigger"
+    MIX = "mix"
+    SYNC = "sync"
+
+
+# Mix combine functions (FanControl parity). Ordered for the UI dropdown.
+MIX_FUNCTIONS: tuple[str, ...] = ("max", "min", "average", "sum", "subtract")
 
 
 @dataclass
@@ -73,8 +81,28 @@ class CurveConfig:
     trigger_idle_pct: float = 30.0
     trigger_load_pct: float = 80.0
 
+    # Mix type (combine other curves' outputs — DEC-150). Each child is
+    # evaluated at its own sensor; the results are combined by ``mix_function``
+    # and clamped 0-100. ``mix_curve_ids`` references CurveConfig.id values in
+    # the same profile.
+    mix_function: str = "max"  # one of MIX_FUNCTIONS
+    mix_curve_ids: list[str] = field(default_factory=list)
+
+    # Sync type (mirror another control's tuned output — DEC-151).
+    # ``sync_control_id`` references LogicalControl.id in the same profile;
+    # ``sync_offset_pct`` is added to that control's current-tick output.
+    sync_control_id: str = ""
+    sync_offset_pct: float = 0.0
+
     def interpolate(self, temp_c: float) -> float:
-        """Return output percentage for the given temperature."""
+        """Return output percentage for the given temperature.
+
+        Pure function of one temperature — serves graph/stepped/linear/flat and
+        the Trigger cold-start value (the stateless ``curve_eval`` parity tier).
+        Mix and Sync are NOT pure functions of a single temperature (they need a
+        multi-curve / cross-control evaluation context, supplied by the control
+        loop's resolver), so they fall through to the constant ``flat_output_pct``
+        fallback here — never the path used to drive fans for those types."""
         if self.type == CurveType.GRAPH:
             return self._interpolate_graph(temp_c)
         elif self.type == CurveType.STEPPED:
@@ -159,6 +187,12 @@ class CurveConfig:
             d["trigger_load_temp_c"] = self.trigger_load_temp_c
             d["trigger_idle_pct"] = self.trigger_idle_pct
             d["trigger_load_pct"] = self.trigger_load_pct
+        elif self.type == CurveType.MIX:
+            d["mix_function"] = self.mix_function
+            d["mix_curve_ids"] = list(self.mix_curve_ids)
+        elif self.type == CurveType.SYNC:
+            d["sync_control_id"] = self.sync_control_id
+            d["sync_offset_pct"] = self.sync_offset_pct
         return d
 
     @staticmethod
@@ -185,6 +219,10 @@ class CurveConfig:
             trigger_load_temp_c=data.get("trigger_load_temp_c", 60.0),
             trigger_idle_pct=data.get("trigger_idle_pct", 30.0),
             trigger_load_pct=data.get("trigger_load_pct", 80.0),
+            mix_function=data.get("mix_function", "max"),
+            mix_curve_ids=list(data.get("mix_curve_ids", [])),
+            sync_control_id=data.get("sync_control_id", ""),
+            sync_offset_pct=data.get("sync_offset_pct", 0.0),
         )
 
 
@@ -384,7 +422,7 @@ class LogicalControl:
 # ---------------------------------------------------------------------------
 
 
-PROFILE_SCHEMA_VERSION = 6
+PROFILE_SCHEMA_VERSION = 7
 
 
 @dataclass
@@ -500,6 +538,101 @@ class Profile:
             curves=curves,
             version=PROFILE_SCHEMA_VERSION,
         )
+
+
+# ---------------------------------------------------------------------------
+# Composite-curve cycle prevention (DEC-150 Mix / DEC-151 Sync)
+# ---------------------------------------------------------------------------
+#
+# Mix curves depend on other *curves*; Sync curves depend on other *controls*.
+# A dependency cycle is prohibited (DEC-152, retiring DEC-014). The evaluators
+# guard cycles at eval time (visited-set / tick-output map → safe fallback);
+# these pure helpers let the editor *prevent* a cycle being authored in the
+# first place by offering only safe choices. Both are O(V+E) DFS reachability
+# over the relevant dependency edges.
+
+
+def _mix_reaches(profile: Profile, start_curve_id: str, target_id: str) -> bool:
+    """True when the Mix curve ``start_curve_id`` transitively includes
+    ``target_id`` through its ``mix_curve_ids`` children."""
+    seen: set[str] = set()
+
+    def visit(curve_id: str) -> bool:
+        if curve_id in seen:
+            return False
+        seen.add(curve_id)
+        curve = profile.get_curve(curve_id)
+        if curve is None or curve.type != CurveType.MIX:
+            return False
+        return any(child_id == target_id or visit(child_id) for child_id in curve.mix_curve_ids)
+
+    return visit(start_curve_id)
+
+
+def mix_candidate_curves(profile: Profile, mix_curve_id: str) -> list[tuple[str, str]]:
+    """``(curve_id, name)`` pairs a Mix curve may include without forming a
+    cycle. Excludes itself, Sync curves (Mix does not nest Sync), and any curve
+    that transitively depends back on ``mix_curve_id``."""
+    out: list[tuple[str, str]] = []
+    for c in profile.curves:
+        if c.id == mix_curve_id:
+            continue
+        if c.type == CurveType.SYNC:
+            continue
+        if _mix_reaches(profile, c.id, mix_curve_id):
+            continue
+        out.append((c.id, c.name))
+    return out
+
+
+def _control_sync_target(profile: Profile, control: LogicalControl) -> str | None:
+    """The control id this control's Sync curve targets, or None when the
+    control is not driven by a Sync curve."""
+    if control.mode != ControlMode.CURVE:
+        return None
+    curve = profile.get_curve(control.curve_id)
+    if curve is None or curve.type != CurveType.SYNC:
+        return None
+    return curve.sync_control_id or None
+
+
+def _sync_reaches(profile: Profile, start_control_id: str, target_control_id: str) -> bool:
+    """True when control ``start_control_id`` transitively mirrors
+    ``target_control_id`` by following Sync control→control edges."""
+    by_id = {c.id: c for c in profile.controls}
+    seen: set[str] = set()
+
+    def visit(control_id: str) -> bool:
+        if control_id in seen:
+            return False
+        seen.add(control_id)
+        control = by_id.get(control_id)
+        if control is None:
+            return False
+        dep = _control_sync_target(profile, control)
+        if dep is None:
+            return False
+        if dep == target_control_id:
+            return True
+        return visit(dep)
+
+    return visit(start_control_id)
+
+
+def sync_candidate_controls(profile: Profile, sync_curve_id: str) -> list[tuple[str, str]]:
+    """``(control_id, name)`` pairs a Sync curve may target without forming a
+    cycle. Excludes any control already driven by this Sync curve (its
+    *users*) and any control that transitively mirrors back to a user — both
+    would close a loop through the new edge."""
+    users = {c.id for c in profile.controls if c.curve_id == sync_curve_id}
+    out: list[tuple[str, str]] = []
+    for c in profile.controls:
+        if c.id in users:
+            continue
+        if any(_sync_reaches(profile, c.id, u) for u in users):
+            continue
+        out.append((c.id, c.name))
+    return out
 
 
 # DEC-102: known-dead member-id patterns. These ids were advertised by

@@ -40,6 +40,8 @@ from control_ofc.services.profile_service import (
     apply_role_floor,
     control_minimum_pct,
     infer_member_role,
+    mix_candidate_curves,
+    sync_candidate_controls,
 )
 from control_ofc.ui.fan_presence import (
     PRESENCE_BADGE,
@@ -773,6 +775,8 @@ class ControlsPage(QWidget):
             CurveType.LINEAR,
             CurveType.FLAT,
             CurveType.TRIGGER,
+            CurveType.MIX,
+            CurveType.SYNC,
         ]:
             menu.addAction(f"{ct.value.title()} Curve", lambda t=ct: self._on_add_curve(t))
         btn = self._add_curve_btn
@@ -848,8 +852,15 @@ class ControlsPage(QWidget):
         if not curve:
             return
 
-        # Linear/Flat/Trigger: open dialog. Graph/Stepped: use embedded editor.
-        if curve.type in (CurveType.LINEAR, CurveType.FLAT, CurveType.TRIGGER):
+        # Parameter/composite curves open a modal dialog; Graph/Stepped use the
+        # embedded point editor.
+        if curve.type in (
+            CurveType.LINEAR,
+            CurveType.FLAT,
+            CurveType.TRIGGER,
+            CurveType.MIX,
+            CurveType.SYNC,
+        ):
             from control_ofc.ui.widgets.curve_edit_dialog import CurveEditDialog
 
             # Build sensor items from current state
@@ -858,7 +869,20 @@ class ControlsPage(QWidget):
                 for s in self._state.sensors:
                     val_text = f" \u2014 {s.value_c:.1f}\u00b0C" if s.value_c else ""
                     sensor_items.append((s.id, f"{s.label} ({s.kind}){val_text}"))
-            dlg = CurveEditDialog(curve, sensor_items, parent=self)
+            # Composite curves offer only cycle-free choices (DEC-150/151).
+            mix_candidates = (
+                mix_candidate_curves(profile, curve.id) if curve.type == CurveType.MIX else None
+            )
+            sync_candidates = (
+                sync_candidate_controls(profile, curve.id) if curve.type == CurveType.SYNC else None
+            )
+            dlg = CurveEditDialog(
+                curve,
+                sensor_items,
+                mix_candidates=mix_candidates,
+                sync_candidates=sync_candidates,
+                parent=self,
+            )
             if dlg.exec():
                 dlg.apply_to_curve()
                 self._refresh_curves_grid(profile)

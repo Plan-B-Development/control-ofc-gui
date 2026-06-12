@@ -95,6 +95,29 @@ class TestPreview:
         assert "30" in text
         assert "80" in text
 
+    def test_mix_shows_function_and_count(self, qtbot):
+        # DEC-150: the Mix summary is self-contained (function + input count),
+        # never resolving other curves' names — the R31 ownership rule.
+        curve = CurveConfig(type=CurveType.MIX, mix_function="max", mix_curve_ids=["a", "b", "c"])
+        card = CurveCard(curve)
+        qtbot.addWidget(card)
+        assert card._preview.summary_text() == "Max of 3 curves"
+
+    def test_mix_singular_count(self, qtbot):
+        curve = CurveConfig(type=CurveType.MIX, mix_function="average", mix_curve_ids=["a"])
+        card = CurveCard(curve)
+        qtbot.addWidget(card)
+        assert card._preview.summary_text() == "Average of 1 curve"
+
+    def test_sync_shows_signed_offset(self, qtbot):
+        # DEC-151: Sync summary shows a signed offset, no target name resolution.
+        card_pos = CurveCard(CurveConfig(type=CurveType.SYNC, sync_offset_pct=10.0))
+        qtbot.addWidget(card_pos)
+        assert card_pos._preview.summary_text() == "Mirror control +10%"
+        card_neg = CurveCard(CurveConfig(type=CurveType.SYNC, sync_offset_pct=-5.0))
+        qtbot.addWidget(card_neg)
+        assert card_neg._preview.summary_text() == "Mirror control -5%"
+
     def test_single_point_no_crash(self, qtbot):
         curve = CurveConfig(type=CurveType.GRAPH, points=[CurvePoint(50.0, 50.0)])
         card = CurveCard(curve)

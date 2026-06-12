@@ -107,6 +107,12 @@ A multi-point curve where you define exactly which temperature maps to which out
 - Below the first point, output equals the first point's value
 - Above the last point, output equals the last point's value
 
+### Stepped (Staircase)
+
+The same point editor as Graph, but it **holds** each point's output until the next point's temperature is reached instead of ramping between points — a staircase. Each band `[this point, next point)` runs at the lower point's output; the step changes exactly at the next point's temperature.
+
+Good for "run quiet up to 60C, then jump to a fixed louder speed" without a sloped ramp.
+
 ### Linear
 
 A two-point interpolation defined by start and end values:
@@ -123,9 +129,31 @@ A constant output regardless of temperature. No sensor binding needed.
 
 Good for pumps, AIO coolers, or fans that should run at a fixed speed.
 
+### Trigger (Two-State Latch)
+
+A two-speed curve with its own hysteresis band. Below the **idle temperature** it runs the idle speed; at/above the **load temperature** it runs the load speed; **within the band it holds** whichever state it is already in. This latch (idle must be below load) prevents the fan hunting back and forth at the boundary.
+
+Good for "stay silent at an idle speed, then jump to a fixed load speed past X degrees, and don't flip-flop while cooling back down".
+
+### Mix (Composite)
+
+Combines the outputs of **other curves** — each evaluated at its own sensor — into one value with a function:
+
+- **Max** — the loudest of its inputs (the classic "follow whichever of CPU/GPU is hotter")
+- **Min** — the quietest of its inputs
+- **Average** — the mean
+- **Sum** — added together (clamped at 100%)
+- **Subtract** — the first input minus the rest (clamped at 0%)
+
+Edited in a dialog: pick the function and tick the curves to combine. A Mix has no sensor of its own — its inputs bring their own. The editor only offers curves that cannot form a loop.
+
+### Sync (Composite)
+
+Mirrors **another control's** output, plus an offset — for example "rear exhaust = CPU fans + 10%". Useful to keep a group of fans tracking another group without re-creating its curve. Edited in a dialog: pick the control to mirror and an offset. The editor only offers controls that cannot form a loop.
+
 ### Sensor Binding
 
-Each curve (except Flat) is bound to a temperature sensor. The sensor determines which temperature reading drives the curve evaluation. Common bindings:
+Graph, Stepped, Linear, and Trigger curves are each bound to one temperature sensor that drives evaluation. Flat needs no sensor (constant output); **Mix and Sync also have no sensor of their own** — Mix reads each input curve at *its* sensor, and Sync mirrors a control's already-computed output. Common single-sensor bindings:
 
 | Curve Purpose | Typical Sensor |
 |---------------|---------------|

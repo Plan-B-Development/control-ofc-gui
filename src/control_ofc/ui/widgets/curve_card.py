@@ -66,8 +66,13 @@ class CurvePreview(QWidget):
         self.update()
 
     def summary_text(self) -> str:
-        """The text painted for linear/flat/trigger curves (empty for the
-        point-based graph/stepped curves, which paint a sparkline/staircase)."""
+        """The text painted for the parameter/composite curves (empty for the
+        point-based graph/stepped curves, which paint a sparkline/staircase).
+
+        Mix/Sync summaries are self-contained — they describe the curve from its
+        own fields (function + input count, offset) without resolving other
+        curves' or controls' names, so the preview never depends on data the
+        card was not given (the R31 ownership rule)."""
         curve = self._curve
         if curve is None:
             return ""
@@ -83,6 +88,12 @@ class CurvePreview(QWidget):
                 f"Idle {curve.trigger_idle_pct:.0f}% <{curve.trigger_idle_temp_c:.0f}° / "
                 f"Load {curve.trigger_load_pct:.0f}% >{curve.trigger_load_temp_c:.0f}°"
             )
+        if curve.type == CurveType.MIX:
+            n = len(curve.mix_curve_ids)
+            return f"{curve.mix_function.title()} of {n} curve{'' if n == 1 else 's'}"
+        if curve.type == CurveType.SYNC:
+            sign = "+" if curve.sync_offset_pct >= 0 else ""
+            return f"Mirror control {sign}{curve.sync_offset_pct:.0f}%"
         return ""
 
     def sizeHint(self) -> QSize:
