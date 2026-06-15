@@ -47,7 +47,7 @@ The result panel also shows the initial → final RPM and `pwm_enable` values, p
 
 Test PWM Control requires a held hwmon lease. The GUI normally takes the lease automatically when fan control starts. If you see `Cannot verify: no hwmon lease held`, activate any profile (or open Controls → activate) so the lease is acquired, then try again.
 
-While the test is running, the GUI's 1 Hz control loop pauses writes to the header under test so its own ticks do not interfere with the daemon's verify wait. A 5-second safety timer guarantees writes resume even if the test hangs.
+While the test is running, the GUI's 1 Hz control loop pauses writes to the header under test so its own ticks do not interfere with the daemon's verify wait. A 9-second safety timer (set above the daemon's ~6-second verify wait) guarantees writes resume even if the test hangs.
 
 ## Test GPU Fan Control
 
@@ -187,7 +187,7 @@ If the warning persists after these steps, see the upstream tracker thread at [f
 
 The daemon's thermal failsafe has two distinct triggers, with different fan speeds:
 
-- **Emergency (100%):** any CPU sensor reports ≥ 105°C. All OpenFan and writable hwmon fans are forced to 100% and held there until the hottest CPU sensor falls below 80°C, then run at 60% during recovery. GPU fans are deliberately excluded — the GPU's own firmware handles GPU thermal protection.
+- **Emergency (100%):** any CPU sensor reports ≥ 105°C. All OpenFan and writable hwmon fans are forced to 100% and held there until the hottest CPU sensor falls to 80°C or below, then run at a 60% recovery floor for two cycles (the release cycle and one more) before the active profile resumes. GPU fans are deliberately excluded — the GPU's own firmware handles GPU thermal protection.
 - **No-sensor fallback (40%):** no CPU sensor has been seen for 5 consecutive poll cycles. OpenFan and writable hwmon fans are set to a 40% safe floor — so fans sitting at a uniform ~40% (rather than 100%) usually mean a missing CPU sensor, not an overheat.
 
 While either override is active the GUI **stands down on purpose**: the control loop pauses all fan writes, hwmon lease renewals pause, and a "Daemon thermal override active" warning appears (Dashboard warning count and the Diagnostics event log). Control resumes automatically once the daemon reports a normal thermal state — fans pinned during an override are the daemon protecting the system, not a stuck profile.

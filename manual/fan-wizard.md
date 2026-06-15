@@ -41,9 +41,9 @@ Headers reporting 0 RPM (nothing plugged in) and read-only fans (e.g. firmware-m
 The wizard works through your selected fans one at a time. For each fan:
 
 1. Press **Start Test** — the fan's PWM is set to 0% so it spins down
-2. A countdown runs ("3 / 8 seconds") with a live RPM readout; press **Abort** to end the test early
+2. A progress bar fills as the timer runs ("3 / 8 seconds", counting elapsed time upward) with a live RPM readout; press **Abort** to end the test early
 3. Watch your case to see **which physical fan stopped**
-4. The fan is **restored automatically** when the countdown ends
+4. The fan is **restored automatically** when the test period ends
 5. Pick a **label** — a preset (CPU Cooler, Rear Exhaust, Front Intake Top, …) or any custom text
 6. If several fans changed at once (they share a splitter or hub), tick **"Multiple physical fans moved (splitter/hub)"** and add an optional note
 7. Press **Save Label & Next Fan** — or **Skip — couldn't identify** to move on without saving a label (you can re-run the test first; nothing limits retries)

@@ -156,6 +156,9 @@ Expected fields:
 - value_c
 - source — `"hwmon"`, `"amd_gpu"`, or `"intel_gpu"` (DEC-121; Intel discrete GPU temps via the `xe`/`i915` hwmon node, kind `gpu_temp`).
 - age_ms
+- rate_c_per_s (optional, float) — smoothed temperature change rate in °C/s; omitted (`skip_serializing_if`) until computable
+- session_min_c (optional, float) — lowest value seen for this sensor since daemon start; omitted until set
+- session_max_c (optional, float) — highest value seen for this sensor since daemon start; omitted until set
 - chip_name — hwmon driver name from sysfs (e.g. `k10temp`, `nct6798`, `it8689`). Always present; `"amdgpu"` for AMD GPU sources and `"xe"`/`"i915"` for Intel GPU sources.
 - temp_type (optional, integer) — thermistor type code from `tempN_type` sysfs. Values: 3 = diode, 4 = thermistor, 5 = AMD TSI, 6 = Intel PECI. Absent when the driver does not expose type information.
 - thresholds (optional object) — DEC-117 curated subset of hwmon temperature-threshold sysfs attributes. The daemon reads these once at discovery and re-reads them on `POST /hwmon/rescan`. Implausible values (<-50 °C, >200 °C) and the `it87`-family `tempN_max == 0` placeholder are filtered at the daemon side. The whole object is omitted when no attribute was readable for this sensor (k10temp typically exposes none). When present, every sub-field is also omitted-when-None so the on-wire shape is the minimal honest set. Sub-fields (all optional):
@@ -222,7 +225,7 @@ GUI falls back to individual endpoints if `/poll` is not available.
 
 ### GET /sensors/history?id=...&last=N
 Returns per-sensor time-series history from the daemon's ring buffer.
-`last` defaults to 250 and is capped server-side at 1000 samples per request.
+`last` is parsed up to a server-side cap of 1000, but the daemon's per-sensor history ring holds at most **250** samples, so a request never returns more than 250 regardless of `last` (which itself defaults to 250).
 Used to pre-fill the GUI's `HistoryStore` on first connection so the timeline chart
 shows data immediately instead of starting empty.
 
@@ -413,8 +416,9 @@ Response (daemon `HwmonVerifyResponse` ↔ GUI `HwmonVerifyResult`):
 
 Errors: `403 lease_required` (missing/invalid/expired lease — including a
 lease that expires between validation and the readback write), `404
-not_found` (unknown header), `503 hardware_unavailable` (no hwmon headers
-or controller absent).
+validation_error` (unknown header — the wire `code` is `validation_error`, not
+`not_found`, which is reserved for unknown routes), `503 hardware_unavailable`
+(no hwmon headers or controller absent).
 
 ### Profile activation
 - `POST /profile/activate` — `{"profile_path": "/path/to/profile.json"}` or `{"profile_id": "quiet"}`
@@ -485,7 +489,7 @@ Response (daemon `GpuVerifyResponse` ↔ GUI `GpuVerifyResult`) — **no
 - `restore_failed: bool` — omitted when false (`skip_serializing_if`)
 
 Errors: `400 feature_unavailable` (read-only GPU — no PMFW `fan_curve` and no
-legacy `pwm1`+`pwm1_enable`), `404 not_found` (unknown `gpu_id`). OD_RANGE
+legacy `pwm1`+`pwm1_enable`), `404 validation_error` (unknown `gpu_id` — wire `code` is `validation_error`, not `not_found`). OD_RANGE
 clamping and zero-RPM idle are reported as informational verdicts, not errors.
 Old daemons predating the route answer `404`, which the GUI treats as
 "unsupported" and hides the control.
@@ -526,8 +530,8 @@ Error codes and HTTP statuses:
   - hwmon PWM writes when the targeted header's discovered `is_writable=false` (DEC-102), e.g. an unforeseen chip exposing a read-only `pwmN` file.
 
   Distinct from `hardware_unavailable` (transient / retryable) and `validation_error` (malformed request). Permanent for this device — clients must not retry.
-- 400/403 `lease_required` (source: `"validation"`, retryable: false) — 400 for invalid/expired lease ID, 403 for missing lease on write
-- 404 `not_found` (source: `"validation"`, retryable: false)
+- 403 `lease_required` (source: `"validation"`, retryable: false) — returned by hwmon PWM-write and `/verify` whenever the lease is missing, invalid, or expired (no 400 variant on these paths; the 409 below covers a lease held by another owner)
+- 404 `not_found` (source: `"validation"`, retryable: false) — **unknown route/URI only**. An unknown *resource* on a known route (hwmon header, GPU id) returns 404 with code `validation_error`, not `not_found`.
 - 409 `lease_already_held` (source: `"validation"`, retryable: false) — surfaced only by hwmon PWM writes when another owner holds the lease; `POST /hwmon/lease/take` unconditionally force-takes and never returns this code
 - 409 `thermal_abort` (source: `"hardware"`, retryable: true) — calibration aborted due to high temperature
 - 500 `internal_error` (source: `"internal"`, retryable: true)

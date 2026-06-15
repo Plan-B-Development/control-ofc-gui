@@ -122,7 +122,11 @@ When the user activates a profile in the GUI:
 4. Profile survives daemon restart, reboot, and GUI close
 
 ### Deactivating a profile
-Currently no explicit deactivate endpoint. Activating a different profile replaces the current one. To return to imperative mode, restart the daemon without a profile.
+Two ways to leave profile mode without restarting the daemon:
+- **Activate a different profile** — `POST /profile/activate` replaces the current one.
+- **Deactivate entirely** — `POST /profile/deactivate` (body ignored) clears the active profile and returns the daemon to imperative-only mode. It is idempotent (deactivating when none is active is a success no-op), persists the cleared state so a restart does not resurrect the profile, and releases the `profile-engine` hwmon lease while preserving any GUI-held lease (DEC-097). Response: `{"deactivated": true, "previous_profile_id": ..., "previous_profile_name": ...}`.
+
+Restarting the daemon without a profile also works, but is no longer required.
 
 ---
 
@@ -177,10 +181,10 @@ The daemon enforces a single thermal safety rule (non-negotiable, not configurab
 - **Trigger**: hottest CPU temperature reaches 105°C
 - **Action**: Force all OpenFan channels and writable hwmon headers to 100% PWM. GPU fans are excluded — there is no GPU emergency threshold; AMD PMFW firmware protects the GPU independently (DEC-130)
 - **Hold**: Until temperature drops below 80°C
-- **Recovery**: Apply a 60% PWM recovery floor for one cycle, then resume active profile control
+- **Recovery**: Apply a 60% PWM recovery floor for two cycles (the release cycle and one more), then resume active profile control
 - **Fallback**: Force 40% PWM (OpenFan + hwmon) if no CPU sensor is reachable for 5 consecutive poll cycles
 - **Visibility**: `GET /status` reports `thermal_state` (`normal` / `recovery` / `emergency` / `no_sensor_fallback`); the GUI pauses its own fan control and shows a warning while any override is active (DEC-132)
 
 There are no per-header PWM floors. The daemon reports `min_pwm_percent: 0` for every hwmon header. Any safety-floor enforcement is the GUI's responsibility (curve validation, profile constraints) — the daemon never refuses a write on the basis of a per-header floor.
 
-Safety thresholds are visible via `GET /capabilities` under `limits`.
+The thermal trigger/release thresholds are reported by `GET /diagnostics/hardware` in its thermal-safety section (`emergency_threshold_c`, `release_threshold_c`, plus `state` and `cpu_sensor_found`). They are **not** in `GET /capabilities`: the `limits` object there carries only `pwm_percent_min`, `pwm_percent_max`, and `openfan_stop_timeout_s`. The live override state is also surfaced as `thermal_state` in `GET /status`.
