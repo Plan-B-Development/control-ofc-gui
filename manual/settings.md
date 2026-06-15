@@ -95,7 +95,7 @@ A single **portable** JSON file with your shareable configuration:
 - All saved profiles
 - All custom themes
 
-Machine-specific state is deliberately **excluded** so the file is safe to share or move between machines: window geometry, last page, data-directory overrides, per-series chart colours, card/sensor bindings, hidden diagnostics sensors, and dismissed kernel warnings. A full snapshot of everything (for same-machine debugging) lives in the Diagnostics **support bundle** instead.
+Machine-specific state is deliberately **excluded** so the file is safe to share or move between machines: window geometry, last page, data-directory overrides, the default export directory, per-series chart colours, card sizes and card/sensor bindings, hidden diagnostics sensors, and dismissed kernel warnings. A full snapshot of everything (for same-machine debugging) lives in the Diagnostics **support bundle** instead.
 
 ### Import Behaviour
 

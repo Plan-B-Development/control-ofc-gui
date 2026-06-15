@@ -39,7 +39,7 @@ The app should be portable enough to:
 1. No direct hardware access from the GUI.
 2. No tray-first workflow.
 3. No full theme editor UI. *(Shipped later anyway — Settings → Themes now has a per-token editor with contrast checking.)*
-4. No multi-sensor blending in curve logic.
+4. No multi-sensor blending in curve logic. *(Superseded — Mix curves now combine several curves, each at its own sensor, and Sync curves mirror another role's output; both are explicit, acyclic, by-id dependencies. DEC-150/151/152.)*
 5. No user-customisable dashboard layout.
 6. No GUI-side profile *roaming* across machines (per-host JSON only; daemon-side activation and persistence is supported via `POST /profile/activate`).
 7. No AIO pump-specific advanced flow UI unless backed by real daemon data.

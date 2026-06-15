@@ -196,7 +196,7 @@ directory, or kernel `asus_*` driver allowlists.
 | | Gigabyte AORUS (X670E AORUS MASTER, X670E AORUS PRO X) | **IT8689E** + IT87952E dual-chip — **Rev 1 silently ignores PWM writes while a normal BIOS curve is active** (issue #96) | out-of-tree `it87-dkms-git`; on Rev 1 the upstream-documented **flat 7-point BIOS curve (PWM 40×6, final 100) restores driver manual control** |
 | | Gigabyte AORUS newer (X670 AORUS / B650 boards) | IT8696E **or** IT8689E (+ optional IT87952E dual; X670 AORUS ELITE AX confirmed IT8689E + IT87952E per the driver DMI table) | out-of-tree `it87-dkms-git` |
 | | ASRock A620/B650/X670 NCT6686D boards | NCT6686D | `nct6686d` or `asrock-nct6683` or `nct6687d` (board-specific — test before relying) |
-| **AM5 800-series** (B850 / X870 / B840) | ASUS (X870E variants, X870 series) | NCT6798D + expanded `asus_ec_sensors` allowlist (ROG STRIX X870E-E/-H, X870-F/-I and B850-I entries landed in kernel **7.0**, alongside the older ProArt X870E-CREATOR WIFI) | mainline `nct6775` + sensor enrichment |
+| **AM5 800-series** (B850 / X870 / B840) | ASUS (X870E variants, X870 series) | NCT6798D + expanded `asus_ec_sensors` allowlist (ROG STRIX X870E-E/-H, X870-F/-I and B850-I entries landed in kernel **6.18**, alongside the older ProArt X870E-CREATOR WIFI) | mainline `nct6775` + sensor enrichment |
 | | MSI **auto-allowlist** (B840/B850/X870/Z890 boards; the upstream list keeps growing — `nct6687.c::msi_alt1_dmi_table` is the source of truth) | NCT6687-R variants with msi_alt1 auto-enabled | out-of-tree `nct6687d-dkms-git` v2.x |
 | | MSI boards NOT on the allowlist | NCT6687-R variants | `nct6687d` + `msi_alt1=1` or `msi_fan_brute_force=1` |
 | | Gigabyte X870E AORUS MASTER / PRO / **ELITE (incl. X3D, issue #89)** / B850-AI-TOP | IT8696E + IT87952E (dual-chip) | out-of-tree `it87-dkms-git`; 2026-03+ builds work out of the box (older builds need `mmio=on`) |
@@ -487,7 +487,7 @@ which modules are currently loaded by reading `/proc/modules`.
 The daemon implements a hardware-independent thermal safety rule:
 - **Emergency:** hottest CPU temperature >= 105°C → force all OpenFan + writable hwmon fans to 100% PWM (GPU fans excluded — PMFW firmware self-protects, DEC-130)
 - **Release:** hottest CPU temperature drops below 80°C → exit emergency
-- **Recovery:** apply a 60% PWM recovery floor for one cycle, then resume active profile control
+- **Recovery:** apply a 60% PWM recovery floor for two cycles (the release cycle and one more), then resume active profile control
 - **Failsafe:** if no CPU sensor is reachable for 5 consecutive cycles → force 40%
 
 The thermal safety state is reported in the hardware diagnostics response.

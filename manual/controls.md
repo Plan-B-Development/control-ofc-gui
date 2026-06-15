@@ -88,7 +88,7 @@ Each physical fan can belong to **only one role**: outputs already assigned else
 
 ## Curves (Bottom Section)
 
-The curve library lives in the lower half (the divider between the two sections is draggable). **+ Curve** offers the five curve types:
+The curve library lives in the lower half (the divider between the two sections is draggable). **+ Curve** offers the seven curve types:
 
 | Type | Description | Use case |
 |------|-------------|----------|
@@ -97,8 +97,12 @@ The curve library lives in the lower half (the divider between the two sections 
 | **Linear Curve** | Two-point ramp: start temp/speed to end temp/speed | Simple "ramp up between X and Y" |
 | **Flat Curve** | Constant output regardless of temperature | Pumps, AIO coolers, always-on fans |
 | **Trigger Curve** | A two-state latch: an idle speed below the idle temperature, a load speed above the load temperature, holding its state in between (its own hysteresis) | "Stay quiet, then ramp hard past X°" |
+| **Mix Curve** | Combines several *other* curves — each evaluated at its own sensor — into one output using a function: **Max**, **Min**, **Average**, **Sum**, or **Subtract** (result clamped 0–100%). Has no sensor of its own | "Drive this fan from whichever of CPU/GPU/VRM is hottest" |
+| **Sync Curve** | Mirrors another fan role's current output, plus an optional offset (−100…+100%). Has no sensor of its own | "Keep the rear fans a few percent above the front fans" |
 
-Each curve card shows the curve's name and type, the bound sensor with its live reading, a preview (a sparkline for graph curves, a staircase for stepped curves; a summary like "35°C→80°C: 30%→100%", "Flat: 65%", or "Idle 30% <40° / Load 80% >60°" for the others), and which roles use it ("Used by: …" with an **Assigned** / **Unassigned** chip). The card's **Actions** menu has **Edit**, **Rename**, **Duplicate**, and **Delete**.
+Mix and Sync are *composite* curves: they reference other curves (Mix) or another fan role (Sync) **by name**, and the editor only offers choices that cannot form a loop, so a composite can never depend on itself (DEC-150/151/152).
+
+Each curve card shows the curve's name and type, the bound sensor with its live reading (composites show no sensor), a preview, and which roles use it ("Used by: …" with an **Assigned** / **Unassigned** chip). The preview is a sparkline for graph curves, a staircase for stepped curves, and otherwise a short summary — for example "35°C→80°C: 30%→100%", "Flat: 65%", "Idle 30% <40° / Load 80% >60°", "Max of 3 curves" (Mix), or "Mirror control +5%" (Sync). The card's **Actions** menu has **Edit**, **Rename**, **Duplicate**, and **Delete**.
 
 ### Editing a Graph or Stepped Curve
 
@@ -111,13 +115,17 @@ Each curve card shows the curve's name and type, the bound sensor with its live 
 - The valid range is 0–120°C and 0–100% output; if a role using this curve has a stall-protection minimum, the editor stops you dragging points below that floor
 - Click **Close Editor** when done — edits update the card preview immediately and mark the profile unsaved
 
-### Editing a Linear, Flat, or Trigger Curve
+### Editing a Linear, Flat, Trigger, Mix, or Sync Curve
 
 These open a small parameter dialog instead:
 
 ![Curve Edit Dialog](../screenshots/auto/14_curve_edit_dialog.png)
 
-Linear curves take a name, a sensor, and start/end temperature and output values; flat curves take just a name and an output percentage (no sensor needed); trigger curves take a sensor plus idle/load temperatures and speeds (the idle temperature must be below the load temperature).
+- **Linear** — name, a sensor, and start/end temperature and output values.
+- **Flat** — just a name and an output percentage (no sensor needed).
+- **Trigger** — a sensor plus idle/load temperatures and speeds (the idle temperature must be below the load temperature).
+- **Mix** — a combine **function** (Max / Min / Average / Sum / Subtract) and a checklist of **curves to combine**. No sensor: each combined curve evaluates at its own sensor and the results are merged. Only curves that would not create a cycle are offered; if none exist the list reads "No other curves available to combine."
+- **Sync** — the fan role to **mirror** and an **offset** percentage (−100…+100). No sensor: the output tracks the chosen role's current value plus the offset. Only roles that would not create a cycle are offered.
 
 ## Empty States
 

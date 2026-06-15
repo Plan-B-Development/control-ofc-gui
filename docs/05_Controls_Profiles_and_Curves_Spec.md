@@ -71,7 +71,7 @@ Groups are flexible user labels, not rigid system types.
 - rename group
 - delete group
 - assign multiple fans to a group
-- allow a fan to belong to multiple groups
+- a fan belongs to **at most one** group (the shipped UI calls these *fan roles*) — outputs already assigned elsewhere appear greyed out, so a fan is never owned by two roles
 - show group badges consistently across the app
 
 ### Suggested built-in starter groups

@@ -196,6 +196,8 @@ The mainline `asus_wmi_sensors` driver explicitly lists these AM4
 400-series boards as supported:
 
 - PRIME X470-PRO
+- ROG CROSSHAIR VII HERO
+- ROG CROSSHAIR VII HERO (WI-FI)
 - ROG STRIX B450-E GAMING
 - ROG STRIX B450-F GAMING
 - ROG STRIX B450-I GAMING
@@ -337,8 +339,12 @@ sensor enrichment ONLY — they never provide PWM writes.
 
 If `nct6775` fails to bind because of an ACPI conflict on I/O ports
 `0x0290-0x0299`, add `acpi_enforce_resources=lax` to kernel boot
-parameters or disable "ACPI Hardware Monitor" in BIOS. On kernel
-5.17+ the driver supports ACPI mutex access that avoids this.
+parameters or disable "ACPI Hardware Monitor" in BIOS. Since Linux
+5.16 the driver can read supported ASUS boards through an ASUS WMI
+access path (`access_asuswmi`) that sidesteps the port reservation,
+often removing the need for `acpi_enforce_resources=lax` (this is a WMI
+sensor-read path, not an "ACPI mutex" — the separately-proposed
+ACPI-mutex patch was never merged; see doc 19 for the source).
 
 ---
 
@@ -556,8 +562,10 @@ ASUS boards with Nuvoton chips may have ACPI OpRegion conflicts on I/O
 ports 0x0290-0x0299. The daemon's diagnostics endpoint detects these
 conflicts. Remediation options:
 
-1. **Preferred (kernel >= 5.17):** The `nct6775` driver supports ACPI mutex
-   coordination, avoiding the conflict without kernel parameters.
+1. **Preferred (kernel >= 5.16, ASUS boards):** The `nct6775` driver can read
+   the chip through an ASUS WMI access path (`access_asuswmi`), sidestepping the
+   conflict without kernel parameters. (A WMI sensor-read path, not an "ACPI
+   mutex" — the separately-proposed ACPI-mutex patch was never merged.)
 2. **Fallback:** Add `acpi_enforce_resources=lax` to kernel parameters.
 3. **BIOS:** Disable "ACPI Hardware Monitor" if the option is available.
 

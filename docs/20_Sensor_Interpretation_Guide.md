@@ -147,7 +147,7 @@ Kernel docs: https://docs.kernel.org/hwmon/it87.html
 Out-of-tree fork: https://github.com/frankcrawford/it87 (newer chip support)
 
 Covers `it8xxx` variants. The mainline kernel `it87` driver supports a fixed
-list of older chips (IT8603E, IT8620E, IT8628E, IT8705F/12F/16F/18F/20E/21F/26E/
+list of older chips (IT8603E, IT8620E, IT8622E, IT8628E, IT8705F/12F/16F/18F/20E/21F/26E/
 28E/71F/72F/76F/79E/81E/82E/83E/91E/92E, with IT8689E only recently merged).
 **Newer Gigabyte/MSI-era chips — IT8625E, IT8686E, IT8688E, IT8696E — are
 NOT in mainline** and require the out-of-tree
