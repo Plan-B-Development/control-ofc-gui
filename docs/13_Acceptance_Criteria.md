@@ -99,4 +99,4 @@ The following are explicitly not required for V1 acceptance:
 - multi-sensor curve logic
 - user-custom dashboard layout
 - daemon-side profile storage
-- AIO-specific advanced support UI *(hwmon AIO recognition shipped in Phase 1 / DEC-156; guided "Configure AIO" UX deferred to Phase 2)*
+- AIO-specific advanced support UI *(shipped — hwmon AIO recognition in Phase 1 / DEC-156; guided "Configure AIO" UX in Phase 2 / GUI 1.40.0 / DEC-157)*

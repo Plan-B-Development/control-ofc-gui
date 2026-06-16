@@ -36,6 +36,9 @@ _SENSOR_KIND_GROUPS: dict[str, tuple[str, str]] = {
     "CpuTemp": ("cpu", "CPU"),
     "gpu_temp": ("gpu", "GPU"),
     "GpuTemp": ("gpu", "GPU"),
+    # DEC-157: liquid-cooler coolant temperatures cluster under "AIO / Liquid".
+    "coolant_temp": ("aio", "AIO / Liquid"),
+    "CoolantTemp": ("aio", "AIO / Liquid"),
     "mb_temp": ("mb", "Motherboard"),
     "MbTemp": ("mb", "Motherboard"),
     "disk_temp": ("disk", "Disk"),
@@ -46,6 +49,7 @@ _SENSOR_KIND_GROUPS: dict[str, tuple[str, str]] = {
 _GROUP_ORDER = [
     "cpu",
     "gpu",
+    "aio",
     "mb",
     "disk",
     "other",
@@ -57,6 +61,7 @@ _GROUP_ORDER = [
 _GROUP_LABELS = {
     "cpu": "CPU",
     "gpu": "GPU",
+    "aio": "AIO / Liquid",
     "mb": "Motherboard",
     "disk": "Disk",
     "other": "Other",
@@ -338,6 +343,14 @@ class SensorSeriesPanel(QFrame):
                     parent.removeChild(item)
             self._fan_items.clear()
 
+            # DEC-157: liquid-cooler headers carry the daemon is_aio flag; tag
+            # their fans "(AIO)" so the pump/radiator are obvious in the tree.
+            aio_ids = (
+                {h.id for h in self._state.hwmon_headers if getattr(h, "is_aio", False)}
+                if self._state
+                else set()
+            )
+
             for f in fans:
                 if f.source in ("amd_gpu", "intel_gpu"):
                     group_key = "fans_gpu"
@@ -350,6 +363,8 @@ class SensorSeriesPanel(QFrame):
 
                 series_key = f"fan:{f.id}:rpm"
                 display_name = self._state.fan_display_name(f.id) if self._state else f.id
+                if f.id in aio_ids:
+                    display_name = f"{display_name} (AIO)"
                 rpm_text = f"{f.rpm} RPM" if f.rpm is not None else "\u2014"
 
                 item = QTreeWidgetItem(group_item)

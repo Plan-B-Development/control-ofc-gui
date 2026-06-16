@@ -761,6 +761,147 @@ def apply_role_floor(control: LogicalControl) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# AIO guided setup (DEC-157) — pure detection + control/curve creation. Kept
+# free of Qt so it is unit-testable; the dialog is a thin UI over this.
+# ---------------------------------------------------------------------------
+
+# Radiator-fan default curve (coolant-temperature range). Research: coolant
+# idles ~30-34 C and loads ~50-60 C; the chassis 20% floor still applies. The
+# curve editor auto-scales its axis to these points — no per-sensor axis code.
+_AIO_RADIATOR_CURVE_POINTS: tuple[tuple[float, float], ...] = (
+    (30.0, 20.0),
+    (40.0, 40.0),
+    (50.0, 75.0),
+    (55.0, 100.0),
+)
+
+# Pump constant-speed presets (DEC-157). A pump runs best at a CONSTANT speed —
+# never a temperature curve — so "Configure AIO" offers these flat levels.
+AIO_PUMP_PRESETS: tuple[tuple[str, int], ...] = (
+    ("Low", 30),
+    ("Mid", 60),
+    ("High", 80),
+    ("Max", 100),
+)
+AIO_PUMP_DEFAULT_PCT = 80
+
+
+@dataclass
+class AioDetection:
+    """What a one-click AIO setup found on this machine (DEC-157)."""
+
+    pump_member: ControlMember | None  # writable AIO pump header, else None
+    radiator_members: list[ControlMember]  # other writable AIO fan headers
+    coolant_sensor_id: str | None  # best coolant sensor for the radiator curve
+    monitor_only: bool  # an AIO is present but no writable pump exists
+
+
+def detect_aio_setup(
+    headers: list, sensors: list, sensor_overrides: dict | None = None
+) -> AioDetection:
+    """Pure detection for the Configure-AIO flow (DEC-157).
+
+    ``headers`` are live ``HwmonHeader``s (with ``is_aio``/``is_writable``),
+    ``sensors`` are live ``SensorReading``s, ``sensor_overrides`` is the user
+    coolant-override map. The pump is the writable AIO header labelled "pump"
+    (else the lowest pwm index); other writable AIO headers are radiator fans.
+    """
+    from control_ofc.ui.sensor_knowledge import classify_sensor_with_overrides
+
+    overrides = sensor_overrides or {}
+    aio_headers = [h for h in headers if getattr(h, "is_aio", False)]
+    writable = [h for h in aio_headers if getattr(h, "is_writable", False)]
+
+    pump_header = None
+    if writable:
+        pumps = [h for h in writable if "pump" in (h.label or "").lower()]
+        pump_header = pumps[0] if pumps else min(writable, key=lambda h: h.pwm_index)
+
+    pump_member = (
+        ControlMember(
+            source="hwmon", member_id=pump_header.id, member_label=pump_header.label or "Pump"
+        )
+        if pump_header is not None
+        else None
+    )
+    radiator_members = [
+        ControlMember(source="hwmon", member_id=h.id, member_label=h.label or "Radiator")
+        for h in writable
+        if pump_header is None or h.id != pump_header.id
+    ]
+
+    coolant_sensor_id = None
+    for s in sensors:
+        cls = classify_sensor_with_overrides(
+            s.id,
+            chip_name=getattr(s, "chip_name", ""),
+            label=getattr(s, "label", ""),
+            overrides=overrides,
+        )
+        if cls.source_class in ("coolant", "coolant_in", "coolant_out"):
+            coolant_sensor_id = s.id
+            break
+
+    aio_present = bool(aio_headers) or coolant_sensor_id is not None
+    monitor_only = aio_present and pump_member is None
+    return AioDetection(pump_member, radiator_members, coolant_sensor_id, monitor_only)
+
+
+def build_aio_controls(
+    profile: Profile,
+    *,
+    pump_member: ControlMember | None,
+    pump_pct: int,
+    radiator_members: list[ControlMember],
+    radiator_sensor_id: str,
+) -> list[LogicalControl]:
+    """Create the pump + radiator controls (and their curves) for a one-click
+    AIO setup, append them to ``profile``, and return the created controls
+    (DEC-157).
+
+    The pump runs at a CONSTANT speed (a Flat curve), never a temperature curve,
+    floored at 30% by role policy. The radiator fans get a coolant-range graph
+    curve bound to ``radiator_sensor_id``.
+    """
+    created: list[LogicalControl] = []
+
+    if pump_member is not None:
+        pump_curve = CurveConfig(
+            name="AIO Pump", type=CurveType.FLAT, flat_output_pct=float(pump_pct)
+        )
+        profile.curves.append(pump_curve)
+        pump_control = LogicalControl(
+            name="AIO Pump",
+            mode=ControlMode.CURVE,
+            curve_id=pump_curve.id,
+            members=[pump_member],
+        )
+        apply_role_floor(pump_control)  # 30% pump floor (DEC-095)
+        profile.controls.append(pump_control)
+        created.append(pump_control)
+
+    if radiator_members:
+        rad_curve = CurveConfig(
+            name="AIO Radiator",
+            type=CurveType.GRAPH,
+            sensor_id=radiator_sensor_id,
+            points=[CurvePoint(t, o) for t, o in _AIO_RADIATOR_CURVE_POINTS],
+        )
+        profile.curves.append(rad_curve)
+        rad_control = LogicalControl(
+            name="AIO Radiator",
+            mode=ControlMode.CURVE,
+            curve_id=rad_curve.id,
+            members=list(radiator_members),
+        )
+        apply_role_floor(rad_control)  # 20% chassis floor
+        profile.controls.append(rad_control)
+        created.append(rad_control)
+
+    return created
+
+
 def _migrate_v1_profile(data: dict) -> Profile:
     """Migrate a v1 profile (TargetAssignment + CurveDefinition) to v2."""
     curves: list[CurveConfig] = []

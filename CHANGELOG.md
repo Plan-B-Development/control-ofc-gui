@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.40.0] — 2026-06-16
+
+Guided **AIO setup UX — Phase 2** (GUI-only, builds on DEC-156). DEC-157.
+
+### Added
+- **One-click "Configure AIO"** on the Controls page (shown when a liquid cooler is detected):
+  builds a constant-speed **pump** control + a coolant-bound **radiator-fan** control. The pump
+  offers four flat presets — Low 30% / Mid 60% / High 80% / Max 100% (default High) — because a
+  pump runs best at a constant speed, not a temperature curve. Monitor-only coolers (no writable
+  pump, e.g. NZXT Kraken2) degrade to radiator + coolant monitoring with an honest note.
+- **AIO affordances**: member-picker entries tagged "(AIO pump)" / "(AIO radiator)"; the dashboard
+  groups coolant sensors under "AIO / Liquid" and tags AIO fans "(AIO)"; coolant + CPU sensors are
+  highlighted as preferred (★) when binding a curve.
+- A one-time pump-info popup (setting `show_aio_pump_info`) explaining the 30% pump floor.
+
 ## [1.39.0] — 2026-06-16
 
 First-class **liquid-cooler (AIO) support — Phase 1** (hwmon-only). Pairs with **daemon v1.18.0**
