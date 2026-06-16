@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.41.0] — 2026-06-17
+
+**Distinct per-severity advisories** in Diagnostics ▸ Troubleshooting ▸ Hardware Readiness
+(GUI-only). DEC-158.
+
+### Added
+- **Each advisory severity is now its own type.** Board/chip vendor quirks render as one
+  collapsible row each, most-severe-first, with a badge that pairs an **icon + word + colour**
+  (never colour alone — WCAG 1.4.1): **CRITICAL** red, **HIGH** orange, **MEDIUM** amber (new
+  `status_caution` theme token), **INFO** blue — so an INFO note no longer looks like a warning.
+- **Collapsible detail per advisory** — open by default for CRITICAL/HIGH, collapsed for
+  MEDIUM/INFO — with clearer prose (bullets only for 3+ short parallel items) and a link to the
+  Hardware Compatibility Guide's *Manufacturer Quirks* section.
+- A single, calm **liability disclaimer** at the bottom of the panel (remediation steps change
+  kernel/driver/firmware settings — applied at your own risk).
+- The pop-out **Full Report** gains a matching **Advisories** section (same data + colours as the
+  inline panel).
+
+### Changed
+- The issue-checklist badges now use the same shared severity presentation (icon + word + colour).
+- Unknown or future severities degrade to the calm INFO treatment rather than appearing as a
+  warning (keeping their own word).
+
 ## [1.40.0] — 2026-06-16
 
 Guided **AIO setup UX — Phase 2** (GUI-only, builds on DEC-156). DEC-157.
