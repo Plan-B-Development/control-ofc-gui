@@ -97,7 +97,7 @@ The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically — 
 
 ## Vendor quirks
 
-When the daemon reports a board vendor and chip combination that matches a known workaround pattern, the Hardware Readiness report automatically renders the relevant guidance — BIOS settings to change, kernel modules to install, or known-issue notes. Currently surfaced quirks include:
+When the daemon reports a board vendor and chip combination that matches a known workaround pattern, the Hardware Readiness report automatically renders the relevant guidance — BIOS settings to change, kernel modules to install, or known-issue notes. Each advisory is shown as its own row, most-severe-first, with a colour-coded severity badge that pairs an icon, the word, and a colour — **CRITICAL** (red), **HIGH** (orange), **MEDIUM** (amber), **INFO** (blue) — so an informational note never looks like a warning. The summary is always visible; click **Details** to expand the full explanation and a link to the Hardware Compatibility Guide (CRITICAL and HIGH advisories start expanded; MEDIUM and INFO start collapsed to keep the panel uncluttered). Currently surfaced quirks include:
 
 - **Gigabyte + IT8696E** — Smart Fan 6 BIOS setup notes for AM5 800-series AORUS boards
 - **NCT6798 / NCT6799 on ASUS** — typical driver-loaded paths and ASUS WMI sensor helpers
