@@ -145,6 +145,10 @@ class AppSettings:
     hidden_chart_series: list[str] = field(default_factory=list)
     card_sensor_bindings: dict[str, str] = field(default_factory=dict)
     show_gpu_zero_rpm_warning: bool = True
+    # DEC-157: one-time popup explaining the AIO pump floor ("don't run the
+    # pump too low"), shown when an AIO pump is first added to a control. Mirrors
+    # show_gpu_zero_rpm_warning — a behaviour preference that travels with export.
+    show_aio_pump_info: bool = True
     series_colors: dict[str, str] = field(default_factory=dict)
     last_page_index: int = 0
     window_geometry: list[int] = field(default_factory=lambda: [100, 100, 1200, 800])
@@ -219,6 +223,7 @@ class AppSettings:
             hidden_chart_series=_as_str_list(data.get("hidden_chart_series"), []),
             card_sensor_bindings=_as_str_dict(data.get("card_sensor_bindings"), {}),
             show_gpu_zero_rpm_warning=_as_bool(data.get("show_gpu_zero_rpm_warning"), True),
+            show_aio_pump_info=_as_bool(data.get("show_aio_pump_info"), True),
             series_colors=_as_color_dict(data.get("series_colors"), {}),
             last_page_index=_as_int(data.get("last_page_index"), 0, lo=0, hi=99),
             window_geometry=_as_geometry(data.get("window_geometry"), [100, 100, 1200, 800]),

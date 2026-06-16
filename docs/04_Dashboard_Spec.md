@@ -98,6 +98,9 @@ These controls may be:
 - a pill/badge row
 - checkboxes in a chart options panel
 
+The series panel groups coolant temperatures (`coolant_temp`) under an **"AIO / Liquid"** group,
+and liquid-cooler pump/radiator fans are tagged "(AIO)" so an AIO reads as a cluster (DEC-157).
+
 ## Fan naming
 The daemon's fan response includes `id` and `source` but not a display label. The dashboard should use the best available display name in this order:
 1. user alias (GUI-owned, persisted locally)

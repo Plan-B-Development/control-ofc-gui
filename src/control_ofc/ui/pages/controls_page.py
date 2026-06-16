@@ -125,6 +125,17 @@ class ControlsPage(QWidget):
         self._wizard_btn.clicked.connect(self._on_fan_wizard)
         controls_header.addWidget(self._wizard_btn)
 
+        # DEC-157: one-click liquid-cooler setup. Hidden until an AIO is
+        # detected (see _on_capabilities_updated).
+        self._configure_aio_btn = QPushButton("Configure AIO")
+        self._configure_aio_btn.setObjectName("Controls_Btn_configureAio")
+        self._configure_aio_btn.setToolTip(
+            "One-click setup for a liquid cooler — a constant-speed pump and a radiator-fan group"
+        )
+        self._configure_aio_btn.clicked.connect(self._on_configure_aio)
+        self._configure_aio_btn.setVisible(False)
+        controls_header.addWidget(self._configure_aio_btn)
+
         self._add_control_btn = QPushButton("+ Fan Role")
         self._add_control_btn.setObjectName("Controls_Btn_newControl")
         self._add_control_btn.setToolTip("Create a new fan role")
@@ -534,6 +545,112 @@ class ControlsPage(QWidget):
         # Alias persistence is handled by MainWindow via AppState.fan_alias_changed
         wizard.exec()
 
+    def _on_configure_aio(self) -> None:
+        """DEC-157: one-click liquid-cooler setup — build a constant-speed pump
+        control + a coolant-bound radiator control via the shared creation path."""
+        profile = self._get_current_profile()
+        if not profile or not self._state:
+            return
+        from control_ofc.services.profile_service import (
+            ControlMember,
+            build_aio_controls,
+            detect_aio_setup,
+        )
+        from control_ofc.ui.sensor_knowledge import classify_sensor_with_overrides
+        from control_ofc.ui.widgets.aio_config_dialog import AioConfigDialog
+
+        overrides = self._state.sensor_class_overrides
+        det = detect_aio_setup(self._state.hwmon_headers, self._state.sensors, overrides)
+        pump_id = det.pump_member.member_id if det.pump_member else None
+        preselect_ids = {m.member_id for m in det.radiator_members}
+
+        # Candidate radiator fans: writable hwmon + OpenFan fans, minus the pump.
+        candidates: list[dict] = []
+        header_by_id = {h.id: h for h in self._state.hwmon_headers}
+        seen: set[str] = set()
+        for fan in self._state.fans:
+            if fan.source in ("amd_gpu", "intel_gpu"):
+                continue
+            if fan.source == "hwmon":
+                h = header_by_id.get(fan.id)
+                if h is None or not h.is_writable:
+                    continue
+            if fan.id == pump_id or fan.id in seen:
+                continue
+            seen.add(fan.id)
+            label = self._state.fan_display_name(fan.id)
+            candidates.append(
+                {
+                    "id": fan.id,
+                    "source": fan.source,
+                    "label": label,
+                    "preselect": fan.id in preselect_ids or "radiator" in label.lower(),
+                }
+            )
+        for header in self._state.hwmon_headers:
+            if not header.is_writable or header.id == pump_id or header.id in seen:
+                continue
+            label = header.label or header.id
+            candidates.append(
+                {
+                    "id": header.id,
+                    "source": "hwmon",
+                    "label": label,
+                    "preselect": header.id in preselect_ids
+                    or header.is_aio
+                    or "radiator" in label.lower(),
+                }
+            )
+
+        # Sensor choices, with coolant + CPU flagged preferred.
+        sensor_choices: list[dict] = []
+        for s in self._state.sensors:
+            cls = classify_sensor_with_overrides(
+                s.id, chip_name=s.chip_name, label=s.label, overrides=overrides
+            )
+            preferred = cls.source_class in (
+                "coolant",
+                "coolant_in",
+                "coolant_out",
+            ) or s.kind in ("cpu_temp", "CpuTemp")
+            sensor_choices.append({"id": s.id, "label": s.label, "preferred": preferred})
+
+        dlg = AioConfigDialog(
+            pump_label=det.pump_member.member_label if det.pump_member else None,
+            monitor_only=det.monitor_only,
+            fan_candidates=candidates,
+            sensor_choices=sensor_choices,
+            default_sensor_id=det.coolant_sensor_id,
+            parent=self,
+        )
+        if not dlg.exec():
+            return
+        res = dlg.get_result()
+        radiator_members = [
+            ControlMember(source=c["source"], member_id=c["id"], member_label=c["label"])
+            for c in res["radiator_members"]
+        ]
+        created = build_aio_controls(
+            profile,
+            pump_member=det.pump_member if res["pump_pct"] is not None else None,
+            pump_pct=res["pump_pct"] or 0,
+            radiator_members=radiator_members,
+            radiator_sensor_id=res["radiator_sensor_id"],
+        )
+        if not created:
+            return
+        self._refresh_controls_grid(profile)
+        self._refresh_curves_grid(profile)
+        self._set_unsaved(True)
+        # One-time pump-info popup when a pump control was created.
+        if (
+            res["pump_pct"] is not None
+            and det.pump_member is not None
+            and self._settings_service
+            and self._settings_service.settings.show_aio_pump_info
+        ):
+            self._show_aio_pump_info()
+
     def _on_new_control_menu(self) -> None:
         menu = QMenu(self)
         menu.addAction("Single Output Fan Role", lambda: self._on_new_control(single=True))
@@ -640,6 +757,10 @@ class ControlsPage(QWidget):
                 badge = PRESENCE_BADGE.get(presence, "")
                 if badge and "(read-only)" not in label:
                     label = f"{label} ({badge})"
+                # DEC-157: tag liquid-cooler headers so AIO members are obvious.
+                h_aio = header_by_id.get(fan.id)
+                if fan.source == "hwmon" and h_aio is not None and h_aio.is_aio:
+                    label += " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
                 tip = PRESENCE_TOOLTIP.get(presence, "") if presence != FanPresence.PRESENT else ""
                 entry = {
                     "id": fan.id,
@@ -664,6 +785,8 @@ class ControlsPage(QWidget):
                     presence = classify_fan_presence(None, header)
                     if PRESENCE_BADGE.get(presence):
                         label = f"{label} ({PRESENCE_BADGE[presence]})"
+                    if header.is_aio:
+                        label += " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
                     tip_parts = [f"ID: {header.id}"]
                     if header.chip_name:
                         tip_parts.append(f"Chip: {header.chip_name}")
@@ -867,8 +990,7 @@ class ControlsPage(QWidget):
             sensor_items = []
             if self._state:
                 for s in self._state.sensors:
-                    val_text = f" \u2014 {s.value_c:.1f}\u00b0C" if s.value_c else ""
-                    sensor_items.append((s.id, f"{s.label} ({s.kind}){val_text}"))
+                    sensor_items.append((s.id, self._sensor_combo_label(s)))
             # Composite curves offer only cycle-free choices (DEC-150/151).
             mix_candidates = (
                 mix_candidate_curves(profile, curve.id) if curve.type == CurveType.MIX else None
@@ -977,6 +1099,27 @@ class ControlsPage(QWidget):
 
         if dont_show.isChecked() and self._settings_service:
             self._settings_service.update(show_gpu_zero_rpm_warning=False)
+
+    def _show_aio_pump_info(self) -> None:
+        """One-time popup explaining the AIO pump floor (DEC-157)."""
+        from PySide6.QtWidgets import QCheckBox, QMessageBox
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("AIO Pump")
+        msg.setText("The pump runs at a constant speed")
+        msg.setInformativeText(
+            "Your AIO pump is set to a constant speed with a 30% minimum floor.\n\n"
+            "Pumps cool best at a steady speed — running a pump too low reduces "
+            "coolant flow and cooling and can stress the pump. Keep it at a constant "
+            "level (around 80% is a good default) rather than curving it down with "
+            "temperature."
+        )
+        dont_show = QCheckBox("Don't show this again")
+        msg.setCheckBox(dont_show)
+        msg.exec()
+        if dont_show.isChecked() and self._settings_service:
+            self._settings_service.update(show_aio_pump_info=False)
 
     def _set_unsaved(self, unsaved: bool) -> None:
         self._has_unsaved = unsaved
@@ -1108,6 +1251,10 @@ class ControlsPage(QWidget):
             card.apply_card_size(base_pt, tier)
 
     def _on_capabilities_updated(self, caps) -> None:
+        # DEC-157: surface the Configure AIO action only when a liquid cooler is
+        # detected (idempotent — capabilities re-fire on every refresh).
+        aio = getattr(caps, "aio_hwmon", None)
+        self._configure_aio_btn.setVisible(bool(getattr(aio, "present", False)))
         if not hasattr(caps, "features") or caps.features is None:
             return
         # Idempotent both ways: capabilities re-fire on every refresh and every
@@ -1138,6 +1285,25 @@ class ControlsPage(QWidget):
         if self._control_loop is not None:
             self._control_loop.set_control_manual(control_id, float(pct))
 
+    def _sensor_combo_label(self, s) -> str:
+        """Curve-editor sensor-combo label, marking coolant + CPU sensors as
+        preferred (\u2605) \u2014 the recommended bindings for AIO/radiator curves
+        (DEC-157). Selection is still free; this only highlights."""
+        from control_ofc.ui.sensor_knowledge import classify_sensor_with_overrides
+
+        val_text = f" \u2014 {s.value_c:.1f}\u00b0C" if s.value_c else ""
+        overrides = self._state.sensor_class_overrides if self._state else {}
+        cls = classify_sensor_with_overrides(
+            s.id, chip_name=s.chip_name, label=s.label, overrides=overrides
+        )
+        preferred = cls.source_class in (
+            "coolant",
+            "coolant_in",
+            "coolant_out",
+        ) or s.kind in ("cpu_temp", "CpuTemp")
+        star = "\u2605 " if preferred else ""
+        return f"{star}{s.label} ({s.kind}){val_text}"
+
     def _on_sensor_values_updated(self, sensors) -> None:
         """Called ~1Hz. Rebuild sensor dropdown only when the sensor list changes."""
         current_ids = {s.id for s in sensors}
@@ -1147,8 +1313,7 @@ class ControlsPage(QWidget):
             items = []
             for s in sensors:
                 if s.id not in seen:
-                    val_text = f" \u2014 {s.value_c:.1f}\u00b0C" if s.value_c else ""
-                    items.append((s.id, f"{s.label} ({s.kind}){val_text}"))
+                    items.append((s.id, self._sensor_combo_label(s)))
                     seen.add(s.id)
             self._curve_editor.set_available_sensors(items)
 
