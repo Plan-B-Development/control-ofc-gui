@@ -41,7 +41,7 @@ Each visible series carries a coloured **latest-value marker** — a dot at its 
 
 ### Series Visibility
 
-The panel on the right is a grouped, searchable tree of every **sensor and fan** — grouped into CPU, GPU, Motherboard, Disk, and Fans (by source: D-GPU, hwmon, OpenFan). You can:
+The panel on the right is a grouped, searchable tree of every **sensor and fan** — grouped into CPU, GPU, **AIO / Liquid** (liquid-cooler coolant temperatures), Motherboard, Disk, and Fans (by source: D-GPU, hwmon, OpenFan). Liquid-cooler pump and radiator fans are tagged **(AIO)**. You can:
 
 - **Type in the "Search sensors…" box** to filter the list
 - **Click a row's checkbox** to show/hide its line on the chart
