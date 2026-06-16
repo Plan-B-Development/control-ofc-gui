@@ -42,7 +42,7 @@ The app should be portable enough to:
 4. No multi-sensor blending in curve logic. *(Superseded — Mix curves now combine several curves, each at its own sensor, and Sync curves mirror another role's output; both are explicit, acyclic, by-id dependencies. DEC-150/151/152.)*
 5. No user-customisable dashboard layout.
 6. No GUI-side profile *roaming* across machines (per-host JSON only; daemon-side activation and persistence is supported via `POST /profile/activate`).
-7. No AIO pump-specific advanced flow UI unless backed by real daemon data.
+7. No AIO pump-specific advanced flow UI unless backed by real daemon data. *(Partially unblocked — DEC-156 / GUI 1.39.0 ships **hwmon** AIO recognition (coolant sensing, `is_aio` headers, dynamic `aio_hwmon` capability), so the hwmon path is now backed by real daemon data; the guided "Configure AIO" UX lands in Phase 2 (GUI 1.40.0). USB-only coolers remain out of scope.)*
 8. No automatic public release tooling in V1.
 
 ## Mandatory architectural rule

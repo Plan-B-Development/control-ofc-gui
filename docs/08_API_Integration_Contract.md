@@ -85,6 +85,16 @@ Notable fields:
   There is deliberately **no** `fan_write_supported`/PMFW/overdrive/zero-RPM/
   kernel-warning field — Intel GPU fans are firmware-managed and never writable.
   Omitted/`present:false` on daemons that predate the field (parser-tolerant).
+- `devices.aio_hwmon` (DEC-156, daemon ≥ 1.18.0) describes hwmon-attached liquid
+  cooling (AIO). Dynamic object: `present` (a liquid cooler or coolant sensor is
+  detected), `status` (`"supported"` = a writable AIO pump/fan header exists;
+  `"monitor_only"` = detected but nothing writable, e.g. NZXT Kraken2 or coolant
+  sensing only — never offer control; `"unsupported"` = nothing detected),
+  `pump_writable`, and `coolant_available`. Additive superset of the legacy
+  `{present, status}` shape — pre-1.18.0 daemons send only the first two and the
+  GUI defaults the rest to `false`. `devices.aio_usb` stays
+  `{present:false, status:"unsupported"}` permanently: USB-only coolers
+  (liquidctl/USB-HID) are out of scope (the daemon never opens USB-HID).
 
 ### Per-call timeouts (DEC-098 / DEC-099)
 
@@ -151,7 +161,10 @@ Older daemons omit the field — the GUI defaults it to `"normal"`.
 Use as the primary sensor snapshot source.
 Expected fields:
 - id
-- kind
+- kind — one of `cpu_temp`, `mb_temp`, `disk_temp`, `gpu_temp`, or `coolant_temp`
+  (DEC-156, daemon ≥ 1.18.0 — liquid-cooler coolant temperature, surfaced by the GUI
+  as a first-class **Liquid** sensor). The GUI treats `kind` as an opaque string and
+  layers its own richer `sensor_knowledge` classification on top.
 - label
 - value_c
 - source — `"hwmon"`, `"amd_gpu"`, or `"intel_gpu"` (DEC-121; Intel discrete GPU temps via the `xe`/`i915` hwmon node, kind `gpu_temp`).
@@ -210,6 +223,10 @@ Use to discover:
   DC-driven fans differently from PWM-driven ones (`models.py`
   `HwmonHeader.pwm_mode`, daemon `responses.rs`
   `PwmHeaderEntry.pwm_mode`).
+- `is_aio` (boolean, DEC-156, daemon ≥ 1.18.0) — `true` when the header belongs to a
+  liquid cooler (NZXT Kraken / Aquacomputer). Daemon-authoritative hint so the GUI can
+  cluster and floor pumps without re-deriving hardware knowledge; per-driver pump
+  writability still rides `is_writable`. Omitted/`false` on daemons that predate it.
 
 ### GET /hwmon/lease/status
 Use to show:

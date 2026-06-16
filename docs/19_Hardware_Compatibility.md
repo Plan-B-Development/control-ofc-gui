@@ -435,6 +435,26 @@ confirmed.
 - [`drivers/gpu/drm/xe/xe_hwmon.c`](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/xe/xe_hwmon.c)
 - [`include/drm/intel/pciids.h`](https://github.com/torvalds/linux/blob/master/include/drm/intel/pciids.h)
 
+## Liquid cooling (AIO) — hwmon
+
+Phase 1 (DEC-156, daemon ≥ 1.18.0 / GUI ≥ 1.39.0) supports **hwmon-attached** liquid coolers.
+Coolers ride the ordinary hwmon path; the daemon classifies coolant sensors as `coolant_temp`,
+flags pump/fan headers `is_aio`, and reports a dynamic `aio_hwmon` capability. **Per-driver pump
+writability is asymmetric** — the GUI reflects the kernel's per-channel `is_writable` and never
+fakes control. There is **no coolant safety rule** (CPU-only thermal safety is unchanged).
+
+| Driver (hwmon `name`) | Devices | Coolant temp | Pump/fan control |
+|---|---|---|---|
+| `nzxt-kraken3` (`x53`, `z53`, `kraken2023`, `kraken2023elite`) | NZXT Kraken X/Z-series, 2023 | yes | **writable** — `pwm1` pump (+ `pwm2` fan on Z/2023) |
+| `nzxt-kraken2` (`kraken2`) | older NZXT Kraken | yes | **monitor-only** (no `pwm` exposed) |
+| `aquacomputer_d5next` (`d5next`, `highflownext`, `leakshield`, …) | Aquacomputer D5 Next, flow/leak devices | yes (labelled channel) | controllable **fan** channels writable; pump duty monitor-only |
+| `corsair-cpro` (`corsaircpro`), `nzxt-smart2` (`nzxtsmart2`) | Commander Pro / RGB & Fan hubs | no (probes are generic) | writable fans, **not** flagged AIO (fan hubs, not coolers) |
+| USB-only (much Corsair iCUE/Commander Core, some NZXT) | — | — | **out of scope** — no mainline hwmon driver; the daemon never opens USB-HID |
+
+For a coolant sensor the conservative auto-classifier misses, the user can right-click it in
+Diagnostics → **Treat as coolant**. Empirical write effectiveness is confirmable with
+`POST /hwmon/{id}/verify`.
+
 ## ACPI Resource Conflicts
 
 Some BIOS implementations claim I/O port ranges used by Super I/O chips

@@ -317,6 +317,27 @@ def _label_indicates_cpu_or_pump(label: str) -> bool:
     return any(hint in lower for hint in _CPU_PUMP_LABEL_HINTS)
 
 
+def _member_is_aio_header(member: ControlMember) -> bool:
+    """True when a hwmon member is a liquid-cooler header (NZXT Kraken /
+    Aquacomputer), so a pump labelled only ``pwm1`` still gets the 30% pump
+    floor (DEC-156).
+
+    Derived from the chip-name segment of the stable id
+    (``hwmon:<chip>:<device>:pwmN:<label>``) using the shared cooler set — the
+    daemon's ``is_aio`` flag is not carried on a persisted member, so the chip
+    embedded in the id is the schema-free signal that also works offline.
+    """
+    if member.source != "hwmon":
+        return False
+    # Local import mirrors app_state's hwmon_label_resolver usage — keeps the
+    # cooler chip-name set in one place without a module-load import cycle.
+    from control_ofc.ui.sensor_knowledge import is_liquid_cooler_chip
+
+    parts = member.member_id.split(":")
+    chip = parts[1] if len(parts) > 1 else ""
+    return is_liquid_cooler_chip(chip)
+
+
 def infer_member_role(member: ControlMember) -> str:
     """Classify a single member into one of the three role buckets."""
     # Intel discrete GPU fans are read-only and never offered as controllable
@@ -325,7 +346,9 @@ def infer_member_role(member: ControlMember) -> str:
     # the control loop no-ops the write).
     if member.source in ("amd_gpu", "intel_gpu"):
         return CONTROL_ROLE_GPU
-    if member.source == "hwmon" and _label_indicates_cpu_or_pump(member.member_label):
+    if member.source == "hwmon" and (
+        _label_indicates_cpu_or_pump(member.member_label) or _member_is_aio_header(member)
+    ):
         return CONTROL_ROLE_CPU_PUMP
     return CONTROL_ROLE_CHASSIS
 

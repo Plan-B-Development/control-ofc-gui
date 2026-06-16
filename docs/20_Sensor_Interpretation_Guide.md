@@ -186,6 +186,12 @@ board features.
 | Contains `Motherboard` | `board_ambient` | high |
 | Other | `vendor_labeled` | high |
 
+Beyond the ASUS EC, dedicated **hwmon liquid coolers** are classified by chip name + label
+(DEC-156): NZXT Kraken (`x53`/`z53`/`kraken2023`/`kraken2023elite`/`kraken2`) and Aquacomputer
+(`d5next`/`highflownext`/`leakshield`) coolant channels map to `coolant` (high confidence), and any
+`coolant`/`water`/`liquid` label maps to `coolant` on any chip (medium). The daemon reports these as
+the `coolant_temp` sensor kind; a user override can force any sensor to `coolant`.
+
 This driver only loads on explicitly supported ASUS boards (the kernel driver
 has a board allowlist). All readings are high confidence because the EC provides
 the identity mapping.

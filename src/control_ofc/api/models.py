@@ -120,6 +120,25 @@ class UnsupportedCapability:
 
 
 @dataclass
+class AioHwmonCapability:
+    """Liquid-cooler (AIO) hwmon capability (daemon >= 1.18.0, DEC-156).
+
+    Backward-compatible superset of :class:`UnsupportedCapability`: ``present``
+    and ``status`` are always parseable (pre-1.18.0 daemons send only those),
+    while ``pump_writable`` / ``coolant_available`` default to ``False`` against
+    an older daemon. ``status`` is one of ``"supported"`` (a writable AIO
+    pump/fan header), ``"monitor_only"`` (a cooler/coolant sensor is detected
+    but nothing is writable — never offer control), or ``"unsupported"``.
+    USB-only coolers are out of scope and reported via ``aio_usb``.
+    """
+
+    present: bool = False
+    status: str = "unsupported"
+    pump_writable: bool = False
+    coolant_available: bool = False
+
+
+@dataclass
 class FeatureFlags:
     openfan_write_supported: bool = False
     hwmon_write_supported: bool = False
@@ -142,7 +161,7 @@ class Capabilities:
     hwmon: HwmonCapability = field(default_factory=HwmonCapability)
     amd_gpu: AmdGpuCapability = field(default_factory=AmdGpuCapability)
     intel_gpu: IntelGpuCapability = field(default_factory=IntelGpuCapability)
-    aio_hwmon: UnsupportedCapability = field(default_factory=UnsupportedCapability)
+    aio_hwmon: AioHwmonCapability = field(default_factory=AioHwmonCapability)
     aio_usb: UnsupportedCapability = field(default_factory=UnsupportedCapability)
     features: FeatureFlags = field(default_factory=FeatureFlags)
     limits: SafetyLimits = field(default_factory=SafetyLimits)
@@ -300,6 +319,7 @@ class HwmonHeader:
     max_pwm_percent: int = 100
     is_writable: bool = True
     pwm_mode: int | None = None  # 0=DC, 1=PWM, None=not exposed
+    is_aio: bool = False  # liquid-cooler header (daemon >= 1.18.0, DEC-156)
 
 
 @dataclass
@@ -757,8 +777,8 @@ def parse_capabilities(data: dict) -> Capabilities:
         hwmon=HwmonCapability(**_filter_fields(HwmonCapability, devices.get("hwmon", {}))),
         amd_gpu=amd_gpu,
         intel_gpu=intel_gpu,
-        aio_hwmon=UnsupportedCapability(
-            **_filter_fields(UnsupportedCapability, devices.get("aio_hwmon", {}))
+        aio_hwmon=AioHwmonCapability(
+            **_filter_fields(AioHwmonCapability, devices.get("aio_hwmon", {}))
         ),
         aio_usb=UnsupportedCapability(
             **_filter_fields(UnsupportedCapability, devices.get("aio_usb", {}))

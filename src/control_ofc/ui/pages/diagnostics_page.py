@@ -70,6 +70,7 @@ from control_ofc.ui.hwmon_guidance import (
 )
 from control_ofc.ui.sensor_knowledge import (
     classify_sensor,
+    classify_sensor_with_overrides,
     format_sensor_tooltip,
     temp_type_label,
 )
@@ -919,6 +920,11 @@ class DiagnosticsPage(QWidget):
             "Intel GPU: \u2014", "Diagnostics_Label_intelGpu"
         )
         device_layout.addWidget(self._intel_gpu_label)
+
+        # DEC-156: liquid cooling (AIO) \u2014 hwmon-only, honest about control.
+        self._aio_label = _transparent_label("Liquid cooling: \u2014", "Diagnostics_Label_aio")
+        self._aio_label.setWordWrap(True)
+        device_layout.addWidget(self._aio_label)
 
         self._features_label = _transparent_label("Features: \u2014", "Diagnostics_Label_features")
         self._features_label.setWordWrap(True)
@@ -1780,6 +1786,22 @@ class DiagnosticsPage(QWidget):
         else:
             self._intel_gpu_label.setText("Intel GPU: Not detected")
 
+        # DEC-156: liquid cooling (AIO) — hwmon-only and honest about
+        # controllability. USB-only coolers (liquidctl/USB-HID) are out of scope:
+        # the daemon does not probe USB, so they simply read as not detected —
+        # never faked as controllable.
+        aio = caps.aio_hwmon
+        if aio.present:
+            if aio.pump_writable:
+                detail = "pump/fan writable"
+            else:
+                detail = "monitor-only (read-only driver — use vendor tooling)"
+            if aio.coolant_available:
+                detail += ", coolant sensed"
+            self._aio_label.setText(f"Liquid cooling: Detected (hwmon) — {detail}")
+        else:
+            self._aio_label.setText("Liquid cooling: Not detected")
+
     def _refresh_hwmon_and_features(self, caps: Capabilities) -> None:
         """Render the Overview hwmon + Features lines, using runtime
         ``writable_headers`` when ``HardwareDiagnosticsResult`` is available.
@@ -1952,11 +1974,13 @@ class DiagnosticsPage(QWidget):
         col_count = len(_SENSOR_COLUMNS)
         self._ensure_row_items(table, row, col_count - 1)  # Details holds a widget
 
-        classification = classify_sensor(
+        classification = classify_sensor_with_overrides(
+            s.id,
             chip_name=s.chip_name,
             label=s.label,
             temp_type=s.temp_type,
             board_vendor=board_vendor,
+            overrides=self._sensor_overrides(),
         )
 
         # ── Quirk chip on the Label cell ─────────────────────────────
@@ -2247,6 +2271,22 @@ class DiagnosticsPage(QWidget):
             hide_action.triggered.connect(lambda: self._set_sensor_hidden(sensor.id, True))
             menu.addAction(hide_action)
 
+        # DEC-156: let the user force/clear a coolant classification when the
+        # conservative auto-classifier misses (or wrongly claims) a coolant sensor.
+        menu.addSeparator()
+        if self._sensor_overrides().get(sensor.id) == "coolant":
+            reset_action = QAction("Reset classification to auto", self)
+            reset_action.setObjectName("Diagnostics_Action_resetSensorClass")
+            reset_action.triggered.connect(lambda: self._set_sensor_class_override(sensor.id, ""))
+            menu.addAction(reset_action)
+        else:
+            coolant_action = QAction("Treat as coolant", self)
+            coolant_action.setObjectName("Diagnostics_Action_treatAsCoolant")
+            coolant_action.triggered.connect(
+                lambda: self._set_sensor_class_override(sensor.id, "coolant")
+            )
+            menu.addAction(coolant_action)
+
         menu.exec(self._sensor_table.viewport().mapToGlobal(pos))
 
     def _row_to_sensor(self, row: int) -> SensorReading | None:
@@ -2299,6 +2339,29 @@ class DiagnosticsPage(QWidget):
         if not changed:
             return
         self._set_hidden_sensor_ids(current)
+        self._render_sensors_table()
+
+    def _sensor_overrides(self) -> dict[str, str]:
+        """Live view of the user's sensor-classification overrides (DEC-156)."""
+        if self._state is not None:
+            return self._state.sensor_class_overrides
+        return dict(getattr(self._settings_service.settings, "sensor_class_overrides", {}) or {})
+
+    def _set_sensor_class_override(self, sensor_id: str, source_class: str) -> None:
+        """Force (``source_class="coolant"``) or clear (``""``) a sensor's
+        classification, persist it, and re-render the table (DEC-156)."""
+        if self._state is not None:
+            # State emits the change; MainWindow persists it to settings.
+            self._state.set_sensor_class_override(sensor_id, source_class)
+        else:
+            overrides = dict(
+                getattr(self._settings_service.settings, "sensor_class_overrides", {}) or {}
+            )
+            if source_class:
+                overrides[sensor_id] = source_class
+            else:
+                overrides.pop(sensor_id, None)
+            self._settings_service.update(sensor_class_overrides=overrides)
         self._render_sensors_table()
 
     def _mirror_hidden_to_dashboard(self) -> None:

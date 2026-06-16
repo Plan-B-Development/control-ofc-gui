@@ -84,10 +84,14 @@ class MainWindow(QWidget):
 
         # Restore persisted settings into state
         self._state.fan_aliases = dict(self._settings_service.settings.fan_aliases)
+        self._state.sensor_class_overrides = dict(
+            self._settings_service.settings.sensor_class_overrides
+        )
         self._series_selection.load_hidden(self._settings_service.settings.hidden_chart_series)
 
         # Persist alias and series changes back to settings
         self._state.fan_alias_changed.connect(self._persist_fan_alias)
+        self._state.sensor_class_override_changed.connect(self._persist_sensor_class_override)
         self._series_selection.selection_changed.connect(self._persist_series_selection)
 
         # --- Status banner + error banner ---
@@ -328,6 +332,11 @@ class MainWindow(QWidget):
 
     def _persist_fan_alias(self, _fan_id: str, _display_name: str) -> None:
         self._settings_service.update(fan_aliases=dict(self._state.fan_aliases))
+
+    def _persist_sensor_class_override(self, _sensor_id: str, _source_class: str) -> None:
+        self._settings_service.update(
+            sensor_class_overrides=dict(self._state.sensor_class_overrides)
+        )
 
     def _persist_series_selection(self) -> None:
         hidden = list(self._series_selection.to_dict()["hidden_keys"])
