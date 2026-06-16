@@ -17,6 +17,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from PySide6.QtWidgets import QLabel
 
 from control_ofc.api.models import (
     BoardInfo,
@@ -35,6 +36,7 @@ from control_ofc.ui.pages.diagnostics_page import (
     reclaim_severity_color,
     render_reclaim_rows,
 )
+from control_ofc.ui.widgets.readiness_report import advisory_rows
 
 
 @pytest.fixture()
@@ -311,16 +313,18 @@ class TestGigabyteIt8696QuirkAutoShow:
         )
         page._populate_hw_diagnostics(diag)
 
-        # The vendor quirk card is the operator's actionable next step —
-        # asserting visibility plus the chip+vendor label keeps the test
-        # honest if the underlying VendorQuirk text is reworded.
-        assert not page._vendor_quirk_label.isHidden()
-        text = page._vendor_quirk_label.text()
-        assert "IT8696E" in text or "it8696" in text.lower()
-        # Severity is "high" in the existing VENDOR_QUIRKS_DB entry, so the
-        # CSS class should be the warn class (CriticalChip is reserved for
-        # the IT8689E "no software workaround" case).
-        assert page._vendor_quirk_label.property("class") == "WarningChip"
+        # DEC-158: vendor quirks now render as per-advisory rows. The container
+        # is visible and there is one row per advisory; the HIGH SmartFan quirk
+        # sorts first, so row 0 carries the WarningChip badge (CriticalChip is
+        # reserved for the IT8689E "no software workaround" case) and a summary
+        # naming the chip — keeping the test honest if the DB text is reworded.
+        assert not page._advisory_container.isHidden()
+        assert len(page._advisory_rows) == len(advisory_rows(diag))
+        badge0 = page.findChild(QLabel, "Diagnostics_AdvisoryBadge_0")
+        assert badge0.property("class") == "WarningChip"
+        assert "HIGH" in badge0.text()
+        summary0 = page.findChild(QLabel, "Diagnostics_AdvisorySummary_0")
+        assert "IT8696E" in summary0.text() or "it8696" in summary0.text().lower()
 
     def test_quirk_card_hidden_for_non_gigabyte_it8696(self, app) -> None:
         # Sanity check the matcher: the same chip on a non-Gigabyte board
@@ -344,7 +348,9 @@ class TestGigabyteIt8696QuirkAutoShow:
             thermal_safety=ThermalSafetyInfo(state="normal"),
         )
         page._populate_hw_diagnostics(diag)
-        assert page._vendor_quirk_label.isHidden()
+        assert advisory_rows(diag) == []
+        assert page._advisory_container.isHidden()
+        assert page._advisory_rows == []
 
 
 class TestHwDiagAsyncFetch:

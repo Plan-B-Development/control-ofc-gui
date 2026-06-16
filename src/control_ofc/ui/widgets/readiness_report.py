@@ -36,10 +36,13 @@ from PySide6.QtWidgets import (
 
 from control_ofc.ui.hwmon_guidance import (
     REMEDIATION_DISCLAIMER,
+    VendorQuirk,
+    advisory_detail_html,
     detect_module_conflicts,
     dual_chip_warning_html,
     format_driver_status,
     lookup_vendor_quirks,
+    severity_display,
 )
 from control_ofc.ui.theme import active_theme
 
@@ -433,6 +436,48 @@ def module_rows(diag: HardwareDiagnosticsResult) -> list[ModuleRow]:
     ]
 
 
+def severity_hex(css_class: str, t) -> str:
+    """Resolve a severity chip class to its themed hex colour (DEC-158).
+
+    The single place the pop-out report (HTML — no QSS class cascade) derives
+    the same colours the inline panel gets from the ``.*Chip`` stylesheet rules,
+    so the two presentations cannot drift.
+    """
+    return {
+        "CriticalChip": t.status_crit,
+        "WarningChip": t.status_warn,
+        "CautionChip": t.status_caution,
+        "InfoChip": t.status_info,
+        "SuccessChip": t.status_ok,
+    }.get(css_class, t.text_primary)
+
+
+def advisory_rows(diag: HardwareDiagnosticsResult) -> list[VendorQuirk]:
+    """Vendor/chip advisories for the detected hardware, most-severe first.
+
+    Shared by the inline Troubleshooting panel and the pop-out report
+    (DEC-115/DEC-158) so both render the same advisories in the same order.
+    De-duplicated by summary — a board with two Super-I/O chips can match one
+    generic vendor quirk twice.
+    """
+    board = diag.board
+    quirks: list[VendorQuirk] = []
+    seen: set[str] = set()
+    for chip in diag.hwmon.chips_detected:
+        for q in lookup_vendor_quirks(
+            board.vendor,
+            chip.chip_name,
+            cpu_vendor=diag.cpu_vendor,
+            board_name=board.name,
+        ):
+            if q.summary in seen:
+                continue
+            seen.add(q.summary)
+            quirks.append(q)
+    quirks.sort(key=lambda q: severity_display(q.severity).rank, reverse=True)
+    return quirks
+
+
 def thermal_line(ts) -> str | None:
     """Return the one-line thermal-safety summary, or ``None`` when no thermal
     info is present. Only ``state`` is daemon-supplied (escape in HTML)."""
@@ -454,11 +499,7 @@ def build_readiness_report_html(diag: HardwareDiagnosticsResult) -> str:
     t = active_theme()
     hw = diag.hwmon
     verdict_text, verdict_cls = readiness_verdict(diag)
-    sev_color = {
-        "SuccessChip": t.status_ok,
-        "WarningChip": t.status_warn,
-        "CriticalChip": t.status_crit,
-    }.get(verdict_cls, t.text_primary)
+    sev_color = severity_hex(verdict_cls, t)
 
     def h(title: str) -> str:
         return f'<h3 style="color:{t.text_primary};margin-bottom:2px">{escape(title)}</h3>'
@@ -475,6 +516,26 @@ def build_readiness_report_html(diag: HardwareDiagnosticsResult) -> str:
     if identity:
         out.append(f"<div>Board: {escape(identity)}</div>")
     out.append(f"<div>{header_summary_line(hw)}.</div>")
+
+    # Advisories — board/chip quirks, most-severe first, with the same
+    # per-severity colour + icon + word as the inline panel (DEC-158). Shared
+    # data + presentation (advisory_rows / severity_display) so the report and
+    # the panel cannot drift (DEC-115).
+    advisories = advisory_rows(diag)
+    if advisories:
+        out.append(h("Advisories"))
+        for q in advisories:
+            d = severity_display(q.severity)
+            color = severity_hex(d.css_class, t)
+            out.append(
+                f'<div style="margin-bottom:6px">'
+                f'<span style="color:{color};font-weight:bold">'
+                f"{d.glyph} {d.word}</span> <b>{escape(q.summary)}</b>"
+            )
+            detail = advisory_detail_html(q.details)
+            if detail:
+                out.append(f'<div style="color:{t.text_secondary};margin-left:10px">{detail}</div>')
+            out.append("</div>")
 
     # Detected chips — same five columns as the inline card (DEC-115).
     crows = chip_rows(diag)

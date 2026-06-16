@@ -35,9 +35,10 @@ from control_ofc.api.models import (
     ThermalSafetyInfo,
 )
 from control_ofc.services.app_state import AppState
+from control_ofc.ui.hwmon_guidance import severity_display
 from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
-from control_ofc.ui.widgets.readiness_report import detect_readiness_problems
+from control_ofc.ui.widgets.readiness_report import advisory_rows, detect_readiness_problems
 
 SECTION_NAMES = [
     "Diagnostics_Section_detectedHardware",
@@ -82,11 +83,12 @@ OUTSIDE_DETAIL_NAMES = [
     "Diagnostics_Label_moduleConflicts",
     "Diagnostics_Label_revertHeadline",
     "Diagnostics_Label_dualChipWarning",
-    "Diagnostics_Label_vendorQuirk",
+    "Diagnostics_Container_advisories",  # DEC-158: replaced the flat vendor-quirk label
     "Diagnostics_Label_acpiConflicts",
     "Diagnostics_Label_hwReadySummary",
     "Diagnostics_Label_boardInfo",
     "Diagnostics_Label_noIssues",
+    "Diagnostics_Label_readinessDisclaimer",  # DEC-158: panel-level liability note
 ]
 
 # The retired DEC-115 outer collapsible card.
@@ -172,6 +174,21 @@ def _healthy_diag() -> HardwareDiagnosticsResult:
         hwmon=HwmonDiagnostics(
             chips_detected=[
                 HwmonChipInfo(chip_name="nct6779", expected_driver="nct6775", header_count=5)
+            ],
+            total_headers=5,
+            writable_headers=5,
+        ),
+    )
+
+
+def _diag_gigabyte_it8696() -> HardwareDiagnosticsResult:
+    """A Gigabyte IT8696E board → at least one actionable (HIGH SmartFan) vendor
+    advisory, used to exercise the per-advisory rows."""
+    return _diag(
+        board=BoardInfo(vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER"),
+        hwmon=HwmonDiagnostics(
+            chips_detected=[
+                HwmonChipInfo(chip_name="it8696", expected_driver="it87", header_count=5)
             ],
             total_headers=5,
             writable_headers=5,
@@ -265,7 +282,9 @@ class TestIssueChecklist:
         badge = page.findChild(QLabel, "Diagnostics_IssueBadge_bios_revert")
         assert badge is not None
         assert badge.property("class") == "CriticalChip"
-        assert badge.text() == "CRITICAL"
+        # DEC-158: the badge now leads with a severity glyph, so assert the word
+        # is present rather than equal to the whole label.
+        assert "CRITICAL" in badge.text()
 
     def test_issue_rows_outside_detail_sections(self, qtbot):
         # The checklist is a top-level health summary, never buried in a
@@ -283,6 +302,87 @@ class TestIssueChecklist:
         page._populate_hw_diagnostics(_healthy_diag())
         assert page._issue_rows == []
         assert not page._no_issues_label.isHidden()
+
+
+class TestAdvisories:
+    """DEC-158: board/chip vendor quirks render as per-advisory rows — a coloured
+    severity badge (icon + word), an always-visible summary, and a collapsible
+    detail whose default-open state follows severity — replacing the old single
+    flat ``[SEVERITY] …`` PlainText label so INFO no longer looks like a warning."""
+
+    def test_container_hidden_when_no_advisories(self, qtbot):
+        page = _make_page(qtbot)
+        assert advisory_rows(_healthy_diag()) == []
+        page._populate_hw_diagnostics(_healthy_diag())
+        assert page._advisory_container.isHidden()
+        assert page._advisory_rows == []
+
+    def test_one_row_per_advisory_with_severity_treatment(self, qtbot):
+        page = _make_page(qtbot)
+        diag = _diag_gigabyte_it8696()
+        advisories = advisory_rows(diag)
+        assert advisories  # the DB has at least one Gigabyte IT8696E quirk
+        page._populate_hw_diagnostics(diag)
+
+        assert not page._advisory_container.isHidden()
+        assert len(page._advisory_rows) == len(advisories)
+        for i, quirk in enumerate(advisories):
+            disp = severity_display(quirk.severity)
+            badge = page.findChild(QLabel, f"Diagnostics_AdvisoryBadge_{i}")
+            assert badge is not None, f"missing advisory badge {i}"
+            assert disp.word in badge.text()
+            assert badge.property("class") == disp.css_class
+            summary = page.findChild(QLabel, f"Diagnostics_AdvisorySummary_{i}")
+            assert summary.text() == quirk.summary
+            section = page.findChild(CollapsibleSection, f"Diagnostics_Section_advisory_{i}")
+            assert section is not None
+            # CRITICAL/HIGH open by default; MEDIUM/INFO collapsed.
+            assert section.is_expanded() is disp.default_expanded
+
+    def test_advisories_sorted_most_severe_first(self, qtbot):
+        # The Gigabyte IT8696E board matches both a HIGH SmartFan quirk and a
+        # MEDIUM IT8883 quirk; the HIGH one must come first.
+        diag = _diag_gigabyte_it8696()
+        ranks = [severity_display(q.severity).rank for q in advisory_rows(diag)]
+        assert ranks == sorted(ranks, reverse=True)
+
+    def test_info_advisory_uses_info_chip_not_warning(self, qtbot):
+        # The whole point of DEC-158: an INFO advisory must not share the warning
+        # tiers' orange. ASUS + NCT6798D yields a single info mainline-coverage note.
+        page = _make_page(qtbot)
+        diag = _diag()  # ASUS ProArt X870E + nct6798
+        advisories = advisory_rows(diag)
+        assert advisories and all(q.severity == "info" for q in advisories)
+        page._populate_hw_diagnostics(diag)
+        badge = page.findChild(QLabel, "Diagnostics_AdvisoryBadge_0")
+        assert badge.property("class") == "InfoChip"
+        assert badge.property("class") not in ("WarningChip", "CautionChip", "CriticalChip")
+        section = page.findChild(CollapsibleSection, "Diagnostics_Section_advisory_0")
+        assert section.is_expanded() is False
+
+    def test_advisory_detail_has_doc_link(self, qtbot):
+        page = _make_page(qtbot)
+        page._populate_hw_diagnostics(_diag_gigabyte_it8696())
+        detail = page.findChild(QLabel, "Diagnostics_Label_advisoryDetail_0")
+        assert detail is not None
+        assert detail.openExternalLinks() is True
+        assert 'href="' in detail.text()
+        assert "manufacturer-quirks" in detail.text()
+
+    def test_rows_cleared_on_rerender(self, qtbot):
+        page = _make_page(qtbot)
+        page._populate_hw_diagnostics(_diag_gigabyte_it8696())
+        assert page._advisory_rows
+        page._populate_hw_diagnostics(_healthy_diag())
+        assert page._advisory_rows == []
+        assert page._advisory_container.isHidden()
+
+    def test_advisories_outside_detail_sections(self, qtbot):
+        page = _make_page(qtbot)
+        page._populate_hw_diagnostics(_diag_gigabyte_it8696())
+        for section_name in SECTION_NAMES:
+            section = page.findChild(CollapsibleSection, section_name)
+            assert section.findChild(QFrame, "Diagnostics_Advisory_0") is None
 
 
 class TestBiosSectionVisibility:
