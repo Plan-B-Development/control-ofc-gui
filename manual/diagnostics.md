@@ -29,6 +29,7 @@ Two information cards:
 | **hwmon** | Whether motherboard fan headers are detected, header count, and whether writes require a lease |
 | **AMD GPU** | Whether an AMD discrete GPU is detected, its model, PCI address, and fan control method (`pmfw` or legacy `pwm1`) |
 | **Intel GPU** | Whether an Intel Arc discrete GPU is detected, its model, and PCI address. Intel GPU fans are always reported `read_only (firmware-managed)` — the `xe`/`i915` drivers expose no fan-control path |
+| **Liquid cooling** | Whether a liquid cooler (AIO) is detected via hwmon, and whether its pump/fan is writable, monitor-only (a read-only driver such as NZXT Kraken2), or not detected. USB-only coolers are out of scope and shown as not detected |
 | **Features** | Summary of write capabilities (OpenFan writes, hwmon writes) |
 
 ## Sensors Tab
@@ -63,6 +64,8 @@ Open it via the per-row **Details** button, a row double-click, or right-click �
 ### Hiding sensors
 
 Right-click a row → **Hide sensor** to remove a sensor you don't care about (a duplicate, or a chip that always reads garbage). Hidden sensors are never silently dropped — they collapse into a `▸ N hidden sensors` toggle row at the bottom that you can expand again. This hide-list is **local to this tab**; the **Mirror hidden to dashboard** button in the header pushes the current hide-list into the shared dashboard series selection as a one-shot.
+
+Right-click also offers **Treat as coolant** / **Reset to auto** — force a sensor to be classified as a liquid-cooling **coolant** temperature (so it groups under *AIO / Liquid* on the dashboard) when the automatic classifier is too conservative, or clear that override. This is a local GUI preference.
 
 Hover any row to see a tooltip explaining the chip's source class, description, and any known driver quirks. For deeper sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
 

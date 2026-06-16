@@ -31,7 +31,7 @@ Deleting a profile asks for confirmation and cannot be undone; deleting the curr
 
 ## Fan Roles (Top Section)
 
-The section header has two buttons: **Fan Wizard** (identify and label your physical fans — see [Fan Wizard](fan-wizard.md)) and **+ Fan Role**, which offers two kinds of role:
+The section header has **Fan Wizard** (identify and label your physical fans — see [Fan Wizard](fan-wizard.md)), **Configure AIO** (shown only when a liquid cooler is detected — see [Configuring an AIO](#configuring-an-aio--liquid-cooler)), and **+ Fan Role**, which offers two kinds of role:
 
 - **Single Output Fan Role** — one physical output
 - **Group Fan Role (Multi-Fan)** — several outputs acting together
@@ -45,6 +45,15 @@ Each fan role appears as a card:
 | **Curve** | The assigned curve and its type, or "Curve: Manual" for fixed-speed roles. A **Min: N%** badge appears when a stall-protection floor applies (see [role-aware minimums](profiles-and-curves.md#role-aware-minimum-stall-protection)) |
 | **Now** | Live output and the driving sensor: "Now: 65% • Tctl 45.0°C". Mixed roles with a GPU member also show the GPU's own value ("(GPU 0%)") when it idles below the rest |
 | **Bottom row** | Measured RPM on the left; **Manual**, **Delete**, and **Edit…** buttons on the right |
+
+### Configuring an AIO / liquid cooler
+
+When a liquid cooler (e.g. an NZXT Kraken or an Aquacomputer pump) is detected, a **Configure AIO** button appears in the Fan Roles header. It sets your cooler up in one step:
+
+- A **pump** control at a **constant speed** — choose Low (30%), Mid (60%), High (80%, the default), or Max (100%). A pump runs best at a steady speed rather than a temperature curve, so these are fixed levels with a 30% minimum floor.
+- A **radiator-fan** control bound to a temperature sensor — the **coolant** sensor by default (recommended, since the radiator's job is to cool the loop), though any sensor is selectable and coolant/CPU are highlighted as preferred.
+
+A read-only / monitor-only cooler (one whose pump the kernel cannot drive, such as an older NZXT Kraken2) skips the pump step and offers radiator + coolant monitoring only — it never offers control that would fail. The controls it creates are ordinary fan roles you can edit afterward.
 
 ### Inline Manual Override
 
