@@ -205,6 +205,30 @@ class TestReport:
         assert "<script>evil</script>" not in html
         assert "&lt;script&gt;" in html
 
+    def test_advisories_section_mirrors_panel(self):
+        # DEC-158/DEC-115: the report gains an Advisories section deriving from
+        # the same advisory_rows + severity_display the inline panel uses, so the
+        # two cannot drift. Gigabyte IT8696E matches a HIGH SmartFan quirk.
+        diag = _healthy(
+            board=BoardInfo(vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER"),
+            hwmon=HwmonDiagnostics(
+                chips_detected=[
+                    HwmonChipInfo(chip_name="it8696", expected_driver="it87", header_count=5)
+                ],
+                total_headers=5,
+                writable_headers=5,
+            ),
+        )
+        html = build_readiness_report_html(diag)
+        assert "Advisories" in html
+        assert "HIGH" in html
+        assert "SmartFan" in html
+
+    def test_no_advisories_section_when_none(self):
+        # A board with no matching quirk shows no Advisories heading.
+        html = build_readiness_report_html(_healthy())
+        assert "Advisories" not in html
+
 
 class TestSharedFormatters:
     """DEC-115: the card and the report build their section bodies from one set

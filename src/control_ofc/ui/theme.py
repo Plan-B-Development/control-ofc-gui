@@ -79,6 +79,12 @@ class ThemeTokens:
     status_warn: str = "#ff9800"
     status_crit: str = "#ef5350"
     status_info: str = "#7ec8e3"
+    # status_caution: amber/gold for the MEDIUM advisory tier (DEC-158). Placed
+    # between status_warn (orange, HIGH) and status_info (blue, INFO) by hue so
+    # the four advisory severities separate by colour as well as by icon + word
+    # — INFO no longer shares an orange with the warning tiers. 8.6:1 on
+    # surface_2, comfortably past the WCAG AA 4.5:1 text minimum.
+    status_caution: str = "#f5c518"
 
     # ─── Charts / Graphs ─────────────────────────────────────────────
     chart_bg: str = "#16213e"
@@ -873,13 +879,24 @@ def build_stylesheet(t: ThemeTokens) -> str:
         border: 1px solid {t.modal_border};
     }}
 
-    /* Warning/status chips */
+    /* Warning/status chips. The four advisory-severity tiers (DEC-158) map
+       CRITICAL→CriticalChip, HIGH→WarningChip, MEDIUM→CautionChip,
+       INFO→InfoChip; each badge also carries an icon + word so colour is never
+       the only severity cue (WCAG 1.4.1). */
     .WarningChip {{
         color: {t.status_warn};
     }}
 
     .CriticalChip {{
         color: {t.status_crit};
+    }}
+
+    .CautionChip {{
+        color: {t.status_caution};
+    }}
+
+    .InfoChip {{
+        color: {t.status_info};
     }}
 
     .SuccessChip {{

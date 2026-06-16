@@ -337,13 +337,28 @@ Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
   stack collapses to nothing on a healthy system, and is always on screen when
   present — never behind a collapse.
 - **Issue checklist** (DEC-124) — one row per detected problem
-  (`detect_readiness_problems`): a severity badge (`CriticalChip` /
-  `WarningChip`), the problem label, its one-line fix, and a clickable doc link.
-  A healthy system shows a single `✓ No issues detected` line. This promotes the
-  former buried "To fix" block into a first-class, always-visible checklist (per
-  NN/g progressive disclosure + PatternFly status-and-severity guidance).
-- **Informational alerts** (DEC-116): the **dual-chip** setup warning, **vendor
-  quirks**, and **ACPI conflicts** — advisory, shown only when present.
+  (`detect_readiness_problems`): a severity badge, the problem label, its
+  one-line fix, and a clickable doc link. A healthy system shows a single
+  `✓ No issues detected` line. This promotes the former buried "To fix" block
+  into a first-class, always-visible checklist (per NN/g progressive disclosure
+  + PatternFly status-and-severity guidance). The badge is built from the shared
+  `severity_display` mapping (DEC-158), so it carries an icon **and** the word
+  **and** a colour (`CriticalChip` red / `WarningChip` orange) — colour is never
+  the only cue (WCAG 1.4.1).
+- **Advisories** (`Diagnostics_Container_advisories`, DEC-158) — board/chip
+  vendor quirks, one collapsible row each, most-severe-first. Replaces the old
+  single flat `[SEVERITY] …` PlainText label: every advisory now shows a
+  per-severity badge (icon + word + colour + weight) and an always-visible
+  summary, with its detail in a `CollapsibleSection` that opens by default for
+  **CRITICAL/HIGH** and stays collapsed for **MEDIUM/INFO**. The four tiers map
+  CRITICAL→red, HIGH→orange, MEDIUM→amber (`status_caution`), INFO→blue
+  (`status_info`) — so **INFO no longer shares the warning tiers' orange**. Each
+  detail links to the Hardware Compatibility Guide's *Manufacturer Quirks*
+  section and reduces bullet overuse (`advisory_detail_html`: 1–2 items render as
+  prose, only 3+ short parallel items become a list). Only GUI-authored DB
+  strings are rendered (no daemon string is interpolated), so rich text is safe
+  (DEC-106). The **dual-chip** setup warning and **ACPI conflicts** sit alongside
+  it — advisory, shown only when present.
 - **Summary + board identity** — the readiness summary line and board identity.
 - **Five flat detail sub-sections** (`CollapsibleSection`, all collapsed by
   default): *Detected hardware* (chip + kernel-module tables), *BIOS
@@ -362,6 +377,11 @@ Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
   click handler re-checks that gate, a success clears the session's
   `gui_wrote_gpu_fan` flag (making the close-time auto-reset a no-op until
   the next GUI GPU write), and both outcomes land in the event log.
+- **Liability disclaimer** (`Diagnostics_Label_readinessDisclaimer`, DEC-158) —
+  one calm, persistent note at the bottom of the card (`REMEDIATION_DISCLAIMER`,
+  `CardMeta` weight): the checklist fixes, advisory details, and chip guidance
+  all describe kernel/driver/firmware changes applied at the user's own risk.
+  Low-weight by design — heavy red styling is reserved for the real alerts above.
 
 The sibling **Fans** tab holds only the live *Fan Status* table.
 
@@ -412,9 +432,14 @@ visibility-gated labels keep working unchanged inside the sections.
   as rich text with external links — sidestepping the DEC-106 escaping
   requirement.
 - **Pop-out report** — *Open Full Report ↗* opens `ReadinessReportDialog`, a
-  themed, resizable `QTextBrowser` window with the complete report (summary,
-  detected-hardware table, thermal/GPU, and the "To fix" block). Daemon strings
-  **are** HTML-escaped here. Link colour is set inline per anchor (the app-wide
+  themed, resizable `QTextBrowser` window with the complete report (summary, an
+  **Advisories** section, detected-hardware table, thermal/GPU, and the "To fix"
+  block). The Advisories section (DEC-158) lists the same `advisory_rows(diag)`
+  the inline panel shows, in the same most-severe-first order and with the same
+  `severity_display` colour + icon + word — `severity_hex` resolves the chip
+  class to a hex colour since the HTML report has no QSS class cascade — so the
+  report and the panel cannot drift (DEC-115). Daemon strings **are**
+  HTML-escaped here. Link colour is set inline per anchor (the app-wide
   stylesheet overrides the palette Link role, so inline `style="color:…"` is
   the only reliably-applied path for contrast).
 

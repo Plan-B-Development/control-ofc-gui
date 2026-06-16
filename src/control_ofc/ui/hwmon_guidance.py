@@ -9,6 +9,7 @@ BIOS firmware actively interferes with Linux fan control.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from html import escape
 
 # Shown beneath every "To fix" block across the diagnostics UI (DEC-113).
 # Lives here (the lowest-level guidance module) so both the dual-chip warning
@@ -19,6 +20,98 @@ REMEDIATION_DISCLAIMER = (
     "your configuration first — an incorrect kernel parameter can stop the "
     "system booting."
 )
+
+
+# ---------------------------------------------------------------------------
+# Advisory severity presentation (DEC-158)
+#
+# One source of truth for how each advisory severity renders across the
+# diagnostics UI — badge word, monochrome glyph, themed chip class, ordering
+# rank, default open/closed state, and badge weight. Shared by the inline
+# Troubleshooting panel (Qt widgets) and the pop-out report (HTML) so the two
+# cannot drift (the DEC-115 single-source rule).
+#
+# Colour is paired with a glyph AND the severity word so it is never the only
+# cue (WCAG 1.4.1 "Use of Color"). Glyphs carry a U+FE0E VARIATION SELECTOR-15
+# suffix where the base code point has an emoji presentation (⚠ U+26A0, ⛔
+# U+26D4) so Qt 6.9+ renders them as monochrome text, not colour emoji. The
+# word is authoritative: if a glyph is missing from the user's font the meaning
+# is still carried by the word + colour.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SeverityDisplay:
+    """Presentation metadata for one advisory-severity tier."""
+
+    severity: str  # canonical key ("critical"|"high"|"medium"|"info"|...)
+    word: str  # uppercase badge label, e.g. "CRITICAL"
+    glyph: str  # leading monochrome glyph
+    css_class: str  # themed chip class (defined in theme.py)
+    rank: int  # higher = more severe (used to sort / aggregate)
+    default_expanded: bool  # open the detail by default at author time
+    bold: bool  # badge weight — an extra, non-colour severity cue
+
+
+# Canonical map. "warn" is the issue-checklist vocabulary
+# (``detect_readiness_problems`` emits only "warn"/"critical"); it shares the
+# HIGH presentation but keeps its own word so the checklist still reads "WARN".
+_SEVERITY_DISPLAY: dict[str, SeverityDisplay] = {
+    "critical": SeverityDisplay("critical", "CRITICAL", "⛔︎", "CriticalChip", 5, True, True),
+    "high": SeverityDisplay("high", "HIGH", "⚠︎", "WarningChip", 4, True, True),
+    "warn": SeverityDisplay("warn", "WARN", "⚠︎", "WarningChip", 3, True, True),
+    "medium": SeverityDisplay("medium", "MEDIUM", "⚠︎", "CautionChip", 2, False, False),
+    "info": SeverityDisplay("info", "INFO", "ⓘ", "InfoChip", 1, False, False),
+}
+
+_INFO_DISPLAY = _SEVERITY_DISPLAY["info"]
+
+
+def severity_display(severity: str) -> SeverityDisplay:
+    """Return the presentation metadata for an advisory severity (DEC-158).
+
+    Unknown or not-yet-emitted severities (e.g. a future ``"low"``) degrade to
+    the calm INFO treatment rather than masquerading as a warning (D1), but keep
+    their own word so nothing is mislabelled.
+    """
+    key = (severity or "").strip().lower()
+    known = _SEVERITY_DISPLAY.get(key)
+    if known is not None:
+        return known
+    return SeverityDisplay(
+        severity=key or "info",
+        word=(severity or "INFO").strip().upper() or "INFO",
+        glyph=_INFO_DISPLAY.glyph,
+        css_class=_INFO_DISPLAY.css_class,
+        rank=_INFO_DISPLAY.rank,
+        default_expanded=_INFO_DISPLAY.default_expanded,
+        bold=_INFO_DISPLAY.bold,
+    )
+
+
+# Detail items at or below this length, when there are >=3 of them, read as a
+# scannable parallel list and render as bullets; anything longer or fewer
+# renders as prose paragraphs (NN/g: reserve bullets for >=3 short, parallel
+# items; prefer prose otherwise).
+_ADVISORY_BULLET_MAXLEN = 90
+
+
+def advisory_detail_html(details: list[str]) -> str:
+    """Render advisory detail items as clean rich text (DEC-158, D6).
+
+    Reduces bullet overuse: one or two items — or any long item — render as
+    prose paragraphs; only three or more short, parallel items render as a
+    compact bullet list. Every item is HTML-escaped: the strings are
+    GUI-authored, but escaping keeps future edits safe inside a rich-text label.
+    Returns an empty string when there is no detail to show.
+    """
+    items = [d.strip() for d in details if d and d.strip()]
+    if not items:
+        return ""
+    listy = len(items) >= 3 and all(len(d) <= _ADVISORY_BULLET_MAXLEN for d in items)
+    if listy:
+        return "<br>".join(f"&#8226;&nbsp;{escape(d)}" for d in items)
+    return "<br><br>".join(escape(d) for d in items)
 
 
 @dataclass(frozen=True)

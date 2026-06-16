@@ -343,13 +343,17 @@ class TestDiagnosticsPageBoardInfo:
 
 
 class TestDiagnosticsPageVendorQuirks:
-    def test_vendor_quirk_label_exists(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_vendorQuirk")
-        assert label is not None
-        assert label.isHidden()
+    """DEC-158: vendor quirks render as per-advisory rows (a coloured severity
+    badge + summary + collapsible detail) in ``Diagnostics_Container_advisories``,
+    replacing the old single flat ``Diagnostics_Label_vendorQuirk``."""
 
-    def test_vendor_quirk_shown_for_gigabyte_it8696(self, qtbot):
+    def test_advisory_container_exists_and_hidden(self, qtbot):
+        page, _ = _make_page(qtbot)
+        assert page._advisory_container is not None
+        assert page._advisory_container.isHidden()
+        assert page._advisory_rows == []
+
+    def test_advisory_shown_for_gigabyte_it8696(self, qtbot):
         page, _ = _make_page(qtbot)
         diag = _make_diag_result(
             board_vendor="Gigabyte Technology Co., Ltd.",
@@ -362,11 +366,13 @@ class TestDiagnosticsPageVendorQuirks:
             ],
         )
         page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_vendorQuirk")
-        assert not label.isHidden()
-        assert "SmartFan" in label.text()
+        assert not page._advisory_container.isHidden()
+        assert page._advisory_rows
+        # HIGH SmartFan quirk sorts first.
+        summary = page.findChild(QLabel, "Diagnostics_AdvisorySummary_0")
+        assert "SmartFan" in summary.text()
 
-    def test_vendor_quirk_critical_for_gigabyte_it8689(self, qtbot):
+    def test_advisory_critical_for_gigabyte_it8689(self, qtbot):
         page, _ = _make_page(qtbot)
         diag = _make_diag_result(
             board_vendor="Gigabyte Technology Co., Ltd.",
@@ -379,11 +385,12 @@ class TestDiagnosticsPageVendorQuirks:
             ],
         )
         page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_vendorQuirk")
-        assert not label.isHidden()
-        assert label.property("class") == "CriticalChip"
+        assert not page._advisory_container.isHidden()
+        badge = page.findChild(QLabel, "Diagnostics_AdvisoryBadge_0")
+        assert badge.property("class") == "CriticalChip"
+        assert "CRITICAL" in badge.text()
 
-    def test_vendor_quirk_hidden_for_unknown_vendor(self, qtbot):
+    def test_advisory_hidden_for_unknown_vendor(self, qtbot):
         page, _ = _make_page(qtbot)
         diag = _make_diag_result(
             board_vendor="Unknown Vendor",
@@ -396,8 +403,8 @@ class TestDiagnosticsPageVendorQuirks:
             ],
         )
         page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_vendorQuirk")
-        assert label.isHidden()
+        assert page._advisory_container.isHidden()
+        assert page._advisory_rows == []
 
 
 # ---------------------------------------------------------------------------

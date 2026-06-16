@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.control_loop import ControlLoopService
     from control_ofc.services.profile_service import ProfileService
+    from control_ofc.ui.hwmon_guidance import VendorQuirk
 from PySide6.QtCore import QObject, QPoint, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -61,11 +62,13 @@ from control_ofc.ui.fan_presence import (
     classify_fan_presence,
 )
 from control_ofc.ui.hwmon_guidance import (
+    REMEDIATION_DISCLAIMER,
+    advisory_detail_html,
     detect_module_conflicts,
     dual_chip_verify_hint,
     dual_chip_warning_html,
     lookup_chip_guidance,
-    lookup_vendor_quirks,
+    severity_display,
     verification_guidance,
 )
 from control_ofc.ui.sensor_knowledge import (
@@ -79,6 +82,7 @@ from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.event_log_view import EventLogView
 from control_ofc.ui.widgets.readiness_report import (
     ReadinessReportDialog,
+    advisory_rows,
     board_identity_line,
     build_readiness_report_html,
     chip_rows,
@@ -92,6 +96,18 @@ from control_ofc.ui.widgets.readiness_report import (
 from control_ofc.ui.widgets.sensor_detail_dialog import SensorDetailDialog
 
 _TRANSPARENT = "background: transparent;"
+
+# DEC-158: per-advisory docs link target — the Manufacturer Quirks section of
+# the Hardware Compatibility Guide. GUI-authored constant (never interpolates a
+# daemon string), so it is safe inside a rich-text advisory row.
+_HW_COMPAT_QUIRKS_URL = (
+    "https://github.com/Plan-B-Development/control-ofc-gui/blob/main/"
+    "docs/19_Hardware_Compatibility.md#manufacturer-quirks"
+)
+
+# Minimum width for a severity badge so "⛔ CRITICAL" never clips and the
+# badge column stays aligned across rows at any user font scale (DEC-158).
+_SEVERITY_BADGE_MIN_WIDTH = 104
 
 # DEC-147: GPU restore-to-automatic button tooltips. The gated variant shows
 # while the GUI control loop manages an amd_gpu: target — restoring then would
@@ -1120,6 +1136,18 @@ class DiagnosticsPage(QWidget):
         card_layout.addWidget(self._build_guidance_section())
         card_layout.addWidget(self._build_pwm_test_section())
 
+        # ── Panel-level liability disclaimer (DEC-158) ───────────────────
+        # One calm, persistent note for the whole panel: the checklist fixes,
+        # advisory details, and chip guidance all describe kernel/driver/firmware
+        # changes. Low-weight (CardMeta secondary text) so it informs without
+        # crying wolf — heavy red styling is reserved for the real alerts above.
+        self._readiness_disclaimer_label = _transparent_label(
+            f"⚠︎ {REMEDIATION_DISCLAIMER}", "Diagnostics_Label_readinessDisclaimer"
+        )
+        self._readiness_disclaimer_label.setWordWrap(True)
+        self._readiness_disclaimer_label.setProperty("class", "CardMeta")
+        card_layout.addWidget(self._readiness_disclaimer_label)
+
         container = QWidget()
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
@@ -1184,9 +1212,14 @@ class DiagnosticsPage(QWidget):
 
         All strings come from :func:`detect_readiness_problems` (GUI-authored,
         no daemon input), so the fix/link line is safe as rich text.
+
+        DEC-158: the badge derives its word, icon, colour, and weight from the
+        shared :func:`severity_display` mapping, so the checklist speaks the same
+        severity visual language as the advisory rows (the checklist only ever
+        emits ``warn``/``critical``; both are covered by the mapping).
         """
         severity = problem.get("severity", "warn")
-        chip = "CriticalChip" if severity == "critical" else "WarningChip"
+        disp = severity_display(severity)
         key = problem.get("key", "issue")
 
         row = QFrame()
@@ -1195,9 +1228,11 @@ class DiagnosticsPage(QWidget):
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(10)
 
-        badge = _transparent_label(severity.upper(), f"Diagnostics_IssueBadge_{key}", bold=True)
-        badge.setProperty("class", chip)
-        badge.setFixedWidth(70)
+        badge = _transparent_label(
+            f"{disp.glyph} {disp.word}", f"Diagnostics_IssueBadge_{key}", bold=disp.bold
+        )
+        badge.setProperty("class", disp.css_class)
+        badge.setMinimumWidth(_SEVERITY_BADGE_MIN_WIDTH)
         row_layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
 
         text_col = QVBoxLayout()
@@ -1220,6 +1255,91 @@ class DiagnosticsPage(QWidget):
         text_col.addWidget(detail)
 
         row_layout.addLayout(text_col, 1)
+        return row
+
+    def _render_advisories(self, advisories: list[VendorQuirk]) -> None:
+        """Render the board/chip advisory rows (DEC-158).
+
+        Replaces the old single flat ``[SEVERITY] …`` label: each advisory gets
+        its own severity badge (icon + word + colour), an always-visible summary,
+        and a collapsible detail (default-open for CRITICAL/HIGH, default-closed
+        for MEDIUM/INFO). Clears prior rows so a re-render — e.g. a theme refresh
+        re-populating from the cached result — rebuilds cleanly, and hides the
+        container when there are no advisories so a healthy board shows nothing.
+        """
+        for row in self._advisory_rows:
+            self._advisory_layout.removeWidget(row)
+            row.deleteLater()
+        self._advisory_rows.clear()
+
+        if not advisories:
+            self._advisory_container.setVisible(False)
+            return
+        self._advisory_container.setVisible(True)
+        for i, quirk in enumerate(advisories):
+            row = self._make_advisory_row(quirk, i)
+            self._advisory_rows.append(row)
+            self._advisory_layout.addWidget(row)
+
+    def _make_advisory_row(self, quirk: VendorQuirk, index: int) -> QWidget:
+        """Build one advisory row: a coloured severity badge + always-visible
+        summary, plus a collapsible detail with a docs link (DEC-158).
+
+        Only GUI-authored strings are rendered as rich text — the in-repo
+        ``VendorQuirk`` DB text plus the GUI glyph/word/link. No daemon-supplied
+        string (chip name, board vendor) is interpolated, so there is no
+        injection surface and rich text is safe (DEC-106). The summary stays in
+        the default text colour; only the badge is coloured, so an INFO advisory
+        reads calm rather than alarming.
+        """
+        disp = severity_display(quirk.severity)
+
+        row = QFrame()
+        row.setObjectName(f"Diagnostics_Advisory_{index}")
+        row_layout = QVBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(2)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(10)
+        badge = _transparent_label(
+            f"{disp.glyph} {disp.word}", f"Diagnostics_AdvisoryBadge_{index}", bold=disp.bold
+        )
+        badge.setProperty("class", disp.css_class)
+        badge.setMinimumWidth(_SEVERITY_BADGE_MIN_WIDTH)
+        header_row.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+
+        summary = _transparent_label(
+            quirk.summary, f"Diagnostics_AdvisorySummary_{index}", bold=True
+        )
+        summary.setWordWrap(True)
+        # PlainText: the summary is a trusted DB string, but rendering it plain
+        # (not AutoText) keeps a future edit containing "<"/"&" from being
+        # misread as markup. The detail label below opts into RichText for the
+        # bullets + doc link, and escapes the DB detail strings.
+        summary.setTextFormat(Qt.TextFormat.PlainText)
+        header_row.addWidget(summary, 1)
+        row_layout.addLayout(header_row)
+
+        link = (
+            f'<a href="{_HW_COMPAT_QUIRKS_URL}" '
+            f'style="color:{active_theme().status_info}">Hardware Compatibility Guide ↗</a>'
+        )
+        detail_html = advisory_detail_html(quirk.details)
+        body = f"{detail_html}<br>{link}" if detail_html else link
+        detail = _transparent_label(body, f"Diagnostics_Label_advisoryDetail_{index}")
+        detail.setWordWrap(True)
+        detail.setTextFormat(Qt.TextFormat.RichText)
+        detail.setOpenExternalLinks(True)
+        detail.setProperty("class", "CardMeta")
+
+        section = CollapsibleSection(
+            "Details",
+            f"Diagnostics_Section_advisory_{index}",
+            expanded=disp.default_expanded,
+        )
+        section.add_widget(detail)
+        row_layout.addWidget(section)
         return row
 
     def _create_alert_labels(self) -> tuple[list[QWidget], list[QWidget]]:
@@ -1265,13 +1385,20 @@ class DiagnosticsPage(QWidget):
         self._dual_chip_warning_label.setOpenExternalLinks(True)
         self._dual_chip_warning_label.setVisible(False)
 
-        # Vendor quirk alert. Explicit PlainText (DEC-106 review): chip names
-        # are interpolated into the lookup key, so never let Qt's AutoText
-        # default render a clickable `<a href=...>` from a hostile chip name.
-        self._vendor_quirk_label = _transparent_label("", "Diagnostics_Label_vendorQuirk")
-        self._vendor_quirk_label.setWordWrap(True)
-        self._vendor_quirk_label.setTextFormat(Qt.TextFormat.PlainText)
-        self._vendor_quirk_label.setVisible(False)
+        # Advisory list (DEC-158): board/chip vendor quirks, one collapsible row
+        # per advisory, each with a per-severity badge (icon + word + colour).
+        # Replaces the old single flat PlainText "[SEVERITY] …" label so INFO no
+        # longer shares the orange of the warning tiers. Rows are (re)built by
+        # _render_advisories. Only GUI-authored DB strings are rendered (no
+        # daemon string is interpolated into the rich text), so the DEC-106
+        # injection concern that forced PlainText before no longer applies.
+        self._advisory_container = QWidget()
+        self._advisory_container.setObjectName("Diagnostics_Container_advisories")
+        self._advisory_layout = QVBoxLayout(self._advisory_container)
+        self._advisory_layout.setContentsMargins(0, 0, 0, 0)
+        self._advisory_layout.setSpacing(10)
+        self._advisory_rows: list[QWidget] = []
+        self._advisory_container.setVisible(False)
 
         # ACPI conflicts.
         self._acpi_label = _transparent_label("", "Diagnostics_Label_acpiConflicts")
@@ -1295,7 +1422,7 @@ class DiagnosticsPage(QWidget):
         ]
         demoted = [
             self._dual_chip_warning_label,
-            self._vendor_quirk_label,
+            self._advisory_container,
             self._acpi_label,
         ]
         return persistent, demoted
@@ -2658,34 +2785,13 @@ class DiagnosticsPage(QWidget):
         else:
             self._dual_chip_warning_label.setVisible(False)
 
-        # Vendor quirks — pass the daemon-supplied CPU vendor and board
-        # name so DEC-110 platform-scoped Intel quirks fire on real
-        # hardware. Older daemons without `cpu_vendor` send empty string
-        # here, which suppresses platform-scoped quirks rather than
-        # firing them indiscriminately.
-        all_quirks = []
-        for chip in hw.chips_detected:
-            all_quirks.extend(
-                lookup_vendor_quirks(
-                    board.vendor,
-                    chip.chip_name,
-                    cpu_vendor=diag.cpu_vendor,
-                    board_name=board.name,
-                )
-            )
-        if all_quirks:
-            quirk_lines: list[str] = []
-            for q in all_quirks:
-                quirk_lines.append(f"[{q.severity.upper()}] {q.summary}")
-                for d in q.details:
-                    quirk_lines.append(f"  • {d}")
-            self._vendor_quirk_label.setText("\n".join(quirk_lines))
-            has_critical = any(q.severity == "critical" for q in all_quirks)
-            css = "CriticalChip" if has_critical else "WarningChip"
-            self._set_class(self._vendor_quirk_label, css)
-            self._vendor_quirk_label.setVisible(True)
-        else:
-            self._vendor_quirk_label.setVisible(False)
+        # Advisories (DEC-158): board/chip vendor quirks rendered as per-severity
+        # collapsible rows. advisory_rows() applies the same dedupe + most-severe-
+        # first ordering the pop-out report uses (DEC-115), passing the
+        # daemon-supplied CPU vendor + board name so DEC-110 platform-scoped Intel
+        # quirks fire on real hardware. Older daemons without cpu_vendor send ""
+        # → platform-scoped quirks are suppressed, not fired indiscriminately.
+        self._render_advisories(advisory_rows(diag))
 
         summary_parts = [header_summary_line(hw)]
         if hw.total_headers > 0 and hw.writable_headers == 0:
