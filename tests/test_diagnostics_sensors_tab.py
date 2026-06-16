@@ -19,6 +19,7 @@ from control_ofc.api.models import (
     SensorReading,
     SensorThresholds,
     ThermalSafetyInfo,
+    parse_capabilities,
 )
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 from control_ofc.services.app_state import AppState
@@ -404,3 +405,55 @@ class TestSettingsRoundTrip:
     def test_hidden_list_defaults_to_empty_when_absent(self):
         s = AppSettings.from_dict({})
         assert s.diagnostics_hidden_sensor_ids == []
+
+
+# ─── AIO Phase 1 (DEC-156): coolant override + honest readiness ──────────
+
+
+class TestCoolantOverride:
+    def test_override_updates_source_class_column(self, qtbot):
+        page, state = _make_page(qtbot, settings=_settings_service())
+        page._on_sensors([_sensor("hwmon:nct6798:SYSTIN", chip_name="nct6798", label="SYSTIN")])
+        page._render_sensors_table()
+        col = _SENSOR_COL_INDEX["Source class"]
+        assert page._sensor_table.item(0, col).text() != "Coolant"
+
+        page._set_sensor_class_override("hwmon:nct6798:SYSTIN", "coolant")
+
+        assert state.sensor_class_overrides == {"hwmon:nct6798:SYSTIN": "coolant"}
+        assert page._sensor_table.item(0, col).text() == "Coolant"
+
+    def test_reset_clears_override(self, qtbot):
+        page, state = _make_page(qtbot, settings=_settings_service())
+        page._on_sensors([_sensor("hwmon:nct6798:SYSTIN", chip_name="nct6798", label="SYSTIN")])
+        page._set_sensor_class_override("hwmon:nct6798:SYSTIN", "coolant")
+        page._set_sensor_class_override("hwmon:nct6798:SYSTIN", "")
+        assert "hwmon:nct6798:SYSTIN" not in state.sensor_class_overrides
+
+
+class TestAioReadinessLabel:
+    def _caps(self, **aio):
+        return parse_capabilities({"devices": {"aio_hwmon": aio}})
+
+    def test_supported_label(self, qtbot):
+        page, _ = _make_page(qtbot)
+        page._on_capabilities(
+            self._caps(present=True, status="supported", pump_writable=True, coolant_available=True)
+        )
+        text = page._aio_label.text()
+        assert "Detected" in text
+        assert "writable" in text
+
+    def test_monitor_only_label(self, qtbot):
+        page, _ = _make_page(qtbot)
+        page._on_capabilities(
+            self._caps(
+                present=True, status="monitor_only", pump_writable=False, coolant_available=True
+            )
+        )
+        assert "monitor-only" in page._aio_label.text()
+
+    def test_not_detected_label(self, qtbot):
+        page, _ = _make_page(qtbot)
+        page._on_capabilities(self._caps(present=False, status="unsupported"))
+        assert "Not detected" in page._aio_label.text()

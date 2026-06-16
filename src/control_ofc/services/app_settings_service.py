@@ -24,6 +24,7 @@ MACHINE_SPECIFIC_KEYS = frozenset(
         "card_sensor_bindings",
         "series_colors",
         "diagnostics_hidden_sensor_ids",
+        "sensor_class_overrides",
         "acknowledged_kernel_warnings",
         "profiles_dir_override",
         "themes_dir_override",
@@ -67,6 +68,18 @@ def _as_str_dict(value: object, default: dict[str, str]) -> dict[str, str]:
     if not isinstance(value, dict):
         return dict(default)
     return {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+# AIO Phase 1 (DEC-156): user sensor-classification overrides. Only "coolant"
+# is offered today; the whitelist stops an untrusted settings/import file from
+# injecting an arbitrary source_class string into the display layer.
+_SENSOR_OVERRIDE_VALUES = frozenset({"coolant"})
+
+
+def _as_sensor_overrides(value: object, default: dict[str, str]) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return dict(default)
+    return {k: v for k, v in value.items() if isinstance(k, str) and v in _SENSOR_OVERRIDE_VALUES}
 
 
 def _as_str_list(value: object, default: list[str]) -> list[str]:
@@ -172,6 +185,13 @@ class AppSettings:
     # group row at the bottom of the table, not silently removed.
     diagnostics_hidden_sensor_ids: list[str] = field(default_factory=list)
 
+    # DEC-156: user overrides forcing a sensor's classification, keyed by stable
+    # sensor id -> source_class (only "coolant" today). GUI-owned policy — the
+    # daemon stays hardware-truthful; this lets the user mark a coolant sensor
+    # the conservative auto-classifier missed. Machine-specific (sensor ids are
+    # local), so excluded from portable export.
+    sensor_class_overrides: dict[str, str] = field(default_factory=dict)
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -218,6 +238,7 @@ class AppSettings:
             diagnostics_hidden_sensor_ids=_as_str_list(
                 data.get("diagnostics_hidden_sensor_ids"), []
             ),
+            sensor_class_overrides=_as_sensor_overrides(data.get("sensor_class_overrides"), {}),
         )
 
     def portable_dict(self) -> dict:

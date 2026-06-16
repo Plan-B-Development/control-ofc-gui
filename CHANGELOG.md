@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.39.0] — 2026-06-16
+
+First-class **liquid-cooler (AIO) support — Phase 1** (hwmon-only). Pairs with **daemon v1.18.0**
+(DEC-156).
+
+### Added
+- **Coolant sensing.** NZXT Kraken and Aquacomputer coolant temperatures (and any
+  `coolant`/`water`/`liquid`-labelled header) now classify as a first-class **Liquid** sensor
+  instead of falling through to a motherboard temperature.
+- **Honest liquid-cooling diagnostics.** Diagnostics shows a "Liquid cooling" line — *detected
+  (pump/fan writable)*, *monitor-only* (read-only driver, e.g. Kraken2 / Aquacomputer pump), or
+  *not detected*. USB-only coolers are out of scope and never shown as controllable.
+- **User coolant override.** Right-click a sensor in Diagnostics → **Treat as coolant** /
+  **Reset to auto** to force a coolant classification the conservative auto-classifier missed
+  (GUI-owned, persisted locally, excluded from portable export).
+
+### Changed
+- Liquid-cooler pump headers (daemon `is_aio`) get the 30% pump floor (DEC-095) even when the
+  kernel only labels them `pwm1`.
+- `GET /capabilities` `aio_hwmon` is now a dynamic `{present, status, pump_writable,
+  coolant_available}` object (additive — older daemons still parse).
+
 ## [1.38.3] — 2026-06-12
 
 Robustness fixes and dependency pinning (from the 2026-06-12 code audit). No new features;

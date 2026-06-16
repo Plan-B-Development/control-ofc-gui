@@ -11,6 +11,7 @@ import random
 import time
 
 from control_ofc.api.models import (
+    AioHwmonCapability,
     AmdGpuCapability,
     BoardInfo,
     Capabilities,
@@ -118,6 +119,14 @@ _DEMO_SENSORS: list[dict] = [
         "source": "hwmon",
         "chip_name": "nvme",
     },
+    # NZXT Kraken AIO coolant temperature (DEC-156) — classifies as Liquid.
+    {
+        "id": "hwmon:z53:usb-3-2:Coolant",
+        "kind": "CoolantTemp",
+        "label": "Coolant",
+        "source": "hwmon",
+        "chip_name": "z53",
+    },
 ]
 
 _DEMO_HWMON_HEADERS: list[dict] = [
@@ -140,6 +149,18 @@ _DEMO_HWMON_HEADERS: list[dict] = [
         "rpm_available": True,
         "min_pwm_percent": 0,
         "max_pwm_percent": 100,
+    },
+    # NZXT Kraken pump — liquid-cooler header (DEC-156): is_aio + writable.
+    {
+        "id": "hwmon:z53:usb-3-2:pwm1:Pump",
+        "label": "Pump",
+        "chip_name": "z53",
+        "pwm_index": 1,
+        "supports_enable": True,
+        "rpm_available": True,
+        "min_pwm_percent": 0,
+        "max_pwm_percent": 100,
+        "is_aio": True,
     },
 ]
 
@@ -176,6 +197,7 @@ class DemoService:
         self._base_gpu_temp = 38.0
         self._base_mb_temp = 32.0
         self._base_disk_temp = 35.0
+        self._base_coolant_temp = 34.0
         self._fan_pwm: dict[str, int] = {f["id"]: 40 for f in _DEMO_FANS}
 
     @property
@@ -224,7 +246,12 @@ class DemoService:
                 fan_rpm_available=True,
                 is_discrete=True,
             ),
-            aio_hwmon=UnsupportedCapability(present=False, status="unsupported"),
+            aio_hwmon=AioHwmonCapability(
+                present=True,
+                status="supported",
+                pump_writable=True,
+                coolant_available=True,
+            ),
             aio_usb=UnsupportedCapability(present=False, status="unsupported"),
             features=FeatureFlags(
                 openfan_write_supported=True,
@@ -256,6 +283,8 @@ class DemoService:
                 val = self._drift(self._base_gpu_temp, 12.0, 150.0)
             elif s["kind"] == "MbTemp":
                 val = self._drift(self._base_mb_temp, 3.0, 200.0)
+            elif s["kind"] == "CoolantTemp":
+                val = self._drift(self._base_coolant_temp, 5.0, 60.0)
             else:
                 val = self._drift(self._base_disk_temp, 2.0, 300.0)
 

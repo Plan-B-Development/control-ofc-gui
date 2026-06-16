@@ -41,6 +41,7 @@ class AppState(QObject):
     warning_count_changed = Signal(int)
     warnings_cleared = Signal()
     fan_alias_changed = Signal(str, str)  # fan_id, display_name
+    sensor_class_override_changed = Signal(str, str)  # sensor_id, source_class ("" = cleared)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -63,6 +64,12 @@ class AppState(QObject):
 
         # Fan aliases: fan_id -> display name (GUI-owned)
         self.fan_aliases: dict[str, str] = {}
+
+        # DEC-156: user sensor-classification overrides (sensor_id ->
+        # source_class, only "coolant" today). GUI-owned policy; the daemon
+        # stays hardware-truthful. Lets the user force a coolant sensor the
+        # conservative auto-classifier missed.
+        self.sensor_class_overrides: dict[str, str] = {}
 
         # DMI board info supplied by /diagnostics/hardware. Used by
         # ``hwmon_label_resolver`` to apply per-board fallback labels
@@ -134,6 +141,20 @@ class AppState(QObject):
         else:
             self.fan_aliases.pop(fan_id, None)
         self.fan_alias_changed.emit(fan_id, self.fan_display_name(fan_id))
+
+    def set_sensor_class_override(self, sensor_id: str, source_class: str) -> None:
+        """Force (or clear) a sensor's display classification (DEC-156).
+
+        ``source_class == "coolant"`` marks the sensor as coolant; an empty
+        string clears the override (revert to auto-classification). GUI-owned
+        user policy — the daemon stays hardware-truthful.
+        """
+        cleaned = source_class.strip() if source_class else ""
+        if cleaned:
+            self.sensor_class_overrides[sensor_id] = cleaned
+        else:
+            self.sensor_class_overrides.pop(sensor_id, None)
+        self.sensor_class_override_changed.emit(sensor_id, cleaned)
 
     def fan_display_name(self, fan_id: str) -> str:
         """Return the best display name for a fan.

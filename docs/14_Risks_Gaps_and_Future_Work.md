@@ -50,8 +50,14 @@ For GPU fans: profile engine defers to GUI when GUI was active in last 30s (DEC-
 ### 4. FanController ownership model (RESOLVED — R46 assessment)
 The daemon's `FanController` is `Option<Arc<parking_lot::Mutex<FanController>>>` in `AppState`. This was previously listed as requiring an Arc refactor for clean API/profile-engine separation. R46 investigation confirmed the current design is correct: locks are held for ~1-2ms (serial I/O), never across `.await` points, contention is minimal (1Hz profile engine + user-driven API), and both paths use the same public `set_pwm()` methods. Per-channel locking would add complexity without benefit since serial I/O is inherently sequential. No refactor needed.
 
-### 5. AIO cooler support placeholder
-`AioPumpState` struct exists in the daemon but has no implementation. No AIO detection, no AIO control.
+### 5. AIO cooler support — hwmon shipped (Phase 1), USB-only out of scope
+Phase 1 (DEC-156, GUI 1.39.0 / daemon 1.18.0) ships **hwmon** liquid-cooler support: coolant
+classification (`CoolantTemp`), an `is_aio` header flag, a dynamic `aio_hwmon` capability, and
+`AioPumpState` wired into the poll loop. Coolers ride the existing hwmon write/lease path — no new
+control plumbing and **no coolant safety rule** (CPU-only `safety.rs` is unchanged). **USB-only
+coolers** (liquidctl/USB-HID, e.g. much Corsair iCUE/Commander Core) remain **out of scope** — the
+daemon never opens USB-HID, so they read as not-detected, never faked. Phase 2 (guided AIO UX —
+wizard, dashboard clustering) is planned for GUI 1.40.0.
 
 ### 6. Multi-GPU UI selection
 Data model supports multiple GPUs. API reports primary only. No UI to select between multiple discrete GPUs. Untested with 2+ dGPUs.

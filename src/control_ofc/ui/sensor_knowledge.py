@@ -39,6 +39,65 @@ class SensorClassification:
 # Kernel docs: "On various ASUS boards with NCT6776F, CPUTIN is not really connected"
 _ASUS_CPUTIN_BOGUS_CHIPS = {"nct6776"}
 
+# AIO Phase 1 (DEC-156): liquid-cooler recognition mirrors the daemon's
+# `hwmon::aio`. NZXT Kraken devices expose a single temp = coolant, so they
+# classify by chip name. Aquacomputer devices (d5next/highflownext/leakshield)
+# expose multiple labelled channels, so they are NOT in the coolant-by-chip set
+# — their coolant channel rides the label path, avoiding false positives on
+# external probes. Any coolant/water/liquid label is coolant on any chip. The
+# user can force any sensor to coolant via an override (see
+# :func:`classify_sensor_with_overrides`).
+_KRAKEN_COOLANT_CHIPS = frozenset({"x53", "z53", "kraken2023", "kraken2023elite", "kraken2"})
+_LIQUID_COOLER_CHIPS = _KRAKEN_COOLANT_CHIPS | frozenset({"d5next", "highflownext", "leakshield"})
+_COOLANT_LABEL_HINTS = ("coolant", "water", "liquid")
+
+
+def is_liquid_cooler_chip(chip_name: str) -> bool:
+    """True when ``chip_name`` is a known hwmon liquid cooler (NZXT Kraken or
+    Aquacomputer). Mirrors the daemon's ``hwmon::aio::is_liquid_cooler_chip``."""
+    return chip_name.lower() in _LIQUID_COOLER_CHIPS
+
+
+def _classify_coolant(chip_name: str, label: str, lower_label: str) -> SensorClassification | None:
+    """Cross-driver coolant classification (AIO Phase 1).
+
+    Returns a coolant :class:`SensorClassification` when the sensor is a coolant
+    temperature, else ``None`` so the caller continues normal dispatch. Runs
+    before driver-specific handlers so coolant is recognised consistently
+    (NZXT Kraken, Aquacomputer, ASUS-EC water, or any coolant-labelled header).
+    """
+    if "water in" in lower_label or "coolant in" in lower_label:
+        return SensorClassification(
+            source_class="coolant_in",
+            display_description="Water coolant inlet temperature",
+            confidence="high",
+            notes=["Liquid cooling loop inlet"],
+        )
+    if "water out" in lower_label or "coolant out" in lower_label:
+        return SensorClassification(
+            source_class="coolant_out",
+            display_description="Water coolant outlet temperature",
+            confidence="high",
+            notes=["Liquid cooling loop outlet"],
+        )
+    if chip_name.lower() in _KRAKEN_COOLANT_CHIPS:
+        return SensorClassification(
+            source_class="coolant",
+            display_description="Coolant temperature (NZXT Kraken)",
+            confidence="high",
+            notes=["Liquid cooler coolant temperature"],
+        )
+    if any(hint in lower_label for hint in _COOLANT_LABEL_HINTS):
+        cooler = is_liquid_cooler_chip(chip_name)
+        suffix = f" ({label})" if label else ""
+        return SensorClassification(
+            source_class="coolant",
+            display_description=f"Coolant (liquid) temperature{suffix}",
+            confidence="high" if cooler else "medium",
+            notes=["Liquid cooling sensor"],
+        )
+    return None
+
 
 def classify_sensor(
     chip_name: str,
@@ -53,6 +112,11 @@ def classify_sensor(
     """
     lower_label = label.lower()
     lower_vendor = board_vendor.lower()
+
+    # -- Liquid coolers / coolant: highest priority, cross-driver (DEC-156) --
+    coolant = _classify_coolant(chip_name, label, lower_label)
+    if coolant is not None:
+        return coolant
 
     # -- k10temp: CPU internal sensors --------------------------------
     if chip_name == "k10temp":
@@ -145,6 +209,36 @@ def classify_sensor(
         confidence="low",
         notes=[f"Driver: {chip_name}" if chip_name else "Unknown driver"],
     )
+
+
+def classify_sensor_with_overrides(
+    sensor_id: str,
+    chip_name: str,
+    label: str,
+    temp_type: int | None = None,
+    board_vendor: str = "",
+    overrides: dict[str, str] | None = None,
+) -> SensorClassification:
+    """Classify a sensor, honouring a user override map (``sensor_id`` -> forced
+    ``source_class``).
+
+    The override is GUI-owned user policy — the daemon stays hardware-truthful.
+    It is the escape hatch for conservative auto-classification: the user can
+    force any sensor to be treated as coolant when the chip/label heuristics
+    miss it. Currently only ``"coolant"`` is offered; an unrecognised override
+    value falls through to normal auto-classification.
+    """
+    if overrides:
+        forced = overrides.get(sensor_id)
+        if forced == "coolant":
+            suffix = f" ({label})" if label else ""
+            return SensorClassification(
+                source_class="coolant",
+                display_description=f"Coolant temperature{suffix}",
+                confidence="high",
+                notes=["Marked as coolant by user override"],
+            )
+    return classify_sensor(chip_name, label, temp_type, board_vendor)
 
 
 def _classify_k10temp(label: str, lower_label: str) -> SensorClassification:
@@ -264,20 +358,8 @@ def _classify_asus_ec(label: str, lower_label: str) -> SensorClassification:
             display_description="VRM temperature (ASUS EC)",
             confidence="high",
         )
-    if "water in" in lower_label:
-        return SensorClassification(
-            source_class="coolant_in",
-            display_description="Water coolant inlet temperature",
-            confidence="high",
-            notes=["Liquid cooling probe header"],
-        )
-    if "water out" in lower_label:
-        return SensorClassification(
-            source_class="coolant_out",
-            display_description="Water coolant outlet temperature",
-            confidence="high",
-            notes=["Liquid cooling probe header"],
-        )
+    # Water in/out is handled earlier by the cross-driver coolant classifier
+    # (`_classify_coolant`), so it is intentionally not repeated here.
     if "chipset" in lower_label:
         return SensorClassification(
             source_class="chipset",
