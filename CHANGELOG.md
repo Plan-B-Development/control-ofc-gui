@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.42.0] — 2026-06-17
+
+**One-time profile import** — migrate your existing local fan profiles into the daemon's own
+profile store. GUI-only; builds on the daemon's profile storage (v1.19.0). DEC-161.
+Pairs with `control-ofc-daemon` ≥ v1.19.0.
+
+### Added
+- **"Import local profiles into daemon…"** on Settings ▸ Import / Export, plus a one-time
+  startup offer shown when a profile-storage-capable daemon (v1.19+) is detected and you have
+  local profiles. Your local copies are left untouched — the import is non-destructive.
+- Each profile is migrated to the current schema and uploaded through the daemon's existing
+  `POST /profiles` API. Profiles already in the daemon are **skipped** by default; an explicit
+  **"import as copies"** action renames collisions (e.g. *Quiet (imported)*).
+- An import report groups results into **imported / skipped / quarantined** — a profile that
+  fails validation or can't be parsed is set aside with a reason, never aborting the rest of
+  the batch.
+
+### Notes
+- No new daemon version is required: the import reuses the daemon's profile CRUD and is offered
+  only when the daemon advertises `control.profile_storage` (a graceful no-op otherwise).
+  Idempotent — re-running skips profiles already imported (matched by id).
+
 ## [1.41.0] — 2026-06-17
 
 **Distinct per-severity advisories** in Diagnostics ▸ Troubleshooting ▸ Hardware Readiness
