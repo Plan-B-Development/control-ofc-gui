@@ -1050,6 +1050,66 @@ def default_profiles() -> list[Profile]:
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class ImportCandidate:
+    """A local profile migrated to the current schema, ready to upload to the
+    daemon's profile store (DEC-161)."""
+
+    source_path: str
+    profile_id: str
+    name: str
+    document: dict
+
+
+@dataclass
+class ImportCollection:
+    """Result of scanning the local profiles dir for daemon import.
+
+    ``ready`` are migrated v7 documents to upload; ``failed`` are
+    ``(source_path, reason)`` pairs that could not be parsed/migrated —
+    quarantined before any upload, never silently dropped.
+    """
+
+    ready: list[ImportCandidate] = field(default_factory=list)
+    failed: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.ready and not self.failed
+
+
+def collect_local_profiles_for_import(directory: Path | None = None) -> ImportCollection:
+    """Scan the local profiles dir and migrate each file to the current schema.
+
+    Reads ``~/.config/control-ofc/profiles/*.json`` (the GUI's own store), runs
+    each file through the existing migration ladder (``Profile.from_dict`` →
+    v7) and re-serialises with ``to_dict``. Files that fail to parse/migrate go
+    to ``failed`` (pre-upload quarantine) rather than aborting the scan.
+    **Originals are only read — never modified or deleted** (rollback path;
+    DEC-161). Qt-free so the import flow stays unit-testable.
+    """
+    coll = ImportCollection()
+    d = directory or profiles_dir()
+    if not d.exists():
+        return coll
+    for path in sorted(d.glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+            profile = Profile.from_dict(data)
+            coll.ready.append(
+                ImportCandidate(
+                    source_path=str(path),
+                    profile_id=profile.id,
+                    name=profile.name,
+                    document=profile.to_dict(),
+                )
+            )
+        except Exception as e:
+            log.warning("Profile %s could not be prepared for import: %s", path, e)
+            coll.failed.append((str(path), str(e)))
+    return coll
+
+
 class ProfileService:
     """Manages profile loading, saving, and selection."""
 
