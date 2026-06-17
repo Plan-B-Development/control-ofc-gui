@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "description": "Cross-stack member role-classification agreement vectors (DEC-162). The GUI's profile_service.infer_member_role and the daemon's profile::{member_is_gpu, member_is_pump_or_cpu} MUST agree on every case, or a GUI-baked profile could be wrongly rejected by the daemon's FLOOR_TOO_LOW backstop. role is one of: gpu, cpu_or_pump, chassis (the GUI CONTROL_ROLE_* values). This file must be byte-identical in both repos (daemon/tests/fixtures and the GUI tests/fixtures).",
+  "cases": [
+    {"name": "amd_gpu_fan", "source": "amd_gpu", "member_id": "amd_gpu:0000:03:00.0", "member_label": "9070XT Fan", "role": "gpu"},
+    {"name": "intel_gpu_fan", "source": "intel_gpu", "member_id": "intel_gpu:0000:03:00.0", "member_label": "", "role": "gpu"},
+    {"name": "cpu_header_by_label", "source": "hwmon", "member_id": "hwmon:nct6798:0000:pwm1:CPU_OPT", "member_label": "CPU_OPT", "role": "cpu_or_pump"},
+    {"name": "pump_header_by_label", "source": "hwmon", "member_id": "hwmon:nct6798:0000:pwm3:PUMP", "member_label": "Pump Header", "role": "cpu_or_pump"},
+    {"name": "aio_header_by_label", "source": "hwmon", "member_id": "hwmon:nct6798:0000:pwm4:AIO", "member_label": "AIO Fan", "role": "cpu_or_pump"},
+    {"name": "kraken_pump_bare_label", "source": "hwmon", "member_id": "hwmon:z53:0000:pwm1:pwm1", "member_label": "pwm1", "role": "cpu_or_pump"},
+    {"name": "aquacomputer_pump_bare_label", "source": "hwmon", "member_id": "hwmon:d5next:0000:pwm1:pwm1", "member_label": "pwm1", "role": "cpu_or_pump"},
+    {"name": "radiator_chassis_fan", "source": "hwmon", "member_id": "hwmon:it8696:0000:pwm2:CHA_FAN", "member_label": "Radiator Top", "role": "chassis"},
+    {"name": "chassis_empty_label", "source": "hwmon", "member_id": "hwmon:nct6798:0000:pwm5:", "member_label": "", "role": "chassis"},
+    {"name": "openfan_chassis", "source": "openfan", "member_id": "openfan:ch00", "member_label": "", "role": "chassis"}
+  ]
+}
