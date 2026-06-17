@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.42.1] — 2026-06-17
+
+Test + documentation maintenance for the daemon's role-floor backstop (DEC-162). **No runtime
+change** — the GUI behaves identically to v1.42.0. Pairs with `control-ofc-daemon` ≥ v1.19.0.
+
+### Added
+- **Cross-stack role-classification agreement test** — `tests/test_role_classification_parity.py`
+  drives the GUI's `infer_member_role` against a new byte-identical `role_classification.json`
+  fixture (shared with the daemon's `role_classification_matches_oracle`), so the GUI's member-role
+  inference can never silently diverge from the daemon's pump/CPU classifier that gates its
+  `FLOOR_TOO_LOW` validation backstop (DEC-162).
+
+### Documentation
+- `docs/08_API_Integration_Contract.md` now documents the `field_violations` detail array on a
+  `validation_error` and the new `FLOOR_TOO_LOW` reason (a control with a pump/CPU member whose
+  `minimum_pct` is below the 30 % hard pump floor).
+
 ## [1.42.0] — 2026-06-17
 
 **One-time profile import** — migrate your existing local fan profiles into the daemon's own
