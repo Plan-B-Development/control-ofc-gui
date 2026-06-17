@@ -109,6 +109,24 @@ When importing:
 
 This makes it safe to experiment — you can always restore from the auto-backup. Some preferences (theme, chart range, aliases) take effect on the next launch.
 
+### Importing Your Profiles into the Daemon
+
+If you run a daemon that owns its own profile store (v1.19 or newer), the
+**Import local profiles into daemon…** button copies your local fan profiles
+(`~/.config/control-ofc/profiles/`) into the daemon so it can manage them
+directly. The first time the GUI connects to a capable daemon and finds local
+profiles it offers this automatically; you can also run it any time from this tab.
+
+- Your local copies are **left untouched** — the import only ever reads them.
+- Profiles already in the daemon are **skipped**; choose **import as copies** to
+  bring them in under a renamed copy (e.g. *Quiet (imported)*) instead.
+- A profile that fails validation is **quarantined** with a reason and listed in
+  the report, without stopping the rest of the import.
+- Re-running is safe: profiles already imported are matched by id and skipped.
+
+The button appears only when the daemon advertises profile storage; against an
+older daemon it does nothing.
+
 ---
 
 Previous: [Controls](controls.md) | Next: [Diagnostics](diagnostics.md)
