@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.api.errors import DaemonError
 from control_ofc.constants import PAGE_CONTROLS, PAGE_DASHBOARD, PAGE_DIAGNOSTICS, PAGE_SETTINGS
 from control_ofc.paths import (
     app_settings_path,
@@ -40,6 +41,8 @@ from control_ofc.paths import (
 )
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
+from control_ofc.services.profile_import_service import import_profiles
+from control_ofc.services.profile_service import ImportCollection, collect_local_profiles_for_import
 from control_ofc.ui.theme import ThemeTokens, load_theme, save_theme
 
 log = logging.getLogger(__name__)
@@ -412,6 +415,22 @@ class SettingsPage(QWidget):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
+        # ── Daemon profile import (DEC-161) ──────────────────────────────
+        daemon_note = QLabel(
+            "Import your local fan profiles into the daemon's own store so it "
+            "can manage them directly. Profiles already in the daemon are "
+            "skipped; your local copies are left untouched. Requires daemon "
+            "v1.19 or newer."
+        )
+        daemon_note.setWordWrap(True)
+        daemon_note.setProperty("class", "PageSubtitle")
+        layout.addWidget(daemon_note)
+
+        import_profiles_btn = QPushButton("Import local profiles into daemon...")
+        import_profiles_btn.setObjectName("Settings_Btn_importProfilesToDaemon")
+        import_profiles_btn.clicked.connect(lambda: self.run_profile_import(auto=False))
+        layout.addWidget(import_profiles_btn)
+
         self._export_result_label = QLabel("")
         layout.addWidget(self._export_result_label)
 
@@ -651,6 +670,132 @@ class SettingsPage(QWidget):
             self._set_status(f"Theme '{current_name}' exported")
         except (OSError, ValueError) as e:
             self._set_status(f"Export failed: {e}")
+
+    # ── Daemon profile import (DEC-161) ──────────────────────────────────
+
+    def run_profile_import(self, *, auto: bool) -> None:
+        """Migrate the user's local profiles into the daemon's profile store.
+
+        ``auto=True`` is the once-per-install startup offer (gated by
+        ``should_offer_import`` in the main window); ``auto=False`` is the
+        always-available manual button. Idempotent: a re-run 409-skips ids
+        already in the store. Originals on disk are never modified.
+        """
+        caps = self._state.capabilities if self._state else None
+        control = getattr(caps, "control", None)
+        storage_ok = bool(control and getattr(control, "profile_storage", False))
+        if self._client is None or not storage_ok:
+            if not auto:
+                QMessageBox.information(
+                    self,
+                    "Import profiles",
+                    "Connect to a daemon that supports profile storage (v1.19 "
+                    "or newer) before importing your local profiles.",
+                )
+            return
+
+        collection = collect_local_profiles_for_import()
+        if collection.is_empty:
+            if auto:
+                self._mark_import_prompted()
+            else:
+                QMessageBox.information(
+                    self, "Import profiles", "No local profiles were found to import."
+                )
+            return
+
+        if auto:
+            # Offered now — never auto-ask again on this install, even on "No".
+            self._mark_import_prompted()
+            proceed = QMessageBox.question(
+                self,
+                "Import your profiles?",
+                f"Found {len(collection.ready)} local profile(s). Import them "
+                "into the daemon so it can manage them?\n\nProfiles already in "
+                "the daemon are skipped, and your local copies are left "
+                "untouched.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if proceed != QMessageBox.StandardButton.Yes:
+                return
+
+        try:
+            report = import_profiles(self._client, collection, on_conflict="skip")
+        except DaemonError as e:
+            QMessageBox.warning(
+                self,
+                "Import failed",
+                f"The daemon became unavailable during import:\n{e}",
+            )
+            return
+
+        if not auto:
+            self._mark_import_prompted()
+        self._present_import_report(report, collection)
+
+    def _mark_import_prompted(self) -> None:
+        if not self._settings_svc.settings.daemon_import_prompted:
+            self._settings_svc.update(daemon_import_prompted=True)
+
+    def _present_import_report(self, report, collection: ImportCollection) -> None:
+        """Show the import result and, when ids collided, offer to re-import the
+        skipped profiles as renamed copies (DEC-161)."""
+        allow_rename = True
+        while True:
+            box = QMessageBox(self)
+            box.setObjectName("Settings_Dialog_importReport")
+            box.setWindowTitle("Profile import")
+            box.setIcon(
+                QMessageBox.Icon.Warning if report.quarantined else QMessageBox.Icon.Information
+            )
+            box.setText(self._format_import_report(report))
+            box.addButton(QMessageBox.StandardButton.Ok)
+            rename_btn = None
+            if allow_rename and report.skipped:
+                rename_btn = box.addButton(
+                    f"Import {len(report.skipped)} skipped as copies",
+                    QMessageBox.ButtonRole.ActionRole,
+                )
+            box.exec()
+
+            if rename_btn is None or box.clickedButton() is not rename_btn:
+                break
+
+            skipped_ids = {o.profile_id for o in report.skipped}
+            sub = ImportCollection(
+                ready=[c for c in collection.ready if c.profile_id in skipped_ids]
+            )
+            try:
+                renamed = import_profiles(self._client, sub, on_conflict="rename")
+            except DaemonError as e:
+                QMessageBox.warning(self, "Import failed", f"The daemon became unavailable:\n{e}")
+                break
+            report.imported.extend(renamed.imported)
+            report.quarantined.extend(renamed.quarantined)
+            report.skipped = []  # every skipped candidate was just reprocessed
+            allow_rename = False
+
+        self._export_result_label.setText(
+            f"Imported {len(report.imported)}, skipped {len(report.skipped)}, "
+            f"quarantined {len(report.quarantined)}."
+        )
+
+    @staticmethod
+    def _format_import_report(report) -> str:
+        lines = [
+            f"Imported: {len(report.imported)}",
+            f"Skipped (already in daemon): {len(report.skipped)}",
+            f"Quarantined (not imported): {len(report.quarantined)}",
+        ]
+        if report.quarantined:
+            lines.append("")
+            lines.append("Quarantined:")
+            for o in report.quarantined[:10]:
+                label = o.name or o.source_path
+                lines.append(f"  • {label}: {o.reason}")
+            if len(report.quarantined) > 10:
+                lines.append(f"  • … and {len(report.quarantined) - 10} more")
+        return "\n".join(lines)
 
     def _export_settings(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

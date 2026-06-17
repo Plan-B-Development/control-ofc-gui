@@ -18,6 +18,7 @@ from control_ofc.services.demo_service import DemoService
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.lease_service import LeaseService
+from control_ofc.services.profile_import_service import should_offer_import
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.pages.controls_page import ControlsPage
@@ -203,6 +204,13 @@ class MainWindow(QWidget):
         # on capabilities_updated rather than checking once at startup so a
         # daemon restart with new detection logic refreshes the popup state.
         self._state.capabilities_updated.connect(self._on_capabilities_updated_for_kernel_warnings)
+
+        # DEC-161: offer the one-time local→daemon profile import when the
+        # daemon first advertises ``control.profile_storage``. Gated to fire at
+        # most once per install (persisted ``daemon_import_prompted``) and once
+        # per session (this guard) — see ``should_offer_import``.
+        self._import_offer_done = False
+        self._state.capabilities_updated.connect(self._on_capabilities_updated_for_profile_import)
 
         # DEC-102: when fresh hwmon header data arrives, sanitize any
         # profile member that targets an unknown or read-only header.
@@ -432,6 +440,27 @@ class MainWindow(QWidget):
 
         if acknowledged != set(settings.acknowledged_kernel_warnings):
             self._settings_service.update(acknowledged_kernel_warnings=sorted(acknowledged))
+
+    def _on_capabilities_updated_for_profile_import(self, caps) -> None:
+        """Offer the one-time local→daemon profile import (DEC-161).
+
+        Fires when the daemon advertises ``control.profile_storage``. Gated by
+        ``should_offer_import`` (capability present + not already offered on
+        this install + local profiles exist + not demo) and a per-session guard
+        so repeated capability emissions don't re-open the dialog. The actual
+        collect/upload/report flow lives on the Settings page (shared with its
+        manual "Import local profiles into daemon..." button).
+        """
+        if self._import_offer_done:
+            return
+        settings = self._settings_service.settings
+        has_local = bool(self._profile_service.profiles)
+        if not should_offer_import(
+            caps, settings, has_local_profiles=has_local, demo=self._demo_mode
+        ):
+            return
+        self._import_offer_done = True
+        self.settings_page.run_profile_import(auto=True)
 
     def _sanitize_profiles_against_headers(self, headers) -> None:
         """Drop profile members that target unknown / read-only hwmon headers.

@@ -339,6 +339,19 @@ class DaemonClient:
         """
         return parse_profile_deactivate(self._post("/profile/deactivate", json={}))
 
+    def create_profile(self, document: dict[str, Any]) -> dict[str, Any]:
+        """POST /profiles — create a daemon-stored profile from a full document.
+
+        The document must carry a stable ``id``; the daemon keys its store on
+        it. Returns the daemon's success body (``{profile_id, created,
+        warnings, ...}``). Raises ``DaemonError`` on failure, distinguished by
+        ``.status``: 409 ``already_exists`` (id already in the store) and 400
+        ``validation_error`` (``field_violations`` in ``.details``) are the
+        cases the one-time profile import branches on (DEC-161). Requires a
+        daemon advertising ``control.profile_storage`` (≥ 1.19).
+        """
+        return self._post("/profiles", json=document)
+
     def set_gpu_fan_speed(
         self, gpu_id: str, speed_pct: int, *, timeout: float | None = None
     ) -> GpuFanSetResult:

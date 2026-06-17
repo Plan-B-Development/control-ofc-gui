@@ -153,6 +153,25 @@ class SafetyLimits:
 
 
 @dataclass
+class ControlCapability:
+    """Daemon control-plane capabilities (DEC-159/160).
+
+    Top-level ``control`` block in ``GET /capabilities``. ``profile_storage``
+    is True when the daemon exposes the ``/profiles`` CRUD + validate surface
+    (daemon ≥ 1.19); the GUI gates its one-time profile-import offer on it. The
+    remaining flags mirror the daemon's full block for forward use (override /
+    identify land in a later phase) — absent on pre-1.19 daemons, so every
+    field defaults to the old/safe value (AIP-180).
+    """
+
+    profile_storage: bool = False
+    curve_evaluation: bool = False
+    manual_override: bool = False
+    fan_identify: bool = False
+    min_supported_gui: str = ""
+
+
+@dataclass
 class Capabilities:
     api_version: int = 1
     daemon_version: str = ""
@@ -164,6 +183,7 @@ class Capabilities:
     aio_hwmon: AioHwmonCapability = field(default_factory=AioHwmonCapability)
     aio_usb: UnsupportedCapability = field(default_factory=UnsupportedCapability)
     features: FeatureFlags = field(default_factory=FeatureFlags)
+    control: ControlCapability = field(default_factory=ControlCapability)
     limits: SafetyLimits = field(default_factory=SafetyLimits)
 
 
@@ -784,6 +804,9 @@ def parse_capabilities(data: dict) -> Capabilities:
             **_filter_fields(UnsupportedCapability, devices.get("aio_usb", {}))
         ),
         features=FeatureFlags(**_filter_fields(FeatureFlags, features)),
+        # DEC-160: top-level ``control`` block; absent on pre-1.19 daemons →
+        # all-default (profile_storage=False), which disables the import offer.
+        control=ControlCapability(**_filter_fields(ControlCapability, data.get("control", {}))),
         limits=SafetyLimits(
             pwm_percent_min=limits.get("pwm_percent_min", 0),
             pwm_percent_max=limits.get("pwm_percent_max", 100),
