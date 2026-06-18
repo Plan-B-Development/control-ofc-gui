@@ -52,13 +52,13 @@
 - [ ] Switching between curves never inherits the previous curve's sensor selection
 - [ ] get_curve().sensor_id always matches the currently loaded curve
 
-### Automatic control
-- [ ] Active profile drives writes through daemon/API
-- [ ] GUI control loop works without direct hardware access
-- [ ] OpenFan writes function through API
-- [ ] Hwmon writes respect lease requirements
-- [ ] Lease failures are visible and do not appear silently successful
-- [ ] 2°C hysteresis deadband prevents fan oscillation near curve inflection points
+### Automatic control (daemon-owned since 2.0.0 — DEC-165)
+- [ ] Activating a profile makes the daemon engine drive fans (the GUI issues no PWM writes)
+- [ ] The GUI runs no control loop and holds no hwmon lease; sensor updates drive zero control calls
+- [ ] A pre-2.0 daemon (no `control.autonomous_control`) triggers the upgrade-required gate, not silently uncontrolled fans
+- [ ] Live manual control via a daemon override reverts to the curve on release/expiry (DEC-163)
+- [ ] Demo mode drives synthetic fans via the GUI-side `DemoController`
+- [ ] 2°C hysteresis deadband (daemon-side) prevents fan oscillation near curve inflection points
 
 ### Settings
 - [ ] Theme import/export works

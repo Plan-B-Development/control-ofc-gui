@@ -113,22 +113,18 @@ mirrors again.
 Tooltip behaviour on each cell is unchanged (still uses
 `format_sensor_tooltip` for hover context).
 
-### 5. Lease state
-If hwmon requires a lease, show:
-- lease required
-- held / not held
-- owner hint
-- TTL remaining
-- whether GUI writes are currently possible
+### 5. Lease state (removed at 2.0.0 — DEC-165)
+The daemon owns the hwmon lease internally as of 2.0.0; the GUI holds none, so the diagnostics
+**Lease tab was removed**. Lease state is no longer a GUI-surfaced diagnostic. (Pre-2.0 this section
+showed lease required / held / owner / TTL.)
 
 ### 6. Logs and events
 Provide a readable log/event view for:
 - recent app events
 - recent API failures
 - validation errors
-- profile/control loop warnings
-- write denials/clamps
-- lease failures
+- profile / daemon-control warnings
+- write denials/clamps surfaced by the daemon
 
 ## Required user actions
 - Reload config
@@ -253,23 +249,12 @@ The four on-demand detail buttons (Daemon Status, Controller Status, GPU Status,
 ### Snapshot widget
 `QPlainTextEdit` with `setMaximumBlockCount(2000)` and a monospace font. The high cap is appropriate for journal pastes; the event-log table has its own 200-row cap that mirrors the deque.
 
-## Implementation: Lease explanation (R34)
+## Implementation: Lease tab (removed at 2.0.0 — DEC-165)
 
-### Explanation content
-The Lease tab includes a static explanation card above the live status card:
-
-> **What is a lease?** A lease grants exclusive write access to your motherboard's fan headers (hwmon). Only one client can hold the lease at a time, preventing conflicting PWM commands from different tools.
->
-> The GUI automatically acquires and renews the lease while controlling fans. The lease expires after 60 seconds if not renewed (e.g. if the GUI crashes), allowing other tools to take over.
->
-> If another tool holds the lease, the GUI cannot write PWM values until the lease is released or expires. OpenFan Controller writes do not require a lease — only motherboard hwmon writes do.
-
-### Status card fields
-- Lease held/not held
-- Lease ID (UUID or —)
-- Owner hint (who holds it)
-- TTL remaining (seconds)
-- Required (yes/no)
+The diagnostics **Lease tab** (explanation card + live status card) was **removed** at the 2.0.0
+cutover. The GUI no longer holds an hwmon lease — the daemon acquires, renews, and releases it
+internally as the sole writer, and runs hwmon write-verify under its own internal lease. There is no
+GUI-surfaced lease state to explain.
 
 ## Implementation: Diagnostics theming (R34)
 
@@ -372,8 +357,8 @@ Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
   **Restore GPU Fan to Automatic** (DEC-147: `POST /gpu/{id}/fan/reset`) —
   shown for any writable AMD GPU with **no** daemon version floor (the reset
   route predates every supported daemon), and **disabled with an explanatory
-  tooltip while the GUI control loop manages an `amd_gpu:` target** (the
-  active profile would silently re-assert its curve within seconds). The
+  tooltip while the active profile owns an `amd_gpu:` member** (the daemon
+  engine would silently re-assert its curve within seconds). The
   click handler re-checks that gate, a success clears the session's
   `gui_wrote_gpu_fan` flag (making the close-time auto-reset a no-op until
   the next GUI GPU write), and both outcomes land in the event log.

@@ -34,30 +34,34 @@ This boundary protects the design from:
 - portability issues across Linux systems
 - architecture drift as the daemon evolves
 
-## V1 control ownership decision
-The daemon exposes both an imperative write surface (set PWM/RPM now) and a headless
-profile engine (`profile_engine.rs`) that can evaluate curves autonomously when a
-profile is active. V1 still defaults to a **GUI-owned control loop** when the GUI is
-connected: the GUI evaluates curves every second and writes PWM, and the daemon's
-profile engine defers to the GUI whenever the GUI has been active in the last 30 seconds
-(DEC-071 GPU, DEC-074 OpenFan). The daemon's profile engine becomes the primary writer
-only when the GUI is absent (headless mode). See `docs/14_Risks_Gaps_and_Future_Work.md`
-for the current coverage of the daemon-side engine across backends.
+## Control ownership (2.0.0+)
+The daemon is the **single source of truth for runtime control** (DEC-159, DEC-165). Its profile
+engine (`profile_engine.rs`) evaluates the active profile's curves autonomously and is the **sole
+writer** of every fan backend (OpenFan, hwmon, GPU PMFW); it keeps fans controlled through GUI close,
+crash, or sleep. The GUI runs **no control loop** and holds **no hwmon lease** — both were deleted at
+the 2.0.0 cutover, along with the 30 s `gui_active` defer window the daemon used while the GUI was the
+writer (retiring DEC-071 / DEC-074 / DEC-093).
 
 That means the GUI will:
-1. poll sensor data
-2. evaluate the active profile's curve rules
-3. decide the desired PWM outputs
-4. write those outputs through daemon endpoints
-5. respect hwmon lease requirements
-6. persist all GUI-owned profile state locally
+1. poll sensor / fan / status data at 1 Hz and render it
+2. author and **validate** profiles, then upload them to the daemon's profile store (DEC-160)
+3. **activate** a profile for the daemon to evaluate
+4. express live manual intent as an **expiring daemon override** (DEC-163) — never a direct PWM write
+5. drive fan identification through the daemon **identify** API (DEC-166)
+6. persist its own **UI-owned** state locally (aliases, themes, layout)
+
+A new-GUI / old-daemon mix is refused (capability gate on `control.autonomous_control` + the package
+pin `control-ofc-daemon>=2.0.0`); the GUI has no loop to fall back to. **Demo mode** is the sole
+exception — it runs a GUI-side evaluator against synthetic hardware, never touching the daemon.
 
 ## Consequences of this decision
-The GUI is not just a passive dashboard. It is also:
-- a policy engine
-- a scheduler/timer owner
-- a state reconciler
-- a persistence owner for profiles/groups/themes
+The GUI is a **viewer and controller-of-intent**, not a control authority. It is:
+- a profile **editor and validator**
+- an **intent** client — activate a profile; take/renew/release an expiring override; identify a fan
+- a **poller / renderer** of daemon telemetry
+- a persistence owner for **UI-owned** state (aliases, themes, layout, demo defaults)
+
+It is **not** a policy engine, a control scheduler, or a PWM writer — the daemon owns all of that.
 
 ## Recommended tech stack
 - **Python**
@@ -106,13 +110,13 @@ control_ofc/
   services/
     app_settings_service.py
     app_state.py
-    control_loop.py
+    demo_controller.py        # demo-only curve evaluator (no daemon, no hardware) — DEC-165
     demo_service.py
     diagnostics_service.py
     history_store.py
-    lease_service.py
     polling.py
-    profile_service.py
+    profile_import_service.py  # one-time local->daemon profile import — DEC-161
+    profile_service.py         # daemon-backed profile CRUD + local draft cache — DEC-160/161
     series_selection.py
   # Persistence (JSON repos, XDG paths) lives inside services/ and the
   # app_settings_service module rather than a separate persistence/ package.
@@ -170,20 +174,21 @@ Responsible for:
 - emission of updated view models
 - selective pause/resume in demo/manual/disconnected states
 
-### Control-loop service
+### Demo controller (demo mode only)
 Responsible for:
-- active profile evaluation
-- curve interpolation
-- write throttling/coalescing
-- manual override state
-- safe fallback when prerequisites fail
+- evaluating the active profile against synthetic sensors on a 1 Hz timer
+- driving `DemoService` fan outputs (stateless `interpolate()` tier; Mix/Sync collapse to flat)
+- mirroring manual override into the demo UI
 
-### Lease service
+Outside demo mode there is **no** GUI-side control loop and **no** lease service — the daemon owns
+profile evaluation, write coalescing, the hwmon lease, and safe fallback. Live manual override and fan
+identify are issued through the API client directly (the Controls page owns the override renew timer).
+
+### Profile service
 Responsible for:
-- acquiring hwmon lease
-- renewing lease
-- releasing lease
-- exposing lease state to UI and control loop
+- daemon-backed profile CRUD (pull + mirror on load; validate + upload on save) with a local draft cache
+- offline fallback — local drafts when the daemon is unreachable, reconciled on reconnect
+- exposing published / draft state to the UI
 
 ### Persistence layer
 Responsible for:
@@ -205,10 +210,11 @@ Responsible for:
 ## Supported operating modes
 
 ### Connected automatic mode
-Daemon reachable, profile active, control loop running.
+Daemon reachable, profile active, the daemon engine controlling.
 
 ### Connected manual override
-Daemon reachable, manual override active, control loop suspended or bypassed.
+Daemon reachable, an expiring daemon override (DEC-163) pinning one or more controls; the engine
+resumes curve control automatically when the override is released or expires.
 
 ### Connected read-only
 Daemon reachable, but writes unavailable or blocked.
@@ -223,5 +229,5 @@ Synthetic data; fully explorable without hardware.
 - prefer conservative defaults
 - clamp unsafe user input in UI before send
 - still trust daemon as final safety authority
-- log all failed write attempts with context
-- never hide lease conflicts
+- log all failed intent attempts with context
+- never hide a control-capability gate (new-GUI / old-daemon) or an override rejection

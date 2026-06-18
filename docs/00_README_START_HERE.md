@@ -49,19 +49,18 @@ This pack is the **working source of truth** for building the Linux-first deskto
 - Theme import/export existed from the start; a full theme editor (per-token palette editing with contrast checking) shipped in a later release
 
 ## Highest-impact architectural decision
-The daemon supports **two control modes**:
+**The daemon owns runtime control.** As of **2.0.0** (DEC-159, DEC-165) the daemon's profile engine is the **single authoritative writer** of every fan backend (OpenFan, hwmon, GPU PMFW): it evaluates the active profile's curves autonomously and keeps fans controlled through GUI close, crash, or sleep. The GUI is an **editor/viewer/controller-of-intent that never writes PWM**.
 
-- **Imperative mode** (default — no profile loaded): the GUI owns curve evaluation and the daemon performs only the PWM/RPM writes the GUI requests. This is the V1 GUI's primary mode of operation.
-- **Profile mode** (headless — profile loaded via CLI, env, API, or persisted state): the daemon evaluates curves autonomously. The GUI still takes priority — when the GUI is active and writing within the last 30 s, the daemon's profile engine defers to it (DEC-071, DEC-074), so concurrent operation never produces a dual-writer conflict.
+With the GUI present:
 
-For V1, with the GUI present:
+- the GUI **authors and validates** profiles, uploads them to the daemon's profile store (DEC-160), and **activates** one for autonomous evaluation
+- the GUI **polls** the daemon at 1 Hz for sensors, fans, and status, and renders them — it runs no control loop and holds no hwmon lease
+- live manual control is an **expiring daemon override** (DEC-163), not a GUI write; fan identification is a daemon **identify** call (DEC-166)
+- the GUI persists its own UI-owned state locally (fan aliases, themes, window layout)
 
-- the **GUI owns the control loop** while connected
-- the GUI polls sensors at 1 Hz
-- the GUI evaluates active profile curves and issues PWM write commands through the daemon API
-- the GUI persists its own profiles, fan groups, aliases, and themes (as well as activating one of them on the daemon for headless operation)
+A new-GUI / old-daemon mix is **refused**, never run dual-writer: the GUI gates control on the daemon advertising `control.autonomous_control`, and the package pins `control-ofc-daemon>=2.0.0`. **Demo mode** is the one exception — it runs a GUI-side evaluator against synthetic hardware, never touching the daemon (DEC-165).
 
-This is the single most important build assumption in this pack.
+This daemon-owns-control model is the single most important build assumption in this pack. (Before 2.0.0 the GUI owned the control loop — DEC-010, now superseded.)
 
 ## Design intent
 The UI should feel like:

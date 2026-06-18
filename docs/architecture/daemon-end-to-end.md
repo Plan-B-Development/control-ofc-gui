@@ -308,23 +308,25 @@ GPU fan RPM is polled alongside motherboard hwmon sensors in the same `hwmon_pol
 
 | Endpoint | Purpose | Lease required? |
 |----------|---------|-----------------|
-| `POST /gpu/{gpu_id}/fan/pwm` | Set GPU fan to static speed % via PMFW flat curve | No |
 | `POST /gpu/{gpu_id}/fan/reset` | Reset GPU fan to firmware automatic mode | No |
+
+(The bare `POST /gpu/{gpu_id}/fan/pwm` static-speed write was retired at 2.0.0 — DEC-165. GPU fans are engine-driven; live manual control is the override API, DEC-163.)
 
 GPU fan writes are routed through the PMFW `fan_curve` sysfs interface (RDNA3+) or `pwm1_enable=1` + `pwm1` (pre-RDNA3). No lease is required — PMFW operations are atomic and firmware-managed.
 
 **Write suppression (v0.5.3):** GPU PMFW writes use a 5% minimum change threshold (not 1% like OpenFan/hwmon). Each PMFW commit triggers SMU firmware processing that can stall the GPU display pipeline. During gaming, temperature fluctuations of 0.5-1°C per second would otherwise produce continuous writes. The `disable_zero_rpm()` call is idempotent — it reads the multi-line sysfs output and skips if already disabled.
 
-**Dual-writer conflict resolution (v0.5.3):** When both the GUI control loop and the profile engine are active, both could independently evaluate the same curve and write to PMFW. The profile engine defers GPU writes when the GUI was active in the last 30 seconds (`cache.last_gui_write_at`). In headless mode (no GUI), the profile engine writes normally. (DEC-070, DEC-071)
+**Single-writer (2.0.0, DEC-159/DEC-165):** the daemon's profile engine is the sole writer of every backend. The pre-2.0 dual-writer hazard (GUI control loop + engine both writing PMFW) and its 30 s `gui_active` defer window (`cache.last_gui_write_at`, DEC-070/DEC-071) were deleted at the cutover — there is no longer a GUI writer to defer to.
 
 ### Profile engine GPU support (R36)
 
 The profile engine's write loop handles `source == "amd_gpu"` members alongside OpenFan. When a profile contains a GPU fan member, the engine:
-1. Checks if GUI was active in the last 30s — if so, skips GPU writes (GUI takes priority)
-2. Checks if speed matches last commanded value — if so, skips (write suppression)
-3. Extracts the PCI BDF from the member_id
-4. Finds the matching GPU in the detected list
-5. Calls `set_static_speed()` via `spawn_blocking()` (sysfs writes are synchronous)
+1. Checks if speed matches last commanded value — if so, skips (write suppression)
+2. Extracts the PCI BDF from the member_id
+3. Finds the matching GPU in the detected list
+4. Calls `set_static_speed()` via `spawn_blocking()` (sysfs writes are synchronous)
+
+(The pre-2.0 "GUI active in last 30 s → skip" defer step was removed at the cutover — the engine is the sole writer, DEC-165.)
 
 ### Shutdown safety (R36)
 

@@ -15,7 +15,7 @@ This manual covers every page, setting, and feature of the application.
 3. [Dashboard](dashboard.md) — Real-time overview of fans, sensors, and system health
 4. [Controls](controls.md) — Profiles, fan roles, curves, and manual override
 5. [Settings](settings.md) — Application preferences, themes, and backup/restore
-6. [Diagnostics](diagnostics.md) — Daemon health, device status, lease info, and logs
+6. [Diagnostics](diagnostics.md) — Daemon health, device status, and logs
 7. [Fan Wizard](fan-wizard.md) — Guided fan identification and labelling
 8. [Profiles and Curves Reference](profiles-and-curves.md) — How profiles, fan roles, and curves work together
 9. [Hardware Troubleshooting](hardware-troubleshooting.md) — Hardware Readiness, missing sensors, vendor quirks, Test PWM Control, and why some fans appear read-only

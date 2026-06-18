@@ -35,8 +35,6 @@ from control_ofc.constants import THERMAL_ABORT_C
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
     from control_ofc.services.app_state import AppState
-    from control_ofc.services.control_loop import ControlLoopService
-    from control_ofc.services.lease_service import LeaseService
 
 log = logging.getLogger(__name__)
 
@@ -76,8 +74,6 @@ class FanConfigWizard(QWizard):
         self,
         state: AppState,
         client: DaemonClient | None = None,
-        control_loop: ControlLoopService | None = None,
-        lease_service: LeaseService | None = None,
         spindown_seconds: int = _FALLBACK_SPINDOWN_S,
         parent=None,
     ) -> None:
@@ -87,8 +83,6 @@ class FanConfigWizard(QWizard):
 
         self._state = state
         self._client = client
-        self._control_loop = control_loop
-        self._lease_service = lease_service
         self.spindown_seconds = max(5, min(12, spindown_seconds))
 
         # Build target list from current fan data
@@ -97,8 +91,10 @@ class FanConfigWizard(QWizard):
         self._labels: dict[str, str] = {}  # fan_id → label
         self._notes: dict[str, str] = {}  # fan_id → notes
         self._current_test_idx = 0
-        self._override_active = False
-        self._lease_acquired = False
+        # True once the user has entered the identify (test) page, so closing
+        # the wizard restores any fan still stopped. Identify is per-fan and
+        # daemon-owned (DEC-166): no global automation freeze, no hwmon lease.
+        self._identify_active = False
 
         # Pages
         self._intro_page = IntroPage(state)
@@ -132,7 +128,6 @@ class FanConfigWizard(QWizard):
                     "rpm": fan.rpm,
                     "has_tach": True,
                     "existing_label": self._state.fan_display_name(fan.id),
-                    "prior_pwm": fan.last_commanded_pwm,
                 }
             )
         return targets
@@ -145,7 +140,7 @@ class FanConfigWizard(QWizard):
             self._selected_indices = self._discovery_page.selected_indices()
             if self._selected_indices:
                 self._current_test_idx = 0
-                self._enter_override()
+                self._identify_active = True
                 return PAGE_TEST
             return PAGE_REVIEW
         if current == PAGE_TEST:
@@ -168,32 +163,21 @@ class FanConfigWizard(QWizard):
         self._test_page.initializePage()
         return True
 
-    def _enter_override(self) -> None:
-        if self._control_loop and not self._override_active:
-            self._control_loop.set_manual_override(True)
-            self._override_active = True
-            log.info("Wizard: manual override activated")
-        # Acquire lease for hwmon targets
-        has_hwmon = any(self._targets[i]["source"] != "openfan" for i in self._selected_indices)
-        if has_hwmon and self._lease_service and not self._lease_acquired:
-            self._lease_service.acquire()
-            self._lease_acquired = True
-            log.info("Wizard: hwmon lease acquired")
-
     def _exit_override(self) -> None:
-        # Restore all fans to 100% as safety measure
+        """Restore every tested fan when leaving the wizard (idempotent).
+
+        Identify-stop has a daemon-side deadman auto-restore (DEC-166), so this
+        is belt-and-braces: it clears any fan the user left stopped without
+        waiting for the deadman. There is no global automation freeze or hwmon
+        lease to undo — identify is per-fan and daemon-owned.
+        """
+        if not self._identify_active:
+            return
+        self._identify_active = False
         self._restore_all_fans()
-        if self._control_loop and self._override_active:
-            self._control_loop.set_manual_override(False)
-            self._override_active = False
-            log.info("Wizard: manual override deactivated")
-        if self._lease_service and self._lease_acquired:
-            self._lease_service.release()
-            self._lease_acquired = False
-            log.info("Wizard: hwmon lease released")
 
     def _restore_all_fans(self) -> None:
-        """Restore all fans to their prior PWM (fallback: 30%)."""
+        """Restore (un-identify) every target fan. Restore is idempotent."""
         if not self._client:
             return
         for target in self._targets:
@@ -202,65 +186,36 @@ class FanConfigWizard(QWizard):
             except DaemonError as e:
                 log.warning("Failed to restore fan %s: %s", target["id"], e.message)
 
-    @staticmethod
-    def _parse_openfan_channel(fan_id: str) -> int | None:
-        if fan_id.startswith("openfan:ch"):
-            try:
-                return int(fan_id[len("openfan:ch") :])
-            except ValueError:
-                pass
-        return None
-
     def stop_fan(self, target: dict) -> str | None:
-        """Stop a single fan for identification. Returns error message or None on success."""
+        """Stop a single fan for identification via the daemon's per-fan
+        identify API (DEC-166). Returns an error message, or None on success.
+
+        The daemon forces just this fan to 0 (floor-exempt — even a pump) with a
+        deadman auto-restore, and keeps every other fan curve-controlled, so
+        there is no global automation freeze and no hwmon lease. Works for every
+        source type (openfan / amd_gpu / hwmon) addressed by fan id.
+        """
         if not self._client:
             return "No daemon client available"
         fan_id = target["id"]
         log.info("Wizard: stopping fan %s for identification", fan_id)
         try:
-            if target["source"] == "openfan":
-                ch = self._parse_openfan_channel(fan_id)
-                if ch is not None:
-                    self._client.set_openfan_pwm(ch, 0)
-                else:
-                    return f"Cannot parse OpenFan channel from {fan_id}"
-            elif target["source"] == "amd_gpu":
-                gpu_id = fan_id.removeprefix("amd_gpu:")
-                self._client.set_gpu_fan_speed(gpu_id, 0)
-            elif target["source"] == "intel_gpu":
-                # Read-only (firmware-managed, DEC-121) — cannot be stopped.
-                return "Intel GPU fans are read-only and cannot be stopped"
-            else:
-                # hwmon — need lease
-                if self._lease_service and self._lease_service.is_held:
-                    self._client.set_hwmon_pwm(fan_id, 0, self._lease_service.lease_id)
-                else:
-                    return "hwmon lease not held — cannot stop fan"
+            self._client.fan_identify(fan_id, "stop")
             return None
         except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
             log.warning("Failed to stop fan %s: %s", fan_id, e)
             return str(e)
 
     def restore_fan(self, target: dict) -> None:
-        """Restore a fan to its prior PWM after identification (fallback: 30%)."""
+        """Restore (un-identify) a fan after identification via the daemon
+        (DEC-166). Restore is idempotent — the engine recomputes the fan's
+        curve value on the next tick, so the GUI never replays a prior PWM."""
         if not self._client:
             return
         fan_id = target["id"]
-        restore_pct = target.get("prior_pwm") or 30
-        log.info("Wizard: restoring fan %s to %d%%", fan_id, restore_pct)
+        log.info("Wizard: restoring fan %s", fan_id)
         try:
-            if target["source"] == "openfan":
-                ch = self._parse_openfan_channel(fan_id)
-                if ch is not None:
-                    self._client.set_openfan_pwm(ch, restore_pct)
-            elif target["source"] == "amd_gpu":
-                gpu_id = fan_id.removeprefix("amd_gpu:")
-                self._client.set_gpu_fan_speed(gpu_id, restore_pct)
-            elif target["source"] == "intel_gpu":
-                return  # read-only (DEC-121) — nothing to restore
-            else:
-                if self._lease_service and self._lease_service.is_held:
-                    self._client.set_hwmon_pwm(fan_id, restore_pct, self._lease_service.lease_id)
+            self._client.fan_identify(fan_id, "restore")
         except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
             log.warning("Failed to restore fan %s: %s", fan_id, e)
 
@@ -290,8 +245,7 @@ class FanConfigWizard(QWizard):
 
     def done(self, result: int) -> None:
         """Ensure cleanup happens regardless of how the wizard closes."""
-        if self._override_active:
-            self._exit_override()
+        self._exit_override()
         super().done(result)
 
 

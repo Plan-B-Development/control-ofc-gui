@@ -8,11 +8,6 @@ fake-daemon load test).
 from __future__ import annotations
 
 import json
-import socket
-import threading
-import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -23,12 +18,9 @@ from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
-    ConnectionState,
     KernelWarning,
-    OperationMode,
     parse_capabilities,
 )
-from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import (
     KERNEL_MODULE_FILTER,
     DiagnosticsService,
@@ -267,7 +259,7 @@ class TestPerCallTimeout:
             "control_ofc.api.client.parse_hwmon_verify_result",
             return_value=MagicMock(),
         ):
-            client.verify_hwmon_pwm("hwmon:test", "lease-id")
+            client.verify_hwmon_pwm("hwmon:test")
         assert isinstance(fake.last_post_timeout, float)
         assert fake.last_post_timeout >= 9.0, (
             f"verify_hwmon_pwm timeout={fake.last_post_timeout} must be ≥ 9 s "
@@ -316,253 +308,6 @@ class TestPostRaisesCorrectExceptionType:
             client._post("/foo", json={})
         assert not isinstance(exc_info.value, DaemonTimeout)
         assert exc_info.value.endpoint == "/foo"
-
-
-# ---------------------------------------------------------------------------
-# DEC-099 — _WriteWorker outcome enum + retry-on-timeout
-# ---------------------------------------------------------------------------
-
-
-class TestWriteWorkerOutcomes:
-    """Exercise _WriteWorker.do_write directly without QSignal plumbing."""
-
-    def _make_worker_with_stub(self, stub_client):
-        from control_ofc.services.control_loop import _WriteWorker
-
-        worker = _WriteWorker(socket_path="/tmp/x.sock")
-        worker._client = stub_client
-        emitted: list[tuple[str, str]] = []
-        worker.write_completed = MagicMock()
-        worker.write_completed.emit = lambda tid, outcome: emitted.append((tid, outcome))
-        return worker, emitted
-
-    def test_successful_write_emits_ok(self):
-        client = MagicMock(spec=DaemonClient)
-        worker, emitted = self._make_worker_with_stub(client)
-        worker.do_write("openfan:ch00", 50, "")
-        assert emitted == [("openfan:ch00", "ok")]
-        client.set_openfan_pwm.assert_called_once()
-
-    def test_timeout_retries_once_then_emits_timeout(self):
-        from control_ofc.services.control_loop import OUTCOME_TIMEOUT
-
-        client = MagicMock(spec=DaemonClient)
-        client.set_openfan_pwm.side_effect = [
-            DaemonTimeout(message="first"),
-            DaemonTimeout(message="second"),
-        ]
-        worker, emitted = self._make_worker_with_stub(client)
-        worker.do_write("openfan:ch00", 50, "")
-        assert client.set_openfan_pwm.call_count == 2
-        assert emitted == [("openfan:ch00", OUTCOME_TIMEOUT)]
-
-    def test_timeout_then_success_emits_ok(self):
-        """Single timeout that recovers on retry — should look like success."""
-        from control_ofc.services.control_loop import OUTCOME_OK
-
-        client = MagicMock(spec=DaemonClient)
-        client.set_openfan_pwm.side_effect = [
-            DaemonTimeout(message="transient"),
-            None,  # success on retry
-        ]
-        worker, emitted = self._make_worker_with_stub(client)
-        worker.do_write("openfan:ch00", 50, "")
-        assert client.set_openfan_pwm.call_count == 2
-        assert emitted == [("openfan:ch00", OUTCOME_OK)]
-
-    def test_unavailable_does_not_retry(self):
-        from control_ofc.services.control_loop import OUTCOME_UNAVAILABLE
-
-        client = MagicMock(spec=DaemonClient)
-        client.set_openfan_pwm.side_effect = DaemonUnavailable(message="refused")
-        worker, emitted = self._make_worker_with_stub(client)
-        worker.do_write("openfan:ch00", 50, "")
-        assert client.set_openfan_pwm.call_count == 1
-        assert emitted == [("openfan:ch00", OUTCOME_UNAVAILABLE)]
-
-    def test_4xx_emits_validation(self):
-        from control_ofc.services.control_loop import OUTCOME_VALIDATION
-
-        client = MagicMock(spec=DaemonClient)
-        client.set_openfan_pwm.side_effect = DaemonError(
-            code="validation_error",
-            message="bad input",
-            retryable=False,
-            source="validation",
-            status=400,
-        )
-        worker, emitted = self._make_worker_with_stub(client)
-        worker.do_write("openfan:ch00", 50, "")
-        assert emitted == [("openfan:ch00", OUTCOME_VALIDATION)]
-
-    def test_5xx_emits_other(self):
-        from control_ofc.services.control_loop import OUTCOME_OTHER
-
-        client = MagicMock(spec=DaemonClient)
-        client.set_openfan_pwm.side_effect = DaemonError(
-            code="hardware_unavailable",
-            message="serial down",
-            retryable=True,
-            source="hardware",
-            status=503,
-        )
-        worker, emitted = self._make_worker_with_stub(client)
-        worker.do_write("openfan:ch00", 50, "")
-        assert emitted == [("openfan:ch00", OUTCOME_OTHER)]
-
-
-# ---------------------------------------------------------------------------
-# DEC-099 — fake-daemon integration test (D5 from audit)
-#
-# A real HTTP server on a Unix socket that holds requests for ~6 seconds.
-# The GUI's write worker should:
-#   1. Time out the first attempt (>2s)
-#   2. Retry once (also times out)
-#   3. Emit OUTCOME_TIMEOUT distinct from OUTCOME_UNAVAILABLE
-# ---------------------------------------------------------------------------
-
-
-class _SlowDaemonHandler(BaseHTTPRequestHandler):
-    """Holds every POST for `hold_seconds` to force client-side timeouts."""
-
-    hold_seconds = 6.0
-
-    def do_POST(self):
-        time.sleep(self.hold_seconds)
-        body = b'{"api_version": 1, "channel": 0, "pwm_percent": 50}'
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *_args):  # silence test output
-        pass
-
-
-class _UDSHttpServer(HTTPServer):
-    """HTTPServer subclass that listens on a Unix domain socket."""
-
-    address_family = socket.AF_UNIX
-
-    def server_bind(self):
-        # http.server expects (host, port); for AF_UNIX we just bind the path.
-        self.socket.bind(self.server_address)
-        # Mirror the daemon's chmod 0666 so the test client can connect.
-        Path(self.server_address).chmod(0o666)
-
-    def server_activate(self):
-        self.socket.listen(8)
-
-    def get_request(self):
-        # AF_UNIX accept returns (sock, b'') instead of (sock, address)
-        sock, _ = self.socket.accept()
-        return sock, ("unix", 0)
-
-
-@pytest.fixture
-def slow_daemon(tmp_path):
-    """Spin up a fake daemon that holds requests for 6 seconds."""
-    sock_path = tmp_path / "fake-daemon.sock"
-
-    server = _UDSHttpServer(str(sock_path), _SlowDaemonHandler)
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
-    try:
-        yield str(sock_path)
-    finally:
-        server.shutdown()
-        server.server_close()
-        server_thread.join(timeout=2)
-
-
-class TestFakeDaemonLoadIntegration:
-    """End-to-end: GUI writes against a daemon that holds requests for 6s."""
-
-    def test_slow_daemon_yields_timeout_outcome_not_unavailable(self, slow_daemon):
-        """Distinct counters: this is timeout, not unavailability (DEC-099)."""
-        from control_ofc.services.control_loop import (
-            OUTCOME_TIMEOUT,
-            OUTCOME_UNAVAILABLE,
-            _WriteWorker,
-        )
-
-        worker = _WriteWorker(socket_path=slow_daemon)
-        emitted: list[tuple[str, str]] = []
-        worker.write_completed = MagicMock()
-        worker.write_completed.emit = lambda tid, outcome: emitted.append((tid, outcome))
-
-        # Real client against the fake-daemon UDS — uses the production
-        # 2s WRITE_TIMEOUT_S per call, retries once on DaemonTimeout, then
-        # surfaces OUTCOME_TIMEOUT. Total elapsed ~4-8s (two 2s-budgeted
-        # waits, but httpx may report slightly later under contention).
-        worker.do_write("openfan:ch00", 50, "")
-        worker.shutdown()
-
-        assert emitted, "worker should emit a result"
-        target_id, outcome = emitted[0]
-        assert target_id == "openfan:ch00"
-        assert outcome == OUTCOME_TIMEOUT, (
-            f"expected OUTCOME_TIMEOUT (slow daemon), got {outcome!r}"
-        )
-        assert outcome != OUTCOME_UNAVAILABLE
-
-
-# ---------------------------------------------------------------------------
-# DEC-099 — outcome-based warning messages in _on_write_completed
-# ---------------------------------------------------------------------------
-
-
-class TestOutcomeAwareWarningMessages:
-    def _make_loop(self):
-        from control_ofc.services.control_loop import ControlLoopService
-
-        state = AppState()
-        state.set_connection(ConnectionState.CONNECTED)
-        state.set_mode(OperationMode.AUTOMATIC)
-        profile_svc = MagicMock()
-        client = MagicMock()
-        return ControlLoopService(state=state, profile_service=profile_svc, client=client), state
-
-    def test_timeout_warning_says_overloaded(self):
-        from control_ofc.services.control_loop import OUTCOME_TIMEOUT
-
-        svc, state = self._make_loop()
-        target = "openfan:ch00"
-        for _ in range(3):
-            svc._on_write_completed(target, OUTCOME_TIMEOUT)
-
-        warnings = [w for w in state._external_warnings if target in w.get("message", "")]
-        assert len(warnings) == 1
-        msg = warnings[0]["message"]
-        assert "timed out" in msg.lower()
-        assert "overload" in msg.lower()
-
-    def test_unavailable_warning_says_connection_lost(self):
-        from control_ofc.services.control_loop import OUTCOME_UNAVAILABLE
-
-        svc, state = self._make_loop()
-        target = "openfan:ch00"
-        for _ in range(3):
-            svc._on_write_completed(target, OUTCOME_UNAVAILABLE)
-
-        warnings = [w for w in state._external_warnings if target in w.get("message", "")]
-        assert len(warnings) == 1
-        msg = warnings[0]["message"]
-        assert "connection lost" in msg.lower()
-
-    def test_validation_warning_says_lease_or_config(self):
-        from control_ofc.services.control_loop import OUTCOME_VALIDATION
-
-        svc, state = self._make_loop()
-        target = "hwmon:nct6683:f1"
-        for _ in range(3):
-            svc._on_write_completed(target, OUTCOME_VALIDATION)
-
-        warnings = [w for w in state._external_warnings if target in w.get("message", "")]
-        assert len(warnings) == 1
-        msg = warnings[0]["message"]
-        assert "lease" in msg.lower() or "configuration" in msg.lower()
 
 
 # ---------------------------------------------------------------------------

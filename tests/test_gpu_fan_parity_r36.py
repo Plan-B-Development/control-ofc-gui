@@ -6,8 +6,6 @@ GPU fan entries, GPU Status event log button, fan role source compatibility.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 from PySide6.QtWidgets import QPushButton
 
 from control_ofc.api.models import (
@@ -58,53 +56,6 @@ def _gpu_caps(present: bool = True) -> Capabilities:
             is_discrete=True,
         ),
     )
-
-
-# ---------------------------------------------------------------------------
-# Control loop GPU write routing
-# ---------------------------------------------------------------------------
-
-
-class TestControlLoopGpuRouting:
-    """Control loop routes amd_gpu fan writes through set_gpu_fan_speed."""
-
-    def test_gpu_target_calls_set_gpu_fan_speed(self):
-        from control_ofc.services.control_loop import ControlLoopService
-
-        state = _make_state()
-        client = MagicMock()
-        profile_svc = MagicMock()
-        svc = ControlLoopService(state=state, profile_service=profile_svc, client=client)
-
-        result = svc._write_target("amd_gpu:0000:2d:00.0", 75.0)
-
-        client.set_gpu_fan_speed.assert_called_once_with("0000:2d:00.0", 75)
-        assert result is True
-
-    def test_gpu_target_strips_prefix(self):
-        from control_ofc.services.control_loop import ControlLoopService
-
-        state = _make_state()
-        client = MagicMock()
-        profile_svc = MagicMock()
-        svc = ControlLoopService(state=state, profile_service=profile_svc, client=client)
-
-        svc._write_target("amd_gpu:0000:05:00.0", 50.0)
-
-        client.set_gpu_fan_speed.assert_called_once_with("0000:05:00.0", 50)
-
-    def test_openfan_still_works(self):
-        from control_ofc.services.control_loop import ControlLoopService
-
-        state = _make_state()
-        client = MagicMock()
-        profile_svc = MagicMock()
-        svc = ControlLoopService(state=state, profile_service=profile_svc, client=client)
-
-        result = svc._write_target("openfan:ch00", 80.0)
-
-        client.set_openfan_pwm.assert_called_once_with(0, 80)
-        assert result is True
 
 
 # ---------------------------------------------------------------------------

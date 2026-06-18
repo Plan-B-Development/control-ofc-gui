@@ -174,14 +174,6 @@ class TestThermalGuard:
         assert not wizard.check_thermal_safe()
 
 
-class TestChannelParsing:
-    def test_parse_openfan_channel(self):
-        assert FanConfigWizard._parse_openfan_channel("openfan:ch04") == 4
-        assert FanConfigWizard._parse_openfan_channel("openfan:ch00") == 0
-        assert FanConfigWizard._parse_openfan_channel("hwmon:xyz") is None
-        assert FanConfigWizard._parse_openfan_channel("openfan:chXX") is None
-
-
 # ---------------------------------------------------------------------------
 # R59 — RPM filtering, stop_fan errors, restore policy
 # ---------------------------------------------------------------------------
@@ -265,79 +257,99 @@ class TestSinglePageFanCycling:
 
 
 class TestStopFanErrorSurfacing:
-    """stop_fan returns error string on failure instead of silently logging (R59)."""
+    """stop_fan drives the daemon identify API and surfaces failures (DEC-166)."""
 
-    def test_stop_fan_returns_none_on_success(self):
+    def test_stop_fan_calls_identify_and_returns_none_on_success(self):
         from unittest.mock import MagicMock
 
-        state = _make_wizard_state()
         client = MagicMock()
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
-        wizard._state = state
-        wizard._lease_service = None
+        wizard._state = _make_wizard_state()
 
-        target = {"id": "openfan:ch00", "source": "openfan"}
-        result = wizard.stop_fan(target)
+        result = wizard.stop_fan({"id": "openfan:ch00", "source": "openfan"})
         assert result is None
+        client.fan_identify.assert_called_once_with("openfan:ch00", "stop")
+
+    def test_stop_fan_hwmon_passes_no_lease(self):
+        """hwmon identify is daemon-owned now — addressed by fan id, no lease."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        wizard = FanConfigWizard.__new__(FanConfigWizard)
+        wizard._client = client
+        wizard._state = _make_wizard_state()
+
+        result = wizard.stop_fan({"id": "hwmon:nct6798:pwm2", "source": "hwmon"})
+        assert result is None
+        client.fan_identify.assert_called_once_with("hwmon:nct6798:pwm2", "stop")
 
     def test_stop_fan_returns_error_on_no_client(self):
-        state = _make_wizard_state()
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = None
-        wizard._state = state
-        wizard._lease_service = None
+        wizard._state = _make_wizard_state()
 
-        target = {"id": "openfan:ch00", "source": "openfan"}
-        result = wizard.stop_fan(target)
+        result = wizard.stop_fan({"id": "openfan:ch00", "source": "openfan"})
         assert result is not None
         assert "client" in result.lower()
 
-
-class TestRestorePriorState:
-    """Wizard restores fans to prior PWM or 30% fallback (R59)."""
-
-    def test_restore_uses_prior_pwm(self):
+    def test_stop_fan_returns_error_string_when_daemon_raises(self):
         from unittest.mock import MagicMock
 
-        state = _make_wizard_state()
+        from control_ofc.api.errors import DaemonError
+
+        client = MagicMock()
+        client.fan_identify.side_effect = DaemonError(
+            code="not_found", message="unknown fan", status=404
+        )
+        wizard = FanConfigWizard.__new__(FanConfigWizard)
+        wizard._client = client
+        wizard._state = _make_wizard_state()
+
+        result = wizard.stop_fan({"id": "openfan:ch09", "source": "openfan"})
+        assert result is not None
+        assert "unknown fan" in result
+
+
+class TestRestoreViaIdentify:
+    """Restore un-identifies via the daemon; the GUI replays no PWM (DEC-166)."""
+
+    def test_restore_calls_identify_restore(self):
+        from unittest.mock import MagicMock
+
         client = MagicMock()
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
-        wizard._state = state
-        wizard._lease_service = None
+        wizard._state = _make_wizard_state()
 
-        target = {"id": "openfan:ch00", "source": "openfan", "prior_pwm": 65}
-        wizard.restore_fan(target)
-        client.set_openfan_pwm.assert_called_once_with(0, 65)
+        wizard.restore_fan({"id": "openfan:ch00", "source": "openfan"})
+        client.fan_identify.assert_called_once_with("openfan:ch00", "restore")
 
-    def test_restore_fallback_30_when_no_prior(self):
+    def test_restore_noop_without_client(self):
+        wizard = FanConfigWizard.__new__(FanConfigWizard)
+        wizard._client = None
+        wizard._state = _make_wizard_state()
+        # Must not raise when there is no client.
+        wizard.restore_fan({"id": "openfan:ch00", "source": "openfan"})
+
+    def test_exit_override_restores_all_then_is_idempotent(self):
         from unittest.mock import MagicMock
 
-        state = _make_wizard_state()
         client = MagicMock()
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
-        wizard._state = state
-        wizard._lease_service = None
-
-        target = {"id": "openfan:ch00", "source": "openfan"}
-        wizard.restore_fan(target)
-        client.set_openfan_pwm.assert_called_once_with(0, 30)
-
-    def test_build_targets_captures_prior_pwm(self, qtbot):
-        state = _make_wizard_state()
-        # Set a known last_commanded_pwm
-        state.fans = [
-            FanReading(
-                id="openfan:ch00",
-                source="openfan",
-                rpm=800,
-                last_commanded_pwm=55,
-                age_ms=100,
-            ),
+        wizard._state = _make_wizard_state()
+        wizard._targets = [
+            {"id": "openfan:ch00", "source": "openfan"},
+            {"id": "openfan:ch01", "source": "openfan"},
         ]
-        wizard = FanConfigWizard(state=state, parent=None)
-        qtbot.addWidget(wizard)
+        wizard._identify_active = True
 
-        assert wizard._targets[0]["prior_pwm"] == 55
+        wizard._exit_override()
+        assert wizard._identify_active is False
+        assert client.fan_identify.call_count == 2
+
+        # Second call is a no-op (identify no longer active).
+        client.fan_identify.reset_mock()
+        wizard._exit_override()
+        client.fan_identify.assert_not_called()

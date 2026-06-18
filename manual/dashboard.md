@@ -62,11 +62,11 @@ Below the chart, a table lists every detected fan with:
 
 ## Profile Selector
 
-The dropdown in the top-right corner lists all available profiles. Pick one and click **Apply** to activate it. While the GUI is running, the GUI itself evaluates the active profile's curves and writes fan speeds through the daemon; the daemon's own profile engine only takes over once no GUI has been active for 30 seconds (for example, after you close the app). See [GUI vs Daemon Priority](profiles-and-curves.md#gui-vs-daemon-priority).
+The dropdown in the top-right corner lists all available profiles. Pick one and click **Apply** to activate it. Activating hands the profile to the daemon, whose profile engine then evaluates its curves every second and drives the fans — so your fans stay controlled whether the GUI is open or closed. See [The Daemon Drives the Fans](profiles-and-curves.md#the-daemon-drives-the-fans).
 
 ## Thermal Safety States
 
-If the daemon engages its thermal failsafe (a CPU sensor at ≥ 105°C, or no CPU sensor found), the daemon forces OpenFan and writable hwmon fans itself and the GUI deliberately pauses its own fan control until the daemon reports normal again. A "Daemon thermal override active" warning appears (warning count and the Diagnostics event log) while this is happening. See ["Fans run at full speed regardless of profile"](hardware-troubleshooting.md#fans-run-at-full-speed-regardless-of-profile) for the full behaviour.
+If the daemon engages its thermal failsafe (a CPU sensor at ≥ 105°C, or no CPU sensor found), the daemon forces OpenFan and writable hwmon fans itself and holds them until it reports normal again. The GUI reflects this with a "Daemon thermal override active" warning (warning count and the Diagnostics event log) driven by the daemon's poll. See ["Fans run at full speed regardless of profile"](hardware-troubleshooting.md#fans-run-at-full-speed-regardless-of-profile) for the full behaviour.
 
 ## Disconnected / No Hardware States
 

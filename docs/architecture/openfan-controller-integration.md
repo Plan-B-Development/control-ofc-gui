@@ -178,10 +178,8 @@ NN:HHHH;NN:HHHH;...;
 - One command per poll cycle
 - Response expected within 500ms (serial timeout)
 
-### GUI-Driven Writes
-- **SetPwm** sent on-demand when GUI control loop determines a write is needed (~1s cycles)
-- **Coalescing:** If the channel is already at the requested PWM, the write is skipped (not sent to firmware)
-- **Write suppression:** If PWM delta from last commanded value is < 1%, the write is suppressed (GUI-side)
+### GUI-Driven Writes (retired at 2.0.0)
+The GUI no longer issues SetPwm — the daemon's profile engine is the sole writer (DEC-165). See *Profile Engine Writes* below for the current write path. (Pre-2.0 the GUI sent SetPwm on ~1 s control-loop cycles with 1% write suppression and per-channel coalescing.)
 
 ### Profile Engine Writes
 - Profile engine evaluates curves at **1 Hz**

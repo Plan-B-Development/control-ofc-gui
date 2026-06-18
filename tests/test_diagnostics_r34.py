@@ -17,7 +17,6 @@ from control_ofc.api.models import (
     ConnectionState,
     DaemonStatus,
     HwmonCapability,
-    LeaseState,
     OpenfanCapability,
     OperationMode,
     SubsystemStatus,
@@ -100,45 +99,6 @@ class TestOverviewTransparentLabels:
         assert "transparent" in label.styleSheet().lower()
 
 
-class TestLeaseTabTransparentLabels:
-    """Lease tab labels have transparent backgrounds."""
-
-    def test_lease_explanation_title_transparent(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_leaseExplainTitle")
-        assert "transparent" in label.styleSheet().lower()
-
-    def test_lease_explanation_text_transparent(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_leaseExplainText")
-        assert "transparent" in label.styleSheet().lower()
-
-    def test_lease_held_label_transparent(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_leaseHeld")
-        assert "transparent" in label.styleSheet().lower()
-
-    def test_lease_id_label_transparent(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_leaseId")
-        assert "transparent" in label.styleSheet().lower()
-
-    def test_lease_owner_label_transparent(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_leaseOwner")
-        assert "transparent" in label.styleSheet().lower()
-
-    def test_lease_ttl_label_transparent(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_leaseTtl")
-        assert "transparent" in label.styleSheet().lower()
-
-    def test_lease_required_label_transparent(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_leaseRequired")
-        assert "transparent" in label.styleSheet().lower()
-
-
 class TestNoInlineFontSizes:
     """No labels inside cards use hardcoded font-size px overrides."""
 
@@ -156,22 +116,6 @@ class TestNoInlineFontSizes:
         ]:
             label = page.findChild(QLabel, name)
             assert label is not None, f"Label {name} not found"
-            assert "font-size" not in label.styleSheet(), (
-                f"{name} has hardcoded font-size in stylesheet"
-            )
-
-    def test_lease_labels_no_px_font_size(self, qtbot):
-        page, _ = _make_page(qtbot)
-        for name in [
-            "Diagnostics_Label_leaseExplainTitle",
-            "Diagnostics_Label_leaseExplainText",
-            "Diagnostics_Label_leaseHeld",
-            "Diagnostics_Label_leaseId",
-            "Diagnostics_Label_leaseOwner",
-            "Diagnostics_Label_leaseTtl",
-            "Diagnostics_Label_leaseRequired",
-        ]:
-            label = page.findChild(QLabel, name)
             assert "font-size" not in label.styleSheet(), (
                 f"{name} has hardcoded font-size in stylesheet"
             )
@@ -229,53 +173,6 @@ class TestSubsystemDisplay:
 # ---------------------------------------------------------------------------
 # Lease explanation
 # ---------------------------------------------------------------------------
-
-
-class TestLeaseExplanation:
-    """Lease tab contains a truthful explanation of what a lease is."""
-
-    def test_lease_explanation_exists(self, qtbot):
-        page, _ = _make_page(qtbot)
-        title = page.findChild(QLabel, "Diagnostics_Label_leaseExplainTitle")
-        assert title is not None
-        assert "lease" in title.text().lower()
-
-    def test_lease_explanation_mentions_exclusive(self, qtbot):
-        page, _ = _make_page(qtbot)
-        text_label = page.findChild(QLabel, "Diagnostics_Label_leaseExplainText")
-        text = text_label.text().lower()
-        assert "exclusive" in text
-
-    def test_lease_explanation_mentions_hwmon(self, qtbot):
-        page, _ = _make_page(qtbot)
-        text_label = page.findChild(QLabel, "Diagnostics_Label_leaseExplainText")
-        assert "hwmon" in text_label.text().lower()
-
-    def test_lease_explanation_mentions_60_seconds(self, qtbot):
-        page, _ = _make_page(qtbot)
-        text_label = page.findChild(QLabel, "Diagnostics_Label_leaseExplainText")
-        assert "60 seconds" in text_label.text()
-
-    def test_lease_explanation_mentions_openfan_no_lease(self, qtbot):
-        page, _ = _make_page(qtbot)
-        text_label = page.findChild(QLabel, "Diagnostics_Label_leaseExplainText")
-        assert "openfan" in text_label.text().lower()
-
-    def test_lease_status_updates_on_signal(self, qtbot):
-        page, state = _make_page(qtbot)
-        state.set_lease(
-            LeaseState(
-                held=True,
-                lease_id="abc-123",
-                owner_hint="gui",
-                ttl_seconds_remaining=45,
-                lease_required=True,
-            )
-        )
-        label = page.findChild(QLabel, "Diagnostics_Label_leaseHeld")
-        assert "Held" in label.text()
-        id_label = page.findChild(QLabel, "Diagnostics_Label_leaseId")
-        assert "abc-123" in id_label.text()
 
 
 # ---------------------------------------------------------------------------

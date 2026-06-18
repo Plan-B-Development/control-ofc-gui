@@ -158,16 +158,18 @@ class ControlCapability:
 
     Top-level ``control`` block in ``GET /capabilities``. ``profile_storage``
     is True when the daemon exposes the ``/profiles`` CRUD + validate surface
-    (daemon ≥ 1.19); the GUI gates its one-time profile-import offer on it. The
-    remaining flags mirror the daemon's full block for forward use (override /
-    identify land in a later phase) — absent on pre-1.19 daemons, so every
-    field defaults to the old/safe value (AIP-180).
+    (daemon ≥ 1.19). ``autonomous_control`` is True only on a 2.0.0+ daemon that
+    is the sole authoritative fan writer (DEC-165) — the thin GUI gates all
+    runtime control on it: a daemon that omits the flag (pre-2.0) defaults it to
+    False here and the GUI refuses to operate. Absent block ⇒ all fields default
+    to the old/safe value (AIP-180).
     """
 
     profile_storage: bool = False
     curve_evaluation: bool = False
     manual_override: bool = False
     fan_identify: bool = False
+    autonomous_control: bool = False
     min_supported_gui: str = ""
 
 
@@ -401,6 +403,54 @@ class ProfileActivateResult:
     activated: bool = False
     profile_id: str = ""
     profile_name: str = ""
+
+
+@dataclass
+class OverrideGrant:
+    """Response from POST /control/{id}/override (DEC-163)."""
+
+    control_id: str = ""
+    override_token: int = 0
+    pwm_percent: int = 0
+    ttl_secs: int = 0
+    renew_secs: int = 0
+    expires_in_secs: int = 0
+
+
+@dataclass
+class OverrideRenewResult:
+    """Response from POST /control/{id}/override/renew (DEC-163)."""
+
+    control_id: str = ""
+    override_token: int = 0
+    ttl_secs: int = 0
+    expires_in_secs: int = 0
+
+
+@dataclass
+class OverrideReleaseResult:
+    """Response from DELETE /control/{id}/override (DEC-163)."""
+
+    control_id: str = ""
+    released: bool = False
+
+
+@dataclass
+class IdentifyResult:
+    """Response from POST /fans/{id}/identify (DEC-166)."""
+
+    fan_id: str = ""
+    action: str = ""
+    expires_in_secs: int | None = None
+
+
+@dataclass
+class FieldViolation:
+    """One validation error from ``error.details.field_violations`` (DEC-160)."""
+
+    field: str = ""
+    reason: str = ""
+    description: str = ""
 
 
 @dataclass
@@ -898,6 +948,36 @@ def parse_lease_result(data: dict) -> LeaseResult:
 
 def parse_lease_released(data: dict) -> LeaseReleasedResult:
     return LeaseReleasedResult(released=data.get("released", False))
+
+
+def parse_override_grant(data: dict) -> OverrideGrant:
+    return OverrideGrant(**_filter_fields(OverrideGrant, data))
+
+
+def parse_override_renew(data: dict) -> OverrideRenewResult:
+    return OverrideRenewResult(**_filter_fields(OverrideRenewResult, data))
+
+
+def parse_override_release(data: dict) -> OverrideReleaseResult:
+    return OverrideReleaseResult(**_filter_fields(OverrideReleaseResult, data))
+
+
+def parse_identify_result(data: dict) -> IdentifyResult:
+    return IdentifyResult(**_filter_fields(IdentifyResult, data))
+
+
+def parse_field_violations(details: object) -> list[FieldViolation]:
+    """Extract ``field_violations`` from a ``DaemonError.details`` payload (DEC-160).
+
+    Returns an empty list when ``details`` is not the validation-error shape, so
+    callers can render violations uniformly without shape-checking.
+    """
+    if not isinstance(details, dict):
+        return []
+    raw = details.get("field_violations", [])
+    if not isinstance(raw, list):
+        return []
+    return [FieldViolation(**_filter_fields(FieldViolation, v)) for v in raw if isinstance(v, dict)]
 
 
 def parse_hwmon_set_pwm(data: dict) -> HwmonSetPwmResult:

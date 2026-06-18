@@ -26,21 +26,21 @@ curl -s --unix-socket $SOCK http://localhost/sensors | jq .
 curl -s --unix-socket $SOCK http://localhost/fans | jq .
 curl -s --unix-socket $SOCK http://localhost/poll | jq .
 curl -s --unix-socket $SOCK http://localhost/hwmon/headers | jq .
-curl -s --unix-socket $SOCK http://localhost/hwmon/lease/status | jq .
+curl -s --unix-socket $SOCK http://localhost/profiles | jq .
 curl -s --unix-socket $SOCK 'http://localhost/sensors/history?id=cpu_tctl&last=50' | jq .
 curl -s --unix-socket $SOCK http://localhost/profile/active | jq .
 curl -s --unix-socket $SOCK http://localhost/diagnostics/hardware | jq .
 
-# Write endpoints
-curl -s --unix-socket $SOCK -X POST http://localhost/fans/openfan/0/pwm \
-  -H 'Content-Type: application/json' -d '{"pwm_percent": 50}'
+# Write endpoints (the GUI expresses intent — the daemon writes PWM)
+curl -s --unix-socket $SOCK -X POST http://localhost/profiles \
+  -H 'Content-Type: application/json' -d @profile.json
 curl -s --unix-socket $SOCK -X POST http://localhost/profile/activate \
   -H 'Content-Type: application/json' -d '{"profile_id": "quiet"}'
-curl -s --unix-socket $SOCK -X POST http://localhost/hwmon/lease/take \
-  -H 'Content-Type: application/json' -d '{"owner_hint": "gui"}'
+curl -s --unix-socket $SOCK -X POST http://localhost/control/cpu_fans/override \
+  -H 'Content-Type: application/json' -d '{"pwm_percent": 60}'
+curl -s --unix-socket $SOCK -X POST http://localhost/fans/amd_gpu:0000:2d:00.0/identify \
+  -H 'Content-Type: application/json' -d '{"action": "stop"}'
 curl -s --unix-socket $SOCK -X POST http://localhost/hwmon/rescan
-curl -s --unix-socket $SOCK -X POST http://localhost/gpu/0000:2d:00.0/fan/pwm \
-  -H 'Content-Type: application/json' -d '{"speed_pct": 60}'
 curl -s --unix-socket $SOCK -X POST http://localhost/gpu/0000:2d:00.0/fan/reset
 ```
 
@@ -132,21 +132,20 @@ upper bounds:
 `DaemonUnavailable`) so callers can distinguish "the daemon is slow" from
 "the daemon is gone."
 
-### Daemon endpoints the v1 GUI does not call
+### Daemon endpoints the GUI does not call
 
-The daemon ships several POST endpoints that the v1 GUI's `DaemonClient`
-does not wrap. They remain documented in the daemon's own contract and
-can be exercised via `curl --unix-socket`:
+As of 2.0.0 the GUI is not a writer, so it does not call the daemon's runtime
+PWM-write endpoints — the daemon's own engine drives fans. A few endpoints
+remain on the daemon surface but are unused (or only curl-exercised) by the GUI:
 
-- `POST /fans/openfan/pwm` — set all OpenFan channels at once. The GUI's
-  per-cycle control loop writes channels individually so per-target
-  hysteresis and write-suppression apply uniformly across backends.
 - `POST /fans/openfan/{channel}/calibrate` — long-running PWM-to-RPM
-  calibration sweep. The Fan Wizard provides a guided alternative for
-  fan identification; full calibration as a built-in UI flow is deferred.
-- `POST /fans/openfan/{channel}/target_rpm` — closed-loop RPM target.
-  V1 control is duty-cycle based; closed-loop control would require
-  reconciling with the GUI-side curve evaluator and is out of scope.
+  calibration sweep. The Fan Wizard provides a guided identify alternative;
+  full calibration as a built-in UI flow is deferred.
+- `POST /fans/openfan/{channel}/target_rpm` — closed-loop RPM target. The
+  daemon engine is duty-cycle based; closed-loop control is out of scope.
+
+(The bare PWM and hwmon-lease endpoints the v1 GUI used to call were retired at
+2.0.0 — see "Write endpoints" below.)
 
 ### GET /status
 Use for:
@@ -161,7 +160,7 @@ This endpoint feeds:
 - header status strip
 - diagnostics overview
 - warning banners
-- the control loop's thermal stand-down gate (DEC-132)
+- the poll-driven thermal-protection banner (DEC-165, superseding the DEC-132 GUI stand-down)
 
 `overall_status` and each subsystem `status` is one of `"ok" | "warn" | "crit"`
 (overall is the worst of all subsystems). The GUI treats `"ok"` as healthy and any
@@ -172,8 +171,8 @@ Emitted by the daemon's `HealthStatus::Display` and pinned on both sides by
 `thermal_state` (daemon ≥1.13.0, additive — `api_version` unchanged) is one of
 `"normal" | "recovery" | "emergency" | "no_sensor_fallback"`. While it is not
 `"normal"` the daemon is forcing all OpenFan+hwmon PWM (GPU fans excluded —
-DEC-130) and force-taking the hwmon lease as `thermal-safety`; the GUI pauses
-its control loop and lease machinery and shows a single thermal warning.
+DEC-130) and holding the hwmon lease as `thermal-safety`; the GUI has no loop
+to stand down (DEC-165) and simply shows a single poll-driven thermal warning.
 Older daemons omit the field — the GUI defaults it to `"normal"`.
 
 `overrides` and `fan_identify` (daemon ≥ 1.21.0, additive — `api_version`
@@ -241,8 +240,8 @@ Use to discover:
   file is read-only on RDNA3+ kernels and writes return `EACCES`). Any
   other chip whose `pwmN` lacks write permission appears here with
   `is_writable: false` — the GUI must not offer such headers in the
-  member-picker, since `POST /hwmon/{header_id}/pwm` will return 400
-  `feature_unavailable`.
+  member-picker, and the daemon rejects a profile that binds one (DEC-102 —
+  `400 feature_unavailable` at validation / activation).
 - `pwm_mode` (optional integer) — `0` = DC (voltage) mode, `1` = PWM
   mode, omitted when the chip does not expose `pwmN_mode`. Consumed by
   the dashboard fan table and the diagnostics hwmon panel to label
@@ -253,13 +252,6 @@ Use to discover:
   liquid cooler (NZXT Kraken / Aquacomputer). Daemon-authoritative hint so the GUI can
   cluster and floor pumps without re-deriving hardware knowledge; per-driver pump
   writability still rides `is_writable`. Omitted/`false` on daemons that predate it.
-
-### GET /hwmon/lease/status
-Use to show:
-- whether a lease is required
-- whether it is currently held
-- who holds it
-- TTL remaining
 
 ### GET /poll
 Combined batch endpoint returning status + sensors + fans in one call.
@@ -399,50 +391,36 @@ deferred work in `docs/14_Risks_Gaps_and_Future_Work.md`.
 
 ## Write endpoints
 
-### OpenFan writes
-- `POST /fans/openfan/{ch}/pwm`
-- `POST /fans/openfan/pwm`
+As of **2.0.0** the daemon is the sole writer (DEC-159, DEC-165). The GUI has **no bare PWM write
+surface** — it expresses control as *intent* (activate a profile, take an expiring override, identify
+a fan) and runs a few diagnostics / maintenance calls (calibrate, verify, GPU reset, rescan).
+
+**Retired at 2.0.0** — no longer routed by the daemon (the `gui_active` defer window they lived behind
+is gone):
+- `POST /fans/openfan/{ch}/pwm` and `POST /fans/openfan/pwm` — bare per-channel + set-all PWM
+- `POST /fans/openfan/{ch}/target_rpm` — closed-loop RPM target (never consumed)
+- `POST /hwmon/{header_id}/pwm` — bare hwmon PWM
+- `POST /hwmon/lease/take` / `/release` / `/renew` and `GET /hwmon/lease/status` — the GUI holds no
+  lease; the daemon manages it internally
+- `POST /gpu/{gpu_id}/fan/pwm` — bare GPU static-speed write (replaced by override / identify)
+
+### OpenFan calibrate
 - `POST /fans/openfan/{ch}/calibrate` — PWM-to-RPM calibration sweep
-
-The GUI uses PWM writes exclusively for V1 control-loop behaviour.
-
-*Note: the daemon also exposes `POST /fans/openfan/{ch}/target_rpm` for closed-loop
-RPM targeting. The V1 GUI does not use this endpoint — it is not part of the
-current control-loop or UI surface.*
-
-*Similarly, `POST /fans/openfan/pwm` (set-all) is daemon surface the V1 GUI does
-not consume — the control loop writes per-channel only, and the client
-deliberately exposes no set-all method (DEC-146).*
 
 The calibration endpoint runs a long-running sweep (steps × hold_seconds) that sets PWM from 0→100%, reads RPM at each step, and returns a mapping. Safety: aborts on thermal limit (85°C), restores pre-calibration PWM on every exit path — completion, thermal abort, or a failed PWM write mid-sweep (DEC-134).
 
-### Hwmon lease endpoints
-- `POST /hwmon/lease/take`
-- `POST /hwmon/lease/release`
-- `POST /hwmon/lease/renew`
-
-### Hwmon PWM write
-- `POST /hwmon/{header_id}/pwm`
-
-May return `400 feature_unavailable` (DEC-102) when the targeted
-header's discovered `is_writable` flag is false — the kernel exposes
-its `pwmN` file read-only and writes would otherwise EACCES into a
-1 Hz 503 storm. The GUI should treat this as a misconfigured profile
-member (drop the member, not retry the write).
-
 ### Hwmon PWM verify
-- `POST /hwmon/{header_id}/verify` — `{"lease_id": "..."}`
+- `POST /hwmon/{header_id}/verify` — empty body (no `lease_id` as of 2.0.0 — DEC-165)
 
 Probes whether a `pwmN` write actually moves the fan, to detect BIOS/EC
 interference. The daemon writes a test PWM, sleeps
 `VERIFY_WAIT_SECONDS = 6 s` (raised from 3 s in DEC-101 — slow-spinning
 fans need settle time), reads back `pwmN` / `pwmN_enable` / `fanN_input`,
-then restores the caller's prior PWM. A lease is **required** — same as
-the PWM write. The GUI sends a **12 s** per-call timeout
-(`verify_hwmon_pwm`, `client.py`) to cover the worst-case ~7.5 s
-round-trip; the control-loop pause-safety auto-resume
-(`control_loop.VERIFY_PAUSE_SAFETY_MS`, 9 s) must stay above the daemon
-wait. See the "Per-call timeouts (DEC-098 / DEC-099)" note above.
+then restores the prior PWM. The daemon runs the probe under its **own
+internal verify lease** — the GUI sends no `lease_id` and holds no lease.
+The GUI sends a **12 s** per-call timeout (`verify_hwmon_pwm`, `client.py`)
+to cover the worst-case ~7.5 s round-trip. See the "Per-call timeouts
+(DEC-098 / DEC-099)" note above.
 
 Response (daemon `HwmonVerifyResponse` ↔ GUI `HwmonVerifyResult`):
 - `header_id: str`
@@ -457,11 +435,22 @@ Response (daemon `HwmonVerifyResponse` ↔ GUI `HwmonVerifyResult`):
   desired PWM explicitly rather than trust the verify call to have
   restored it.
 
-Errors: `403 lease_required` (missing/invalid/expired lease — including a
-lease that expires between validation and the readback write), `404
-validation_error` (unknown header — the wire `code` is `validation_error`, not
-`not_found`, which is reserved for unknown routes), `503 hardware_unavailable`
-(no hwmon headers or controller absent).
+Errors: `404 validation_error` (unknown header — the wire `code` is
+`validation_error`, not `not_found`, which is reserved for unknown routes),
+`503 hardware_unavailable` (no hwmon headers or controller absent). The pre-2.0
+`403 lease_required` no longer applies — the daemon owns the verify lease.
+
+### Profile storage (CRUD — DEC-160, daemon ≥ 1.19.0)
+The daemon is the profile **store of record** (`/var/lib/control-ofc/profiles/`). The GUI uploads and
+validates full profile documents; it keeps a local draft cache but does not treat it as authoritative.
+- `GET /profiles` — list stored profiles; `GET /profiles/{id}` — fetch one
+- `POST /profiles` — create (`409 already_exists` on a duplicate id)
+- `PUT /profiles/{id}` — replace stored desired-state (no hot-reload — re-activate to apply)
+- `DELETE /profiles/{id}` — `409 profile_in_use` if it is the active profile
+- `POST` / `PUT` accept `?validate_only=true` — runs the real validation, persists nothing
+- Validation returns hard `errors` (reject) + soft `warnings` (accept). An unknown `sensor_id` is a
+  warning, not an error (profiles stay portable across machines). Field-level detail rides the error
+  envelope's `field_violations` (see Error model).
 
 ### Profile activation
 - `POST /profile/activate` — `{"profile_path": "/path/to/profile.json"}` or `{"profile_id": "quiet"}`
@@ -470,11 +459,9 @@ validation_error` (unknown header — the wire `code` is `validation_error`, not
   - GUI must only update "active" state after daemon confirms success
 - `POST /profile/deactivate` — body ignored (DEC-097, daemon v1.6.0+)
   - Clears the in-memory active profile, persists the cleared state, and
-    releases any held `profile-engine` lease so the GUI can take a fresh
-    one without a force-take. Leases held by other owners (e.g. `gui`) are
-    explicitly preserved.
-  - Refreshes the GUI-activity marker so the engine doesn't immediately
-    re-take a lease.
+    releases the daemon's internal `profile-engine` lease so a later
+    re-activate cleanly re-takes it. (There is no GUI lease to preserve as
+    of 2.0.0 — DEC-165.)
   - Idempotent: returns `{"deactivated": true, "previous_profile_id": null,
     "previous_profile_name": null}` when no profile was active. With an
     active profile, the previous values are populated.
@@ -516,25 +503,20 @@ freeze + raw writes.
   `restore` clears it (the engine resumes the fan's curve value). `404` if the fan id is unknown on
   `stop`; `400` on a bad action. Only the named fan is affected — others keep curve-controlling.
 
-### GPU fan writes
-- `POST /gpu/{gpu_id}/fan/pwm` — `{"speed_pct": 0..100}` — set GPU fan to static speed
+### GPU fan reset
 - `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM)
-  - GUI callers: the close-time auto-reset (M9 — skipped when a profile
-    stays active or the GUI never wrote the GPU fan) and Diagnostics ▸
-    Troubleshooting ▸ *Restore GPU Fan to Automatic* (DEC-147 — disabled
-    while the GUI control loop manages an `amd_gpu:` target; a success
-    clears the session's `gui_wrote_gpu_fan` flag).
+  - GUI caller: Diagnostics ▸ Troubleshooting ▸ *Restore GPU Fan to Automatic* (DEC-147 — disabled
+    while the **active profile** owns an `amd_gpu:` member, since the daemon is actively driving it).
 
-No lease required. Uses 5% minimum change threshold (DEC-070) to avoid SMU firmware churn.
-Profile engine defers GPU writes when GUI is active in last 30s (DEC-071).
+The bare `POST /gpu/{gpu_id}/fan/pwm` static-speed write is **retired at 2.0.0** — GPU fans are driven
+by the daemon engine, with live manual control via the override API (DEC-163) and identification via
+the identify API (DEC-166). No lease is required for GPU writes; the daemon applies a 5% minimum-change
+threshold (DEC-070) to avoid SMU firmware churn.
 
-**Zero-RPM handling.** Manual writes via `POST /gpu/{id}/fan/pwm` always
-disable `fan_zero_rpm_enable` before writing the curve so the fan spins
-continuously at the commanded speed (DEC-053). Profile-driven writes
-(daemon v1.6.0+) honour each member's `fan_zero_rpm` boolean: when true,
-the daemon preserves `fan_zero_rpm_enable` so the GPU stops the fan at
-its idle threshold (DEC-095). The default for omitted/legacy v3
-profiles is false, so pre-1.6.0 behaviour is unchanged.
+**Zero-RPM handling.** The daemon engine honours each member's `fan_zero_rpm` boolean: when true it
+preserves `fan_zero_rpm_enable` so the GPU stops the fan at its idle threshold (DEC-095 / DEC-053);
+when false the fan spins continuously at the commanded speed. The default for omitted / legacy v3
+profiles is false.
 
 ### GPU fan verify
 - `POST /gpu/{gpu_id}/fan/verify` — empty body, **no lease** (DEC-120, daemon v1.11.0+)
@@ -548,8 +530,8 @@ hwmon verify), reads back the applied PMFW `fan_curve` (or legacy `pwm1`) plus
 `fan1_input` RPM and `fan_zero_rpm_enable`, then restores the prior state
 (re-applies the last commanded speed if the GPU was being driven, else resets to
 auto + re-enables zero-RPM). The GUI sends a **12 s** per-call timeout
-(`verify_gpu_fan`, `client.py`) and pauses the control loop for the
-`amd_gpu:{bdf}` key for the duration.
+(`verify_gpu_fan`, `client.py`); the daemon coordinates the probe with its own
+engine, so the GUI no longer pauses any control loop.
 
 Response (daemon `GpuVerifyResponse` ↔ GUI `GpuVerifyResult`) — **no
 `api_version`**, symmetric with `HwmonVerifyResponse`:
@@ -605,10 +587,10 @@ Error codes and HTTP statuses:
   - hwmon PWM writes when the targeted header's discovered `is_writable=false` (DEC-102), e.g. an unforeseen chip exposing a read-only `pwmN` file.
 
   Distinct from `hardware_unavailable` (transient / retryable) and `validation_error` (malformed request). Permanent for this device — clients must not retry.
-- 403 `lease_required` (source: `"validation"`, retryable: false) — returned by hwmon PWM-write and `/verify` whenever the lease is missing, invalid, or expired (no 400 variant on these paths; the 409 below covers a lease held by another owner)
+- 403 `lease_required` (source: `"validation"`, retryable: false) — **retired at 2.0.0** with the bare hwmon PWM-write and the GUI-held lease (DEC-165); the daemon now verifies under its own internal lease. Listed for historical context.
 - 404 `not_found` (source: `"validation"`, retryable: false) — **unknown route/URI only**. An unknown *resource* on a known route (hwmon header, GPU id) returns 404 with code `validation_error`, not `not_found`.
 - 404 `override_expired` (source: `"validation"`, retryable: false) — renew/release of a manual override (DEC-163) that already lapsed on the daemon's deadman, or was never taken; re-take rather than renew.
-- 409 `lease_already_held` (source: `"validation"`, retryable: false) — surfaced only by hwmon PWM writes when another owner holds the lease; `POST /hwmon/lease/take` unconditionally force-takes and never returns this code
+- 409 `lease_already_held` (source: `"validation"`, retryable: false) — **retired at 2.0.0** with the GUI-held lease (DEC-165); the GUI no longer surfaces it. Listed for historical context.
 - 409 `thermal_abort` (source: `"hardware"`, retryable: true) — calibration aborted due to high temperature
 - 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
 - 500 `internal_error` (source: `"internal"`, retryable: true)
@@ -618,7 +600,7 @@ Error codes and HTTP statuses:
 
 ## Trust model
 
-The daemon listens on `/run/control-ofc/control-ofc.sock` with mode 0666 so a non-root GUI can connect (DEC-049). There is no authentication on the socket — any local user can issue any API call, including `POST /hwmon/lease/take`, which force-evicts the current holder. This is intentional: the project assumes a trust-the-local-machine model. If the socket is ever proxied to the network, that proxy is responsible for authentication and for rejecting lease-take from untrusted callers.
+The daemon listens on `/run/control-ofc/control-ofc.sock` with mode 0666 so a non-root GUI can connect (DEC-049). There is no authentication on the socket — any local user can issue any API call, including activating a profile or pinning a control via `POST /control/{id}/override`. This is intentional: the project assumes a trust-the-local-machine model. If the socket is ever proxied to the network, that proxy is responsible for authentication and for rejecting writes from untrusted callers.
 
 The API client must normalize this into an internal error object that includes:
 - endpoint
@@ -635,34 +617,31 @@ According to the provided daemon notes:
 
 ### OpenFan
 - 0% allowed for max 8s (stop timeout queryable via `GET /capabilities` → `limits.openfan_stop_timeout_s`)
-- PWM 0–100 passed through — no clamping in the daemon. Safety floors are
-  GUI-side profile constraints (see
-  `docs/09_State_Model_Control_Loop_and_Lease_Behaviour.md`).
-- duplicate writes may be coalesced. Both `POST /fans/openfan/{ch}/pwm`
-  and `POST /fans/openfan/pwm` return a `coalesced: bool` field in
-  the response body. `true` means the daemon skipped the serial
-  command because the requested value matched the last commanded
-  value (per-channel: that channel; all-channel: every channel).
-  The cache is left untouched on coalesce. The GUI parses this on
-  both `SetPwmResult` and `SetPwmAllResult`. (DEC-108)
+- PWM 0–100 passed through — no clamping in the daemon. Role-aware floors are
+  baked into the profile by the GUI and enforced by the daemon engine
+  (DEC-162; see `docs/09_State_Model_Control_Loop_and_Lease_Behaviour.md`).
+- the daemon engine coalesces duplicate writes internally — it skips the serial
+  command when a channel's value matches the last commanded value (DEC-073 /
+  DEC-108). The bare OpenFan write endpoints that returned a `coalesced` field
+  were retired at 2.0.0 (DEC-165).
 
 ### Hwmon
 - PWM 0–100 passed through — no per-header floors in the daemon
-  (`min_pwm_percent: 0` on every header). Safety floors are GUI-side profile
-  constraints enforced by `ControlLoopService` and `ThermalSafetyRule`; the
-  daemon only rejects values outside 0–100. See DEC-022 and the
-  "No per-header PWM floors" rule in `CLAUDE.md`.
-- first write per lease auto-sets `pwmN_enable` to manual mode
+  (`min_pwm_percent: 0` on every header). The role-aware pump/CPU floor is
+  baked into the profile by the GUI and enforced by the daemon engine
+  (DEC-162); the 105 °C thermal force (`safety.rs`) is the absolute backstop.
+  See DEC-022 and the "No per-header PWM floors" rule in `CLAUDE.md`.
+- the daemon engine auto-sets `pwmN_enable` to manual mode on the first write per lease
 - identical writes coalesced at daemon level (DEC-073)
-- lease is required
+- the daemon holds the hwmon lease internally (the GUI holds none — DEC-165)
 - `pwm_enable` restored to automatic (2) on daemon shutdown
 
 ### AMD GPU (PMFW)
 - 0–100% accepted, no lease required
 - 5% minimum change threshold to avoid SMU firmware churn (DEC-070)
-- Daemon disables `fan_zero_rpm_enable` before writing PMFW curve, re-enables on reset
-- Profile engine defers when GUI active (DEC-071)
-- Daemon restores fan curve to automatic on shutdown
+- Daemon disables `fan_zero_rpm_enable` before writing the PMFW curve, re-enables on reset
+- The daemon engine is the sole GPU writer (the 30 s GUI-defer was retired at 2.0.0 — DEC-165)
+- Daemon restores the fan curve to automatic on shutdown
 
 ### Intel GPU (read-only, DEC-121)
 - **No write path exists.** The Linux `xe`/`i915` drivers expose only read-only
@@ -682,15 +661,14 @@ The GUI must reflect these constraints honestly.
 2. `GET /hwmon/headers`
 3. `GET /poll` (combined status + sensors + fans)
 4. `GET /sensors/history?id=...` for each sensor (pre-fill timeline chart)
-5. `GET /hwmon/lease/status`
 
 ### Ongoing cadence
 - **Primary data (sensors/fans/status):** 1 Hz via `GET /poll` (combined batch endpoint)
-- **Lease status:** every poll cycle
 - **Capabilities/headers:** startup + on reconnect only
 
-The `PollingService` owns the full read path in V1 (`/poll`, lease, history).
-No SSE stream is consumed — see the `/events` note above and DEC-023/DEC-024.
+The `PollingService` owns the full read path (`/poll`, history). No SSE stream is consumed — the GUI
+is poll-only and detects transitions by poll-diff (DEC-164 defers SSE past 2.0.0; see the `/events`
+note above and DEC-023/DEC-024).
 
 ## Model normalisation
 Define internal view-model friendly data classes for:
@@ -699,7 +677,6 @@ Define internal view-model friendly data classes for:
 - SensorReading
 - FanReading
 - HwmonHeader
-- LeaseState
 - ApiFault
 
 ## Missing or partial data
@@ -720,14 +697,14 @@ Examples:
 - disable hwmon write controls if unsupported
 - validate interval fields against reported ranges
 
-### /hwmon/lease/status drives control messaging
+### /status drives control-gate + thermal messaging
 Examples:
-- show lease chip in header or Controls page
-- disable hwmon writes if lease unavailable
-- show owner hint where available
+- show the "daemon upgrade required" banner when `control.autonomous_control` is absent (DEC-165)
+- show the poll-driven thermal-protection banner from `thermal_state` (DEC-165)
+- reflect active overrides / fan-identify holds from `/status.overrides[]` / `fan_identify[]`
 
-### /fans and /sensors drive control loop inputs
-These are operational inputs, not just display data.
+### /fans and /sensors are display inputs
+These feed the dashboard, charts, and freshness indicators. The daemon (not the GUI) consumes them for control.
 
 ## Retry guidance
 - retry read polling naturally on next cycle
@@ -737,12 +714,12 @@ These are operational inputs, not just display data.
 
 ## Profile management
 
-The daemon has a profile engine (`profile_engine.rs`) that evaluates fan curves autonomously when a profile is active. The GUI can:
-- Activate a profile: `POST /profile/activate`
-- Query the active profile: `GET /profile/active`
-- The daemon persists the active profile to `/var/lib/control-ofc/daemon_state.json`
+The daemon's profile engine (`profile_engine.rs`) evaluates fan curves and is the sole writer whenever a profile is active (DEC-159). The GUI:
+- Stores profiles on the daemon via the CRUD surface above (`/profiles`, DEC-160) — the daemon is the store of record (`/var/lib/control-ofc/profiles/`)
+- Activates a profile: `POST /profile/activate`; queries it: `GET /profile/active`
+- The daemon persists the active-profile *pointer* to `/var/lib/control-ofc/daemon_state.json`
 
-Profile *storage* remains GUI-owned — the daemon loads profiles from configured search directories.
+Profile *storage of record* moved to the daemon at 2.0.0 (DEC-160); the GUI keeps a local draft cache and uploads / validates through the CRUD API.
 
 The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `default_version`). Both evaluators must recognise the same curve `type` values — `graph`, `stepped`, `linear`, `flat`, `trigger`, `mix`, `sync` — and the **composite** types carry extra fields the daemon parses and evaluates: `mix` (`mix_function`, `mix_curve_ids`) combines other curves at their own sensors; `sync` (`sync_control_id`, `sync_offset_pct`) mirrors another control's tuned output via stable topological control ordering (DEC-150/151, retiring the single-sensor rule DEC-014 via DEC-152). The byte-identical `parity_vectors.json` fixture pins GUI ⇄ daemon evaluation agreement (DEC-126). Schema changes are additive: a v7 profile using a new curve type still loads on an older daemon/GUI, which degrades safely (daemon → 50%, GUI → flat) rather than crashing.
 

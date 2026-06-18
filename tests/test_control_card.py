@@ -237,6 +237,33 @@ class TestControlCardManual:
         assert not c._output_label.isHidden()
         assert toggles[-1][1] is False
 
+    def test_clear_manual_exits_without_emitting(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        toggles: list[tuple[str, bool, int]] = []
+        c.manual_toggled.connect(lambda cid, active, pct: toggles.append((cid, active, pct)))
+
+        c._manual_btn.setChecked(True)
+        toggles.clear()
+        c.clear_manual()
+
+        # A programmatic clear (override lapsed, DEC-163) must NOT emit
+        # manual_toggled — otherwise the page would try to release the
+        # already-gone override.
+        assert not c._manual_btn.isChecked()
+        assert c._manual_slider.isHidden()
+        assert not c._output_label.isHidden()
+        assert toggles == []
+
+    def test_clear_manual_noop_when_not_manual(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        toggles: list = []
+        c.manual_toggled.connect(lambda *a: toggles.append(a))
+
+        c.clear_manual()  # not in manual mode → no-op, no emit
+
+        assert toggles == []
+        assert not c._manual_btn.isChecked()
+
     def test_slider_drag_emits_value(self, qtbot, curves):
         c = _card_with_member(qtbot, curves)
         c._manual_btn.setChecked(True)

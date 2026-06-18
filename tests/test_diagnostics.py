@@ -68,4 +68,3 @@ def test_export_support_bundle_with_state(tmp_path, qtbot):
     assert data["state"]["connection"] == "connected"
     assert data["state"]["mode"] == "automatic"
     assert data["state"]["active_profile"] == "Balanced"
-    assert "lease" in data

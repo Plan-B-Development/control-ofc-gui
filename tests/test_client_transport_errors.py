@@ -55,7 +55,7 @@ def test_post_transport_error_maps_to_unavailable(exc):
     client = _client_raising(exc)
     try:
         with pytest.raises(DaemonUnavailable):
-            client.set_openfan_pwm(0, 50)  # POST /fans/openfan/0/pwm
+            client.fan_identify("openfan:ch00", "stop")  # POST /fans/.../identify
     finally:
         client.close()
 

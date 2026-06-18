@@ -22,21 +22,7 @@ EXPECTED_API_VERSION = 1
 
 # Polling
 POLL_INTERVAL_MS = 1000
-LEASE_RENEW_INTERVAL_S = 30
 CAPABILITIES_REFRESH_INTERVAL_S = 300
-
-# Per-call timeout for lease HTTP calls (take/renew/release). Bounded well
-# below LEASE_RENEW_INTERVAL_S so the recurring renew timer cannot pile up
-# concurrent in-flight requests, and below the daemon's 60s lease TTL so we
-# always get an authoritative answer before the lease can expire. Lease ops
-# in production run on a worker thread (see LeaseService); this is a defense
-# against a hung daemon making any individual HTTP call drag on.
-LEASE_API_TIMEOUT_S = 1.5
-
-# Control loop
-CONTROL_LOOP_INTERVAL_MS = 1000
-HYSTERESIS_DEADBAND_C = 2.0
-PWM_WRITE_THRESHOLD_PCT = 1
 
 # History
 HISTORY_DURATION_S = 7200  # 2 hours

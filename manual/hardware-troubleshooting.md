@@ -45,9 +45,7 @@ The result panel also shows the initial → final RPM and `pwm_enable` values, p
 
 ### Prerequisites
 
-Test PWM Control requires a held hwmon lease. The GUI normally takes the lease automatically when fan control starts. If you see `Cannot verify: no hwmon lease held`, activate any profile (or open Controls → activate) so the lease is acquired, then try again.
-
-While the test is running, the GUI's 1 Hz control loop pauses writes to the header under test so its own ticks do not interfere with the daemon's verify wait. A 9-second safety timer (set above the daemon's ~6-second verify wait) guarantees writes resume even if the test hangs.
+Just a connected daemon and a writable header to test. The daemon performs the write test under its own internal hwmon lease and coordinates it with its profile engine, so its own per-second writes never collide with the verify wait — the GUI sends no lease and holds none. Earlier versions asked you to "activate a profile to acquire the lease" first; that step is gone in 2.0.0.
 
 ## Test GPU Fan Control
 
@@ -89,7 +87,7 @@ The Hardware Readiness report surfaces a per-header count with a severity ramp:
 |---------------|--------|---------|
 | **0** | Green (OK) | Header is being controlled cleanly — no contention |
 | **1–9** | Amber (WARN) | Occasional reclaim; control still working but the EC is fighting back |
-| **≥10** | Red (HIGH) | Persistent contention; expect fan speed to drift even though the GUI keeps writing |
+| **≥10** | Red (HIGH) | Persistent contention; expect fan speed to drift even though the daemon keeps writing |
 
 The verdict takes the highest severity across all headers, so if any single header is in HIGH state the whole report alerts you to it.
 
@@ -190,7 +188,7 @@ The daemon's thermal failsafe has two distinct triggers, with different fan spee
 - **Emergency (100%):** any CPU sensor reports ≥ 105°C. All OpenFan and writable hwmon fans are forced to 100% and held there until the hottest CPU sensor falls to 80°C or below, then run at a 60% recovery floor for two cycles (the release cycle and one more) before the active profile resumes. GPU fans are deliberately excluded — the GPU's own firmware handles GPU thermal protection.
 - **No-sensor fallback (40%):** no CPU sensor has been seen for 5 consecutive poll cycles. OpenFan and writable hwmon fans are set to a 40% safe floor — so fans sitting at a uniform ~40% (rather than 100%) usually mean a missing CPU sensor, not an overheat.
 
-While either override is active the GUI **stands down on purpose**: the control loop pauses all fan writes, hwmon lease renewals pause, and a "Daemon thermal override active" warning appears (Dashboard warning count and the Diagnostics event log). Control resumes automatically once the daemon reports a normal thermal state — fans pinned during an override are the daemon protecting the system, not a stuck profile.
+Both overrides are owned and driven entirely by the daemon — it forces the fan speeds and holds them itself. The GUI simply reflects what the daemon reports: while an override is active it shows a "Daemon thermal override active" warning (in the Dashboard warning count and the Diagnostics event log), driven by the `thermal_state` field in the daemon's 1 Hz poll. Normal profile control resumes automatically once the daemon reports a normal thermal state again — fans pinned during an override are the daemon protecting the system, not a stuck profile.
 
 Check the **Thermal safety** row of the Hardware Readiness report. If it reports "no CPU sensor", install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`). See [Sensors missing or fewer than expected](#sensors-missing-or-fewer-than-expected).
 

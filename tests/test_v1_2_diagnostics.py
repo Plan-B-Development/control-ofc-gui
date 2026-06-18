@@ -499,25 +499,6 @@ class TestDiagnosticsPageVerifyUI:
         btn = page.findChild(QPushButton, "Diagnostics_Btn_verifyPwm")
         assert not btn.isEnabled()
 
-    def test_verify_no_lease_shows_message(self, qtbot):
-        state = _make_state()
-        state.set_hwmon_headers(
-            [
-                HwmonHeader(id="h1", label="Fan", is_writable=True),
-            ]
-        )
-        client = MagicMock()
-        page, _ = _make_page(qtbot, state=state, client=client)
-        diag = _make_diag_result()
-        page._populate_hw_diagnostics(diag)
-
-        page._verify_combo.setCurrentIndex(0)
-        page._run_pwm_verify()
-
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
-        assert not label.isHidden()
-        assert "lease" in label.text().lower()
-
     def test_verify_shows_effective_result(self, qtbot):
         page, _ = _make_page(qtbot)
         result = HwmonVerifyResult(
@@ -724,17 +705,6 @@ class TestVerifyTimingConstantsDec101:
     loop or the HTTP layer would race the daemon's readback.
     """
 
-    def test_safety_timer_exceeds_daemon_verify_wait_with_slack(self):
-        from control_ofc.services.control_loop import VERIFY_PAUSE_SAFETY_MS
-
-        # Daemon's VERIFY_WAIT_SECONDS is 6 s — the safety timer must allow
-        # at least 2 s slack for IPC + restore-PWM + classify, otherwise
-        # the auto-resume can fire mid-verify.
-        assert VERIFY_PAUSE_SAFETY_MS >= 8000, (
-            f"VERIFY_PAUSE_SAFETY_MS={VERIFY_PAUSE_SAFETY_MS} ms must be ≥ 8000 ms "
-            f"(daemon verify wait 6 s + 2 s slack). DEC-101."
-        )
-
     def test_http_timeout_exceeds_daemon_verify_wait_with_slack(self):
         # The verify HTTP call is hard-coded to a 12 s per-call timeout so
         # the global API_TIMEOUT_S can stay aggressive for fast endpoints.
@@ -927,25 +897,6 @@ class TestVerifyAllBatchDec101:
         btn = page.findChild(QPushButton, "Diagnostics_Btn_verifyAll")
         assert btn is not None
         assert btn.text() == "Verify All Writable"
-
-    def test_run_without_lease_shows_error(self, qtbot):
-        # No lease held → the progress label must explain instead of
-        # firing an unauthorised verify request.
-        state = _make_state()
-        state.hwmon_headers = [
-            HwmonHeader(id="hwmon:it8696:0a40:pwm1", chip_name="it8696", is_writable=True),
-        ]
-        client = MagicMock()
-        client._socket_path = "/tmp/fake.sock"
-        page, _ = _make_page(qtbot, state=state, client=client)
-        page._run_pwm_verify_all()
-
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyAllProgress")
-        assert label is not None
-        assert not label.isHidden()
-        assert "lease" in label.text().lower()
-        # No batch state must persist after a refused start.
-        assert page._verify_all_total == 0
 
     def test_run_without_writable_headers_shows_message(self, qtbot):
         state = _make_state()

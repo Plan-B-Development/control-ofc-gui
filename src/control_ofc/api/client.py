@@ -13,41 +13,37 @@ from control_ofc.api.models import (
     DaemonStatus,
     FanReading,
     GpuFanResetResult,
-    GpuFanSetResult,
     GpuVerifyResult,
     HardwareDiagnosticsResult,
     HwmonHeader,
-    HwmonSetPwmResult,
     HwmonVerifyResult,
-    LeaseReleasedResult,
-    LeaseResult,
-    LeaseState,
+    IdentifyResult,
+    OverrideGrant,
+    OverrideReleaseResult,
+    OverrideRenewResult,
     ProfileActivateResult,
     ProfileDeactivateResult,
     ProfileSearchDirsResult,
     SensorHistory,
     SensorReading,
-    SetPwmResult,
     StartupDelayResult,
     parse_active_profile,
     parse_capabilities,
     parse_fans,
     parse_gpu_fan_reset,
-    parse_gpu_fan_set,
     parse_gpu_verify_result,
     parse_hardware_diagnostics,
     parse_hwmon_headers,
-    parse_hwmon_set_pwm,
     parse_hwmon_verify_result,
-    parse_lease_released,
-    parse_lease_result,
-    parse_lease_status,
+    parse_identify_result,
+    parse_override_grant,
+    parse_override_release,
+    parse_override_renew,
     parse_profile_activate,
     parse_profile_deactivate,
     parse_profile_search_dirs,
     parse_sensor_history,
     parse_sensors,
-    parse_set_pwm,
     parse_startup_delay,
     parse_status,
 )
@@ -126,10 +122,13 @@ class DaemonClient:
         path: str,
         json: dict[str, Any] | None = None,
         *,
+        params: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         try:
             kwargs: dict[str, Any] = {}
+            if params is not None:
+                kwargs["params"] = params
             if timeout is not None:
                 kwargs["timeout"] = timeout
             resp = self._client.post(path, json=json, **kwargs)
@@ -144,6 +143,49 @@ class DaemonClient:
             # drop the client for a clean reconnect.
             raise DaemonUnavailable(message=str(e), endpoint=path, method="POST") from e
         return self._handle(resp, "POST", path)
+
+    def _put(
+        self,
+        path: str,
+        json: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        try:
+            kwargs: dict[str, Any] = {}
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            resp = self._client.put(path, json=json, **kwargs)
+        except httpx.TimeoutException as e:
+            raise DaemonTimeout(message=str(e), endpoint=path, method="PUT") from e
+        except httpx.ConnectError as e:
+            raise DaemonUnavailable(message=str(e), endpoint=path, method="PUT") from e
+        except httpx.RequestError as e:
+            raise DaemonUnavailable(message=str(e), endpoint=path, method="PUT") from e
+        return self._handle(resp, "PUT", path)
+
+    def _delete(
+        self,
+        path: str,
+        json: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        try:
+            kwargs: dict[str, Any] = {}
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            # httpx's ``.delete()`` convenience method takes no ``json=``; a
+            # DELETE with a body (override release carries ``override_token``)
+            # must go through the generic ``request()`` entrypoint.
+            resp = self._client.request("DELETE", path, json=json, **kwargs)
+        except httpx.TimeoutException as e:
+            raise DaemonTimeout(message=str(e), endpoint=path, method="DELETE") from e
+        except httpx.ConnectError as e:
+            raise DaemonUnavailable(message=str(e), endpoint=path, method="DELETE") from e
+        except httpx.RequestError as e:
+            raise DaemonUnavailable(message=str(e), endpoint=path, method="DELETE") from e
+        return self._handle(resp, "DELETE", path)
 
     @staticmethod
     def _handle(resp: httpx.Response, method: str, path: str) -> dict[str, Any]:
@@ -191,9 +233,6 @@ class DaemonClient:
     def hwmon_headers(self) -> list[HwmonHeader]:
         return parse_hwmon_headers(self._get("/hwmon/headers"))
 
-    def hwmon_lease_status(self) -> LeaseState:
-        return parse_lease_status(self._get("/hwmon/lease/status"))
-
     def poll(self) -> tuple[DaemonStatus, list[SensorReading], list[FanReading]]:
         """Batch read: status + sensors + fans in one call."""
         data = self._get("/poll")
@@ -213,47 +252,6 @@ class DaemonClient:
         return parse_sensor_history(data)
 
     # -- write endpoints --
-
-    def set_openfan_pwm(
-        self, channel: int, pwm_percent: int, *, timeout: float | None = None
-    ) -> SetPwmResult:
-        data = self._post(
-            f"/fans/openfan/{channel}/pwm",
-            json={"pwm_percent": pwm_percent},
-            timeout=timeout,
-        )
-        return parse_set_pwm(data)
-
-    def hwmon_lease_take(
-        self, owner_hint: str = "gui", *, timeout: float | None = None
-    ) -> LeaseResult:
-        data = self._post("/hwmon/lease/take", json={"owner_hint": owner_hint}, timeout=timeout)
-        return parse_lease_result(data)
-
-    def hwmon_lease_release(
-        self, lease_id: str, *, timeout: float | None = None
-    ) -> LeaseReleasedResult:
-        data = self._post("/hwmon/lease/release", json={"lease_id": lease_id}, timeout=timeout)
-        return parse_lease_released(data)
-
-    def hwmon_lease_renew(self, lease_id: str, *, timeout: float | None = None) -> LeaseResult:
-        data = self._post("/hwmon/lease/renew", json={"lease_id": lease_id}, timeout=timeout)
-        return parse_lease_result(data)
-
-    def set_hwmon_pwm(
-        self,
-        header_id: str,
-        pwm_percent: int,
-        lease_id: str,
-        *,
-        timeout: float | None = None,
-    ) -> HwmonSetPwmResult:
-        data = self._post(
-            f"/hwmon/{header_id}/pwm",
-            json={"pwm_percent": pwm_percent, "lease_id": lease_id},
-            timeout=timeout,
-        )
-        return parse_hwmon_set_pwm(data)
 
     def hwmon_rescan(self) -> list[HwmonHeader]:
         """POST /hwmon/rescan — re-enumerate hwmon devices and return fresh headers.
@@ -306,21 +304,18 @@ class DaemonClient:
         """GET /diagnostics/hardware — hardware readiness and driver diagnostics."""
         return parse_hardware_diagnostics(self._get("/diagnostics/hardware"))
 
-    def verify_hwmon_pwm(self, header_id: str, lease_id: str) -> HwmonVerifyResult:
+    def verify_hwmon_pwm(self, header_id: str) -> HwmonVerifyResult:
         """POST /hwmon/{header_id}/verify — test PWM write effectiveness (~6s).
 
-        Daemon sleeps `VERIFY_WAIT_SECONDS = 6 s` once between the test
-        write and the readback (raised from 3 s — slow-spinning fans need
-        more settle time, see DEC-101). Worst-case round-trip under load
-        (mutex contention, USB-CDC turnaround, IPC marshal) is ~7.5 s —
-        so we send a 12 s per-call timeout regardless of the global
-        default. See DEC-098 / DEC-101 in `control-ofc-gui/DECISIONS.md`.
+        Daemon-performed (DEC-165): the daemon pauses its engine, force-takes a
+        short-lived internal "verify" lease, drives the test write + readback,
+        and restores — the GUI no longer holds or passes an hwmon lease (the
+        endpoint takes no body). The daemon sleeps ``VERIFY_WAIT_SECONDS = 6 s``
+        between the test write and the readback (DEC-101); worst-case round-trip
+        under load is ~7.5 s, so we send a 12 s per-call timeout regardless of
+        the global default. See DEC-098 / DEC-101 / DEC-165.
         """
-        data = self._post(
-            f"/hwmon/{header_id}/verify",
-            json={"lease_id": lease_id},
-            timeout=12.0,
-        )
+        data = self._post(f"/hwmon/{header_id}/verify", timeout=12.0)
         return parse_hwmon_verify_result(data)
 
     def active_profile(self) -> ActiveProfileInfo | None:
@@ -352,16 +347,96 @@ class DaemonClient:
         """
         return self._post("/profiles", json=document)
 
-    def set_gpu_fan_speed(
-        self, gpu_id: str, speed_pct: int, *, timeout: float | None = None
-    ) -> GpuFanSetResult:
-        """POST /gpu/{gpu_id}/fan/pwm — set GPU fan to a static speed percentage."""
-        data = self._post(
-            f"/gpu/{gpu_id}/fan/pwm",
-            json={"speed_pct": speed_pct},
-            timeout=timeout,
+    def list_profiles(self) -> list[dict[str, Any]]:
+        """GET /profiles — list daemon-stored profile summaries (raw documents)."""
+        data = self._get("/profiles")
+        profiles = data.get("profiles", [])
+        return profiles if isinstance(profiles, list) else []
+
+    def get_profile(self, profile_id: str) -> dict[str, Any]:
+        """GET /profiles/{id} — fetch a stored profile's full document."""
+        return self._get(f"/profiles/{profile_id}")
+
+    def update_profile(self, profile_id: str, document: dict[str, Any]) -> dict[str, Any]:
+        """PUT /profiles/{id} — replace a stored profile with a full document."""
+        return self._put(f"/profiles/{profile_id}", json=document)
+
+    def delete_profile(self, profile_id: str) -> dict[str, Any]:
+        """DELETE /profiles/{id} — remove a stored profile."""
+        return self._delete(f"/profiles/{profile_id}")
+
+    def validate_profile(self, document: dict[str, Any]) -> dict[str, Any]:
+        """POST /profiles?validate_only=true — run the daemon's real validate, persist nothing.
+
+        Returns the daemon's success body on a valid document; raises
+        ``DaemonError`` with ``field_violations`` in ``.details`` (parse with
+        ``models.parse_field_violations``) on a 400 ``validation_error`` (DEC-160).
+        """
+        return self._post("/profiles", json=document, params={"validate_only": "true"})
+
+    def override_take(
+        self,
+        control_id: str,
+        pwm_percent: int,
+        *,
+        ttl_secs: int | None = None,
+        timeout: float | None = None,
+    ) -> OverrideGrant:
+        """POST /control/{id}/override — pin a control's members to a fixed PWM (DEC-163).
+
+        Reverts to autonomous curve control if the GUI stops renewing (daemon
+        deadman); renew at the grant's ``renew_secs``.
+        """
+        payload: dict[str, Any] = {"pwm_percent": pwm_percent}
+        if ttl_secs is not None:
+            payload["ttl_secs"] = ttl_secs
+        return parse_override_grant(
+            self._post(f"/control/{control_id}/override", json=payload, timeout=timeout)
         )
-        return parse_gpu_fan_set(data)
+
+    def override_renew(
+        self, control_id: str, override_token: int, *, timeout: float | None = None
+    ) -> OverrideRenewResult:
+        """POST /control/{id}/override/renew — extend an override before its TTL (DEC-163)."""
+        return parse_override_renew(
+            self._post(
+                f"/control/{control_id}/override/renew",
+                json={"override_token": override_token},
+                timeout=timeout,
+            )
+        )
+
+    def override_release(
+        self, control_id: str, override_token: int, *, timeout: float | None = None
+    ) -> OverrideReleaseResult:
+        """DELETE /control/{id}/override — release an override, reverting to curve (DEC-163)."""
+        return parse_override_release(
+            self._delete(
+                f"/control/{control_id}/override",
+                json={"override_token": override_token},
+                timeout=timeout,
+            )
+        )
+
+    def fan_identify(
+        self,
+        fan_id: str,
+        action: str,
+        *,
+        ttl_secs: int | None = None,
+        timeout: float | None = None,
+    ) -> IdentifyResult:
+        """POST /fans/{id}/identify — stop/restore one fan for identification (DEC-166).
+
+        ``action`` is ``"stop"`` (forces the fan to 0 with a deadman auto-restore)
+        or ``"restore"``. Only the named fan is affected; others keep curve control.
+        """
+        payload: dict[str, Any] = {"action": action}
+        if ttl_secs is not None:
+            payload["ttl_secs"] = ttl_secs
+        return parse_identify_result(
+            self._post(f"/fans/{fan_id}/identify", json=payload, timeout=timeout)
+        )
 
     def reset_gpu_fan(self, gpu_id: str, *, timeout: float | None = None) -> GpuFanResetResult:
         """POST /gpu/{gpu_id}/fan/reset — reset GPU fan to automatic mode."""
@@ -375,8 +450,7 @@ class DaemonClient:
         test speed, waits ``GPU_VERIFY_WAIT_SECONDS = 6 s``, reads back the
         applied curve + RPM, restores the prior state, and classifies the
         outcome. We send a 12 s per-call timeout to clear the 6 s wait plus
-        round-trip overhead, matching ``verify_hwmon_pwm``. The GUI must keep
-        its ``VERIFY_PAUSE_SAFETY_MS`` strictly above the 6 s wait. See DEC-120.
+        round-trip overhead, matching ``verify_hwmon_pwm``. See DEC-120.
         """
         data = self._post(
             f"/gpu/{gpu_id}/fan/verify",

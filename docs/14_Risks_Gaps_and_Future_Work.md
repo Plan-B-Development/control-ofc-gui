@@ -42,10 +42,14 @@ Sensor descriptors are discovered at startup and cached (DEC-133); `POST /hwmon/
 ### 2. No GPU-specific thermal safety rule
 The thermal safety rule monitors CPU Tctl only (105C trigger). GPU temperatures rely on PMFW firmware protection. If a daemon-level GPU thermal rule is needed, it would require reading GPU junction temp from the cache and adding a separate threshold.
 
-### 3. GUI/daemon simultaneous control conflict (PARTIALLY RESOLVED — v0.5.3)
-For hwmon fans: GUI always wins via `force_take` lease preemption.
-For GPU fans: profile engine defers to GUI when GUI was active in last 30s (DEC-071). Previously, both the GUI control loop and profile engine independently wrote to PMFW every second, causing gaming stutter via GPU SMU firmware churn.
-**Remaining limitation:** If the GUI disconnects and reconnects within 30s, there may be a brief period where neither writes. This is acceptable — the PMFW firmware manages fans automatically during the gap.
+### 3. GUI/daemon simultaneous control conflict (RESOLVED — 2.0.0 single-writer, DEC-159/DEC-165)
+The dual-writer hazard is eliminated at 2.0.0: the daemon's engine is the **sole** writer of every
+backend and the GUI no longer writes PWM, so there is nothing to conflict. The 30 s `gui_active` defer
+window (and the brief reconnect gap it implied) was deleted along with the GUI control loop. The
+105 °C thermal force remains the absolute backstop.
+
+*History (pre-2.0):* hwmon used `force_take` lease preemption (GUI wins); GPU used a 30 s
+profile-engine defer (DEC-070/DEC-071) so both writers didn't churn PMFW and stutter games.
 
 ### 4. FanController ownership model (RESOLVED — R46 assessment)
 The daemon's `FanController` is `Option<Arc<parking_lot::Mutex<FanController>>>` in `AppState`. This was previously listed as requiring an Arc refactor for clean API/profile-engine separation. R46 investigation confirmed the current design is correct: locks are held for ~1-2ms (serial I/O), never across `.await` points, contention is minimal (1Hz profile engine + user-driven API), and both paths use the same public `set_pwm()` methods. Per-channel locking would add complexity without benefit since serial I/O is inherently sequential. No refactor needed.
@@ -65,7 +69,7 @@ Data model supports multiple GPUs. API reports primary only. No UI to select bet
 ### 7. Some GUI spec features not implemented
 - Background self-checks (deferred)
 - One-click diagnostics redaction (deferred — partial PII scrubbing gives false confidence)
-- **SSE consumption (`GET /events`) — daemon exposes it, GUI does not consume it.** The planned `EventStreamService` (DEC-024) was never wired up. `httpx-sse` was removed in v1.0.0 (commit `55cf44f`, PKGBUILD follow-up `64e3fac`). The GUI polls at 1 Hz via the combined `GET /poll` endpoint and this has been sufficient for V1 responsiveness. Sub-second UI updates would require reintroducing the SSE client and reconciling it with the existing `PollingService`.
+- **SSE consumption (`GET /events`) — daemon exposes it, GUI does not consume it (formally deferred, DEC-164).** The planned `EventStreamService` (DEC-024) was never wired up; `httpx-sse` was removed in v1.0.0 (commit `55cf44f`, PKGBUILD follow-up `64e3fac`). At the 2.0.0 cutover SSE consumption was **deliberately deferred** past the flip (DEC-164) to keep the atomic change minimal — the GUI stays poll-only (1 Hz `GET /poll`) and detects transitions by poll-diff, which is sufficient. Sub-second UI updates would require reintroducing the SSE client and reconciling it with `PollingService` in a post-2.0 release.
 - **Dashboard fan table — group-membership badges and per-fan state chips** (stale/fault/manual). `docs/04_Dashboard_Spec.md` listed these in Row 3; the shipped table shows label/source/RPM/PWM only.
 - ~~**Dashboard sensor panel — per-sensor freshness age and stale/invalid warning marker.**~~ PARTIALLY RESOLVED: Sensor summary cards now show per-card freshness indicators (`⏱` stale, `⚠` invalid) with age tooltips. Full side panel/lower strip per the spec is still deferred.
 
@@ -164,7 +168,7 @@ Diagnostics ▸ Troubleshooting ▸ "Restore GPU Fan to Automatic" now wires
 `DaemonClient.reset_gpu_fan` to a user-facing action beside the GPU verify
 button: shown for any writable AMD GPU (no daemon version floor — the reset
 route predates every supported daemon), disabled with an explanatory tooltip
-while the GUI control loop manages an `amd_gpu:` target (the active profile
+while the active profile owns an `amd_gpu:` member (the daemon engine
 would silently re-assert its curve), re-checked at click time, and clearing
 the session's `gui_wrote_gpu_fan` flag on success so the close-time
 auto-reset (M9) becomes a no-op until the next GUI GPU write. Before DEC-147
@@ -200,7 +204,7 @@ table only with authoritatively-verified device-ID → name pairs.
 | Gap | Resolution | Version |
 |-----|-----------|---------|
 | GUI rescan button (endpoint existed, never wired) | Diagnostics ▸ Troubleshooting "Rescan Hardware" + restored `hwmon_rescan` wrapper + chained diagnostics refetch (DEC-147) | GUI v1.35.0 |
-| GUI surface for `reset_gpu_fan` (§11) | Diagnostics ▸ Troubleshooting "Restore GPU Fan to Automatic", gated against the GUI control loop (DEC-147) | GUI v1.35.0 |
+| GUI surface for `reset_gpu_fan` (§11) | Diagnostics ▸ Troubleshooting "Restore GPU Fan to Automatic", gated against the active profile owning an `amd_gpu:` member (DEC-147; re-keyed off the loop at 2.0.0, DEC-165) | GUI v1.35.0 |
 | Emergency ↔ GUI lease ping-pong (alternating curve/forced PWM during 105°C events) | `thermal_state` in GET /status + GUI control-loop/lease stand-down (DEC-132) | GUI v1.30.0 / daemon v1.13.0 |
 | Per-tick sensor re-discovery (~340 sysfs ops/s; asus_wmi_sensors polling risk) | Descriptor cache + triggered re-discovery (DEC-133) | daemon v1.13.0 |
 | GPU GUI-priority lapse on slow ramps (coalesced writes didn't count as liveness; engine used exact-match suppression) | record_gui_write on coalesced returns + shared 5% threshold (DEC-131) | daemon v1.13.0 |

@@ -97,69 +97,64 @@ class TestGpuFanDisplayName:
 
 
 class TestFanWizardGpuBranch:
-    """Fan wizard stop/restore correctly routes GPU fans."""
+    """Fan wizard stop/restore routes every source through the daemon identify
+    API by fan id (DEC-166) — no per-source raw PWM writes, no GUI lease."""
 
-    def test_stop_gpu_fan_calls_correct_api(self):
+    def test_stop_gpu_fan_uses_identify(self):
         from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
 
-        state = _make_state()
         client = MagicMock()
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
-        wizard._state = state
-        wizard._lease_service = None
+        wizard._state = _make_state()
 
-        target = {"id": "amd_gpu:0000:03:00.0", "source": "amd_gpu"}
-        wizard.stop_fan(target)
+        wizard.stop_fan({"id": "amd_gpu:0000:03:00.0", "source": "amd_gpu"})
 
-        client.set_gpu_fan_speed.assert_called_once_with("0000:03:00.0", 0)
+        client.fan_identify.assert_called_once_with("amd_gpu:0000:03:00.0", "stop")
+        client.set_gpu_fan_speed.assert_not_called()
         client.set_hwmon_pwm.assert_not_called()
 
-    def test_restore_gpu_fan_calls_correct_api(self):
+    def test_restore_gpu_fan_uses_identify(self):
         from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
 
-        state = _make_state()
         client = MagicMock()
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
-        wizard._state = state
-        wizard._lease_service = None
+        wizard._state = _make_state()
 
-        # With prior_pwm=60, restore should use 60
-        target = {"id": "amd_gpu:0000:03:00.0", "source": "amd_gpu", "prior_pwm": 60}
-        wizard.restore_fan(target)
-        client.set_gpu_fan_speed.assert_called_once_with("0000:03:00.0", 60)
+        wizard.restore_fan({"id": "amd_gpu:0000:03:00.0", "source": "amd_gpu"})
+
+        client.fan_identify.assert_called_once_with("amd_gpu:0000:03:00.0", "restore")
+        client.set_gpu_fan_speed.assert_not_called()
+
+    def test_restore_replays_no_pwm(self):
+        """Restore never sends a PWM — the daemon recomputes the curve."""
+        from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
+
+        client = MagicMock()
+        wizard = FanConfigWizard.__new__(FanConfigWizard)
+        wizard._client = client
+        wizard._state = _make_state()
+
+        wizard.restore_fan({"id": "amd_gpu:0000:03:00.0", "source": "amd_gpu"})
+
+        client.fan_identify.assert_called_once_with("amd_gpu:0000:03:00.0", "restore")
+        client.set_gpu_fan_speed.assert_not_called()
+        client.set_openfan_pwm.assert_not_called()
         client.set_hwmon_pwm.assert_not_called()
 
-    def test_restore_gpu_fan_fallback_30_when_no_prior(self):
-        """Without prior_pwm, restore falls back to 30% (R59)."""
+    def test_stop_openfan_uses_identify(self):
         from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
 
-        state = _make_state()
         client = MagicMock()
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
-        wizard._state = state
-        wizard._lease_service = None
+        wizard._state = _make_state()
 
-        target = {"id": "amd_gpu:0000:03:00.0", "source": "amd_gpu"}
-        wizard.restore_fan(target)
-        client.set_gpu_fan_speed.assert_called_once_with("0000:03:00.0", 30)
+        wizard.stop_fan({"id": "openfan:ch02", "source": "openfan"})
 
-    def test_stop_openfan_still_works(self):
-        from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
-
-        state = _make_state()
-        client = MagicMock()
-        wizard = FanConfigWizard.__new__(FanConfigWizard)
-        wizard._client = client
-        wizard._state = state
-        wizard._lease_service = None
-
-        target = {"id": "openfan:ch02", "source": "openfan"}
-        wizard.stop_fan(target)
-
-        client.set_openfan_pwm.assert_called_once_with(2, 0)
+        client.fan_identify.assert_called_once_with("openfan:ch02", "stop")
+        client.set_openfan_pwm.assert_not_called()
         client.set_gpu_fan_speed.assert_not_called()
 
 

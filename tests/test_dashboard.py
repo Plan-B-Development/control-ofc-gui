@@ -458,3 +458,33 @@ class TestR14SensorPanelGrouping:
             [SensorReading(id="s1", label="Tctl", kind="CpuTemp", value_c=62.3, age_ms=50)]
         )
         assert "62.3" in panel._sensor_items["s1"].text(1)
+
+
+class TestThermalBanner:
+    """Dashboard surfaces the daemon's thermal-protection state from /status
+    poll diffs (the GUI no longer runs a loop watching thermal_state)."""
+
+    def test_thermal_trip_shows_banner(self, qtbot, window, app_state):
+        dash = window.dashboard_page
+        assert dash._thermal_banner.isHidden()
+
+        app_state.set_status(DaemonStatus(thermal_state="force"))
+
+        assert not dash._thermal_banner.isHidden()
+        assert "Thermal protection" in dash._thermal_banner._message_label.text()
+
+    def test_thermal_recovery_clears_banner(self, qtbot, window, app_state):
+        dash = window.dashboard_page
+        app_state.set_status(DaemonStatus(thermal_state="force"))
+        assert not dash._thermal_banner.isHidden()
+
+        app_state.set_status(DaemonStatus(thermal_state="normal"))
+
+        assert dash._thermal_banner.isHidden()
+
+    def test_normal_status_keeps_banner_hidden(self, qtbot, window, app_state):
+        dash = window.dashboard_page
+
+        app_state.set_status(DaemonStatus(thermal_state="normal"))
+
+        assert dash._thermal_banner.isHidden()
