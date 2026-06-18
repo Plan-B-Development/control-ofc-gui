@@ -96,6 +96,25 @@ Notable fields:
   `{present:false, status:"unsupported"}` permanently: USB-only coolers
   (liquidctl/USB-HID) are out of scope (the daemon never opens USB-HID).
 
+The top-level **`control` block** (daemon ≥ 1.19.0, DEC-159/160) advertises which
+control responsibilities the daemon can own. Each flag defaults to the
+pre-migration/safe value when absent — a pre-1.19 daemon sends no block, so the
+GUI treats every flag as false / old behaviour (AIP-180):
+- `profile_storage` (bool) — daemon exposes the `/profiles` CRUD + validate
+  surface; `true` since **1.19.0** (DEC-160). The GUI gates its one-time
+  profile-import offer on this flag.
+- `curve_evaluation` (bool) — daemon evaluates fan curves headlessly; always
+  `true` (the profile engine has done this since DEC-096).
+- `manual_override` (bool) — daemon exposes the manual-override API (DEC-163);
+  `false` in 1.19–1.20, **`true` since 1.21.0**. Gates the GUI's Manual-card
+  override UI.
+- `fan_identify` (bool) — daemon exposes the fan-identify API (DEC-166);
+  `false` in 1.19–1.20, **`true` since 1.21.0**. Gates the Fan Wizard's
+  daemon-mediated identify.
+- `min_supported_gui` (string) — coarse GUI-version floor for a legible
+  hard-fail; empty until the 2.0.0 cutover sets it (drives the GUI's startup
+  capability gate).
+
 ### Per-call timeouts (DEC-098 / DEC-099)
 
 The GUI's `DaemonClient` accepts a `timeout=` kwarg on every method that
@@ -156,6 +175,13 @@ Emitted by the daemon's `HealthStatus::Display` and pinned on both sides by
 DEC-130) and force-taking the hwmon lease as `thermal-safety`; the GUI pauses
 its control loop and lease machinery and shows a single thermal warning.
 Older daemons omit the field — the GUI defaults it to `"normal"`.
+
+`overrides` and `fan_identify` (daemon ≥ 1.21.0, additive — `api_version`
+unchanged, omitted when empty) make `/status` the poll-authoritative source for
+active manual overrides and fan-identify holds (DEC-163 / DEC-166): `overrides[]`
+of `{control_id, pwm_percent, expires_in_secs}` and `fan_identify[]` of
+`{fan_id, expires_in_secs}`. Both arrays are absent on daemons < 1.21.0 and when
+nothing is held; the GUI defaults them to empty.
 
 ### GET /sensors
 Use as the primary sensor snapshot source.
@@ -458,6 +484,38 @@ validation_error` (unknown header — the wire `code` is `validation_error`, not
   - GUI queries on connect/reconnect to reflect daemon truth
   - Prevents stale widget state from misleading user
 
+### Manual override (DEC-163, daemon ≥ 1.21.0)
+
+Daemon-owned, expiring, fencing-guarded per-control pin. Replaces the GUI's transient Manual card.
+The override **reverts to autonomous curve control** if the GUI stops renewing (deadman on the
+daemon's clock); a stale token cannot re-pin (fencing).
+
+- `POST /control/{control_id}/override` — body `{"pwm_percent": 0..100, "ttl_secs"?: N}` →
+  `200 {"control_id","override_token","pwm_percent","ttl_secs","renew_secs","expires_in_secs"}`.
+  `404` if the control is not in the active profile; `400` if `pwm_percent` out of range.
+  The override PWM is still clamped by the daemon's hard pump/CPU floor (≥30 %) and GPU 0 % floor.
+- `POST /control/{control_id}/override/renew` — body `{"override_token": N}` →
+  `200 {"control_id","override_token","ttl_secs","expires_in_secs"}`. Renew at ~`renew_secs`
+  (≈5 s, ⅓ of the 15 s TTL). `409 stale_fencing_token` if superseded; `404 override_expired` if it
+  already lapsed (re-take, don't renew).
+- `DELETE /control/{control_id}/override` — body `{"override_token": N}` →
+  `200 {"control_id","released": bool}` (reverts immediately; `released:false` = nothing was held,
+  idempotent). `409 stale_fencing_token` on a stale token.
+
+The 105 °C thermal force always overrides an active override. No absolute max-duration cap — a live
+renewing GUI holds indefinitely.
+
+### Fan identify (DEC-166, daemon ≥ 1.21.0)
+
+Per-fan stop/restore for the Fan Wizard, with a deadman auto-restore. Replaces the wizard's global
+freeze + raw writes.
+
+- `POST /fans/{fan_id}/identify` — body `{"action": "stop" | "restore", "ttl_secs"?: N}` →
+  `200 {"fan_id","action","expires_in_secs"?}` (`expires_in_secs` present only for `stop`).
+  `stop` forces the fan to 0 (floor-exempt — even a pump) and auto-restores after the deadman;
+  `restore` clears it (the engine resumes the fan's curve value). `404` if the fan id is unknown on
+  `stop`; `400` on a bad action. Only the named fan is affected — others keep curve-controlling.
+
 ### GPU fan writes
 - `POST /gpu/{gpu_id}/fan/pwm` — `{"speed_pct": 0..100}` — set GPU fan to static speed
 - `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM)
@@ -549,8 +607,10 @@ Error codes and HTTP statuses:
   Distinct from `hardware_unavailable` (transient / retryable) and `validation_error` (malformed request). Permanent for this device — clients must not retry.
 - 403 `lease_required` (source: `"validation"`, retryable: false) — returned by hwmon PWM-write and `/verify` whenever the lease is missing, invalid, or expired (no 400 variant on these paths; the 409 below covers a lease held by another owner)
 - 404 `not_found` (source: `"validation"`, retryable: false) — **unknown route/URI only**. An unknown *resource* on a known route (hwmon header, GPU id) returns 404 with code `validation_error`, not `not_found`.
+- 404 `override_expired` (source: `"validation"`, retryable: false) — renew/release of a manual override (DEC-163) that already lapsed on the daemon's deadman, or was never taken; re-take rather than renew.
 - 409 `lease_already_held` (source: `"validation"`, retryable: false) — surfaced only by hwmon PWM writes when another owner holds the lease; `POST /hwmon/lease/take` unconditionally force-takes and never returns this code
 - 409 `thermal_abort` (source: `"hardware"`, retryable: true) — calibration aborted due to high temperature
+- 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
 - 500 `internal_error` (source: `"internal"`, retryable: true)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)
 - 503 `persistence_failed` (source: `"internal"`, retryable: true) — returned by `POST /config/*` when the daemon cannot persist the runtime configuration file
