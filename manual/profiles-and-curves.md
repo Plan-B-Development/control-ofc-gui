@@ -38,7 +38,7 @@ A profile is a named collection of fan roles and curves. You can have multiple p
 | Balanced | Moderate noise, good cooling for mixed workloads |
 | Performance | Maximum cooling for gaming or rendering, higher noise |
 
-Only one profile can be **active** at a time. The active profile's fan roles are evaluated by the control loop every second.
+Only one profile can be **active** at a time. The daemon evaluates the active profile's fan roles every second and drives the fans.
 
 ### Built-in Profiles
 
@@ -46,7 +46,7 @@ Control-OFC ships with three default profiles (Quiet, Balanced, Performance) tha
 
 ### Profile Storage
 
-Profiles are saved as individual JSON files in your profiles directory (default: `~/.config/control-ofc/profiles/`). They are GUI-owned — the daemon does not manage profiles, but it can load them for headless operation when the GUI is not running.
+The daemon is the store of record for profiles — it holds the active profile and evaluates it. The GUI keeps a local draft cache of profiles as individual JSON files in your profiles directory (default: `~/.config/control-ofc/profiles/`) so you can author and edit them, including while disconnected; drafts reconcile with the daemon the next time the GUI connects.
 
 ## Fan Roles
 
@@ -71,7 +71,7 @@ Each physical fan can only belong to one role. If you try to add a fan that is a
 
 ### Tuning Parameters
 
-Each fan role carries a set of tuning parameters that the control loop applies to the raw curve output before it is written to the hardware. These are stored in the profile and applied automatically — there is **no dedicated UI to hand-edit them**; they use sensible role-aware defaults (and **Minimum** in particular is set automatically from the role — see below).
+Each fan role carries a set of tuning parameters that the daemon applies to the raw curve output before it is written to the hardware. These are stored in the profile and applied automatically — there is **no dedicated UI to hand-edit them**; they use sensible role-aware defaults (and **Minimum** in particular is set automatically from the role — see below).
 
 | Parameter | Effect |
 |-----------|--------|
@@ -164,25 +164,27 @@ Graph, Stepped, Linear, and Trigger curves are each bound to one temperature sen
 
 ## The Control Loop
 
-The control loop runs every second and performs this sequence:
+The **daemon** runs the control loop every second — the GUI never writes fan speeds. Each second the daemon performs this sequence:
 
-1. Read the latest sensor temperatures from the daemon
+1. Read the latest sensor temperatures
 2. For each fan role in the active profile:
    - If mode is Manual: use the fixed output percentage
    - If mode is Curve: look up the curve, read the bound sensor's temperature, interpolate the output
 3. Apply the **hysteresis deadband** (2 degrees C): when temperature is falling, hold the current PWM until the temperature drops 2 degrees below the last transition point (prevents fan oscillation)
 4. Apply **write suppression**: skip writes when the calculated output differs from the last commanded value by less than 1% (reduces unnecessary hardware writes)
-5. Write the final PWM values to the daemon
+5. Write the final PWM values to every fan backend (OpenFan, motherboard hwmon, and AMD GPU PMFW)
 
-## GUI vs Daemon Priority
+## The Daemon Drives the Fans
 
-Both the GUI and the daemon have profile evaluation capability:
+Once you **Activate** a profile, the daemon owns fan control completely:
 
-- When the GUI is running and has an active profile, **the GUI drives fan speeds**
-- When the GUI closes, the daemon can take over using the last activated profile
-- The daemon defers to the GUI if it has been active within the last 30 seconds
+- The daemon's profile engine evaluates the active profile and writes every fan backend itself
+- Your fans stay controlled whether the GUI is open, closed, or has crashed — there is nothing to keep running
+- The GUI's job is to author and validate profiles, upload and activate them, poll the daemon once a second, and show you what is happening
 
-This means you can close the GUI and your fans continue to be managed by the daemon headlessly.
+This is why **Activate** is the moment that matters: it hands your profile to the daemon, which then keeps your fans managed headlessly.
+
+> **Demo mode is the one exception.** With no daemon to talk to, the GUI animates fans with its own built-in evaluator so you can explore curves and profiles. Nothing is written to real hardware.
 
 ---
 

@@ -16,10 +16,8 @@ from control_ofc.constants import APP_NAME, APP_VERSION, DEFAULT_SOCKET_PATH
 from control_ofc.paths import ensure_dirs, set_path_overrides, themes_dir
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
-from control_ofc.services.control_loop import ControlLoopService
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
-from control_ofc.services.lease_service import LeaseService
 from control_ofc.services.polling import PollingService
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.ui.main_window import MainWindow
@@ -212,14 +210,19 @@ def main() -> None:
             log.info("Daemon unreachable at startup — starting in demo mode (demo_on_disconnect)")
     demo_mode = _resolve_demo_mode(args.demo, s.demo_on_disconnect, daemon_reachable)
 
-    # Core services
+    # Core services. In live mode the daemon client is created up-front so the
+    # ProfileService can use the daemon-owned profile store (control migration);
+    # demo mode keeps client=None and the service stays purely local.
     state = AppState()
     history = HistoryStore()
-    profile_service = ProfileService()
+    client: DaemonClient | None = None
+    if not demo_mode:
+        client = DaemonClient(socket_path=socket_path)
+    profile_service = ProfileService(client=client)
 
     # DEC-111: a single DiagnosticsService is shared between the polling
-    # service, lease service, control loop, main window, and diagnostics
-    # page so every emitter writes into the same in-process event deque.
+    # service, main window, and diagnostics page so every emitter writes into
+    # the same in-process event deque.
     diagnostics = DiagnosticsService(
         state=state,
         settings_service=settings_service,
@@ -252,29 +255,16 @@ def main() -> None:
     state.sensors_updated.connect(history.record_sensors)
     state.fans_updated.connect(history.record_fans)
 
-    # Polling and control loop (only in live mode)
-    client: DaemonClient | None = None
+    # Polling (only in live mode); the client was created above. The daemon is
+    # the authoritative fan-control engine now (DEC-165) — the GUI runs no
+    # control loop and holds no hwmon lease.
     polling: PollingService | None = None
-    control_loop: ControlLoopService | None = None
-    lease: LeaseService | None = None
     if not demo_mode:
-        client = DaemonClient(socket_path=socket_path)
         polling = PollingService(state, socket_path, history=history, diagnostics=diagnostics)
         # Profile-search-dir registration runs inside the polling worker
         # thread on first successful poll and after every reconnect
         # (see PollingService._PollWorker._register_profile_search_dir).
         # Kept off the Qt main thread so a slow daemon cannot stall the UI.
-        # socket_path enables the dedicated lease worker thread (DEC-108) so
-        # take/renew/release HTTP calls never block the Qt main thread.
-        lease = LeaseService(client, socket_path=socket_path, diagnostics=diagnostics)
-        control_loop = ControlLoopService(
-            state=state,
-            profile_service=profile_service,
-            client=client,
-            lease_service=lease,
-            socket_path=socket_path,
-            diagnostics=diagnostics,
-        )
 
     # Set app icon
     from control_ofc.ui.branding import load_app_icon
@@ -290,8 +280,6 @@ def main() -> None:
         profile_service=profile_service,
         settings_service=settings_service,
         client=client if not demo_mode else None,
-        control_loop=control_loop,
-        lease_service=lease,
         diagnostics_service=diagnostics,
         demo_mode=demo_mode,
     )
@@ -306,8 +294,6 @@ def main() -> None:
     # Start services after window is visible
     if polling:
         polling.start()
-    if control_loop:
-        control_loop.start()
 
     exit_code = qt_app.exec()
 
@@ -317,10 +303,6 @@ def main() -> None:
     diagnostics.log_event("info", "gui", "GUI exiting")
 
     # Cleanup
-    if control_loop:
-        control_loop.shutdown()
-    if lease:
-        lease.shutdown()
     if polling:
         polling.shutdown()
     if client:

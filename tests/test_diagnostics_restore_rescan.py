@@ -31,7 +31,6 @@ from control_ofc.api.models import (
     ThermalSafetyInfo,
 )
 from control_ofc.services.app_state import AppState
-from control_ofc.services.control_loop import ControlLoopService
 from control_ofc.services.demo_service import DemoService
 from control_ofc.services.profile_service import (
     ControlMember,
@@ -108,38 +107,6 @@ def _profile_with_member(target_id: str, source: str) -> Profile:
     return Profile(id="test", name="Test", controls=[control])
 
 
-class TestManagesGpuTarget:
-    def _loop(self, state, profile_service, profile: Profile | None) -> ControlLoopService:
-        if profile is not None:
-            profile_service._profiles[profile.id] = profile
-            profile_service.set_active(profile.id)
-        loop = ControlLoopService(state, profile_service)
-        loop._running = True
-        return loop
-
-    def test_true_with_gpu_member(self, state, profile_service, qtbot):
-        loop = self._loop(
-            state, profile_service, _profile_with_member("amd_gpu:0000:2d:00.0", "amd_gpu")
-        )
-        assert loop.manages_gpu_target() is True
-
-    def test_false_without_gpu_member(self, state, profile_service, qtbot):
-        loop = self._loop(state, profile_service, _profile_with_member("openfan:ch00", "openfan"))
-        assert loop.manages_gpu_target() is False
-
-    def test_false_when_not_running(self, state, profile_service, qtbot):
-        loop = self._loop(
-            state, profile_service, _profile_with_member("amd_gpu:0000:2d:00.0", "amd_gpu")
-        )
-        loop._running = False
-        assert loop.manages_gpu_target() is False
-
-    def test_false_without_active_profile(self, state, profile_service, qtbot):
-        loop = self._loop(state, profile_service, None)
-        profile_service._active_id = "does-not-exist"
-        assert loop.manages_gpu_target() is False
-
-
 # ── Page fixtures (mirroring test_gpu_verify) ────────────────────────
 
 
@@ -149,8 +116,12 @@ def _page_state(daemon_version: str = "1.11.0") -> AppState:
     return s
 
 
-def _make_page(qtbot, state=None, client=None, control_loop=None) -> DiagnosticsPage:
-    page = DiagnosticsPage(state=state or _page_state(), client=client, control_loop=control_loop)
+def _make_page(qtbot, state=None, client=None, profile_service=None):
+    page = DiagnosticsPage(
+        state=state or _page_state(),
+        client=client,
+        profile_service=profile_service,
+    )
     qtbot.addWidget(page)
     return page
 
@@ -177,10 +148,22 @@ def _writable_gpu() -> GpuDiagnosticsInfo:
     )
 
 
-def _managing_loop(managed: bool) -> MagicMock:
-    loop = MagicMock()
-    loop.manages_gpu_target.return_value = managed
-    return loop
+def _gpu_controlling_ps() -> ProfileService:
+    """A profile service whose active profile owns an ``amd_gpu:`` member."""
+    ps = ProfileService()
+    prof = _profile_with_member("amd_gpu:0000:2d:00.0", "amd_gpu")
+    ps._profiles[prof.id] = prof
+    ps.set_active(prof.id)
+    return ps
+
+
+def _non_gpu_ps() -> ProfileService:
+    """A profile service whose active profile owns only a non-GPU member."""
+    ps = ProfileService()
+    prof = _profile_with_member("openfan:ch00", "openfan")
+    ps._profiles[prof.id] = prof
+    ps.set_active(prof.id)
+    return ps
 
 
 # ── GPU restore: visibility ──────────────────────────────────────────
@@ -223,34 +206,41 @@ class TestGpuRestoreVisibility:
 
 
 class TestGpuRestoreGate:
-    def test_disabled_while_loop_manages_gpu(self, qtbot):
-        page = _make_page(qtbot, control_loop=_managing_loop(True))
+    """The page gate is loop-independent now (DEC-165): disabled while the
+    active profile owns the GPU, since the daemon would re-apply the curve."""
+
+    def test_disabled_while_active_profile_controls_gpu(self, qtbot):
+        page = _make_page(qtbot, profile_service=_gpu_controlling_ps())
         page._populate_hw_diagnostics(_diag(gpu=_writable_gpu()))
         assert not page._gpu_restore_btn.isEnabled()
         assert page._gpu_restore_btn.toolTip() == _GPU_RESTORE_TOOLTIP_GATED
 
-    def test_enabled_when_loop_not_managing(self, qtbot):
-        page = _make_page(qtbot, control_loop=_managing_loop(False))
+    def test_enabled_when_profile_has_no_gpu_member(self, qtbot):
+        page = _make_page(qtbot, profile_service=_non_gpu_ps())
         page._populate_hw_diagnostics(_diag(gpu=_writable_gpu()))
         assert page._gpu_restore_btn.isEnabled()
         assert page._gpu_restore_btn.toolTip() == _GPU_RESTORE_TOOLTIP_READY
 
-    def test_enabled_without_control_loop(self, qtbot):
-        """Pages built outside main_window (unit tests) have no loop — the
-        gate must not block the button."""
-        page = _make_page(qtbot, control_loop=None)
+    def test_enabled_without_profile_service(self, qtbot):
+        """Pages built outside main_window (unit tests) may have no profile
+        service — the gate must not block the button."""
+        page = _make_page(qtbot, profile_service=None)
         page._populate_hw_diagnostics(_diag(gpu=_writable_gpu()))
         assert page._gpu_restore_btn.isEnabled()
 
     def test_gate_flips_on_active_profile_changed(self, qtbot):
-        loop = _managing_loop(False)
+        ps = _non_gpu_ps()
         state = _page_state()
-        page = _make_page(qtbot, state=state, control_loop=loop)
+        page = _make_page(qtbot, state=state, profile_service=ps)
         page._populate_hw_diagnostics(_diag(gpu=_writable_gpu()))
         assert page._gpu_restore_btn.isEnabled()
 
-        loop.manages_gpu_target.return_value = True
-        state.set_active_profile("gaming")  # emits active_profile_changed
+        # Switch the active profile to one that owns the GPU, then fire the
+        # signal the gate listens on (active_profile_changed).
+        gpu_prof = _profile_with_member("amd_gpu:0000:2d:00.0", "amd_gpu")
+        ps._profiles[gpu_prof.id] = gpu_prof
+        ps.set_active(gpu_prof.id)
+        state.set_active_profile("gaming")
 
         assert not page._gpu_restore_btn.isEnabled()
         assert page._gpu_restore_btn.toolTip() == _GPU_RESTORE_TOOLTIP_GATED
@@ -259,11 +249,9 @@ class TestGpuRestoreGate:
         """A stale-enabled button must not slip a restore through: the click
         handler re-checks the gate and refuses without calling the client."""
         client = _RestoreSyncClient(GpuFanResetResult(gpu_id="0000:2d:00.0", reset=True))
-        loop = _managing_loop(False)
-        page = _make_page(qtbot, client=client, control_loop=loop)
+        page = _make_page(qtbot, client=client, profile_service=_gpu_controlling_ps())
         page._gpu_verify_bdf = "0000:2d:00.0"
 
-        loop.manages_gpu_target.return_value = True  # flips after last gate run
         page._run_gpu_restore()
 
         assert client.calls == []

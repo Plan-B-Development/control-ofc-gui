@@ -1,6 +1,6 @@
 [project]
 name = "control-ofc-gui"
-version = "1.42.1"
+version = "2.0.0"
 description = "Desktop fan control GUI for the Control-OFC daemon"
 requires-python = ">=3.12"
 license = "MIT"
@@ -48,9 +48,22 @@ pythonpath = ["src"]
 timeout = 60
 timeout_method = "thread"
 
+# Mutation scope (run via /test-tests). After the 2.0.0 control-migration the
+# GUI no longer evaluates curves or writes PWM (control_loop.py is deleted); the
+# remaining author-side safety logic lives in profile_service.py — the schema
+# migration ladder, the role-floor bake (DEC-095/162), and the demo/preview
+# interpolate(). That is the meaningful Python mutation target now. (The daemon's
+# runtime safety logic — profile.rs::validate, override expiry/fencing, the
+# role-floor backstop — is Rust; mutate it with cargo-mutants, not mutmut.)
 [tool.mutmut]
-paths_to_mutate = ["src/control_ofc/services/control_loop.py"]
-tests_dir = ["tests/test_control_loop.py", "tests/test_control_loop_writes.py"]
+paths_to_mutate = ["src/control_ofc/services/profile_service.py"]
+tests_dir = [
+    "tests/test_profile_service.py",
+    "tests/test_profile_service_daemon.py",
+    "tests/test_role_classification_parity.py",
+    "tests/test_aio_phase1.py",
+    "tests/test_aio_phase2.py",
+]
 
 [tool.setuptools.package-data]
 # Ship bundled theme presets inside the wheel so first-run install can

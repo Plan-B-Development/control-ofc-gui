@@ -18,7 +18,6 @@ from control_ofc.api.models import (
     Capabilities,
     ConnectionState,
     DaemonStatus,
-    LeaseState,
     OperationMode,
 )
 from control_ofc.constants import CAPABILITIES_REFRESH_INTERVAL_S, POLL_INTERVAL_MS
@@ -39,7 +38,6 @@ class _PollWorker(QObject):
     sensors_ready = Signal(list)
     fans_ready = Signal(list)
     headers_ready = Signal(list)
-    lease_ready = Signal(LeaseState)
     active_profile_ready = Signal(object)  # ActiveProfileInfo | None
 
     # Connection state
@@ -124,8 +122,6 @@ class _PollWorker(QObject):
             if self._poll_count == 0 and self._history and sensors:
                 self._prefill_history(client, sensors)
 
-            self.lease_ready.emit(client.hwmon_lease_status())
-
             self.connected.emit()
             if self._consecutive_failures > 0:
                 # Reconnected after failure — force capabilities re-fetch on
@@ -139,7 +135,7 @@ class _PollWorker(QObject):
         except (DaemonError, ConnectionError, OSError, KeyError, ValueError, TypeError) as e:
             # P3-1: parse-shaped exceptions (KeyError/ValueError/TypeError from
             # a malformed-but-200 payload) and raw transport errors from the
-            # fallback legs / capabilities() / hwmon_lease_status() previously
+            # fallback legs / capabilities() previously
             # escaped this handler and landed in the Qt excepthook once per
             # second with no backoff. Treat them all as a failed cycle.
             self._consecutive_failures += 1
@@ -239,7 +235,6 @@ class PollingService(QObject):
         self._worker.sensors_ready.connect(state.set_sensors)
         self._worker.fans_ready.connect(state.set_fans)
         self._worker.headers_ready.connect(state.set_hwmon_headers)
-        self._worker.lease_ready.connect(state.set_lease)
         self._worker.active_profile_ready.connect(self._on_active_profile)
         self._worker.connected.connect(self._on_connected)
         self._worker.disconnected.connect(self._on_disconnected)

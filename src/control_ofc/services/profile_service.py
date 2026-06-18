@@ -23,9 +23,14 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.constants import DEFAULT_CURVE_POINTS
 from control_ofc.paths import atomic_write, profiles_dir
+
+if TYPE_CHECKING:
+    from control_ofc.api.client import DaemonClient
 
 log = logging.getLogger(__name__)
 
@@ -1111,11 +1116,36 @@ def collect_local_profiles_for_import(directory: Path | None = None) -> ImportCo
 
 
 class ProfileService:
-    """Manages profile loading, saving, and selection."""
+    """Manages profile loading, saving, and selection.
 
-    def __init__(self) -> None:
+    Persistence is daemon-backed when a :class:`DaemonClient` is supplied (the
+    control-migration model: the daemon owns the authoritative profile store).
+    ``load()`` then pulls from ``GET /profiles`` and mirrors each profile into
+    the local cache dir so they stay viewable/editable offline; ``save_profile``
+    validates-then-uploads and, when the daemon is unreachable, keeps the edit
+    as a local draft (no background auto-sync — the user re-saves explicitly;
+    migration Decision 3). With ``client=None`` the service is purely local —
+    byte-for-byte the pre-migration behaviour — which keeps demo mode and the
+    existing unit tests unchanged.
+    """
+
+    def __init__(self, client: DaemonClient | None = None) -> None:
         self._profiles: dict[str, Profile] = {}
         self._active_id: str = ""
+        self._client = client
+        # Profile ids known to exist in the daemon store (from the last
+        # successful daemon load or upload). Selects create (POST) vs replace
+        # (PUT) on save without a probe round-trip.
+        self._daemon_ids: set[str] = set()
+        # Profile ids written to the local cache but NOT published to the
+        # daemon — saved while offline, or rejected on upload. The Controls
+        # page badges these as unpublished drafts (Phase 6c). Always empty in
+        # pure-local mode (there is no daemon to publish to).
+        self._unpublished: set[str] = set()
+        # True once a load()/save fell back to the local cache because the
+        # daemon was unreachable — the GUI is working against the offline
+        # mirror. Cleared on the next successful daemon load.
+        self._offline: bool = False
 
     @property
     def profiles(self) -> list[Profile]:
@@ -1129,13 +1159,100 @@ class ProfileService:
     def active_id(self) -> str:
         return self._active_id
 
-    def load(self) -> list[tuple[str, str]]:
-        """Load profiles from disk. Create defaults if none exist.
+    @property
+    def offline(self) -> bool:
+        """True when the last daemon load/save fell back to the local cache."""
+        return self._offline
 
-        Returns a list of ``(path, error_message)`` tuples for every profile
-        file that failed to parse. The caller is expected to surface these
-        via ``AppState.add_warning`` so Diagnostics shows the failure — prior
-        to this, corrupted profiles were silently dropped from the UI.
+    @property
+    def daemon_backed(self) -> bool:
+        """True when persistence is daemon-backed (a client was supplied), so the
+        published/draft distinction is meaningful. False in pure-local mode,
+        where every profile is just a local file."""
+        return self._client is not None
+
+    @property
+    def unpublished_ids(self) -> set[str]:
+        """Profile ids written locally but not yet published to the daemon."""
+        return set(self._unpublished)
+
+    def is_published(self, profile_id: str) -> bool:
+        """True when ``profile_id`` is in the daemon store with no pending
+        local-only edits. Always False in pure-local mode."""
+        return profile_id in self._daemon_ids and profile_id not in self._unpublished
+
+    def load(self) -> list[tuple[str, str]]:
+        """Load profiles, preferring the daemon store when a client is set.
+
+        Returns a list of ``(path_or_id, error_message)`` tuples for every
+        profile that failed to parse, for the caller to surface via
+        ``AppState.add_warning``. With a daemon client that is reachable,
+        profiles come from ``GET /profiles`` and are mirrored into the local
+        cache; if the daemon is unreachable the GUI falls back to the local
+        cache so it still opens offline. With no client it reads the local
+        store directly (pre-migration behaviour).
+        """
+        if self._client is not None:
+            errors = self._load_from_daemon()
+            if errors is not None:
+                self._offline = False
+                return errors
+            # Daemon unreachable — fall back to the local mirror so the GUI
+            # still opens; edits become drafts until the daemon returns.
+            log.info("Daemon unreachable at load — using the local profile cache (offline)")
+            self._offline = True
+        return self._load_from_local()
+
+    def _load_from_daemon(self) -> list[tuple[str, str]] | None:
+        """Pull profiles from the daemon store and mirror them locally.
+
+        Returns the per-profile error list on success (daemon reached, even if
+        some stored documents failed to parse), or ``None`` when the daemon is
+        unreachable so ``load()`` can fall back to the local cache.
+        """
+        assert self._client is not None
+        try:
+            documents = self._client.list_profiles()
+        except (DaemonUnavailable, DaemonTimeout):
+            return None
+        except DaemonError as e:
+            # Reachable but errored (unexpected for a GET) — surface it as a
+            # daemon-side failure rather than masking it as an offline fallback.
+            log.warning("Daemon profile listing failed (%s): %s", e.code, e.message)
+            return None
+
+        errors: list[tuple[str, str]] = []
+        for doc in documents:
+            ident = doc.get("id", "<unknown>") if isinstance(doc, dict) else "<unknown>"
+            try:
+                profile = Profile.from_dict(doc)
+            except Exception as e:  # malformed stored document
+                log.warning("Failed to parse daemon profile %s: %s", ident, e)
+                errors.append((str(ident), str(e)))
+                continue
+            self._profiles[profile.id] = profile
+            self._daemon_ids.add(profile.id)
+            self._unpublished.discard(profile.id)
+            # Mirror to the local cache (write only — never re-upload) so the
+            # profile stays editable while offline.
+            self._write_local(profile)
+
+        # A daemon with no stored profiles (fresh install) — seed the built-in
+        # starters and publish them, matching local-mode default seeding.
+        if not self._profiles:
+            for p in default_profiles():
+                self._profiles[p.id] = p
+                self.save_profile(p)
+
+        if not self._active_id and self._profiles:
+            self._active_id = next(iter(self._profiles))
+        return errors
+
+    def _load_from_local(self) -> list[tuple[str, str]]:
+        """Load profiles from the local cache dir (offline / no-client path).
+
+        The pre-migration loader: migrate each file to the current schema,
+        persist migrations/sanitisations to the cache, seed defaults when empty.
         """
         d = profiles_dir()
         d.mkdir(parents=True, exist_ok=True)
@@ -1167,7 +1284,8 @@ class ProfileService:
                 }
                 members_sanitized = pre_sanitize_member_ids != post_sanitize_member_ids
                 if schema_migrated or members_sanitized:
-                    self.save_profile(profile)
+                    # Local-only write: load() never re-uploads (no auto-sync).
+                    self._write_local(profile)
                     if schema_migrated:
                         log.info("Migrated profile %s to v%d", profile.name, PROFILE_SCHEMA_VERSION)
                     if members_sanitized:
@@ -1183,16 +1301,70 @@ class ProfileService:
         if not loaded:
             for p in default_profiles():
                 self._profiles[p.id] = p
-                self.save_profile(p)
+                self._write_local(p)
 
         if not self._active_id and self._profiles:
             self._active_id = next(iter(self._profiles))
 
         return errors
 
-    def save_profile(self, profile: Profile) -> None:
+    def _write_local(self, profile: Profile) -> None:
+        """Write a profile to the local cache dir (atomic; 0600 via paths)."""
         path = profiles_dir() / f"{profile.id}.json"
         atomic_write(path, json.dumps(profile.to_dict(), indent=2) + "\n")
+
+    def save_profile(self, profile: Profile) -> None:
+        """Persist a profile: always to the local cache, then to the daemon.
+
+        With a daemon client, the local write is the offline mirror/draft and
+        the profile is uploaded (replace if it already exists in the store,
+        else create). If the daemon is unreachable the edit is kept as a local
+        draft (tracked in :attr:`unpublished_ids`) and re-published only when
+        the user saves again — there is no background auto-sync (migration
+        Decision 3). With no client this is a pure local write.
+        """
+        self._write_local(profile)
+        if self._client is None:
+            return
+        try:
+            self._publish(profile)
+        except (DaemonUnavailable, DaemonTimeout):
+            self._offline = True
+            self._unpublished.add(profile.id)
+            log.info(
+                "Profile %s saved as a local draft — daemon offline, not published",
+                profile.id,
+            )
+        except DaemonError as e:
+            # Daemon reached but rejected the document (validation / conflict).
+            # Keep the local draft so the edit is never lost; the Controls page
+            # validates before save (Phase 6c) and surfaces field_violations.
+            self._unpublished.add(profile.id)
+            log.warning(
+                "Profile %s rejected by the daemon (%s): %s — kept as a local draft",
+                profile.id,
+                e.code,
+                e.message,
+            )
+
+    def _publish(self, profile: Profile) -> None:
+        """Upload a profile to the daemon store (replace existing, else create)."""
+        assert self._client is not None
+        document = profile.to_dict()
+        if profile.id in self._daemon_ids:
+            self._client.update_profile(profile.id, document)
+        else:
+            try:
+                self._client.create_profile(document)
+            except DaemonError as e:
+                if e.code == "already_exists":
+                    # The store already has this id (e.g. imported via DEC-161
+                    # before this session knew about it) — replace it instead.
+                    self._client.update_profile(profile.id, document)
+                else:
+                    raise
+        self._daemon_ids.add(profile.id)
+        self._unpublished.discard(profile.id)
 
     def set_active(self, profile_id: str) -> bool:
         if profile_id in self._profiles:
@@ -1221,10 +1393,31 @@ class ProfileService:
     def delete_profile(self, profile_id: str) -> bool:
         if profile_id not in self._profiles:
             return False
+        if self._client is not None:
+            try:
+                self._client.delete_profile(profile_id)
+            except (DaemonUnavailable, DaemonTimeout):
+                # Offline: drop it locally; the daemon copy reconciles on the
+                # next online load (activation needs the daemon anyway).
+                self._offline = True
+            except DaemonError as e:
+                if e.code == "profile_in_use":
+                    # The daemon is actively running this profile — refuse the
+                    # delete rather than desync the GUI from a live profile.
+                    log.warning("Cannot delete profile %s — it is active on the daemon", profile_id)
+                    return False
+                log.warning(
+                    "Daemon delete of profile %s failed (%s): %s",
+                    profile_id,
+                    e.code,
+                    e.message,
+                )
         profile = self._profiles.pop(profile_id)
         path = profiles_dir() / f"{profile.id}.json"
         if path.exists():
             path.unlink()
+        self._daemon_ids.discard(profile_id)
+        self._unpublished.discard(profile_id)
         if self._active_id == profile_id:
             self._active_id = next(iter(self._profiles), "")
         return True

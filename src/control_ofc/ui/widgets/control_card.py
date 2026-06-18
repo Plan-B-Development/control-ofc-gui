@@ -343,6 +343,24 @@ class ControlCard(QFrame):
         if self._manual_btn.isChecked():
             self.manual_value_changed.emit(self._control.id, value)
 
+    def clear_manual(self) -> None:
+        """Programmatically exit Manual without emitting ``manual_toggled``.
+
+        Used when a daemon override lapses or is rejected (DEC-163): the card
+        must stop showing Manual without re-triggering a release of the
+        already-gone override. Mirrors the unchecked branch of
+        ``_on_manual_toggled``.
+        """
+        if not self._manual_btn.isChecked():
+            return
+        self._manual_btn.blockSignals(True)
+        self._manual_btn.setChecked(False)
+        self._manual_btn.blockSignals(False)
+        self._manual_slider.setVisible(False)
+        self._manual_pct_label.setVisible(False)
+        self._output_label.setVisible(True)
+        self._apply_chip("", "")
+
     def update_control(self, control: LogicalControl, curves: list[CurveConfig]) -> None:
         self._control = control
         self._name_label.setText(control.name or "Unnamed")

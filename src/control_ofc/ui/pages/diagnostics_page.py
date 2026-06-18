@@ -13,7 +13,6 @@ from PySide6.QtGui import QColor
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
     from control_ofc.services.app_settings_service import AppSettingsService
-    from control_ofc.services.control_loop import ControlLoopService
     from control_ofc.services.profile_service import ProfileService
     from control_ofc.ui.hwmon_guidance import VendorQuirk
 from PySide6.QtCore import QObject, QPoint, Qt, QThread, Signal, Slot
@@ -48,7 +47,6 @@ from control_ofc.api.models import (
     HwmonCapability,
     HwmonHeader,
     HwmonVerifyResult,
-    LeaseState,
     SensorReading,
 )
 from control_ofc.services.app_state import AppState
@@ -461,12 +459,12 @@ class _VerifyWorker(QObject):
             self._client = _DaemonClient(socket_path=self._socket_path)
         return self._client
 
-    @Slot(str, str)
-    def do_verify(self, header_id: str, lease_id: str) -> None:
+    @Slot(str)
+    def do_verify(self, header_id: str) -> None:
         from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 
         try:
-            result = self._ensure_client().verify_hwmon_pwm(header_id, lease_id)
+            result = self._ensure_client().verify_hwmon_pwm(header_id)
             self.verify_ok.emit(result)
         except DaemonTimeout:
             # DEC-098: a verify timeout means the daemon was slow — the write
@@ -708,7 +706,7 @@ class DiagnosticsPage(QWidget):
 
     # Main-thread signal that fires a queued connection to the verify worker
     # (running on its own QThread) so the ~6s hardware probe never blocks the UI.
-    _verify_request = Signal(str, str)
+    _verify_request = Signal(str)
 
     # DEC-120: Main-thread signal that kicks the GPU verify worker (its own
     # QThread) with the GPU PCI BDF so the ~6s probe never blocks the UI.
@@ -740,16 +738,14 @@ class DiagnosticsPage(QWidget):
         profile_service: ProfileService | None = None,
         client: DaemonClient | None = None,
         series_selection: SeriesSelectionModel | None = None,
-        control_loop: ControlLoopService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._state = state
         self._client = client
-        # DEC-147: used to gate "Restore GPU Fan to Automatic" while the GUI
-        # control loop manages an amd_gpu: target. None outside main_window
-        # (unit tests) or until demo mode assigns its late-created loop.
-        self._control_loop = control_loop
+        # DEC-165: the GPU-restore gate checks the active profile directly for an
+        # ``amd_gpu:`` member (the GUI no longer runs a control loop).
+        self._profile_service = profile_service
         self._settings_service = settings_service
         # DEC-117: Diagnostics > Sensors "Mirror hidden to dashboard" button
         # pushes the local diagnostics_hidden_sensor_ids list into the shared
@@ -823,7 +819,6 @@ class DiagnosticsPage(QWidget):
         self._tabs.addTab(self._build_sensors_tab(), "Sensors")
         self._tabs.addTab(self._build_fans_tab(), "Fans")
         self._tabs.addTab(self._build_troubleshooting_tab(), "Troubleshooting")
-        self._tabs.addTab(self._build_lease_tab(), "Lease")
         self._tabs.addTab(self._build_logs_tab(), "Event Log")
         layout.addWidget(self._tabs, 1)
         # DEC-124: the Hardware Readiness content lives in its own Troubleshooting
@@ -860,7 +855,6 @@ class DiagnosticsPage(QWidget):
             self._state.status_updated.connect(self._on_status)
             self._state.sensors_updated.connect(self._on_sensors)
             self._state.fans_updated.connect(self._on_fans)
-            self._state.lease_updated.connect(self._on_lease)
             # DEC-147: profile changes flip who owns the GPU fan — re-gate
             # the restore button (it is also re-checked on click).
             self._state.active_profile_changed.connect(self._update_gpu_restore_gate)
@@ -1683,76 +1677,6 @@ class DiagnosticsPage(QWidget):
         )
         fan_pane_layout.addWidget(self._fan_table, 1)
         return fan_pane
-
-    def _build_lease_tab(self) -> QWidget:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setSpacing(12)
-
-        # Explanation card
-        explain_frame = QFrame()
-        explain_frame.setProperty("class", "Card")
-        explain_layout = QVBoxLayout(explain_frame)
-
-        explain_title = _transparent_label(
-            "What is a lease?", "Diagnostics_Label_leaseExplainTitle", bold=True
-        )
-        explain_title.setProperty("class", "PageSubtitle")
-        explain_layout.addWidget(explain_title)
-
-        explain_text = _transparent_label(
-            "A lease grants exclusive write access to your motherboard\u2019s fan "
-            "headers (hwmon). Only one client can hold the lease at a time, "
-            "preventing conflicting PWM commands from different tools.\n\n"
-            "The GUI automatically acquires and renews the lease while controlling "
-            "fans. The lease expires after 60 seconds if not renewed (e.g. if the "
-            "GUI crashes), allowing other tools to take over.\n\n"
-            "If another tool holds the lease, the GUI cannot write PWM values "
-            "until the lease is released or expires. OpenFan Controller writes "
-            "do not require a lease \u2014 only motherboard hwmon writes do.",
-            "Diagnostics_Label_leaseExplainText",
-        )
-        explain_text.setWordWrap(True)
-        explain_text.setProperty("class", "CardMeta")
-        explain_layout.addWidget(explain_text)
-
-        layout.addWidget(explain_frame)
-
-        # Status card
-        frame = QFrame()
-        frame.setProperty("class", "Card")
-        frame_layout = QVBoxLayout(frame)
-
-        self._lease_held_label = _transparent_label(
-            "Lease: \u2014", "Diagnostics_Label_leaseHeld", bold=True
-        )
-        self._lease_held_label.setProperty("class", "PageSubtitle")
-        frame_layout.addWidget(self._lease_held_label)
-
-        self._lease_id_label = _transparent_label("Lease ID: \u2014", "Diagnostics_Label_leaseId")
-        frame_layout.addWidget(self._lease_id_label)
-
-        self._lease_owner_label = _transparent_label(
-            "Owner: \u2014", "Diagnostics_Label_leaseOwner"
-        )
-        frame_layout.addWidget(self._lease_owner_label)
-
-        self._lease_ttl_label = _transparent_label(
-            "TTL remaining: \u2014", "Diagnostics_Label_leaseTtl"
-        )
-        frame_layout.addWidget(self._lease_ttl_label)
-
-        self._lease_required_label = _transparent_label(
-            "Required: \u2014", "Diagnostics_Label_leaseRequired"
-        )
-        frame_layout.addWidget(self._lease_required_label)
-
-        layout.addWidget(frame)
-        layout.addStretch()
-        scroll.setWidget(container)
-        return scroll
 
     def _build_logs_tab(self) -> QWidget:
         container = QWidget()
@@ -2644,15 +2568,6 @@ class DiagnosticsPage(QWidget):
             return f"{rpm_text} — {badge}"
         return rpm_text
 
-    def _on_lease(self, lease: LeaseState) -> None:
-        held_text = "Held" if lease.held else "Not held"
-        self._lease_held_label.setText(f"Lease: {held_text}")
-        self._lease_id_label.setText(f"Lease ID: {lease.lease_id or '\u2014'}")
-        self._lease_owner_label.setText(f"Owner: {lease.owner_hint or '\u2014'}")
-        ttl = f"{lease.ttl_seconds_remaining}s" if lease.ttl_seconds_remaining else "\u2014"
-        self._lease_ttl_label.setText(f"TTL remaining: {ttl}")
-        self._lease_required_label.setText(f"Required: {'Yes' if lease.lease_required else 'No'}")
-
     # ─── Hardware diagnostics ──────────────────────────────────────────
 
     def _fetch_hardware_diagnostics(self) -> None:
@@ -3118,19 +3033,6 @@ class DiagnosticsPage(QWidget):
             self._verify_result_label.setText("Cannot verify: no daemon connection")
             self._verify_result_label.setVisible(True)
             return
-        if not self._state or not self._state.lease.held:
-            self._verify_result_label.setText(
-                "Cannot verify: no hwmon lease held. Start fan control or acquire a lease first."
-            )
-            self._verify_result_label.setVisible(True)
-            return
-
-        lease_id = self._state.lease.lease_id
-        if not lease_id:
-            self._verify_result_label.setText("Cannot verify: lease ID unavailable")
-            self._verify_result_label.setVisible(True)
-            return
-
         self._verify_btn.setEnabled(False)
         self._verify_btn.setText("Testing...")
         self._verify_result_label.setVisible(False)
@@ -3144,16 +3046,15 @@ class DiagnosticsPage(QWidget):
             self._verify_result_label.setVisible(True)
             return
 
-        # Pause the GUI control loop's writes to this header so the daemon's
-        # 6-second verify wait does not get stomped on by our own 1Hz tick (A1).
-        # The control loop has its own 9-second safety auto-resume, so a hung
-        # verify cannot pin the header indefinitely even if we never emit
-        # verify_completed.
+        # The daemon self-coordinates the verify (DEC-165 / daemon P5): it pauses
+        # its own engine write phase and force-takes a short-lived "verify" lease
+        # for the test window, so the GUI neither holds an hwmon lease nor pauses
+        # anything. We still track the active header for UI state.
         self._verify_active_header = header_id
         self.verify_started.emit(header_id)
 
         # Fire queued signal to worker running on its own thread.
-        self._verify_request.emit(header_id, lease_id)
+        self._verify_request.emit(header_id)
 
     def _ensure_verify_worker(self) -> bool:
         """Create the verify worker + thread on first use. Returns False if no
@@ -3265,12 +3166,6 @@ class DiagnosticsPage(QWidget):
             self._verify_all_progress_label.setText("Cannot verify: no daemon connection")
             self._verify_all_progress_label.setVisible(True)
             return
-        if not self._state.lease.held or not self._state.lease.lease_id:
-            self._verify_all_progress_label.setText(
-                "Cannot verify: no hwmon lease held. Start fan control or acquire a lease first."
-            )
-            self._verify_all_progress_label.setVisible(True)
-            return
         if self._verify_all_total > 0:
             # Already running — guard against double-clicks.
             return
@@ -3325,19 +3220,6 @@ class DiagnosticsPage(QWidget):
             self._finish_verify_all()
             return
 
-        # Lease check before each step — if the lease evaporated mid-run
-        # we cannot send another verify request, so abort cleanly with
-        # whatever results we have so far.
-        if not self._state or not self._state.lease.held:
-            remaining = list(self._verify_all_queue)
-            self._verify_all_queue.clear()
-            for h in remaining:
-                self._verify_all_results.append((h, "error:lease_lost"))
-            self._show_verify_all_summary(aborted=True)
-            self._finish_verify_all()
-            return
-
-        lease_id = self._state.lease.lease_id or ""
         header_id = self._verify_all_queue.pop(0)
         # 1-based index of the header now under test (queue already popped).
         index = self._verify_all_total - len(self._verify_all_queue)
@@ -3346,7 +3228,7 @@ class DiagnosticsPage(QWidget):
         )
         self._verify_active_header = header_id
         self.verify_started.emit(header_id)
-        self._verify_request.emit(header_id, lease_id)
+        self._verify_request.emit(header_id)
 
     def _show_verify_all_summary(self, *, aborted: bool = False) -> None:
         """Render the multi-header summary into the progress label."""
@@ -3593,18 +3475,33 @@ class DiagnosticsPage(QWidget):
 
     # ─── GPU restore-to-automatic + hwmon rescan (DEC-147) ──────────────
 
-    def _update_gpu_restore_gate(self, _profile_name: str | None = None) -> None:
-        """Enable/disable the GPU restore button against the control loop.
+    def _active_profile_controls_gpu(self) -> bool:
+        """True when the active profile owns an ``amd_gpu:`` member, so the
+        daemon is driving the GPU fan — restoring it to automatic would be
+        undone on the next curve tick. Loop-independent replacement for the old
+        ``control_loop.manages_gpu_target()`` gate (DEC-147 / DEC-165)."""
+        ps = self._profile_service
+        profile = ps.active_profile if ps is not None else None
+        if profile is None:
+            return False
+        return any(
+            member.target_id.startswith("amd_gpu:")
+            for control in profile.controls
+            for member in control.members
+        )
 
-        Disabled while the loop manages an ``amd_gpu:`` target (D2, DEC-147)
-        — restoring then would be silently undone on the next ≥5% curve
-        delta. Connected to ``active_profile_changed`` (the optional arg
-        swallows the signal's profile name) and re-run on every diagnostics
-        populate; ``_run_gpu_restore`` re-checks at click time so a stale
-        enabled state cannot slip a restore through.
+    def _update_gpu_restore_gate(self, _profile_name: str | None = None) -> None:
+        """Enable/disable the GPU restore button against the active profile.
+
+        Disabled while the active profile owns an ``amd_gpu:`` target (D2,
+        DEC-147) — restoring then would be silently undone on the next ≥5%
+        curve delta as the daemon re-applies the curve. Connected to
+        ``active_profile_changed`` (the optional arg swallows the signal's
+        profile name) and re-run on every diagnostics populate;
+        ``_run_gpu_restore`` re-checks at click time so a stale enabled state
+        cannot slip a restore through.
         """
-        loop = self._control_loop
-        managed = bool(loop is not None and loop.manages_gpu_target())
+        managed = self._active_profile_controls_gpu()
         self._gpu_restore_btn.setEnabled(not managed)
         self._gpu_restore_btn.setToolTip(
             _GPU_RESTORE_TOOLTIP_GATED if managed else _GPU_RESTORE_TOOLTIP_READY
@@ -3621,8 +3518,7 @@ class DiagnosticsPage(QWidget):
             return
         # Click-time gate re-check (D2): fan-role member edits don't emit a
         # page-visible signal, so the button state may be stale.
-        loop = self._control_loop
-        if loop is not None and loop.manages_gpu_target():
+        if self._active_profile_controls_gpu():
             self._update_gpu_restore_gate()
             self._show_gpu_restore_message(f"Not restored: {_GPU_RESTORE_TOOLTIP_GATED}")
             return
@@ -3926,7 +3822,6 @@ class DiagnosticsPage(QWidget):
             self._on_status(self._state.daemon_status)
         self._on_sensors(self._state.sensors)
         self._on_fans(self._state.fans)
-        self._on_lease(self._state.lease)
         # Event log self-updates from diag signals; no refresh action needed.
         self._status_label.setText("Refreshed")
 

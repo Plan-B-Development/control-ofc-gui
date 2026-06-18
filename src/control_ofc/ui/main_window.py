@@ -5,19 +5,17 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from control_ofc.api.client import DaemonClient
-from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import ConnectionState, OperationMode
 from control_ofc.constants import POLL_INTERVAL_MS
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 from control_ofc.services.app_state import AppState
-from control_ofc.services.control_loop import ControlLoopService
+from control_ofc.services.demo_controller import DemoController
 from control_ofc.services.demo_service import DemoService
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
-from control_ofc.services.lease_service import LeaseService
 from control_ofc.services.profile_import_service import should_offer_import
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.series_selection import SeriesSelectionModel
@@ -52,8 +50,6 @@ class MainWindow(QWidget):
         profile_service: ProfileService | None = None,
         settings_service: AppSettingsService | None = None,
         client: DaemonClient | None = None,
-        control_loop: ControlLoopService | None = None,
-        lease_service: LeaseService | None = None,
         diagnostics_service: DiagnosticsService | None = None,
         demo_mode: bool = False,
         parent: QWidget | None = None,
@@ -70,8 +66,11 @@ class MainWindow(QWidget):
         self._client = client
         self._demo_mode = demo_mode
         self._demo_service: DemoService | None = None
-        self._control_loop: ControlLoopService | None = control_loop
-        self._lease_service = lease_service
+        self._demo_controller: DemoController | None = None
+        # Safety gate (DEC-165): True while connected to a daemon too old to be
+        # the autonomous fan writer — the GUI stands its loop down and shows the
+        # upgrade banner rather than pretend to control.
+        self._control_blocked = False
         # DEC-111: share one DiagnosticsService across the page, snapshots,
         # and the event-log view so every emitter writes to the same deque.
         # Tests construct MainWindow without one, so we fall back to a fresh
@@ -98,6 +97,13 @@ class MainWindow(QWidget):
         # --- Status banner + error banner ---
         self.status_banner = StatusBanner()
         self.error_banner = ErrorBanner()
+        # Persistent, non-dismissible upgrade-required banner (control gate,
+        # DEC-165) — distinct from the transient/dismissible error_banner.
+        self._gate_banner = QLabel()
+        self._gate_banner.setObjectName("MainWindow_Banner_upgradeRequired")
+        self._gate_banner.setWordWrap(True)
+        self._gate_banner.setProperty("class", "CriticalChip")
+        self._gate_banner.setVisible(False)
 
         # --- Sidebar ---
         self.sidebar = Sidebar()
@@ -113,14 +119,11 @@ class MainWindow(QWidget):
             profile_service=self._profile_service,
             settings_service=self._settings_service,
             client=self._client,
-            control_loop=self._control_loop,
         )
         self.controls_page = ControlsPage(
             state=self._state,
             profile_service=self._profile_service,
             client=self._client,
-            control_loop=self._control_loop,
-            lease_service=self._lease_service,
             settings_service=self._settings_service,
         )
         self.settings_page = SettingsPage(
@@ -135,7 +138,6 @@ class MainWindow(QWidget):
             profile_service=self._profile_service,
             client=self._client,
             series_selection=self._series_selection,
-            control_loop=self._control_loop,
         )
 
         self.page_stack.addWidget(self.dashboard_page)
@@ -147,6 +149,7 @@ class MainWindow(QWidget):
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
+        content_layout.addWidget(self._gate_banner)
         content_layout.addWidget(self.status_banner)
         content_layout.addWidget(self.error_banner)
         content_layout.addWidget(self.page_stack, 1)
@@ -193,9 +196,6 @@ class MainWindow(QWidget):
         if demo_mode:
             self._start_demo_mode()
         else:
-            if self._control_loop:
-                self._control_loop.status_changed.connect(self._on_control_loop_status)
-                self._wire_diagnostics_to_control_loop()
             self._state.set_connection(ConnectionState.DISCONNECTED)
             self._state.set_mode(OperationMode.READ_ONLY)
 
@@ -212,6 +212,12 @@ class MainWindow(QWidget):
         self._import_offer_done = False
         self._state.capabilities_updated.connect(self._on_capabilities_updated_for_profile_import)
 
+        # DEC-165 control gate: block runtime control against a pre-2.0 daemon
+        # (one that does not advertise ``control.autonomous_control``). Reactive
+        # to capabilities so a daemon restart/upgrade clears it without a GUI
+        # restart. Demo mode never reaches the daemon, so it is exempt.
+        self._state.capabilities_updated.connect(self._on_control_capability_gate)
+
         # DEC-102: when fresh hwmon header data arrives, sanitize any
         # profile member that targets an unknown or read-only header.
         # Load-time sanitization (``_drop_dead_hwmon_members``) only
@@ -223,17 +229,6 @@ class MainWindow(QWidget):
         # files.
         self._headers_sanitization_done = False
         self._state.headers_updated.connect(self._sanitize_profiles_against_headers)
-
-    def _wire_diagnostics_to_control_loop(self) -> None:
-        """Connect Diagnostics' verify_started/completed signals to the
-        control loop's pause/resume so the 1Hz tick does not race the
-        daemon's 3-second verify wait (A1)."""
-        loop = self._control_loop
-        page = getattr(self, "diagnostics_page", None)
-        if loop is None or page is None:
-            return
-        page.verify_started.connect(loop.pause_writes_for_header)
-        page.verify_completed.connect(loop.resume_writes_for_header)
 
     def _on_page_changed(self, page_id: int) -> None:
         self.page_stack.setCurrentIndex(page_id)
@@ -290,11 +285,45 @@ class MainWindow(QWidget):
         elif state == ConnectionState.CONNECTED:
             self.error_banner.show_info("Connected to daemon", auto_dismiss_ms=3000)
 
-    def _on_control_loop_status(self, status) -> None:
-        if status.control_outputs:
-            self.controls_page.update_control_outputs(
-                status.control_outputs, getattr(status, "member_outputs", None)
-            )
+    def _on_control_capability_gate(self, caps) -> None:
+        """Safety gate (DEC-165): never pretend to control a pre-2.0 daemon.
+
+        A daemon that advertises ``control.autonomous_control`` is the sole
+        authoritative fan writer (2.0.0+), so this loop-less GUI may drive intent
+        against it. A daemon that omits the flag (pre-2.0) still expects a GUI
+        control loop to do the writing — but this GUI has none, so against such a
+        daemon fans would be left uncontrolled. The GUI must therefore refuse to
+        present itself as in control: it shows a persistent upgrade-required
+        banner and drives nothing. Demo mode is exempt (it never reaches a daemon).
+        """
+        if self._demo_mode:
+            return
+        control = getattr(caps, "control", None)
+        autonomous = bool(control and control.autonomous_control)
+        if autonomous:
+            if self._control_blocked:
+                self._control_blocked = False
+                self._gate_banner.setVisible(False)
+                log.info("Daemon now reports autonomous_control — control gate cleared")
+            return
+        if self._control_blocked:
+            return
+        self._control_blocked = True
+        min_gui = (control.min_supported_gui if control else "") or "2.0.0"
+        found = getattr(caps, "daemon_version", "") or "unknown"
+        self._gate_banner.setText(
+            f"⚠  Daemon upgrade required — this GUI needs control-ofc-daemon "
+            f"≥ {min_gui} (found {found}). The GUI has stood down; the daemon's "
+            f"built-in engine is controlling your fans. Upgrade the daemon for full "
+            f"GUI control."
+        )
+        self._gate_banner.setVisible(True)
+        log.warning(
+            "Control gate engaged — daemon %s lacks autonomous_control (needs >= %s); "
+            "GUI refuses to control (it has no local loop)",
+            found,
+            min_gui,
+        )
 
     def _open_diagnostics(self) -> None:
         from control_ofc.constants import PAGE_DIAGNOSTICS
@@ -308,22 +337,17 @@ class MainWindow(QWidget):
         self._state.set_connection(ConnectionState.CONNECTED)
         self._state.fan_aliases = DemoService.fan_aliases()
 
-        # Start control loop in demo mode
-        self._control_loop = ControlLoopService(
-            state=self._state,
-            profile_service=self._profile_service,
-            demo_service=self._demo_service,
+        # Demo evaluator (DEC-165): a demo-only mini-evaluator drives the
+        # synthetic fans (live fan control is the daemon's job now). It exposes
+        # the same set/clear_control_manual API as the old loop, so the Controls
+        # page demo branch drives it unchanged, and emits per-control outputs to
+        # keep the control cards live.
+        self._demo_controller = DemoController(
+            self._profile_service, self._demo_service, self._state
         )
-        self._control_loop.status_changed.connect(self._on_control_loop_status)
-        self._control_loop.start()
-
-        # Pages were constructed before the demo control loop existed —
-        # propagate the new reference so Activate-profile calls (and the
-        # DEC-147 GPU restore gate) can reach it.
-        self.dashboard_page._control_loop = self._control_loop
-        self.controls_page._control_loop = self._control_loop
-        self.diagnostics_page._control_loop = self._control_loop
-        self._wire_diagnostics_to_control_loop()
+        self._demo_controller.outputs_changed.connect(self.controls_page.update_control_outputs)
+        self._demo_controller.start()
+        self.controls_page._demo_controller = self._demo_controller
 
         # Load initial demo data
         self._state.set_capabilities(self._demo_service.capabilities())
@@ -364,9 +388,8 @@ class MainWindow(QWidget):
         )
         if hasattr(self, "_demo_timer") and self._demo_timer is not None:
             self._demo_timer.stop()
-        if hasattr(self, "_control_loop") and self._control_loop is not None:
-            self._control_loop.shutdown()
-        self._maybe_reset_gpu_on_close()
+        if hasattr(self, "_demo_controller") and self._demo_controller is not None:
+            self._demo_controller.stop()
         self.dashboard_page.cleanup()
         if hasattr(self, "diagnostics_page") and self.diagnostics_page is not None:
             self.diagnostics_page.cleanup()
@@ -503,30 +526,3 @@ class MainWindow(QWidget):
                 len(affected),
             )
         self._headers_sanitization_done = True
-
-    def _maybe_reset_gpu_on_close(self) -> None:
-        """Reset the GPU fan to automatic when the GUI drove it and no
-        profile is active to keep driving it after we exit (M9).
-
-        When a profile is active, the daemon's profile engine takes over
-        after the GUI's 30s heartbeat lapses, so there's nothing to reset.
-        Uses cached ``active_profile_name`` — a blocking API call here could
-        hang the close. Best-effort: failures are logged, not surfaced.
-        """
-        if self._demo_mode or not self._client:
-            return
-        if not self._state.gui_wrote_gpu_fan:
-            return
-        if self._state.active_profile_name:
-            return
-        caps = self._state.capabilities
-        if not caps or not caps.amd_gpu or not caps.amd_gpu.present:
-            return
-        gpu_id = caps.amd_gpu.pci_id
-        if not gpu_id:
-            return
-        try:
-            self._client.reset_gpu_fan(gpu_id)
-            log.info("GPU fan reset to automatic on GUI close (%s)", gpu_id)
-        except (DaemonError, ConnectionError, OSError) as exc:
-            log.debug("GPU reset on close failed (best-effort): %s", exc)

@@ -224,7 +224,7 @@ class TestManualOverrideWiring:
         from control_ofc.services.profile_service import ControlMember
 
         page = ControlsPage(
-            state=app_state, profile_service=profile_service, control_loop=mock_loop
+            state=app_state, profile_service=profile_service, demo_controller=mock_loop
         )
         qtbot.addWidget(page)
         curve = CurveConfig(id="c1", name="C", type=CurveType.FLAT, flat_output_pct=40.0)
@@ -260,3 +260,255 @@ class TestManualOverrideWiring:
         btn.setChecked(False)
 
         mock_loop.clear_control_manual.assert_called_once_with("lc1")
+
+
+class TestManualOverrideLiveWiring:
+    """In live (daemon-connected) mode the Manual toggle drives the daemon
+    override API (DEC-163), not the local loop — with renew + fail-safe revert."""
+
+    @staticmethod
+    def _grant(token=1, renew_secs=5):
+        from control_ofc.api.models import OverrideGrant
+
+        return OverrideGrant(
+            control_id="lc1",
+            override_token=token,
+            pwm_percent=50,
+            ttl_secs=15,
+            renew_secs=renew_secs,
+            expires_in_secs=15,
+        )
+
+    @classmethod
+    def _live_page(cls, qtbot, app_state, profile_service, client):
+        from control_ofc.services.profile_service import ControlMember
+
+        page = ControlsPage(state=app_state, profile_service=profile_service, client=client)
+        qtbot.addWidget(page)
+        curve = CurveConfig(id="c1", name="C", type=CurveType.FLAT, flat_output_pct=40.0)
+        ctrl = LogicalControl(
+            id="lc1",
+            name="LC",
+            mode=ControlMode.CURVE,
+            curve_id="c1",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        page._refresh_controls_grid(Profile(id="p", name="P", controls=[ctrl], curves=[curve]))
+        return page
+
+    def test_toggle_on_takes_override_and_renews(self, qtbot, app_state, profile_service):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        client.override_take.assert_called_once()
+        assert client.override_take.call_args[0][0] == "lc1"
+        assert page._overrides["lc1"] == 7
+        assert page._override_renew_timer.isActive()
+        # The demo controller is never present in live mode.
+        assert page._demo_controller is None
+
+    def test_toggle_off_releases_override(self, qtbot, app_state, profile_service):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+
+        btn = page._control_cards["lc1"]._manual_btn
+        btn.setChecked(True)
+        btn.setChecked(False)
+
+        client.override_release.assert_called_once_with("lc1", 7)
+        assert "lc1" not in page._overrides
+        assert not page._override_renew_timer.isActive()
+
+    def test_take_failure_reverts_card(self, qtbot, app_state, profile_service):
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+
+        client = MagicMock()
+        client.override_take.side_effect = DaemonError(code="not_found", message="x", status=404)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        assert "lc1" not in page._overrides
+        assert not page._control_cards["lc1"]._manual_btn.isChecked()
+
+    def test_renew_failure_reverts_card(self, qtbot, app_state, profile_service):
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        client.override_renew.side_effect = DaemonError(
+            code="override_expired", message="gone", status=404
+        )
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+        assert page._control_cards["lc1"]._manual_btn.isChecked()
+
+        page._renew_overrides()
+
+        assert "lc1" not in page._overrides
+        assert not page._control_cards["lc1"]._manual_btn.isChecked()
+
+    def test_renew_updates_token(self, qtbot, app_state, profile_service):
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.models import OverrideRenewResult
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        client.override_renew.return_value = OverrideRenewResult(
+            control_id="lc1", override_token=8, ttl_secs=15, expires_in_secs=15
+        )
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        page._renew_overrides()
+
+        assert page._overrides["lc1"] == 8
+
+    def test_rebuild_releases_held_overrides(self, qtbot, app_state, profile_service):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+        assert page._overrides
+
+        # Rebuilding the grid (e.g. a profile switch) must release the override
+        # so card state never diverges from the daemon.
+        page._refresh_controls_grid(Profile(id="p", name="P", controls=[], curves=[]))
+
+        client.override_release.assert_called_once_with("lc1", 7)
+        assert not page._overrides
+
+    def test_slider_drag_debounces_into_one_repin(self, qtbot, app_state, profile_service):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+        client.override_take.reset_mock()
+
+        # Several rapid drag values queue; one flush re-pins with only the last.
+        page._on_card_manual_value("lc1", 60)
+        page._on_card_manual_value("lc1", 70)
+        page._on_card_manual_value("lc1", 80)
+        page._flush_override_values()
+
+        client.override_take.assert_called_once_with("lc1", 80)
+
+
+class TestOfflineDraftUX:
+    """Offline Save/Activate UX (slice 6) built on the 6b daemon-backed
+    persistence accessors (offline / unpublished_ids / is_published)."""
+
+    @staticmethod
+    def _daemon_ps(*, published=(), local=()):
+        from unittest.mock import MagicMock
+
+        from control_ofc.services.profile_service import ProfileService
+
+        ps = ProfileService(client=MagicMock())
+        for pid in published:
+            ps._profiles[pid] = Profile(id=pid, name=pid.title())
+            ps._daemon_ids.add(pid)
+        for pid in local:
+            ps._profiles[pid] = Profile(id=pid, name=pid.title())
+        return ps
+
+    def test_draft_badge_for_unpublished_profile(self, qtbot, app_state):
+        from unittest.mock import MagicMock
+
+        ps = self._daemon_ps(published=["pub"], local=["drf"])
+        page = ControlsPage(state=app_state, profile_service=ps, client=MagicMock())
+        qtbot.addWidget(page)
+
+        labels = [page._profile_combo.itemText(i) for i in range(page._profile_combo.count())]
+        pub_label = next(label for label in labels if "Pub" in label)
+        drf_label = next(label for label in labels if "Drf" in label)
+        assert "(draft)" not in pub_label
+        assert "(draft)" in drf_label
+
+    def test_no_draft_badge_in_local_mode(self, qtbot, app_state):
+        from control_ofc.services.profile_service import ProfileService
+
+        ps = ProfileService()  # no client -> pure local, no daemon concept
+        ps._profiles["p1"] = Profile(id="p1", name="Local")
+        page = ControlsPage(state=app_state, profile_service=ps, client=None)
+        qtbot.addWidget(page)
+
+        labels = [page._profile_combo.itemText(i) for i in range(page._profile_combo.count())]
+        assert all("(draft)" not in label for label in labels)
+
+    def test_save_offline_marks_draft(self, qtbot, app_state):
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonTimeout
+        from control_ofc.services.profile_service import ProfileService
+
+        client = MagicMock()
+        client.create_profile.side_effect = DaemonTimeout()
+        ps = ProfileService(client=client)
+        ps._profiles["p1"] = Profile(id="p1", name="P1")
+        ps.set_active("p1")
+        page = ControlsPage(state=app_state, profile_service=ps, client=client)
+        qtbot.addWidget(page)
+
+        page._on_save_profile()
+
+        assert "not published" in page._unsaved_label.text().lower()
+        assert page._unsaved_label.property("class") == "WarningChip"
+
+    def test_save_published_shows_saved(self, qtbot, app_state):
+        from unittest.mock import MagicMock
+
+        from control_ofc.services.profile_service import ProfileService
+
+        client = MagicMock()
+        client.create_profile.return_value = {"created": "p1"}
+        ps = ProfileService(client=client)
+        ps._profiles["p1"] = Profile(id="p1", name="P1")
+        ps.set_active("p1")
+        page = ControlsPage(state=app_state, profile_service=ps, client=client)
+        qtbot.addWidget(page)
+
+        page._on_save_profile()
+
+        assert page._unsaved_label.text() == "Settings saved"
+        assert page._unsaved_label.property("class") == "SuccessChip"
+
+    def test_activate_disabled_when_offline_live(self, qtbot, app_state):
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.models import ConnectionState
+
+        page = ControlsPage(state=app_state, client=MagicMock())
+        qtbot.addWidget(page)
+
+        page._on_connection_changed(ConnectionState.DISCONNECTED)
+        assert not page._activate_btn.isEnabled()
+
+        page._on_connection_changed(ConnectionState.CONNECTED)
+        assert page._activate_btn.isEnabled()
+
+    def test_activate_stays_enabled_in_demo(self, qtbot, app_state):
+        from control_ofc.api.models import ConnectionState
+
+        page = ControlsPage(state=app_state, client=None)  # demo / local
+        qtbot.addWidget(page)
+
+        page._on_connection_changed(ConnectionState.DISCONNECTED)
+        assert page._activate_btn.isEnabled()  # local activation is never gated

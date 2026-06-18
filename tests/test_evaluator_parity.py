@@ -8,26 +8,20 @@ headless behaviour are pinned together — silent drift (the cause of DEC-096 /
 DEC-119) fails on at least one side.
 
 - ``curve_eval``: stateless ``CurveConfig.interpolate`` vs ``evaluate_curve``.
-- ``tuning_sequence``: the real ``ControlLoopService._cycle`` over a temp
-  sequence, comparing the integer wire PWM per member (``member_outputs``).
+
+The GUI's stateful tuning pipeline moved to the daemon at the 2.0 flip (DEC-165),
+so its ``tuning_sequence`` parity is pinned daemon-side now; the GUI keeps the
+stateless tier honest here (it still backs demo/preview).
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
-from control_ofc.api.models import (
-    ConnectionState,
-    OperationMode,
-    SensorReading,
-)
-from control_ofc.services.app_state import AppState
-from control_ofc.services.control_loop import ControlLoopService
-from control_ofc.services.profile_service import CurveConfig, Profile, ProfileService
+from control_ofc.services.profile_service import CurveConfig
 
 FIXTURE = Path(__file__).parent / "fixtures" / "parity_vectors.json"
 _VECTORS = json.loads(FIXTURE.read_text())
@@ -69,66 +63,7 @@ def test_curve_eval_parity(case):
     assert result == pytest.approx(case["expected_pct"], abs=0.01)
 
 
-def _sensor_steps(vector: dict) -> list[list[SensorReading]]:
-    """Per-step sensor readings from either fixture shape (DEC-150).
-
-    A ``tuning_sequence`` case carries EITHER ``sensor_id`` + ``temps`` (one
-    sensor over N steps) OR ``sensor_temps`` (a ``{id: [temp_per_step]}`` map,
-    each list the same length — used by multi-sensor Mix cases). Both normalise
-    to a list of per-step ``[SensorReading, ...]``.
-    """
-    sensor_temps = vector.get("sensor_temps")
-    if sensor_temps:
-        ids = list(sensor_temps)
-        n = len(sensor_temps[ids[0]])
-        return [
-            [
-                SensorReading(
-                    id=sid, kind="CpuTemp", label=sid, value_c=sensor_temps[sid][i], age_ms=100
-                )
-                for sid in ids
-            ]
-            for i in range(n)
-        ]
-    sensor_id = vector["sensor_id"]
-    return [
-        [SensorReading(id=sensor_id, kind="CpuTemp", label="CPU", value_c=t, age_ms=100)]
-        for t in vector["temps"]
-    ]
-
-
-@pytest.mark.parametrize("vector", _VECTORS["tuning_sequence"], ids=_id)
-def test_tuning_sequence_parity(vector, qtbot):
-    profile = Profile.from_dict(vector["profile"])
-
-    svc = ProfileService()
-    svc._profiles[profile.id] = profile
-    svc.set_active(profile.id)
-
-    state = AppState()
-    state.connection = ConnectionState.CONNECTED
-    state.mode = OperationMode.AUTOMATIC
-    loop = ControlLoopService(state, svc, client=MagicMock())
-    loop._running = True
-
-    captured: list = []
-    loop.status_changed.connect(captured.append)
-
-    tracked = [m["member_id"] for m in vector["expected"]]
-    produced: dict[str, list[int]] = {mid: [] for mid in tracked}
-    for readings in _sensor_steps(vector):
-        state.sensors = readings
-        captured.clear()
-        loop._cycle()
-        # Merge member outputs across ALL controls — a Sync case has a target
-        # and a mirror control, each owning different members.
-        members: dict[str, float] = {}
-        for cmap in captured[-1].member_outputs.values():
-            members.update(cmap)
-        for mid in tracked:
-            produced[mid].append(round(members[mid]))
-
-    for member in vector["expected"]:
-        assert produced[member["member_id"]] == member["pwm"], (
-            f"{vector['name']} / {member['member_id']}"
-        )
+# The GUI's full tuning/hysteresis pipeline moved to the daemon at the 2.0 flip
+# (DEC-165); its parity is now pinned daemon-side against the same fixture
+# (``tuning_sequence``). The GUI keeps only the stateless ``interpolate`` tier
+# honest here, which is what demo/preview still use.

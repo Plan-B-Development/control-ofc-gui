@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from control_ofc.api.models import Capabilities, FeatureFlags
+from control_ofc.api.models import Capabilities, ControlCapability, FeatureFlags
 from control_ofc.services.profile_service import (
     ControlMember,
     ControlMode,
@@ -124,3 +124,60 @@ class TestCapabilityGating:
         assert window.controls_page._control_cards  # non-vacuous
         for card in window.controls_page._control_cards.values():
             assert not card.isEnabled()
+
+
+def _autonomous_caps(version: str = "2.0.0") -> Capabilities:
+    return Capabilities(
+        daemon_version=version,
+        control=ControlCapability(autonomous_control=True, min_supported_gui="2.0.0"),
+    )
+
+
+def _legacy_caps(version: str = "1.21.0") -> Capabilities:
+    return Capabilities(
+        daemon_version=version,
+        control=ControlCapability(autonomous_control=False, min_supported_gui="2.0.0"),
+    )
+
+
+class TestControlCapabilityGate:
+    """DEC-165: the thin GUI must refuse to control a pre-2.0 daemon (one that
+    does not advertise ``control.autonomous_control``)."""
+
+    def test_blocked_when_daemon_not_autonomous(self, qtbot, window, app_state):
+        app_state.set_capabilities(_legacy_caps("1.21.0"))
+
+        assert window._control_blocked is True
+        assert not window._gate_banner.isHidden()
+        text = window._gate_banner.text()
+        assert "2.0.0" in text and "1.21.0" in text  # needs >= / found
+
+    def test_not_blocked_when_daemon_autonomous(self, qtbot, window, app_state):
+        app_state.set_capabilities(_autonomous_caps("2.0.0"))
+
+        assert window._control_blocked is False
+        assert window._gate_banner.isHidden()
+
+    def test_daemon_upgrade_clears_the_block(self, qtbot, window, app_state):
+        app_state.set_capabilities(_legacy_caps("1.21.0"))
+        assert window._control_blocked
+
+        app_state.set_capabilities(_autonomous_caps("2.0.0"))
+
+        assert window._control_blocked is False
+        assert window._gate_banner.isHidden()
+
+    def test_demo_mode_is_exempt(self, qtbot, app_state, profile_service, settings_service):
+        win = MainWindow(
+            state=app_state,
+            profile_service=profile_service,
+            settings_service=settings_service,
+            demo_mode=True,
+        )
+        qtbot.addWidget(win)
+
+        # Even a legacy-caps signal must not engage the gate in demo mode.
+        win._on_control_capability_gate(_legacy_caps("1.21.0"))
+
+        assert win._control_blocked is False
+        assert win._gate_banner.isHidden()

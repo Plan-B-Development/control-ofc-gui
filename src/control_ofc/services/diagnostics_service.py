@@ -567,12 +567,6 @@ class DiagnosticsService(QObject):
                 }
             else:
                 missing.append("daemon_status: daemon not connected or not yet polled")
-            bundle["lease"] = {
-                "held": self._state.lease.held,
-                "lease_id": self._state.lease.lease_id,
-                "ttl": self._state.lease.ttl_seconds_remaining,
-                "owner": self._state.lease.owner_hint,
-            }
             # Fan state snapshot (RPM + last commanded PWM for all fans)
             bundle["fan_state"] = [
                 {

@@ -21,11 +21,13 @@ The top bar manages profiles:
 | Control | What it does |
 |---------|-------------|
 | **Profile dropdown** | Selects which profile to view and edit. The active profile is marked with `*` |
-| **Activate** | Saves the selected profile, then makes it the active one — the control loop starts evaluating it, and the daemon is told so it can take over headlessly later |
+| **Activate** | Uploads the selected profile to the daemon and makes it the active one. From that point the daemon's profile engine evaluates its curves every second and drives the fans — so your fans stay controlled even with the GUI closed. Disabled while disconnected (you cannot activate a profile the daemon cannot receive) |
 | **Save** | Writes the profile's changes to disk (`Ctrl+S`) |
 | **Manage Profiles…** | Menu with **New Profile**, **Rename Profile**, **Duplicate Profile**, and **Delete Profile** |
 
 Next to Save, a status chip shows **"Unsaved changes"** whenever you have modified the profile without saving, and confirms afterwards with "Settings saved" / "Profile activated". Activation failures are shown in red ("Activation failed: …") — the GUI never falsely marks a profile active.
+
+The daemon is the store of record for profiles; the GUI keeps a local draft cache so you can author and edit while disconnected. A profile saved while the daemon is unreachable is held as a **draft** and reconciled with the daemon automatically the next time the GUI connects. **Activate** is disabled while disconnected — you cannot make a profile active until the daemon can receive it.
 
 Deleting a profile asks for confirmation and cannot be undone; deleting the currently active profile deactivates it on the daemon first.
 
@@ -57,11 +59,12 @@ A read-only / monitor-only cooler (one whose pump the kernel cannot drive, such 
 
 ### Inline Manual Override
 
-The **Manual** button on each card is a toggle: switch it on and a slider replaces the output line, pinning that role's fans to a fixed speed. This is a *temporary* override:
+The **Manual** button on each card is a toggle: switch it on and a slider replaces the output line, pinning that role's fans to a fixed speed. This asks the **daemon** to override that role — the daemon, not the GUI, enforces the fixed speed and reverts to the curve when you are done. It is a *temporary* override:
 
-- it pauses curve evaluation for **that role only** — every other card keeps following its curve
-- it is **not saved** to the profile
-- it clears when you toggle it off or switch profiles
+- it overrides **that role only** — every other role keeps following its curve
+- it is **floor-clamped** — the requested speed is raised to the role's stall-protection minimum if you ask for less (see [role-aware minimums](profiles-and-curves.md#role-aware-minimum-stall-protection))
+- it is **expiring** — the GUI keeps the override alive while the slider is up; if the GUI closes or stops renewing it, the daemon lets the override lapse and the curve resumes on its own
+- it is **not saved** to the profile, and it clears the moment you toggle it off or switch profiles — the daemon snaps that role straight back to its curve
 
 Use it for quick experiments ("what does 80% sound like?") without touching the saved profile. To make a role *permanently* fixed-speed, set its mode to Manual in the Edit dialog instead.
 

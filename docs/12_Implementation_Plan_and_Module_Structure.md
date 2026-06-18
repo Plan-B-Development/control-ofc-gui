@@ -66,6 +66,12 @@ Build:
 Deliverable:
 Automatic control works through the daemon/API.
 
+> **Superseded at 2.0.0 (DEC-165):** this GUI-owned control loop, the hwmon lease service, and the
+> PWM write paths were **deleted**. The daemon's profile engine now owns curve evaluation, write
+> coalescing, the hwmon lease, and all writes; the GUI retains only a demo-mode evaluator
+> (`demo_controller.py`). Live manual control is a daemon override (DEC-163), fan identify a daemon
+> call (DEC-166).
+
 ### Phase 6 — Settings
 Build:
 - app settings
@@ -112,24 +118,24 @@ The app feels coherent and test-ready.
 - periodic read orchestration
 - publishes snapshots to stores/view models
 
-### `services/control_loop.py`
-- active profile logic
-- interpolation
-- write decisions
-- manual override interactions
+### `services/demo_controller.py` (demo mode only)
+- evaluates the active profile against synthetic sensors on a 1 Hz timer
+- stateless `interpolate()` tier only (Mix/Sync collapse to flat)
+- drives `DemoService`; mirrors manual-override into the demo UI
 
-### `services/lease_service.py`
-- hwmon lease acquire/renew/release
-- lease health updates
+> The GUI's real control loop (`control_loop.py`) and hwmon lease service (`lease_service.py`) were
+> **removed at the 2.0.0 cutover** (DEC-165). The daemon owns curve evaluation, write coalescing,
+> the hwmon lease, and all PWM writes; live manual override (DEC-163) and fan identify (DEC-166) are
+> issued through `api/client.py`.
 
 ### `services/history_store.py`
 - 2-hour rolling time-series buffer
 - `prefill_sensor()` for pre-populating from daemon history on connect
 
 ### `services/profile_service.py`
-- profile CRUD
-- assignment validation
-- active profile state
+- daemon-backed profile CRUD (pull/mirror on load; validate + upload on save) — DEC-160/161
+- a local draft cache with offline fallback (drafts when the daemon is unreachable)
+- assignment validation; active profile state
 
 ### `services/demo_service.py`
 - synthetic models and event simulation

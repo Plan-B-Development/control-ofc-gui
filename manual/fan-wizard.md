@@ -55,10 +55,8 @@ A summary table (ID, Source, New Label, Notes) where every label and note is sti
 ## Safety Features
 
 - **Thermal abort:** CPU temperature is checked before and during every test. If any CPU sensor exceeds **85°C**, the test aborts immediately and the fan is restored.
-- **One fan at a time:** only one fan is ever stopped.
-- **Restore on every exit:** finishing, cancelling, aborting a test, or closing the wizard all restore the tested fans to their last commanded speed. If no prior speed is known (e.g. a GPU fan that was under firmware control), a **30% fallback** is used until automatic control resumes.
-- **Lease management:** if any selected fan is a motherboard (hwmon) header, the wizard holds the hwmon lease for the whole session and releases it when the wizard closes, so nothing else can write those headers mid-test.
-- **Control loop paused:** the GUI's own curve evaluation is suspended while the wizard runs and resumes when it closes.
+- **One fan at a time:** the wizard asks the daemon to stop only the fan you are identifying. Every other fan keeps running on its curve — there is no global pause and the daemon stays in charge throughout.
+- **Daemon-enforced auto-restore:** each stop is a daemon request with a built-in deadman timer, so even if the GUI closes or crashes mid-test the daemon restores that fan on its own. Finishing, cancelling, aborting a test, or closing the wizard also restore the tested fan to its last commanded speed. If no prior speed is known (e.g. a GPU fan that was under firmware control), a **30% fallback** is used until normal control resumes.
 
 ## Settings That Affect the Wizard
 

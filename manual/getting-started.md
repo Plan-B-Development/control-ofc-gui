@@ -107,7 +107,7 @@ The left sidebar provides access to all four pages:
 | **Dashboard** | At-a-glance monitoring: temperatures, fan speeds, charts |
 | **Controls** | Profile management, fan grouping, curve editing |
 | **Settings** | Application preferences, themes, backup/restore |
-| **Diagnostics** | Daemon health, sensor freshness, lease status, logs |
+| **Diagnostics** | Daemon health, sensor freshness, logs |
 
 An **About** button at the bottom of the sidebar shows version and credit information:
 

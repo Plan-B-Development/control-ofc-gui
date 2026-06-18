@@ -200,9 +200,11 @@ Recommended:
 
 ## Safety behaviour
 
-### Per-control minimum PWM (GUI-owned, role-aware — DEC-095)
-The GUI enforces a role-aware default minimum PWM by setting
-`LogicalControl.minimum_pct` when members are assigned or edited:
+### Per-control minimum PWM (GUI-baked, daemon-enforced, role-aware — DEC-095/DEC-162)
+The GUI **bakes** a role-aware default minimum PWM into each control's
+`LogicalControl.minimum_pct` when members are assigned or edited; as of 2.0.0
+the daemon then **enforces and backstops** that floor (DEC-162 — validate-time
+reject + an independent eval-time clamp). The GUI-side defaults are:
 - **30%** for any control whose members include a CPU- or pump-labelled
   hwmon header (label contains `CPU`, `PUMP`, or `AIO`).
 - **20%** for chassis / OpenFan-only controls.
@@ -225,7 +227,9 @@ chassis-only controls are raised to 20%.
 
 #### Per-member flooring — GPU members are never floored (DEC-119)
 `minimum_pct` is a single control-wide value, but the floor is applied
-**per member** at write time via `profile_service.member_minimum_pct`:
+**per member**. As of 2.0.0 the daemon applies this rule at write time
+(DEC-119/DEC-162); the GUI mirrors it in `profile_service.member_minimum_pct`
+for the floor badge, profile baking, and demo evaluation:
 - **GPU members (`source == "amd_gpu"`)** are floored at **0%** — always,
   regardless of how the control is composed. The GPU's PMFW firmware owns
   its idle minimum (the OD_RANGE ~15% clamp; zero-RPM via the per-member
@@ -236,13 +240,12 @@ chassis-only controls are raised to 20%.
   members), so no non-GPU behaviour changes.
 
 This matters only for a **mixed control** — a GPU fan grouped with
-chassis/CPU fans. There, the control loop writes the GPU member down to its
+chassis/CPU fans. There, the daemon engine writes the GPU member down to its
 0% floor in the **same cycle** that the chassis/CPU members hold their 20% /
 30% floor, each tracking an independent step-rate trajectory. A GPU-only
 control was already at 0% (its `minimum_pct` is 0). The **daemon profile
-engine applies the identical per-member rule** when a profile runs headless,
-so a mixed-control GPU idles to 0% whether or not the GUI is connected
-(DEC-096 consistency); the PMFW write path then clamps to the firmware
+engine applies this per-member rule on every tick** (it is the sole writer as
+of 2.0.0), so a mixed-control GPU idles to 0%; the PMFW write path then clamps to the firmware
 OD_RANGE (~15%) and honours the per-member `fan_zero_rpm` idle stop. The control card's
 `Min: NN%` badge shows the non-GPU floor; its tooltip notes that GPU members
 in a mixed control are not floored. The curve editor's lower bound is
@@ -260,16 +263,20 @@ recovery floor and 40% no-sensor fallback are likewise hardcoded.
 GPU fans are deliberately excluded (DEC-130): there is no GPU emergency
 threshold — AMD PMFW firmware owns GPU thermal protection independently
 of OS fan control. While any override is active the daemon reports
-`thermal_state != "normal"` in `GET /status` and the GUI control loop
-stands down (DEC-132).
+`thermal_state != "normal"` in `GET /status`; the GUI has no loop to stand
+down (DEC-165, superseding the DEC-132 GUI stand-down) and simply shows a
+poll-driven thermal-protection banner.
 
-Per-header safety floors are **not** enforced by the daemon — the
-hwmon controller treats `min_pwm_percent: 0` for every header. The
-"GUI owns curve safety policy, daemon owns thermal emergency" split
-is intentional (CLAUDE.md, DEC-022, DEC-095). Hand-edited profile
-JSON or third-party clients that bypass the GUI's role-aware floor
-can still command low PWM; the project's threat model treats local
-writers as trusted (DEC-049).
+Per-header safety floors are **not** enforced by the daemon's hwmon
+controller (`min_pwm_percent: 0` for every header). But the **role-aware
+pump/CPU floor is now daemon-enforced** (DEC-162): the daemon clamps a
+pump/CPU member to ≥30% on every eval tick regardless of the profile's
+declared `minimum_pct`, so hand-edited profile JSON or a third-party client
+can no longer strand a pump/CPU below its safety minimum. The GUI still
+**bakes** the floor and owns the rest of curve safety policy; the daemon owns
+thermal emergency and the floor backstop (CLAUDE.md, DEC-022, DEC-095,
+DEC-162). The project's threat model treats local writers as trusted
+(DEC-049).
 
 ### Per-GPU zero-RPM idle (per-member toggle)
 Each `amd_gpu` member of a control carries a `fan_zero_rpm` boolean
@@ -385,20 +392,20 @@ When a user tries to create an unsafe curve:
 - explain why the value was changed or rejected
 - do not silently accept an invalid curve
 
-## Hwmon lease implications
-If the active target includes hwmon-controlled headers:
-- show lease state in the Controls page
-- show whether writes are currently possible
-- do not allow the user to think a profile is actively controlling something when the lease is unavailable
+## Hwmon control implications
+The daemon owns the hwmon lease internally (the GUI holds no lease as of 2.0.0 — DEC-165). If the active profile includes hwmon-controlled headers:
+- reflect the daemon's reported control/health state for those headers in the Controls page
+- show whether the daemon reports the header as writable (a header the daemon cannot drive — e.g. a read-only RDNA3+ `pwm1`, DEC-102 — must not look actively controlled)
+- do not allow the user to think a profile is actively controlling something the daemon cannot drive
 
 ## Suggested key workflows
 
 ### Workflow: switch profile
 1. User selects a different profile
 2. App shows whether there are unsaved edits
-3. App applies the selected profile
-4. Control loop begins using that profile
-5. Dashboard and header update immediately
+3. App activates the selected profile on the daemon (`POST /profile/activate`)
+4. The daemon begins evaluating that profile (the GUI does not write PWM)
+5. Dashboard and header update on the next poll
 
 ### Workflow: edit curve
 1. User selects profile

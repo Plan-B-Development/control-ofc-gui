@@ -1,5 +1,42 @@
 # Changelog
 
+## [2.0.0] — 2026-06-19
+
+**Breaking — the GUI no longer controls fans directly (DEC-159 / DEC-165).** Runtime control moved to
+the daemon: the GUI is now an editor/viewer/controller-of-intent that never writes PWM. Requires
+`control-ofc-daemon` ≥ v2.0.0 — the GUI refuses to control a pre-2.0 daemon. Pairs with
+`control-ofc-daemon` ≥ v2.0.0.
+
+### Removed (breaking)
+- The GUI-side control loop (`ControlLoopService`) and hwmon lease client (`LeaseService`) are deleted.
+  The GUI holds no lease and issues no PWM writes — the daemon's profile engine is the sole writer.
+- `DaemonClient` PWM/lease methods (`set_*_pwm`, `hwmon_lease_*`) are gone; `verify_hwmon_pwm` no longer
+  takes a `lease_id` (the daemon verifies under its own internal lease).
+- The Diagnostics **Lease tab** is removed (lease state is daemon-internal).
+
+### Changed (breaking)
+- **Profiles are daemon-stored.** `ProfileService` is daemon-backed — pull/mirror on load, validate +
+  upload on save — over the `/profiles` CRUD API (DEC-160). The local `~/.config/control-ofc/profiles/`
+  becomes a draft cache; offline edits are drafts that reconcile on reconnect.
+- **Manual control is a daemon override** (DEC-163): the Controls card takes/renews/releases an
+  expiring, floor-clamped override and reverts to the curve on release or expiry.
+- **Fan identification is a daemon call** (DEC-166): the Fan Wizard uses `fan_identify` (per-fan,
+  deadman auto-restore) for every source — no global automation freeze.
+
+### Added
+- **Startup capability gate** — against a daemon that does not advertise `control.autonomous_control`
+  (a pre-2.0 daemon) the GUI shows a persistent "daemon upgrade required" banner and attempts no
+  control (it has no loop to fall back to). Packaging: `depends control-ofc-daemon>=2.0.0`,
+  `conflicts control-ofc-daemon<2.0.0`.
+- **Poll-driven thermal-protection banner** from `status.thermal_state`, replacing the old DEC-132 loop
+  stand-down.
+- **Demo mode** keeps a GUI-side evaluator (`DemoController`, stateless curve tier) so it runs with no
+  daemon and no hardware.
+
+### Note
+- SSE `/events` consumption remains deferred (DEC-164) — the GUI is poll-only and detects transitions
+  by poll-diff.
+
 ## [1.42.1] — 2026-06-17
 
 Test + documentation maintenance for the daemon's role-floor backstop (DEC-162). **No runtime

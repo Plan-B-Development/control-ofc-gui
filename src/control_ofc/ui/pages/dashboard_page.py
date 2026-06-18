@@ -50,7 +50,6 @@ from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
-    from control_ofc.services.control_loop import ControlLoopService
     from control_ofc.services.profile_service import ProfileService
 
 
@@ -72,7 +71,6 @@ class DashboardPage(QWidget):
         profile_service: ProfileService | None = None,
         settings_service: AppSettingsService | None = None,
         client: DaemonClient | None = None,
-        control_loop: ControlLoopService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -82,7 +80,6 @@ class DashboardPage(QWidget):
         self._profile_service = profile_service
         self._settings_service = settings_service
         self._client = client
-        self._control_loop = control_loop
         self._fan_ids: list[str] = []  # Track fan IDs for table row mapping
         self._displayable_fan_keys: list[str] = []  # Fan series keys for selection
         self._has_data = False
@@ -341,6 +338,15 @@ class DashboardPage(QWidget):
         self._api_version_banner.setObjectName("Dashboard_Banner_api_version")
         content_layout.addWidget(self._api_version_banner)
 
+        # Thermal-protection banner (DEC-132): surfaced from /status poll diffs
+        # when the daemon's thermal_state leaves "normal" (105 °C emergency /
+        # recovery). Poll is the authoritative transition source now the GUI
+        # has no control loop watching thermal_state itself.
+        self._thermal_banner = ErrorBanner()
+        self._thermal_banner.setObjectName("Dashboard_Banner_thermal")
+        content_layout.addWidget(self._thermal_banner)
+        self._last_thermal_state = "normal"
+
         # Row 1: Summary cards + profile quick switch
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(12)
@@ -557,6 +563,20 @@ class DashboardPage(QWidget):
             self._state.remove_warning("api_version_skew")
 
     def _on_status_updated(self, status: DaemonStatus) -> None:
+        # Thermal-protection transition (poll-diff): the daemon's 105 °C
+        # emergency / recovery overrides fan control. Surface it the moment
+        # thermal_state leaves "normal", and clear it on the return.
+        thermal = status.thermal_state or "normal"
+        if thermal != self._last_thermal_state:
+            self._last_thermal_state = thermal
+            if thermal == "normal":
+                self._thermal_banner.hide_banner()
+            else:
+                self._thermal_banner.show_error(
+                    f"Thermal protection active ({thermal}) — the daemon has overridden "
+                    "fan control to protect your hardware. Fans return to your profile "
+                    "once temperatures recover."
+                )
         for sub in status.subsystems:
             if sub.name == "openfan" and sub.status != "ok":
                 reason = f" ({sub.reason})" if sub.reason else ""
@@ -892,10 +912,8 @@ class DashboardPage(QWidget):
         self._profile_service.set_active(target.id)
         if self._state:
             self._state.set_active_profile(target.name)
-        # Force immediate control loop re-evaluation — active_profile_changed
-        # is suppressed when the name is unchanged, so rely on a direct call.
-        if self._control_loop is not None:
-            self._control_loop.reevaluate_now()
+        # The daemon re-evaluates the activated profile itself (DEC-165); the
+        # GUI no longer forces a local control-loop re-evaluation.
         self._apply_btn.setText("Applied!")
         self._apply_btn.setEnabled(False)
         QTimer.singleShot(1500, self._reset_apply_btn)

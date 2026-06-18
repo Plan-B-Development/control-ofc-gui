@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError
+from control_ofc.api.models import ConnectionState
 from control_ofc.services.app_state import AppState
 from control_ofc.services.profile_service import (
     CONTROL_ROLE_GPU,
@@ -59,8 +60,7 @@ from control_ofc.ui.widgets.draggable_flow import DraggableFlowContainer
 
 if TYPE_CHECKING:
     from control_ofc.services.app_settings_service import AppSettingsService
-    from control_ofc.services.control_loop import ControlLoopService
-    from control_ofc.services.lease_service import LeaseService
+    from control_ofc.services.demo_controller import DemoController
 
 
 class ControlsPage(QWidget):
@@ -69,14 +69,19 @@ class ControlsPage(QWidget):
     profile_activated = Signal(str)
 
     _log = logging.getLogger(__name__)
+    # Manual-override (DEC-163) GUI timing. The renew cadence follows each
+    # grant's advised ``renew_secs``; this is only the fallback. The value
+    # debounce coalesces a live slider drag into a single re-pin (a new
+    # override_take supersedes the prior token) instead of one call per pixel.
+    _OVERRIDE_RENEW_FALLBACK_MS = 5000
+    _OVERRIDE_VALUE_DEBOUNCE_MS = 200
 
     def __init__(
         self,
         state: AppState | None = None,
         profile_service: ProfileService | None = None,
         client: DaemonClient | None = None,
-        control_loop: ControlLoopService | None = None,
-        lease_service: LeaseService | None = None,
+        demo_controller: DemoController | None = None,
         settings_service: AppSettingsService | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -84,8 +89,10 @@ class ControlsPage(QWidget):
         self._state = state
         self._profile_service = profile_service or ProfileService()
         self._client = client
-        self._control_loop = control_loop
-        self._lease_service = lease_service
+        # Demo-only mini-evaluator (DEC-165). Live mode has no control loop —
+        # the daemon is the authoritative writer; this drives the demo manual
+        # and curve simulation only.
+        self._demo_controller = demo_controller
         self._settings_service = settings_service
         self._control_cards: dict[str, ControlCard] = {}
         self._curve_cards: dict[str, CurveCard] = {}
@@ -96,6 +103,22 @@ class ControlsPage(QWidget):
         # switch) and a later capability change both honour the latest value
         # instead of stranding cards disabled (see _on_capabilities_updated).
         self._cards_writable: bool = True
+        # Live manual overrides (DEC-163): control_id -> current override_token.
+        # Populated only in daemon-driven (live) mode; demo mode drives the demo
+        # control loop instead. The renew timer keeps every held override alive
+        # well inside its TTL — a rejected renew means it lapsed (GUI froze /
+        # daemon restarted), so the card reverts. The value timer debounces a
+        # live slider drag into a single re-pin.
+        self._overrides: dict[str, int] = {}
+        self._override_pending: dict[str, int] = {}
+        self._override_renew_timer = QTimer(self)
+        self._override_renew_timer.setObjectName("Controls_Timer_overrideRenew")
+        self._override_renew_timer.timeout.connect(self._renew_overrides)
+        self._override_value_timer = QTimer(self)
+        self._override_value_timer.setObjectName("Controls_Timer_overrideValue")
+        self._override_value_timer.setSingleShot(True)
+        self._override_value_timer.setInterval(self._OVERRIDE_VALUE_DEBOUNCE_MS)
+        self._override_value_timer.timeout.connect(self._flush_override_values)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(12, 8, 12, 8)
@@ -261,6 +284,7 @@ class ControlsPage(QWidget):
             self._state.sensors_updated.connect(self._on_sensor_values_updated)
             self._state.fans_updated.connect(self._on_fan_rpm_updated)
             self._state.capabilities_updated.connect(self._on_capabilities_updated)
+            self._state.connection_changed.connect(self._on_connection_changed)
 
     # ─── Profile bar ─────────────────────────────────────────────────
 
@@ -317,8 +341,13 @@ class ControlsPage(QWidget):
             self._profile_combo.clear()
             active_id = self._profile_service.active_id
             select_idx = 0
-            for i, p in enumerate(self._profile_service.profiles):
+            ps = self._profile_service
+            for i, p in enumerate(ps.profiles):
                 label = f"* {p.name}" if p.id == active_id else p.name
+                # Daemon-backed mode: flag profiles that exist only locally
+                # (created/edited while offline, or rejected on upload).
+                if ps.daemon_backed and not ps.is_published(p.id):
+                    label = f"{label}  (draft)"
                 self._profile_combo.addItem(label, p.id)
                 if p.id == selected_id:
                     select_idx = i
@@ -384,12 +413,9 @@ class ControlsPage(QWidget):
         self._refresh_all()
         if self._state:
             self._state.set_active_profile(profile.name)
-        # Force immediate control loop re-evaluation. active_profile_changed
-        # does not fire when the name is unchanged (e.g. re-activating after
-        # editing curves on the already-active profile), so we cannot rely
-        # on the signal-driven path to reset hysteresis and push new writes.
-        if self._control_loop is not None:
-            self._control_loop.reevaluate_now()
+        # The daemon re-evaluates the activated profile itself (it is the
+        # authoritative engine, DEC-165) — the GUI no longer forces a local
+        # control-loop re-evaluation. (Demo mode reflects it on its next tick.)
         self.profile_activated.emit(profile_id)
         self._unsaved_label.setText("Profile activated")
         self._unsaved_label.setProperty("class", "SuccessChip")
@@ -474,13 +500,41 @@ class ControlsPage(QWidget):
 
     def _on_save_profile(self) -> None:
         profile = self._get_current_profile()
-        if profile:
-            self._profile_service.save_profile(profile)
-            self._set_unsaved(False)
+        if not profile:
+            return
+        self._profile_service.save_profile(profile)
+        self._set_unsaved(False)
+        if self._profile_service.daemon_backed and not self._profile_service.is_published(
+            profile.id
+        ):
+            # Written to the local cache but the daemon did not accept it
+            # (offline, or rejected on upload) — an unpublished draft (6b).
+            self._unsaved_label.setText("Saved locally — daemon offline, not published")
+            self._unsaved_label.setProperty("class", "WarningChip")
+        else:
             self._unsaved_label.setText("Settings saved")
             self._unsaved_label.setProperty("class", "SuccessChip")
-            self._unsaved_label.style().unpolish(self._unsaved_label)
-            self._unsaved_label.style().polish(self._unsaved_label)
+        self._unsaved_label.style().unpolish(self._unsaved_label)
+        self._unsaved_label.style().polish(self._unsaved_label)
+        # Reflect the new published/draft state in the combo badge.
+        self._refresh_profile_combo()
+
+    def _on_connection_changed(self, conn: ConnectionState) -> None:
+        """Gate Activate on the daemon being reachable (live mode only).
+
+        Activation is a daemon verb, so it cannot work while the daemon is
+        offline. Demo/local mode (no client) activates locally and stays
+        enabled.
+        """
+        if self._client is None:
+            return
+        connected = conn == ConnectionState.CONNECTED
+        self._activate_btn.setEnabled(connected)
+        self._activate_btn.setToolTip(
+            "Set selected profile as active"
+            if connected
+            else "Daemon offline — cannot activate a profile"
+        )
 
     # ─── Refresh all ─────────────────────────────────────────────────
 
@@ -494,6 +548,10 @@ class ControlsPage(QWidget):
     # ─── Control cards grid ──────────────────────────────────────────
 
     def _refresh_controls_grid(self, profile) -> None:
+        # Release any live overrides first: the cards are about to be destroyed
+        # and rebuilt un-toggled, so a still-held daemon override would leave
+        # card state diverged from the daemon (DEC-163).
+        self._release_all_overrides()
         # Clear existing
         self._controls_flow.clear_cards()
         self._control_cards.clear()
@@ -537,8 +595,6 @@ class ControlsPage(QWidget):
         wizard = FanConfigWizard(
             state=self._state,
             client=self._client,
-            control_loop=self._control_loop,
-            lease_service=self._lease_service,
             spindown_seconds=spindown,
             parent=self,
         )
@@ -1267,23 +1323,124 @@ class ControlsPage(QWidget):
             card.setEnabled(self._cards_writable)
 
     def _on_card_manual_toggled(self, control_id: str, active: bool, pct: int) -> None:
-        """Per-card Manual toggle (1A): pin/release one control's fans.
+        """Per-card Manual toggle: pin or release one control transiently.
 
-        Transient — never touches the saved profile. The loop clears all
-        per-control manual state on profile change, so the card toggles
-        (recreated on rebuild) stay in sync automatically.
+        In live mode this is a daemon-owned, expiring, fencing-guarded override
+        (DEC-163): it reverts to autonomous curve control if the GUI stops
+        renewing (daemon deadman), and the card reverts if a renew is rejected.
+        In demo mode (no daemon client) the demo control loop owns the simulated
+        manual state. Never touches the saved profile.
         """
-        if self._control_loop is None:
-            return
-        if active:
-            self._control_loop.set_control_manual(control_id, float(pct))
-        else:
-            self._control_loop.clear_control_manual(control_id)
+        if self._client is not None:
+            if active:
+                self._take_override(control_id, pct)
+            else:
+                self._release_override(control_id)
+        elif self._demo_controller is not None:
+            if active:
+                self._demo_controller.set_control_manual(control_id, float(pct))
+            else:
+                self._demo_controller.clear_control_manual(control_id)
 
     def _on_card_manual_value(self, control_id: str, pct: int) -> None:
         """Live slider drag while a card is in transient manual mode."""
-        if self._control_loop is not None:
-            self._control_loop.set_control_manual(control_id, float(pct))
+        if self._client is not None:
+            if control_id in self._overrides:
+                # Debounce: coalesce a drag into one re-pin (a new override_take
+                # supersedes the prior token) instead of one call per pixel.
+                self._override_pending[control_id] = pct
+                self._override_value_timer.start()
+        elif self._demo_controller is not None:
+            self._demo_controller.set_control_manual(control_id, float(pct))
+
+    # ── Manual override via the daemon API (DEC-163) ─────────────────────
+    def _take_override(self, control_id: str, pct: int) -> None:
+        """Pin a control to a fixed PWM on the daemon and start renewing."""
+        if self._client is None:
+            return
+        try:
+            grant = self._client.override_take(control_id, pct)
+        except DaemonError as exc:
+            self._log.warning(
+                "Override of control %s failed (%s): %s", control_id, exc.code, exc.message
+            )
+            self._revert_card_manual(control_id)
+            return
+        self._overrides[control_id] = grant.override_token
+        interval = (
+            (grant.renew_secs * 1000) if grant.renew_secs else self._OVERRIDE_RENEW_FALLBACK_MS
+        )
+        self._override_renew_timer.setInterval(max(1000, interval))
+        if not self._override_renew_timer.isActive():
+            self._override_renew_timer.start()
+
+    def _release_override(self, control_id: str) -> None:
+        """Release a held override; the daemon reverts the control to its curve."""
+        self._override_pending.pop(control_id, None)
+        token = self._overrides.pop(control_id, None)
+        if not self._overrides:
+            self._override_renew_timer.stop()
+        if token is None or self._client is None:
+            return
+        try:
+            self._client.override_release(control_id, token)
+        except DaemonError as exc:
+            # Offline / already lapsed — the daemon deadman reverts it anyway.
+            self._log.info("Override release for %s not confirmed (%s)", control_id, exc.code)
+
+    def _release_all_overrides(self) -> None:
+        """Release every held override (e.g. before the card grid rebuilds) so
+        card state never diverges from the daemon."""
+        for control_id in list(self._overrides):
+            self._release_override(control_id)
+
+    def _renew_overrides(self) -> None:
+        """Renew every held override inside its TTL; a rejected renew means the
+        override lapsed (GUI froze / daemon restarted) → revert that card."""
+        if self._client is None or not self._overrides:
+            self._override_renew_timer.stop()
+            return
+        for control_id, token in list(self._overrides.items()):
+            try:
+                result = self._client.override_renew(control_id, token)
+            except DaemonError as exc:
+                self._log.info("Override on %s lapsed (%s) — reverting card", control_id, exc.code)
+                self._overrides.pop(control_id, None)
+                self._override_pending.pop(control_id, None)
+                self._revert_card_manual(control_id)
+                continue
+            self._overrides[control_id] = result.override_token
+        if not self._overrides:
+            self._override_renew_timer.stop()
+
+    def _flush_override_values(self) -> None:
+        """Apply the latest debounced slider value as a re-pin (which supersedes
+        the prior token). Skips controls released mid-drag; reverts on failure."""
+        if self._client is None:
+            self._override_pending.clear()
+            return
+        pending = dict(self._override_pending)
+        self._override_pending.clear()
+        for control_id, pct in pending.items():
+            if control_id not in self._overrides:
+                continue
+            try:
+                grant = self._client.override_take(control_id, pct)
+            except DaemonError as exc:
+                self._log.info(
+                    "Override re-pin on %s failed (%s) — reverting", control_id, exc.code
+                )
+                self._overrides.pop(control_id, None)
+                self._revert_card_manual(control_id)
+                continue
+            self._overrides[control_id] = grant.override_token
+
+    def _revert_card_manual(self, control_id: str) -> None:
+        """Visually exit Manual on a card whose override lapsed/failed, without
+        re-emitting manual_toggled (which would try to release it again)."""
+        card = self._control_cards.get(control_id)
+        if card is not None:
+            card.clear_manual()
 
     def _sensor_combo_label(self, s) -> str:
         """Curve-editor sensor-combo label, marking coolant + CPU sensors as

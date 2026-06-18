@@ -1,6 +1,6 @@
 # Diagnostics
 
-The Diagnostics page exposes the health and status of every subsystem. It is your primary tool for troubleshooting connection issues, stale sensors, lease conflicts, and hardware detection problems.
+The Diagnostics page exposes the health and status of every subsystem. It is your primary tool for troubleshooting connection issues, stale sensors, and hardware detection problems.
 
 > **Looking for help with a specific motherboard or fan controller?** Start with the [Hardware Troubleshooting](hardware-troubleshooting.md) page — it covers the Hardware Readiness checks on the **Troubleshooting** tab, Test PWM Control, vendor quirks, and what to do when fans report 0 RPM or refuse to change speed.
 
@@ -26,7 +26,7 @@ Two information cards:
 | Field | Meaning |
 |-------|---------|
 | **OpenFan** | Whether an OpenFan Controller is detected, channel count, and write/RPM capability |
-| **hwmon** | Whether motherboard fan headers are detected, header count, and whether writes require a lease |
+| **hwmon** | Whether motherboard fan headers are detected, the header count, and their write capability |
 | **AMD GPU** | Whether an AMD discrete GPU is detected, its model, PCI address, and fan control method (`pmfw` or legacy `pwm1`) |
 | **Intel GPU** | Whether an Intel Arc discrete GPU is detected, its model, and PCI address. Intel GPU fans are always reported `read_only (firmware-managed)` — the `xe`/`i915` drivers expose no fan-control path |
 | **Liquid cooling** | Whether a liquid cooler (AIO) is detected via hwmon, and whether its pump/fan is writable, monitor-only (a read-only driver such as NZXT Kraken2), or not detected. USB-only coolers are out of scope and shown as not detected |
@@ -106,35 +106,13 @@ It leads with the answer and keeps the detail one click away:
 
 This tab is covered in depth on the [Hardware Troubleshooting](hardware-troubleshooting.md) page.
 
-## Lease Tab
-
-![Diagnostics — Lease Tab](../screenshots/auto/09_diagnostics_lease.png)
-
-### What is a Lease?
-
-A lease grants exclusive write access to your motherboard's fan headers (hwmon). Only one client can hold the lease at a time, preventing conflicting speed commands from different tools.
-
-The GUI automatically acquires and renews the lease while controlling fans. The lease expires after 60 seconds if not renewed (e.g., if the GUI crashes), allowing other tools to take over.
-
-OpenFan Controller and GPU fan writes do **not** require a lease — only motherboard hwmon writes do.
-
-### Lease Status
-
-| Field | Meaning |
-|-------|---------|
-| **Lease** | "Held" or "Not held" |
-| **Lease ID** | Unique identifier of the current lease |
-| **Owner** | Which client holds the lease (e.g., "gui") |
-| **TTL remaining** | Seconds until the lease expires if not renewed |
-| **Required** | Whether any detected hardware requires a lease for writes |
-
-If another tool (or another instance of Control-OFC) holds the lease, the GUI cannot write PWM values until the lease is released or expires.
+> **Lease management is daemon-internal as of 2.0.0.** The daemon is the sole writer of motherboard fan headers, so it manages the hwmon lease entirely on its own — the GUI never holds one. The dedicated **Lease** tab that earlier versions showed here has been removed.
 
 ## Event Log Tab
 
 ![Diagnostics — Event Log Tab](../screenshots/auto/10_diagnostics_event_log.png)
 
-A live, filterable table of in-process GUI events: daemon connect/disconnect, lease lifecycle, control-loop write failures, profile activations, theme changes, and the like. The log retains up to 200 entries (oldest discarded first).
+A live, filterable table of in-process GUI events: daemon connect/disconnect, profile activations and override actions, theme changes, and the like. The log retains up to 200 entries (oldest discarded first).
 
 Three concepts that look similar but answer different questions:
 
@@ -149,7 +127,7 @@ Three concepts that look similar but answer different questions:
 | Control | Behaviour |
 |---------|-----------|
 | **Info / Warning / Error toggles** | Multi-select severity filter. Uncheck a level to hide every row at that severity. |
-| **Source dropdown** | Single-select source filter — `gui`, `polling`, `lease`, `control_loop`, `profile`, `kernel`, etc. New sources appear automatically the first time they fire. |
+| **Source dropdown** | Single-select source filter — `gui`, `polling`, `profile`, `kernel`, etc. New sources appear automatically the first time they fire. |
 | **Search** | Case-insensitive substring match against message text and source. |
 | **Auto-scroll** | When on, the view follows new events while you are at the bottom. Scroll up to pause; scroll back to the bottom to resume. |
 

@@ -6,23 +6,23 @@
 Define what the GUI owns and how it should persist that data.
 
 ## GUI-owned persistent data
-The GUI must persist:
-- profiles
-- curve definitions
-- fan groups
+The GUI persists its **UI-owned** state:
 - aliases/friendly names
+- fan groups / role names
 - theme selection
 - imported/exported themes
 - GUI settings
 - last-used page/state
 - demo mode defaults
+- a **local profile draft cache** (see below) — curve definitions live inside each profile
 
 ## Daemon-owned state
-The GUI does **not** own:
+As of 2.0.0 the daemon is the **store of record for profiles** (DEC-160). The GUI does **not** own:
+- profile storage of record (`/var/lib/control-ofc/profiles/`; the GUI keeps only a local cache / drafts)
 - hardware discovery truth
 - daemon status truth
 - runtime capability truth
-- lease truth
+- the hwmon lease (daemon-internal)
 - hardware write execution truth
 
 ## Storage location strategy
@@ -50,6 +50,12 @@ Recommended approach:
     performance.json
     custom_profile.json
 ```
+
+As of 2.0.0 the **daemon** is the profile store of record at `/var/lib/control-ofc/profiles/`
+(DEC-160). The GUI's `~/.config/control-ofc/profiles/` is now a **local draft cache**:
+`ProfileService` mirrors the daemon's profiles there on load, and writes drafts there when the
+daemon is offline (reconciling on reconnect). The GUI uploads and validates profiles through the
+daemon CRUD API rather than treating its local copy as authoritative.
 
 GUI runtime state currently lives entirely under `~/.config/control-ofc/`.
 The XDG state and cache directories are created by `ensure_dirs()` but the

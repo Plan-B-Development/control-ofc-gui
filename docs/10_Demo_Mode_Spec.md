@@ -73,7 +73,7 @@ The synthetic data should:
 Allow optional toggles or scripted events for:
 - daemon disconnected
 - stale sensor
-- lease unavailable
+- manual override active
 - missing fan RPM
 - unsupported device category
 

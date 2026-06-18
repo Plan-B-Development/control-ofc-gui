@@ -20,7 +20,6 @@ from control_ofc.api.models import (
     parse_hardware_diagnostics,
 )
 from control_ofc.services.app_state import AppState
-from control_ofc.services.control_loop import _dispatch_write
 from control_ofc.services.demo_service import DemoService
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.pages.diagnostics_page import _fan_control_method
@@ -190,15 +189,6 @@ class TestFanDisplayName:
 
 
 class TestControlLoopNeverWritesIntel:
-    def test_dispatch_write_returns_false_for_intel_gpu(self):
-        client = MagicMock()
-        result = _dispatch_write(client, "intel_gpu:0000:03:00.0", 80, lease_id="")
-        assert result is False
-        # The single most important regression guard: no write call of any kind.
-        client.set_gpu_fan_speed.assert_not_called()
-        client.set_openfan_pwm.assert_not_called()
-        client.set_hwmon_pwm.assert_not_called()
-
     def test_diagnostics_fan_control_method_is_read_only(self):
         state = AppState()
         state.set_capabilities(_make_intel_caps())
@@ -283,7 +273,7 @@ class TestFanWizardExcludesIntel:
             FanReading(id="openfan:ch00", source="openfan", rpm=1200),
             FanReading(id="intel_gpu:0000:03:00.0", source="intel_gpu", rpm=1500),
         ]
-        wizard = FanConfigWizard(state=state, client=MagicMock(), lease_service=None)
+        wizard = FanConfigWizard(state=state, client=MagicMock())
         qtbot.addWidget(wizard)
         target_ids = {t["id"] for t in wizard._targets}
         assert "openfan:ch00" in target_ids

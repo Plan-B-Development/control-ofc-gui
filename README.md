@@ -1,6 +1,6 @@
 # Control-OFC GUI
 
-**Latest release:** v1.42.1 — 2026-06-17. Pairs with `control-ofc-daemon` ≥ v1.19.0. See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
+**Latest release:** v2.0.0 — 2026-06-19. Pairs with `control-ofc-daemon` ≥ v2.0.0. See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 Desktop fan control interface for Linux. Communicates with the [`control-ofc-daemon`](https://github.com/Plan-B-Development/control-ofc-daemon) service to monitor temperatures, manage fan speeds, and apply custom fan curves.
 
@@ -10,10 +10,10 @@ Desktop fan control interface for Linux. Communicates with the [`control-ofc-dae
 
 - **Dashboard** — real-time sensor temperatures, fan RPM, active profile, system health with per-sensor freshness indicators; a dual-axis telemetry chart with latest-value markers and a hover tooltip
 - **Controls** — profile switching, seven curve types (graph, stepped, linear, flat, trigger, plus mix/sync composites), fan roles, manual override; drag-resizable cards that snap to a shared grid (double-click the grip to reset)
-- **Multi-source fan control** — OpenFan Controller channels, motherboard hwmon headers (lease-managed), and AMD discrete GPU fans (PMFW `fan_curve` / legacy `pwm1`)
+- **Multi-source fan control** — OpenFan Controller channels, motherboard hwmon headers (daemon-managed), and AMD discrete GPU fans (PMFW `fan_curve` / legacy `pwm1`)
 - **GPU monitoring** — AMD and Intel Arc discrete GPU temperatures and fan RPM (Intel Arc fans are firmware-managed and read-only)
 - **Settings** — GUI preferences, daemon runtime config, full theme editor with contrast checking, import/export
-- **Diagnostics** — connection health, subsystem status, 14-column sensor table, lease state, Test PWM Control / Test GPU Fan Control, Restore GPU Fan to Automatic, hardware rescan, hardware-readiness reporting, support bundle export
+- **Diagnostics** — connection health, subsystem status, 14-column sensor table, Test PWM Control / Test GPU Fan Control, Restore GPU Fan to Automatic, hardware rescan, hardware-readiness reporting, support bundle export
 - **Fan Wizard** — guided fan identification and labelling
 - **Demo mode** — full UI without hardware (`--demo`)
 
@@ -99,7 +99,7 @@ Development extras (`pip install -e ".[dev]"`):
 | Location | Contents |
 |----------|----------|
 | `~/.config/control-ofc/app_settings.json` | GUI preferences |
-| `~/.config/control-ofc/profiles/` | Fan control profiles |
+| `~/.config/control-ofc/profiles/` | Local profile draft cache (daemon holds the canonical copies) |
 | `~/.config/control-ofc/themes/` | Custom themes |
 
 Daemon configuration: see the [daemon repo](https://github.com/Plan-B-Development/control-ofc-daemon) and the [Operations Guide](docs/18_Operations_Guide.md).
@@ -108,12 +108,14 @@ Daemon configuration: see the [daemon repo](https://github.com/Plan-B-Developmen
 
 The GUI is a **daemon API client only**. All hardware access goes through the daemon's HTTP-over-Unix-socket API.
 
+As of **2.0.0** the daemon owns all runtime control — it evaluates curves and is the sole writer of every fan backend. The GUI authors profiles, polls, and renders; it never writes PWM (DEC-159, DEC-165).
+
 | Owned by GUI | Owned by daemon |
 |-------------|----------------|
-| Fan curve evaluation (1 Hz control loop) | Hardware access (hwmon, serial, GPU PMFW) |
-| Profile/theme/settings persistence | Thermal safety enforcement |
-| User-facing presentation | Sensor polling and history |
-| Hwmon lease management | Socket permissions and IPC |
+| Profile authoring + validation UX | Fan curve evaluation + all PWM writes |
+| Theme / settings / alias persistence | Hardware access (hwmon, serial, GPU PMFW) |
+| Local profile draft cache | Profile storage of record + thermal safety |
+| User-facing presentation | Hwmon lease, sensor polling, socket/IPC |
 
 See the [architecture docs](docs/02_System_Architecture_and_Boundaries.md) and [API contract](docs/08_API_Integration_Contract.md) for details.
 

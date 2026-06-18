@@ -507,7 +507,6 @@ class TestPollingServiceConstruction:
                 ConnectionState,
                 DaemonStatus,
                 FanReading,
-                LeaseState,
                 SensorReading,
             )
 
@@ -526,10 +525,6 @@ class TestPollingServiceConstruction:
             fans = [FanReading(id="fan0", rpm=1000, age_ms=10)]
             svc._worker.fans_ready.emit(fans)
             assert state.fans == fans
-
-            lease = LeaseState()
-            svc._worker.lease_ready.emit(lease)
-            assert state.lease is lease
 
             # connected/disconnected drive state.connection
             svc._worker.connected.emit()
