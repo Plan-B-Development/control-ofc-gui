@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.1.1] — 2026-06-20
+
+A data-loss-class bug fix. Pairs with `control-ofc-daemon` ≥ v2.0.0 (no daemon change required).
+
+### Fixed
+- **Fan roles and curves no longer vanish on GUI restart (DEC-175).** On startup the GUI listed
+  daemon-stored profiles via `GET /profiles` — which returns name-only summaries — and parsed those
+  directly, so every profile loaded with empty controls and curves, then overwrote its good local
+  cache copy. The loader now hydrates each profile to its full document via `GET /profiles/{id}`
+  before parsing. A profile whose fetch fails is skipped and reported (the rest still load) and its
+  existing local mirror is preserved; a daemon that drops mid-load falls back to the local cache.
+  The fix self-heals already-stripped local mirrors on the next load (the daemon keeps the complete
+  documents). GUI-only — no API or daemon change.
+
 ## [2.1.0] — 2026-06-19
 
 Correctness, hardening, and a display-only override-reconcile feature on top of 2.0.0. Pairs with

@@ -1238,12 +1238,13 @@ class ProfileService:
         """Load profiles, preferring the daemon store when a client is set.
 
         Returns a list of ``(path_or_id, error_message)`` tuples for every
-        profile that failed to parse, for the caller to surface via
+        profile that failed to load, for the caller to surface via
         ``AppState.add_warning``. With a daemon client that is reachable,
-        profiles come from ``GET /profiles`` and are mirrored into the local
-        cache; if the daemon is unreachable the GUI falls back to the local
-        cache so it still opens offline. With no client it reads the local
-        store directly (pre-migration behaviour).
+        profiles are listed via ``GET /profiles`` then hydrated to their full
+        documents via ``GET /profiles/{id}`` (DEC-175) and mirrored into the
+        local cache; if the daemon is unreachable the GUI falls back to the
+        local cache so it still opens offline. With no client it reads the
+        local store directly (pre-migration behaviour).
         """
         if self._client is not None:
             errors = self._load_from_daemon()
@@ -1259,13 +1260,18 @@ class ProfileService:
     def _load_from_daemon(self) -> list[tuple[str, str]] | None:
         """Pull profiles from the daemon store and mirror them locally.
 
-        Returns the per-profile error list on success (daemon reached, even if
-        some stored documents failed to parse), or ``None`` when the daemon is
-        unreachable so ``load()`` can fall back to the local cache.
+        ``GET /profiles`` returns lightweight summaries (``id``/``name``/
+        ``description`` only — DEC-160), which carry no controls or curves, so
+        each listed profile is *hydrated* to its full document via
+        ``GET /profiles/{id}`` before parsing (DEC-175). Returns the per-profile
+        error list on success (daemon reached, even if some stored documents
+        failed to fetch or parse), or ``None`` when the daemon is unreachable —
+        at the listing *or* mid-hydration — so ``load()`` can fall back to the
+        local cache.
         """
         assert self._client is not None
         try:
-            documents = self._client.list_profiles()
+            summaries = self._client.list_profiles()
         except (DaemonUnavailable, DaemonTimeout):
             return None
         except DaemonError as e:
@@ -1275,14 +1281,44 @@ class ProfileService:
             return None
 
         errors: list[tuple[str, str]] = []
-        for doc in documents:
-            ident = doc.get("id", "<unknown>") if isinstance(doc, dict) else "<unknown>"
+        hydrated: list[Profile] = []
+        for summary in summaries:
+            ident = summary.get("id") if isinstance(summary, dict) else None
+            if not ident:
+                log.warning("Daemon profile summary without an id: %r", summary)
+                errors.append(("<unknown>", "profile summary missing 'id'"))
+                continue
             try:
-                profile = Profile.from_dict(doc)
+                document = self._client.get_profile(ident)
+            except (DaemonUnavailable, DaemonTimeout):
+                # The daemon went away mid-hydration. Abandon the partial set
+                # and fall back to the local cache so the GUI opens with a
+                # consistent view rather than an arbitrary subset of profiles.
+                log.info(
+                    "Daemon became unreachable while hydrating profile %s — "
+                    "using the local profile cache (offline)",
+                    ident,
+                )
+                return None
+            except DaemonError as e:
+                # One profile could not be fetched (e.g. removed between the
+                # listing and this fetch → 404). Skip and report it, but keep
+                # loading the rest — and never touch its local mirror.
+                log.warning("Failed to fetch daemon profile %s (%s): %s", ident, e.code, e.message)
+                errors.append((str(ident), e.message))
+                continue
+            try:
+                profile = Profile.from_dict(document)
             except Exception as e:  # malformed stored document
                 log.warning("Failed to parse daemon profile %s: %s", ident, e)
                 errors.append((str(ident), str(e)))
                 continue
+            hydrated.append(profile)
+
+        # Commit only fully-hydrated profiles. A failed fetch/parse leaves the
+        # existing local mirror untouched, so a transient per-profile error
+        # can't clobber a previously-good cached copy (DEC-175).
+        for profile in hydrated:
             self._profiles[profile.id] = profile
             self._daemon_ids.add(profile.id)
             self._unpublished.discard(profile.id)

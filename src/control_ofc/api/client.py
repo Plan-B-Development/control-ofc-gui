@@ -348,13 +348,25 @@ class DaemonClient:
         return self._post("/profiles", json=document)
 
     def list_profiles(self) -> list[dict[str, Any]]:
-        """GET /profiles — list daemon-stored profile summaries (raw documents)."""
+        """GET /profiles — list daemon-stored profile summaries.
+
+        Each entry is a lightweight ``{id, name, description}`` summary (DEC-160)
+        — it carries **no** ``controls`` or ``curves``. Fetch a profile's full
+        document with :meth:`get_profile` (callers that need the body must
+        hydrate per id — DEC-175).
+        """
         data = self._get("/profiles")
         profiles = data.get("profiles", [])
         return profiles if isinstance(profiles, list) else []
 
     def get_profile(self, profile_id: str) -> dict[str, Any]:
-        """GET /profiles/{id} — fetch a stored profile's full document."""
+        """GET /profiles/{id} — fetch a stored profile's full (lossless) document.
+
+        Returns the raw stored document at the top level (``id``/``name``/
+        ``controls``/``curves``/…), ready for ``Profile.from_dict``. Raises
+        ``DaemonError`` with status 404 ``validation_error`` if no profile has
+        that id.
+        """
         return self._get(f"/profiles/{profile_id}")
 
     def update_profile(self, profile_id: str, document: dict[str, Any]) -> dict[str, Any]:
