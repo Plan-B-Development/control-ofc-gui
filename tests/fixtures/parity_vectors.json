@@ -203,6 +203,17 @@
       },
       "temps": [50.0, 60.0],
       "expected": [{"member_id": "openfan:ch00", "pwm": [52, 68]}, {"member_id": "openfan:ch01", "pwm": [62, 78]}]
+    },
+    {
+      "name": "pump_floor_survives_stop_pct",
+      "sensor_id": "cpu",
+      "profile": {
+        "id": "p_pumpstop", "name": "PumpStop", "version": 7, "description": "",
+        "controls": [{"id": "c", "name": "C", "mode": "curve", "curve_id": "cv", "manual_output_pct": 0.0, "members": [{"source": "hwmon", "member_id": "hwmon:z53:n:pwm1:pwm1", "member_label": "AIO_PUMP", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 30.0, "start_pct": 0.0, "stop_pct": 35.0}],
+        "curves": [{"id": "cv", "name": "CV", "type": "flat", "sensor_id": "cpu", "flat_output_pct": 10.0}]
+      },
+      "temps": [50.0, 50.0],
+      "expected": [{"member_id": "hwmon:z53:n:pwm1:pwm1", "pwm": [30, 30]}]
     }
   ]
 }
