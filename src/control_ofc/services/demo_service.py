@@ -15,6 +15,7 @@ from control_ofc.api.models import (
     AmdGpuCapability,
     BoardInfo,
     Capabilities,
+    ControlCapability,
     DaemonStatus,
     FanReading,
     FeatureFlags,
@@ -213,7 +214,7 @@ class DemoService:
     def capabilities(self) -> Capabilities:
         return Capabilities(
             api_version=1,
-            daemon_version="1.12.0-demo",
+            daemon_version="2.0.0-demo",
             ipc_transport="demo",
             openfan=OpenfanCapability(
                 present=True, channels=8, rpm_support=True, write_support=True
@@ -255,12 +256,17 @@ class DemoService:
                 hwmon_write_supported=True,
             ),
             limits=SafetyLimits(),
+            # Demo simulates a modern, autonomous 2.0.0+ daemon (the sole fan
+            # writer), so the Controls override cards stay live — the card gate now
+            # requires autonomous_control (see controls_page._on_capabilities_updated
+            # and the main-window control gate).
+            control=ControlCapability(autonomous_control=True, min_supported_gui="2.0.0"),
         )
 
     def status(self) -> DaemonStatus:
         return DaemonStatus(
             api_version=1,
-            daemon_version="1.12.0-demo",
+            daemon_version="2.0.0-demo",
             overall_status="healthy",
             subsystems=[
                 SubsystemStatus(name="openfan", status="ok", age_ms=500, reason=""),

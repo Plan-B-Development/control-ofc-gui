@@ -17,6 +17,12 @@ def test_demo_capabilities():
     assert caps.hwmon.present is True
     assert caps.amd_gpu.present is True
     assert caps.amd_gpu.display_label == "RX 7900 XTX"
+    # Demo simulates a modern autonomous daemon, so the Controls override cards
+    # stay live under the autonomous-aware card gate (controls_page
+    # _on_capabilities_updated). Guards against a regression that would silently
+    # disable demo control.
+    assert caps.control.autonomous_control is True
+    assert caps.daemon_version == "2.0.0-demo"
 
 
 def test_demo_sensors_returns_readings():
