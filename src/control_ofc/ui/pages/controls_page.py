@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError
-from control_ofc.api.models import ConnectionState
+from control_ofc.api.models import ConnectionState, DaemonStatus
 from control_ofc.services.app_state import AppState
 from control_ofc.services.profile_service import (
     CONTROL_ROLE_GPU,
@@ -111,6 +111,13 @@ class ControlsPage(QWidget):
         # live slider drag into a single re-pin.
         self._overrides: dict[str, int] = {}
         self._override_pending: dict[str, int] = {}
+        # DEC-169: daemon-held overrides this session does NOT own (control_id ->
+        # pwm), discovered by reconciling `/status.overrides[]`. Distinct from
+        # `_overrides`: no fencing token, so they are display-only (read-only
+        # "External" chip) — the renew timer never touches them, and clicking
+        # Manual takes a fresh override (explicit ownership). Kept separate so the
+        # two authorities (renew timer vs poll reconcile) never collide.
+        self._external_overrides: dict[str, int] = {}
         self._override_renew_timer = QTimer(self)
         self._override_renew_timer.setObjectName("Controls_Timer_overrideRenew")
         self._override_renew_timer.timeout.connect(self._renew_overrides)
@@ -285,6 +292,10 @@ class ControlsPage(QWidget):
             self._state.fans_updated.connect(self._on_fan_rpm_updated)
             self._state.capabilities_updated.connect(self._on_capabilities_updated)
             self._state.connection_changed.connect(self._on_connection_changed)
+            # DEC-169: reconcile daemon-held overrides from the 1 Hz poll so a
+            # foreign override (another client, or this GUI restarted within the
+            # TTL) shows on the card instead of a stale "Curve".
+            self._state.status_updated.connect(self._on_status_reconcile)
 
     # ─── Profile bar ─────────────────────────────────────────────────
 
@@ -535,6 +546,11 @@ class ControlsPage(QWidget):
             if connected
             else "Daemon offline — cannot activate a profile"
         )
+        if not connected:
+            # DEC-169: polling stops while offline, so nothing would clear a
+            # stale "External" chip — revert them now. GUI-owned overrides
+            # self-correct via the renew timer's rejected renew.
+            self._clear_all_external_overrides()
 
     # ─── Refresh all ─────────────────────────────────────────────────
 
@@ -552,6 +568,9 @@ class ControlsPage(QWidget):
         # and rebuilt un-toggled, so a still-held daemon override would leave
         # card state diverged from the daemon (DEC-163).
         self._release_all_overrides()
+        # Drop foreign-override tracking too — the cards are being rebuilt fresh;
+        # the next poll re-adopts any still-active foreign override (DEC-169).
+        self._external_overrides.clear()
         # Clear existing
         self._controls_flow.clear_cards()
         self._control_cards.clear()
@@ -1441,6 +1460,51 @@ class ControlsPage(QWidget):
         card = self._control_cards.get(control_id)
         if card is not None:
             card.clear_manual()
+
+    # ── Foreign-override reconcile from /status (DEC-169) ────────────────
+    def _on_status_reconcile(self, status: DaemonStatus) -> None:
+        """Reconcile daemon-held overrides from the 1 Hz poll.
+
+        Display-only: an override this session did not create carries no fencing
+        token on `/status`, so it can only be *shown* (read-only "External"
+        chip), never renewed or released. GUI-owned overrides (`self._overrides`)
+        belong to the renew timer and are skipped here, so the two authorities
+        never collide. Idempotent — acts only on the per-poll delta.
+        """
+        if self._client is None:
+            return
+        foreign = {
+            entry.control_id: entry.pwm_percent
+            for entry in status.overrides
+            if entry.control_id not in self._overrides
+        }
+        # Adopt new / changed foreign overrides onto their cards.
+        for control_id, pwm in foreign.items():
+            card = self._control_cards.get(control_id)
+            if card is None:
+                # No card for this control (a different profile is loaded). It
+                # will be picked up on the next poll after a grid rebuild.
+                continue
+            if self._external_overrides.get(control_id) != pwm:
+                card.set_external_override(pwm)
+                self._external_overrides[control_id] = pwm
+        # Drop tracked ones the daemon no longer reports (expired / released /
+        # taken over by the user — which moves them into `self._overrides`).
+        for control_id in list(self._external_overrides):
+            if control_id not in foreign:
+                self._clear_external_override(control_id)
+
+    def _clear_external_override(self, control_id: str) -> None:
+        """Stop tracking a foreign override and revert its card (DEC-169)."""
+        self._external_overrides.pop(control_id, None)
+        card = self._control_cards.get(control_id)
+        if card is not None:
+            card.clear_external_override()
+
+    def _clear_all_external_overrides(self) -> None:
+        """Revert every foreign-override card (e.g. on daemon disconnect)."""
+        for control_id in list(self._external_overrides):
+            self._clear_external_override(control_id)
 
     def _sensor_combo_label(self, s) -> str:
         """Curve-editor sensor-combo label, marking coolant + CPU sensors as

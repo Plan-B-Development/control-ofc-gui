@@ -67,6 +67,11 @@ class ControlCard(QFrame):
         self.setProperty("class", "Card")
         self._control = control
         self._last_output_pct: float | None = None
+        # DEC-169: a daemon-held override this GUI session does NOT own (no
+        # fencing token — only displayable, never renewable/releasable). Set by
+        # the Controls page's /status reconcile; shows a read-only "External"
+        # chip. `None` when no foreign override is pinning this control.
+        self._external_pct: int | None = None
         # Fixed width keeps the grid columns aligned; height is a floor so the
         # card grows to fit scaled text rather than clipping rows (DEC-128).
         self._card_size_tier = card_size
@@ -312,6 +317,11 @@ class ControlCard(QFrame):
             )
         else:
             self._output_label.setText(f"Now: {output_pct:.0f}%{gpu_suffix}")
+        if self._external_pct is not None:
+            # DEC-169: a foreign daemon override owns the chip — keep the
+            # read-only "External" badge instead of repainting "Applied" each
+            # tick. The output label above still tracks the live value.
+            return
         self._apply_chip("Applied", "SuccessChip")
 
     def set_rpm(self, rpm_text: str) -> None:
@@ -326,6 +336,10 @@ class ControlCard(QFrame):
 
     def _on_manual_toggled(self, checked: bool) -> None:
         """Reveal/hide the inline slider and signal the transient manual state."""
+        if checked:
+            # DEC-169: taking manual ownership supersedes any foreign-override
+            # display — the user's own (fenced, renewable) override now wins.
+            self._external_pct = None
         if checked and self._last_output_pct is not None:
             # Start manual at the current speed so the fan doesn't jump.
             self._manual_slider.blockSignals(True)
@@ -359,6 +373,32 @@ class ControlCard(QFrame):
         self._manual_slider.setVisible(False)
         self._manual_pct_label.setVisible(False)
         self._output_label.setVisible(True)
+        self._apply_chip("", "")
+
+    def set_external_override(self, pct: int) -> None:
+        """Show a read-only "External" chip for a daemon-held override this GUI
+        session does not own (DEC-169).
+
+        Such an override carries no fencing token on the `/status` surface, so it
+        can only be *displayed* — never renewed or released. The Manual button is
+        left unchecked: clicking it is an explicit *take-over* (a fresh
+        ``override_take`` that supersedes via monotonic fencing). Manual state, if
+        the user already owns one, wins over this display.
+        """
+        self._external_pct = pct
+        if self._manual_btn.isChecked():
+            return
+        self._apply_chip(f"External {pct}%", "InfoChip")
+
+    def clear_external_override(self) -> None:
+        """Drop the read-only external-override chip (DEC-169) once the daemon no
+        longer reports it. Leaves a user-owned Manual state untouched; otherwise
+        clears the chip and lets the next ``set_output`` repaint "Applied"."""
+        if self._external_pct is None:
+            return
+        self._external_pct = None
+        if self._manual_btn.isChecked():
+            return
         self._apply_chip("", "")
 
     def update_control(self, control: LogicalControl, curves: list[CurveConfig]) -> None:

@@ -896,6 +896,16 @@ class DiagnosticsPage(QWidget):
         self._subsystems_label.setWordWrap(True)
         daemon_layout.addWidget(self._subsystems_label)
 
+        # DEC-169: read-only view of daemon-held live overrides + fan-identify
+        # holds (the `/status` poll surface). Lets the user/support see what the
+        # daemon is actively pinning, including state no GUI session owns.
+        self._overrides_label = _transparent_label(
+            "Overrides: \u2014", "Diagnostics_Label_overrides"
+        )
+        self._overrides_label.setWordWrap(True)
+        self._overrides_label.setProperty("class", "CardMeta")
+        daemon_layout.addWidget(self._overrides_label)
+
         # Age explanation note
         age_note = _transparent_label(
             "Age = time since daemon last polled this hardware subsystem",
@@ -1931,6 +1941,18 @@ class DiagnosticsPage(QWidget):
         self._subsystems_label.setText(
             "Subsystems:\n" + "\n".join(parts) if parts else "Subsystems: \u2014"
         )
+
+        # DEC-169: surface daemon-held overrides + identify holds read-only.
+        ov_lines = [
+            f"{o.control_id} {o.pwm_percent}% ({o.expires_in_secs}s)" for o in status.overrides
+        ]
+        id_lines = [f"{i.fan_id} ({i.expires_in_secs}s)" for i in status.fan_identify]
+        active = []
+        if ov_lines:
+            active.append("Overrides: " + ", ".join(ov_lines))
+        if id_lines:
+            active.append("Identify: " + ", ".join(id_lines))
+        self._overrides_label.setText("\n".join(active) if active else "Overrides: \u2014")
 
     def _on_sensors(self, sensors: list) -> None:
         """Cache the latest sensor payload and trigger a full re-render
