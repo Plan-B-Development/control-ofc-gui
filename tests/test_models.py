@@ -120,6 +120,59 @@ def test_parse_status_preserves_daemon_health_vocabulary():
     assert crit.overall_status == "crit"
 
 
+def test_parse_status_overrides_and_fan_identify():
+    """DEC-163/166/169: /status carries daemon-held overrides + identify holds.
+    A non-empty payload must round-trip into the model so the Controls page can
+    reconcile foreign overrides and Diagnostics can surface both."""
+    data = {
+        "overall_status": "ok",
+        "subsystems": [],
+        "counters": {},
+        "overrides": [
+            {"control_id": "pump", "pwm_percent": 40, "expires_in_secs": 12},
+            {"control_id": "cpu", "pwm_percent": 75, "expires_in_secs": 3},
+        ],
+        "fan_identify": [
+            {"fan_id": "openfan:ch00", "expires_in_secs": 8},
+        ],
+    }
+    status = parse_status(data)
+    assert [(o.control_id, o.pwm_percent, o.expires_in_secs) for o in status.overrides] == [
+        ("pump", 40, 12),
+        ("cpu", 75, 3),
+    ]
+    assert len(status.fan_identify) == 1
+    assert status.fan_identify[0].fan_id == "openfan:ch00"
+    assert status.fan_identify[0].expires_in_secs == 8
+
+
+def test_parse_status_missing_overrides_defaults_to_empty():
+    """The daemon omits both Vecs from the wire when empty (skip_serializing_if).
+    The model must default to [] so the common-case poll never trips reconcile."""
+    status = parse_status({"overall_status": "ok", "subsystems": [], "counters": {}})
+    assert status.overrides == []
+    assert status.fan_identify == []
+
+
+def test_parse_status_overrides_ignore_unknown_fields():
+    """Forward-compatible: an override/identify entry with extra daemon fields
+    parses (via _filter_fields) rather than crashing the polling loop."""
+    data = {
+        "overall_status": "ok",
+        "subsystems": [],
+        "counters": {},
+        "overrides": [
+            {"control_id": "pump", "pwm_percent": 40, "expires_in_secs": 12, "future": "ignored"},
+        ],
+        "fan_identify": [
+            {"fan_id": "gpu:fan", "expires_in_secs": 5, "added_later": True},
+        ],
+    }
+    status = parse_status(data)
+    assert status.overrides[0].control_id == "pump"
+    assert status.fan_identify[0].fan_id == "gpu:fan"
+
+
 def test_parse_sensors():
     data = {
         "sensors": [

@@ -11,9 +11,11 @@ from control_ofc.api.models import (
     ConnectionState,
     DaemonStatus,
     FanReading,
+    IdentifyStatusEntry,
     LeaseState,
     OpenfanCapability,
     OperationMode,
+    OverrideStatusEntry,
     SensorReading,
     SubsystemStatus,
 )
@@ -210,6 +212,24 @@ class TestFormatDaemonStatus:
         svc = DiagnosticsService(state=state)
         text = svc.format_daemon_status()
         assert "not available" in text
+
+    def test_includes_overrides_and_identify(self):
+        """DEC-169: the support bundle records daemon-held overrides + identify
+        holds so what the daemon was actively pinning is captured."""
+        state = AppState()
+        state.set_connection(ConnectionState.CONNECTED)
+        state.set_status(
+            DaemonStatus(
+                overall_status="healthy",
+                overrides=[
+                    OverrideStatusEntry(control_id="pump", pwm_percent=40, expires_in_secs=12)
+                ],
+                fan_identify=[IdentifyStatusEntry(fan_id="openfan:ch00", expires_in_secs=8)],
+            )
+        )
+        text = DiagnosticsService(state=state).format_daemon_status()
+        assert "Override: pump 40% (expires 12s)" in text
+        assert "Identify: openfan:ch00 (expires 8s)" in text
 
 
 # ---------------------------------------------------------------------------

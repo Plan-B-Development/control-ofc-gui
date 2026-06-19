@@ -17,8 +17,10 @@ from control_ofc.api.models import (
     ConnectionState,
     DaemonStatus,
     HwmonCapability,
+    IdentifyStatusEntry,
     OpenfanCapability,
     OperationMode,
+    OverrideStatusEntry,
     SubsystemStatus,
 )
 from control_ofc.services.app_state import AppState
@@ -73,6 +75,12 @@ class TestOverviewTransparentLabels:
         label = page.findChild(QLabel, "Diagnostics_Label_subsystems")
         assert "transparent" in label.styleSheet().lower()
 
+    def test_overrides_label_transparent(self, qtbot):
+        page, _ = _make_page(qtbot)
+        label = page.findChild(QLabel, "Diagnostics_Label_overrides")
+        assert label is not None
+        assert "transparent" in label.styleSheet().lower()
+
     def test_age_note_label_transparent(self, qtbot):
         page, _ = _make_page(qtbot)
         label = page.findChild(QLabel, "Diagnostics_Label_ageNote")
@@ -97,6 +105,31 @@ class TestOverviewTransparentLabels:
         page, _ = _make_page(qtbot)
         label = page.findChild(QLabel, "Diagnostics_Label_features")
         assert "transparent" in label.styleSheet().lower()
+
+
+class TestOverridesLabelPopulation:
+    """DEC-169: the Overview overrides label reflects daemon-held overrides +
+    fan-identify holds from `/status` (read-only)."""
+
+    def test_active_overrides_and_identify_shown(self, qtbot):
+        page, state = _make_page(qtbot)
+        state.set_status(
+            DaemonStatus(
+                overall_status="ok",
+                overrides=[
+                    OverrideStatusEntry(control_id="pump", pwm_percent=40, expires_in_secs=12)
+                ],
+                fan_identify=[IdentifyStatusEntry(fan_id="openfan:ch00", expires_in_secs=8)],
+            )
+        )
+        text = page.findChild(QLabel, "Diagnostics_Label_overrides").text()
+        assert "pump 40% (12s)" in text
+        assert "openfan:ch00 (8s)" in text
+
+    def test_no_overrides_shows_dash(self, qtbot):
+        page, state = _make_page(qtbot)
+        state.set_status(DaemonStatus(overall_status="ok"))
+        assert page.findChild(QLabel, "Diagnostics_Label_overrides").text() == "Overrides: —"
 
 
 class TestNoInlineFontSizes:

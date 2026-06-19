@@ -182,6 +182,20 @@ of `{control_id, pwm_percent, expires_in_secs}` and `fan_identify[]` of
 `{fan_id, expires_in_secs}`. Both arrays are absent on daemons < 1.21.0 and when
 nothing is held; the GUI defaults them to empty.
 
+The GUI **consumes** these read-only (DEC-169). Crucially, the entries carry **no
+`override_token`**, and renew/release both require it — so an override this GUI
+session did not create (another client, or this GUI restarted within the TTL) can
+only be *displayed*, never renewed or released. The Controls page reconciles
+`overrides[]` each poll: a "foreign" `control_id` (one not in the GUI's own
+token-bearing set) paints a read-only **"External NN%"** chip on its card and
+reverts when the daemon stops reporting it; clicking **Manual** on such a card is
+an explicit *take-over* (a fresh `override_take`, which supersedes via monotonic
+fencing and yields a token the GUI can then manage). The GUI's own overrides are
+left to the renew timer — reconcile never touches them, so the two authorities
+never collide. Diagnostics surfaces both arrays read-only (and in the support
+bundle). `fan_identify[]` is Diagnostics-only — the fan wizard owns its own
+stop/restore + deadman lifecycle and is not driven from poll state.
+
 ### GET /sensors
 Use as the primary sensor snapshot source.
 Expected fields:
@@ -701,7 +715,9 @@ Examples:
 Examples:
 - show the "daemon upgrade required" banner when `control.autonomous_control` is absent (DEC-165)
 - show the poll-driven thermal-protection banner from `thermal_state` (DEC-165)
-- reflect active overrides / fan-identify holds from `/status.overrides[]` / `fan_identify[]`
+- reflect daemon-held overrides from `/status.overrides[]` on Controls cards — read-only
+  "External" chip for foreign overrides (no token → display-only + explicit take-over), plus
+  a read-only Diagnostics view of `overrides[]` / `fan_identify[]` (DEC-169)
 
 ### /fans and /sensors are display inputs
 These feed the dashboard, charts, and freshness indicators. The daemon (not the GUI) consumes them for control.

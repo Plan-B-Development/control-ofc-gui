@@ -195,6 +195,14 @@ class DiagnosticsService(QObject):
                 age = f" (age {s.age_ms}ms)" if s.age_ms is not None else ""
                 reason = f" — {s.reason}" if s.reason else ""
                 lines.append(f"  {s.name}: {s.status}{age}{reason}")
+            # DEC-169: daemon-held live overrides + fan-identify holds, so a
+            # support bundle records what the daemon was actively pinning.
+            for o in status.overrides:
+                lines.append(
+                    f"Override: {o.control_id} {o.pwm_percent}% (expires {o.expires_in_secs}s)"
+                )
+            for i in status.fan_identify:
+                lines.append(f"Identify: {i.fan_id} (expires {i.expires_in_secs}s)")
             c = status.counters
             if c.last_error_summary:
                 lines.append(f"Last error: {c.last_error_summary}")

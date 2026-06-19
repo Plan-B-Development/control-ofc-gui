@@ -208,6 +208,28 @@ class StatusCounters:
 
 
 @dataclass
+class OverrideStatusEntry:
+    """One active manual override on the daemon's `/status` poll surface
+    (DEC-163). Carries no `override_token` — this is an *observation* surface,
+    not a control one: an override the GUI did not create cannot be renewed or
+    released (no token), only displayed or superseded by a fresh take (DEC-169).
+    """
+
+    control_id: str = ""
+    pwm_percent: int = 0
+    expires_in_secs: int = 0
+
+
+@dataclass
+class IdentifyStatusEntry:
+    """One active fan-identify hold on the daemon's `/status` poll surface
+    (DEC-166), each with its remaining deadman TTL."""
+
+    fan_id: str = ""
+    expires_in_secs: int = 0
+
+
+@dataclass
 class DaemonStatus:
     api_version: int = 1
     daemon_version: str = ""
@@ -222,6 +244,12 @@ class DaemonStatus:
     # control loop stands down. Defaults to "normal" for older daemons that
     # don't send the field.
     thermal_state: str = "normal"
+    # Daemon-held live overrides / fan-identify holds (DEC-163/166), each with
+    # remaining TTL. Omitted from the wire when empty (daemon skips empty Vecs),
+    # so these default to []. Poll-authoritative observation surface consumed by
+    # the Controls page (display-only reconcile) and Diagnostics (DEC-169).
+    overrides: list[OverrideStatusEntry] = field(default_factory=list)
+    fan_identify: list[IdentifyStatusEntry] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -879,6 +907,17 @@ def parse_status(data: dict) -> DaemonStatus:
         gui_last_seen_seconds_ago=data.get("gui_last_seen_seconds_ago"),
         # DEC-132: absent on pre-1.13 daemons — treat as "normal".
         thermal_state=data.get("thermal_state", "normal"),
+        # DEC-163/166/169: omitted from the wire when empty — default to [].
+        overrides=[
+            OverrideStatusEntry(**_filter_fields(OverrideStatusEntry, e))
+            for e in data.get("overrides", [])
+            if isinstance(e, dict)
+        ],
+        fan_identify=[
+            IdentifyStatusEntry(**_filter_fields(IdentifyStatusEntry, e))
+            for e in data.get("fan_identify", [])
+            if isinstance(e, dict)
+        ],
     )
 
 

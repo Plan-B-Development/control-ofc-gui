@@ -298,6 +298,66 @@ class TestControlCardManual:
         assert not card._manual_btn.isEnabled()
 
 
+class TestControlCardExternalOverride:
+    """DEC-169: read-only display of a daemon-held override this GUI session does
+    not own (no fencing token). Driven by the Controls page's /status reconcile."""
+
+    def test_set_external_shows_readonly_chip(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c.set_external_override(45)
+        assert c._status_chip.text() == "External 45%"
+        # The Manual button stays UNchecked: clicking it is a deliberate take-over.
+        assert not c._manual_btn.isChecked()
+
+    def test_external_chip_survives_status_update(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c.set_external_override(45)
+
+        # A 1 Hz loop tick must not repaint "Applied" over the External chip,
+        # but the live output value must still update.
+        c.set_output(45.0, sensor_name="CPU", sensor_value=40.0)
+
+        assert c._status_chip.text() == "External 45%"
+        assert "45" in c._output_label.text()
+
+    def test_clear_external_then_status_repaints_applied(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c.set_external_override(45)
+        c.clear_external_override()
+
+        assert c._external_pct is None
+        # Next loop tick repaints the normal Applied chip.
+        c.set_output(50.0)
+        assert "Applied" in c._status_chip.text()
+
+    def test_clear_external_noop_when_none(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c.set_output(50.0)
+        assert "Applied" in c._status_chip.text()
+        c.clear_external_override()  # nothing external → leave the chip alone
+        assert "Applied" in c._status_chip.text()
+
+    def test_manual_takeover_supersedes_external(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c.set_external_override(45)
+
+        # The user takes ownership: Manual wins and the external display is dropped.
+        c._manual_btn.setChecked(True)
+
+        assert c._status_chip.text() == "Manual"
+        assert c._external_pct is None
+
+    def test_set_external_while_manual_leaves_manual_chip(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        c._manual_btn.setChecked(True)
+
+        # Reconcile may report this control (the GUI's own override shows in
+        # /status too); a stray external set must not clobber the Manual chip.
+        c.set_external_override(45)
+
+        assert c._status_chip.text() == "Manual"
+
+
 class TestControlCardGpuOutput:
     """DEC-119: card surfaces a divergent GPU member output."""
 
