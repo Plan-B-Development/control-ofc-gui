@@ -576,6 +576,14 @@ class Profile:
         # via its ``amd_gpu:`` member; only the dead hwmon shadow is dropped.
         _drop_dead_hwmon_members(controls)
 
+        # DEC-167: a pump must never be configured to stop. The GUI exposes no
+        # stop_pct editor, but a hand-edited / imported / legacy profile (any
+        # schema version) can carry a non-zero stop on a pump/CPU control — which
+        # the engine would clamp and the daemon would reject (PUMP_STOP_FORBIDDEN).
+        # Normalise to 0 on every load so the profile is consistent and accepted.
+        for control in controls:
+            sanitize_pump_stop(control)
+
         return Profile(
             id=data.get("id", str(uuid.uuid4())[:8]),
             name=data.get("name", ""),
@@ -751,14 +759,36 @@ def _migrate_control_to_v4(control: LogicalControl) -> LogicalControl:
     return control
 
 
+def sanitize_pump_stop(control: LogicalControl) -> bool:
+    """Force ``stop_pct`` to 0 on a control with any pump/CPU member (DEC-167).
+
+    A pump must never be configured to stop — coolant-flow loss leads to rapid
+    thermal runaway. The GUI exposes no ``stop_pct`` editor, so a non-zero value
+    only arrives via a hand-edited / imported / legacy profile. Mirrors the
+    daemon's ``PUMP_STOP_FORBIDDEN`` validate rule and its eval-time stop-snap
+    exemption, so a loaded profile is never sent to the daemon only to be
+    rejected, nor silently carried with a dangerous field. Returns True when the
+    value was changed.
+    """
+    if control.stop_pct != 0.0 and any(
+        infer_member_role(m) == CONTROL_ROLE_CPU_PUMP for m in control.members
+    ):
+        control.stop_pct = 0.0
+        return True
+    return False
+
+
 def apply_role_floor(control: LogicalControl) -> bool:
     """Raise ``control.minimum_pct`` to its role-derived floor when too low.
 
     Call this from the UI after the user edits a control's member list so the
     control's minimum tracks the new role. Never lowers an explicit value —
-    user-set floors above the role default are preserved. Returns True when
-    the value was changed.
+    user-set floors above the role default are preserved. Also sanitises a
+    pump/CPU control's ``stop_pct`` to 0 (DEC-167) so adding a pump member to a
+    control that carried a stop never leaves a stop configured. Returns True
+    when ``minimum_pct`` was raised.
     """
+    sanitize_pump_stop(control)
     role_floor = control_minimum_pct(control.members)
     if role_floor > control.minimum_pct:
         control.minimum_pct = role_floor

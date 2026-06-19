@@ -814,6 +814,118 @@ def test_v3_to_v4_migration_does_not_lower_explicit_user_value():
     assert p.controls[0].minimum_pct == 50.0
 
 
+# ─────────────────── DEC-167 pump stop_pct sanitization ───────────────────
+
+
+def test_sanitize_pump_stop_zeros_pump_control():
+    from control_ofc.services.profile_service import sanitize_pump_stop
+
+    ctrl = LogicalControl(
+        name="Pump",
+        members=[
+            ControlMember(source="hwmon", member_id="hwmon:nct6775:pwm1", member_label="AIO_PUMP")
+        ],
+        stop_pct=35.0,
+    )
+    assert sanitize_pump_stop(ctrl) is True
+    assert ctrl.stop_pct == 0.0
+
+
+def test_sanitize_pump_stop_noop_when_already_zero():
+    from control_ofc.services.profile_service import sanitize_pump_stop
+
+    ctrl = LogicalControl(
+        name="Pump",
+        members=[
+            ControlMember(source="hwmon", member_id="hwmon:nct6775:pwm1", member_label="PUMP")
+        ],
+        stop_pct=0.0,
+    )
+    assert sanitize_pump_stop(ctrl) is False
+    assert ctrl.stop_pct == 0.0
+
+
+def test_sanitize_pump_stop_preserves_nonpump_stop():
+    from control_ofc.services.profile_service import sanitize_pump_stop
+
+    # A chassis/openfan control keeps its legitimate stop-to-0 feature.
+    ctrl = LogicalControl(
+        name="Top fans",
+        members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        stop_pct=15.0,
+    )
+    assert sanitize_pump_stop(ctrl) is False
+    assert ctrl.stop_pct == 15.0
+
+
+def test_apply_role_floor_sanitizes_pump_stop_when_pump_added():
+    from control_ofc.services.profile_service import apply_role_floor
+
+    # A control that carried a stop and is now pump-role must lose the stop.
+    ctrl = LogicalControl(
+        name="Pump",
+        members=[
+            ControlMember(source="hwmon", member_id="hwmon:nct6775:pwm1", member_label="AIO_PUMP")
+        ],
+        minimum_pct=30.0,
+        stop_pct=20.0,
+    )
+    apply_role_floor(ctrl)
+    assert ctrl.stop_pct == 0.0
+
+
+def test_from_dict_sanitizes_pump_stop_pct():
+    # DEC-167: a hand-edited current-schema profile with a pump stop must load
+    # with stop_pct normalised to 0 (the version-gated v4 migration would miss it).
+    data = {
+        "id": "handedit",
+        "name": "HandEdit",
+        "version": PROFILE_SCHEMA_VERSION,
+        "controls": [
+            {
+                "id": "c1",
+                "name": "Pump",
+                "mode": "curve",
+                "curve_id": "x",
+                "members": [
+                    {
+                        "source": "hwmon",
+                        "member_id": "hwmon:nct6775:pwm1",
+                        "member_label": "AIO_PUMP",
+                    }
+                ],
+                "minimum_pct": 30.0,
+                "stop_pct": 35.0,
+            }
+        ],
+        "curves": [],
+    }
+    p = Profile.from_dict(data)
+    assert p.controls[0].stop_pct == 0.0
+
+
+def test_from_dict_preserves_nonpump_stop_pct():
+    data = {
+        "id": "chassis",
+        "name": "Chassis",
+        "version": PROFILE_SCHEMA_VERSION,
+        "controls": [
+            {
+                "id": "c1",
+                "name": "Top fans",
+                "mode": "curve",
+                "curve_id": "x",
+                "members": [{"source": "openfan", "member_id": "openfan:ch00"}],
+                "minimum_pct": 20.0,
+                "stop_pct": 15.0,
+            }
+        ],
+        "curves": [],
+    }
+    p = Profile.from_dict(data)
+    assert p.controls[0].stop_pct == 15.0
+
+
 def test_v3_to_v4_migration_chassis_only_raises_to_20():
     v3 = {
         "id": "legacy",
