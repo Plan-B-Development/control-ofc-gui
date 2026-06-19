@@ -629,12 +629,12 @@ class TestDiagnosticsPageVerifyWorker:
     def test_on_verify_error_generic(self, qtbot):
         """Generic DaemonError surfaces the message with the 'Verify error:' prefix."""
         page, _ = _make_page(qtbot)
-        page._on_verify_error("error", "lease expired")
+        page._on_verify_error("error", "hardware unavailable")
 
         assert page._verify_btn.isEnabled()
         label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
         assert not label.isHidden()
-        assert "lease expired" in label.text().lower()
+        assert "hardware unavailable" in label.text().lower()
 
     def test_cleanup_is_safe_when_no_worker_created(self, qtbot):
         """cleanup() must be a no-op when no verify has ever been run."""
@@ -886,10 +886,12 @@ class TestDualChipVerifyHintDec101:
 
 class TestVerifyAllBatchDec101:
     """The batch verify button must:
-    - refuse to run without a held lease (no spurious 403s on the daemon)
     - run with no double-click duplication
     - aggregate results in a summary
-    - abort cleanly if the lease is lost mid-run
+
+    Post-2.0.0 the GUI holds no hwmon lease — the daemon verifies under its
+    own internal lease (DEC-165/DEC-170) — so there is no client-lease
+    precondition and no lease-lost abort path.
     """
 
     def test_button_exists_and_has_object_name(self, qtbot):
@@ -903,9 +905,6 @@ class TestVerifyAllBatchDec101:
         state.hwmon_headers = [
             HwmonHeader(id="hwmon:it8696:0a40:pwm1", chip_name="it8696", is_writable=False),
         ]
-        # Fake an active lease.
-        state.lease.held = True
-        state.lease.lease_id = "test-lease"
         client = MagicMock()
         client._socket_path = "/tmp/fake.sock"
         page, _ = _make_page(qtbot, state=state, client=client)

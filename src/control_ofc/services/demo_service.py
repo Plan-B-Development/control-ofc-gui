@@ -34,7 +34,6 @@ from control_ofc.api.models import (
     OpenfanCapability,
     SafetyLimits,
     SensorReading,
-    StatusCounters,
     SubsystemStatus,
     ThermalSafetyInfo,
     UnsupportedCapability,
@@ -219,9 +218,7 @@ class DemoService:
             openfan=OpenfanCapability(
                 present=True, channels=8, rpm_support=True, write_support=True
             ),
-            hwmon=HwmonCapability(
-                present=True, pwm_header_count=2, lease_required=True, write_support=True
-            ),
+            hwmon=HwmonCapability(present=True, pwm_header_count=2, write_support=True),
             amd_gpu=AmdGpuCapability(
                 present=True,
                 model_name="Radeon RX 7900 XTX",
@@ -256,7 +253,6 @@ class DemoService:
             features=FeatureFlags(
                 openfan_write_supported=True,
                 hwmon_write_supported=True,
-                lease_required_for_hwmon_writes=True,
             ),
             limits=SafetyLimits(),
         )
@@ -271,7 +267,6 @@ class DemoService:
                 SubsystemStatus(name="hwmon_sensors", status="ok", age_ms=500, reason=""),
                 SubsystemStatus(name="hwmon_pwm", status="ok", age_ms=500, reason=""),
             ],
-            counters=StatusCounters(),
         )
 
     def sensors(self) -> list[SensorReading]:

@@ -39,7 +39,6 @@ def test_parse_capabilities_full():
             "hwmon": {
                 "present": True,
                 "pwm_header_count": 3,
-                "lease_required": True,
                 "write_support": True,
             },
             "aio_hwmon": {"present": False, "status": "unsupported"},
@@ -48,7 +47,6 @@ def test_parse_capabilities_full():
         "features": {
             "openfan_write_supported": True,
             "hwmon_write_supported": True,
-            "lease_required_for_hwmon_writes": True,
         },
         "limits": {
             "pwm_percent_min": 0,
@@ -63,6 +61,31 @@ def test_parse_capabilities_full():
     assert caps.limits.openfan_stop_timeout_s == 8
 
 
+def test_parse_capabilities_ignores_legacy_lease_fields():
+    # DEC-170: the lease capability surface was retired. A payload from an older
+    # daemon may still carry lease_required / lease_required_for_hwmon_writes; the
+    # GUI must parse it without error and simply drop the now-unknown fields.
+    data = {
+        "devices": {
+            "hwmon": {
+                "present": True,
+                "pwm_header_count": 2,
+                "lease_required": True,
+                "write_support": True,
+            },
+        },
+        "features": {
+            "hwmon_write_supported": True,
+            "lease_required_for_hwmon_writes": True,
+        },
+    }
+    caps = parse_capabilities(data)
+    assert caps.hwmon.present is True
+    assert caps.hwmon.write_support is True
+    assert not hasattr(caps.hwmon, "lease_required")
+    assert not hasattr(caps.features, "lease_required_for_hwmon_writes")
+
+
 def test_parse_status():
     data = {
         "api_version": 1,
@@ -70,7 +93,6 @@ def test_parse_status():
         "subsystems": [
             {"name": "openfan", "status": "ok", "age_ms": 500, "reason": ""},
         ],
-        "counters": {},
     }
     status = parse_status(data)
     assert status.overall_status == "healthy"
@@ -82,7 +104,6 @@ def test_parse_status_extracts_uptime():
     data = {
         "overall_status": "ok",
         "subsystems": [],
-        "counters": {},
         "uptime_seconds": 3600,
         "gui_last_seen_seconds_ago": 5,
     }
@@ -92,7 +113,7 @@ def test_parse_status_extracts_uptime():
 
 
 def test_parse_status_missing_uptime_is_none():
-    data = {"overall_status": "ok", "subsystems": [], "counters": {}}
+    data = {"overall_status": "ok", "subsystems": []}
     status = parse_status(data)
     assert status.uptime_seconds is None
     assert status.gui_last_seen_seconds_ago is None

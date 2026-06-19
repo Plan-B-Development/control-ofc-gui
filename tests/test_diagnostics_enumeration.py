@@ -72,7 +72,6 @@ def _caps_with_hwmon(pwm_header_count: int = 3, write_support: bool = True) -> C
             present=True,
             pwm_header_count=pwm_header_count,
             write_support=write_support,
-            lease_required=True,
         ),
         features=FeatureFlags(hwmon_write_supported=write_support),
     )
@@ -193,7 +192,7 @@ class TestControlMethodFanRows:
         )
         page, _ = _make_page(qtbot, state=state)
         page._on_fans([FanReading(id="hwmon:nct6798:fan1", source="hwmon", rpm=1000)])
-        assert page._fan_table.item(0, 2).text() == "hwmon PWM (lease)"
+        assert page._fan_table.item(0, 2).text() == "hwmon PWM"
 
     def test_hwmon_readonly_row(self, qtbot):
         state = _state(
@@ -279,10 +278,10 @@ class TestControlMethodTooltips:
         assert "BIOS/EC owns this fan" in tip
         assert "Test PWM Control" in tip
 
-    def test_openfan_tooltip_says_no_lease(self, qtbot):
+    def test_openfan_tooltip_describes_usb(self, qtbot):
         page, _ = _make_page(qtbot)
         page._on_fans([FanReading(id="openfan:ch00", source="openfan", rpm=1200)])
-        assert "No lease required" in page._fan_table.item(0, 2).toolTip()
+        assert "USB serial" in page._fan_table.item(0, 2).toolTip()
 
     def test_pmfw_tooltip_mentions_fan_curve(self, qtbot):
         state = _state(caps=_caps_with_gpu("pmfw_curve"))
@@ -290,11 +289,15 @@ class TestControlMethodTooltips:
         page._on_fans([FanReading(id="amd_gpu:0000:03:00.0", source="amd_gpu", rpm=0)])
         assert "fan_curve" in page._fan_table.item(0, 2).toolTip()
 
-    def test_hwmon_writable_tooltip_mentions_lease(self, qtbot):
+    def test_hwmon_writable_tooltip_mentions_daemon_owned(self, qtbot):
         state = _state(hwmon_headers=[HwmonHeader(id="hwmon:nct6798:fan1", is_writable=True)])
         page, _ = _make_page(qtbot, state=state)
         page._on_fans([FanReading(id="hwmon:nct6798:fan1", source="hwmon", rpm=1000)])
-        assert "lease" in page._fan_table.item(0, 2).toolTip().lower()
+        # Post-2.0.0 the daemon engine owns hwmon writes; the tooltip says so
+        # and no longer mentions a client lease (DEC-170).
+        tip = page._fan_table.item(0, 2).toolTip().lower()
+        assert "daemon engine owns" in tip
+        assert "lease" not in tip
 
     def test_unknown_tooltip_admits_no_classification(self, qtbot):
         page, _ = _make_page(qtbot)
@@ -306,7 +309,7 @@ class TestControlMethodTooltips:
         ``_pwm_only_control_method`` can emit must have a tooltip entry."""
         expected = {
             "OpenFan USB",
-            "hwmon PWM (lease)",
+            "hwmon PWM",
             "hwmon PWM — no RPM",
             "hwmon PWM (legacy)",
             "PMFW curve",
@@ -327,7 +330,7 @@ class TestFanRowTooltip:
         page._on_fans([FanReading(id="hwmon:nct6798:fan1", source="hwmon", rpm=1200)])
         # Column 0 gets the row tooltip (not the control-method tooltip)
         row_tip = page._fan_table.item(0, 0).toolTip()
-        assert "Control method: hwmon PWM (lease)" in row_tip
+        assert "Control method: hwmon PWM" in row_tip
 
 
 # ─── P1.3 — Overview hwmon runtime reality ────────────────────────────
@@ -378,7 +381,6 @@ class TestOverviewHwmonRuntimeReality:
         page, _ = _make_page(qtbot, state=state)
         assert page._hwmon_label.property("class") != "WarningChip"
         assert "write" in page._hwmon_label.text()
-        assert "lease required" in page._hwmon_label.text()
 
     def test_features_reconciled_when_zero_writable(self, qtbot):
         state = _state(caps=_caps_with_hwmon(pwm_header_count=3, write_support=True))

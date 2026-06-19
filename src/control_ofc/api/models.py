@@ -50,7 +50,6 @@ class OpenfanCapability:
 class HwmonCapability:
     present: bool = False
     pwm_header_count: int = 0
-    lease_required: bool = True
     write_support: bool = False
 
 
@@ -142,7 +141,6 @@ class AioHwmonCapability:
 class FeatureFlags:
     openfan_write_supported: bool = False
     hwmon_write_supported: bool = False
-    lease_required_for_hwmon_writes: bool = True
 
 
 @dataclass
@@ -203,11 +201,6 @@ class SubsystemStatus:
 
 
 @dataclass
-class StatusCounters:
-    last_error_summary: str | None = None
-
-
-@dataclass
 class OverrideStatusEntry:
     """One active manual override on the daemon's `/status` poll surface
     (DEC-163). Carries no `override_token` — this is an *observation* surface,
@@ -235,14 +228,13 @@ class DaemonStatus:
     daemon_version: str = ""
     overall_status: str = "unknown"
     subsystems: list[SubsystemStatus] = field(default_factory=list)
-    counters: StatusCounters = field(default_factory=StatusCounters)
     uptime_seconds: int | None = None
     gui_last_seen_seconds_ago: int | None = None
     # Daemon thermal safety override state (DEC-132): "normal" | "recovery"
     # | "emergency" | "no_sensor_fallback". While not "normal" the daemon is
-    # forcing OpenFan+hwmon PWM and force-taking the hwmon lease, so the
-    # control loop stands down. Defaults to "normal" for older daemons that
-    # don't send the field.
+    # forcing OpenFan + writable-hwmon PWM to protect the hardware — the engine
+    # is the sole writer since 2.0.0, so there is no GUI loop to stand down
+    # (DEC-165). Defaults to "normal" for older daemons that don't send the field.
     thermal_state: str = "normal"
     # Daemon-held live overrides / fan-identify holds (DEC-163/166), each with
     # remaining TTL. Omitted from the wire when empty (daemon skips empty Vecs),
@@ -902,7 +894,6 @@ def parse_status(data: dict) -> DaemonStatus:
             SubsystemStatus(**_filter_fields(SubsystemStatus, s))
             for s in data.get("subsystems", [])
         ],
-        counters=StatusCounters(**_filter_fields(StatusCounters, data.get("counters", {}))),
         uptime_seconds=data.get("uptime_seconds"),
         gui_last_seen_seconds_ago=data.get("gui_last_seen_seconds_ago"),
         # DEC-132: absent on pre-1.13 daemons — treat as "normal".

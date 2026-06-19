@@ -151,10 +151,8 @@ remain on the daemon surface but are unused (or only curl-exercised) by the GUI:
 Use for:
 - top-level health
 - subsystem status/freshness
-- queue depth
-- dropped counters
-- last error summary
 - daemon thermal override state
+- active manual overrides / fan-identify holds (DEC-163/166)
 
 This endpoint feeds:
 - header status strip
@@ -451,8 +449,11 @@ Response (daemon `HwmonVerifyResponse` ↔ GUI `HwmonVerifyResult`):
 
 Errors: `404 validation_error` (unknown header — the wire `code` is
 `validation_error`, not `not_found`, which is reserved for unknown routes),
-`503 hardware_unavailable` (no hwmon headers or controller absent). The pre-2.0
-`403 lease_required` no longer applies — the daemon owns the verify lease.
+`503 hardware_unavailable` (no hwmon headers or controller absent; also if the
+daemon's own internal verify lease lapses mid-write — DEC-170). The pre-2.0
+`403 lease_required` no longer applies — the daemon owns the verify lease, and an
+internal-lease lapse surfaces as retryable `503 hardware_unavailable`, never a
+client lease error.
 
 ### Profile storage (CRUD — DEC-160, daemon ≥ 1.19.0)
 The daemon is the profile **store of record** (`/var/lib/control-ofc/profiles/`). The GUI uploads and
@@ -601,10 +602,10 @@ Error codes and HTTP statuses:
   - hwmon PWM writes when the targeted header's discovered `is_writable=false` (DEC-102), e.g. an unforeseen chip exposing a read-only `pwmN` file.
 
   Distinct from `hardware_unavailable` (transient / retryable) and `validation_error` (malformed request). Permanent for this device — clients must not retry.
-- 403 `lease_required` (source: `"validation"`, retryable: false) — **retired at 2.0.0** with the bare hwmon PWM-write and the GUI-held lease (DEC-165); the daemon now verifies under its own internal lease. Listed for historical context.
+- 403 `lease_required` (source: `"validation"`, retryable: false) — **retired** with the bare hwmon PWM-write and the GUI-held lease (DEC-165); **fully removed at DEC-170**, when the verify path's internal-lease lapse was re-mapped to retryable `503 hardware_unavailable`. No route emits this code any more. Listed for historical context.
 - 404 `not_found` (source: `"validation"`, retryable: false) — **unknown route/URI only**. An unknown *resource* on a known route (hwmon header, GPU id) returns 404 with code `validation_error`, not `not_found`.
 - 404 `override_expired` (source: `"validation"`, retryable: false) — renew/release of a manual override (DEC-163) that already lapsed on the daemon's deadman, or was never taken; re-take rather than renew.
-- 409 `lease_already_held` (source: `"validation"`, retryable: false) — **retired at 2.0.0** with the GUI-held lease (DEC-165); the GUI no longer surfaces it. Listed for historical context.
+- 409 `lease_already_held` (source: `"validation"`, retryable: false) — **retired** with the GUI-held lease (DEC-165); **fully removed at DEC-170** (the verify mapper no longer emits it). No route emits this code any more. Listed for historical context.
 - 409 `thermal_abort` (source: `"hardware"`, retryable: true) — calibration aborted due to high temperature
 - 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
 - 500 `internal_error` (source: `"internal"`, retryable: true)

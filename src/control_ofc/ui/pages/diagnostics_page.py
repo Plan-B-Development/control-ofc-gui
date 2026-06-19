@@ -1,4 +1,4 @@
-"""Diagnostics page — daemon health, sensor/fan status, lease, logs, support export."""
+"""Diagnostics page — daemon health, sensor/fan status, logs, support export."""
 
 from __future__ import annotations
 
@@ -113,7 +113,7 @@ _SEVERITY_BADGE_MIN_WIDTH = 104
 # with the reason in the tooltip rather than left to fail mysteriously.
 _GPU_RESTORE_TOOLTIP_READY = (
     "Hand the GPU fan back to the firmware's automatic curve (PMFW default) — "
-    "undoes a static speed set this session. No lease required."
+    "undoes a static speed set this session."
 )
 _GPU_RESTORE_TOOLTIP_GATED = (
     "The active profile is driving the GPU fan — remove it from its fan role "
@@ -127,10 +127,8 @@ log = logging.getLogger(__name__)
 # ``_pwm_only_control_method`` — every string those helpers can return must
 # have an entry here so a tooltip is guaranteed.
 _CONTROL_METHOD_TOOLTIPS: dict[str, str] = {
-    "OpenFan USB": "OpenFan Controller connected via USB serial. No lease required.",
-    "hwmon PWM (lease)": (
-        "Motherboard fan controlled via hwmon PWM. Requires a hwmon lease before writes."
-    ),
+    "OpenFan USB": "OpenFan Controller connected via USB serial.",
+    "hwmon PWM": "Motherboard fan controlled via hwmon PWM (the daemon engine owns all writes).",
     "hwmon PWM — no RPM": (
         "Motherboard PWM output without a tachometer input. Writable but no RPM feedback."
     ),
@@ -290,7 +288,7 @@ def _fan_control_method(fan: FanReading, state: AppState | None) -> str:
         header = next((h for h in state.hwmon_headers if h.id == fan.id), None)
         if header is None:
             return "unknown"
-        return "read-only" if not header.is_writable else "hwmon PWM (lease)"
+        return "read-only" if not header.is_writable else "hwmon PWM"
     return "unknown"
 
 
@@ -321,8 +319,6 @@ def _hwmon_overview_text(
     parts: list[str] = []
     if hwmon_cap.write_support:
         parts.append("write")
-    if hwmon_cap.lease_required:
-        parts.append("lease required")
     suffix = (", " + ", ".join(parts) + ")") if parts else ")"
     return f"hwmon: Present ({count} headers{suffix}", False
 
@@ -702,7 +698,7 @@ def _transparent_label(text: str, object_name: str, *, bold: bool = False) -> QL
 
 
 class DiagnosticsPage(QWidget):
-    """System health, device discovery, lease state, logs, and support bundle export."""
+    """System health, device discovery, logs, and support bundle export."""
 
     # Main-thread signal that fires a queued connection to the verify worker
     # (running on its own QThread) so the ~6s hardware probe never blocks the UI.
@@ -3221,8 +3217,8 @@ class DiagnosticsPage(QWidget):
     def _finish_verify_all(self) -> None:
         """Reset batch-verify state and re-enable the controls after a run.
 
-        Shared by the normal end-of-batch path and the lease-lost abort path
-        so the teardown can never drift between them.
+        Called once the batch-verify queue drains, keeping the teardown in
+        one place.
         """
         self._verify_all_total = 0
         self._verify_btn.setEnabled(self._verify_combo.count() > 0)
@@ -3232,9 +3228,8 @@ class DiagnosticsPage(QWidget):
     def _step_pwm_verify_all(self) -> None:
         """Advance the batch-verify state machine by one header.
 
-        If the queue is empty, finalises and shows a summary. If the
-        lease has been lost mid-run (no lease_id available), aborts the
-        rest of the queue with a clear message.
+        If the queue is empty, finalises and shows a summary; otherwise
+        advances to the next header under test.
         """
         # End-of-batch: render summary, reset state.
         if not self._verify_all_queue:
@@ -3252,7 +3247,7 @@ class DiagnosticsPage(QWidget):
         self.verify_started.emit(header_id)
         self._verify_request.emit(header_id)
 
-    def _show_verify_all_summary(self, *, aborted: bool = False) -> None:
+    def _show_verify_all_summary(self) -> None:
         """Render the multi-header summary into the progress label."""
         if not self._verify_all_results:
             self._verify_all_progress_label.setText("Verify all: no results.")
@@ -3271,9 +3266,7 @@ class DiagnosticsPage(QWidget):
         )
 
         intro = (
-            "Verify all (aborted — lease lost):"
-            if aborted
-            else f"Verify all complete ({len(self._verify_all_results)}/"
+            f"Verify all complete ({len(self._verify_all_results)}/"
             f"{self._verify_all_total} tested):"
         )
         lines = [intro]
