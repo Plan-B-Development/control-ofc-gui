@@ -5,8 +5,5 @@
   "subsystems": [
     {"name": "openfan", "status": "ok", "age_ms": 150, "reason": ""},
     {"name": "hwmon", "status": "ok", "age_ms": 200, "reason": ""}
-  ],
-  "counters": {
-    "last_error_summary": null
-  }
+  ]
 }

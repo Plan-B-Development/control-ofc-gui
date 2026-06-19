@@ -25,6 +25,12 @@ class TestThermalStateParsing:
         status = parse_status({"thermal_state": "emergency"})
         assert status.thermal_state == "emergency"
 
+    def test_parse_status_reads_no_sensor_fallback(self):
+        # DEC-170: pin the daemon's "no_sensor_fallback" contract string GUI-side
+        # so a rename is caught here (the daemon emits it under test too).
+        status = parse_status({"thermal_state": "no_sensor_fallback"})
+        assert status.thermal_state == "no_sensor_fallback"
+
     def test_parse_status_defaults_to_normal_for_old_daemons(self):
         """Pre-1.13 daemons don't send the field — must default to normal."""
         status = parse_status({"daemon_version": "1.12.2"})

@@ -473,6 +473,18 @@ class TestThermalBanner:
         assert not dash._thermal_banner.isHidden()
         assert "Thermal protection" in dash._thermal_banner._message_label.text()
 
+    def test_no_sensor_fallback_shows_banner_with_state(self, qtbot, window, app_state):
+        # DEC-170 contract pin: the daemon's "no_sensor_fallback" thermal_state
+        # (forced 40% when no CPU sensor is reachable) must surface the banner and
+        # name the specific state, so the contract string can't silently drift.
+        dash = window.dashboard_page
+        assert dash._thermal_banner.isHidden()
+
+        app_state.set_status(DaemonStatus(thermal_state="no_sensor_fallback"))
+
+        assert not dash._thermal_banner.isHidden()
+        assert "no_sensor_fallback" in dash._thermal_banner._message_label.text()
+
     def test_thermal_recovery_clears_banner(self, qtbot, window, app_state):
         dash = window.dashboard_page
         app_state.set_status(DaemonStatus(thermal_state="force"))

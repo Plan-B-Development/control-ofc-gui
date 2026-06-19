@@ -142,7 +142,7 @@ The daemon runs concurrent async tasks on the Tokio multi-threaded runtime:
 
 | Path | Purpose | Latency class |
 |------|---------|--------------|
-| `/status` | Subsystem health, freshness (age_ms), uptime, counters | Fast |
+| `/status` | Subsystem health, freshness (age_ms), uptime, thermal state, active overrides/identify | Fast |
 | `/sensors` | All temperature readings with age/rate/min/max | Fast |
 | `/fans` | All fan states (RPM, PWM, stall detection) | Fast |
 | `/poll` | Combined status+sensors+fans (batch) | Fast |
@@ -178,9 +178,7 @@ All errors use `ErrorEnvelope`:
 | HTTP | Code | Source | Retryable |
 |------|------|--------|-----------|
 | 400 | `validation_error` | validation | false |
-| 403 | `lease_required` | validation | false |
 | 404 | `not_found` | validation | false |
-| 409 | `lease_already_held` | validation | false |
 | 409 | `thermal_abort` | hardware | true |
 | 500 | `internal_error` | internal | true |
 | 503 | `hardware_unavailable` | hardware | true |
@@ -350,7 +348,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Debug line flooding | MAX_DEBUG_LINES=50 + wall-clock deadline | Returns `SerialError::Protocol` | Write fails, logged | Cannot recover without restart |
 | 0% PWM > 8 seconds | Per-channel `stop_started_at` tracking | Reject further 0% commands | Fan restarts at last non-zero | Only protects API writes, not direct sysfs |
 | Stale sensor (>2× interval) | Health computation in staleness.rs | Status → Warn/Crit | Warning in diagnostics | No automatic fallback PWM |
-| hwmon write without lease | LeaseManager.validate_lease() | 403 `lease_required` | Write rejected | Intended behavior |
+| Client hwmon PWM write attempt | No public write route (engine is sole writer since 2.0.0 — DEC-165) | 404 `validation_error` | Not possible | Verify path uses the daemon's own internal lease (DEC-170) |
 | Concurrent calibration | `AtomicBool` guard | 409 Conflict | Second request rejected | None |
 | Corrupted config file | Config parser returns error | Daemon exits with code 1 | Must fix config | No fallback to defaults on parse error |
 | Missing config file | `ErrorKind::NotFound` check | Use defaults silently | Daemon runs with defaults | Correct behavior |

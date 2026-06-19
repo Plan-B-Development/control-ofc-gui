@@ -203,9 +203,6 @@ class DiagnosticsService(QObject):
                 )
             for i in status.fan_identify:
                 lines.append(f"Identify: {i.fan_id} (expires {i.expires_in_secs}s)")
-            c = status.counters
-            if c.last_error_summary:
-                lines.append(f"Last error: {c.last_error_summary}")
         else:
             lines.append("Daemon status: not available (no response received)")
 
@@ -251,7 +248,6 @@ class DiagnosticsService(QObject):
         if hw.present:
             lines.append(f"  PWM headers: {hw.pwm_header_count}")
             lines.append(f"  Write support: {'Yes' if hw.write_support else 'No'}")
-            lines.append(f"  Lease required: {'Yes' if hw.lease_required else 'No'}")
 
         # Subsystem freshness from status
         status = self._state.daemon_status
