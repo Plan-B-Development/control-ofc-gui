@@ -31,7 +31,6 @@ from control_ofc.api.models import (
     IntelGpuCapability,
     IntelGpuDiagnosticsInfo,
     KernelModuleInfo,
-    LeaseState,
     OpenfanCapability,
     SafetyLimits,
     SensorReading,
@@ -395,9 +394,6 @@ class DemoService:
                 bios_version="F4 (demo)",
             ),
         )
-
-    def lease_status(self) -> LeaseState:
-        return LeaseState(lease_required=True, held=True, lease_id="demo-lease")
 
     def set_fan_pwm(self, fan_id: str, pwm_percent: int) -> None:
         """Simulate a PWM write in demo mode."""

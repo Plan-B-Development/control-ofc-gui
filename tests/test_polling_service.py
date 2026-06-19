@@ -16,7 +16,6 @@ from control_ofc.api.models import (
     ConnectionState,
     DaemonStatus,
     FanReading,
-    LeaseState,
     OperationMode,
     SensorReading,
 )
@@ -46,7 +45,6 @@ def _make_mock_client() -> MagicMock:
     client.status.return_value = DaemonStatus(overall_status="ok")
     client.sensors.return_value = [SensorReading(id="cpu", value_c=45.0, age_ms=100)]
     client.fans.return_value = [FanReading(id="fan0", rpm=1200, age_ms=100)]
-    client.hwmon_lease_status.return_value = LeaseState()
     client.sensor_history.return_value = MagicMock(points=[])
     return client
 
@@ -62,7 +60,6 @@ def _make_failing_client() -> MagicMock:
         "status",
         "sensors",
         "fans",
-        "hwmon_lease_status",
     ):
         getattr(client, attr).side_effect = _DAEMON_ERROR
     return client

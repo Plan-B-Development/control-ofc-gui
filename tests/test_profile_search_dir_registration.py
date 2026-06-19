@@ -144,7 +144,7 @@ class TestRegistrationRunsInWorkerPollCycle:
 
     def test_registration_fires_on_first_successful_poll(self, tmp_profiles_dir, monkeypatch):
         """Worker.poll() calls update_profile_search_dirs when _poll_count == 0."""
-        from control_ofc.api.models import ActiveProfileInfo, Capabilities, LeaseState
+        from control_ofc.api.models import ActiveProfileInfo, Capabilities
 
         worker = _PollWorker(socket_path="/tmp/nonexistent.sock")
 
@@ -153,7 +153,6 @@ class TestRegistrationRunsInWorkerPollCycle:
         client.hwmon_headers.return_value = []
         client.active_profile.return_value = ActiveProfileInfo(active=False)
         client.poll.return_value = (MagicMock(), [], [])
-        client.hwmon_lease_status.return_value = LeaseState(held=False)
 
         monkeypatch.setattr(worker, "_ensure_client", lambda: client)
 
@@ -166,7 +165,7 @@ class TestRegistrationRunsInWorkerPollCycle:
     def test_registration_repeats_after_reconnect(self, tmp_profiles_dir, monkeypatch):
         """On reconnect the worker sets _poll_count=0, triggering a fresh register."""
         from control_ofc.api.errors import DaemonUnavailable
-        from control_ofc.api.models import ActiveProfileInfo, Capabilities, LeaseState
+        from control_ofc.api.models import ActiveProfileInfo, Capabilities
 
         worker = _PollWorker(socket_path="/tmp/nonexistent.sock")
 
@@ -175,7 +174,6 @@ class TestRegistrationRunsInWorkerPollCycle:
         client.hwmon_headers.return_value = []
         client.active_profile.return_value = ActiveProfileInfo(active=False)
         client.poll.return_value = (MagicMock(), [], [])
-        client.hwmon_lease_status.return_value = LeaseState(held=False)
 
         monkeypatch.setattr(worker, "_ensure_client", lambda: client)
 

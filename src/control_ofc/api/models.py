@@ -229,7 +229,6 @@ class DaemonStatus:
     overall_status: str = "unknown"
     subsystems: list[SubsystemStatus] = field(default_factory=list)
     uptime_seconds: int | None = None
-    gui_last_seen_seconds_ago: int | None = None
     # Daemon thermal safety override state (DEC-132): "normal" | "recovery"
     # | "emergency" | "no_sensor_fallback". While not "normal" the daemon is
     # forcing OpenFan + writable-hwmon PWM to protect the hardware — the engine
@@ -344,7 +343,7 @@ class FanReading:
 
 
 # ---------------------------------------------------------------------------
-# Hwmon headers and lease
+# Hwmon headers
 # ---------------------------------------------------------------------------
 
 
@@ -364,56 +363,15 @@ class HwmonHeader:
     is_aio: bool = False  # liquid-cooler header (daemon >= 1.18.0, DEC-156)
 
 
-@dataclass
-class LeaseState:
-    lease_required: bool = True
-    held: bool = False
-    lease_id: str | None = None
-    ttl_seconds_remaining: int | None = None
-    owner_hint: str | None = None
-
-
 # ---------------------------------------------------------------------------
 # Write responses
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class SetPwmResult:
-    channel: int = 0
-    pwm_percent: int = 0
-    coalesced: bool = False
-
-
-@dataclass
-class HwmonSetPwmResult:
-    header_id: str = ""
-    pwm_percent: int = 0
-    raw_value: int = 0
-
-
-@dataclass
-class LeaseResult:
-    lease_id: str = ""
-    owner_hint: str = ""
-    ttl_seconds: int = 0
-
-
-@dataclass
-class GpuFanSetResult:
-    gpu_id: str = ""
-    speed_pct: int = 0
-
-
-@dataclass
 class GpuFanResetResult:
     gpu_id: str = ""
     reset: bool = False
-
-
-@dataclass
-class LeaseReleasedResult:
-    released: bool = False
 
 
 @dataclass
@@ -895,7 +853,6 @@ def parse_status(data: dict) -> DaemonStatus:
             for s in data.get("subsystems", [])
         ],
         uptime_seconds=data.get("uptime_seconds"),
-        gui_last_seen_seconds_ago=data.get("gui_last_seen_seconds_ago"),
         # DEC-132: absent on pre-1.13 daemons — treat as "normal".
         thermal_state=data.get("thermal_state", "normal"),
         # DEC-163/166/169: omitted from the wire when empty — default to [].
@@ -950,36 +907,6 @@ def parse_hwmon_headers(data: dict) -> list[HwmonHeader]:
     return [HwmonHeader(**_filter_fields(HwmonHeader, h)) for h in data.get("headers", [])]
 
 
-def parse_lease_status(data: dict) -> LeaseState:
-    return LeaseState(
-        lease_required=data.get("lease_required", True),
-        held=data.get("held", False),
-        lease_id=data.get("lease_id"),
-        ttl_seconds_remaining=data.get("ttl_seconds_remaining"),
-        owner_hint=data.get("owner_hint"),
-    )
-
-
-def parse_set_pwm(data: dict) -> SetPwmResult:
-    return SetPwmResult(
-        channel=data.get("channel", 0),
-        pwm_percent=data.get("pwm_percent", 0),
-        coalesced=data.get("coalesced", False),
-    )
-
-
-def parse_lease_result(data: dict) -> LeaseResult:
-    return LeaseResult(
-        lease_id=data.get("lease_id", ""),
-        owner_hint=data.get("owner_hint", ""),
-        ttl_seconds=data.get("ttl_seconds", 0),
-    )
-
-
-def parse_lease_released(data: dict) -> LeaseReleasedResult:
-    return LeaseReleasedResult(released=data.get("released", False))
-
-
 def parse_override_grant(data: dict) -> OverrideGrant:
     return OverrideGrant(**_filter_fields(OverrideGrant, data))
 
@@ -1008,14 +935,6 @@ def parse_field_violations(details: object) -> list[FieldViolation]:
     if not isinstance(raw, list):
         return []
     return [FieldViolation(**_filter_fields(FieldViolation, v)) for v in raw if isinstance(v, dict)]
-
-
-def parse_hwmon_set_pwm(data: dict) -> HwmonSetPwmResult:
-    return HwmonSetPwmResult(
-        header_id=data.get("header_id", ""),
-        pwm_percent=data.get("pwm_percent", 0),
-        raw_value=data.get("raw_value", 0),
-    )
 
 
 def parse_calibration_result(data: dict) -> CalibrationResult:
@@ -1060,10 +979,6 @@ def parse_active_profile(data: dict) -> ActiveProfileInfo | None:
         profile_id=data.get("profile_id", ""),
         profile_name=data.get("profile_name", ""),
     )
-
-
-def parse_gpu_fan_set(data: dict) -> GpuFanSetResult:
-    return GpuFanSetResult(gpu_id=data.get("gpu_id", ""), speed_pct=data.get("speed_pct", 0))
 
 
 def parse_gpu_fan_reset(data: dict) -> GpuFanResetResult:

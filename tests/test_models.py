@@ -9,13 +9,8 @@ from control_ofc.api.models import (
     parse_calibration_result,
     parse_capabilities,
     parse_fans,
-    parse_hwmon_set_pwm,
-    parse_lease_released,
-    parse_lease_result,
-    parse_lease_status,
     parse_sensor_history,
     parse_sensors,
-    parse_set_pwm,
     parse_status,
 )
 
@@ -105,18 +100,15 @@ def test_parse_status_extracts_uptime():
         "overall_status": "ok",
         "subsystems": [],
         "uptime_seconds": 3600,
-        "gui_last_seen_seconds_ago": 5,
     }
     status = parse_status(data)
     assert status.uptime_seconds == 3600
-    assert status.gui_last_seen_seconds_ago == 5
 
 
 def test_parse_status_missing_uptime_is_none():
     data = {"overall_status": "ok", "subsystems": []}
     status = parse_status(data)
     assert status.uptime_seconds is None
-    assert status.gui_last_seen_seconds_ago is None
 
 
 def test_parse_status_preserves_daemon_health_vocabulary():
@@ -234,28 +226,6 @@ def test_parse_fans():
     assert fans[1].last_commanded_pwm == 50
 
 
-def test_parse_lease_status_not_held():
-    data = {"lease_required": True, "held": False}
-    lease = parse_lease_status(data)
-    assert lease.lease_required is True
-    assert lease.held is False
-    assert lease.lease_id is None
-
-
-def test_parse_lease_status_held():
-    data = {
-        "lease_required": True,
-        "held": True,
-        "lease_id": "lease-1",
-        "ttl_seconds_remaining": 45,
-        "owner_hint": "gui",
-    }
-    lease = parse_lease_status(data)
-    assert lease.held is True
-    assert lease.lease_id == "lease-1"
-    assert lease.ttl_seconds_remaining == 45
-
-
 def test_sensor_freshness_stale():
     s = SensorReading(id="test", age_ms=5000)
     assert s.freshness == Freshness.STALE
@@ -269,39 +239,6 @@ def test_sensor_freshness_invalid():
 def test_fan_freshness():
     f = FanReading(id="test", age_ms=500)
     assert f.freshness == Freshness.FRESH
-
-
-# ---------------------------------------------------------------------------
-# Write-response parsers (P2 gap: previously untested)
-# ---------------------------------------------------------------------------
-
-
-def test_parse_set_pwm():
-    data = {"channel": 2, "pwm_percent": 65, "coalesced": True}
-    result = parse_set_pwm(data)
-    assert result.channel == 2
-    assert result.pwm_percent == 65
-    assert result.coalesced is True
-
-
-def test_parse_lease_result():
-    data = {"lease_id": "abc-123", "owner_hint": "gui", "ttl_seconds": 60}
-    result = parse_lease_result(data)
-    assert result.lease_id == "abc-123"
-    assert result.ttl_seconds == 60
-
-
-def test_parse_lease_released():
-    data = {"released": True}
-    result = parse_lease_released(data)
-    assert result.released is True
-
-
-def test_parse_hwmon_set_pwm():
-    data = {"header_id": "hwmon:nct6775:pwm1", "pwm_percent": 45, "raw_value": 115}
-    result = parse_hwmon_set_pwm(data)
-    assert result.header_id == "hwmon:nct6775:pwm1"
-    assert result.raw_value == 115
 
 
 def test_parse_sensor_history():
@@ -482,20 +419,6 @@ class TestParserFailureModes:
         assert len(sensors) == 1
         assert sensors[0].value_c == "not-a-number"
 
-    def test_parse_lease_status_missing_held_defaults_to_false(self):
-        """If the daemon omits `held`, the parser must NOT crash; default
-        to False so the UI shows 'no lease' rather than an exception."""
-        result = parse_lease_status({})
-        assert result.held is False
-        assert result.lease_id is None
-        assert result.ttl_seconds_remaining is None
-
-    def test_parse_lease_status_with_null_lease_id(self):
-        """`lease_id: null` is the daemon's wire shape when no lease is
-        held. Must survive parsing without coercion."""
-        result = parse_lease_status({"held": False, "lease_id": None})
-        assert result.lease_id is None
-
     def test_parse_status_missing_overall_status_defaults_to_unknown(self):
         """Required-on-the-wire field missing → parser falls back to
         'unknown' string rather than raising. The UI distinguishes
@@ -503,22 +426,6 @@ class TestParserFailureModes:
         result = parse_status({})
         assert result.overall_status == "unknown"
         assert result.subsystems == []
-
-    def test_parse_set_pwm_missing_fields_uses_defaults(self):
-        """SetPwmResult parser must not raise on incomplete envelopes —
-        defaults to channel=0, pwm_percent=0, coalesced=False."""
-        result = parse_set_pwm({})
-        assert result.channel == 0
-        assert result.pwm_percent == 0
-        assert result.coalesced is False
-
-    def test_parse_lease_result_missing_lease_id_defaults_to_empty_string(self):
-        """Empty string default (not None) so downstream code can treat
-        the field as a string everywhere without isinstance checks."""
-        result = parse_lease_result({})
-        assert result.lease_id == ""
-        assert isinstance(result.lease_id, str)
-        assert result.ttl_seconds == 0
 
     def test_parse_capabilities_with_completely_empty_input(self):
         """The smoke test: an empty dict must yield sensible defaults
@@ -546,14 +453,6 @@ class TestParserFailureModes:
         with pytest.raises(AttributeError):
             parse_capabilities({"devices": None})
 
-    def test_parse_lease_released_with_string_released_field(self):
-        """released=True is the contract, but the parser does not coerce.
-        Lock the pass-through behaviour to catch a sneaky `bool()` wrap."""
-        result = parse_lease_released({"released": "true"})
-        # No coercion: string "true" survives. The UI sees a truthy
-        # non-bool which is unusual but documented.
-        assert result.released == "true"
-
     def test_parse_sensors_with_nonlist_sensors_field_raises(self):
         """If `sensors` is a dict instead of a list (bad daemon shape),
         the list comprehension raises — not silently treats it as empty.
@@ -572,15 +471,6 @@ class TestParserFailureModes:
         assert result.points == []
         assert result.min_rpm == 0
         assert result.max_rpm == 0
-
-    def test_parse_hwmon_set_pwm_missing_header_id_uses_empty_string(self):
-        """Empty-string default keeps the type stable for downstream
-        consumers (e.g. logging concatenations) at the cost of a slightly
-        suspicious value. Lock this trade-off."""
-        result = parse_hwmon_set_pwm({})
-        assert result.header_id == ""
-        assert result.pwm_percent == 0
-        assert result.raw_value == 0
 
     def test_parse_sensor_history_missing_v_uses_zero_default(self):
         """HistoryPoint.v defaults to 0.0 so a malformed point still parses

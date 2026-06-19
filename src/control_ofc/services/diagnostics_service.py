@@ -63,7 +63,7 @@ class DiagEvent:
 
     timestamp: float
     level: str  # "info", "warning", "error"
-    source: str  # "control_loop", "lease", "polling", "api", etc.
+    source: str  # emitter tag, e.g. "polling", "api" (see known_sources())
     message: str
 
     @property
@@ -189,8 +189,6 @@ class DiagnosticsService(QObject):
             lines.append(f"Overall status: {status.overall_status}")
             if status.uptime_seconds is not None:
                 lines.append(f"Uptime: {format_uptime(status.uptime_seconds)}")
-            if status.gui_last_seen_seconds_ago is not None:
-                lines.append(f"GUI last seen: {status.gui_last_seen_seconds_ago}s ago")
             for s in status.subsystems:
                 age = f" (age {s.age_ms}ms)" if s.age_ms is not None else ""
                 reason = f" — {s.reason}" if s.reason else ""

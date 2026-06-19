@@ -35,6 +35,7 @@ from control_ofc.paths import (
     atomic_write,
     config_dir,
     export_default_dir,
+    load_json_capped,
     profiles_dir,
     set_path_overrides,
     themes_dir,
@@ -818,7 +819,7 @@ class SettingsPage(QWidget):
         if not path:
             return
         try:
-            raw = json.loads(Path(path).read_text())
+            raw = load_json_capped(Path(path))
             if not isinstance(raw, dict):
                 self._set_export_result("Import failed: invalid file format", "CriticalChip")
                 return
@@ -915,8 +916,8 @@ class SettingsPage(QWidget):
             profiles = {}
             for p in pdir.glob("*.json"):
                 try:
-                    profiles[p.stem] = json.loads(p.read_text())
-                except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+                    profiles[p.stem] = load_json_capped(p)
+                except (OSError, ValueError) as e:
                     log.warning("Skipping unreadable profile %s: %s", p, e)
             if profiles:
                 export["profiles"] = profiles
@@ -927,8 +928,8 @@ class SettingsPage(QWidget):
             themes = {}
             for tf in td.glob("*.json"):
                 try:
-                    themes[tf.stem] = json.loads(tf.read_text())
-                except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+                    themes[tf.stem] = load_json_capped(tf)
+                except (OSError, ValueError) as e:
                     log.warning("Skipping unreadable theme %s: %s", tf, e)
             if themes:
                 export["themes"] = themes

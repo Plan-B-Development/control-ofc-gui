@@ -122,11 +122,7 @@ might exceed the global `API_TIMEOUT_S = 5.0`. Endpoints with known long
 upper bounds:
 
 - `verify_hwmon_pwm` — daemon sleeps **6 s** (raised from 3 s in DEC-101);
-  client timeout is **12 s**. The control-loop pause-safety auto-resume
-  must stay strictly above the daemon wait — see
-  `control_loop.VERIFY_PAUSE_SAFETY_MS` (currently 9 s).
-- `set_openfan_pwm`, `set_hwmon_pwm`, `set_gpu_fan_speed` (write fast
-  path) — client timeout is **2s** with one retry on `DaemonTimeout`.
+  client timeout is **12 s**.
 
 `DaemonTimeout` is a distinct subclass of `DaemonError` (separate from
 `DaemonUnavailable`) so callers can distinguish "the daemon is slow" from
