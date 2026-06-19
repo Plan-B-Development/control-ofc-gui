@@ -458,6 +458,9 @@ validates full profile documents; it keeps a local draft cache but does not trea
 - `POST /profiles` — create (`409 already_exists` on a duplicate id)
 - `PUT /profiles/{id}` — replace stored desired-state (no hot-reload — re-activate to apply)
 - `DELETE /profiles/{id}` — `409 profile_in_use` if it is the active profile
+- Profile ids are filesystem-safe stems: non-empty, ≤128 bytes, no `/` `\` `..` or control
+  characters, else `400 validation_error` (DEC-173). The GUI auto-generates 8-char hex ids, so this
+  only constrains hand-authored/imported ids.
 - `POST` / `PUT` accept `?validate_only=true` — runs the real validation, persists nothing
 - Validation returns hard `errors` (reject) + soft `warnings` (accept). An unknown `sensor_id` is a
   warning, not an error (profiles stay portable across machines). Field-level detail rides the error
