@@ -12,7 +12,6 @@ from control_ofc.api.models import (
     DaemonStatus,
     FanReading,
     IdentifyStatusEntry,
-    LeaseState,
     OpenfanCapability,
     OperationMode,
     OverrideStatusEntry,
@@ -393,7 +392,6 @@ class TestExportSupportBundle:
         state.set_mode(OperationMode.AUTOMATIC)
         state.set_capabilities(Capabilities(daemon_version="1.4.0"))
         state.set_status(DaemonStatus(overall_status="healthy", daemon_version="1.4.0"))
-        state.lease = LeaseState(held=True, lease_id="test-lease")
         state.sensors = [
             SensorReading(
                 id="s1", kind="CpuTemp", label="Tctl", value_c=45.0, source="hwmon", age_ms=100
@@ -452,8 +450,6 @@ class TestExportSupportBundle:
             )
         )
         state.set_status(DaemonStatus(overall_status="healthy", daemon_version="1.4.0"))
-        state.lease = LeaseState()
-
         svc = DiagnosticsService(state=state)
         bundle_path = tmp_path / "support.json"
         with patch(

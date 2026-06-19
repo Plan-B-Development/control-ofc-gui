@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.constants import DEFAULT_CURVE_POINTS
-from control_ofc.paths import atomic_write, profiles_dir
+from control_ofc.paths import atomic_write, load_json_capped, profiles_dir
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
@@ -44,6 +44,17 @@ MAX_CURVE_POINTS = 256
 def _is_finite(value: object) -> bool:
     """True only for a real, finite number (rejects NaN/inf, bool, non-numbers)."""
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _require_finite(value: object, name: str) -> float:
+    """Return *value* if it is a real finite number; else raise ``ValueError``.
+
+    Extends the curve-point ``_is_finite`` guard to the scalar profile fields so a
+    crafted/corrupt import carrying ``NaN``/``Infinity``/``1e400`` (or a non-number)
+    is rejected at load rather than poisoning evaluation/serialisation (P3 / DEC-172)."""
+    if not _is_finite(value):
+        raise ValueError(f"{name!r} is non-finite or non-numeric: {value!r}")
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -233,19 +244,29 @@ class CurveConfig:
             type=curve_type,
             sensor_id=data.get("sensor_id", ""),
             points=points,
-            start_temp_c=data.get("start_temp_c", 30.0),
-            start_output_pct=data.get("start_output_pct", 20.0),
-            end_temp_c=data.get("end_temp_c", 80.0),
-            end_output_pct=data.get("end_output_pct", 100.0),
-            flat_output_pct=data.get("flat_output_pct", 50.0),
-            trigger_idle_temp_c=data.get("trigger_idle_temp_c", 40.0),
-            trigger_load_temp_c=data.get("trigger_load_temp_c", 60.0),
-            trigger_idle_pct=data.get("trigger_idle_pct", 30.0),
-            trigger_load_pct=data.get("trigger_load_pct", 80.0),
+            start_temp_c=_require_finite(data.get("start_temp_c", 30.0), "start_temp_c"),
+            start_output_pct=_require_finite(
+                data.get("start_output_pct", 20.0), "start_output_pct"
+            ),
+            end_temp_c=_require_finite(data.get("end_temp_c", 80.0), "end_temp_c"),
+            end_output_pct=_require_finite(data.get("end_output_pct", 100.0), "end_output_pct"),
+            flat_output_pct=_require_finite(data.get("flat_output_pct", 50.0), "flat_output_pct"),
+            trigger_idle_temp_c=_require_finite(
+                data.get("trigger_idle_temp_c", 40.0), "trigger_idle_temp_c"
+            ),
+            trigger_load_temp_c=_require_finite(
+                data.get("trigger_load_temp_c", 60.0), "trigger_load_temp_c"
+            ),
+            trigger_idle_pct=_require_finite(
+                data.get("trigger_idle_pct", 30.0), "trigger_idle_pct"
+            ),
+            trigger_load_pct=_require_finite(
+                data.get("trigger_load_pct", 80.0), "trigger_load_pct"
+            ),
             mix_function=data.get("mix_function", "max"),
             mix_curve_ids=list(data.get("mix_curve_ids", [])),
             sync_control_id=data.get("sync_control_id", ""),
-            sync_offset_pct=data.get("sync_offset_pct", 0.0),
+            sync_offset_pct=_require_finite(data.get("sync_offset_pct", 0.0), "sync_offset_pct"),
         )
 
 
@@ -452,14 +473,16 @@ class LogicalControl:
             name=data.get("name", ""),
             mode=mode,
             curve_id=data.get("curve_id", ""),
-            manual_output_pct=data.get("manual_output_pct", 50.0),
+            manual_output_pct=_require_finite(
+                data.get("manual_output_pct", 50.0), "manual_output_pct"
+            ),
             members=members,
-            step_up_pct=data.get("step_up_pct", 100.0),
-            step_down_pct=data.get("step_down_pct", 100.0),
-            start_pct=data.get("start_pct", 0.0),
-            stop_pct=data.get("stop_pct", 0.0),
-            offset_pct=data.get("offset_pct", 0.0),
-            minimum_pct=data.get("minimum_pct", 0.0),
+            step_up_pct=_require_finite(data.get("step_up_pct", 100.0), "step_up_pct"),
+            step_down_pct=_require_finite(data.get("step_down_pct", 100.0), "step_down_pct"),
+            start_pct=_require_finite(data.get("start_pct", 0.0), "start_pct"),
+            stop_pct=_require_finite(data.get("stop_pct", 0.0), "stop_pct"),
+            offset_pct=_require_finite(data.get("offset_pct", 0.0), "offset_pct"),
+            minimum_pct=_require_finite(data.get("minimum_pct", 0.0), "minimum_pct"),
         )
 
 
@@ -1129,7 +1152,7 @@ def collect_local_profiles_for_import(directory: Path | None = None) -> ImportCo
         return coll
     for path in sorted(d.glob("*.json")):
         try:
-            data = json.loads(path.read_text())
+            data = load_json_capped(path)
             profile = Profile.from_dict(data)
             coll.ready.append(
                 ImportCandidate(
@@ -1291,7 +1314,7 @@ class ProfileService:
 
         for path in sorted(d.glob("*.json")):
             try:
-                data = json.loads(path.read_text())
+                data = load_json_capped(path)
                 # Snapshot the on-disk member ids before sanitization so we
                 # can detect DEC-102 drops without re-running the pattern
                 # match here. Compares against the post-load profile state.

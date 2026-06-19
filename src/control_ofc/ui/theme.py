@@ -239,7 +239,9 @@ def load_theme(path: Path) -> ThemeTokens:
     values are dropped/clamped to the dataclass default so a hand-edited or
     corrupt on-disk theme can never break the stylesheet (DEC-142).
     """
-    data = json.loads(path.read_text())
+    from control_ofc.paths import load_json_capped
+
+    data = load_json_capped(path)
     migrated = _migrate_tokens(data)
     tokens = ThemeTokens()
     _apply_token_dict(tokens, migrated, strict=False)

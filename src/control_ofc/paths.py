@@ -7,12 +7,19 @@ os.replace). See Dan Luu "Files are hard" and the POSIX rename(2) guarantee.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import tempfile
 from pathlib import Path
 
 _APP = "control-ofc"
+
+# Hard cap on a single JSON config/import file (profiles, settings, themes).
+# Real files are a few KB; this only stops a crafted oversized file from being
+# read wholesale into memory. 4 MiB is ~1000x any real profile (audit 2026-06-19
+# ph7 / DEC-172). Per-file — bundles are read one file at a time.
+MAX_IMPORT_BYTES = 4 * 1024 * 1024
 
 log = logging.getLogger(__name__)
 
@@ -170,3 +177,29 @@ def atomic_write(filepath: Path, content: str) -> None:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp_path)
         raise
+
+
+def _reject_nonfinite(token: str) -> float:
+    """``parse_constant`` hook: reject the non-standard JSON ``NaN`` /
+    ``Infinity`` / ``-Infinity`` literals that the stdlib ``json`` accepts by
+    default. (A finite literal that overflows to ``inf``, e.g. ``1e400``, slips
+    past this — the per-field ``_is_finite`` guards catch that case.)"""
+    raise ValueError(f"non-finite JSON constant in import: {token!r}")
+
+
+def load_json_capped(path: Path, *, max_bytes: int = MAX_IMPORT_BYTES) -> object:
+    """Read and JSON-parse *path* with a hard size cap (P3 import hardening).
+
+    Bounded read — never pulls more than ``max_bytes + 1`` into memory — so a
+    crafted oversized file cannot exhaust RAM, plus ``parse_constant`` rejection
+    of the non-standard ``NaN``/``Infinity`` literals. Raises ``ValueError`` when
+    the file exceeds the cap or carries a non-finite constant (``json.JSONDecodeError``
+    is itself a ``ValueError``), and ``OSError`` for read failures — callers
+    handle both. For external/import paths only; internal trusted reads (e.g.
+    ``/proc/cmdline``) need no cap.
+    """
+    with path.open("rb") as f:
+        raw = f.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise ValueError(f"import file exceeds {max_bytes} bytes: {path}")
+    return json.loads(raw, parse_constant=_reject_nonfinite)

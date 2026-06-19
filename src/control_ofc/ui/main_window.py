@@ -353,7 +353,6 @@ class MainWindow(QWidget):
         self._state.set_capabilities(self._demo_service.capabilities())
         self._state.set_status(self._demo_service.status())
         self._state.set_hwmon_headers(self._demo_service.hwmon_headers())
-        self._state.set_lease(self._demo_service.lease_status())
 
         # Demo polling timer
         self._demo_timer = QTimer(self)

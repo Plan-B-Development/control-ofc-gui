@@ -127,6 +127,81 @@ class TestProfileImportValidation:
 
 
 # ---------------------------------------------------------------------------
+# Scalar-field finiteness (DEC-172): the curve *points* path was already
+# guarded; these cover the scalar curve/control fields that were not. Python's
+# json parses NaN/Infinity by default and 1e400 overflows to inf, so any of
+# these can reach from_dict via an imported profile bundle.
+# ---------------------------------------------------------------------------
+
+_NONFINITE = [float("inf"), float("-inf"), float("nan"), 1e400, "oops"]
+
+
+class TestScalarFieldFiniteness:
+    @pytest.mark.parametrize("bad", _NONFINITE)
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "start_temp_c",
+            "end_output_pct",
+            "flat_output_pct",
+            "trigger_load_temp_c",
+            "trigger_idle_pct",
+            "sync_offset_pct",
+        ],
+    )
+    def test_curve_scalar_nonfinite_rejected(self, field, bad):
+        from control_ofc.services.profile_service import CurveConfig
+
+        with pytest.raises(ValueError, match="non-finite"):
+            CurveConfig.from_dict({"id": "c1", "type": "graph", field: bad})
+
+    @pytest.mark.parametrize("bad", _NONFINITE)
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "manual_output_pct",
+            "step_up_pct",
+            "step_down_pct",
+            "start_pct",
+            "stop_pct",
+            "offset_pct",
+            "minimum_pct",
+        ],
+    )
+    def test_control_scalar_nonfinite_rejected(self, field, bad):
+        from control_ofc.services.profile_service import LogicalControl
+
+        with pytest.raises(ValueError, match="non-finite"):
+            LogicalControl.from_dict({"mode": "curve", field: bad})
+
+    def test_finite_scalars_still_accepted(self):
+        """Valid finite values — including a legitimately negative offset — load
+        unchanged (the guard rejects non-finite only, never clamps a range)."""
+        from control_ofc.services.profile_service import CurveConfig, LogicalControl
+
+        c = CurveConfig.from_dict({"id": "c1", "type": "sync", "sync_offset_pct": -15.0})
+        assert c.sync_offset_pct == -15.0
+        lc = LogicalControl.from_dict({"mode": "curve", "offset_pct": -10.0, "minimum_pct": 30})
+        assert lc.offset_pct == -10.0
+        assert lc.minimum_pct == 30
+
+    def test_nonfinite_rejected_through_profile_import_path(self):
+        """The reject also fires via the top-level Profile.from_dict (the real
+        import entry point), for both a curve scalar and a control scalar."""
+        with pytest.raises(ValueError, match="non-finite"):
+            Profile.from_dict(
+                {
+                    "controls": [],
+                    "curves": [{"id": "c1", "type": "flat", "flat_output_pct": float("nan")}],
+                }
+            )
+        with pytest.raises(ValueError, match="non-finite"):
+            Profile.from_dict(
+                {"controls": [{"mode": "curve", "stop_pct": float("inf")}], "curves": []}
+            )
+
+
+# ---------------------------------------------------------------------------
 # Theme validation (_migrate_tokens + ThemeTokens construction)
 # ---------------------------------------------------------------------------
 

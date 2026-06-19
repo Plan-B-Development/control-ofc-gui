@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from control_ofc.colors import is_valid_color
-from control_ofc.paths import app_settings_path, atomic_write
+from control_ofc.paths import app_settings_path, atomic_write, load_json_capped
 
 log = logging.getLogger(__name__)
 
@@ -272,7 +272,7 @@ class AppSettingsService:
         path = app_settings_path()
         if path.exists():
             try:
-                data = json.loads(path.read_text())
+                data = load_json_capped(path)
                 self._settings = AppSettings.from_dict(data)
                 log.info("Loaded app settings from %s", path)
             except (json.JSONDecodeError, KeyError, TypeError, ValueError, OSError) as e:
@@ -304,7 +304,7 @@ class AppSettingsService:
 
     def import_settings(self, path: Path) -> AppSettings:
         """Import settings from file. Returns the loaded settings (caller decides to apply)."""
-        data = json.loads(path.read_text())
+        data = load_json_capped(path)
         return AppSettings.from_dict(data)
 
     def import_settings_from_dict(self, data: dict) -> AppSettings:

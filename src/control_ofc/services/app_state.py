@@ -18,7 +18,6 @@ from control_ofc.api.models import (
     FanReading,
     Freshness,
     HwmonHeader,
-    LeaseState,
     OperationMode,
     SensorReading,
 )
@@ -36,7 +35,6 @@ class AppState(QObject):
     sensors_updated = Signal(list)  # list[SensorReading]
     fans_updated = Signal(list)  # list[FanReading]
     headers_updated = Signal(list)  # list[HwmonHeader]
-    lease_updated = Signal(LeaseState)
     active_profile_changed = Signal(str)  # profile name
     warning_count_changed = Signal(int)
     warnings_cleared = Signal()
@@ -54,7 +52,6 @@ class AppState(QObject):
         self.sensors: list[SensorReading] = []
         self.fans: list[FanReading] = []
         self.hwmon_headers: list[HwmonHeader] = []
-        self.lease: LeaseState = LeaseState()
         self.active_profile_name: str = ""
         self.warning_count: int = 0
         self.active_warnings: list[dict] = []  # [{timestamp, level, source, message}]
@@ -123,10 +120,6 @@ class AppState(QObject):
     def set_hwmon_headers(self, headers: list[HwmonHeader]) -> None:
         self.hwmon_headers = headers
         self.headers_updated.emit(headers)
-
-    def set_lease(self, lease: LeaseState) -> None:
-        self.lease = lease
-        self.lease_updated.emit(lease)
 
     def set_active_profile(self, name: str) -> None:
         if name != self.active_profile_name:
