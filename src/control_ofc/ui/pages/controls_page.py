@@ -98,10 +98,11 @@ class ControlsPage(QWidget):
         self._curve_cards: dict[str, CurveCard] = {}
         self._selected_control_id: str | None = None
         self._has_unsaved: bool = False
-        # Last-known write capability. Cards are disabled when the daemon
-        # reports no writable backend; tracked here so a rebuild (profile
-        # switch) and a later capability change both honour the latest value
-        # instead of stranding cards disabled (see _on_capabilities_updated).
+        # Last-known card-writability. Cards are disabled when the daemon reports
+        # no writable backend OR is not autonomous (pre-2.0, where override is
+        # unsupported — DEC-163); tracked here so a rebuild (profile switch) and a
+        # later capability change both honour the latest value instead of
+        # stranding cards disabled (see _on_capabilities_updated).
         self._cards_writable: bool = True
         # Live manual overrides (DEC-163): control_id -> current override_token.
         # Populated only in daemon-driven (live) mode; demo mode drives the demo
@@ -1335,7 +1336,17 @@ class ControlsPage(QWidget):
         # Idempotent both ways: capabilities re-fire on every refresh and every
         # reconnect, so an incomplete snapshot must not leave cards stranded
         # disabled once write support returns.
-        self._cards_writable = bool(
+        #
+        # Override is a 2.0.0 daemon feature (DEC-163): its endpoints don't exist
+        # on a pre-2.0 daemon, and against one the GUI has stood down (the
+        # main-window control gate shows the upgrade banner). So cards are writable
+        # only when the daemon is autonomous AND advertises a writable backend —
+        # keeping the Manual toggles in step with the banner instead of offering an
+        # override that can only 404. Demo advertises autonomous_control, so its
+        # cards stay live.
+        control = getattr(caps, "control", None)
+        autonomous = bool(control and control.autonomous_control)
+        self._cards_writable = autonomous and bool(
             caps.features.openfan_write_supported or caps.features.hwmon_write_supported
         )
         for card in self._control_cards.values():

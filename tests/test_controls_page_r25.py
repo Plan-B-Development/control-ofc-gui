@@ -309,6 +309,10 @@ class TestManualOverrideLiveWiring:
         assert client.override_take.call_args[0][0] == "lc1"
         assert page._overrides["lc1"] == 7
         assert page._override_renew_timer.isActive()
+        # The renew cadence is driven by the grant's renew_secs (the GUI ignores
+        # ttl_secs entirely), so the deadman is honoured by re-pinning well inside
+        # the daemon's TTL. _grant() advises renew_secs=5 → a 5000 ms interval.
+        assert page._override_renew_timer.interval() == 5000
         # The demo controller is never present in live mode.
         assert page._demo_controller is None
 

@@ -32,16 +32,21 @@ def _profile_with_control() -> Profile:
 
 
 def _no_write_caps() -> Capabilities:
+    # Autonomous but no writable backend: isolates the write-support dimension of
+    # the card gate (cards disabled because of no write support, not non-autonomy).
     return Capabilities(
-        daemon_version="0.2.0",
+        daemon_version="2.0.0",
         features=FeatureFlags(openfan_write_supported=False, hwmon_write_supported=False),
+        control=ControlCapability(autonomous_control=True),
     )
 
 
 def _write_caps() -> Capabilities:
+    # A modern autonomous daemon with a writable backend → cards enabled.
     return Capabilities(
-        daemon_version="0.2.0",
+        daemon_version="2.0.0",
         features=FeatureFlags(openfan_write_supported=True),
+        control=ControlCapability(autonomous_control=True),
     )
 
 
@@ -59,35 +64,46 @@ def window(qtbot, app_state, profile_service, settings_service):
 
 class TestCapabilityGating:
     def test_controls_disabled_when_no_write_support(self, qtbot, window, app_state):
-        """capabilities with no write support -> control cards disabled."""
+        """Autonomous daemon but no writable backend -> control cards disabled."""
         # First ensure we have cards by selecting a profile
         window.controls_page._profile_combo.setCurrentIndex(0)
 
-        caps = Capabilities(
-            daemon_version="0.2.0",
-            features=FeatureFlags(
-                openfan_write_supported=False,
-                hwmon_write_supported=False,
-            ),
-        )
-        app_state.set_capabilities(caps)
+        app_state.set_capabilities(_no_write_caps())
 
         for card in window.controls_page._control_cards.values():
             assert not card.isEnabled()
 
     def test_controls_enabled_with_write_support(self, qtbot, window, app_state):
-        """capabilities with write support -> control cards stay enabled."""
+        """Autonomous daemon with write support -> control cards stay enabled."""
         window.controls_page._profile_combo.setCurrentIndex(0)
 
-        caps = Capabilities(
-            daemon_version="0.2.0",
-            features=FeatureFlags(openfan_write_supported=True),
-        )
-        app_state.set_capabilities(caps)
+        app_state.set_capabilities(_write_caps())
 
         # Cards should remain enabled (default state)
         for card in window.controls_page._control_cards.values():
             assert card.isEnabled()
+
+    def test_controls_disabled_when_daemon_not_autonomous(self, qtbot, window, app_state):
+        """Write support but no autonomous_control (pre-2.0 daemon) -> cards disabled.
+
+        Override is a 2.0.0 daemon feature (DEC-163); against a non-autonomous
+        daemon the GUI has stood down (the main-window upgrade banner), so the
+        Manual override toggles must be non-interactive even though a writable
+        backend is advertised. Isolates the autonomy dimension from write support.
+        """
+        window.controls_page._profile_combo.setCurrentIndex(0)
+        assert window.controls_page._control_cards  # non-vacuous
+
+        caps = Capabilities(
+            daemon_version="1.21.0",
+            features=FeatureFlags(openfan_write_supported=True),
+            control=ControlCapability(autonomous_control=False),
+        )
+        app_state.set_capabilities(caps)
+
+        assert not window.controls_page._cards_writable
+        for card in window.controls_page._control_cards.values():
+            assert not card.isEnabled()
 
     def test_controls_reenable_after_write_returns(self, qtbot, window, app_state):
         """Cards disabled by a no-write snapshot must re-enable when write support returns.
