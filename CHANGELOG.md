@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.1.0] — 2026-06-19
+
+Correctness, hardening, and a display-only override-reconcile feature on top of 2.0.0. Pairs with
+`control-ofc-daemon` ≥ v2.0.0.
+
+### Added
+- **Daemon-held overrides are surfaced from `/status` (DEC-169).** The Controls page shows a
+  read-only "External NN%" chip for an override the daemon holds on behalf of another client
+  (manual > external > applied precedence, cleared on take-over); foreign fan-identify state is
+  shown in Diagnostics. Display-only — the GUI never renews or releases a foreign override (it
+  carries no fencing token).
+
+### Fixed
+- **Pump/CPU floor parity (DEC-167).** Profiles are sanitized on load so a non-zero pump/CPU
+  `stop_pct` can never snap a floored control to 0%, pinned to the daemon via a parity vector.
+- **The override UI is disabled (not just banner-warned) against a non-autonomous, pre-2.0 daemon
+  (DEC-171).** Control cards now require `autonomous_control` plus write support.
+
+### Changed
+- **Retired the GUI lease surface (DEC-170, DEC-172).** Dropped the mirror lease capability fields,
+  all "lease"-labelled UI text, and the dead lease/setpwm client models and write-path (the GUI has
+  held no lease and written no PWM since 2.0.0); dropped the `counters` / `last_error_summary`
+  reader and pinned the `no_sensor_fallback` banner.
+
+### Security
+- **Hardened JSON import (DEC-172).** External profile, settings, and theme loads use a bounded
+  (4 MiB) read and reject non-finite (`NaN` / `Infinity` / overflow) numeric fields.
+
 ## [2.0.0] — 2026-06-19
 
 **Breaking — the GUI no longer controls fans directly (DEC-159 / DEC-165).** Runtime control moved to
