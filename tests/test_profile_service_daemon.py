@@ -16,7 +16,17 @@ import pytest
 
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.paths import profiles_dir
-from control_ofc.services.profile_service import Profile, ProfileService, default_profiles
+from control_ofc.services.profile_service import (
+    ControlMember,
+    ControlMode,
+    CurveConfig,
+    CurvePoint,
+    CurveType,
+    LogicalControl,
+    Profile,
+    ProfileService,
+    default_profiles,
+)
 
 
 @pytest.fixture
@@ -37,6 +47,9 @@ class FakeDaemonClient:
         self.store: dict[str, dict] = {}
         self.calls: list[tuple[str, str | None]] = []
         self.raise_on: dict[str, Exception] = {}
+        # Per-id fetch failures for get_profile (id -> exception). Lets a test
+        # fail one profile's hydration while the rest still succeed (DEC-175).
+        self.fail_get: dict[str, Exception] = {}
 
     def _maybe(self, name: str) -> None:
         exc = self.raise_on.get(name)
@@ -46,7 +59,29 @@ class FakeDaemonClient:
     def list_profiles(self) -> list[dict]:
         self.calls.append(("list", None))
         self._maybe("list_profiles")
-        return [dict(d) for d in self.store.values()]
+        # The real daemon returns lightweight summaries (DEC-160) — id/name/
+        # description only, never the controls or curves. Mirroring that here
+        # is what forces load() to hydrate per id (DEC-175); a fake that
+        # returned full documents would hide the bug it now guards against.
+        return [
+            {"id": d["id"], "name": d.get("name", ""), "description": d.get("description", "")}
+            for d in self.store.values()
+        ]
+
+    def get_profile(self, profile_id: str) -> dict:
+        self.calls.append(("get", profile_id))
+        self._maybe("get_profile")
+        exc = self.fail_get.get(profile_id)
+        if exc is not None:
+            raise exc
+        try:
+            return dict(self.store[profile_id])
+        except KeyError:
+            raise DaemonError(
+                code="validation_error",
+                message=f"profile '{profile_id}' not found",
+                status=404,
+            ) from None
 
     def create_profile(self, document: dict) -> dict:
         self.calls.append(("create", document.get("id")))
@@ -81,6 +116,37 @@ def _names(fake: FakeDaemonClient) -> list[str]:
 
 def _ids(svc: ProfileService) -> set[str]:
     return {p.id for p in svc.profiles}
+
+
+def _rich_profile(name: str = "Rich") -> Profile:
+    """A profile carrying a real control + curve.
+
+    The whole point of DEC-175 is that controls and curves survive a daemon
+    round-trip; a bare ``Profile(name=...)`` has neither, so it can't prove
+    hydration is lossless. This one does.
+    """
+    p = Profile(name=name)
+    p.curves.append(
+        CurveConfig(
+            id="c1",
+            name="CPU Fan",
+            type=CurveType.GRAPH,
+            sensor_id="cpu_temp",
+            points=[CurvePoint(30, 20), CurvePoint(55, 60), CurvePoint(80, 100)],
+        )
+    )
+    p.controls.append(
+        LogicalControl(
+            id="ctrl1",
+            name="Chassis",
+            mode=ControlMode.CURVE,
+            curve_id="c1",
+            members=[
+                ControlMember(source="openfan", member_id="openfan:ch00", member_label="Fan 1")
+            ],
+        )
+    )
+    return p
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +214,90 @@ def test_load_reports_malformed_daemon_document(cfg):
     assert any(ident == "broken" for ident, _ in errors)
     assert good.id in _ids(svc)  # the good one still loads
     assert svc.offline is False
+
+
+def test_load_hydrates_full_profile_documents(cfg):
+    # Regression for DEC-175: GET /profiles returns id/name/description summaries
+    # with no controls or curves; load() must hydrate each via GET /profiles/{id}.
+    # Before the fix the summary was parsed directly, so every fan role (control)
+    # and curve was silently dropped on restart.
+    fake = FakeDaemonClient()
+    rich = _rich_profile()
+    _seed(fake, rich)
+    svc = ProfileService(client=fake)
+
+    errors = svc.load()
+
+    assert errors == []
+    # The listing was hydrated per id, not parsed in place.
+    assert ("get", rich.id) in fake.calls
+    loaded = svc.get_profile(rich.id)
+    assert loaded is not None
+    assert len(loaded.controls) == 1  # would be 0 with the summary-only bug
+    assert len(loaded.curves) == 1
+    assert loaded.controls[0].curve_id == "c1"
+    assert loaded.controls[0].members[0].member_id == "openfan:ch00"
+    assert len(loaded.curves[0].points) == 3
+    # The lossless document — not the stripped summary — is mirrored locally.
+    mirror = json.loads((profiles_dir() / f"{rich.id}.json").read_text())
+    assert len(mirror["controls"]) == 1
+    assert len(mirror["curves"]) == 1
+
+
+def test_load_skips_unfetchable_profile_and_preserves_its_mirror(cfg):
+    # DEC-175: if one profile fails to hydrate (e.g. deleted between the listing
+    # and the fetch → 404), the rest still load, the failure is reported, and
+    # that profile's existing local mirror is left intact (not clobbered by the
+    # failed fetch).
+    good = _rich_profile("Good")
+    stale = _rich_profile("Stale")
+    fake = FakeDaemonClient()
+    _seed(fake, good, stale)
+
+    # A previously-good local mirror of `stale` already sits on disk.
+    profiles_dir().mkdir(parents=True, exist_ok=True)
+    mirror_path = profiles_dir() / f"{stale.id}.json"
+    mirror_path.write_text(json.dumps(stale.to_dict(), indent=2))
+
+    # The daemon still lists `stale` but now 404s its fetch (removed under us).
+    fake.fail_get[stale.id] = DaemonError(
+        code="validation_error", message=f"profile '{stale.id}' not found", status=404
+    )
+    svc = ProfileService(client=fake)
+
+    errors = svc.load()
+
+    assert svc.offline is False  # daemon was reachable — this is not an outage
+    assert good.id in _ids(svc)  # the healthy profile still loaded
+    assert stale.id not in _ids(svc)  # the 404'd one was skipped
+    assert any(ident == stale.id for ident, _ in errors)
+    # Its existing mirror was not overwritten by the failed hydration.
+    assert mirror_path.exists()
+    preserved = json.loads(mirror_path.read_text())
+    assert len(preserved["controls"]) == 1
+
+
+def test_load_disconnect_mid_hydration_falls_back_to_local(cfg):
+    # DEC-175: a daemon that drops *after* listing but *during* hydration must
+    # abandon the partial set and fall back to the local cache (offline), rather
+    # than committing an arbitrary subset of profiles.
+    cached = _rich_profile("Cached")
+    profiles_dir().mkdir(parents=True, exist_ok=True)
+    (profiles_dir() / f"{cached.id}.json").write_text(json.dumps(cached.to_dict()))
+
+    fake = FakeDaemonClient()
+    _seed(fake, cached)  # the daemon lists it...
+    fake.raise_on["get_profile"] = DaemonUnavailable()  # ...but dies on the fetch
+    svc = ProfileService(client=fake)
+
+    errors = svc.load()
+
+    assert errors == []
+    assert svc.offline is True
+    # Present from the local cache, controls intact.
+    loaded = svc.get_profile(cached.id)
+    assert loaded is not None
+    assert len(loaded.controls) == 1
 
 
 # ---------------------------------------------------------------------------

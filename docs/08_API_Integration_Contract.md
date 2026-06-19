@@ -454,7 +454,10 @@ client lease error.
 ### Profile storage (CRUD — DEC-160, daemon ≥ 1.19.0)
 The daemon is the profile **store of record** (`/var/lib/control-ofc/profiles/`). The GUI uploads and
 validates full profile documents; it keeps a local draft cache but does not treat it as authoritative.
-- `GET /profiles` — list stored profiles; `GET /profiles/{id}` — fetch one
+- `GET /profiles` — list stored profiles as `{id, name, description}` summaries (no controls or
+  curves); `GET /profiles/{id}` — fetch one profile's full document. On load the GUI lists, then
+  **hydrates** each id via `GET /profiles/{id}` before parsing — a summary alone has no controls or
+  curves (DEC-175).
 - `POST /profiles` — create (`409 already_exists` on a duplicate id)
 - `PUT /profiles/{id}` — replace stored desired-state (no hot-reload — re-activate to apply)
 - `DELETE /profiles/{id}` — `409 profile_in_use` if it is the active profile
