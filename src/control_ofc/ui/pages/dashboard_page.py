@@ -31,7 +31,11 @@ from control_ofc.api.models import (
     OperationMode,
     SensorReading,
 )
-from control_ofc.constants import DEFAULT_SOCKET_PATH, EXPECTED_API_VERSION
+from control_ofc.constants import (
+    AGGREGATE_FAN_RPM_KEY,
+    DEFAULT_SOCKET_PATH,
+    EXPECTED_API_VERSION,
+)
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.daemon_service_check import (
@@ -40,10 +44,11 @@ from control_ofc.services.daemon_service_check import (
 )
 from control_ofc.services.fan_grouping import build_fan_groups
 from control_ofc.services.history_store import HistoryStore
-from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.services.series_selection import ChartMode, SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 from control_ofc.ui.qt_util import block_signals
+from control_ofc.ui.status_banner import MODE_LABELS
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.error_banner import ErrorBanner
 from control_ofc.ui.widgets.fan_zone_card import FanZoneGrid
@@ -124,6 +129,13 @@ class DashboardPage(QWidget):
         self._fan_ids: list[str] = []  # Track fan IDs for table row mapping
         self._displayable_fan_keys: list[str] = []  # Fan series keys for selection
         self._has_data = False
+        # Chart first-run seeding + poll-diff annotation state (DEC-181).
+        self._seen_sensors = False
+        self._seen_fans = False
+        self._prev_connection = state.connection if state else None
+        self._last_override_ids: set[str] = set()
+        self._last_stale_sensor_ids: set[str] = set()
+        self._last_stalled_fan_ids: set[str] = set()
         # Card-to-sensor bindings: category -> sensor_id (empty = auto)
         self._card_bindings: dict[str, str] = {}
         if settings_service:
@@ -459,6 +471,11 @@ class DashboardPage(QWidget):
             # Startup default only — changing the Range combo afterwards is
             # session-local; the Settings value is re-applied on next launch.
             self._chart.set_range_index(self._settings_service.settings.chart_default_range_index)
+        # Chart modes/reset (DEC-181): the chart is dumb about sensor kinds, so it
+        # emits the choice and the page applies it (COMBINED is the curated subset).
+        self._chart.mode_selected.connect(self._on_chart_mode_selected)
+        self._chart.reset_requested.connect(self._on_chart_reset)
+        self._push_chart_context()
         self._chart.setMinimumHeight(150)
         self._chart.setMinimumWidth(320)  # inspector can't crush the chart (refinement §7.5)
         self._v_splitter.addWidget(self._chart)
@@ -527,6 +544,13 @@ class DashboardPage(QWidget):
 
     def _on_connection_changed(self, state: ConnectionState) -> None:
         self._status_strip.set_connection_state(state)
+        # (Re)connect transition → annotation (poll-diff, DEC-181).
+        if (
+            state == ConnectionState.CONNECTED
+            and self._prev_connection != ConnectionState.CONNECTED
+        ):
+            self._annotate("Connected")
+        self._prev_connection = state
         if state == ConnectionState.DISCONNECTED:
             self._has_data = False
             self._reset_cards()
@@ -537,6 +561,7 @@ class DashboardPage(QWidget):
 
     def _on_mode_changed(self, mode: OperationMode) -> None:
         self._status_strip.set_operation_mode(mode)
+        self._push_chart_context()
 
     def _sync_status_strip(self) -> None:
         """Push current AppState into the strip + Safety card (initial render)."""
@@ -581,6 +606,87 @@ class DashboardPage(QWidget):
     def _tick_poll_age(self) -> None:
         if self._state:
             self._status_strip.update_poll_age(time.monotonic(), self._state.last_poll_monotonic)
+
+    # ─── Chart series: known keys, curated subset, modes (DEC-181) ────
+
+    def _register_known_keys(self) -> None:
+        """Push the displayable sensor + fan keys (and the synthetic aggregate, when
+        any fan exists) into the selection model — the single source for both
+        handlers so the aggregate key is never forgotten."""
+        keys = [f"sensor:{sid}" for sid in self._sensor_panel.displayed_sensor_ids()]
+        keys += self._displayable_fan_keys
+        if self._displayable_fan_keys:
+            keys.append(AGGREGATE_FAN_RPM_KEY)
+        self._selection.update_known_keys(keys)
+
+    def _curated_sensor_id(
+        self, category: str, kinds: tuple[str, ...], sensors: list[SensorReading]
+    ) -> str | None:
+        """The one sensor id that represents a card category in the curated chart
+        subset — the card's binding if set, else the first by kind (mirrors
+        ``_update_card`` so the chart's default line matches the card)."""
+        binding = self._card_bindings.get(category, "")
+        if binding and any(s.id == binding for s in sensors):
+            return binding
+        for s in sensors:
+            if s.kind in kinds:
+                return s.id
+        return None
+
+    def _curated_chart_keys(self) -> set[str]:
+        """The curated default series (refinement §7.3 / B-fork DEC-181): CPU temp,
+        GPU temp, one mobo/case temp, and the aggregate fan line. Kind-aware, so it
+        lives here (the pure model can't tell a CPU temp from a GPU temp by key).
+        Non-existent slots are simply dropped; ``set_only_visible`` intersects with
+        known keys so a filtered/absent sensor is harmless."""
+        sensors = self._state.sensors if self._state else []
+        keys: set[str] = set()
+        for category, kinds in (
+            ("cpu_temp", ("CpuTemp", "cpu_temp")),
+            ("gpu_temp", ("GpuTemp", "gpu_temp")),
+            ("mobo_temp", ("MbTemp", "mb_temp")),
+        ):
+            sid = self._curated_sensor_id(category, kinds, sensors)
+            if sid:
+                keys.add(f"sensor:{sid}")
+        if self._displayable_fan_keys:
+            keys.add(AGGREGATE_FAN_RPM_KEY)
+        return keys
+
+    def _maybe_seed_chart_defaults(self) -> None:
+        """First-run only (A-fork DEC-181): once BOTH sensors and fans have been
+        seen, declutter the chart to the curated subset and latch
+        ``chart_series_seeded`` so a returning user who chose "show all" is never
+        re-decluttered. Skipped entirely without a settings service or once seeded."""
+        if not self._settings_service or self._settings_service.settings.chart_series_seeded:
+            return
+        if not (self._seen_sensors and self._seen_fans):
+            return
+        self._selection.apply_mode(ChartMode.COMBINED, self._curated_chart_keys())
+        self._chart.set_mode(ChartMode.COMBINED)
+        self._settings_service.update(chart_series_seeded=True)
+
+    def _on_chart_mode_selected(self, mode: ChartMode) -> None:
+        curated = self._curated_chart_keys() if mode == ChartMode.COMBINED else None
+        self._selection.apply_mode(mode, curated)
+
+    def _on_chart_reset(self) -> None:
+        """Reset-to-default: restore the curated Combined subset and reflect it in
+        the selector (refinement §11)."""
+        self._selection.apply_mode(ChartMode.COMBINED, self._curated_chart_keys())
+        self._chart.set_mode(ChartMode.COMBINED)
+
+    def _push_chart_context(self) -> None:
+        """Feed the chart's crosshair footer the current profile + mode (DEC-181)."""
+        if not self._state:
+            return
+        self._chart.set_status_context(
+            self._state.active_profile_name, MODE_LABELS.get(self._state.mode, "")
+        )
+
+    def _annotate(self, label: str) -> None:
+        """Add a poll-diff event line to the chart at the current monotonic time."""
+        self._chart.add_annotation(time.monotonic(), label)
 
     def _on_capabilities_updated(self, caps: Capabilities) -> None:
         of = caps.openfan
@@ -662,6 +768,7 @@ class DashboardPage(QWidget):
         self._update_safety_card(thermal, status.overrides)
         if thermal != self._last_thermal_state:
             self._last_thermal_state = thermal
+            self._annotate(f"Thermal: {thermal}")
             if thermal == "normal":
                 self._thermal_banner.hide_banner()
             else:
@@ -670,6 +777,17 @@ class DashboardPage(QWidget):
                     "fan control to protect your hardware. Fans return to your profile "
                     "once temperatures recover."
                 )
+
+        # Override start/end (poll-diff, DEC-181) — net-new diff state; overrides
+        # are not otherwise tracked across polls.
+        override_ids = {o.control_id for o in status.overrides} if status.overrides else set()
+        if override_ids != self._last_override_ids:
+            for cid in sorted(override_ids - self._last_override_ids):
+                self._annotate(f"Override: {cid}")
+            for cid in sorted(self._last_override_ids - override_ids):
+                self._annotate(f"Override end: {cid}")
+            self._last_override_ids = override_ids
+
         for sub in status.subsystems:
             if sub.name == "openfan" and sub.status != "ok":
                 reason = f" ({sub.reason})" if sub.reason else ""
@@ -687,6 +805,13 @@ class DashboardPage(QWidget):
     def _on_sensors_updated(self, sensors: list[SensorReading]) -> None:
         if sensors:
             self._show_content()
+            self._seen_sensors = True
+            # Stale-sensor onset → annotation (poll-diff, DEC-181). Onset only,
+            # to avoid re-annotating a sensor that stays stale across polls.
+            stale_now = {s.id for s in sensors if s.freshness != Freshness.FRESH}
+            for sid in sorted(stale_now - self._last_stale_sensor_ids):
+                self._annotate(f"Stale: {sid}")
+            self._last_stale_sensor_ids = stale_now
 
         # Re-read the iGPU auto-hide setting each poll so the toggle applies
         # live, mirroring hide_unused_fan_headers in _on_fans_updated (F9).
@@ -695,13 +820,10 @@ class DashboardPage(QWidget):
         # Update sensor panel first (applies iGPU filtering)
         self._sensor_panel.update_sensors(sensors)
 
-        # Seed selection model from DISPLAYABLE keys only — not raw history.
-        # The panel filters iGPU sensors and the fan handler filters duplicate
-        # hwmon fans. Only keys for entities visible in panel/table should be
-        # graphable. Fan keys are added in _on_fans_updated.
-        displayed_ids = self._sensor_panel.displayed_sensor_ids()
-        displayable_sensor_keys = [f"sensor:{sid}" for sid in displayed_ids]
-        self._selection.update_known_keys(displayable_sensor_keys + self._displayable_fan_keys)
+        # Register displayable keys for charting — DISPLAYABLE only (the panel
+        # filters iGPU sensors and the fan handler filters duplicate hwmon fans).
+        # Fan keys + the aggregate are folded in by _register_known_keys.
+        self._register_known_keys()
 
         sensor_by_id = {s.id: s for s in sensors}
 
@@ -726,6 +848,8 @@ class DashboardPage(QWidget):
             crit=90,
         )
         self._update_card(self._mb_card, "mobo_temp", ("MbTemp", "mb_temp"), sensors, sensor_by_id)
+
+        self._maybe_seed_chart_defaults()
 
     # ─── Visibility gating (R48 performance) ───────────────────────
 
@@ -765,6 +889,13 @@ class DashboardPage(QWidget):
     def _on_fans_updated(self, fans: list[FanReading]) -> None:
         if fans:
             self._show_content()
+            self._seen_fans = True
+            # Fan-stall onset → annotation (poll-diff, DEC-181). Onset only.
+            stalled_now = {f.id for f in fans if f.stall_detected}
+            for fid in sorted(stalled_now - self._last_stalled_fan_ids):
+                name = self._state.fan_display_name(fid) if self._state else fid
+                self._annotate(f"Stall: {name}")
+            self._last_stalled_fan_ids = stalled_now
 
         # Update sensor panel fan groups (applies displayability + dedup)
         self._sensor_panel.update_fans(fans)
@@ -779,14 +910,9 @@ class DashboardPage(QWidget):
         self._update_fans_card(display_fans)
         self._refresh_fan_zones()
 
-        # Store displayable fan keys and re-seed selection model
-        self._displayable_fan_keys = []
-        for f in display_fans:
-            self._displayable_fan_keys.append(f"fan:{f.id}:rpm")
-        displayable_sensor_keys = [
-            f"sensor:{sid}" for sid in self._sensor_panel.displayed_sensor_ids()
-        ]
-        self._selection.update_known_keys(displayable_sensor_keys + self._displayable_fan_keys)
+        # Store displayable fan keys and re-register (folds in sensors + aggregate)
+        self._displayable_fan_keys = [f"fan:{f.id}:rpm" for f in display_fans]
+        self._register_known_keys()
 
         # Update fan table rows (add rows for new fans, update existing)
         self._fan_ids = [f.id for f in display_fans]
@@ -808,6 +934,8 @@ class DashboardPage(QWidget):
                 else:
                     if item.text() != text:
                         item.setText(text)
+
+        self._maybe_seed_chart_defaults()
 
     def _zone_names(self) -> list[str]:
         """Distinct existing user-zone names, for the assign-to-zone picker."""
@@ -962,6 +1090,8 @@ class DashboardPage(QWidget):
 
     def _on_profile_changed(self, name: str) -> None:
         self._status_strip.set_active_profile(name)
+        self._annotate(f"Profile: {name}" if name else "Profile cleared")
+        self._push_chart_context()
         # Sync combo selection to active profile
         idx = self._profile_combo.findText(name)
         if idx >= 0:
