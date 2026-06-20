@@ -42,6 +42,7 @@ from control_ofc.services.daemon_service_check import (
     ENABLE_COMMAND,
     check_daemon_service_state,
 )
+from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.fan_grouping import build_fan_groups
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import ChartMode, SeriesSelectionModel
@@ -50,7 +51,9 @@ from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.status_banner import MODE_LABELS
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
+from control_ofc.ui.widgets.dashboard_inspector import DashboardInspector, WarningsView
 from control_ofc.ui.widgets.error_banner import ErrorBanner
+from control_ofc.ui.widgets.event_log_view import EventLogView
 from control_ofc.ui.widgets.fan_zone_card import FanZoneGrid
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
@@ -65,6 +68,10 @@ if TYPE_CHECKING:
 # Trend deadband: a |rate| below this reads as "flat" so a near-steady
 # temperature doesn't flicker the glyph between rising/falling.
 _TREND_DEADBAND_C_PER_S = 0.05
+
+# Inspector opens by default only when the page is at least this wide at first
+# show; narrower windows start collapsed so the chart keeps room (DEC-182, 3A).
+_INSPECTOR_WIDE_THRESHOLD_PX = 1100
 
 # Plain-language reason per daemon thermal_state, for the Safety card detail.
 # Kept qualitative (no hardcoded thresholds) so it can't drift from the daemon.
@@ -117,6 +124,7 @@ class DashboardPage(QWidget):
         profile_service: ProfileService | None = None,
         settings_service: AppSettingsService | None = None,
         client: DaemonClient | None = None,
+        diagnostics_service: DiagnosticsService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -126,6 +134,14 @@ class DashboardPage(QWidget):
         self._profile_service = profile_service
         self._settings_service = settings_service
         self._client = client
+        # Shared with MainWindow so the dashboard + diagnostics event logs read one
+        # deque (DEC-111). Tests build the page without one, so fall back like
+        # MainWindow does rather than make the Events tab conditional.
+        self._diag = diagnostics_service or DiagnosticsService(
+            state,
+            settings_service=settings_service,
+            profile_service=profile_service,
+        )
         self._fan_ids: list[str] = []  # Track fan IDs for table row mapping
         self._displayable_fan_keys: list[str] = []  # Fan series keys for selection
         self._has_data = False
@@ -136,6 +152,12 @@ class DashboardPage(QWidget):
         self._last_override_ids: set[str] = set()
         self._last_stale_sensor_ids: set[str] = set()
         self._last_stalled_fan_ids: set[str] = set()
+        # Inspector pane (DEC-182): logical shown-state + the saved splitter split
+        # for restore-on-reopen; the open/closed default is decided once on first
+        # show (Qt reports a placeholder width at construction).
+        self._inspector_shown = True
+        self._inspector_saved_sizes: list[int] | None = None
+        self._inspector_default_applied = False
         # Card-to-sensor bindings: category -> sensor_id (empty = auto)
         self._card_bindings: dict[str, str] = {}
         if settings_service:
@@ -416,7 +438,8 @@ class DashboardPage(QWidget):
         self._profile_combo = self._status_strip.profile_combo
         self._apply_btn = self._status_strip.apply_btn
         self._apply_btn.clicked.connect(self._on_apply_profile)
-        self._status_strip.warning_clicked.connect(self._open_warnings_dialog)
+        self._status_strip.warning_clicked.connect(self._open_warnings)
+        self._status_strip.inspector_toggle_clicked.connect(self._toggle_inspector)
         content_layout.addWidget(self._status_strip)
 
         # Row 1: Summary cards
@@ -516,19 +539,33 @@ class DashboardPage(QWidget):
         self._v_splitter.setSizes([500, 200])
         self._h_splitter.addWidget(self._v_splitter)
 
-        # Right pane: sensor series panel (spans full chart+table height)
+        # Right pane: tabbed inspector (DEC-182). The sensor panel becomes the
+        # Sensors tab; Events reuses the diagnostics EventLogView (one shared
+        # deque); Warnings renders AppState.active_warnings (the set the strip
+        # warning chip counts — distinct from the event log). The whole pane
+        # toggles from the strip so the chart can reclaim width on narrow windows.
         self._sensor_panel = SensorSeriesPanel(self._selection, state=self._state)
         if self._settings_service:
             self._sensor_panel.hide_igpu = self._settings_service.settings.hide_igpu_sensors
         self._sensor_panel.set_chart(self._chart, self._settings_service)
-        self._h_splitter.addWidget(self._sensor_panel)
+
+        self._event_log_view = EventLogView(self._diag)
+        self._warnings_view = WarningsView(self._state)
+        self._inspector = DashboardInspector(
+            self._sensor_panel, self._event_log_view, self._warnings_view
+        )
+        self._h_splitter.addWidget(self._inspector)
 
         self._h_splitter.setStretchFactor(0, 3)
         self._h_splitter.setStretchFactor(1, 1)
-        self._h_splitter.setSizes([800, 260])
+        self._h_splitter.setSizes([800, 300])
         self._h_splitter.setCollapsible(0, False)
         self._h_splitter.setCollapsible(1, False)
         content_layout.addWidget(self._h_splitter, 1)
+
+        # Coherent initial state (shown) until the first showEvent picks the
+        # width-based default; keeps the strip toggle glyph in sync from build.
+        self._set_inspector_shown(self._inspector_shown)
 
         # Raw fan data (4A): the dense table, one collapsed click away. Cards are
         # primary now, so the table is advanced detail kept in context, not deleted.
@@ -858,6 +895,8 @@ class DashboardPage(QWidget):
         if not self._chart_timer.isActive():
             self._chart_timer.start()
         super().showEvent(event)
+        # Inspector open/closed default is decided once, on the first real width.
+        self._apply_inspector_default(self.width())
 
     def hideEvent(self, event) -> None:
         """Stop chart timer when dashboard is hidden (e.g. switched to another page)."""
@@ -1142,14 +1181,42 @@ class DashboardPage(QWidget):
             if self._state:
                 self._on_sensors_updated(self._state.sensors)
 
-    def _open_warnings_dialog(self) -> None:
-        """Open the warnings viewer dialog."""
-        if not self._state:
-            return
-        from control_ofc.ui.widgets.warnings_dialog import WarningsDialog
+    def _open_warnings(self) -> None:
+        """Status-strip warning chip → reveal the inspector's Warnings tab."""
+        self._set_inspector_shown(True)
+        self._inspector.show_warnings_tab()
 
-        dialog = WarningsDialog(self._state, parent=self)
-        dialog.exec()
+    def _toggle_inspector(self) -> None:
+        """Status-strip toggle → show/hide the inspector pane."""
+        self._set_inspector_shown(not self._inspector_shown)
+
+    def _apply_inspector_default(self, width: int) -> None:
+        """One-shot: open the inspector on wide windows, collapse it on narrow.
+
+        Decided on the first real page width (Qt reports a placeholder width at
+        construction), then user-controlled for the session (DEC-182, 3A).
+        """
+        if self._inspector_default_applied:
+            return
+        self._inspector_default_applied = True
+        self._set_inspector_shown(width >= _INSPECTOR_WIDE_THRESHOLD_PX)
+
+    def _set_inspector_shown(self, shown: bool) -> None:
+        """Show or hide the inspector pane, restoring the prior split on reopen.
+
+        Hiding a QSplitter child hands its width to the chart pane (a programmatic
+        hide bypasses ``setCollapsible(False)``, which only blocks interactive
+        drag); the saved sizes restore the proportions when reopened.
+        """
+        if not shown and self._inspector_shown:
+            sizes = self._h_splitter.sizes()
+            if len(sizes) == 2 and sizes[1] > 0:
+                self._inspector_saved_sizes = list(sizes)
+        self._inspector_shown = shown
+        self._inspector.setVisible(shown)
+        if shown and self._inspector_saved_sizes is not None:
+            self._h_splitter.setSizes(self._inspector_saved_sizes)
+        self._status_strip.set_inspector_expanded(shown)
 
     def _safety_detail_text(self) -> str:
         """Read-only thermal-safety summary for the Safety card's click detail.

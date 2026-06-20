@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QHeaderView, QScrollArea, QSplitter, QTableWidget
 
 from control_ofc.ui.pages.dashboard_page import DashboardPage
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
+from control_ofc.ui.widgets.dashboard_inspector import DashboardInspector
 from control_ofc.ui.widgets.fan_zone_card import FanZoneGrid
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.summary_card import SummaryCard
@@ -39,12 +40,15 @@ class TestSplitterHierarchy:
         # v_splitter is the left child of h_splitter
         assert h_splitter.widget(0) is v_splitter
 
-    def test_sensor_panel_is_right_pane(self, qtbot, app_state):
+    def test_inspector_is_right_pane(self, qtbot, app_state):
+        """DEC-182: the right pane is the tabbed inspector; the sensor panel is its
+        Sensors tab, still reachable as ``page._sensor_panel``."""
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         h_splitter = page.findChild(QSplitter, "Dashboard_Splitter_horizontal")
         right_child = h_splitter.widget(1)
-        assert isinstance(right_child, SensorSeriesPanel)
+        assert isinstance(right_child, DashboardInspector)
+        assert page._sensor_panel in right_child.findChildren(SensorSeriesPanel)
 
     def test_chart_and_zone_cards_share_left_column(self, qtbot, app_state):
         """Chart (top) and the fan-zone card region (bottom) share the left
