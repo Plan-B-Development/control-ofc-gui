@@ -1,6 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [2.2.0] — 2026-06-20
+
+A GUI-only **dashboard refinement** — a calmer, progressive-disclosure operator
+overview (status strip, refined summary cards, user-assigned fan zones, a
+readable-by-default chart, and a collapsible inspector) with all advanced data
+preserved — plus a new-user documentation pass. No daemon change required; pairs
+with `control-ofc-daemon` ≥ v2.0.0.
 
 ### Added
 - **Dashboard refinement — a calmer, progressive-disclosure operator overview**
