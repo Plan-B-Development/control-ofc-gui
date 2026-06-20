@@ -163,19 +163,22 @@ _DEMO_HWMON_HEADERS: list[dict] = [
     },
 ]
 
-_DEMO_GROUPS: dict[str, list[str]] = {
-    "Intake": ["openfan:ch00", "openfan:ch01", "openfan:ch05"],
-    "Exhaust": ["openfan:ch02", "openfan:ch03", "openfan:ch04"],
-    "CPU": ["hwmon:it8696:pci0:pwm1:CHA_FAN1", "hwmon:it8696:pci0:pwm3:CHA_FAN3"],
-    "Radiator": ["openfan:ch06", "openfan:ch07"],
-    "Case": [
-        "openfan:ch00",
-        "openfan:ch01",
-        "openfan:ch02",
-        "openfan:ch03",
-        "openfan:ch04",
-        "openfan:ch05",
-    ],
+# DEC-176: one-zone-per-fan demo seed (fan_id -> zone name). Flattened from the
+# old overlapping _DEMO_GROUPS rollup (its "Case" group double-counted the Intake
+# and Exhaust fans; a physical zone is exclusive). GPU fans are intentionally left
+# unassigned so demo mode exercises BOTH the user-zone path and the role/source
+# fallback in services/fan_grouping.py.
+_DEMO_ZONES: dict[str, str] = {
+    "openfan:ch00": "Front Intake",
+    "openfan:ch01": "Front Intake",
+    "openfan:ch05": "Front Intake",
+    "openfan:ch02": "Exhaust",
+    "openfan:ch03": "Exhaust",
+    "openfan:ch04": "Exhaust",
+    "openfan:ch06": "Radiator",
+    "openfan:ch07": "Radiator",
+    "hwmon:it8696:pci0:pwm1:CHA_FAN1": "CPU",
+    "hwmon:it8696:pci0:pwm3:CHA_FAN3": "CPU",
 }
 
 
@@ -430,3 +433,12 @@ class DemoService:
     def fan_aliases() -> dict[str, str]:
         """Return demo-friendly display names for fans."""
         return {f["id"]: f["label"] for f in _DEMO_FANS}
+
+    @staticmethod
+    def fan_zones() -> dict[str, str]:
+        """Return demo-friendly physical zone assignments (DEC-176).
+
+        One zone per fan; GPU fans are intentionally left unassigned so demo
+        mode exercises the role/source fallback alongside the user-zone path.
+        """
+        return dict(_DEMO_ZONES)
