@@ -63,7 +63,7 @@ A fan role groups physical fan outputs that should behave the same way. For exam
 
 Each fan role contains a list of physical fan outputs (members). A member can be:
 
-- An OpenFan Controller channel (e.g., channels 0-7)
+- An OpenFan Controller channel (e.g., channels 0-9)
 - A motherboard hwmon fan header (e.g., CPU Fan, chassis fans)
 - An AMD GPU fan output
 
@@ -171,8 +171,7 @@ The **daemon** runs the control loop every second — the GUI never writes fan s
    - If mode is Manual: use the fixed output percentage
    - If mode is Curve: look up the curve, read the bound sensor's temperature, interpolate the output
 3. Apply the **hysteresis deadband** (2 degrees C): when temperature is falling, hold the current PWM until the temperature drops 2 degrees below the last transition point (prevents fan oscillation)
-4. Apply **write suppression**: skip writes when the calculated output differs from the last commanded value by less than 1% (reduces unnecessary hardware writes)
-5. Write the final PWM values to every fan backend (OpenFan, motherboard hwmon, and AMD GPU PMFW)
+4. Write the final PWM values to every fan backend (OpenFan, motherboard hwmon, and AMD GPU PMFW), **coalescing redundant writes**: for hwmon it skips the write when the new PWM is byte-identical to the last commanded value, and for AMD GPU PMFW it skips changes smaller than 5% (to avoid SMU firmware churn). This coalescing is entirely daemon-internal — the GUI itself never writes PWM.
 
 ## The Daemon Drives the Fans
 

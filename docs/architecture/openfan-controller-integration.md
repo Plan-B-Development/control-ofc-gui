@@ -39,7 +39,9 @@ The daemon uses a stable device path via `/dev/serial/by-id/` (recommended) or a
 ### Retry on Failure
 - **5 retries** with exponential backoff: 1s, 2s, 4s, 8s, 16s
 - If all retries fail: daemon starts without OpenFan (degrades gracefully)
-- No auto-reconnect at runtime — requires daemon restart if device disconnects
+- **Runtime auto-reconnect (R43):** after 5 consecutive read errors the daemon
+  enters reconnect mode — it re-runs `auto_detect_port` and retries with its own
+  capped backoff, recovering a disconnected device without a daemon restart
 
 ### Assumptions About Device
 - Device responds within 500ms per line
@@ -205,7 +207,7 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 - **Trigger:** CPU Tctl ≥ 105°C
 - **Action:** Force all OpenFan channels to 100% PWM
 - **Hold:** Until Tctl ≤ 80°C
-- **Recovery:** 60% PWM floor for 1 cycle, then resume profile control
+- **Recovery:** 60% PWM floor for two cycles (release + 1), then resume profile control
 - **Implementation:** `ThermalSafetyRule.evaluate()` called every 1s in profile engine
 
 ### Command Safety Guards
@@ -264,7 +266,7 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 | Failure | Detection | Recovery | Impact |
 |---------|-----------|----------|--------|
 | Device not found at startup | Port open fails | 5 retries with backoff | Daemon runs without OpenFan |
-| Device disconnects during operation | Next read/write returns I/O error | **No auto-reconnect** — must restart daemon | Fan control stops |
+| Device disconnects during operation | Next read/write returns I/O error | **Auto-reconnect (R43)** — after 5 consecutive errors the daemon re-detects and reconnects with backoff; no restart needed | Fan control pauses until reconnect |
 | Firmware enters debug loop | 50 debug lines exceeded | Command fails with Protocol error | Affected write skipped |
 | Response timeout | 500ms per read_line | SerialError::Timeout returned | Write skipped for this cycle |
 | Malformed response | Protocol parsing fails | SerialError::Protocol returned | Write skipped |

@@ -131,18 +131,29 @@ control_ofc/
       settings_page.py
       diagnostics_page.py
     widgets/
-      fan_card.py
-      sensor_badge.py
-      health_chip.py
+      control_card.py          # fan role card (theme-derived size, user-resizable — DEC-128/129)
+      curve_card.py            # curve card (theme-derived size, user-resizable — DEC-128/129)
+      summary_card.py          # dashboard summary tiles
       curve_editor.py
-      group_editor.py
+      curve_edit_dialog.py
+      member_editor.py         # fan-role membership editor
+      fan_role_dialog.py
+      fan_wizard.py            # fan-identify wizard (daemon identify API — DEC-166)
       timeline_chart.py
-      log_viewer.py
-      empty_state.py
+      sensor_series_panel.py
+      series_chooser_dialog.py
+      sensor_detail_dialog.py
+      event_log_view.py
+      error_banner.py
+      readiness_report.py
+      warnings_dialog.py
+      theme_editor.py
+      aio_config_dialog.py
+      collapsible_section.py
       flow_layout.py          # Qt FlowLayout — responsive card wrapping
       draggable_flow.py       # DraggableFlowContainer — drag-to-reorder
-      curve_card.py            # curve card (theme-derived size, user-resizable — DEC-128/129)
-      control_card.py          # fan role card (theme-derived size, user-resizable — DEC-128/129)
+      card_metrics.py         # shared card sizing helpers
+      card_resize.py          # resize-grip support
   assets/
     ...
 ```
@@ -169,10 +180,10 @@ Responsible for:
 
 ### Polling service
 Responsible for:
-- periodic reads
+- periodic reads (a single 1 Hz `QTimer` driving a worker-thread `poll()`)
 - freshness tracking
 - emission of updated view models
-- selective pause/resume in demo/manual/disconnected states
+- start/stop of the whole loop (`start()`/`stop()`/`shutdown()`); it does not pause selectively per state — disconnect is detected by poll failure, and demo mode swaps in synthetic data rather than pausing this service
 
 ### Demo controller (demo mode only)
 Responsible for:

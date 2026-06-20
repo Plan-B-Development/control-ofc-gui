@@ -56,7 +56,7 @@ A summary table (ID, Source, New Label, Notes) where every label and note is sti
 
 - **Thermal abort:** CPU temperature is checked before and during every test. If any CPU sensor exceeds **85°C**, the test aborts immediately and the fan is restored.
 - **One fan at a time:** the wizard asks the daemon to stop only the fan you are identifying. Every other fan keeps running on its curve — there is no global pause and the daemon stays in charge throughout.
-- **Daemon-enforced auto-restore:** each stop is a daemon request with a built-in deadman timer, so even if the GUI closes or crashes mid-test the daemon restores that fan on its own. Finishing, cancelling, aborting a test, or closing the wizard also restore the tested fan to its last commanded speed. If no prior speed is known (e.g. a GPU fan that was under firmware control), a **30% fallback** is used until normal control resumes.
+- **Daemon-enforced auto-restore:** each stop is a daemon request with a built-in deadman timer, so even if the GUI closes or crashes mid-test the daemon restores that fan on its own. Finishing, cancelling, aborting a test, or closing the wizard also restore the tested fan. On restore the daemon simply removes the identify entry, and the fan resumes its normal curve control on the next daemon tick (1 Hz) — there is no separate fallback speed.
 
 ## Settings That Affect the Wizard
 

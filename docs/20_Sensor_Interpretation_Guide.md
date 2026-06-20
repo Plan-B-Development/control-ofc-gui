@@ -399,6 +399,10 @@ precedence.
 | ASRock | X670E | AMD TSI Addr 98h | amd_tsi | high |
 | Gigabyte | B550 | temp1 | vendor_wmi_unlabeled | low |
 
+> This table is a representative subset. The authoritative list is
+> `BOARD_SENSOR_OVERRIDES` in `src/control_ofc/ui/sensor_knowledge.py`,
+> which also carries the DEC-110 Intel/LGA1700 ASUS EC anchors (Z690/Z790).
+
 ### How to add new entries
 
 1. Verify the sensor identity from at least one of:

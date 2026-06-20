@@ -20,7 +20,7 @@ Summary cards for:
 - overall daemon status
 - OpenFan availability
 - hwmon availability
-- hwmon lease state
+- thermal state
 - last error summary
 
 ### 2. Connection and daemon health
@@ -175,7 +175,7 @@ Should copy a concise but useful text summary, not an unreadable blob.
 
 ## Warnings to surface explicitly
 - daemon unreachable
-- lease unavailable
+- thermal protection active
 - stale sensor data
 - write support disabled
 - unsupported device categories
@@ -231,8 +231,6 @@ Auto-scroll behaviour: the view follows the bottom only when the user is already
 |--------|------------|
 | `gui` | GUI start/exit; theme changed; manual override entered; demo mode activated; kernel warning acknowledged |
 | `polling` | First connection established; disconnected (after a prior connect); daemon-reported active profile detected |
-| `lease` | Acquired; released; renewal failed after all retries (lost) |
-| `control_loop` | Loop started/stopped; write-fail threshold crossed (count == 3); per-target recovery; lease lost transition |
 | `profile` | Activated/deactivated; profile load error |
 
 Per-cycle work (every poll, every write attempt) must continue to use Python `logging` directly — the in-process event log is for breadcrumbs the user opens Diagnostics to see, not the daemon journal.

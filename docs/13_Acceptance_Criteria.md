@@ -69,7 +69,7 @@
 - [ ] Diagnostics shows daemon/API status
 - [ ] Diagnostics shows sensor health
 - [ ] Diagnostics shows controller/device discovery
-- [ ] Diagnostics shows lease state with user-facing explanation
+- [ ] Diagnostics shows connection health, subsystem freshness, and daemon thermal state with user-facing explanation
 - [ ] Diagnostics offers hardware-diagnostics refresh, PWM/GPU write tests, export support bundle, and copy last errors
 - [ ] Export support bundle produces a structured output
 - [ ] Subsystem age_ms values include reason text and explanatory note (R34)

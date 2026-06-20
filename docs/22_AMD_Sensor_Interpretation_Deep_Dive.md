@@ -376,7 +376,8 @@ The daemon polls at 1 Hz, which is within safe limits for all known boards.
 #### Supported boards (AMD, from kernel docs)
 
 - PRIME X470-PRO
-- ROG CROSSHAIR VII HERO (Wi-Fi)
+- ROG CROSSHAIR VII HERO
+- ROG CROSSHAIR VII HERO (WI-FI)
 - ROG STRIX B450-E / B450-F / B450-I GAMING
 - ROG STRIX X470-F / X470-I GAMING
 
@@ -647,7 +648,7 @@ a one-time popup; acknowledged warnings are remembered in
 | `id` | Affected kernels | Affected hardware | Severity | Symptom |
 |---|---|---|---|---|
 | `rdna_hang_kernel_6_18_6_19` | 6.18.x **and** 6.19.x | RDNA3 (RX 7000) and RDNA4 (RX 9000) | Critical | Hard hang under GPU load ([Phoronix, EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)); [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101) panics on 6.18.20 and 6.19.10. Pre-RDNA3 GPUs are unaffected. |
-| `smu_mismatch_navi48_r9700` | all current kernels (6.14 → 7.0 tested) | R9700 only (PCI `0x7551`) | Critical | No working `fan_curve` path — SMU interface-version mismatch (firmware v50 vs driver v46, [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)); `pwm1` read-only. RX 9070 XT (`0x7550`) **not** affected. |
+| `smu_mismatch_navi48_r9700` | all current kernels (tested through 7.0; **not an upper bound** — device-scoped, still fires on 7.1+) | R9700 only (PCI `0x7551`) | Critical | No working `fan_curve` path — SMU interface-version mismatch (firmware v50 vs driver v46, [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)); `pwm1` read-only. RX 9070 XT (`0x7550`) **not** affected. |
 
 For mitigation guidance, see `docs/19_Hardware_Compatibility.md` § Known kernel-version regressions.
 

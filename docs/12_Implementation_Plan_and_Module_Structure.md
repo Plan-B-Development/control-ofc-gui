@@ -134,6 +134,9 @@ The app feels coherent and test-ready.
 
 ### `services/profile_service.py`
 - daemon-backed profile CRUD (pull/mirror on load; validate + upload on save) — DEC-160/161
+- full-profile hydration on load: lists summaries, then fetches each id's complete body via
+  `GET /profiles/{id}` before parsing, so fan roles/curves survive a GUI restart and a transient
+  per-id fetch failure can't clobber a good local mirror (mirror-on-success-only) — DEC-175
 - a local draft cache with offline fallback (drafts when the daemon is unreachable)
 - assignment validation; active profile state
 
@@ -176,7 +179,7 @@ and both AUR sources live under `/home/mitch/Development/aur/`.
 - stale sensors
 - invalid imports
 - unsaved profile changes
-- lease unavailable
+- daemon thermal protection (poll-driven banner)
 - mixed OpenFan + hwmon targets
 - profile activation / deactivation
 - chart time-range switching
