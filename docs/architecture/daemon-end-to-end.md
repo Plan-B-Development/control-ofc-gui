@@ -2,12 +2,26 @@
 
 > **Snapshot, not source of truth.** This document was generated from a code
 > inspection on 2026-03-25 against daemon v0.2.0. The daemon has since
-> evolved through dozens of releases since —
-> the structural narrative below is still accurate at the architectural
-> level, but specific claims about endpoints, error codes, or module shape
-> may be stale. For current authoritative documentation:
-> - Module layout: `daemon.md` (in the daemon repo)
+> evolved through dozens of releases — specific claims about endpoints, error
+> codes, or module shape may be stale.
+>
+> **⚠️ Superseded by the 2.0.0 daemon-control cutover (DEC-159/DEC-165).** Several
+> architectural claims below describe a model that no longer exists:
+> - The **dual-control model** (§1, §2) is gone — the daemon profile engine is now
+>   the **sole PWM writer**; the GUI never writes PWM (poll-only, 1 Hz `GET /poll`).
+> - The **GUI-held hwmon lease** and the **30 s `gui_active` deferral** (§9, §10) were
+>   **deleted** at the cutover — the daemon self-leases internally, and headless
+>   profile/thermal writes to every backend (OpenFan, hwmon, GPU) are fully shipped.
+> - **AIO support** is no longer a placeholder — hwmon-attached liquid cooling shipped
+>   (DEC-156).
+> - Live manual override and fan identify are now **daemon APIs** (DEC-163/DEC-166),
+>   not GUI-side writes.
+>
+> The GPU PCI-ID table in §8 has been corrected inline (it was a factual error, not
+> merely stale). For current authoritative documentation:
+> - Architecture / sole-writer model: `CLAUDE.md` (this repo)
 > - API contract: `docs/08_API_Integration_Contract.md` (in this repo)
+> - Module layout: `daemon.md` (in the daemon repo)
 > - Endpoint reference: `daemon.md` § API Endpoints
 > - Recent changes: daemon `CHANGELOG.md`
 
@@ -168,6 +182,13 @@ The daemon runs concurrent async tasks on the Tokio multi-threaded runtime:
 | `/hwmon/rescan` | Re-enumerate devices | No |
 | `/profile/activate` | Switch active profile | No |
 
+> **Correction (factual error, not just stale):** `/fans/openfan/{ch}/target_rpm`
+> above was **never an HTTP route**, even at v0.2.0 — closed-loop RPM targeting
+> exists only as an internal serial method (`set_target_rpm` / `Command::SetTargetRpm`).
+> Separately, every bare PWM-write row and the entire `/hwmon/lease/*` quartet were
+> **retired at 2.0.0** (DEC-165): the daemon engine self-leases and is the sole
+> writer. See `docs/08_API_Integration_Contract.md` for the current surface.
+
 ### Error Model
 
 All errors use `ErrorEnvelope`:
@@ -221,7 +242,7 @@ The `age_ms` field in `/status` subsystem entries and `/sensors`/`/fans` respons
 ### Thermal Safety (safety.rs)
 - **Implemented and tested** with 8 unit tests
 - Evaluates CPU Tctl from cache each engine cycle
-- State machine: Normal → Emergency (105°C) → Hold (>80°C) → Recovery (≤80°C, 60% for 1 cycle) → Normal
+- State machine: Normal → Emergency (105°C) → Hold (>80°C) → Recovery (≤80°C, 60% for 2 cycles) → Normal
 
 ---
 
@@ -258,17 +279,20 @@ RDNA3+ GPUs expose a firmware-managed fan curve at `gpu_od/fan_ctrl/fan_curve`. 
 
 ### GPU model identification
 
-PCI device IDs are mapped to marketing names via a lookup table:
+PCI device IDs (plus revision, where one device ID covers multiple SKUs) are
+mapped to marketing names via a lookup table:
 
-| PCI ID | Model |
-|--------|-------|
-| 0x69C0 | RX 9070 XT |
-| 0x69C1 | RX 9070 |
-| 0x744C | RX 7900 XTX |
-| 0x7448 | RX 7900 XT |
-| ... | (see gpu_detect.rs for full table) |
+| PCI ID | Revision | Model |
+|--------|----------|-------|
+| 0x7550 | 0xC0 | RX 9070 XT |
+| 0x7550 | 0xC3 | RX 9070 |
+| 0x744C | — | RX 7900 XTX |
+| 0x7448 | — | RX 7900 XT |
+| ... | | (see gpu_detect.rs for full table) |
 
-Unknown IDs fall back to "AMD D-GPU" as the display label.
+Navi 48 (RX 9070 XT / 9070) shares device ID **0x7550** and is disambiguated by
+PCI revision (0xC0 = XT, 0xC3 = non-XT). Unknown IDs fall back to "AMD D-GPU"
+as the display label.
 
 ### Capabilities API
 
@@ -342,8 +366,8 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Condition | Detection | Response | User impact | Gaps |
 |-----------|-----------|----------|-------------|------|
 | CPU Tctl ≥ 105°C | Profile engine polls cache | Force all OpenFan+hwmon fans 100% (auto-lease via force_take, R43) | Fans max until 80°C | GPU fans excluded by design — PMFW self-protects (DEC-130) |
-| CPU Tctl ≤ 80°C (after emergency) | Safety rule evaluate() | Release + 60% recovery for 1 cycle | Fans drop to 60%, then profile resumes | None |
-| Serial device not found | Retry loop (5×, exponential backoff) | Daemon starts without OpenFan | GUI shows "not connected" | Auto-reconnect at runtime not implemented |
+| CPU Tctl ≤ 80°C (after emergency) | Safety rule evaluate() | Release + 60% recovery for 2 cycles (release + 1) | Fans drop to 60% for two cycles, then profile resumes | None |
+| Serial device not found | Retry loop (5×, exponential backoff) | Daemon starts without OpenFan | GUI shows "not connected" | ~~Auto-reconnect at runtime not implemented~~ — **shipped in R43**: after 5 consecutive errors the daemon enters reconnect mode (auto-detect + backoff) |
 | Serial timeout (no response) | Per-read serialport timeout (500ms) | Returns `SerialError::Timeout` | Write skipped for this cycle | No automatic retry of failed commands |
 | Debug line flooding | MAX_DEBUG_LINES=50 + wall-clock deadline | Returns `SerialError::Protocol` | Write fails, logged | Cannot recover without restart |
 | 0% PWM > 8 seconds | Per-channel `stop_started_at` tracking | Reject further 0% commands | Fan restarts at last non-zero | Only protects API writes, not direct sysfs |
@@ -403,7 +427,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Profile persistence across reboot | **Implemented** | `/var/lib/control-ofc/daemon_state.json` |
 | Profile activation via API | **Implemented** | `POST /profile/activate` |
 | SSE event stream | **Implemented** | `GET /events` |
-| Auto-reconnect on serial disconnect | **Not implemented** | Requires daemon restart |
+| Auto-reconnect on serial disconnect | **Implemented (R43)** | After 5 consecutive errors the daemon enters reconnect mode (auto-detect + backoff); no restart needed |
 | AIO pump support | **Placeholder only** | Struct exists, no implementation |
 | udev hotplug detection | **Not implemented** | Static detection at startup only |
 

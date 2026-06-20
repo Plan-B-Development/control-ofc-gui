@@ -66,7 +66,7 @@ not match any installed theme the GUI falls back to Default Dark and
 logs the miss.
 
 ### C. Safety display
-Safety is daemon-owned and **not editable by the GUI**. The daemon reports `min_pwm_percent: 0` for all hwmon headers (no per-header floors). Thermal safety is temperature-triggered: 105°C → force all OpenFan and writable hwmon fans to 100% PWM, hold until temperature falls below 80°C, then apply a 60% PWM recovery floor for one cycle before resuming active control; 40% fallback if no CPU sensor for 5 cycles. GPU fans are excluded — PMFW firmware owns GPU thermal protection (DEC-130). The GUI reads safety metadata from `GET /capabilities` under `limits` and uses it for:
+Safety is daemon-owned and **not editable by the GUI**. The daemon reports `min_pwm_percent: 0` for all hwmon headers (no per-header floors). Thermal safety is temperature-triggered: 105°C → force all OpenFan and writable hwmon fans to 100% PWM, hold until temperature falls below 80°C, then apply a 60% PWM recovery floor for two cycles (the release cycle and one more) before resuming active control; 40% fallback if no CPU sensor for 5 cycles. GPU fans are excluded — PMFW firmware owns GPU thermal protection (DEC-130). The GUI reads safety metadata from `GET /capabilities` under `limits` and uses it for:
 - curve validation (reject curves that violate floors)
 - display in Controls and Diagnostics
 - stale-data timeout thresholds for warning presentation
@@ -106,8 +106,8 @@ These belong to the GUI:
 - demo mode defaults
 - aliases
 - groups
-- profiles
 - local UI state
+- a local profile **draft cache** (the daemon is the profile store of record — DEC-160)
 - per-card size overrides (`controls_card_sizes` — set via the Controls-page
   resize grips, not via a Settings control; reset per card by double-clicking
   its grip. DEC-129)
@@ -117,7 +117,7 @@ These belong to the daemon runtime/config:
 - capabilities
 - health
 - write permissions
-- lease status
+- profile store of record (DEC-160)
 - hardware availability
 
 ## Settings UX rules

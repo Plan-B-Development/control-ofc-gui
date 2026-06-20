@@ -47,7 +47,7 @@ control-ofc-gui --socket /tmp/control-ofc.sock
 pytest
 
 # Specific file
-pytest tests/test_control_loop.py -v
+pytest tests/test_profile_service.py -v
 
 # With coverage
 pytest --cov --cov-branch --cov-report=term-missing
@@ -75,7 +75,7 @@ Tests use `pytest-qt` for widget testing. All tests must be deterministic — no
 ```
 src/control_ofc/
 ├── api/            # Daemon HTTP client and typed models
-├── services/       # AppState, PollingService, ControlLoop, ProfileService
+├── services/       # AppState, PollingService, ProfileService (daemon owns control — no GUI control loop)
 ├── ui/
 │   ├── pages/      # Dashboard, Controls, Settings, Diagnostics
 │   └── widgets/    # Reusable components (cards, charts, editors)

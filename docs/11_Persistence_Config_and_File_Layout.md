@@ -54,13 +54,17 @@ Recommended approach:
 As of 2.0.0 the **daemon** is the profile store of record at `/var/lib/control-ofc/profiles/`
 (DEC-160). The GUI's `~/.config/control-ofc/profiles/` is now a **local draft cache**:
 `ProfileService` mirrors the daemon's profiles there on load, and writes drafts there when the
-daemon is offline (reconciling on reconnect). The GUI uploads and validates profiles through the
-daemon CRUD API rather than treating its local copy as authoritative.
+daemon is offline. There is **no background auto-sync**: an offline draft is re-published only when
+the user saves it again (the next `save_profile` validate-then-upload), not automatically on
+reconnect. The GUI uploads and validates profiles through the daemon CRUD API rather than treating
+its local copy as authoritative.
 
-GUI runtime state currently lives entirely under `~/.config/control-ofc/`.
-The XDG state and cache directories are created by `ensure_dirs()` but the
-v1 GUI does not yet write to them — no on-disk log, no `last_session.json`
-snapshot, no `support_bundle_work/` staging directory. Support bundles are
+GUI runtime state currently lives almost entirely under `~/.config/control-ofc/`.
+The XDG state and cache directories are created by `ensure_dirs()`. The GUI does
+**not** write to the XDG **state** dir — no on-disk log, no `last_session.json`
+snapshot, no `support_bundle_work/` staging directory. It **does** write to the
+XDG **cache** dir (`~/.cache/control-ofc-gui/`): `ui/theme.py` writes a themed
+combo-box arrow SVG (`combo-arrow-<digest>.svg`) there for the active theme. Support bundles are
 generated on demand and written to a user-selected export location.
 Aliases are persisted inside `app_settings.json` rather than a separate
 `aliases.json`; fan roles and their memberships are stored inside each

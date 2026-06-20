@@ -112,7 +112,7 @@ ls -la /dev/ttyACM0
 1. CLI: `--profile quiet` or `--profile-file /path/to/profile.json`
 2. Environment: `OPENFAN_PROFILE=quiet`
 3. Persisted state: `/var/lib/control-ofc/daemon_state.json` (from previous API activation)
-4. None → imperative mode (GUI drives PWM writes)
+4. None → the daemon runs purely imperative (no autonomous control; nothing is evaluated until a profile is activated). The GUI never drives PWM — the daemon's profile engine is the sole writer (DEC-159 / DEC-165).
 
 ### GUI activation flow
 When the user activates a profile in the GUI:
@@ -124,7 +124,7 @@ When the user activates a profile in the GUI:
 ### Deactivating a profile
 Two ways to leave profile mode without restarting the daemon:
 - **Activate a different profile** — `POST /profile/activate` replaces the current one.
-- **Deactivate entirely** — `POST /profile/deactivate` (body ignored) clears the active profile and returns the daemon to imperative-only mode. It is idempotent (deactivating when none is active is a success no-op), persists the cleared state so a restart does not resurrect the profile, and releases the `profile-engine` hwmon lease while preserving any GUI-held lease (DEC-097). Response: `{"deactivated": true, "previous_profile_id": ..., "previous_profile_name": ...}`.
+- **Deactivate entirely** — `POST /profile/deactivate` (body ignored) clears the active profile and returns the daemon to imperative-only mode. It is idempotent (deactivating when none is active is a success no-op), persists the cleared state so a restart does not resurrect the profile, and releases the daemon's internal `profile-engine` hwmon lease (the GUI holds no lease — DEC-097/DEC-165). Response: `{"deactivated": true, "previous_profile_id": ..., "previous_profile_name": ...}`.
 
 Restarting the daemon without a profile also works, but is no longer required.
 
@@ -183,7 +183,7 @@ The daemon enforces a single thermal safety rule (non-negotiable, not configurab
 - **Hold**: Until temperature drops below 80°C
 - **Recovery**: Apply a 60% PWM recovery floor for two cycles (the release cycle and one more), then resume active profile control
 - **Fallback**: Force 40% PWM (OpenFan + hwmon) if no CPU sensor is reachable for 5 consecutive poll cycles
-- **Visibility**: `GET /status` reports `thermal_state` (`normal` / `recovery` / `emergency` / `no_sensor_fallback`); the GUI pauses its own fan control and shows a warning while any override is active (DEC-132)
+- **Visibility**: `GET /status` reports `thermal_state` (`normal` / `recovery` / `emergency` / `no_sensor_fallback`); the GUI has no fan control to pause and only **shows** a poll-driven thermal-protection banner while protection is active (DEC-165, superseding the retired DEC-132 GUI stand-down)
 
 There are no per-header PWM floors. The daemon reports `min_pwm_percent: 0` for every hwmon header. Any safety-floor enforcement is the GUI's responsibility (curve validation, profile constraints) — the daemon never refuses a write on the basis of a per-header floor.
 

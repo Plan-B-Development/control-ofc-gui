@@ -43,7 +43,7 @@ The user should never need to guess whether the app is:
 - in demo mode
 - in manual override
 - read-only
-- holding a hwmon lease
+- under daemon thermal protection
 - using an unsaved edited profile
 
 ### 5. Color is supportive, not the only signal
@@ -229,7 +229,7 @@ Each empty state should:
 Good:
 - "Daemon unreachable"
 - "Manual override is active"
-- "Lease held by another controller"
+- "Thermal protection active"
 - "Sensor update is stale"
 - "Profile has unsaved changes"
 

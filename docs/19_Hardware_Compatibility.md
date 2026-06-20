@@ -528,7 +528,7 @@ Currently catalogued (severity in parentheses):
 | `id` | Affected kernels | Affected hardware | Severity | Symptom |
 |---|---|---|---|---|
 | `rdna_hang_kernel_6_18_6_19` | 6.18.x **and** 6.19.x | RDNA3 (RX 7000) and RDNA4 (RX 9000) | Critical | Hard hang under load ([Phoronix, EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)). Not bisected; **no** AMD revert or fix confirmed. [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101) reports kernel panics on both 6.18.20 and 6.19.10. Pre-RDNA3 GPUs are unaffected. |
-| `smu_mismatch_navi48_r9700` | all current kernels (6.14 → 7.0 tested) | R9700 only (PCI `0x7551`) | Critical | No working PMFW fan-control path: an SMU interface-version mismatch (firmware iface v50 vs driver v46, [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)) leaves `pwm1` read-only and commanded fan changes ineffective; the GPU can reach 109 °C with no dmesg error. Scoped to `0x7551` — the RX 9070 XT (`0x7550`) is **not** affected. |
+| `smu_mismatch_navi48_r9700` | all current kernels (tested through 7.0; **not an upper bound** — device-scoped, still fires on 7.1+) | R9700 only (PCI `0x7551`) | Critical | No working PMFW fan-control path: an SMU interface-version mismatch (firmware iface v50 vs driver v46, [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)) leaves `pwm1` read-only and commanded fan changes ineffective; the GPU can reach 109 °C with no dmesg error. Scoped to `0x7551` — the RX 9070 XT (`0x7550`) is **not** affected. |
 
 **Mitigations:**
 

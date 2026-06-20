@@ -6,11 +6,16 @@
 
 ### Fan Write Backends
 
+As of 2.0.0 the daemon profile engine is the **sole PWM writer** (DEC-159/DEC-165); the GUI no longer
+writes PWM at all — its old imperative write path was deleted at the cutover. The "GUI Imperative"
+column therefore reads N/A throughout. Live manual override and fan identify are daemon APIs
+(DEC-163/DEC-166), not GUI writes.
+
 | Backend | GUI Imperative | Daemon Profile (Headless) | Thermal Safety Emergency |
 |---------|---------------|--------------------------|-------------------------|
-| **OpenFan** | Full | Full | Full (105C→100%) |
-| **hwmon (motherboard)** | Full (lease required) | **Full (R43: auto-lease)** | **Full (R43: force_take)** |
-| **AMD GPU (PMFW)** | Full | Full | Relies on PMFW firmware |
+| **OpenFan** | N/A (removed at 2.0.0) | Full | Full (105C→100%) |
+| **hwmon (motherboard)** | N/A (removed at 2.0.0) | **Full (daemon self-leases)** | **Full (force_take)** |
+| **AMD GPU (PMFW)** | N/A (removed at 2.0.0) | Full | Relies on PMFW firmware |
 
 ### Device Lifecycle
 

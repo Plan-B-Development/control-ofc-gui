@@ -111,6 +111,13 @@ GUI treats every flag as false / old behaviour (AIP-180):
 - `fan_identify` (bool) — daemon exposes the fan-identify API (DEC-166);
   `false` in 1.19–1.20, **`true` since 1.21.0**. Gates the Fan Wizard's
   daemon-mediated identify.
+- `autonomous_control` (bool) — the daemon engine is the sole authoritative
+  fan writer (the `gui_active` defer was deleted at the 2.0.0 cutover, DEC-165),
+  so it writes every tick a profile is active. **The single safety-critical
+  flag**: the loop-less GUI refuses to drive control unless this is `true`, and
+  a pre-2.0 daemon omits it (so the GUI defaults it to `false` and stays in the
+  capability gate rather than leaving fans uncontrolled). Drives the startup
+  control gate. `true` since **2.0.0**.
 - `min_supported_gui` (string) — coarse GUI-version floor for a legible
   hard-fail; empty until the 2.0.0 cutover sets it (drives the GUI's startup
   capability gate).
@@ -137,11 +144,13 @@ remain on the daemon surface but are unused (or only curl-exercised) by the GUI:
 - `POST /fans/openfan/{channel}/calibrate` — long-running PWM-to-RPM
   calibration sweep. The Fan Wizard provides a guided identify alternative;
   full calibration as a built-in UI flow is deferred.
-- `POST /fans/openfan/{channel}/target_rpm` — closed-loop RPM target. The
-  daemon engine is duty-cycle based; closed-loop control is out of scope.
 
-(The bare PWM and hwmon-lease endpoints the v1 GUI used to call were retired at
-2.0.0 — see "Write endpoints" below.)
+(There is no `target_rpm` HTTP route: closed-loop RPM targeting exists **only**
+as an internal serial method — `SerialController::set_target_rpm` /
+`Command::SetTargetRpm` — and was never exposed on the daemon's HTTP surface.
+The daemon engine is duty-cycle based, so closed-loop control is out of scope
+for the API. The bare PWM and hwmon-lease endpoints the v1 GUI used to call
+were retired at 2.0.0 — see "Write endpoints" below.)
 
 ### GET /status
 Use for:
@@ -403,14 +412,17 @@ As of **2.0.0** the daemon is the sole writer (DEC-159, DEC-165). The GUI has **
 surface** — it expresses control as *intent* (activate a profile, take an expiring override, identify
 a fan) and runs a few diagnostics / maintenance calls (calibrate, verify, GPU reset, rescan).
 
-**Retired at 2.0.0** — no longer routed by the daemon (the `gui_active` defer window they lived behind
-is gone):
+**Retired at 2.0.0** — these were genuine HTTP routes that the daemon no longer routes (the
+`gui_active` defer window they lived behind is gone):
 - `POST /fans/openfan/{ch}/pwm` and `POST /fans/openfan/pwm` — bare per-channel + set-all PWM
-- `POST /fans/openfan/{ch}/target_rpm` — closed-loop RPM target (never consumed)
 - `POST /hwmon/{header_id}/pwm` — bare hwmon PWM
 - `POST /hwmon/lease/take` / `/release` / `/renew` and `GET /hwmon/lease/status` — the GUI holds no
   lease; the daemon manages it internally
 - `POST /gpu/{gpu_id}/fan/pwm` — bare GPU static-speed write (replaced by override / identify)
+
+Note: `POST /fans/openfan/{ch}/target_rpm` is **not** in this list because it was never an HTTP route.
+Closed-loop RPM targeting exists only as an internal serial method (`set_target_rpm` /
+`Command::SetTargetRpm`); no GUI ever consumed it and the daemon never exposed it over HTTP.
 
 ### OpenFan calibrate
 - `POST /fans/openfan/{ch}/calibrate` — PWM-to-RPM calibration sweep

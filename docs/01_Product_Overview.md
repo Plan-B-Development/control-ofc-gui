@@ -96,12 +96,13 @@ A temporary operator-driven mode that overrides automatic curve application. It 
 ## V1 data sources
 The GUI consumes daemon/API endpoints for:
 - capabilities
-- status
+- status (including `thermal_state`)
 - sensors
 - fans
 - hwmon headers
-- hwmon lease state
-- write commands for OpenFanController, hwmon PWM, and GPU fans
+- profile intent (activate/deactivate, expiring manual override, fan identify)
+
+As of 2.0.0 the daemon's profile engine is the **sole writer** of every backend; the GUI never writes PWM. It is poll-only (1 Hz `GET /poll`) and expresses intent rather than driving hardware (DEC-159 / DEC-165).
 
 ## V1 sensors
 The GUI must treat these as first-class sensor categories:

@@ -1,4 +1,4 @@
-# 09 — State Model, Control Loop, and Lease Behaviour
+# 09 — State Model and Control Behaviour
 
 **Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
@@ -82,7 +82,7 @@ The Fan Wizard's "stop a fan to find it" flow calls `POST /fans/{id}/identify {a
 ## Thermal protection (supersedes the DEC-132 GUI stand-down)
 The daemon owns the thermal ladder: at 105 °C it forces all OpenFan + writable hwmon fans to 100 %, holds until 80 °C, recovers at 60 %, and forces 40 % if no CPU sensor is found for 5 cycles (GPU fans are excluded by design — DEC-130). Thermal force supersedes overrides and curves.
 
-The old **DEC-132 GUI stand-down** (where `ControlLoopService` paused its own writes while `thermal_state != "normal"`) is **gone** — there is no GUI loop to stand down. The GUI now uses `status.thermal_state` only to **show** a poll-driven thermal-protection banner (DEC-164/DEC-165), never to gate a write. `thermal_state` (`normal | recovery | emergency | no_sensor_fallback`) remains in `GET /status`.
+The old **DEC-132 GUI stand-down** (where `ControlLoopService` paused its own writes while `thermal_state != "normal"`) is **gone** — there is no GUI loop to stand down. The GUI now uses `status.thermal_state` only to **show** a poll-driven thermal-protection banner (DEC-165), never to gate a write. `thermal_state` (`normal | recovery | emergency | no_sensor_fallback`) remains in `GET /status`.
 
 ## Sensor freshness handling
 The GUI surfaces freshness for display, not for control gating (the daemon owns the conservative fallback — e.g. the no-CPU-sensor 40 % force). If a sensor is stale or invalid the GUI should:
