@@ -32,7 +32,8 @@ from control_ofc.ui.status_banner import CONNECTION_CHIP, CONNECTION_LABELS, MOD
 # DaemonStatus.thermal_state -> (label, chip class). The daemon reports
 # "normal" | "recovery" | "emergency" | "no_sensor_fallback" (DEC-132/165);
 # anything else falls back to a neutral info chip rather than being hidden.
-_THERMAL: dict[str, tuple[str, str]] = {
+# Public so the dashboard Safety card renders from the SAME map (no drift).
+THERMAL_STATES: dict[str, tuple[str, str]] = {
     "normal": ("Thermal OK", "SuccessChip"),
     "recovery": ("Thermal: Recovery", "WarningChip"),
     "emergency": ("Thermal: Emergency", "CriticalChip"),
@@ -141,7 +142,7 @@ class DashboardStatusStrip(QWidget):
         _refresh_chip(self._mode, css)
 
     def set_thermal_state(self, thermal: str) -> None:
-        label, css = _THERMAL.get(thermal or "normal", (f"Thermal: {thermal}", "InfoChip"))
+        label, css = THERMAL_STATES.get(thermal or "normal", (f"Thermal: {thermal}", "InfoChip"))
         self._thermal.setText(label)
         _refresh_chip(self._thermal, css)
 
