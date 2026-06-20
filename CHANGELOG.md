@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Documentation
+- **New-user onboarding pass (docs only).** Added two manual pages —
+  [OpenFan Controller](manual/openfan-controller.md) (what it is, detection, serial/USB access, stable
+  `by-id` device paths, channels, fan identification, profiles, and troubleshooting; framed as an
+  independent third-party open-source/open-hardware project, no endorsement implied) and
+  [Understanding Motherboard Fan Control](manual/understanding-fan-control.md) (a plain-English primer on
+  hwmon, sysfs, Super I/O, the `pwmN` / `pwmN_enable` / `fanN_input` / `tempN_input` files, drivers, and
+  BIOS interference). Reworked the README opening with a plain-English "What is Control-OFC?" intro and a
+  "Which path should I follow?" router, and cross-linked the new pages from Getting Started, the Setup
+  Checklist, and Hardware Troubleshooting. No code, behaviour, or API change.
+
 ## [2.1.1] — 2026-06-20
 
 A data-loss-class bug fix. Pairs with `control-ofc-daemon` ≥ v2.0.0 (no daemon change required).
