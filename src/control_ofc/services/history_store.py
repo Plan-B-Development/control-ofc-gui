@@ -10,7 +10,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from control_ofc.api.models import FanReading, HistoryPoint, SensorReading
-from control_ofc.constants import HISTORY_DURATION_S
+from control_ofc.constants import AGGREGATE_FAN_RPM_KEY, HISTORY_DURATION_S
 
 
 @dataclass
@@ -42,6 +42,23 @@ class HistoryStore:
                 self._append(f"fan:{f.id}:rpm", now, float(f.rpm))
             if f.last_commanded_pwm is not None:
                 self._append(f"fan:{f.id}:pwm", now, float(f.last_commanded_pwm))
+        self._record_fan_aggregate(now, fans)
+
+    def _record_fan_aggregate(self, now: float, fans: list[FanReading]) -> None:
+        """Append the derived "average fan RPM" series (DEC-181).
+
+        Averages **spinning** fans only — a fan reporting 0 RPM (idle, e.g. a
+        GPU zero-RPM fan, DEC-047) is excluded so an idle fan can't drag the line
+        to the floor. When fans report RPM but none are spinning the average is 0
+        (truthful: nothing is turning). When no fan reports RPM at all there is no
+        data to aggregate, so nothing is recorded (the line simply has no point
+        for that tick) — never a spurious 0.
+        """
+        if not any(f.rpm is not None for f in fans):
+            return
+        spinning = [float(f.rpm) for f in fans if f.rpm is not None and f.rpm > 0]
+        avg = sum(spinning) / len(spinning) if spinning else 0.0
+        self._append(AGGREGATE_FAN_RPM_KEY, now, avg)
 
     def get_series(self, key: str) -> list[TimestampedReading]:
         """Return the time series for a given key, pruned to max_age."""

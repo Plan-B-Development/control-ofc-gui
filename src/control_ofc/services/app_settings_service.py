@@ -150,6 +150,12 @@ class AppSettings:
     # the dashboard view-model (services/fan_grouping.py).
     fan_zones: dict[str, str] = field(default_factory=dict)
     hidden_chart_series: list[str] = field(default_factory=list)
+    # DEC-181: True once the dashboard has seeded the curated first-run chart
+    # subset. Needed because hidden_chart_series == [] is indistinguishable
+    # between a fresh user (seed the curated default) and a returning user who
+    # chose "show all" (must NOT be re-decluttered). Without this flag the
+    # dashboard cannot tell them apart — do not seed first-run defaults without it.
+    chart_series_seeded: bool = False
     card_sensor_bindings: dict[str, str] = field(default_factory=dict)
     show_gpu_zero_rpm_warning: bool = True
     # DEC-157: one-time popup explaining the AIO pump floor ("don't run the
@@ -234,6 +240,7 @@ class AppSettings:
             fan_aliases=_as_str_dict(data.get("fan_aliases"), {}),
             fan_zones=_as_str_dict(data.get("fan_zones"), {}),
             hidden_chart_series=_as_str_list(data.get("hidden_chart_series"), []),
+            chart_series_seeded=_as_bool(data.get("chart_series_seeded"), False),
             card_sensor_bindings=_as_str_dict(data.get("card_sensor_bindings"), {}),
             show_gpu_zero_rpm_warning=_as_bool(data.get("show_gpu_zero_rpm_warning"), True),
             show_aio_pump_info=_as_bool(data.get("show_aio_pump_info"), True),
