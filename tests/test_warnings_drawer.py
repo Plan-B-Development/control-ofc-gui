@@ -124,6 +124,15 @@ class TestWarningsView:
         assert view.findChild(QLabel, "WarningsView_Label_empty") is not None
         assert view.findChild(QPushButton, "WarningsView_Btn_clearAll").isEnabled() is False
 
+    def test_unknown_warning_renders_without_action_label(self, qtbot, app_state):
+        """A warning whose type implies no next action shows no action line (the
+        action label is omitted, not blank)."""
+        app_state.add_warning(level="warning", source="mystery", message="odd", key="weird:1")
+        view = WarningsView(app_state)
+        qtbot.addWidget(view)
+        assert view.entry_count() == 1
+        assert view.findChild(QLabel, "WarningsView_Entry_0_action") is None
+
     def test_daemon_strings_render_as_plain_text(self, qtbot, app_state):
         """Sensor-label markup must not be reinterpreted as rich text (truthful UI)."""
         from PySide6.QtCore import Qt

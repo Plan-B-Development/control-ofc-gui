@@ -15,52 +15,67 @@ The Dashboard is the default landing page and provides a quick operational overv
 
 ## V1 structure
 
-### Top status strip
-Always visible page summary:
+### Top status strip (DEC-177)
+A single always-visible command + status header. While the dashboard is active it is
+the **only** status surface — the global status banner is hidden to avoid duplication:
+- Connection state
 - Active profile
 - Control mode: Automatic / Manual Override / Demo / Read-only
-- Daemon health
-- Controller availability
-- Warning count
+- Daemon **thermal state** (Thermal OK / Recovery / Emergency / No CPU sensor)
+- "Updated Xs ago" — time since the last successful poll
+- A clickable **warning chip** (count); clicking opens the inspector's Warnings tab
+- A compact profile selector + Apply
+- An **Inspector** toggle that shows/hides the right-hand inspector pane (DEC-182)
 
 ### Main dashboard body
 Recommended layout:
 
-#### Row 1: summary cards
-Cards for:
-- CPU temperature
-- GPU temperature
-- Motherboard temperature
-- Active profile
-- Total visible fan count
-- Warning/fault summary
+#### Row 1: summary cards (DEC-178)
+Five cards — **CPU**, **GPU**, **Motherboard**, **Fans**, **Safety**. Each
+**temperature** card (CPU / GPU / Motherboard) carries a trend glyph (rising /
+falling / flat, derived from `rate_c_per_s`) and a session min/max range. The
+**Fans** card shows online/expected counts plus average PWM/RPM.
+The **Safety** card surfaces the daemon `thermal_state` with a click-through
+read-only detail; it replaced the former Warnings card (warnings now live in the
+strip's warning chip and the inspector's Warnings tab). Clicking a temperature card
+opens its sensor-binding picker.
 
-#### Row 2: primary chart area
-A wide fan-speed-over-time chart with:
+#### Row 2: primary chart area (DEC-181)
+A wide temperature / fan-speed-over-time chart with:
 - selectable time range
-- series show/hide
-- current-value emphasis
-- clean legend or direct series labels
+- a curated default series subset on first run (CPU · GPU · one case temp · an
+  aggregate fan-RPM line) instead of every series at once
+- **chart modes** (Combined [default] / Thermals / Fans / Diagnostics) + Reset
+- a model-bound checkbox legend, kept in sync with the inspector's Sensors tab
+- poll-diff **event annotations** (profile change, reconnect, thermal transition,
+  override start/end, sensor-stale / fan-stall onset)
+- current-value emphasis via the crosshair readout
 
-#### Row 3: fan status section
-A fan list/card grid showing:
-- fan label
-- source
-- current RPM
-- current commanded PWM
+#### Row 3: fan zone cards (DEC-176/179)
+Fans render as **zone-grouped cards** (the primary fan view), driven by a pure
+fan-grouping view-model:
+- user-assigned **fan zones** (GUI-owned `fan_zones`, e.g. Front Intake / Exhaust),
+  falling back to role/source grouping for unassigned fans
+- a per-fan **state chip** — Normal / Low RPM / Stall / Stale / Offline / Override
+- per-zone roll-ups: online/expected count, average RPM/PWM
+- a per-tile detail dialog to rename a fan or reassign its zone
 
-*Deferred to a later iteration (see `docs/14_Risks_Gaps_and_Future_Work.md`):*
-*group-membership badges and a per-fan state chip (stale/fault/manual).*
-*The current implementation shows plain row values only.*
+The dense **raw fan table** (label / source / RPM / PWM) is preserved but re-homed
+into a collapsed **"Raw fan data"** expander on the dashboard — advanced detail, one
+click away. (Resolves the previously-deferred group-membership badges + per-fan state
+chip; see `docs/14_Risks_Gaps_and_Future_Work.md`.)
 
-#### Optional side panel or lower strip
-Key sensor health list:
-- sensor label
-- current value
+#### Right-hand inspector (DEC-182)
+A toggle-button **side panel** — opens by default on wide windows, collapses on
+narrow ones so the chart keeps room — with three tabs:
+- **Sensors** — the grouped sensor/fan tree (device grouping, per-series checkboxes,
+  colour swatches, search, freshness in tooltips); drives the shared chart legend
+- **Events** — the diagnostics event log (severity/source filter, search, export)
+- **Warnings** — active warnings (severity, summary, affected component, timestamp, a
+  suggested next action, and expandable raw detail); opened by the strip's warning chip
 
-*Deferred to a later iteration (see `docs/14_Risks_Gaps_and_Future_Work.md`):*
-*per-sensor freshness age and a dedicated stale/invalid warning marker*
-*(the top status strip already covers global staleness).*
+(Resolves the previously-deferred per-sensor freshness side panel; see
+`docs/14_Risks_Gaps_and_Future_Work.md`.)
 
 ## Time ranges
 The dashboard must support:
