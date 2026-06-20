@@ -10,7 +10,7 @@ The **OpenFan Controller** (branded **OpenFAN**) is a USB fan controller that dr
 - Store: <https://shop.sasakaranovic.com/products/openfan-pc-fan-controller>
 - Source and hardware design (GitHub): <https://github.com/SasaKaranovic/OpenFanController>
 
-**What this means:** the OpenFan Controller is **not** hardware made or sold by Control-OFC. Control-OFC is an independent, third-party way to drive it from Linux; the two projects are **not affiliated**, and neither endorses the other. For the device itself — firmware updates, the on-device web UI, warranty, where to buy — use the official links above.
+**What this means:** the OpenFan Controller is **not** hardware made or sold by Control-OFC. Control-OFC is an independent, third-party way to drive it from Linux. For the device itself — firmware updates, the on-device web UI, warranty, where to buy — use the official links above.
 
 ## How Control-OFC talks to it
 
