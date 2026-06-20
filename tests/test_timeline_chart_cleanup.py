@@ -43,6 +43,28 @@ class TestTimelineChartCleanup:
         # call path that raised the use-after-free during teardown.
         chart._sync_rpm_viewbox()  # must not raise
 
+    def test_app_focus_slot_safe_after_cleanup(self, qtbot):
+        """cleanup() tears the scene down (deleting the crosshair). An app-focus
+        change racing teardown must not raise — this exact path
+        (_on_app_state_changed → _hide_hover → deleted InfiniteLine) leaked a
+        shiboken RuntimeError into a later, unrelated test."""
+        from PySide6.QtCore import Qt
+
+        chart = TimelineChart(HistoryStore(), selection=SeriesSelectionModel())
+        qtbot.addWidget(chart)
+        chart.cleanup()
+        chart._on_app_state_changed(Qt.ApplicationState.ApplicationInactive)  # must not raise
+
+    def test_selection_signal_inert_after_cleanup(self, qtbot):
+        """cleanup() disconnects the (externally owned) selection model, so a
+        later selection change cannot drive update_chart() against the torn-down
+        scene."""
+        selection = SeriesSelectionModel()
+        chart = TimelineChart(HistoryStore(), selection=selection)
+        qtbot.addWidget(chart)
+        chart.cleanup()
+        selection.selection_changed.emit()  # must not raise / not touch the scene
+
 
 class TestDashboardCloseEventCleanup:
     def test_close_triggers_chart_cleanup(self, qtbot, app_state):

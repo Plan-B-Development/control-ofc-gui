@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -37,12 +38,15 @@ from control_ofc.services.daemon_service_check import (
     ENABLE_COMMAND,
     check_daemon_service_state,
 )
+from control_ofc.services.fan_grouping import build_fan_groups
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 from control_ofc.ui.qt_util import block_signals
+from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.error_banner import ErrorBanner
+from control_ofc.ui.widgets.fan_zone_card import FanZoneGrid
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
 from control_ofc.ui.widgets.status_strip import THERMAL_STATES, DashboardStatusStrip
@@ -147,6 +151,8 @@ class DashboardPage(QWidget):
             self._state.mode_changed.connect(self._on_mode_changed)
             self._state.capabilities_updated.connect(self._on_capabilities_updated)
             self._state.status_updated.connect(self._on_status_updated)
+            self._state.fan_zones_changed.connect(self._on_fan_zones_changed)
+            self._state.fan_alias_changed.connect(self._on_fan_alias_changed)
 
         # Chart refresh timer — visibility-gated for performance (R48)
         self._chart_timer = QTimer(self)
@@ -457,7 +463,21 @@ class DashboardPage(QWidget):
         self._chart.setMinimumWidth(320)  # inspector can't crush the chart (refinement §7.5)
         self._v_splitter.addWidget(self._chart)
 
-        # Fan table (shares left-column width with chart via vertical splitter)
+        # Primary fan display: zone cards (refinement §7.4, DEC-179). Driven by
+        # the pure fan_grouping view-model; the dense raw table is re-homed below
+        # into a collapsed "Raw fan data" expander (4A) rather than deleted.
+        self._fan_zone_grid = FanZoneGrid(state=self._state, zone_provider=self._zone_names)
+        zone_scroll = QScrollArea()
+        zone_scroll.setObjectName("Dashboard_ScrollArea_fanZones")
+        zone_scroll.setWidgetResizable(True)
+        zone_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        zone_scroll.setWidget(self._fan_zone_grid)
+        zone_scroll.setMinimumHeight(60)
+        self._v_splitter.addWidget(zone_scroll)
+
+        # Raw fan table — built intact (columns / sort / double-click rename
+        # preserved) but detached from the splitter; folded into the collapsed
+        # expander once the splitter is assembled.
         self._fan_table = QTableWidget(0, 4)
         self._fan_table.setHorizontalHeaderLabels(["Label", "Source", "RPM", "PWM%"])
         self._fan_table.verticalHeader().setVisible(False)
@@ -473,7 +493,6 @@ class DashboardPage(QWidget):
         header.setMinimumSectionSize(50)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
-        self._v_splitter.addWidget(self._fan_table)
 
         self._v_splitter.setStretchFactor(0, 3)
         self._v_splitter.setStretchFactor(1, 1)
@@ -493,6 +512,14 @@ class DashboardPage(QWidget):
         self._h_splitter.setCollapsible(0, False)
         self._h_splitter.setCollapsible(1, False)
         content_layout.addWidget(self._h_splitter, 1)
+
+        # Raw fan data (4A): the dense table, one collapsed click away. Cards are
+        # primary now, so the table is advanced detail kept in context, not deleted.
+        self._raw_fan_section = CollapsibleSection(
+            "Raw fan data", "Dashboard_Section_rawFanData", expanded=False
+        )
+        self._raw_fan_section.add_widget(self._fan_table)
+        content_layout.addWidget(self._raw_fan_section)
 
         return content
 
@@ -548,6 +575,8 @@ class DashboardPage(QWidget):
         self._safety_card.set_value("—")
         self._safety_card.set_status_class("")
         self._safety_card.set_detail_text("")
+        # Drop zone tiles too — a stale tile must not survive a disconnect.
+        self._fan_zone_grid.set_groups([])
 
     def _tick_poll_age(self) -> None:
         if self._state:
@@ -748,6 +777,7 @@ class DashboardPage(QWidget):
         display_fans = filter_displayable_fans(fans, aliases, hide_unused)
 
         self._update_fans_card(display_fans)
+        self._refresh_fan_zones()
 
         # Store displayable fan keys and re-seed selection model
         self._displayable_fan_keys = []
@@ -778,6 +808,60 @@ class DashboardPage(QWidget):
                 else:
                     if item.text() != text:
                         item.setText(text)
+
+    def _zone_names(self) -> list[str]:
+        """Distinct existing user-zone names, for the assign-to-zone picker."""
+        if not self._state:
+            return []
+        return sorted({z for z in self._state.fan_zones.values() if z})
+
+    @staticmethod
+    def _absent_member_ids(profile, present_ids: set[str]) -> set[str]:
+        """Active-profile member fan ids that are *expected* but currently absent
+        from the readings — these become OFFLINE tiles.
+
+        Pure/testable. A present-but-idle member fan (one filtered out of the calm
+        card view) stays in ``present_ids`` and is therefore simply omitted, never
+        mislabelled OFFLINE — truthfulness over completeness (refinement §4.2)."""
+        if profile is None:
+            return set()
+        member_ids = {m.member_id for c in profile.controls for m in c.members}
+        return member_ids - present_ids
+
+    def _refresh_fan_zones(self) -> None:
+        """Rebuild the zone cards from the latest readings + active profile +
+        overrides. The same trigger fires on poll, zone re-assignment, and rename
+        so the cards always reflect current intent. Cheap and idempotent."""
+        if not self._state:
+            return
+        fans = self._state.fans or []
+        hide_unused = (
+            self._settings_service.settings.hide_unused_fan_headers
+            if self._settings_service
+            else True
+        )
+        display_fans = filter_displayable_fans(fans, self._state.fan_aliases, hide_unused)
+        profile = self._profile_service.active_profile if self._profile_service else None
+        status = self._state.daemon_status
+        overrides = status.overrides if status else []
+        expected = self._absent_member_ids(profile, {f.id for f in fans})
+        groups = build_fan_groups(
+            display_fans,
+            fan_zones=self._state.fan_zones,
+            display_name=self._state.fan_display_name,
+            active_profile=profile,
+            overrides=overrides,
+            expected_fan_ids=expected or None,
+        )
+        self._fan_zone_grid.set_groups(groups)
+
+    def _on_fan_zones_changed(self, fan_id: str, zone: str) -> None:
+        del fan_id, zone  # the whole grouping is recomputed from state
+        self._refresh_fan_zones()
+
+    def _on_fan_alias_changed(self, fan_id: str, display_name: str) -> None:
+        del fan_id, display_name  # tiles re-resolve their display name on rebuild
+        self._refresh_fan_zones()
 
     def _fan_tooltip(self, fan: FanReading) -> str:
         """Build a tooltip for a fan row, including hwmon chip/driver context."""

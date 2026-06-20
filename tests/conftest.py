@@ -198,6 +198,7 @@ def _neutralize_modals(monkeypatch):
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""), raising=False)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "", raising=False)
     monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("", False), raising=False)
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *a, **k: ("", False), raising=False)
     monkeypatch.setattr(
         QDialog, "exec", lambda self, *a, **k: QDialog.DialogCode.Rejected, raising=False
     )
