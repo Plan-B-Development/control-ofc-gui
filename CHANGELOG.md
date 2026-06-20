@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+### Added
+- **Dashboard refinement — a calmer, progressive-disclosure operator overview**
+  (DEC-176–182). The dense single-view dashboard was re-homed so a new user can
+  read cooling health at a glance while every piece of advanced data stays one
+  click away. GUI-only — no daemon, API, or contract change.
+  - **Command + status strip (DEC-177).** A single header row: connection ·
+    active profile · control mode · daemon **thermal state** · "Updated Xs ago" · a
+    clickable warning chip · a compact profile selector + Apply. While the dashboard
+    is active it is the single status surface (the global banner is hidden to avoid
+    duplication).
+  - **User-assigned fan zones + per-tile zone editor (DEC-176/179).** A GUI-owned,
+    portable `fan_zones` setting (mirrors `fan_aliases`) names and groups fans into
+    physical zones (e.g. Front Intake / Exhaust). Unassigned fans fall back to
+    role/source grouping, so the board is useful out of the box. Each fan tile opens
+    a detail dialog to rename the fan or reassign its zone.
+  - **Fan zone cards with state chips (DEC-179).** Fans render as zone-grouped cards
+    with a per-fan state chip (Normal / Low RPM / Stall / Stale / Offline / Override)
+    and per-zone roll-ups (online/expected, average RPM/PWM) — fan state is
+    understandable without reading the raw table.
+  - **Refined summary cards (DEC-178).** CPU / GPU / Motherboard / Fans / **Safety**
+    cards. Each **temperature** card (CPU / GPU / Motherboard) carries a trend glyph
+    (rising/falling/flat from `rate_c_per_s`) and a session min/max range. The Fans
+    card shows online/expected + average PWM/RPM; the new Safety card surfaces the
+    daemon `thermal_state` with a read-only detail.
+  - **Readable-by-default chart (DEC-181).** On first run the chart shows a curated
+    subset (CPU · GPU · one case temp · an aggregate fan-RPM line) instead of every
+    series; **chart modes** (Combined [default] / Thermals / Fans / Diagnostics) +
+    Reset; a
+    model-bound checkbox legend; and **event annotations** for transitions the GUI
+    honestly detects by poll-diff (profile change, reconnect, thermal transition,
+    override start/end, sensor-stale / fan-stall onset).
+  - **Collapsible inspector (DEC-182).** The right-hand sensor tree became a
+    toggle-button side panel with **Sensors / Events / Warnings** tabs; it opens by
+    default on wide windows and collapses on narrow ones to give the chart room. The
+    warning chip opens the Warnings tab, where each warning shows severity, summary,
+    component, timestamp, a suggested next action, and expandable raw detail.
+
+### Changed
+- **Dashboard information architecture.** The raw fan table is preserved but
+  re-homed into a collapsed "Raw fan data" expander on the dashboard (advanced data,
+  one click away). Warnings moved from a dedicated card + modal dialog into the
+  status strip's warning chip and the inspector's Warnings tab.
+
+### Fixed
+- **TimelineChart teardown hardening (DEC-180).** The added dashboard widgets
+  surfaced a latent chart-teardown race — an intermittent offscreen / Python 3.14
+  segfault from a half-freed pyqtgraph scene plus app-focus/selection signals firing
+  on freed items. Chart `cleanup()` now severs the externally-owned signals and
+  closes the scene deterministically, and a `closeEvent` guarantees teardown even
+  without an explicit `cleanup()`.
+
 ### Documentation
 - **New-user onboarding pass (docs only).** Added two manual pages —
   [OpenFan Controller](manual/openfan-controller.md) (what it is, detection, serial/USB access, stable
