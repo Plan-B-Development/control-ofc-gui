@@ -202,28 +202,19 @@ class TestDashboardContent:
 
 
 class TestModeBadge:
-    def test_demo_mode_shows_badge(self, qtbot, window, app_state):
+    """Mode now renders in the dashboard status strip (DEC-176/177)."""
+
+    def test_demo_mode_shows_label(self, qtbot, window, app_state):
         app_state.set_mode(OperationMode.DEMO)
-        # Need to show live content to see the badge
-        app_state.set_sensors(
-            [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=42.0, age_ms=100),
-            ]
-        )
-        assert "DEMO" in window.dashboard_page._mode_badge.text()
+        assert "Demo" in window.dashboard_page._status_strip._mode.text()
 
-    def test_manual_override_shows_badge(self, qtbot, window, app_state):
+    def test_manual_override_shows_label(self, qtbot, window, app_state):
         app_state.set_mode(OperationMode.MANUAL_OVERRIDE)
-        app_state.set_sensors(
-            [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=42.0, age_ms=100),
-            ]
-        )
-        assert "MANUAL" in window.dashboard_page._mode_badge.text()
+        assert "Manual" in window.dashboard_page._status_strip._mode.text()
 
-    def test_automatic_mode_no_badge(self, qtbot, window, app_state):
+    def test_automatic_mode_shows_label(self, qtbot, window, app_state):
         app_state.set_mode(OperationMode.AUTOMATIC)
-        assert window.dashboard_page._mode_badge.text() == ""
+        assert window.dashboard_page._status_strip._mode.text() == "Automatic"
 
 
 class TestSensorPickerDialog:
@@ -286,17 +277,14 @@ class TestSensorPickerDialog:
 
 
 class TestProfilePosition:
-    """R10-003: Profile selector at far right."""
+    """Profile selector now lives in the status strip (DEC-176/177)."""
 
-    def test_profile_widget_is_last_in_row(self, qtbot, window, app_state):
-        """Profile widget should be the last widget in the cards row."""
-        app_state.set_sensors(
-            [SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=42.0, age_ms=100)]
-        )
+    def test_profile_selector_in_status_strip(self, qtbot, window, app_state):
+        """The profile combo + Apply are the strip's, reused verbatim by the page."""
         page = window.dashboard_page
-        # The profile widget should be the rightmost card in the layout
-        # Find the cards_layout (it's inside the live content)
-        assert page._profile_widget is not None
+        assert page._status_strip is not None
+        assert page._profile_combo is page._status_strip.profile_combo
+        assert page._apply_btn is page._status_strip.apply_btn
 
 
 class TestSensorSeriesPanel:

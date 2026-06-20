@@ -89,6 +89,20 @@ class AppState(QObject):
         # Per-sensor session min/max tracker (resets on reconnect)
         self.session_stats = SessionStatsTracker()
 
+        # Monotonic timestamp of the last successful poll / demo tick, for the
+        # dashboard status strip's "Updated Xs ago" indicator (DEC-176/177).
+        # None until the first success; deliberately NOT reset on disconnect so
+        # the age keeps growing to signal staleness.
+        self.last_poll_monotonic: float | None = None
+
+    def mark_poll_success(self, now: float | None = None) -> None:
+        """Record the time of the latest successful poll (or demo tick).
+
+        Uses a monotonic clock so the dashboard can show time-since-last-update;
+        tests pass an explicit ``now`` to avoid real timing.
+        """
+        self.last_poll_monotonic = now if now is not None else time.monotonic()
+
     def set_connection(self, state: ConnectionState) -> None:
         if state != self.connection:
             self.connection = state

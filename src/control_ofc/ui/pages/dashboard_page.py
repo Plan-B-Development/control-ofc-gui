@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -45,6 +45,7 @@ from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.widgets.error_banner import ErrorBanner
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
+from control_ofc.ui.widgets.status_strip import DashboardStatusStrip
 from control_ofc.ui.widgets.summary_card import SummaryCard
 from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
@@ -118,6 +119,15 @@ class DashboardPage(QWidget):
         self._chart_timer.start()
         self._chart_active_interval = 1000  # 1Hz when active
         self._chart_background_interval = 5000  # 0.2Hz when app unfocused
+
+        # Poll-age refresh (~1 Hz) for the status strip's "Updated Xs ago" — kept
+        # separate from the chart timer so it stays correct while the app is
+        # unfocused (the chart throttles to 0.2 Hz then).
+        self._poll_age_timer = QTimer(self)
+        self._poll_age_timer.setInterval(1000)
+        self._poll_age_timer.timeout.connect(self._tick_poll_age)
+        self._poll_age_timer.start()
+        self._tick_poll_age()
 
         # Throttle chart when app loses focus (reduces compositor work while gaming)
         app = QApplication.instance()
@@ -315,15 +325,11 @@ class DashboardPage(QWidget):
         content_layout.setContentsMargins(24, 16, 24, 16)
         content_layout.setSpacing(12)
 
-        # Title + mode badge
+        # Title row (mode now lives in the status strip below).
         title_row = QHBoxLayout()
         title = QLabel("Dashboard")
         title.setProperty("class", "PageTitle")
         title_row.addWidget(title)
-
-        self._mode_badge = QLabel("")
-        self._mode_badge.setProperty("class", "SectionTitle")
-        title_row.addWidget(self._mode_badge)
         title_row.addStretch()
         content_layout.addLayout(title_row)
 
@@ -347,7 +353,20 @@ class DashboardPage(QWidget):
         content_layout.addWidget(self._thermal_banner)
         self._last_thermal_state = "normal"
 
-        # Row 1: Summary cards + profile quick switch
+        # Command + status strip (DEC-176/177): connection/profile/mode/thermal/
+        # poll-age/warnings + the compact profile selector. Replaces the detached
+        # profile widget; the global StatusBanner is hidden while the dashboard is
+        # active (main_window), so this is the single status surface here.
+        self._status_strip = DashboardStatusStrip()
+        # The page owns the apply flow — reuse the strip's combo/apply verbatim.
+        self._profile_combo = self._status_strip.profile_combo
+        self._apply_btn = self._status_strip.apply_btn
+        self._apply_btn.clicked.connect(self._on_apply_profile)
+        self._status_strip.warning_clicked.connect(self._open_warnings_dialog)
+        content_layout.addWidget(self._status_strip)
+        self._sync_status_strip()
+
+        # Row 1: Summary cards
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(12)
 
@@ -368,11 +387,6 @@ class DashboardPage(QWidget):
         cards_layout.addWidget(self._warnings_card)
 
         cards_layout.addStretch()
-
-        # Profile quick switch — far right
-        self._profile_widget = self._build_profile_widget()
-        cards_layout.addWidget(self._profile_widget)
-
         content_layout.addLayout(cards_layout)
 
         # Horizontal splitter: left content (chart+table) | right sensor panel
@@ -394,6 +408,7 @@ class DashboardPage(QWidget):
             # session-local; the Settings value is re-applied on next launch.
             self._chart.set_range_index(self._settings_service.settings.chart_default_range_index)
         self._chart.setMinimumHeight(150)
+        self._chart.setMinimumWidth(320)  # inspector can't crush the chart (refinement §7.5)
         self._v_splitter.addWidget(self._chart)
 
         # Fan table (shares left-column width with chart via vertical splitter)
@@ -435,39 +450,10 @@ class DashboardPage(QWidget):
 
         return content
 
-    def _build_profile_widget(self) -> QWidget:
-        """Build the profile quick-switch card."""
-        widget = QFrame()
-        widget.setProperty("class", "Card")
-        widget.setMinimumWidth(140)
-        widget.setMaximumHeight(90)
-
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(4)
-
-        lbl = QLabel("Profile")
-        lbl.setProperty("class", "PageSubtitle")
-        layout.addWidget(lbl)
-
-        row = QHBoxLayout()
-        row.setSpacing(4)
-        self._profile_combo = QComboBox()
-        self._profile_combo.setObjectName("Dashboard_Combo_profileSwitch")
-        self._profile_combo.setMinimumWidth(80)
-        row.addWidget(self._profile_combo, 1)
-
-        self._apply_btn = QPushButton("Apply")
-        self._apply_btn.setObjectName("Dashboard_Btn_applyProfile")
-        self._apply_btn.clicked.connect(self._on_apply_profile)
-        row.addWidget(self._apply_btn)
-        layout.addLayout(row)
-
-        return widget
-
     # ─── Signal handlers ─────────────────────────────────────────────
 
     def _on_connection_changed(self, state: ConnectionState) -> None:
+        self._status_strip.set_connection_state(state)
         if state == ConnectionState.DISCONNECTED:
             self._has_data = False
             self._stack.setCurrentIndex(self._IDX_DISCONNECTED)
@@ -476,20 +462,22 @@ class DashboardPage(QWidget):
             self._stack.setCurrentIndex(self._IDX_NO_HARDWARE)
 
     def _on_mode_changed(self, mode: OperationMode) -> None:
-        badges = {
-            OperationMode.MANUAL_OVERRIDE: ("MANUAL OVERRIDE", "ManualBadge"),
-            OperationMode.DEMO: ("DEMO MODE", "DemoBadge"),
-            OperationMode.READ_ONLY: ("READ ONLY", "PageSubtitle"),
-        }
-        if mode in badges:
-            text, css_class = badges[mode]
-            self._mode_badge.setText(text)
-            self._mode_badge.setProperty("class", css_class)
-        else:
-            self._mode_badge.setText("")
-            self._mode_badge.setProperty("class", "")
-        self._mode_badge.style().unpolish(self._mode_badge)
-        self._mode_badge.style().polish(self._mode_badge)
+        self._status_strip.set_operation_mode(mode)
+
+    def _sync_status_strip(self) -> None:
+        """Push current AppState into the strip (initial render before signals)."""
+        if not self._state:
+            return
+        self._status_strip.set_connection_state(self._state.connection)
+        self._status_strip.set_operation_mode(self._state.mode)
+        self._status_strip.set_active_profile(self._state.active_profile_name)
+        self._status_strip.set_warning_count(self._state.warning_count)
+        if self._state.daemon_status:
+            self._status_strip.set_thermal_state(self._state.daemon_status.thermal_state)
+
+    def _tick_poll_age(self) -> None:
+        if self._state:
+            self._status_strip.update_poll_age(time.monotonic(), self._state.last_poll_monotonic)
 
     def _on_capabilities_updated(self, caps: Capabilities) -> None:
         of = caps.openfan
@@ -567,6 +555,7 @@ class DashboardPage(QWidget):
         # emergency / recovery overrides fan control. Surface it the moment
         # thermal_state leaves "normal", and clear it on the return.
         thermal = status.thermal_state or "normal"
+        self._status_strip.set_thermal_state(thermal)
         if thermal != self._last_thermal_state:
             self._last_thermal_state = thermal
             if thermal == "normal":
@@ -650,6 +639,7 @@ class DashboardPage(QWidget):
     def cleanup(self) -> None:
         """Release chart resources before app shutdown. Idempotent."""
         self._chart_timer.stop()
+        self._poll_age_timer.stop()
         self._chart.cleanup()
 
     def closeEvent(self, event) -> None:
@@ -784,6 +774,7 @@ class DashboardPage(QWidget):
             card.set_range(None, None)
 
     def _on_warnings_changed(self, count: int) -> None:
+        self._status_strip.set_warning_count(count)
         self._warnings_card.set_value(str(count))
         if count > 0:
             self._warnings_card.set_status_class("WarningChip")
@@ -791,6 +782,7 @@ class DashboardPage(QWidget):
             self._warnings_card.set_status_class("SuccessChip")
 
     def _on_profile_changed(self, name: str) -> None:
+        self._status_strip.set_active_profile(name)
         # Sync combo selection to active profile
         idx = self._profile_combo.findText(name)
         if idx >= 0:
