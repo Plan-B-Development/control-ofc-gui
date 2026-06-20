@@ -230,4 +230,4 @@ Reboot, confirm the parameter took effect with `cat /proc/cmdline`, then run **T
 
 ---
 
-Previous: [Hardware Troubleshooting](hardware-troubleshooting.md) | Back to [Table of Contents](README.md)
+Previous: [Hardware Troubleshooting](hardware-troubleshooting.md) | Next: [Understanding Motherboard Fan Control](understanding-fan-control.md) | Back to [Table of Contents](README.md)

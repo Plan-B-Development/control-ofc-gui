@@ -6,6 +6,21 @@ Desktop fan control interface for Linux. Communicates with the [`control-ofc-dae
 
 ![Dashboard](screenshots/auto/01_dashboard.png)
 
+## What is Control-OFC?
+
+Control-OFC keeps your computer quiet and cool by managing its fans for you. Instead of fans that are always loud or always guessing, you tell Control-OFC how each fan should respond to temperature — and it handles the rest, automatically, in the background.
+
+This is the **desktop app** (`control-ofc-gui`). It pairs with a small background service (`control-ofc-daemon`) that does the actual hardware work: the app is where you see what's happening and set up how your fans behave; the service keeps your fans controlled even when the app is closed.
+
+Control-OFC controls fans in a few different places, and it helps to know which one you have:
+
+- **OpenFan Controller** — a USB fan controller you plug fans into. Full control. → [OpenFan Controller guide](manual/openfan-controller.md)
+- **Motherboard fan headers** — the fan connectors on your motherboard, reached through Linux's hwmon interface. Full control on most boards; some need a driver and/or one BIOS setting first. → [Understanding Motherboard Fan Control](manual/understanding-fan-control.md)
+- **AMD GPU fans** — the fan on a discrete AMD graphics card. Full control (RDNA3+ cards need a one-time kernel setting).
+- **Intel Arc GPU fans** — **monitor only.** Control-OFC shows their temperature and RPM, but Intel's firmware owns the fan and no Linux tool can set its speed.
+
+Just curious, or have no hardware yet? Explore the whole app with **demo mode** (`control-ofc-gui --demo`) — no daemon or hardware required.
+
 ## Features
 
 - **Dashboard** — real-time sensor temperatures, fan RPM, active profile, system health with per-sensor freshness indicators; a dual-axis telemetry chart with latest-value markers and a hover tooltip
@@ -16,6 +31,15 @@ Desktop fan control interface for Linux. Communicates with the [`control-ofc-dae
 - **Diagnostics** — connection health, subsystem status, 14-column sensor table, Test PWM Control / Test GPU Fan Control, Restore GPU Fan to Automatic, hardware rescan, hardware-readiness reporting, support bundle export
 - **Fan Wizard** — guided fan identification and labelling
 - **Demo mode** — full UI without hardware (`--demo`)
+
+## Which path should I follow?
+
+| Your situation | Start here |
+|---|---|
+| **I have an OpenFan Controller** | [OpenFan Controller guide](manual/openfan-controller.md) — plug it in and it auto-detects; then the [Setup Checklist](manual/setup-checklist.md) for profiles |
+| **I want to control my motherboard fans** | [Setup Checklist](manual/setup-checklist.md) for the ordered path, [Understanding Motherboard Fan Control](manual/understanding-fan-control.md) for the "why", and [Driver Setup](manual/driver-setup.md) if your board needs a driver |
+| **I want to control an AMD GPU fan** | [Setup Checklist](manual/setup-checklist.md), then [Driver Setup — AMD GPU prerequisite](manual/driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3) for the one-time kernel setting RDNA3+ cards need |
+| **I only want to try the GUI in demo mode** | `control-ofc-gui --demo` — the full interface with simulated hardware, no daemon required ([Getting Started → Demo Mode](manual/getting-started.md#demo-mode)) |
 
 ## Install
 
@@ -124,6 +148,8 @@ See the [architecture docs](docs/02_System_Architecture_and_Boundaries.md) and [
 - **[User Manual](manual/README.md)** — installation, features, and usage guide
 - **[Setup Checklist](manual/setup-checklist.md)** — ordered path from fresh install to verified sensors and fan control
 - **[Hardware Troubleshooting](manual/hardware-troubleshooting.md)** — Hardware Readiness, Test PWM Control, vendor quirks
+- **[OpenFan Controller](manual/openfan-controller.md)** — the OpenFan USB fan controller: detection, serial access, channels, profiles, and troubleshooting
+- **[Understanding Motherboard Fan Control](manual/understanding-fan-control.md)** — plain-English primer on hwmon, sysfs, Super I/O, and PWM, and why drivers/BIOS settings matter
 - **[Hardware Compatibility](docs/19_Hardware_Compatibility.md)** — chip support matrix, kernel drivers, ACPI conflicts
 - **[AMD Motherboard Fan Control Guide](docs/21_AMD_Motherboard_Fan_Control_Guide.md)** — vendor-by-vendor BIOS notes (Gigabyte, ASUS, MSI, ASRock)
 - **[Intel Motherboard Fan Control Guide](docs/23_Intel_Motherboard_Fan_Control_Guide.md)** — Intel LGA1700/1851 Super-I/O fan control, per-vendor notes

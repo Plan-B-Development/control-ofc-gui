@@ -2,6 +2,8 @@
 
 This page is the **ordered path** from a fresh install to verified, working fan control: install → sensors → readiness → drivers/BIOS → verify → first profile. Do the steps in order — each one links to a deeper page for the detail. Commands target **Arch Linux and CachyOS** (the platforms Control-OFC is packaged for); the concepts carry to other distributions but the commands will differ.
 
+New to how Linux fan control works? [Understanding Motherboard Fan Control](understanding-fan-control.md) is a short, plain-English primer on the concepts this checklist puts into practice (hwmon, Super I/O chips, drivers, and BIOS settings). It is optional background — you can follow the steps below without it.
+
 > ## ⚠ Read this first
 >
 > This checklist is **informational guidance only**. Some linked steps install third-party kernel modules, change firmware (UEFI/BIOS) settings, alter kernel boot parameters, or change fan behaviour — done incorrectly these can make a system unbootable, cause overheating, or damage hardware.
@@ -48,7 +50,7 @@ Open **Diagnostics → Troubleshooting** (the report fetches automatically the f
 | A chips-table row says **"not loaded — install …"** | Your board needs an out-of-tree DKMS driver (most 2022+ Gigabyte / MSI, some ASRock) | [Driver Setup](driver-setup.md) |
 | **BIOS interference**, or Test PWM Control says control was reverted | Firmware Smart Fan keeps reclaiming the headers | [Driver Setup — Step 5 (BIOS)](driver-setup.md#step-5--bios-settings-the-half-people-skip); vendor depth: [AMD boards](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) / [Intel boards](../docs/23_Intel_Motherboard_Fan_Control_Guide.md) |
 | AMD RDNA3+ dGPU (RX 7000 / 9000) and GPU diagnostics flags `ppfeaturemask` | GPU fan-curve writes need a one-time kernel parameter | [Driver Setup — AMD GPU prerequisite](driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3) |
-| OpenFan Controller | **Nothing to do** — the daemon auto-detects it on `/dev/ttyACM*` / `/dev/ttyUSB*`, and the service ships with serial access | Step 5 |
+| OpenFan Controller | **Nothing to do** — the daemon auto-detects it on `/dev/ttyACM*` / `/dev/ttyUSB*`, and the service ships with serial access | [OpenFan Controller](openfan-controller.md) → Step 5 |
 | Intel Arc dGPU | Monitor-only **by design** (firmware-managed fan; the kernel exposes no write interface) | [Why](hardware-troubleshooting.md#intel-arc-gpus-are-monitor-only) |
 
 ## Step 5 — Stop competing fan-control software

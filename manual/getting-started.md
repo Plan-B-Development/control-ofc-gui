@@ -34,6 +34,13 @@ page of this manual is a copy-paste beginner walkthrough — identify the
 chip, install the right DKMS package, verify it works, and roll it all
 back if needed.
 
+Want the bigger picture first? [Understanding Motherboard Fan Control](understanding-fan-control.md)
+is a plain-English primer on how Linux controls motherboard fans — hwmon,
+Super I/O chips, drivers, and BIOS settings — and why each setup step is
+asked of you. Using an [OpenFan Controller](openfan-controller.md)? That
+USB fan controller has its own page covering detection, permissions, and
+troubleshooting.
+
 ## Installation
 
 ### Arch Linux (AUR)

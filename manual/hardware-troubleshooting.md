@@ -10,6 +10,8 @@ This page covers the **Hardware Readiness** report on the Diagnostics → Troubl
 
 If the report tells you a **driver is missing**, the step-by-step install walkthrough (prerequisites, DKMS, verify, rollback) is on the [Driver Setup](driver-setup.md) page. For the chip and driver matrix, see [Hardware Compatibility](../docs/19_Hardware_Compatibility.md). For vendor-by-vendor BIOS notes, see the [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md). For sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
 
+New to the terms on this page — hwmon, Super I/O, `pwm_enable`, "read-only headers"? [Understanding Motherboard Fan Control](understanding-fan-control.md) explains them in plain English first, then points back here for the diagnosis.
+
 ## What the Hardware Readiness report shows
 
 When you fetch hardware diagnostics, the report populates with:
