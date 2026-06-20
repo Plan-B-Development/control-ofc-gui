@@ -237,9 +237,27 @@ class TimelineChart(QWidget):
         X-link to an already-freed ViewBox and shiboken raises
         "Internal C++ object (ViewBox) already deleted". Breaking the links
         here prevents that on app shutdown and in test teardown. Idempotent:
-        guarded by ``_rpm_vb`` being cleared, so it is safe to call twice
-        (e.g. from both ``closeEvent`` and an explicit shutdown ``cleanup``).
+        Idempotent via the ``_cleaned_up`` latch — a second call (e.g. from both
+        ``closeEvent`` and an explicit shutdown, or qtbot's teardown after a
+        manual ``close()``) returns immediately, so it never re-``disconnect()``s
+        an already-severed signal (which libpyside warns about).
         """
+        if getattr(self, "_cleaned_up", False):
+            return
+        self._cleaned_up = True
+        # Sever every signal that outlives this widget *first*, so no slot can
+        # fire against our items after the scene is torn down below. The
+        # app-focus and selection signals originate from objects (QApplication,
+        # the shared selection model) that outlive the chart; left connected they
+        # call _hide_hover()/update_chart() on already-freed scene items
+        # (e.g. the crosshair InfiniteLine) → a shiboken "C++ object already
+        # deleted" error during a later, unrelated test (DEC-113/118 lineage).
+        app = QApplication.instance()
+        if app is not None:
+            with contextlib.suppress(RuntimeError, TypeError):
+                app.applicationStateChanged.disconnect(self._on_app_state_changed)
+        with contextlib.suppress(RuntimeError, TypeError):
+            self._selection.selection_changed.disconnect(self.update_chart)
         if self._proxy is not None:
             with contextlib.suppress(RuntimeError, TypeError):
                 self._proxy.disconnect()
@@ -265,6 +283,15 @@ class TimelineChart(QWidget):
                     with contextlib.suppress(RuntimeError):
                         scene.removeItem(self._rpm_vb)
             self._rpm_vb = None
+            # Tear the main plot's scene down *now*, while every C++ object is
+            # still alive. GraphicsView.close() clears the scene synchronously,
+            # so the main ViewBox's itemChange(ItemSceneChange) fires against a
+            # live scene. Left to deferred deletion it can instead fire against a
+            # half-freed QGraphicsScene and segfault under offscreen Qt on
+            # Python 3.14 — extends the DEC-113/118 teardown protection. Guarded
+            # by _rpm_vb above, so it runs exactly once.
+            with contextlib.suppress(RuntimeError):
+                self._plot_widget.close()
 
     def _sync_rpm_viewbox(self) -> None:
         plot = self._plot_widget.getPlotItem()
@@ -273,9 +300,15 @@ class TimelineChart(QWidget):
             self._rpm_vb.linkedViewChanged(plot.vb, self._rpm_vb.XAxis)
 
     def _hide_hover(self) -> None:
-        """Hide the crosshair and hover label."""
-        self._crosshair_v.hide()
-        self._hover_label.hide()
+        """Hide the crosshair and hover label.
+
+        Guarded against use-after-free: ``cleanup()`` tears the scene down, so a
+        late call (e.g. an app-focus change racing teardown) can find the
+        crosshair InfiniteLine already deleted. Suppressing that keeps a torn-down
+        chart from raising into an unrelated test's event loop (DEC-113/118)."""
+        with contextlib.suppress(RuntimeError):
+            self._crosshair_v.hide()
+            self._hover_label.hide()
 
     def eventFilter(self, obj, event):
         """Hide hover when mouse leaves the plot widget."""
