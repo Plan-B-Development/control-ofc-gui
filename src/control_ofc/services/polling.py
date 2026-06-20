@@ -268,6 +268,8 @@ class PollingService(QObject):
             self._thread.wait(1000)
 
     def _on_connected(self) -> None:
+        # Stamp every successful poll for the dashboard "Updated Xs ago" strip.
+        self._state.mark_poll_success()
         was_connected = self._was_connected
         self._was_connected = True
         if self._state.connection != ConnectionState.CONNECTED:

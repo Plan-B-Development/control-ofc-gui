@@ -7,6 +7,26 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from control_ofc.api.models import ConnectionState, OperationMode
 
+# Shared label/chip maps so the dashboard's DashboardStatusStrip (DEC-176/177)
+# renders connection + mode identically to this global banner. A single source
+# of truth keeps the two status surfaces from drifting.
+CONNECTION_LABELS: dict[ConnectionState, str] = {
+    ConnectionState.CONNECTED: "Connected",
+    ConnectionState.DEGRADED: "Degraded",
+    ConnectionState.DISCONNECTED: "Disconnected",
+}
+CONNECTION_CHIP: dict[ConnectionState, str] = {
+    ConnectionState.CONNECTED: "SuccessChip",
+    ConnectionState.DEGRADED: "WarningChip",
+    ConnectionState.DISCONNECTED: "CriticalChip",
+}
+MODE_LABELS: dict[OperationMode, str] = {
+    OperationMode.AUTOMATIC: "Automatic",
+    OperationMode.MANUAL_OVERRIDE: "Manual Override",
+    OperationMode.READ_ONLY: "Read-only",
+    OperationMode.DEMO: "Demo mode",
+}
+
 
 class StatusBanner(QWidget):
     """Horizontal strip showing connection state, active profile, mode, and warnings."""
@@ -43,18 +63,8 @@ class StatusBanner(QWidget):
         layout.addWidget(self._demo_badge)
 
     def set_connection_state(self, state: ConnectionState) -> None:
-        labels = {
-            ConnectionState.CONNECTED: "Connected",
-            ConnectionState.DEGRADED: "Degraded",
-            ConnectionState.DISCONNECTED: "Disconnected",
-        }
-        colors = {
-            ConnectionState.CONNECTED: "SuccessChip",
-            ConnectionState.DEGRADED: "WarningChip",
-            ConnectionState.DISCONNECTED: "CriticalChip",
-        }
-        self._connection_label.setText(labels.get(state, "Unknown"))
-        self._connection_label.setProperty("class", colors.get(state, ""))
+        self._connection_label.setText(CONNECTION_LABELS.get(state, "Unknown"))
+        self._connection_label.setProperty("class", CONNECTION_CHIP.get(state, ""))
         # Force style refresh
         self._connection_label.style().unpolish(self._connection_label)
         self._connection_label.style().polish(self._connection_label)
@@ -63,13 +73,7 @@ class StatusBanner(QWidget):
         self._profile_label.setText(name if name else "No profile")
 
     def set_operation_mode(self, mode: OperationMode) -> None:
-        labels = {
-            OperationMode.AUTOMATIC: "Automatic",
-            OperationMode.MANUAL_OVERRIDE: "Manual Override",
-            OperationMode.READ_ONLY: "Read-only",
-            OperationMode.DEMO: "Demo mode",
-        }
-        self._mode_label.setText(labels.get(mode, ""))
+        self._mode_label.setText(MODE_LABELS.get(mode, ""))
 
         is_manual = mode == OperationMode.MANUAL_OVERRIDE
         self._mode_label.setProperty("class", "ManualBadge" if is_manual else "")

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, 
 
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.models import ConnectionState, OperationMode
-from control_ofc.constants import POLL_INTERVAL_MS
+from control_ofc.constants import PAGE_DASHBOARD, POLL_INTERVAL_MS
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.demo_controller import DemoController
@@ -185,6 +185,9 @@ class MainWindow(QWidget):
         idx = _resolve_startup_page(s, self.page_stack.count())
         self.page_stack.setCurrentIndex(idx)
         self.sidebar.select_page(idx)
+        # select_page() does not emit page_changed, so set the initial global-banner
+        # visibility explicitly (hidden on the dashboard — it owns its own strip).
+        self.status_banner.setVisible(idx != PAGE_DASHBOARD)
         geo = s.window_geometry
         if len(geo) == 4:
             self.setGeometry(geo[0], geo[1], geo[2], geo[3])
@@ -234,6 +237,9 @@ class MainWindow(QWidget):
 
     def _on_page_changed(self, page_id: int) -> None:
         self.page_stack.setCurrentIndex(page_id)
+        # The dashboard owns a rich status strip (DEC-176/177); hide the global
+        # banner there so connection/profile/mode/warnings aren't shown twice.
+        self.status_banner.setVisible(page_id != PAGE_DASHBOARD)
 
     def _on_theme_changed(self, tokens) -> None:
         from PySide6.QtWidgets import QApplication
@@ -383,6 +389,7 @@ class MainWindow(QWidget):
         if self._demo_service:
             self._state.set_sensors(self._demo_service.sensors())
             self._state.set_fans(self._demo_service.fans())
+            self._state.mark_poll_success()  # drive the strip's poll-age in demo
 
     def closeEvent(self, event) -> None:
         """Persist window geometry and last page on close, then clean up timers."""
