@@ -121,6 +121,7 @@ class MainWindow(QWidget):
             profile_service=self._profile_service,
             settings_service=self._settings_service,
             client=self._client,
+            diagnostics_service=self._diag,
         )
         self.controls_page = ControlsPage(
             state=self._state,

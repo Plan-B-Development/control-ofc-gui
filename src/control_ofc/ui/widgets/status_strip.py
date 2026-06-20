@@ -66,6 +66,7 @@ class DashboardStatusStrip(QWidget):
     """Connection/profile/mode/thermal/poll-age/warning chips + profile picker."""
 
     warning_clicked = Signal()
+    inspector_toggle_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -119,6 +120,19 @@ class DashboardStatusStrip(QWidget):
         self.apply_btn.setObjectName("StatusStrip_Btn_apply")
         layout.addWidget(self.apply_btn)
 
+        # Inspector toggle: shows/hides the right-hand inspector pane so the
+        # chart can reclaim width on narrow windows. Lives in the strip (not the
+        # pane) so it stays reachable while the pane is hidden. The chevron
+        # mirrors CollapsibleSection (▾ shown / ▸ hidden); text + tooltip + glyph
+        # keep state off a colour-only cue (WCAG 1.4.1).
+        self.inspector_toggle = QPushButton("▸  Inspector")
+        self.inspector_toggle.setObjectName("Inspector_Btn_toggle")
+        self.inspector_toggle.setFlat(True)
+        self.inspector_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.inspector_toggle.setToolTip("Show or hide the sensor / events / warnings inspector")
+        self.inspector_toggle.clicked.connect(self.inspector_toggle_clicked)
+        layout.addWidget(self.inspector_toggle)
+
         # Sane initial render before the first poll.
         self.set_connection_state(ConnectionState.DISCONNECTED)
         self.set_thermal_state("normal")
@@ -157,3 +171,7 @@ class DashboardStatusStrip(QWidget):
     def update_poll_age(self, now: float, last_poll: float | None) -> None:
         seconds = None if last_poll is None else now - last_poll
         self._poll_age.setText(format_poll_age(seconds))
+
+    def set_inspector_expanded(self, expanded: bool) -> None:
+        """Reflect the inspector pane's open state on the toggle button."""
+        self.inspector_toggle.setText(("▾  " if expanded else "▸  ") + "Inspector")
