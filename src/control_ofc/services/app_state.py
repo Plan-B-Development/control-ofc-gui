@@ -39,6 +39,7 @@ class AppState(QObject):
     warning_count_changed = Signal(int)
     warnings_cleared = Signal()
     fan_alias_changed = Signal(str, str)  # fan_id, display_name
+    fan_zones_changed = Signal(str, str)  # fan_id, zone_name ("" = unassigned)
     sensor_class_override_changed = Signal(str, str)  # sensor_id, source_class ("" = cleared)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -61,6 +62,11 @@ class AppState(QObject):
 
         # Fan aliases: fan_id -> display name (GUI-owned)
         self.fan_aliases: dict[str, str] = {}
+
+        # DEC-176: fan_id -> user-assigned physical zone name (GUI-owned).
+        # Opt-in overlay on the dashboard's role/source grouping; unassigned
+        # fans fall back to that grouping (services/fan_grouping.py).
+        self.fan_zones: dict[str, str] = {}
 
         # DEC-156: user sensor-classification overrides (sensor_id ->
         # source_class, only "coolant" today). GUI-owned policy; the daemon
@@ -134,6 +140,19 @@ class AppState(QObject):
         else:
             self.fan_aliases.pop(fan_id, None)
         self.fan_alias_changed.emit(fan_id, self.fan_display_name(fan_id))
+
+    def set_fan_zone(self, fan_id: str, zone: str) -> None:
+        """Assign or clear a fan's physical zone (DEC-176).
+
+        Empty/whitespace-only ``zone`` unassigns the fan (it then falls back to
+        role/source grouping in the dashboard). Mirrors :meth:`set_fan_alias`.
+        """
+        cleaned = zone.strip() if zone else ""
+        if cleaned:
+            self.fan_zones[fan_id] = cleaned
+        else:
+            self.fan_zones.pop(fan_id, None)
+        self.fan_zones_changed.emit(fan_id, cleaned)
 
     def set_sensor_class_override(self, sensor_id: str, source_class: str) -> None:
         """Force (or clear) a sensor's display classification (DEC-156).

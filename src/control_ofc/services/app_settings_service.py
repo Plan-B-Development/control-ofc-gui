@@ -143,6 +143,12 @@ class AppSettings:
     chart_default_range_index: int = 4  # 15m in TimelineChart
     theme_name: str = "Default Dark"
     fan_aliases: dict[str, str] = field(default_factory=dict)
+    # DEC-176: GUI-owned named physical zones for fans (fan_id -> zone name),
+    # e.g. "Front Intake" / "Exhaust". Mirrors fan_aliases exactly — both are
+    # fan_id-keyed display labels — so it is portable (NOT in MACHINE_SPECIFIC_KEYS)
+    # and travels with export. Unassigned fans fall back to role/source grouping in
+    # the dashboard view-model (services/fan_grouping.py).
+    fan_zones: dict[str, str] = field(default_factory=dict)
     hidden_chart_series: list[str] = field(default_factory=list)
     card_sensor_bindings: dict[str, str] = field(default_factory=dict)
     show_gpu_zero_rpm_warning: bool = True
@@ -226,6 +232,7 @@ class AppSettings:
             ),
             theme_name=_as_str(data.get("theme_name"), "Default Dark"),
             fan_aliases=_as_str_dict(data.get("fan_aliases"), {}),
+            fan_zones=_as_str_dict(data.get("fan_zones"), {}),
             hidden_chart_series=_as_str_list(data.get("hidden_chart_series"), []),
             card_sensor_bindings=_as_str_dict(data.get("card_sensor_bindings"), {}),
             show_gpu_zero_rpm_warning=_as_bool(data.get("show_gpu_zero_rpm_warning"), True),

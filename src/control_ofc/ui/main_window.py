@@ -84,6 +84,7 @@ class MainWindow(QWidget):
 
         # Restore persisted settings into state
         self._state.fan_aliases = dict(self._settings_service.settings.fan_aliases)
+        self._state.fan_zones = dict(self._settings_service.settings.fan_zones)
         self._state.sensor_class_overrides = dict(
             self._settings_service.settings.sensor_class_overrides
         )
@@ -91,6 +92,7 @@ class MainWindow(QWidget):
 
         # Persist alias and series changes back to settings
         self._state.fan_alias_changed.connect(self._persist_fan_alias)
+        self._state.fan_zones_changed.connect(self._persist_fan_zones)
         self._state.sensor_class_override_changed.connect(self._persist_sensor_class_override)
         self._series_selection.selection_changed.connect(self._persist_series_selection)
 
@@ -336,6 +338,7 @@ class MainWindow(QWidget):
         self._state.set_mode(OperationMode.DEMO)
         self._state.set_connection(ConnectionState.CONNECTED)
         self._state.fan_aliases = DemoService.fan_aliases()
+        self._state.fan_zones = DemoService.fan_zones()
 
         # Demo evaluator (DEC-165): a demo-only mini-evaluator drives the
         # synthetic fans (live fan control is the daemon's job now). It exposes
@@ -363,6 +366,9 @@ class MainWindow(QWidget):
 
     def _persist_fan_alias(self, _fan_id: str, _display_name: str) -> None:
         self._settings_service.update(fan_aliases=dict(self._state.fan_aliases))
+
+    def _persist_fan_zones(self, _fan_id: str, _zone_name: str) -> None:
+        self._settings_service.update(fan_zones=dict(self._state.fan_zones))
 
     def _persist_sensor_class_override(self, _sensor_id: str, _source_class: str) -> None:
         self._settings_service.update(
