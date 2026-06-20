@@ -45,13 +45,49 @@ from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.widgets.error_banner import ErrorBanner
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
-from control_ofc.ui.widgets.status_strip import DashboardStatusStrip
+from control_ofc.ui.widgets.status_strip import THERMAL_STATES, DashboardStatusStrip
 from control_ofc.ui.widgets.summary_card import SummaryCard
 from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
     from control_ofc.services.profile_service import ProfileService
+
+# Trend deadband: a |rate| below this reads as "flat" so a near-steady
+# temperature doesn't flicker the glyph between rising/falling.
+_TREND_DEADBAND_C_PER_S = 0.05
+
+# Plain-language reason per daemon thermal_state, for the Safety card detail.
+# Kept qualitative (no hardcoded thresholds) so it can't drift from the daemon.
+_THERMAL_REASONS: dict[str, str] = {
+    "normal": "Cooling is operating normally; the daemon is following the active profile.",
+    "recovery": (
+        "Temperature exceeded the safety threshold. The daemon forced fans up and is holding "
+        "a recovery speed until the system cools further."
+    ),
+    "emergency": (
+        "A critical temperature was reached. The daemon has forced all controllable fans to "
+        "100% to protect the hardware until temperatures fall."
+    ),
+    "no_sensor_fallback": (
+        "No CPU temperature sensor is reachable. The daemon has forced a safe fallback fan "
+        "speed because it cannot confirm the system is cool."
+    ),
+}
+
+
+def _trend_from_rate(rate: float | None) -> str:
+    """Map a °C/s rate to a trend direction ("up"/"down"/"flat"/"").
+
+    ``None`` (no rate yet) yields "" (no glyph). Pure/testable; mirrors the
+    deadband so the Summary card's arrow is stable."""
+    if rate is None:
+        return ""
+    if rate > _TREND_DEADBAND_C_PER_S:
+        return "up"
+    if rate < -_TREND_DEADBAND_C_PER_S:
+        return "down"
+    return "flat"
 
 
 class DashboardPage(QWidget):
@@ -364,30 +400,40 @@ class DashboardPage(QWidget):
         self._apply_btn.clicked.connect(self._on_apply_profile)
         self._status_strip.warning_clicked.connect(self._open_warnings_dialog)
         content_layout.addWidget(self._status_strip)
-        self._sync_status_strip()
 
         # Row 1: Summary cards
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(12)
 
         self._cpu_card = SummaryCard("CPU Temp", category="cpu_temp")
+        self._cpu_card.setObjectName("Dashboard_Card_cpu")
         self._gpu_card = SummaryCard("GPU Temp", category="gpu_temp")
+        self._gpu_card.setObjectName("Dashboard_Card_gpu")
         self._mb_card = SummaryCard("Motherboard", category="mobo_temp")
+        self._mb_card.setObjectName("Dashboard_Card_mobo")
         self._fans_card = SummaryCard("Fans", category="fans")
-        self._warnings_card = SummaryCard("Warnings", "0", category="warnings")
+        self._fans_card.setObjectName("Dashboard_Card_fans")
+        # Safety card (DEC-178): mirrors the strip's thermal chip at a glance but
+        # earns its slot with a click-through thermal detail. Replaces the former
+        # Warnings card — warnings now live solely in the strip's warning chip.
+        self._safety_card = SummaryCard("Safety", category="safety")
+        self._safety_card.setObjectName("Dashboard_Card_safety")
 
-        for card in [self._cpu_card, self._gpu_card, self._mb_card]:
+        for card in (
+            self._cpu_card,
+            self._gpu_card,
+            self._mb_card,
+            self._fans_card,
+            self._safety_card,
+        ):
             card.clicked.connect(self._on_card_clicked)
             cards_layout.addWidget(card)
 
-        self._fans_card.clicked.connect(self._on_card_clicked)
-        cards_layout.addWidget(self._fans_card)
-
-        self._warnings_card.clicked.connect(self._on_card_clicked)
-        cards_layout.addWidget(self._warnings_card)
-
         cards_layout.addStretch()
         content_layout.addLayout(cards_layout)
+
+        # Initial render (strip + Safety card) now that every widget exists.
+        self._sync_status_strip()
 
         # Horizontal splitter: left content (chart+table) | right sensor panel
         self._h_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -456,6 +502,7 @@ class DashboardPage(QWidget):
         self._status_strip.set_connection_state(state)
         if state == ConnectionState.DISCONNECTED:
             self._has_data = False
+            self._reset_cards()
             self._stack.setCurrentIndex(self._IDX_DISCONNECTED)
             self._refresh_service_hint()
         elif state == ConnectionState.CONNECTED and not self._has_data:
@@ -465,15 +512,42 @@ class DashboardPage(QWidget):
         self._status_strip.set_operation_mode(mode)
 
     def _sync_status_strip(self) -> None:
-        """Push current AppState into the strip (initial render before signals)."""
+        """Push current AppState into the strip + Safety card (initial render)."""
         if not self._state:
             return
         self._status_strip.set_connection_state(self._state.connection)
         self._status_strip.set_operation_mode(self._state.mode)
         self._status_strip.set_active_profile(self._state.active_profile_name)
         self._status_strip.set_warning_count(self._state.warning_count)
-        if self._state.daemon_status:
-            self._status_strip.set_thermal_state(self._state.daemon_status.thermal_state)
+        ds = self._state.daemon_status
+        if ds:
+            self._status_strip.set_thermal_state(ds.thermal_state)
+            self._update_safety_card(ds.thermal_state, ds.overrides)
+
+    def _update_safety_card(self, thermal: str, overrides: list) -> None:
+        """Render the Safety card from thermal_state via the shared THERMAL_STATES
+        map (same source as the strip's thermal chip — no drift). Manual overrides
+        appear as a secondary note; the click-through detail carries the reason."""
+        label, css = THERMAL_STATES.get(thermal or "normal", (f"Thermal: {thermal}", "InfoChip"))
+        self._safety_card.set_value(label)
+        self._safety_card.set_status_class(css)
+        n = len(overrides) if overrides else 0
+        self._safety_card.set_detail_text(
+            f"{n} manual override{'s' if n != 1 else ''} active" if n else ""
+        )
+
+    def _reset_cards(self) -> None:
+        """Clear card faces to a neutral "—" on disconnect so a stale
+        pre-disconnect value is never presented as current (refinement §4.2)."""
+        for card in (self._cpu_card, self._gpu_card, self._mb_card, self._fans_card):
+            card.set_value("—")
+            card.set_trend("")
+            card.set_detail_text("")
+            card.set_status_class("")
+            card.setToolTip("")
+        self._safety_card.set_value("—")
+        self._safety_card.set_status_class("")
+        self._safety_card.set_detail_text("")
 
     def _tick_poll_age(self) -> None:
         if self._state:
@@ -556,6 +630,7 @@ class DashboardPage(QWidget):
         # thermal_state leaves "normal", and clear it on the return.
         thermal = status.thermal_state or "normal"
         self._status_strip.set_thermal_state(thermal)
+        self._update_safety_card(thermal, status.overrides)
         if thermal != self._last_thermal_state:
             self._last_thermal_state = thermal
             if thermal == "normal":
@@ -672,7 +747,7 @@ class DashboardPage(QWidget):
         aliases = self._state.fan_aliases if self._state else {}
         display_fans = filter_displayable_fans(fans, aliases, hide_unused)
 
-        self._fans_card.set_value(str(len(display_fans)))
+        self._update_fans_card(display_fans)
 
         # Store displayable fan keys and re-seed selection model
         self._displayable_fan_keys = []
@@ -745,6 +820,11 @@ class DashboardPage(QWidget):
                 sensor = matches[0]
         if sensor:
             freshness = sensor.freshness
+            # Trend glyph only while the reading is live — a stale rate is not
+            # trustworthy. Rendered in its own label, beside the value.
+            card.set_trend(
+                _trend_from_rate(sensor.rate_c_per_s) if freshness == Freshness.FRESH else ""
+            )
             if freshness == Freshness.INVALID:
                 card.set_value(f"{sensor.value_c:.1f}\u00b0C \u26a0")
                 card.setToolTip(f"Stale reading ({sensor.age_ms / 1000:.0f}s old)")
@@ -770,16 +850,31 @@ class DashboardPage(QWidget):
             )
         elif binding:
             card.set_value("\u2014")
+            card.set_trend("")
             card.setToolTip("Bound sensor not available")
             card.set_range(None, None)
 
+    def _update_fans_card(self, display_fans: list[FanReading]) -> None:
+        """Fans card face: online/expected + average PWM/RPM. "Online" = a FRESH
+        reading; a shortfall flags a warning. Definitions mirror the fan_grouping
+        view-model (Phase 4 wires per-zone cards from the same data)."""
+        total = len(display_fans)
+        online = sum(1 for f in display_fans if f.freshness == Freshness.FRESH)
+        self._fans_card.set_value(f"{online}/{total}")
+        self._fans_card.set_status_class("WarningChip" if total and online < total else "")
+        rpms = [f.rpm for f in display_fans if f.rpm is not None]
+        pwms = [f.last_commanded_pwm for f in display_fans if f.last_commanded_pwm is not None]
+        parts = []
+        if pwms:
+            parts.append(f"avg {round(sum(pwms) / len(pwms))}% PWM")
+        if rpms:
+            parts.append(f"{round(sum(rpms) / len(rpms))} rpm")
+        self._fans_card.set_detail_text(" \u00b7 ".join(parts))
+
     def _on_warnings_changed(self, count: int) -> None:
+        # Warnings now surface only in the strip's warning chip (DEC-178); the
+        # former Warnings summary card was replaced by the Safety card.
         self._status_strip.set_warning_count(count)
-        self._warnings_card.set_value(str(count))
-        if count > 0:
-            self._warnings_card.set_status_class("WarningChip")
-        else:
-            self._warnings_card.set_status_class("SuccessChip")
 
     def _on_profile_changed(self, name: str) -> None:
         self._status_strip.set_active_profile(name)
@@ -791,8 +886,8 @@ class DashboardPage(QWidget):
 
     def _on_card_clicked(self, category: str) -> None:
         """Open the appropriate dialog for the clicked card."""
-        if category == "warnings":
-            self._open_warnings_dialog()
+        if category == "safety":
+            self._open_safety_detail()
             return
 
         # Sensor picker for temp/fan cards
@@ -841,6 +936,41 @@ class DashboardPage(QWidget):
 
         dialog = WarningsDialog(self._state, parent=self)
         dialog.exec()
+
+    def _safety_detail_text(self) -> str:
+        """Read-only thermal-safety summary for the Safety card's click detail.
+
+        Pure (no I/O) so it is unit-testable. Surfaces only data we actually have
+        — state, a plain reason, the current hottest CPU sensor, and any active
+        manual overrides. It does NOT invent a "last safe value" or a persisted
+        transition timestamp (neither is daemon-provided)."""
+        ds = self._state.daemon_status if self._state else None
+        thermal = (ds.thermal_state if ds else "normal") or "normal"
+        label, _css = THERMAL_STATES.get(thermal, (f"Thermal: {thermal}", ""))
+        lines = [
+            f"State: {label}",
+            "",
+            _THERMAL_REASONS.get(thermal, "Current daemon thermal state."),
+        ]
+        sensors = self._state.sensors if self._state else []
+        cpu_vals = [s.value_c for s in sensors if s.kind in ("CpuTemp", "cpu_temp")]
+        if cpu_vals:
+            lines += ["", f"Hottest CPU sensor: {max(cpu_vals):.1f}°C"]
+        n = len(ds.overrides) if ds and ds.overrides else 0
+        if n:
+            lines += ["", f"{n} manual override{'s' if n != 1 else ''} active."]
+        return "\n".join(lines)
+
+    def _open_safety_detail(self) -> None:
+        """Show the read-only thermal-safety detail (Safety card click)."""
+        from PySide6.QtWidgets import QMessageBox
+
+        box = QMessageBox(self)
+        box.setObjectName("Dashboard_Dialog_safetyDetail")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Thermal safety")
+        box.setText(self._safety_detail_text())
+        box.exec()
 
     def _on_fan_table_double_click(self, index) -> None:
         """Open rename dialog on double-click of fan table row."""

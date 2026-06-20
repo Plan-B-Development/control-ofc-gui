@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout
+
+# Trend glyphs are text/shape (not colour-only) so direction is conveyed without
+# relying on colour (WCAG 1.4.1). Empty string hides the glyph.
+_TREND_GLYPHS: dict[str, str] = {"up": "↑", "down": "↓", "flat": "→", "": ""}
 
 
 class SummaryCard(QFrame):
-    """A small card displaying a title, prominent value, and optional session
-    min/max range.  Used in dashboard row 1.
+    """A small card displaying a title, prominent value, an optional trend glyph,
+    and an optional session min/max range (or free-form detail line).  Used in
+    dashboard row 1.
 
     When ``category`` is set, the card is clickable and emits ``clicked(category)``.
     Height is driven by font metrics (Maximum vertical policy) so the card
@@ -38,11 +43,27 @@ class SummaryCard(QFrame):
         self._title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self._title_label)
 
+        # Value + trend share a row so the trend glyph sits beside the value
+        # without colliding with the freshness glyph (⚠/⏱) the dashboard appends
+        # to the value text itself.
+        value_row = QHBoxLayout()
+        value_row.setContentsMargins(0, 0, 0, 0)
+        value_row.setSpacing(6)
+
         self._value_label = QLabel(value)
         self._value_label.setProperty("class", "CardValue")
         self._value_label.setStyleSheet("background: transparent;")
         self._value_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(self._value_label)
+        value_row.addWidget(self._value_label)
+
+        self._trend_label = QLabel("")
+        self._trend_label.setProperty("class", "CardValue")
+        self._trend_label.setStyleSheet("background: transparent;")
+        self._trend_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._trend_label.setHidden(True)
+        value_row.addWidget(self._trend_label)
+        value_row.addStretch()
+        layout.addLayout(value_row)
 
         self._range_label = QLabel("")
         self._range_label.setProperty("class", "CardRange")
@@ -57,10 +78,36 @@ class SummaryCard(QFrame):
     def set_value(self, value: str) -> None:
         self._value_label.setText(value)
 
+    def set_trend(self, direction: str) -> None:
+        """Show a small ↑/↓/→ trend glyph beside the value.  Pass "" to hide.
+
+        ``direction`` ∈ {"up","down","flat",""}; unknown values hide the glyph.
+        Text/shape glyph — never colour-only (WCAG 1.4.1)."""
+        glyph = _TREND_GLYPHS.get(direction, "")
+        if glyph:
+            if self._trend_label.text() != glyph:
+                self._trend_label.setText(glyph)
+            if self._trend_label.isHidden():
+                self._trend_label.setHidden(False)
+        elif not self._trend_label.isHidden():
+            self._trend_label.setHidden(True)
+            self._trend_label.setText("")
+
     def set_range(self, min_c: float | None, max_c: float | None) -> None:
-        """Show session min/max below the value.  Pass None to hide."""
+        """Show session min/max below the value.  Pass None to hide.
+
+        Convenience wrapper over :meth:`set_detail_text` for temperature cards."""
         if min_c is not None and max_c is not None:
-            text = f"↓ {min_c:.1f}°  ↑ {max_c:.1f}°"
+            self.set_detail_text(f"↓ {min_c:.1f}°  ↑ {max_c:.1f}°")
+        else:
+            self.set_detail_text("")
+
+    def set_detail_text(self, text: str) -> None:
+        """Show a free-form one-line detail below the value (empty hides it).
+
+        Mutually exclusive with :meth:`set_range` per card — both drive the same
+        secondary label, so a given card should use one or the other."""
+        if text:
             if self._range_label.text() != text:
                 self._range_label.setText(text)
             if self._range_label.isHidden():

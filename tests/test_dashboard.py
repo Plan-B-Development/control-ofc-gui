@@ -181,18 +181,22 @@ class TestDashboardContent:
                 FanReading(id="f2", source="openfan", rpm=1100, age_ms=100),
             ]
         )
-        assert window.dashboard_page._fans_card._value_label.text() == "2"
+        # Fans card now shows online/expected (DEC-178); both fresh ⇒ "2/2".
+        assert window.dashboard_page._fans_card._value_label.text() == "2/2"
 
-    def test_warning_count_card_updates(self, qtbot, window, app_state):
-        # Trigger a warning by setting a stale sensor
+    def test_warning_count_shows_in_strip(self, qtbot, window, app_state):
+        # The Warnings summary card was replaced by the Safety card (DEC-178);
+        # warnings now surface in the strip's warning chip.
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_sensors(
             [
                 SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=42.0, age_ms=5000),
             ]
         )
-        # Warning count should be at least 1 (stale sensor)
-        assert int(window.dashboard_page._warnings_card._value_label.text()) >= 1
+        assert app_state.warning_count >= 1
+        chip = window.dashboard_page._status_strip._warning
+        assert not chip.isHidden()
+        assert any(c.isdigit() for c in chip.text())
 
     def test_open_diagnostics_button_exists(self, qtbot, window):
         """The no-hardware state has an 'Open Diagnostics' button."""
