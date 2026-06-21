@@ -66,6 +66,12 @@ def test_thermal_chip_text(qtbot):
     s.set_thermal_state("emergency")
     assert "Emergency" in s._thermal.text()
     assert s._thermal.property("class") == "CriticalChip"
+    s.set_thermal_state("recovery")
+    assert s._thermal.text() == "Thermal: Recovery"
+    assert s._thermal.property("class") == "WarningChip"
+    s.set_thermal_state("no_sensor_fallback")
+    assert s._thermal.text() == "Thermal: No CPU sensor"
+    assert s._thermal.property("class") == "WarningChip"
     # Unknown states are surfaced (never hidden), as a neutral info chip.
     s.set_thermal_state("weird_state")
     assert "weird_state" in s._thermal.text()

@@ -21,9 +21,13 @@ dev = [
     "pytest>=8.0",
     "pytest-qt>=4.3",
     "pytest-timeout>=2.3",
+    # Coverage plugin for the `pytest --cov` audit/test-tests/release gate
+    # (CLAUDE.md "Quality gates"). Without it that gate errors out on `--cov`.
+    "pytest-cov>=5",
     "ruff>=0.4",
     "pip-audit>=2.7",
-    "mutmut>=2.5",
+    # 3.x reads scope from [tool.mutmut]; the old 2.5 `--paths-to-mutate` CLI is gone.
+    "mutmut>=3.5",
 ]
 
 [project.scripts]
@@ -56,8 +60,10 @@ timeout_method = "thread"
 # runtime safety logic — profile.rs::validate, override expiry/fencing, the
 # role-floor backstop — is Rust; mutate it with cargo-mutants, not mutmut.)
 [tool.mutmut]
-paths_to_mutate = ["src/control_ofc/services/profile_service.py"]
-tests_dir = [
+# mutmut 3.6 renamed these keys (paths_to_mutate -> source_paths,
+# tests_dir -> pytest_add_cli_args_test_selection); same list format.
+source_paths = ["src/control_ofc/services/profile_service.py"]
+pytest_add_cli_args_test_selection = [
     "tests/test_profile_service.py",
     "tests/test_profile_service_daemon.py",
     "tests/test_role_classification_parity.py",

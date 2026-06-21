@@ -130,8 +130,10 @@ def test_state_stale_from_age():
 
 
 def test_state_low_rpm_no_profile_floor_zero():
-    # No profile => floor 0; rpm 0 while pwm>0 => LOW_RPM.
-    g = _call([_fan("openfan:ch00", rpm=0, pwm=50)])[0]
+    # No profile => floor 0.0; rpm 0 while pwm is just above the floor => LOW_RPM.
+    # pwm=1 pins the floor at 0.0: 1 > 0.0 is True, but 1 > 1.0 (a floor-value
+    # mutant) is False, which would flip this to NORMAL.
+    g = _call([_fan("openfan:ch00", rpm=0, pwm=1)])[0]
     assert g.tiles[0].state == FanState.LOW_RPM
 
 
@@ -297,16 +299,21 @@ def test_aggregates_average_ignore_none():
 
 
 def test_online_counts_only_fresh_present():
+    # Three present fans at distinct freshness + one missing-expected. Only the
+    # FRESH one is online. The third (INVALID) reading is deliberate: with just a
+    # fresh+stale pair the count is 1 under both ``== FRESH`` and ``!= FRESH``, so
+    # the operator mutant survives; a second non-fresh reading makes ``!=`` give 2.
     groups = _call(
         [
-            _fan("openfan:ch00", age_ms=200),  # fresh -> online
-            _fan("openfan:ch01", age_ms=5000),  # stale -> not online
+            _fan("openfan:ch00", age_ms=200),  # FRESH -> online
+            _fan("openfan:ch01", age_ms=5000),  # STALE -> not online
+            _fan("openfan:ch02", age_ms=15000),  # INVALID -> not online
         ],
         expected_fan_ids={"openfan:ch00", "openfan:ch01", "openfan:ch99"},  # ch99 missing
     )
     g = groups[0]
-    assert g.fans_expected == 3
-    assert g.fans_online == 1  # only the fresh one
+    assert g.fans_expected == 4  # 3 present + 1 missing-expected
+    assert g.fans_online == 1  # only the FRESH one (the ``!= FRESH`` mutant gives 2)
 
 
 def test_avg_none_when_all_missing():
@@ -387,3 +394,60 @@ def test_no_profile_means_no_role_no_control():
     assert tile.role is None
     assert tile.controlled_by_daemon is False
     assert tile.curve_source is None
+
+
+# ---------------------------------------------------------------------------
+# Tile field pass-through (present + OFFLINE) — pins fields a mutant could null
+# ---------------------------------------------------------------------------
+
+
+def test_present_tile_passthrough_fields():
+    # A present tile must carry the live reading's identity/telemetry verbatim.
+    # source/age_ms are only asserted for OFFLINE tiles elsewhere, so a mutant
+    # nulling them on the present path would otherwise slip through.
+    g = _call([_fan("openfan:ch00", source="openfan", rpm=1234, pwm=55, age_ms=500)])[0]
+    t = g.tiles[0]
+    assert t.source == "openfan"
+    assert t.age_ms == 500
+    assert t.rpm == 1234
+    assert t.pwm_pct == 55
+
+
+def test_offline_tile_identity_fields():
+    # An expected-but-absent fan becomes an OFFLINE tile that must still carry its
+    # identity: display_name (called with the fan id, not None), source (from the
+    # id prefix) and role (resolved from the profile member).
+    prof = _member_profile("hwmon:x:pwm1:CPU", source="hwmon", label="CPU Fan")
+    groups = _call(
+        [_fan("openfan:ch00")],  # an unrelated present fan
+        active_profile=prof,
+        expected_fan_ids={"openfan:ch00", "hwmon:x:pwm1:CPU"},  # CPU member missing
+        display_name=lambda fid: f"Fan {fid}",
+    )
+    tiles = {t.fan_id: t for g in groups for t in g.tiles}
+    off = tiles["hwmon:x:pwm1:CPU"]
+    assert off.state == FanState.OFFLINE
+    assert off.display_name == "Fan hwmon:x:pwm1:CPU"  # display_name(fid), not (None)
+    assert off.source == "hwmon"  # derived from the id prefix
+    assert off.role == "cpu_or_pump"  # resolved from the profile member
+
+
+def test_intel_gpu_zero_rpm_idle_is_normal():
+    # DEC-047 zero-RPM guard applies to BOTH GPU sources. An intel_gpu fan
+    # commanded but idling at 0 RPM => NORMAL, never LOW_RPM (amd_gpu is covered
+    # by test_gpu_zero_rpm_idle_is_normal). pwm is non-None so the source check is
+    # the deciding factor, not the pwm-is-None short-circuit.
+    g = _call([_fan("intel_gpu:0000:03:00.0", source="intel_gpu", rpm=0, pwm=30)])[0]
+    assert g.tiles[0].state == FanState.NORMAL
+
+
+def test_bucket_fallbacks_for_unknown_role_and_source():
+    # Defensive fallbacks in fan->bucket placement: an unrecognised role falls back
+    # to "Chassis", an unrecognised source to "Other".
+    from control_ofc.services.fan_grouping import _bucket_for
+
+    by_role = _bucket_for("hwmon:x:pwm1", source="hwmon", role="something_new", fan_zones={})
+    assert by_role.label == "Chassis" and by_role.is_user_zone is False
+
+    by_source = _bucket_for("weird:0", source="weird", role=None, fan_zones={})
+    assert by_source.label == "Other" and by_source.is_user_zone is False

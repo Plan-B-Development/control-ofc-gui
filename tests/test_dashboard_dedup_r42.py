@@ -165,26 +165,10 @@ class TestSensorDeduplication:
 
 
 # ---------------------------------------------------------------------------
-# Hover: only selected series, suppress zero RPM
+# (Hover behaviour is now covered by real _on_mouse_moved tests in
+# test_dashboard_graph_r41.py::TestCrosshairHover — the former identity-only
+# placeholder here was removed.)
 # ---------------------------------------------------------------------------
-
-
-class TestHoverSelection:
-    """Hover only considers user-selected visible series."""
-
-    def test_hover_iterates_visible_keys_only(self, qtbot):
-        from control_ofc.services.history_store import HistoryStore
-        from control_ofc.ui.widgets.timeline_chart import TimelineChart
-
-        history = HistoryStore()
-        selection = SeriesSelectionModel()
-        chart = TimelineChart(history, selection=selection)
-        qtbot.addWidget(chart)
-
-        # The _on_mouse_moved method checks self._selection.visible_keys()
-        # and only processes keys in that set. Verify by checking the code
-        # path uses selection (presence of _selection attribute check).
-        assert chart._selection is selection
 
 
 # ---------------------------------------------------------------------------

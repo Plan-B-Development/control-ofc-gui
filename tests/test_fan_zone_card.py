@@ -191,6 +191,25 @@ class TestFanTileActions:
         tile._prompt_assign()
         assert state.fan_zones["openfan:ch00"] == "Exhaust"
 
+    def test_prompt_rename_cancel_is_noop(self, qtbot, monkeypatch):
+        # Dialog dismissed (ok=False) must not write an alias, even though the
+        # dialog "returns" a value.
+        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("ignored", False))
+        state = AppState()
+        tile = FanTile(_tile_vm(), state=state)
+        qtbot.addWidget(tile)
+        tile._prompt_rename()
+        assert "openfan:ch00" not in state.fan_aliases
+
+    def test_prompt_assign_cancel_is_noop(self, qtbot, monkeypatch):
+        # Dialog dismissed (ok=False) must not (re)assign a zone.
+        monkeypatch.setattr(QInputDialog, "getItem", lambda *a, **k: ("ignored", False))
+        state = AppState()
+        tile = FanTile(_tile_vm(), state=state)
+        qtbot.addWidget(tile)
+        tile._prompt_assign()
+        assert "openfan:ch00" not in state.fan_zones
+
 
 class TestFanGroupCard:
     def test_user_zone_header(self, qtbot):

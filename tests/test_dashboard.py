@@ -413,14 +413,17 @@ class TestR12ProfileSelector:
     ):
         """Selecting a profile should not revert when sensors update."""
         page = window.dashboard_page
-        if page._profile_combo.count() >= 2:
-            page._profile_combo.setCurrentIndex(1)
-            selected = page._profile_combo.currentText()
-            # Simulate sensor update
-            app_state.set_sensors(
-                [SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=50.0, age_ms=50)]
-            )
-            assert page._profile_combo.currentText() == selected
+        # The fixture loads 3 bundled profiles; fail loudly if that invariant
+        # breaks rather than silently skipping the assertion (the old `if` guard
+        # turned a broken fixture into a green no-op).
+        assert page._profile_combo.count() >= 2
+        page._profile_combo.setCurrentIndex(1)
+        selected = page._profile_combo.currentText()
+        # Simulate sensor update
+        app_state.set_sensors(
+            [SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=50.0, age_ms=50)]
+        )
+        assert page._profile_combo.currentText() == selected
 
 
 class TestR14SensorPanelGrouping:

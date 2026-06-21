@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from control_ofc.services.series_selection import SeriesGroup, SeriesSelectionModel
+from control_ofc.services.series_selection import ChartMode, SeriesGroup, SeriesSelectionModel
 
 
 def test_new_keys_default_visible():
@@ -159,3 +159,134 @@ def test_keys_for_group():
     model.update_known_keys(["sensor:cpu", "fan:openfan:ch00:rpm"])
     assert model.keys_for_group(SeriesGroup.TEMPS) == {"sensor:cpu"}
     assert model.keys_for_group(SeriesGroup.OPENFAN_FANS) == {"fan:openfan:ch00:rpm"}
+
+
+# ---------------------------------------------------------------------------
+# set_group_visible: each member's hide/show must depend on BOTH `visible` AND
+# the member's current hidden-state. A mutant relaxing `and`->`or` resurrects an
+# already-hidden member when the group is hidden.
+# ---------------------------------------------------------------------------
+
+
+def test_set_group_visible_hide_with_one_already_hidden():
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu", "sensor:gpu"])
+    model.set_visible("sensor:cpu", False)  # pre-hide one TEMPS member
+    assert not model.is_visible("sensor:cpu")
+    assert model.is_visible("sensor:gpu")
+    # Hiding the whole group must hide BOTH and never resurrect the pre-hidden one.
+    model.set_group_visible(SeriesGroup.TEMPS, False)
+    assert not model.is_visible("sensor:cpu")  # the `and`->`or` mutant un-hides this
+    assert not model.is_visible("sensor:gpu")
+
+
+def test_set_group_visible_show_from_all_hidden():
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu", "sensor:gpu", "fan:openfan:ch00:rpm"])
+    model.select_none()  # hide everything
+    model.set_group_visible(SeriesGroup.TEMPS, True)  # show only the temps group
+    assert model.is_visible("sensor:cpu")
+    assert model.is_visible("sensor:gpu")
+    assert not model.is_visible("fan:openfan:ch00:rpm")  # non-temps stays hidden
+
+
+def test_set_group_visible_emits_once_on_change(qtbot):
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu", "sensor:gpu"])
+    calls: list[int] = []
+    model.selection_changed.connect(lambda: calls.append(1))
+    model.set_group_visible(SeriesGroup.TEMPS, False)
+    assert calls == [1]  # exactly one emit (kills the `changed=True`->None mutant)
+
+
+def test_set_group_visible_no_emit_when_unchanged(qtbot):
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu"])
+    model.set_group_visible(SeriesGroup.TEMPS, False)  # now hidden
+    calls: list[int] = []
+    model.selection_changed.connect(lambda: calls.append(1))
+    model.set_group_visible(SeriesGroup.TEMPS, False)  # no-op
+    assert calls == []  # no spurious emit (kills the `changed=False`->True mutant)
+
+
+# ---------------------------------------------------------------------------
+# update_known_keys: prune dropped hidden keys + emit when a group mode hides a
+# freshly-seen key.
+# ---------------------------------------------------------------------------
+
+
+def test_update_known_keys_prunes_dropped_hidden_key():
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu", "sensor:gpu"])
+    model.set_visible("sensor:gpu", False)
+    assert model.is_hidden("sensor:gpu")
+    model.update_known_keys(["sensor:cpu"])  # gpu disappears from the known set
+    # Re-discovering gpu must show it visible — i.e. it was pruned from hidden,
+    # not silently retained across the drop.
+    model.update_known_keys(["sensor:cpu", "sensor:gpu"])
+    assert model.is_visible("sensor:gpu")
+
+
+def test_update_known_keys_emits_when_mode_hides_new_key(qtbot):
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu"])
+    model.apply_mode(ChartMode.THERMALS)  # group-based mode active
+    calls: list[int] = []
+    model.selection_changed.connect(lambda: calls.append(1))
+    model.update_known_keys(["sensor:cpu", "fan:openfan:ch00:rpm"])  # new non-temps key
+    assert calls == [1]  # the mode hid the fresh fan -> one emit
+    assert not model.is_visible("fan:openfan:ch00:rpm")
+
+
+# ---------------------------------------------------------------------------
+# classify: the synthetic aggregate-RPM key is its own group (checked first).
+# ---------------------------------------------------------------------------
+
+
+def test_classify_fan_aggregate():
+    from control_ofc.constants import AGGREGATE_FAN_RPM_KEY
+
+    assert SeriesSelectionModel.classify(AGGREGATE_FAN_RPM_KEY) == SeriesGroup.FAN_AGGREGATE
+
+
+# ---------------------------------------------------------------------------
+# apply_mode presets (unit-level; the dashboard-integration paths live in
+# test_chart_modes.py). Pins each ChartMode's resolved visibility.
+# ---------------------------------------------------------------------------
+
+
+def test_apply_mode_thermals_shows_only_temps():
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu", "fan:openfan:ch00:rpm", "fan:hwmon:nct:fan1:rpm"])
+    model.apply_mode(ChartMode.THERMALS)
+    assert model.active_mode == ChartMode.THERMALS
+    assert model.is_visible("sensor:cpu")
+    assert not model.is_visible("fan:openfan:ch00:rpm")
+    assert not model.is_visible("fan:hwmon:nct:fan1:rpm")
+
+
+def test_apply_mode_fans_shows_only_fans():
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu", "fan:openfan:ch00:rpm", "fan:hwmon:nct:fan1:rpm"])
+    model.apply_mode(ChartMode.FANS)
+    assert not model.is_visible("sensor:cpu")
+    assert model.is_visible("fan:openfan:ch00:rpm")
+    assert model.is_visible("fan:hwmon:nct:fan1:rpm")
+
+
+def test_apply_mode_diagnostics_shows_all():
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu", "fan:openfan:ch00:rpm"])
+    model.set_visible("sensor:cpu", False)
+    model.apply_mode(ChartMode.DIAGNOSTICS)  # everything visible (select_all)
+    assert model.is_visible("sensor:cpu")
+    assert model.is_visible("fan:openfan:ch00:rpm")
+
+
+def test_apply_mode_combined_uses_curated_keys():
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:cpu", "sensor:gpu", "fan:openfan:ch00:rpm"])
+    model.apply_mode(ChartMode.COMBINED, curated_keys={"sensor:cpu"})
+    assert model.is_visible("sensor:cpu")
+    assert not model.is_visible("sensor:gpu")
+    assert not model.is_visible("fan:openfan:ch00:rpm")
