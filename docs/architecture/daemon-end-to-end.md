@@ -34,7 +34,7 @@
 
 The Control-OFC daemon (`control-ofc-daemon`) is a Rust service that provides hardware-mediated fan control for Linux systems. It communicates with two hardware interfaces: **OpenFanController** (USB serial, Karanovic Research) and **motherboard hwmon** (Linux sysfs). The GUI communicates with the daemon over HTTP via a Unix domain socket.
 
-**Key architectural themes:**
+**Key architectural themes:** *(⚠️ superseded — see top banner; the dual-control and lease bullets below describe the pre-2.0.0 model)*
 - Daemon owns all hardware access — GUI never touches hardware directly
 - Dual control model: imperative (GUI drives) or profile (daemon drives autonomously)
 - Thermal safety rule: CPU Tctl 105°C → force OpenFan+hwmon fans to 100% (GPU excluded — DEC-130), hold until 80°C
@@ -394,6 +394,11 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 ---
 
 ## 9. Key Design Decisions
+
+> ⚠️ **Superseded rows (see top banner):** "Lease-based hwmon exclusivity" and
+> "Profile engine GUI deferral" describe the pre-2.0.0 model — the GUI-held lease and
+> the 30 s `gui_active` deferral were deleted at the 2.0.0 cutover (DEC-165). The daemon
+> is now the sole PWM writer and self-leases internally.
 
 | Decision | Implementation | Evidence |
 |----------|---------------|----------|

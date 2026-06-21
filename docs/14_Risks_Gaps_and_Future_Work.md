@@ -65,8 +65,8 @@ classification (`CoolantTemp`), an `is_aio` header flag, a dynamic `aio_hwmon` c
 `AioPumpState` wired into the poll loop. Coolers ride the existing hwmon write/lease path — no new
 control plumbing and **no coolant safety rule** (CPU-only `safety.rs` is unchanged). **USB-only
 coolers** (liquidctl/USB-HID, e.g. much Corsair iCUE/Commander Core) remain **out of scope** — the
-daemon never opens USB-HID, so they read as not-detected, never faked. Phase 2 (guided AIO UX —
-wizard, dashboard clustering) is planned for GUI 1.40.0.
+daemon never opens USB-HID, so they read as not-detected, never faked. Phase 2 (guided AIO UX — one-click "Configure AIO" on the Controls page,
+dashboard liquid-cooler grouping) shipped in GUI 1.40.0 (DEC-157).
 
 ### 6. Multi-GPU UI selection
 Data model supports multiple GPUs. API reports primary only. No UI to select between multiple discrete GPUs. Untested with 2+ dGPUs.
@@ -169,17 +169,19 @@ across restarts, the daemon journal is the right place.
 
 ### 11. GUI surface for `reset_gpu_fan` (RESOLVED — DEC-147)
 
-Diagnostics ▸ Troubleshooting ▸ "Restore GPU Fan to Automatic" now wires
+Diagnostics ▸ Troubleshooting ▸ "Restore GPU Fan to Automatic" wires
 `DaemonClient.reset_gpu_fan` to a user-facing action beside the GPU verify
 button: shown for any writable AMD GPU (no daemon version floor — the reset
 route predates every supported daemon), disabled with an explanatory tooltip
 while the active profile owns an `amd_gpu:` member (the daemon engine
-would silently re-assert its curve), re-checked at click time, and clearing
-the session's `gui_wrote_gpu_fan` flag on success so the close-time
-auto-reset (M9) becomes a no-op until the next GUI GPU write. Before DEC-147
-the only caller was that close-time reset — mid-session the user could set a
-static GPU speed but not hand control back to PMFW without restarting the
-daemon.
+would silently re-assert its curve), and re-checked at click time.
+
+**Post-2.0.0 note:** the GUI no longer writes GPU PWM at all — the daemon engine
+is the sole writer (DEC-165) — so the original close-time auto-reset (M9) is gone
+and the `gui_wrote_gpu_fan` session flag is now only a vestige that a true
+reconnect clears (`polling.py`). The Diagnostics action itself remains useful for
+handing a GPU left in a static/manual state back to PMFW automatic without
+restarting the daemon.
 
 **Remaining (optional) surface:** a secondary "Restore to automatic" action in
 the fan wizard / fan role editor for GPU fans. Deferred — that surface only
@@ -205,6 +207,13 @@ other Intel discrete GPUs display as the generic "Intel D-GPU". Extend the
 table only with authoritatively-verified device-ID → name pairs.
 
 ## Resolved Gaps (previously listed as future work)
+
+> **Historical ledger.** Each row records a fix at the version in its Evidence
+> column. Some describe mechanisms that were **later deleted at the 2.0.0 cutover
+> (DEC-165)** — the GUI control loop, `LeaseService`/`ControlLoopService`, the
+> GUI-held hwmon lease, and the 30 s `gui_active` profile-engine deferral. Those
+> rows are kept for provenance; the components no longer exist (the daemon is the
+> sole PWM writer and self-leases internally).
 
 | Gap | Resolution | Version |
 |-----|-----------|---------|
