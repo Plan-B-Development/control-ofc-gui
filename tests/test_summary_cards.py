@@ -230,6 +230,55 @@ class TestTempCardTrend:
         assert window.dashboard_page._cpu_card._trend_label.isHidden()
 
 
+class TestMoboCard:
+    """The motherboard temp card is driven by the same _update_card path as the
+    CPU/GPU cards (kind 'MbTemp'/'mb_temp') but had no test exercising it."""
+
+    def test_value_and_rising_trend(self, qtbot, window, app_state):
+        app_state.set_connection(ConnectionState.CONNECTED)
+        app_state.set_sensors(
+            [
+                SensorReading(
+                    id="mb0",
+                    label="Motherboard",
+                    kind="MbTemp",
+                    value_c=45.5,
+                    age_ms=100,
+                    rate_c_per_s=0.5,
+                )
+            ]
+        )
+        card = window.dashboard_page._mb_card
+        assert "45.5" in card._value_label.text()
+        assert card._trend_label.text() == "↑"
+
+    def test_stale_reading_hides_trend(self, qtbot, window, app_state):
+        app_state.set_connection(ConnectionState.CONNECTED)
+        app_state.set_sensors(
+            [
+                SensorReading(
+                    id="mb0",
+                    label="Motherboard",
+                    kind="MbTemp",
+                    value_c=50.0,
+                    age_ms=5000,
+                    rate_c_per_s=0.5,
+                )
+            ]
+        )
+        assert window.dashboard_page._mb_card._trend_label.isHidden()
+
+    def test_disconnect_blanks_mobo_card(self, qtbot, window, app_state):
+        app_state.set_connection(ConnectionState.CONNECTED)
+        app_state.set_sensors(
+            [SensorReading(id="mb0", label="Motherboard", kind="MbTemp", value_c=50.0, age_ms=100)]
+        )
+        assert "50.0" in window.dashboard_page._mb_card._value_label.text()
+        app_state.set_connection(ConnectionState.DISCONNECTED)
+        assert window.dashboard_page._mb_card._value_label.text() == "—"
+        assert window.dashboard_page._mb_card._trend_label.isHidden()
+
+
 # ─── Disconnect resets cards ─────────────────────────────────────────────
 
 

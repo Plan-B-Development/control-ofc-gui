@@ -21,23 +21,68 @@ class TestSensorPanelColourSwatch:
         qtbot.addWidget(panel)
         assert panel._tree.columnCount() == 3
 
-    def test_set_chart_stores_reference(self, qtbot, app_state):
+    def test_set_chart_reference_is_used_for_swatch(self, qtbot, app_state):
+        """set_chart isn't merely stored — the colour-swatch column is painted
+        from the chart's color_for_key, so the stored reference is consulted."""
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QTreeWidgetItem
+
         from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         panel = SensorSeriesPanel(SeriesSelectionModel(), state=app_state)
         qtbot.addWidget(panel)
-
         chart = TimelineChart(HistoryStore())
         qtbot.addWidget(chart)
         panel.set_chart(chart)
-        assert panel._chart is chart
 
-    def test_item_clicked_handler_exists(self, qtbot, app_state):
+        item = QTreeWidgetItem(["CPU", "", ""])
+        panel._set_color_swatch(item, "sensor:cpu0")
+        expected = QColor(chart.color_for_key("sensor:cpu0")).name()
+        assert item.background(2).color().name() == expected
+
+    def test_color_swatch_click_applies_chosen_color(self, qtbot, app_state, monkeypatch):
+        """Clicking the colour swatch (column 2) opens the picker and applies the
+        chosen colour to the chart series — real wiring, not just method presence."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QColorDialog, QTreeWidgetItem
+
         from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
         panel = SensorSeriesPanel(SeriesSelectionModel(), state=app_state)
         qtbot.addWidget(panel)
-        assert hasattr(panel, "_on_item_clicked")
+        chart = TimelineChart(HistoryStore())
+        qtbot.addWidget(chart)
+        panel.set_chart(chart)
+
+        item = QTreeWidgetItem(["CPU", "", ""])
+        item.setData(0, Qt.ItemDataRole.UserRole, "sensor:cpu0")
+        # Accept the (non-modal) dialog with a chosen colour.
+        monkeypatch.setattr(QColorDialog, "exec", lambda self: 1)
+        monkeypatch.setattr(QColorDialog, "currentColor", lambda self: QColor("#abcdef"))
+
+        panel._on_item_clicked(item, 2)
+        assert chart.color_for_key("sensor:cpu0") == "#abcdef"
+
+    def test_click_off_color_column_opens_no_picker(self, qtbot, app_state, monkeypatch):
+        """A click outside the colour column (column 2) must not open the picker."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QColorDialog, QTreeWidgetItem
+
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
+
+        panel = SensorSeriesPanel(SeriesSelectionModel(), state=app_state)
+        qtbot.addWidget(panel)
+        chart = TimelineChart(HistoryStore())
+        qtbot.addWidget(chart)
+        panel.set_chart(chart)
+
+        item = QTreeWidgetItem(["CPU", "", ""])
+        item.setData(0, Qt.ItemDataRole.UserRole, "sensor:cpu0")
+        opened: list[int] = []
+        monkeypatch.setattr(QColorDialog, "exec", lambda self: opened.append(1) or 1)
+        panel._on_item_clicked(item, 0)  # not the colour column
+        assert opened == []
 
 
 class TestSummaryCardSizing:
@@ -77,12 +122,6 @@ class TestSummaryCardSizing:
 
 class TestHoverLifecycle:
     """Hover hides on leave event and app deactivation."""
-
-    def test_event_filter_installed(self, qtbot):
-        chart = TimelineChart(HistoryStore())
-        qtbot.addWidget(chart)
-        # The event filter is installed — verify by checking the method exists
-        assert hasattr(chart, "eventFilter")
 
     def test_hide_hover_method(self, qtbot):
         chart = TimelineChart(HistoryStore())

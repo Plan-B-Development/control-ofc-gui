@@ -394,7 +394,13 @@ class TestAnnotationFeed:
         page, _ = _page(qtbot, app_state, settings_service, profile_service)
         page._prev_connection = ConnectionState.DISCONNECTED
         page._on_connection_changed(ConnectionState.CONNECTED)
-        assert "Connected" in self._labels(page)
+        # _labels is a list, so this is exact membership (not a substring match):
+        # exactly one "Connected" annotation for the disconnected→connected edge.
+        assert self._labels(page).count("Connected") == 1
+        # A redundant CONNECTED→CONNECTED is not a transition and must NOT add a
+        # second annotation (guards the `_prev_connection != CONNECTED` check).
+        page._on_connection_changed(ConnectionState.CONNECTED)
+        assert self._labels(page).count("Connected") == 1
 
     def test_override_appear_and_end_annotate(
         self, qtbot, app_state, settings_service, profile_service
