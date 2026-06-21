@@ -116,10 +116,10 @@ ls -la /dev/ttyACM0
 
 ### GUI activation flow
 When the user activates a profile in the GUI:
-1. GUI saves profile to `~/.config/control-ofc/profiles/<id>.json`
+1. GUI saves the profile locally to `~/.config/control-ofc/profiles/<id>.json` **and** uploads it to the daemon — the **store of record** (DEC-160) — via `PUT /profiles/<id>` (or `POST /profiles` to create it)
 2. GUI calls `POST /profile/activate {"profile_path": "/home/user/.config/control-ofc/profiles/<id>.json"}`
-3. Daemon validates, applies, and persists to `/var/lib/control-ofc/daemon_state.json`
-4. Profile survives daemon restart, reboot, and GUI close
+3. Daemon validates, applies, and persists the active selection to `/var/lib/control-ofc/daemon_state.json`
+4. Profile survives daemon restart, reboot, and GUI close; the daemon can re-hydrate the full profile document from its own store via `GET /profiles/<id>` (DEC-175)
 
 ### Deactivating a profile
 Two ways to leave profile mode without restarting the daemon:
