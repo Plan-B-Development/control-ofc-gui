@@ -71,6 +71,18 @@ pytest_add_cli_args_test_selection = [
     "tests/test_aio_phase2.py",
 ]
 
+[tool.coverage.run]
+branch = true
+source = ["control_ofc"]
+
+[tool.coverage.report]
+# Branch-coverage floor for the audit/test-tests/release `pytest --cov` gate and
+# the push/PR CI workflow (.github/workflows/ci.yml). Measured 84% on 2026-06-21;
+# the floor sits below that to leave refactor headroom — ratchet it upward over
+# time rather than letting coverage silently regress.
+fail_under = 80
+show_missing = true
+
 [tool.setuptools.package-data]
 # Ship bundled theme presets inside the wheel so first-run install can
 # copy them into the user's themes_dir.
