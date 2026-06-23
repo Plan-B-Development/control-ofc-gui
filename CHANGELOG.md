@@ -1,5 +1,45 @@
 # Changelog
 
+## [2.3.0] — 2026-06-23
+
+A GUI-only **dashboard polish** pass that sharpens the v2.2.0 information
+hierarchy: the right pane is now a single **Sensors** panel, the top cards are more
+compact, and the fan-group cards are styled, reorderable, and collapsible. No
+daemon, API, or contract change; pairs with `control-ofc-daemon` ≥ v2.0.0.
+
+### Added
+- **Draggable fan-group cards (DEC-187).** Drag a card by its header to reorder the
+  dashboard fan groups; the order persists per machine (`fan_zone_order`).
+- **Show/hide for the fan-group section (DEC-187).** A small **"Fan zones"**
+  collapsible header folds the whole bottom section away so the chart can reclaim
+  the space; the collapsed state persists (`fan_zones_collapsed`).
+- **Styled fan-group cards/tiles (DEC-187).** Dedicated theme QSS gives the cards
+  and tiles a calm, consistent surface (one accent per card — its state chip) in a
+  responsive wrapping grid.
+
+### Changed
+- **Right pane is Sensors-only (DEC-184).** The inspector's Events and Warnings tabs
+  were removed; it is now a single titled **Sensors** panel. The status-strip
+  warning chip opens a standalone **warnings dialog** (hosting the same
+  `WarningsView`), and the strip toggle is relabelled **Sensors**.
+- **Compact, balanced summary cards (DEC-185).** Row-1 cards lose excess inner
+  padding and are width-capped so they read as an intentional row, not a stretch.
+- **Thermal-safety detail re-homed to the thermal chip (DEC-185).** The **Safety**
+  summary card was removed; the daemon thermal state still shows on the strip's
+  thermal chip, which is now **clickable** and opens the read-only thermal-safety
+  detail.
+
+### Removed
+- **Chart legend + synthetic "Avg fan RPM" line (DEC-186).** The per-series checkbox
+  legend below the chart controls is gone; series visibility is driven by the
+  **Show:** mode combo and the Sensors tree. The derived aggregate-RPM line was
+  removed with it.
+
+### Internal
+- Extracted a shared **`ReorderableFlow`** base for the drag-reorder plumbing, now
+  used by both the Controls page's `DraggableFlowContainer` and the dashboard's
+  `FanZoneGrid` (DEC-187). No behaviour change on the Controls page.
+
 ## [2.2.0] — 2026-06-20
 
 A GUI-only **dashboard refinement** — a calmer, progressive-disclosure operator

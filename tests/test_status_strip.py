@@ -116,6 +116,17 @@ def test_warning_chip_click_emits(qtbot):
     assert fired == [True]
 
 
+def test_thermal_chip_click_emits(qtbot):
+    """DEC-185: the thermal chip is a focusable button that opens the safety
+    detail — clicking it emits thermal_clicked (the page wires it to the dialog)."""
+    s = DashboardStatusStrip()
+    qtbot.addWidget(s)
+    fired = []
+    s.thermal_clicked.connect(lambda: fired.append(True))
+    s._thermal.click()
+    assert fired == [True]
+
+
 # ---------------------------------------------------------------------------
 # Poll-age from an injected timestamp (no real clock)
 # ---------------------------------------------------------------------------

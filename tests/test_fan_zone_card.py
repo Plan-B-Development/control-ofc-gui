@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QInputDialog, QLabel
 from control_ofc.services.app_state import AppState
 from control_ofc.services.fan_grouping import FanGroupVM, FanState, FanTileVM
 from control_ofc.services.profile_service import CONTROL_ROLE_CPU_PUMP
-from control_ofc.ui.widgets.fan_zone_card import FanGroupCard, FanTile
+from control_ofc.ui.widgets.fan_zone_card import FanGroupCard, FanTile, FanZoneGrid
 
 
 def _tile_vm(
@@ -66,6 +66,51 @@ def _group_vm(
         avg_pwm_pct=avg_pwm,
         state=state,
     )
+
+
+class TestFanZoneGridOrdering:
+    """DEC-187: drag-reorderable grid with a persisted order applied on reconcile."""
+
+    def test_persisted_order_sorts_groups(self, qtbot):
+        grid = FanZoneGrid()
+        qtbot.addWidget(grid)
+        grid.set_order(["zone_c", "zone_a"])
+        grid.set_groups([_group_vm(key="zone_a"), _group_vm(key="zone_b"), _group_vm(key="zone_c")])
+        # Known keys lead in saved order; the unseen key keeps its build position.
+        assert grid.card_ids() == ["zone_c", "zone_a", "zone_b"]
+
+    def test_no_order_keeps_build_order(self, qtbot):
+        grid = FanZoneGrid()
+        qtbot.addWidget(grid)
+        grid.set_groups([_group_vm(key="zone_a"), _group_vm(key="zone_b")])
+        assert grid.card_ids() == ["zone_a", "zone_b"]
+
+    def test_cards_are_drag_tagged(self, qtbot):
+        grid = FanZoneGrid()
+        qtbot.addWidget(grid)
+        grid.set_groups([_group_vm(key="zone_a"), _group_vm(key="zone_b")])
+        for key in ("zone_a", "zone_b"):
+            assert grid._cards[key].property("card_id") == key
+
+    def test_set_order_resorts_on_next_reconcile(self, qtbot):
+        grid = FanZoneGrid()
+        qtbot.addWidget(grid)
+        groups = [_group_vm(key="zone_a"), _group_vm(key="zone_b")]
+        grid.set_groups(groups)
+        assert grid.card_ids() == ["zone_a", "zone_b"]
+        grid.set_order(["zone_b", "zone_a"])
+        grid.set_groups(groups)  # next 1 Hz poll
+        assert grid.card_ids() == ["zone_b", "zone_a"]
+
+    def test_reconcile_reuses_card_objects(self, qtbot):
+        """A reorder must not tear down cards (no flicker / no closed detail dialog)."""
+        grid = FanZoneGrid()
+        qtbot.addWidget(grid)
+        grid.set_groups([_group_vm(key="zone_a"), _group_vm(key="zone_b")])
+        card_a = grid._cards["zone_a"]
+        grid.set_order(["zone_b", "zone_a"])
+        grid.set_groups([_group_vm(key="zone_a"), _group_vm(key="zone_b")])
+        assert grid._cards["zone_a"] is card_a  # same object, reconciled in place
 
 
 class TestFanTileRender:

@@ -66,6 +66,7 @@ class DashboardStatusStrip(QWidget):
     """Connection/profile/mode/thermal/poll-age/warning chips + profile picker."""
 
     warning_clicked = Signal()
+    thermal_clicked = Signal()
     inspector_toggle_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -88,8 +89,16 @@ class DashboardStatusStrip(QWidget):
         self._mode.setObjectName("StatusStrip_Chip_mode")
         layout.addWidget(self._mode)
 
-        self._thermal = QLabel("")
+        # Clickable thermal chip (DEC-185): mirrors the warning chip — a flat,
+        # focusable button so the thermal-safety detail is reachable by click or
+        # keyboard (WCAG 1.4.13), not hover. Always visible (unlike the warning
+        # chip); its label + chip class are driven by set_thermal_state.
+        self._thermal = QPushButton("")
         self._thermal.setObjectName("StatusStrip_Chip_thermal")
+        self._thermal.setFlat(True)
+        self._thermal.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._thermal.setToolTip("Show thermal-safety detail")
+        self._thermal.clicked.connect(self.thermal_clicked)
         layout.addWidget(self._thermal)
 
         self._poll_age = QLabel("Not updated yet")
@@ -120,16 +129,16 @@ class DashboardStatusStrip(QWidget):
         self.apply_btn.setObjectName("StatusStrip_Btn_apply")
         layout.addWidget(self.apply_btn)
 
-        # Inspector toggle: shows/hides the right-hand inspector pane so the
-        # chart can reclaim width on narrow windows. Lives in the strip (not the
-        # pane) so it stays reachable while the pane is hidden. The chevron
-        # mirrors CollapsibleSection (▾ shown / ▸ hidden); text + tooltip + glyph
-        # keep state off a colour-only cue (WCAG 1.4.1).
-        self.inspector_toggle = QPushButton("▸  Inspector")
+        # Sensors toggle: shows/hides the right-hand Sensors pane so the chart can
+        # reclaim width on narrow windows. Lives in the strip (not the pane) so it
+        # stays reachable while the pane is hidden. The chevron mirrors
+        # CollapsibleSection (▾ shown / ▸ hidden); text + tooltip + glyph keep
+        # state off a colour-only cue (WCAG 1.4.1).
+        self.inspector_toggle = QPushButton("▸  Sensors")
         self.inspector_toggle.setObjectName("Inspector_Btn_toggle")
         self.inspector_toggle.setFlat(True)
         self.inspector_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.inspector_toggle.setToolTip("Show or hide the sensor / events / warnings inspector")
+        self.inspector_toggle.setToolTip("Show or hide the sensors panel")
         self.inspector_toggle.clicked.connect(self.inspector_toggle_clicked)
         layout.addWidget(self.inspector_toggle)
 
@@ -173,5 +182,5 @@ class DashboardStatusStrip(QWidget):
         self._poll_age.setText(format_poll_age(seconds))
 
     def set_inspector_expanded(self, expanded: bool) -> None:
-        """Reflect the inspector pane's open state on the toggle button."""
-        self.inspector_toggle.setText(("▾  " if expanded else "▸  ") + "Inspector")
+        """Reflect the Sensors pane's open state on the toggle button."""
+        self.inspector_toggle.setText(("▾  " if expanded else "▸  ") + "Sensors")

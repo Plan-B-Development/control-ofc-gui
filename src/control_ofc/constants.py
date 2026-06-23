@@ -27,14 +27,6 @@ CAPABILITIES_REFRESH_INTERVAL_S = 300
 # History
 HISTORY_DURATION_S = 7200  # 2 hours
 
-# Synthetic "average fan RPM" chart series (DEC-181). A derived history key, NOT a
-# real fan — the chart's curated default shows this single line instead of every
-# fan. Ends ``:rpm`` so the chart routes it to the RPM axis and the selection model
-# never filters it (only ``:pwm`` is filtered); the ``__aggregate__`` id can't
-# collide with a real fan id. PWM is deliberately not aggregated — the chart has no
-# PWM axis (B1 fork, DEC-181).
-AGGREGATE_FAN_RPM_KEY = "fan:__aggregate__:rpm"
-
 # Curves
 DEFAULT_CURVE_POINTS = 5
 

@@ -51,17 +51,20 @@ class TestSplitterHierarchy:
         assert page._sensor_panel in right_child.findChildren(SensorSeriesPanel)
 
     def test_chart_and_zone_cards_share_left_column(self, qtbot, app_state):
-        """Chart (top) and the fan-zone card region (bottom) share the left
-        column; the zone region is a scroll area wrapping the FanZoneGrid."""
+        """Chart (top) and the fan-zone section (bottom) share the left column; the
+        zone region is a collapsible 'Fan zones' section wrapping a scroll area +
+        FanZoneGrid (DEC-187)."""
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         v_splitter = page.findChild(QSplitter, "Dashboard_Splitter_vertical")
         assert v_splitter.count() == 2
         assert isinstance(v_splitter.widget(0), TimelineChart)
         bottom = v_splitter.widget(1)
-        assert isinstance(bottom, QScrollArea)
-        assert bottom.objectName() == "Dashboard_ScrollArea_fanZones"
-        assert isinstance(bottom.widget(), FanZoneGrid)
+        assert isinstance(bottom, CollapsibleSection)
+        assert bottom.objectName() == "Dashboard_Section_fanZones"
+        scroll = bottom.findChild(QScrollArea, "Dashboard_ScrollArea_fanZones")
+        assert scroll is not None
+        assert isinstance(scroll.widget(), FanZoneGrid)
 
     def test_raw_fan_table_rehomed_to_collapsed_expander(self, qtbot, app_state):
         """The raw fan table is intact but lives inside a collapsed 'Raw fan

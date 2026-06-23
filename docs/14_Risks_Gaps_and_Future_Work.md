@@ -76,7 +76,7 @@ Data model supports multiple GPUs. API reports primary only. No UI to select bet
 - One-click diagnostics redaction (deferred — partial PII scrubbing gives false confidence)
 - **SSE consumption (`GET /events`) — daemon exposes it, GUI does not consume it (formally deferred, DEC-164).** The planned `EventStreamService` (DEC-024) was never wired up; `httpx-sse` was removed in v1.0.0 (commit `55cf44f`, PKGBUILD follow-up `64e3fac`). At the 2.0.0 cutover SSE consumption was **deliberately deferred** past the flip (DEC-164) to keep the atomic change minimal — the GUI stays poll-only (1 Hz `GET /poll`) and detects transitions by poll-diff, which is sufficient. Sub-second UI updates would require reintroducing the SSE client and reconciling it with `PollingService` in a post-2.0 release.
 - ~~**Dashboard fan table — group-membership badges and per-fan state chips** (stale/fault/manual).~~ RESOLVED (DEC-176/179, GUI v2.2.0): the dashboard's primary fan view is now zone-grouped **fan cards** with a per-fan state chip (Normal / Low RPM / Stall / Stale / Offline / Override) and per-zone roll-ups (online/expected, avg RPM/PWM); the raw label/source/RPM/PWM table is preserved in a collapsed "Raw fan data" expander.
-- ~~**Dashboard sensor panel — per-sensor freshness age and stale/invalid warning marker.**~~ RESOLVED (DEC-178 cards + DEC-182 inspector, GUI v2.2.0): summary cards show per-card freshness glyphs (`⏱` stale, `⚠` invalid) with age tooltips, and the collapsible inspector's **Sensors** tab is the grouped sensor browser (device grouping, freshness in tooltips, search), with **Events** and **Warnings** tabs alongside.
+- ~~**Dashboard sensor panel — per-sensor freshness age and stale/invalid warning marker.**~~ RESOLVED (DEC-178 cards + DEC-182 inspector, GUI v2.2.0): summary cards show per-card freshness glyphs (`⏱` stale, `⚠` invalid) with age tooltips, and the collapsible right pane is the grouped **Sensors** browser (device grouping, freshness in tooltips, search). (DEC-184, GUI v2.3.0, later reduced it to Sensors-only — Events moved to Diagnostics, warnings to a dialog.)
 
 ### 8. polkit helper for offline config editing (deferred)
 
@@ -282,8 +282,8 @@ table only with authoritatively-verified device-ID → name pairs.
 | One-click diagnostics redaction | Deferred — partial PII scrubbing gives false confidence | Intentionally deferred (R55) |
 | Per-sensor freshness on dashboard | Summary cards show ⏱/⚠ indicators with age tooltips | V5 audit |
 | Dashboard fan group badges + per-fan state chips (spec Row 3) | Zone-grouped fan cards with per-fan state chip + per-zone roll-ups; raw table → collapsed expander (DEC-176/179) | GUI v2.2.0 |
-| Dashboard sensor-freshness side panel (spec) | Collapsible inspector (Sensors / Events / Warnings tabs) + status strip + summary-card freshness glyphs (DEC-177/178/182) | GUI v2.2.0 |
-| Dense dashboard dominated by raw data | Progressive-disclosure IA: status strip, refined cards, fan zone cards, readable-by-default chart with modes/legend/annotations, collapsible inspector (DEC-176–182) | GUI v2.2.0 |
+| Dashboard sensor-freshness side panel (spec) | Collapsible **Sensors** panel (DEC-184; was a Sensors/Events/Warnings inspector, DEC-182) + status strip + summary-card freshness glyphs (DEC-177/178) | GUI v2.2.0–2.3.0 |
+| Dense dashboard dominated by raw data | Progressive-disclosure IA: status strip, refined cards, styled/reorderable/collapsible fan-zone cards, readable-by-default chart with modes + annotations, collapsible Sensors panel (DEC-176–187) | GUI v2.2.0–2.3.0 |
 | Daemon panic leaves hardware in manual mode | Panic hook restores GPU curves + hwmon pwm_enable=2 | V5 audit (daemon) |
 | GPU reset_to_auto skips zero-RPM on partial failure | Always re-enable zero-RPM regardless of curve reset outcome | V5 audit (daemon) |
 | blockSignals pairs exception-unsafe (GUI) | block_signals() context manager with try/finally | V5 audit |

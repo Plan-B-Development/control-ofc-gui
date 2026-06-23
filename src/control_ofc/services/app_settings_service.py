@@ -21,6 +21,7 @@ MACHINE_SPECIFIC_KEYS = frozenset(
         "window_geometry",
         "last_page_index",
         "controls_card_sizes",
+        "fan_zone_order",
         "card_sensor_bindings",
         "series_colors",
         "diagnostics_hidden_sensor_ids",
@@ -149,6 +150,13 @@ class AppSettings:
     # and travels with export. Unassigned fans fall back to role/source grouping in
     # the dashboard view-model (services/fan_grouping.py).
     fan_zones: dict[str, str] = field(default_factory=dict)
+    # DEC-187: user-defined order of the dashboard fan-group cards (list of group
+    # keys). Machine-specific — keys derive from local hardware/zones — so excluded
+    # from portable export via MACHINE_SPECIFIC_KEYS.
+    fan_zone_order: list[str] = field(default_factory=list)
+    # DEC-187: True when the dashboard fan-group section is collapsed (hidden).
+    # Portable: a behaviour preference like restore_last_page.
+    fan_zones_collapsed: bool = False
     hidden_chart_series: list[str] = field(default_factory=list)
     # DEC-181: True once the dashboard has seeded the curated first-run chart
     # subset. Needed because hidden_chart_series == [] is indistinguishable
@@ -239,6 +247,8 @@ class AppSettings:
             theme_name=_as_str(data.get("theme_name"), "Default Dark"),
             fan_aliases=_as_str_dict(data.get("fan_aliases"), {}),
             fan_zones=_as_str_dict(data.get("fan_zones"), {}),
+            fan_zone_order=_as_str_list(data.get("fan_zone_order"), []),
+            fan_zones_collapsed=_as_bool(data.get("fan_zones_collapsed"), False),
             hidden_chart_series=_as_str_list(data.get("hidden_chart_series"), []),
             chart_series_seeded=_as_bool(data.get("chart_series_seeded"), False),
             card_sensor_bindings=_as_str_dict(data.get("card_sensor_bindings"), {}),

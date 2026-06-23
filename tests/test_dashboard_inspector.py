@@ -1,13 +1,14 @@
-"""DEC-182: dashboard inspector — tabbed Sensors/Events/Warnings side panel.
+"""DEC-184 (was DEC-182): dashboard inspector — Sensors side panel.
 
-Covers the composition widget in isolation and its integration into the
+Covers the Sensors-only container in isolation and its integration into the
 dashboard page (default-by-width at first show, toggle, save/restore of the
-splitter split, and the shared selection model).
+splitter split, and the shared selection model), plus the re-homed active-warnings
+dialog that replaced the former Warnings tab.
 """
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QPushButton, QSplitter, QTabWidget, QWidget
+from PySide6.QtWidgets import QLabel, QPushButton, QSplitter, QTabWidget, QWidget
 
 from control_ofc.ui.pages.dashboard_page import DashboardPage
 from control_ofc.ui.widgets.dashboard_inspector import DashboardInspector
@@ -15,32 +16,26 @@ from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
 
 class TestDashboardInspectorWidget:
-    """The composition widget in isolation (plain stand-in tab pages)."""
+    """The Sensors-only container in isolation (plain stand-in panel)."""
 
     def _make(self, qtbot):
-        sensors, events, warnings = QWidget(), QWidget(), QWidget()
-        insp = DashboardInspector(sensors, events, warnings)
+        sensors = QWidget()
+        insp = DashboardInspector(sensors)
         qtbot.addWidget(insp)
-        return insp, sensors, events, warnings
+        return insp, sensors
 
-    def test_three_tabs_with_labels(self, qtbot):
-        insp, *_ = self._make(qtbot)
-        tabs = insp.findChild(QTabWidget, "Inspector_Tabs")
-        assert tabs.count() == 3
-        assert [tabs.tabText(i) for i in range(3)] == ["Sensors", "Events", "Warnings"]
+    def test_no_tabs_just_sensors_heading(self, qtbot):
+        insp, _sensors = self._make(qtbot)
+        # The tabbed Sensors/Events/Warnings structure (DEC-182) is gone (DEC-184).
+        assert insp.findChildren(QTabWidget) == []
+        heading = insp.findChild(QLabel, "Inspector_Heading")
+        assert heading is not None
+        assert heading.text() == "Sensors"
 
-    def test_tab_pages_get_inspector_objectnames(self, qtbot):
-        _insp, sensors, events, warnings = self._make(qtbot)
-        assert sensors.objectName() == "Inspector_Tab_sensors"
-        assert events.objectName() == "Inspector_Tab_events"
-        assert warnings.objectName() == "Inspector_Tab_warnings"
-
-    def test_show_warnings_tab_selects_warnings(self, qtbot):
-        insp, _sensors, _events, warnings = self._make(qtbot)
-        tabs = insp.findChild(QTabWidget, "Inspector_Tabs")
-        tabs.setCurrentIndex(0)
-        insp.show_warnings_tab()
-        assert tabs.currentWidget() is warnings
+    def test_hosts_the_sensors_widget(self, qtbot):
+        insp, sensors = self._make(qtbot)
+        assert sensors.objectName() == "Inspector_Panel_sensors"
+        assert insp.sensors_widget() is sensors
 
 
 class TestInspectorDefaultByWidth:
@@ -120,41 +115,38 @@ class TestInspectorToggle:
 
 
 class TestInspectorSharesSelectionModel:
-    def test_sensors_tab_shares_the_chart_selection_model(self, qtbot, app_state):
-        """Toggling a series in the Sensors tab reflects on the chart because they
+    def test_sensors_panel_shares_the_chart_selection_model(self, qtbot, app_state):
+        """Toggling a series in the Sensors panel reflects on the chart because they
         are the *same* SeriesSelectionModel instance (DEC-181 contract preserved)."""
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         # Sensor panel lives inside the inspector and is still page._sensor_panel.
-        panel = page._inspector.findChild(SensorSeriesPanel, "Inspector_Tab_sensors")
+        panel = page._inspector.findChild(SensorSeriesPanel, "Inspector_Panel_sensors")
         assert panel is page._sensor_panel
         assert panel._selection is page._selection
         assert page._chart._selection is page._selection
 
 
-class TestInspectorTabContent:
-    def test_tabs_carry_expected_objectnames(self, qtbot, app_state):
+class TestInspectorContent:
+    def test_sensor_panel_hosted_no_event_or_warning_surfaces(self, qtbot, app_state):
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
-        for name in ("Inspector_Tab_sensors", "Inspector_Tab_events", "Inspector_Tab_warnings"):
-            assert page._inspector.findChild(QWidget, name) is not None
+        assert page._inspector.findChild(QWidget, "Inspector_Panel_sensors") is not None
+        # The former Events/Warnings tab pages are gone (DEC-184).
+        assert page._inspector.findChild(QWidget, "Inspector_Tab_events") is None
+        assert page._inspector.findChild(QWidget, "Inspector_Tab_warnings") is None
 
-    def test_events_tab_falls_back_to_own_diag(self, qtbot, app_state):
-        """No injected diag → the page builds its own DiagnosticsService and the
-        Events tab's EventLogView reads from that same deque (mirrors MainWindow)."""
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-        assert page._inspector.findChild(QWidget, "Inspector_Tab_events") is not None
-        assert page._diag is not None
-        assert page._event_log_view._diag is page._diag
-
-    def test_injected_diag_is_shared_with_events_tab(self, qtbot, app_state):
-        """The whole point of the ctor kwarg: the dashboard EventLogView must read
-        the SAME shared deque MainWindow passes (DEC-111), not a private copy."""
+    def test_diagnostics_service_still_accepted_and_stored(self, qtbot, app_state):
+        """DEC-111: the page accepts MainWindow's shared DiagnosticsService even
+        though the dashboard no longer renders an event log (DEC-184)."""
         from control_ofc.services.diagnostics_service import DiagnosticsService
 
         diag = DiagnosticsService(app_state)
         page = DashboardPage(state=app_state, diagnostics_service=diag)
         qtbot.addWidget(page)
         assert page._diag is diag
-        assert page._event_log_view._diag is diag
+
+    def test_diagnostics_service_falls_back_when_absent(self, qtbot, app_state):
+        page = DashboardPage(state=app_state)
+        qtbot.addWidget(page)
+        assert page._diag is not None

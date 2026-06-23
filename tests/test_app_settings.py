@@ -117,6 +117,27 @@ def test_hidden_chart_series_roundtrip():
     assert restored.hidden_chart_series == ["sensor:gpu", "fan:ch01:rpm"]
 
 
+def test_fan_zone_order_roundtrip():
+    original = AppSettings(fan_zone_order=["zone_a", "bucket_openfan"])
+    restored = AppSettings.from_dict(original.to_dict())
+    assert restored.fan_zone_order == ["zone_a", "bucket_openfan"]
+
+
+def test_fan_zones_collapsed_roundtrip():
+    assert AppSettings.from_dict(
+        AppSettings(fan_zones_collapsed=True).to_dict()
+    ).fan_zones_collapsed
+    # Garbage coerces to the default (False), not a crash (DEC-137 trust boundary).
+    assert AppSettings.from_dict({"fan_zones_collapsed": "nope"}).fan_zones_collapsed is False
+
+
+def test_fan_zone_order_machine_specific_collapsed_portable():
+    s = AppSettings(fan_zone_order=["zone_a"], fan_zones_collapsed=True)
+    portable = s.portable_dict()
+    assert "fan_zone_order" not in portable  # local hardware keys don't travel
+    assert portable.get("fan_zones_collapsed") is True  # behaviour pref does
+
+
 def test_from_dict_unknown_keys_ignored():
     """Extra keys in JSON should not crash deserialization."""
     data = {"version": 1, "unknown_future_key": "value", "theme_name": "Test"}

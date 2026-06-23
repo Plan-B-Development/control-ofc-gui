@@ -11,17 +11,11 @@ from enum import Enum
 
 from PySide6.QtCore import QObject, Signal
 
-from control_ofc.constants import AGGREGATE_FAN_RPM_KEY
-
 
 class SeriesGroup(Enum):
     TEMPS = "temps"
     MOBO_FANS = "mobo_fans"
     OPENFAN_FANS = "openfan_fans"
-    # DEC-181: the synthetic "average fan RPM" line gets its own group so it is
-    # never mis-bucketed under OpenFan, and so chart modes can include/exclude it
-    # explicitly.
-    FAN_AGGREGATE = "fan_aggregate"
 
 
 class ChartMode(Enum):
@@ -39,7 +33,7 @@ class ChartMode(Enum):
 # DIAGNOSTICS is absent too — it means "all known keys" (select_all).
 _MODE_GROUPS: dict[ChartMode, set[SeriesGroup]] = {
     ChartMode.THERMALS: {SeriesGroup.TEMPS},
-    ChartMode.FANS: {SeriesGroup.MOBO_FANS, SeriesGroup.OPENFAN_FANS, SeriesGroup.FAN_AGGREGATE},
+    ChartMode.FANS: {SeriesGroup.MOBO_FANS, SeriesGroup.OPENFAN_FANS},
 }
 
 
@@ -173,14 +167,10 @@ class SeriesSelectionModel(QObject):
     def classify(key: str) -> SeriesGroup:
         """Classify a history key into a group.
 
-        - the aggregate-RPM key → FAN_AGGREGATE (checked first: it ends ``:rpm``
-          but is a synthetic line, not an OpenFan/hwmon fan)
         - sensor:* → TEMPS
         - fan:hwmon:*:rpm → MOBO_FANS
         - fan:openfan:*:rpm → OPENFAN_FANS
         """
-        if key == AGGREGATE_FAN_RPM_KEY:
-            return SeriesGroup.FAN_AGGREGATE
         if key.startswith("sensor:"):
             return SeriesGroup.TEMPS
         if ":hwmon:" in key:
