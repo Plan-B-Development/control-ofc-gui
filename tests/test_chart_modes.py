@@ -1,8 +1,9 @@
 """Phase 5 (DEC-181): chart readability.
 
 Covers the curated first-run subset + ``chart_series_seeded`` flag, chart modes,
-the synthetic aggregate-RPM series, the model-bound legend, and poll-diff event
-annotations. All deterministic — injected state only, no real timing/hardware.
+and poll-diff event annotations. All deterministic — injected state only, no real
+timing/hardware. (The synthetic aggregate-RPM series and model-bound legend were
+removed in v2.3.0 / DEC-186.)
 """
 
 from __future__ import annotations
@@ -20,11 +21,9 @@ from control_ofc.api.models import (
     OverrideStatusEntry,
     SensorReading,
 )
-from control_ofc.constants import AGGREGATE_FAN_RPM_KEY
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import (
     ChartMode,
-    SeriesGroup,
     SeriesSelectionModel,
 )
 from control_ofc.ui.pages.dashboard_page import DashboardPage
@@ -39,8 +38,8 @@ def _drain_qt_deferred_deletes():
     outlive-the-widget signals + closing the scene synchronously): the source
     teardown is safe here (a 120-chart create/cleanup stress loop survives). What
     this guards is pure *accumulation*. These tests add many charts, each now
-    carrying extra child widgets (mode combo, reset button, legend checkboxes) and
-    annotation items; pytest-qt does not flush their deferred deletion between
+    carrying extra child widgets (mode combo, reset button) and annotation items;
+    pytest-qt does not flush their deferred deletion between
     tests, so they pile up until a queued delete fires during a much later,
     unrelated test and segfaults under offscreen Qt/py3.14. Flushing here keeps
     this file's churn from tipping that heap-timing race. Autouse → set up before
@@ -77,37 +76,14 @@ def _page(qtbot, app_state, settings_service, profile_service, selection=None):
     return page, sel
 
 
-# ── Aggregate-RPM series (B-fork) ────────────────────────────────────
+# ── PWM keys are never chartable ─────────────────────────────────────
 
 
-class TestAggregateSeries:
-    def test_records_spinning_average_excluding_zero(self):
-        h = HistoryStore()
-        h.record_fans([_fan("a", rpm=1000), _fan("b", rpm=2000), _fan("c", rpm=0)])
-        series = h.get_series(AGGREGATE_FAN_RPM_KEY)
-        # (1000 + 2000) / 2 — the 0-RPM fan is excluded, not averaged in.
-        assert len(series) == 1
-        assert series[-1].value == 1500.0
-
-    def test_all_idle_records_zero(self):
-        h = HistoryStore()
-        h.record_fans([_fan("a", rpm=0), _fan("b", rpm=0)])
-        assert h.get_series(AGGREGATE_FAN_RPM_KEY)[-1].value == 0.0
-
-    def test_no_rpm_records_no_point(self):
-        h = HistoryStore()
-        h.record_fans([_fan("a", rpm=None)])
-        assert h.get_series(AGGREGATE_FAN_RPM_KEY) == []
-
-    def test_classify_is_own_group(self):
-        assert SeriesSelectionModel.classify(AGGREGATE_FAN_RPM_KEY) == SeriesGroup.FAN_AGGREGATE
-        # A real OpenFan key must NOT collapse into the aggregate group.
-        assert SeriesSelectionModel.classify("fan:openfan:ch0:rpm") == SeriesGroup.OPENFAN_FANS
-
-    def test_survives_known_keys_unlike_pwm(self):
+class TestPwmExclusion:
+    def test_pwm_keys_excluded_from_known(self):
         m = SeriesSelectionModel()
-        m.update_known_keys([AGGREGATE_FAN_RPM_KEY, "fan:x:pwm", "sensor:cpu"])
-        assert AGGREGATE_FAN_RPM_KEY in m.known_keys()
+        m.update_known_keys(["fan:x:rpm", "fan:x:pwm", "sensor:cpu"])
+        assert "fan:x:rpm" in m.known_keys()
         assert "fan:x:pwm" not in m.known_keys()
 
 
@@ -123,15 +99,14 @@ class TestModes:
                 "sensor:gpu",
                 "sensor:disk",
                 "fan:openfan:ch0:rpm",
-                AGGREGATE_FAN_RPM_KEY,
             ]
         )
         return m
 
     def test_combined_curated_subset(self):
         m = self._model()
-        m.apply_mode(ChartMode.COMBINED, {"sensor:cpu", AGGREGATE_FAN_RPM_KEY})
-        assert m.is_visible("sensor:cpu") and m.is_visible(AGGREGATE_FAN_RPM_KEY)
+        m.apply_mode(ChartMode.COMBINED, {"sensor:cpu"})
+        assert m.is_visible("sensor:cpu")
         assert not m.is_visible("sensor:gpu")
         assert not m.is_visible("fan:openfan:ch0:rpm")
 
@@ -146,12 +121,11 @@ class TestModes:
         m.apply_mode(ChartMode.THERMALS)
         assert m.is_visible("sensor:cpu") and m.is_visible("sensor:disk")
         assert not m.is_visible("fan:openfan:ch0:rpm")
-        assert not m.is_visible(AGGREGATE_FAN_RPM_KEY)
 
-    def test_fans_includes_aggregate(self):
+    def test_fans_only_fan_series(self):
         m = self._model()
         m.apply_mode(ChartMode.FANS)
-        assert m.is_visible("fan:openfan:ch0:rpm") and m.is_visible(AGGREGATE_FAN_RPM_KEY)
+        assert m.is_visible("fan:openfan:ch0:rpm")
         assert not m.is_visible("sensor:cpu")
 
     def test_diagnostics_shows_all(self):
@@ -175,7 +149,6 @@ class TestModes:
                 "sensor:disk",
                 "fan:openfan:ch0:rpm",
                 "fan:openfan:ch9:rpm",  # newly discovered fan
-                AGGREGATE_FAN_RPM_KEY,
             ]
         )
         assert not m.is_visible("fan:openfan:ch9:rpm")
@@ -190,7 +163,6 @@ class TestModes:
                 "sensor:disk",
                 "sensor:vrm",
                 "fan:openfan:ch0:rpm",
-                AGGREGATE_FAN_RPM_KEY,
             ]
         )
         assert m.is_visible("sensor:vrm")  # a temp belongs to THERMALS → appears
@@ -206,13 +178,12 @@ class TestModes:
                 "sensor:disk",
                 "sensor:new",
                 "fan:openfan:ch0:rpm",
-                AGGREGATE_FAN_RPM_KEY,
             ]
         )
         assert m.is_visible("sensor:new")
 
 
-# ── Chart widget: modes, legend, annotations ─────────────────────────
+# ── Chart widget: modes + annotations ────────────────────────────────
 
 
 class TestChartWidget:
@@ -257,17 +228,8 @@ class TestChartWidget:
         assert got == []
         assert chart._mode_combo.currentData() == ChartMode.DIAGNOSTICS
 
-    def test_legend_includes_aggregate_and_toggles_model(self, chart_sel):
-        chart, sel = chart_sel
-        chart.update_chart()
-        assert AGGREGATE_FAN_RPM_KEY in chart._legend_checks
-        cb = chart._legend_checks["sensor:cpu"]
-        cb.setChecked(False)
-        assert not sel.is_visible("sensor:cpu")
-
     def test_humanize_key(self, chart_sel):
         chart, _ = chart_sel
-        assert chart._humanize_key(AGGREGATE_FAN_RPM_KEY) == "Avg fan RPM"
         assert chart._humanize_key("sensor:cpu:tctl") == "tctl"
         assert chart._humanize_key("fan:openfan:ch0:rpm") == "ch0"
 
@@ -309,10 +271,9 @@ class TestFirstRunSeeding:
         )
         app_state.set_fans([_fan("f1"), _fan("f2")])
 
-        # Curated: CPU + GPU temps + aggregate RPM visible; everything else hidden.
+        # Curated: CPU + GPU temps visible; everything else hidden.
         assert sel.is_visible("sensor:cpu")
         assert sel.is_visible("sensor:gpu")
-        assert sel.is_visible(AGGREGATE_FAN_RPM_KEY)
         assert not sel.is_visible("sensor:disk")
         assert not sel.is_visible("fan:f1:rpm")
         assert not sel.is_visible("fan:f2:rpm")
@@ -355,7 +316,6 @@ class TestModeWiring:
         page._chart.mode_selected.emit(ChartMode.THERMALS)
         assert sel.is_visible("sensor:cpu")
         assert not sel.is_visible("fan:f1:rpm")
-        assert not sel.is_visible(AGGREGATE_FAN_RPM_KEY)
 
     def test_reset_restores_combined(self, qtbot, app_state, settings_service, profile_service):
         page, sel = _page(qtbot, app_state, settings_service, profile_service)

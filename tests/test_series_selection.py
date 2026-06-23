@@ -239,17 +239,6 @@ def test_update_known_keys_emits_when_mode_hides_new_key(qtbot):
 
 
 # ---------------------------------------------------------------------------
-# classify: the synthetic aggregate-RPM key is its own group (checked first).
-# ---------------------------------------------------------------------------
-
-
-def test_classify_fan_aggregate():
-    from control_ofc.constants import AGGREGATE_FAN_RPM_KEY
-
-    assert SeriesSelectionModel.classify(AGGREGATE_FAN_RPM_KEY) == SeriesGroup.FAN_AGGREGATE
-
-
-# ---------------------------------------------------------------------------
 # apply_mode presets (unit-level; the dashboard-integration paths live in
 # test_chart_modes.py). Pins each ChartMode's resolved visibility.
 # ---------------------------------------------------------------------------

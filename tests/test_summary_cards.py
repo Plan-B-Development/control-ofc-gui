@@ -1,9 +1,9 @@
-"""Summary-card refinement tests (DEC-178, dashboard refinement Phase 3).
+"""Summary-card refinement tests (DEC-178; DEC-185 removed the Safety card).
 
-Covers the trend glyph, the free-form detail line, the Safety card (which
-replaced the Warnings card), the Fans-card online/expected face, the
-disconnect "—" reset, and that a temp-card click still opens the sensor
-binding picker (not a surprise chart-series toggle).
+Covers the trend glyph, the free-form detail line, the thermal-safety detail
+(re-homed from the removed Safety card to the strip's thermal chip), the
+Fans-card online/expected face, the disconnect "—" reset, and that a temp-card
+click still opens the sensor binding picker (not a surprise chart-series toggle).
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from control_ofc.api.models import (
 from control_ofc.ui.main_window import MainWindow
 from control_ofc.ui.pages import dashboard_page as dashboard_page_mod
 from control_ofc.ui.pages.dashboard_page import _trend_from_rate
-from control_ofc.ui.widgets.status_strip import THERMAL_STATES
 from control_ofc.ui.widgets.summary_card import SummaryCard
 
 
@@ -93,6 +92,15 @@ class TestSummaryCardDetail:
         assert card._range_label.isHidden()
 
 
+class TestSummaryCardCompaction:
+    def test_card_width_is_capped(self, qtbot):
+        """DEC-185: row-1 cards are width-capped so they read as an intentional
+        row rather than stretching across the page (compaction)."""
+        card = SummaryCard("CPU")
+        qtbot.addWidget(card)
+        assert card.maximumWidth() == 220
+
+
 # ─── _trend_from_rate (pure) ─────────────────────────────────────────────
 
 
@@ -114,49 +122,19 @@ class TestTrendFromRate:
         assert _trend_from_rate(rate) == expected
 
 
-# ─── Safety card (replaces Warnings card) ────────────────────────────────
+# ─── Thermal-safety detail (Safety card removed, DEC-185) ────────────────
 
 
-class TestSafetyCard:
-    @pytest.mark.parametrize("thermal", ["normal", "recovery", "emergency", "no_sensor_fallback"])
-    def test_thermal_state_maps_to_shared_labels(self, qtbot, window, app_state, thermal):
-        app_state.set_connection(ConnectionState.CONNECTED)
-        app_state.set_status(DaemonStatus(thermal_state=thermal))
-        card = window.dashboard_page._safety_card
-        label, css = THERMAL_STATES[thermal]
-        assert card._value_label.text() == label
-        assert card._value_label.property("class") == css
+class TestThermalSafetyDetail:
+    """DEC-185: the Safety summary card was removed; thermal state shows on the
+    strip's thermal chip and its detail re-homed to a click on that chip."""
 
-    def test_unknown_thermal_state_is_info(self, qtbot, window, app_state):
-        app_state.set_connection(ConnectionState.CONNECTED)
-        app_state.set_status(DaemonStatus(thermal_state="weird_state"))
-        card = window.dashboard_page._safety_card
-        assert "weird_state" in card._value_label.text()
-        assert card._value_label.property("class") == "InfoChip"
+    def test_no_safety_card_on_dashboard(self, qtbot, window):
+        page = window.dashboard_page
+        assert not hasattr(page, "_safety_card")
+        assert page.findChild(SummaryCard, "Dashboard_Card_safety") is None
 
-    def test_override_note_appears(self, qtbot, window, app_state):
-        app_state.set_connection(ConnectionState.CONNECTED)
-        app_state.set_status(
-            DaemonStatus(
-                thermal_state="normal",
-                overrides=[OverrideStatusEntry(control_id="cpu", pwm_percent=80)],
-            )
-        )
-        card = window.dashboard_page._safety_card
-        assert "1 manual override active" in card._range_label.text()
-
-    def test_no_override_clears_note(self, qtbot, window, app_state):
-        app_state.set_connection(ConnectionState.CONNECTED)
-        app_state.set_status(
-            DaemonStatus(
-                thermal_state="normal",
-                overrides=[OverrideStatusEntry(control_id="cpu")],
-            )
-        )
-        app_state.set_status(DaemonStatus(thermal_state="normal"))
-        assert window.dashboard_page._safety_card._range_label.isHidden()
-
-    def test_safety_detail_text(self, qtbot, window, app_state):
+    def test_safety_detail_text_surfaces_state_and_hottest_cpu(self, qtbot, window, app_state):
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_sensors(
             [SensorReading(id="cpu0", label="CPU", kind="CpuTemp", value_c=92.3, age_ms=100)]
@@ -167,13 +145,27 @@ class TestSafetyCard:
         assert "critical temperature" in text.lower()
         assert "92.3" in text  # current hottest CPU sensor surfaced
 
-    def test_card_click_routes_to_safety_detail(self, qtbot, window, monkeypatch):
-        fired = []
-        monkeypatch.setattr(
-            window.dashboard_page, "_open_safety_detail", lambda: fired.append(True)
+    def test_safety_detail_text_includes_override_count(self, qtbot, window, app_state):
+        app_state.set_connection(ConnectionState.CONNECTED)
+        app_state.set_status(
+            DaemonStatus(
+                thermal_state="normal",
+                overrides=[OverrideStatusEntry(control_id="cpu", pwm_percent=80)],
+            )
         )
-        window.dashboard_page._on_card_clicked("safety")
-        assert fired == [True]
+        text = window.dashboard_page._safety_detail_text()
+        assert "1 manual override" in text
+
+    def test_thermal_chip_click_opens_safety_detail(self, qtbot, window, app_state):
+        """Full chain: strip thermal_clicked → _open_safety_detail (exec is
+        neutralised in tests, so the message box persists as a page child)."""
+        from PySide6.QtWidgets import QMessageBox
+
+        app_state.set_connection(ConnectionState.CONNECTED)
+        app_state.set_status(DaemonStatus(thermal_state="emergency"))
+        page = window.dashboard_page
+        page._status_strip.thermal_clicked.emit()
+        assert page.findChild(QMessageBox, "Dashboard_Dialog_safetyDetail") is not None
 
 
 # ─── Temp-card trend integration ─────────────────────────────────────────
@@ -293,7 +285,6 @@ class TestDisconnectReset:
         app_state.set_connection(ConnectionState.DISCONNECTED)
         assert window.dashboard_page._cpu_card._value_label.text() == "—"
         assert window.dashboard_page._cpu_card._trend_label.isHidden()
-        assert window.dashboard_page._safety_card._value_label.text() == "—"
 
 
 # ─── Fans card ───────────────────────────────────────────────────────────

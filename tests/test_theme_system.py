@@ -38,6 +38,22 @@ class TestThemeBasics:
         assert loaded.name == "Future"
 
 
+class TestFanCardStyling:
+    """DEC-187: the dashboard fan group cards/tiles get dedicated QSS classes."""
+
+    def test_fan_card_classes_present_in_stylesheet(self):
+        qss = build_stylesheet(default_dark_theme())
+        for cls in (
+            ".FanGroupCard",
+            ".FanGroupTitle",
+            ".FanGroupChip",
+            ".FanTile",
+            ".FanTileName",
+            ".FanTileStatus",
+        ):
+            assert cls in qss, cls
+
+
 class TestTokenCoverage:
     def test_default_theme_has_all_required_tokens(self):
         """Default theme must define all spec-required tokens."""

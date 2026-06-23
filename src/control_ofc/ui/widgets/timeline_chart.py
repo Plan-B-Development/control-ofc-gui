@@ -16,9 +16,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -26,11 +24,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.constants import AGGREGATE_FAN_RPM_KEY
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import ChartMode
 from control_ofc.ui.theme import ThemeTokens, active_theme
-from control_ofc.ui.widgets.flow_layout import FlowLayout
 
 if TYPE_CHECKING:
     from control_ofc.services.series_selection import SeriesSelectionModel
@@ -155,17 +151,6 @@ class TimelineChart(QWidget):
 
         controls.addStretch()
         layout.addLayout(controls)
-
-        # Compact, model-bound legend (DEC-181): the right-hand sensor tree is no
-        # longer the *only* place to toggle series — and it is the only place the
-        # synthetic "Avg fan RPM" line can be toggled (it has no tree row). Plain
-        # checkboxes in a wrapping FlowLayout: no pyqtgraph scene items, so it adds
-        # zero teardown surface (keeps clear of the DEC-180 hazard).
-        self._legend_frame = QFrame()
-        self._legend_frame.setObjectName("Chart_Legend")
-        self._legend_flow = FlowLayout(self._legend_frame, margin=0, h_spacing=10, v_spacing=2)
-        self._legend_checks: dict[str, QCheckBox] = {}
-        layout.addWidget(self._legend_frame)
 
         # Plot widget — antialiasing disabled for real-time performance (R48)
         pg.setConfigOptions(antialias=False)
@@ -569,10 +554,9 @@ class TimelineChart(QWidget):
         if self._rpm_vb:
             self._rpm_vb.enableAutoRange(axis=pg.ViewBox.YAxis)
 
-        # Poll-diff event lines + the compact legend reconcile here so they ride
-        # the same 1 Hz refresh as the series (DEC-181).
+        # Poll-diff event annotation lines reconcile here so they ride the same
+        # 1 Hz refresh as the series (DEC-181).
         self._render_annotations(now, plot)
-        self._refresh_legend(set(all_keys), set(visible))
 
     def _on_mouse_moved(self, event: tuple) -> None:
         """Update crosshair and hover label when mouse moves over the chart."""
@@ -674,9 +658,7 @@ class TimelineChart(QWidget):
         self._ctx_mode = mode or ""
 
     def _humanize_key(self, key: str) -> str:
-        """Short human label for a series key — shared by hover + legend."""
-        if key == AGGREGATE_FAN_RPM_KEY:
-            return "Avg fan RPM"
+        """Short human label for a series key (used by the crosshair hover)."""
         if key.startswith("sensor:"):
             return key.removeprefix("sensor:").split(":")[-1]
         parts = key.split(":")
@@ -759,33 +741,3 @@ class TimelineChart(QWidget):
         for ann_id in list(self._annotation_items):
             self._remove_annotation_item(ann_id)
         self._annotations.clear()
-
-    # ── Legend (DEC-181) ─────────────────────────────────────────────
-
-    def _refresh_legend(self, all_keys: set[str], visible: set[str]) -> None:
-        """Reconcile the compact legend: one checkbox per known series, keyed so
-        rows are never torn down/rebuilt per tick. Check-state mirrors the model."""
-        for key in list(self._legend_checks):
-            if key not in all_keys:
-                cb = self._legend_checks.pop(key)
-                self._legend_flow.removeWidget(cb)
-                cb.setParent(None)
-                cb.deleteLater()
-        for key in sorted(all_keys, key=self._humanize_key):
-            cb = self._legend_checks.get(key)
-            if cb is None:
-                cb = QCheckBox(self._humanize_key(key))
-                cb.setObjectName(f"Chart_Legend_{key}")
-                cb.setToolTip(key)
-                cb.toggled.connect(lambda checked, k=key: self._on_legend_toggled(k, checked))
-                self._legend_checks[key] = cb
-                self._legend_flow.addWidget(cb)
-            want = key in visible
-            if cb.isChecked() != want:
-                cb.blockSignals(True)
-                cb.setChecked(want)
-                cb.blockSignals(False)
-
-    def _on_legend_toggled(self, key: str, checked: bool) -> None:
-        if self._selection:
-            self._selection.set_visible(key, checked)

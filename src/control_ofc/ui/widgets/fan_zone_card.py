@@ -49,6 +49,7 @@ from control_ofc.services.profile_service import (
     CONTROL_ROLE_GPU,
 )
 from control_ofc.ui.widgets.flow_layout import FlowLayout
+from control_ofc.ui.widgets.reorderable_flow import ReorderableFlow
 
 # Per-state presentation: (glyph, qss status class). Glyph + the state's text
 # label means the chip is never distinguished by colour alone (WCAG 1.4.1). The
@@ -298,7 +299,10 @@ class FanGroupCard(QFrame):
         self.setProperty("class", "FanGroupCard")
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        self.setMinimumWidth(240)
+        # Uniform, card-like width so groups read as a responsive grid (DEC-187):
+        # wide enough for ~two tiles per row, capped so one group can't sprawl.
+        self.setMinimumWidth(300)
+        self.setMaximumWidth(480)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 8, 10, 8)
@@ -429,11 +433,16 @@ class FanGroupCard(QFrame):
         self._toggle.setText(f" Hide {n} fans" if expanded else f" Show {n} fans")
 
 
-class FanZoneGrid(QWidget):
-    """Wrapping flow of :class:`FanGroupCard` s, reconciled in place each poll.
+class FanZoneGrid(ReorderableFlow):
+    """Wrapping flow of :class:`FanGroupCard` s, reconciled in place each poll and
+    drag-reorderable (DEC-187).
 
-    Bind it to the dashboard with :meth:`set_groups`, passing the ordered list
-    that :func:`control_ofc.services.fan_grouping.build_fan_groups` returns.
+    Bind it with :meth:`set_groups`, passing the ordered list that
+    :func:`control_ofc.services.fan_grouping.build_fan_groups` returns. A
+    user-defined order (persisted by the page as ``fan_zone_order``) is applied via
+    :meth:`set_order`: known keys sort to the front in the saved order, newly-seen
+    keys keep their build order at the back. Dragging a card emits
+    :attr:`order_changed` with the new key order; the page persists it.
     """
 
     tile_activated = Signal(str)
@@ -450,12 +459,29 @@ class FanZoneGrid(QWidget):
         self._state = state
         self._zone_provider = zone_provider or (lambda: [])
         self._cards: dict[str, FanGroupCard] = {}
+        self._order: list[str] = []
         self._flow = FlowLayout(self, margin=0, h_spacing=12, v_spacing=12)
         self._empty = QLabel("No fans are being reported yet.")
         self._empty.setObjectName("FanZone_Grid_empty")
         self._flow.addWidget(self._empty)
 
+    def flow_layout(self) -> FlowLayout:
+        return self._flow
+
+    def set_order(self, order: list[str]) -> None:
+        """Set the persisted card order (group keys); applied on the next reconcile."""
+        self._order = list(order)
+
+    def _ordered(self, groups: list[FanGroupVM]) -> list[FanGroupVM]:
+        """Sort groups by the persisted order: keys in ``self._order`` first (in that
+        order), then keys not yet known in their incoming build order (stable)."""
+        if not self._order:
+            return groups
+        rank = {key: i for i, key in enumerate(self._order)}
+        return sorted(groups, key=lambda g: rank.get(g.key, len(rank)))
+
     def set_groups(self, groups: list[FanGroupVM]) -> None:
+        groups = self._ordered(groups)
         new_keys = [g.key for g in groups]
         for key in list(self._cards):
             if key not in new_keys:
@@ -476,6 +502,7 @@ class FanZoneGrid(QWidget):
                     g, state=self._state, zone_provider=self._zone_provider, parent=self
                 )
                 card.tile_activated.connect(self.tile_activated)
+                self._attach_drag(card, g.key)
                 self._cards[g.key] = card
             else:
                 card.update_vm(g)

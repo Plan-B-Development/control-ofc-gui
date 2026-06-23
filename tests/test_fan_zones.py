@@ -138,3 +138,38 @@ def test_main_window_persists_fan_zone_on_change(
 
     app_state.set_fan_zone("openfan:ch00", "")  # unassign also persists
     assert settings_service.settings.fan_zones == {}
+
+
+def test_dashboard_persists_fan_zone_order_on_drag(
+    qtbot, app_state, profile_service, settings_service
+):
+    """DEC-187: the saved card order is applied at build, and a drag (order_changed)
+    persists the new order while keeping the grid in sync so the next poll cannot
+    snap it back."""
+    from control_ofc.ui.pages.dashboard_page import DashboardPage
+
+    settings_service.update(fan_zone_order=["zone_b", "zone_a"])
+    page = DashboardPage(
+        state=app_state, profile_service=profile_service, settings_service=settings_service
+    )
+    qtbot.addWidget(page)
+    assert page._fan_zone_grid._order == ["zone_b", "zone_a"]  # loaded at build
+
+    page._fan_zone_grid.order_changed.emit(["zone_a", "zone_b"])  # a drop fires this
+    assert settings_service.settings.fan_zone_order == ["zone_a", "zone_b"]  # persisted
+    assert page._fan_zone_grid._order == ["zone_a", "zone_b"]  # grid re-synced
+
+
+def test_dashboard_persists_fan_zones_collapsed_on_toggle(qtbot, app_state, settings_service):
+    """DEC-187: the fan-zone section loads its collapsed state and persists changes."""
+    from control_ofc.ui.pages.dashboard_page import DashboardPage
+
+    settings_service.update(fan_zones_collapsed=True)
+    page = DashboardPage(state=app_state, settings_service=settings_service)
+    qtbot.addWidget(page)
+    assert page._fan_zone_section.is_expanded() is False  # loaded collapsed
+
+    page._fan_zone_section.set_expanded(True)  # user shows it
+    assert settings_service.settings.fan_zones_collapsed is False
+    page._fan_zone_section.set_expanded(False)  # user hides it again
+    assert settings_service.settings.fan_zones_collapsed is True

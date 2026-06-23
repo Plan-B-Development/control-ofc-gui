@@ -1,16 +1,15 @@
-"""Dashboard inspector — tabbed Sensors / Events / Warnings side panel (DEC-182).
+"""Dashboard inspector — Sensors side panel (DEC-184, was DEC-182).
 
-A thin composition widget for the dashboard's right pane. It owns no data of its
-own: the Sensors tab is the existing :class:`SensorSeriesPanel`, the Events tab is
-the existing :class:`EventLogView` (both passed in), and the Warnings tab is a
-:class:`WarningsView` over ``AppState.active_warnings``. The dashboard page toggles
-the whole pane's visibility from the status strip (so the chart can reclaim width)
-and repoints its warning chip at :meth:`show_warnings_tab`.
+A thin container for the dashboard's right pane: a "Sensors" heading over the
+existing :class:`SensorSeriesPanel` (passed in). The dashboard page toggles the
+whole pane's visibility from the status strip so the chart can reclaim width on
+narrow windows.
 
-The Warnings tab is deliberately NOT the diagnostics event log: the status-strip
-warning chip counts ``AppState.active_warnings`` (the dedup-keyed, dismissable set —
-stale sensor/fan, fan stall, API skew, …), which is a different surface from the
-``DiagnosticsService`` breadcrumb deque the Events tab shows.
+DEC-184 reduced this from the former tabbed Sensors/Events/Warnings panel: the
+Events breadcrumb now lives only in Diagnostics, and the active-warnings detail
+(``AppState.active_warnings`` — the dedup-keyed, dismissable set: stale sensor/fan,
+fan stall, API skew, …) re-homed to a dialog opened from the status-strip warning
+chip. :class:`WarningsView` (still defined here) renders that set in the dialog.
 """
 
 from __future__ import annotations
@@ -25,7 +24,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -212,43 +210,28 @@ class WarningsView(QWidget):
 
 
 class DashboardInspector(QWidget):
-    """Right-pane inspector: a 3-tab (Sensors / Events / Warnings) composition."""
+    """Right-pane inspector: a titled Sensors panel (DEC-184)."""
 
-    def __init__(
-        self,
-        sensors_widget: QWidget,
-        events_widget: QWidget,
-        warnings_widget: QWidget,
-        parent: QWidget | None = None,
-    ) -> None:
+    def __init__(self, sensors_widget: QWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Inspector_Root")
         self.setMinimumWidth(240)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(6, 6, 6, 2)
+        layout.setSpacing(4)
 
-        self._tabs = QTabWidget()
-        self._tabs.setObjectName("Inspector_Tabs")
+        self._heading = QLabel("Sensors")
+        self._heading.setObjectName("Inspector_Heading")
+        self._heading.setProperty("class", "SectionTitle")
+        layout.addWidget(self._heading)
 
-        # The inspector owns the tab-page objectNames so the naming is consistent
-        # regardless of what the page named the composed widgets.
-        sensors_widget.setObjectName("Inspector_Tab_sensors")
-        events_widget.setObjectName("Inspector_Tab_events")
-        warnings_widget.setObjectName("Inspector_Tab_warnings")
+        # The inspector owns the panel objectName so naming stays consistent
+        # regardless of what the page named the composed widget.
+        sensors_widget.setObjectName("Inspector_Panel_sensors")
+        self._sensors_widget = sensors_widget
+        layout.addWidget(sensors_widget, 1)
 
-        self._tabs.addTab(sensors_widget, "Sensors")
-        self._tabs.addTab(events_widget, "Events")
-        self._warnings_widget = warnings_widget
-        self._tabs.addTab(warnings_widget, "Warnings")
-
-        layout.addWidget(self._tabs)
-
-    def tabs(self) -> QTabWidget:
-        """The underlying tab widget (exposed for tests/wiring)."""
-        return self._tabs
-
-    def show_warnings_tab(self) -> None:
-        """Select the Warnings tab (the status-strip warning chip calls this)."""
-        self._tabs.setCurrentWidget(self._warnings_widget)
+    def sensors_widget(self) -> QWidget:
+        """The hosted sensor panel (exposed for tests/wiring)."""
+        return self._sensors_widget

@@ -586,6 +586,44 @@ def build_stylesheet(t: ThemeTokens) -> str:
         background-color: {t.surface_3};
     }}
 
+    /* Fan group cards (dashboard fan zones, DEC-187) — a calm card surface with a
+       quieter inner tile; the one accent per card is its state chip. */
+    .FanGroupCard {{
+        background-color: {t.surface_2};
+        border: 1px solid {t.border_default};
+        border-radius: 8px;
+    }}
+
+    .FanGroupTitle {{
+        color: {t.text_primary};
+        font-size: {fs["body"]}pt;
+        font-weight: 600;
+    }}
+
+    .FanGroupChip {{
+        font-size: {fs["small"]}pt;
+        font-weight: 600;
+    }}
+
+    .FanTile {{
+        background-color: {t.surface_1};
+        border: 1px solid {t.border_default};
+        border-radius: 6px;
+    }}
+
+    .FanTile:hover {{
+        background-color: {t.surface_3};
+    }}
+
+    .FanTileName {{
+        color: {t.text_primary};
+        font-weight: 600;
+    }}
+
+    .FanTileStatus {{
+        font-size: {fs["small"]}pt;
+    }}
+
     /* Page titles */
     .PageTitle {{
         color: {t.text_primary};

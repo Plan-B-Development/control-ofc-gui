@@ -23,30 +23,30 @@ the **only** status surface — the global status banner is hidden to avoid dupl
 - Control mode: Automatic / Manual Override / Demo / Read-only
 - Daemon **thermal state** (Thermal OK / Recovery / Emergency / No CPU sensor)
 - "Updated Xs ago" — time since the last successful poll
-- A clickable **warning chip** (count); clicking opens the inspector's Warnings tab
+- A clickable **warning chip** (count); clicking opens a standalone warnings dialog
 - A compact profile selector + Apply
-- An **Inspector** toggle that shows/hides the right-hand inspector pane (DEC-182)
+- A **Sensors** toggle that shows/hides the right-hand Sensors panel (DEC-182/184)
 
 ### Main dashboard body
 Recommended layout:
 
-#### Row 1: summary cards (DEC-178)
-Five cards — **CPU**, **GPU**, **Motherboard**, **Fans**, **Safety**. Each
+#### Row 1: summary cards (DEC-178; DEC-185 removed the Safety card)
+Four compact cards — **CPU**, **GPU**, **Motherboard**, **Fans**. Each
 **temperature** card (CPU / GPU / Motherboard) carries a trend glyph (rising /
 falling / flat, derived from `rate_c_per_s`) and a session min/max range. The
-**Fans** card shows online/expected counts plus average PWM/RPM.
-The **Safety** card surfaces the daemon `thermal_state` with a click-through
-read-only detail; it replaced the former Warnings card (warnings now live in the
-strip's warning chip and the inspector's Warnings tab). Clicking a temperature card
-opens its sensor-binding picker.
+**Fans** card shows online/expected counts plus average PWM/RPM. The daemon
+`thermal_state` shows on the strip's **thermal chip**, which is clickable and opens
+a read-only thermal-safety detail (DEC-185 — re-homed from the former Safety card).
+Clicking a temperature card opens its sensor-binding picker.
 
 #### Row 2: primary chart area (DEC-181)
 A wide temperature / fan-speed-over-time chart with:
 - selectable time range
-- a curated default series subset on first run (CPU · GPU · one case temp · an
-  aggregate fan-RPM line) instead of every series at once
-- **chart modes** (Combined [default] / Thermals / Fans / Diagnostics) + Reset
-- a model-bound checkbox legend, kept in sync with the inspector's Sensors tab
+- a curated default series subset on first run (CPU · GPU · one case temp) instead
+  of every series at once
+- **chart modes** (Combined [default] / Thermals / Fans / Diagnostics) + Reset — the
+  selectors are the Show-mode combo and the Sensors tree (DEC-186 removed the
+  per-series checkbox legend and the synthetic aggregate fan-RPM line)
 - poll-diff **event annotations** (profile change, reconnect, thermal transition,
   override start/end, sensor-stale / fan-stall onset)
 - current-value emphasis via the crosshair readout
@@ -59,20 +59,24 @@ fan-grouping view-model:
 - a per-fan **state chip** — Normal / Low RPM / Stall / Stale / Offline / Override
 - per-zone roll-ups: online/expected count, average RPM/PWM
 - a per-tile detail dialog to rename a fan or reassign its zone
+- **drag a card by its header to reorder** the groups (order persists per machine,
+  `fan_zone_order`), and a small **"Fan zones"** collapsible header **shows/hides**
+  the whole section so the chart can reclaim the space (`fan_zones_collapsed`) — both
+  DEC-187
 
 The dense **raw fan table** (label / source / RPM / PWM) is preserved but re-homed
 into a collapsed **"Raw fan data"** expander on the dashboard — advanced detail, one
 click away. (Resolves the previously-deferred group-membership badges + per-fan state
 chip; see `docs/14_Risks_Gaps_and_Future_Work.md`.)
 
-#### Right-hand inspector (DEC-182)
+#### Right-hand Sensors panel (DEC-182/184)
 A toggle-button **side panel** — opens by default on wide windows, collapses on
-narrow ones so the chart keeps room — with three tabs:
-- **Sensors** — the grouped sensor/fan tree (device grouping, per-series checkboxes,
-  colour swatches, search, freshness in tooltips); drives the shared chart legend
-- **Events** — the diagnostics event log (severity/source filter, search, export)
-- **Warnings** — active warnings (severity, summary, affected component, timestamp, a
-  suggested next action, and expandable raw detail); opened by the strip's warning chip
+narrow ones so the chart keeps room — hosting the grouped **Sensors** tree (device
+grouping, per-series checkboxes, colour swatches, search, freshness in tooltips).
+
+DEC-184 reduced this from the former Sensors/Events/Warnings tabbed inspector: the
+Events breadcrumb now lives only in Diagnostics, and active warnings open in a
+standalone dialog from the strip's warning chip.
 
 (Resolves the previously-deferred per-sensor freshness side panel; see
 `docs/14_Risks_Gaps_and_Future_Work.md`.)

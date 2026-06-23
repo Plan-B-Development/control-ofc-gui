@@ -32,7 +32,6 @@ from control_ofc.api.models import (
     SensorReading,
 )
 from control_ofc.constants import (
-    AGGREGATE_FAN_RPM_KEY,
     DEFAULT_SOCKET_PATH,
     EXPECTED_API_VERSION,
 )
@@ -53,7 +52,6 @@ from control_ofc.ui.status_banner import MODE_LABELS
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.dashboard_inspector import DashboardInspector, WarningsView
 from control_ofc.ui.widgets.error_banner import ErrorBanner
-from control_ofc.ui.widgets.event_log_view import EventLogView
 from control_ofc.ui.widgets.fan_zone_card import FanZoneGrid
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
@@ -439,6 +437,7 @@ class DashboardPage(QWidget):
         self._apply_btn = self._status_strip.apply_btn
         self._apply_btn.clicked.connect(self._on_apply_profile)
         self._status_strip.warning_clicked.connect(self._open_warnings)
+        self._status_strip.thermal_clicked.connect(self._open_safety_detail)
         self._status_strip.inspector_toggle_clicked.connect(self._toggle_inspector)
         content_layout.addWidget(self._status_strip)
 
@@ -454,18 +453,12 @@ class DashboardPage(QWidget):
         self._mb_card.setObjectName("Dashboard_Card_mobo")
         self._fans_card = SummaryCard("Fans", category="fans")
         self._fans_card.setObjectName("Dashboard_Card_fans")
-        # Safety card (DEC-178): mirrors the strip's thermal chip at a glance but
-        # earns its slot with a click-through thermal detail. Replaces the former
-        # Warnings card — warnings now live solely in the strip's warning chip.
-        self._safety_card = SummaryCard("Safety", category="safety")
-        self._safety_card.setObjectName("Dashboard_Card_safety")
 
         for card in (
             self._cpu_card,
             self._gpu_card,
             self._mb_card,
             self._fans_card,
-            self._safety_card,
         ):
             card.clicked.connect(self._on_card_clicked)
             cards_layout.addWidget(card)
@@ -473,7 +466,7 @@ class DashboardPage(QWidget):
         cards_layout.addStretch()
         content_layout.addLayout(cards_layout)
 
-        # Initial render (strip + Safety card) now that every widget exists.
+        # Initial render (strip) now that every widget exists.
         self._sync_status_strip()
 
         # Horizontal splitter: left content (chart+table) | right sensor panel
@@ -507,13 +500,28 @@ class DashboardPage(QWidget):
         # the pure fan_grouping view-model; the dense raw table is re-homed below
         # into a collapsed "Raw fan data" expander (4A) rather than deleted.
         self._fan_zone_grid = FanZoneGrid(state=self._state, zone_provider=self._zone_names)
+        if self._settings_service:
+            self._fan_zone_grid.set_order(self._settings_service.settings.fan_zone_order)
+        self._fan_zone_grid.order_changed.connect(self._persist_fan_zone_order)
         zone_scroll = QScrollArea()
         zone_scroll.setObjectName("Dashboard_ScrollArea_fanZones")
         zone_scroll.setWidgetResizable(True)
         zone_scroll.setFrameShape(QFrame.Shape.NoFrame)
         zone_scroll.setWidget(self._fan_zone_grid)
         zone_scroll.setMinimumHeight(60)
-        self._v_splitter.addWidget(zone_scroll)
+        # Collapsible "Fan zones" section (DEC-187): a small show/hide control so the
+        # chart can reclaim the bottom pane. The collapsed state persists; toggling
+        # reflows the split so the freed space goes to the chart.
+        self._fan_zones_saved_sizes: list[int] | None = None
+        fan_zones_collapsed = bool(
+            self._settings_service and self._settings_service.settings.fan_zones_collapsed
+        )
+        self._fan_zone_section = CollapsibleSection(
+            "Fan zones", "Dashboard_Section_fanZones", expanded=not fan_zones_collapsed
+        )
+        self._fan_zone_section.add_widget(zone_scroll)
+        self._fan_zone_section.toggled.connect(self._on_fan_zones_toggled)
+        self._v_splitter.addWidget(self._fan_zone_section)
 
         # Raw fan table — built intact (columns / sort / double-click rename
         # preserved) but detached from the splitter; folded into the collapsed
@@ -537,23 +545,20 @@ class DashboardPage(QWidget):
         self._v_splitter.setStretchFactor(0, 3)
         self._v_splitter.setStretchFactor(1, 1)
         self._v_splitter.setSizes([500, 200])
+        if fan_zones_collapsed:
+            self._apply_fan_zones_split(expanded=False)
         self._h_splitter.addWidget(self._v_splitter)
 
-        # Right pane: tabbed inspector (DEC-182). The sensor panel becomes the
-        # Sensors tab; Events reuses the diagnostics EventLogView (one shared
-        # deque); Warnings renders AppState.active_warnings (the set the strip
-        # warning chip counts — distinct from the event log). The whole pane
+        # Right pane: Sensors inspector (DEC-184). The sensor panel is the only
+        # inspector surface now — Events moved to Diagnostics and active-warnings
+        # detail re-homed to a dialog off the strip's warning chip. The whole pane
         # toggles from the strip so the chart can reclaim width on narrow windows.
         self._sensor_panel = SensorSeriesPanel(self._selection, state=self._state)
         if self._settings_service:
             self._sensor_panel.hide_igpu = self._settings_service.settings.hide_igpu_sensors
         self._sensor_panel.set_chart(self._chart, self._settings_service)
 
-        self._event_log_view = EventLogView(self._diag)
-        self._warnings_view = WarningsView(self._state)
-        self._inspector = DashboardInspector(
-            self._sensor_panel, self._event_log_view, self._warnings_view
-        )
+        self._inspector = DashboardInspector(self._sensor_panel)
         self._h_splitter.addWidget(self._inspector)
 
         self._h_splitter.setStretchFactor(0, 3)
@@ -601,7 +606,7 @@ class DashboardPage(QWidget):
         self._push_chart_context()
 
     def _sync_status_strip(self) -> None:
-        """Push current AppState into the strip + Safety card (initial render)."""
+        """Push current AppState into the strip (initial render)."""
         if not self._state:
             return
         self._status_strip.set_connection_state(self._state.connection)
@@ -611,19 +616,6 @@ class DashboardPage(QWidget):
         ds = self._state.daemon_status
         if ds:
             self._status_strip.set_thermal_state(ds.thermal_state)
-            self._update_safety_card(ds.thermal_state, ds.overrides)
-
-    def _update_safety_card(self, thermal: str, overrides: list) -> None:
-        """Render the Safety card from thermal_state via the shared THERMAL_STATES
-        map (same source as the strip's thermal chip — no drift). Manual overrides
-        appear as a secondary note; the click-through detail carries the reason."""
-        label, css = THERMAL_STATES.get(thermal or "normal", (f"Thermal: {thermal}", "InfoChip"))
-        self._safety_card.set_value(label)
-        self._safety_card.set_status_class(css)
-        n = len(overrides) if overrides else 0
-        self._safety_card.set_detail_text(
-            f"{n} manual override{'s' if n != 1 else ''} active" if n else ""
-        )
 
     def _reset_cards(self) -> None:
         """Clear card faces to a neutral "—" on disconnect so a stale
@@ -634,9 +626,6 @@ class DashboardPage(QWidget):
             card.set_detail_text("")
             card.set_status_class("")
             card.setToolTip("")
-        self._safety_card.set_value("—")
-        self._safety_card.set_status_class("")
-        self._safety_card.set_detail_text("")
         # Drop zone tiles too — a stale tile must not survive a disconnect.
         self._fan_zone_grid.set_groups([])
 
@@ -647,13 +636,10 @@ class DashboardPage(QWidget):
     # ─── Chart series: known keys, curated subset, modes (DEC-181) ────
 
     def _register_known_keys(self) -> None:
-        """Push the displayable sensor + fan keys (and the synthetic aggregate, when
-        any fan exists) into the selection model — the single source for both
-        handlers so the aggregate key is never forgotten."""
+        """Push the displayable sensor + fan keys into the selection model — the
+        single source for both poll handlers."""
         keys = [f"sensor:{sid}" for sid in self._sensor_panel.displayed_sensor_ids()]
         keys += self._displayable_fan_keys
-        if self._displayable_fan_keys:
-            keys.append(AGGREGATE_FAN_RPM_KEY)
         self._selection.update_known_keys(keys)
 
     def _curated_sensor_id(
@@ -672,10 +658,10 @@ class DashboardPage(QWidget):
 
     def _curated_chart_keys(self) -> set[str]:
         """The curated default series (refinement §7.3 / B-fork DEC-181): CPU temp,
-        GPU temp, one mobo/case temp, and the aggregate fan line. Kind-aware, so it
-        lives here (the pure model can't tell a CPU temp from a GPU temp by key).
-        Non-existent slots are simply dropped; ``set_only_visible`` intersects with
-        known keys so a filtered/absent sensor is harmless."""
+        GPU temp, and one mobo/case temp. Kind-aware, so it lives here (the pure
+        model can't tell a CPU temp from a GPU temp by key). Non-existent slots are
+        simply dropped; ``set_only_visible`` intersects with known keys so a
+        filtered/absent sensor is harmless."""
         sensors = self._state.sensors if self._state else []
         keys: set[str] = set()
         for category, kinds in (
@@ -686,8 +672,6 @@ class DashboardPage(QWidget):
             sid = self._curated_sensor_id(category, kinds, sensors)
             if sid:
                 keys.add(f"sensor:{sid}")
-        if self._displayable_fan_keys:
-            keys.add(AGGREGATE_FAN_RPM_KEY)
         return keys
 
     def _maybe_seed_chart_defaults(self) -> None:
@@ -802,7 +786,6 @@ class DashboardPage(QWidget):
         # thermal_state leaves "normal", and clear it on the return.
         thermal = status.thermal_state or "normal"
         self._status_strip.set_thermal_state(thermal)
-        self._update_safety_card(thermal, status.overrides)
         if thermal != self._last_thermal_state:
             self._last_thermal_state = thermal
             self._annotate(f"Thermal: {thermal}")
@@ -1030,6 +1013,35 @@ class DashboardPage(QWidget):
         del fan_id, display_name  # tiles re-resolve their display name on rebuild
         self._refresh_fan_zones()
 
+    def _persist_fan_zone_order(self, order: list[str]) -> None:
+        """Drag-reorder of the fan-group cards (DEC-187): keep the grid's order in
+        sync so the next poll doesn't snap back, then persist it."""
+        self._fan_zone_grid.set_order(order)
+        if self._settings_service:
+            self._settings_service.update(fan_zone_order=order)
+
+    def _on_fan_zones_toggled(self, expanded: bool) -> None:
+        """Show/hide of the fan-zone section (DEC-187): persist the collapsed state
+        and reflow the vertical split so the chart reclaims the freed space."""
+        if self._settings_service:
+            self._settings_service.update(fan_zones_collapsed=not expanded)
+        self._apply_fan_zones_split(expanded)
+
+    def _apply_fan_zones_split(self, expanded: bool) -> None:
+        """Resize the chart/zone split when the section folds: collapse hands its
+        space to the chart (saving the prior split); expand restores it."""
+        sizes = self._v_splitter.sizes()
+        if len(sizes) != 2:
+            return
+        if not expanded:
+            if sizes[1] > 0:
+                self._fan_zones_saved_sizes = list(sizes)
+            header_h = self._fan_zone_section.header_button().sizeHint().height() + 4
+            self._v_splitter.setSizes([max(1, sum(sizes) - header_h), header_h])
+        elif self._fan_zones_saved_sizes is not None:
+            self._v_splitter.setSizes(self._fan_zones_saved_sizes)
+            self._fan_zones_saved_sizes = None
+
     def _fan_tooltip(self, fan: FanReading) -> str:
         """Build a tooltip for a fan row, including hwmon chip/driver context."""
         parts = [f"ID: {fan.id}"]
@@ -1138,11 +1150,7 @@ class DashboardPage(QWidget):
                 self._profile_combo.setCurrentIndex(idx)
 
     def _on_card_clicked(self, category: str) -> None:
-        """Open the appropriate dialog for the clicked card."""
-        if category == "safety":
-            self._open_safety_detail()
-            return
-
+        """Open the sensor picker for the clicked temp/fan card."""
         # Sensor picker for temp/fan cards
         sensors = self._state.sensors if self._state else []
         fans = self._state.fans if self._state else []
@@ -1181,10 +1189,30 @@ class DashboardPage(QWidget):
             if self._state:
                 self._on_sensors_updated(self._state.sensors)
 
+    def _build_warnings_dialog(self):
+        """Build the active-warnings dialog (seam: returns it un-exec'd so the
+        wiring is unit-testable). Hosts a fresh :class:`WarningsView` over
+        ``AppState.active_warnings`` — the same set the strip chip counts."""
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+
+        dlg = QDialog(self)
+        dlg.setObjectName("Dashboard_Dialog_warnings")
+        dlg.setWindowTitle("Active warnings")
+        dlg.resize(460, 420)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(WarningsView(self._state, parent=dlg))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=dlg)
+        buttons.rejected.connect(dlg.reject)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+        return dlg
+
     def _open_warnings(self) -> None:
-        """Status-strip warning chip → reveal the inspector's Warnings tab."""
-        self._set_inspector_shown(True)
-        self._inspector.show_warnings_tab()
+        """Status-strip warning chip → open the active-warnings dialog (DEC-184).
+
+        Re-homed here when the inspector's Warnings tab was removed."""
+        self._build_warnings_dialog().exec()
 
     def _toggle_inspector(self) -> None:
         """Status-strip toggle → show/hide the inspector pane."""
@@ -1219,7 +1247,7 @@ class DashboardPage(QWidget):
         self._status_strip.set_inspector_expanded(shown)
 
     def _safety_detail_text(self) -> str:
-        """Read-only thermal-safety summary for the Safety card's click detail.
+        """Read-only thermal-safety summary for the thermal chip's click detail.
 
         Pure (no I/O) so it is unit-testable. Surfaces only data we actually have
         — state, a plain reason, the current hottest CPU sensor, and any active
@@ -1243,7 +1271,7 @@ class DashboardPage(QWidget):
         return "\n".join(lines)
 
     def _open_safety_detail(self) -> None:
-        """Show the read-only thermal-safety detail (Safety card click)."""
+        """Show the read-only thermal-safety detail (thermal chip click)."""
         from PySide6.QtWidgets import QMessageBox
 
         box = QMessageBox(self)

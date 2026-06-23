@@ -25,8 +25,12 @@ class SummaryCard(QFrame):
     def __init__(self, title: str, value: str = "—", category: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setProperty("class", "Card")
-        self.setMinimumWidth(140)
-        # Height driven by content — Maximum policy prevents stretching beyond sizeHint
+        self.setMinimumWidth(150)
+        # Balanced, compact row-1 cards (DEC-185): cap the width so the cards read
+        # as an intentional row instead of stretching across the page, and lean on
+        # the .Card QSS padding for inner spacing (Maximum vertical policy keeps the
+        # height at the content's sizeHint — no hardcoded pixel heights).
+        self.setMaximumWidth(220)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self._category = category
 
@@ -34,7 +38,7 @@ class SummaryCard(QFrame):
             self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(2)
 
         self._title_label = QLabel(title)
