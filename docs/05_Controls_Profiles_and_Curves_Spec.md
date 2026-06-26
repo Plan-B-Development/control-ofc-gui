@@ -412,7 +412,7 @@ The daemon owns the hwmon lease internally (the GUI holds no lease as of 2.0.0 �
 2. User selects target
 3. User selects sensor
 4. User edits 5-point curve
-5. User saves
+5. User saves (saving the active profile re-applies it to the daemon — DEC-188 — so the edit takes effect immediately)
 6. User optionally activates the profile if not already active
 
 ### Workflow: create group

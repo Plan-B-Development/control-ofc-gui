@@ -22,10 +22,10 @@ The top bar manages profiles:
 |---------|-------------|
 | **Profile dropdown** | Selects which profile to view and edit. The active profile is marked with `*` |
 | **Activate** | Uploads the selected profile to the daemon and makes it the active one. From that point the daemon's profile engine evaluates its curves every second and drives the fans — so your fans stay controlled even with the GUI closed. Disabled while disconnected (you cannot activate a profile the daemon cannot receive) |
-| **Save** | Writes the profile's changes to disk (`Ctrl+S`) |
+| **Save** | Writes the profile's changes to disk (`Ctrl+S`). Saving the **active** profile also re-applies it to the daemon, so an edited curve takes effect immediately instead of only after the next **Activate** |
 | **Manage Profiles…** | Menu with **New Profile**, **Rename Profile**, **Duplicate Profile**, and **Delete Profile** |
 
-Next to Save, a status chip shows **"Unsaved changes"** whenever you have modified the profile without saving, and confirms afterwards with "Settings saved" / "Profile activated". Activation failures are shown in red ("Activation failed: …") — the GUI never falsely marks a profile active.
+Next to Save, a status chip shows **"Unsaved changes"** whenever you have modified the profile without saving, and confirms afterwards with "Settings saved" / "Profile activated". Saving the active profile re-applies it and confirms with "Saved & reapplied to daemon" (or "Saved — reapply failed (see log)" if the daemon rejects the re-apply — your local edit is still kept). Activation failures are shown in red ("Activation failed: …") — the GUI never falsely marks a profile active.
 
 The daemon is the store of record for profiles; the GUI keeps a local draft cache so you can author and edit while disconnected. A profile saved while the daemon is unreachable is held as a **draft** and reconciled with the daemon automatically the next time the GUI connects. **Activate** is disabled while disconnected — you cannot make a profile active until the daemon can receive it.
 

@@ -523,6 +523,25 @@ class ControlsPage(QWidget):
             # (offline, or rejected on upload) — an unpublished draft (6b).
             self._unsaved_label.setText("Saved locally — daemon offline, not published")
             self._unsaved_label.setProperty("class", "WarningChip")
+        elif (
+            self._client is not None
+            and profile.id == self._profile_service.active_id
+            and self._profile_service.is_published(profile.id)
+        ):
+            # DEC-188: saving the ACTIVE profile re-applies it. A store update
+            # (PUT /profiles/{id}) only changes desired-state — it does NOT
+            # hot-reload the daemon engine — so without an explicit re-activate an
+            # edited curve would not take effect until the user clicked Activate.
+            # Re-applying makes the daemon re-read the profile and re-anchor its
+            # engine immediately (the daemon's activation epoch bypasses the 2°C
+            # deadband so the change is visible on the next tick, not up to ~30 s
+            # later).
+            if self._reapply_active_profile(profile):
+                self._unsaved_label.setText("Saved & reapplied to daemon")
+                self._unsaved_label.setProperty("class", "SuccessChip")
+            else:
+                self._unsaved_label.setText("Saved — reapply failed (see log)")
+                self._unsaved_label.setProperty("class", "WarningChip")
         else:
             self._unsaved_label.setText("Settings saved")
             self._unsaved_label.setProperty("class", "SuccessChip")
@@ -530,6 +549,30 @@ class ControlsPage(QWidget):
         self._unsaved_label.style().polish(self._unsaved_label)
         # Reflect the new published/draft state in the combo badge.
         self._refresh_profile_combo()
+
+    def _reapply_active_profile(self, profile) -> bool:
+        """Re-activate the already-active profile so the daemon re-reads it and
+        re-anchors its engine immediately (DEC-188).
+
+        Called from :meth:`_on_save_profile` when the saved profile is the active
+        one — which only happens when a client is present, so ``self._client`` is
+        set here. A store update alone does not hot-reload the engine, so we
+        re-apply to make the edit take effect now. Returns ``True`` on success;
+        logs and returns ``False`` on any daemon error — the local save has
+        already succeeded, so a failed re-apply never loses the edit.
+        """
+        assert self._client is not None  # guaranteed by the caller's guard
+        profile_path = str(self._profile_service.profile_path(profile.id))
+        try:
+            result = self._client.activate_profile(profile_path)
+        except DaemonError as exc:
+            self._log.warning("Reapply of active profile %s failed: %s", profile.id, exc)
+            return False
+        if not result.activated:
+            self._log.warning("Daemon rejected reapply of active profile %s", profile.id)
+            return False
+        self._log.info("Active profile %s reapplied to daemon", profile.id)
+        return True
 
     def _on_connection_changed(self, conn: ConnectionState) -> None:
         """Gate Activate on the daemon being reachable (live mode only).
