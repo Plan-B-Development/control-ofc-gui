@@ -521,6 +521,13 @@ daemon's clock); a stale token cannot re-pin (fencing).
 The 105 °C thermal force always overrides an active override. No absolute max-duration cap — a live
 renewing GUI holds indefinitely.
 
+**Activating a profile clears all active control-overrides (DEC-189, daemon ≥ 2.2.1).** A
+`POST /profile/activate` — including a same-id re-apply — reverts every pinned control to its curve,
+so an override taken against the previous profile cannot bleed onto a same-id control in the new one.
+The GUI is poll-only and already drops its Manual cards when `/poll` no longer reports the override;
+no client action is required. Fan-identify stops (below) are per physical fan and are **not** cleared
+by an activation.
+
 ### Fan identify (DEC-166, daemon ≥ 1.21.0)
 
 Per-fan stop/restore for the Fan Wizard, with a deadman auto-restore. Replaces the wizard's global
