@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.4.0] — 2026-06-26
+
+### Changed
+- **Saving the active profile now re-applies it (DEC-188).** Pressing Save (or Ctrl+S) on the
+  profile that is currently active re-activates it on the daemon, so an edited curve takes effect
+  immediately instead of only after a manual **Activate**. A store update alone does not hot-reload
+  the daemon engine; the re-apply makes the daemon re-read the profile and re-anchor its control
+  loop now (its activation epoch bypasses the 2°C deadband, so the change is visible on the next
+  poll, not up to ~30 s later). Saving a *non-active* profile is unchanged ("Settings saved"); a failed
+  re-apply warns but never loses the local edit. Pairs with `control-ofc-daemon` ≥ 2.2.0.
+
 ## [2.3.0] — 2026-06-23
 
 A GUI-only **dashboard polish** pass that sharpens the v2.2.0 information

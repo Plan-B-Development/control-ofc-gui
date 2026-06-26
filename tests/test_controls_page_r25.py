@@ -476,13 +476,20 @@ class TestOfflineDraftUX:
         assert "not published" in page._unsaved_label.text().lower()
         assert page._unsaved_label.property("class") == "WarningChip"
 
-    def test_save_published_shows_saved(self, qtbot, app_state):
+    def test_save_active_published_reapplies(self, qtbot, app_state):
+        """DEC-188: saving the ACTIVE published profile re-applies it to the
+        daemon so the edited curve takes effect immediately, not on the next
+        manual Activate."""
         from unittest.mock import MagicMock
 
+        from control_ofc.api.models import ProfileActivateResult
         from control_ofc.services.profile_service import ProfileService
 
         client = MagicMock()
         client.create_profile.return_value = {"created": "p1"}
+        client.activate_profile.return_value = ProfileActivateResult(
+            activated=True, profile_id="p1", profile_name="P1"
+        )
         ps = ProfileService(client=client)
         ps._profiles["p1"] = Profile(id="p1", name="P1")
         ps.set_active("p1")
@@ -491,8 +498,87 @@ class TestOfflineDraftUX:
 
         page._on_save_profile()
 
+        client.activate_profile.assert_called_once()
+        assert page._unsaved_label.text() == "Saved & reapplied to daemon"
+        assert page._unsaved_label.property("class") == "SuccessChip"
+
+    def test_save_inactive_published_does_not_reapply(self, qtbot, app_state):
+        """Saving a published but NON-active profile must not re-apply — that
+        would wrongly switch the daemon's running profile (DEC-188)."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.services.profile_service import ProfileService
+
+        client = MagicMock()
+        client.create_profile.return_value = {"created": "p1"}
+        ps = ProfileService(client=client)
+        ps._profiles["p1"] = Profile(id="p1", name="P1")
+        ps._profiles["p2"] = Profile(id="p2", name="P2")
+        ps.set_active("p2")  # p2 is active; we save the non-active p1
+        page = ControlsPage(state=app_state, profile_service=ps, client=client)
+        qtbot.addWidget(page)
+        page._profile_combo.setCurrentIndex(page._profile_combo.findData("p1"))
+
+        page._on_save_profile()
+
+        client.activate_profile.assert_not_called()
         assert page._unsaved_label.text() == "Settings saved"
         assert page._unsaved_label.property("class") == "SuccessChip"
+
+    def test_save_active_reapply_failure_warns(self, qtbot, app_state):
+        """DEC-188: a failed re-apply warns but the local save is preserved, so
+        the edit is never lost."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+        from control_ofc.services.profile_service import ProfileService
+
+        client = MagicMock()
+        client.create_profile.return_value = {"created": "p1"}
+        client.activate_profile.side_effect = DaemonError(
+            code="validation_error",
+            message="boom",
+            retryable=False,
+            source="validation",
+            status=400,
+        )
+        ps = ProfileService(client=client)
+        ps._profiles["p1"] = Profile(id="p1", name="P1")
+        ps.set_active("p1")
+        page = ControlsPage(state=app_state, profile_service=ps, client=client)
+        qtbot.addWidget(page)
+
+        page._on_save_profile()
+
+        client.activate_profile.assert_called_once()
+        assert "reapply failed" in page._unsaved_label.text().lower()
+        assert page._unsaved_label.property("class") == "WarningChip"
+        # The local save still succeeded (published), so the edit is not lost.
+        assert ps.is_published("p1")
+
+    def test_save_active_reapply_soft_rejection_warns(self, qtbot, app_state):
+        """DEC-188: a daemon that returns ``activated=False`` (no exception) is
+        treated as a failed re-apply — warn, and keep the local save."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.models import ProfileActivateResult
+        from control_ofc.services.profile_service import ProfileService
+
+        client = MagicMock()
+        client.create_profile.return_value = {"created": "p1"}
+        client.activate_profile.return_value = ProfileActivateResult(
+            activated=False, profile_id="p1", profile_name="P1"
+        )
+        ps = ProfileService(client=client)
+        ps._profiles["p1"] = Profile(id="p1", name="P1")
+        ps.set_active("p1")
+        page = ControlsPage(state=app_state, profile_service=ps, client=client)
+        qtbot.addWidget(page)
+
+        page._on_save_profile()
+
+        assert "reapply failed" in page._unsaved_label.text().lower()
+        assert page._unsaved_label.property("class") == "WarningChip"
 
     def test_activate_disabled_when_offline_live(self, qtbot, app_state):
         from unittest.mock import MagicMock
