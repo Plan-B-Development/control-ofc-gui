@@ -158,6 +158,7 @@ Use for:
 - subsystem status/freshness
 - daemon thermal override state
 - active manual overrides / fan-identify holds (DEC-163/166)
+- sensors discovered but currently unreadable (DEC-193)
 
 This endpoint feeds:
 - header status strip
@@ -199,6 +200,16 @@ never collide. Diagnostics surfaces both arrays read-only (and in the support
 bundle). `fan_identify[]` is Diagnostics-only — the fan wizard owns its own
 stop/restore + deadman lifecycle and is not driven from poll state.
 
+`unavailable_sensors` (daemon ≥ 2.3.0, additive — `api_version` unchanged, omitted when empty) lists
+sensors the daemon discovered but currently cannot read — the canonical case is an `ath12k` WiFi
+temperature returning `ENETDOWN` while the radio is soft-blocked. Each entry is `{id, label, reason,
+unavailable_for_ms}` where `reason` is the daemon's hwmon read error and `unavailable_for_ms` is the
+time since the sensor was quarantined. These are evicted from `/sensors` (so a stale value is never
+served) and the daemon suppresses its own per-tick read-failure logging for them (DEC-193). The GUI
+consumes this **display-only**: Diagnostics ▸ Sensors shows a low-key panel + an "N unavailable"
+summary count, and these sensors do **not** raise a staleness warning (they are absent from the live
+sensor list). Older daemons omit the array — the GUI defaults it to empty.
+
 ### GET /sensors
 Use as the primary sensor snapshot source.
 Expected fields:
@@ -224,9 +235,20 @@ Expected fields:
   - `offset_c` — userspace-applied calibration offset (°C)
   - `alarm`, `max_alarm`, `crit_alarm` — chip-asserted alarm bits (bool); sampled at discovery only, not refreshed per poll cycle
   - `fault` — chip-reported sensor fault (bool)
+- control_eligible (bool, DEC-193, daemon ≥ 2.3.0) — `false` when this temperature must **not** be
+  offered as a fan-curve source. Currently set only for wireless-radio PHY temps (e.g. `ath12k`
+  WiFi, chip names `ath*_hwmon` / `iwlwifi*`), which read `ENETDOWN` whenever the radio is down and
+  would strand a curve. Advisory and display-agnostic: the GUI drops `control_eligible == false`
+  sensors from the curve sensor picker (mirroring how `is_writable: false` headers are dropped from
+  the member picker, DEC-102) but still shows them everywhere else; the daemon engine never consults
+  it. Omitted by pre-2.3.0 daemons → the GUI defaults it to `true` (every sensor stays selectable).
 
 Entries are sorted by `id` — deterministic across daemon restarts and rescans
 (DEC-146; fans were already sorted, sensors now match).
+
+Sensors that exist but currently fail every read are **not** in this array — the daemon evicts them
+and reports them under `unavailable_sensors` on `/status` + `/poll` instead (DEC-193, see below), so
+a sensor that goes unreadable is never served at a stale value.
 
 ### GET /fans
 Use as the primary current fan state source.

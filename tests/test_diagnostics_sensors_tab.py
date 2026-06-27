@@ -14,11 +14,13 @@ from __future__ import annotations
 from control_ofc.api.models import (
     BoardInfo,
     ConnectionState,
+    DaemonStatus,
     HardwareDiagnosticsResult,
     OperationMode,
     SensorReading,
     SensorThresholds,
     ThermalSafetyInfo,
+    UnavailableSensor,
     parse_capabilities,
 )
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
@@ -130,6 +132,85 @@ class TestSensorSummaryLine:
         page, _ = _make_page(qtbot, settings=svc)
         page._on_sensors([_sensor("hwmon:k10temp:Tctl")])
         assert "1 hidden" in page._sensor_summary_label.text()
+
+
+# ─── DEC-193: unavailable (present-but-unreadable) sensors ───────────────
+
+
+def _status(unavailable=None) -> DaemonStatus:
+    return DaemonStatus(
+        overall_status="ok",
+        unavailable_sensors=list(unavailable or []),
+    )
+
+
+class TestUnavailableSensors:
+    def test_panel_hidden_when_none(self, qtbot):
+        # isHidden() reflects the explicit visibility flag, robust in headless
+        # tests where the top-level window is never shown (isVisible() would be
+        # False for any child regardless).
+        page, _ = _make_page(qtbot)
+        page._on_status(_status())
+        assert page._unavailable_label.isHidden() is True
+
+    def test_panel_shows_reason_and_summary_count(self, qtbot):
+        page, _ = _make_page(qtbot)
+        page._on_sensors([_sensor("hwmon:k10temp:Tctl")])
+        page._on_status(
+            _status(
+                [
+                    UnavailableSensor(
+                        id="hwmon:ath12k_hwmon:phy0:temp1",
+                        label="temp1",
+                        reason="read error: Network is down (os error 100)",
+                        unavailable_for_ms=4200,
+                    )
+                ]
+            )
+        )
+        assert page._unavailable_label.isHidden() is False
+        text = page._unavailable_label.text()
+        assert "temp1" in text
+        assert "Network is down" in text
+        # Surfaced as a count on the header summary too.
+        assert "1 unavailable" in page._sensor_summary_label.text()
+
+    def test_panel_clears_on_recovery(self, qtbot):
+        page, _ = _make_page(qtbot)
+        page._on_status(
+            _status(
+                [
+                    UnavailableSensor(
+                        id="hwmon:ath12k_hwmon:phy0:temp1",
+                        label="temp1",
+                        reason="Network is down",
+                        unavailable_for_ms=1000,
+                    )
+                ]
+            )
+        )
+        assert page._unavailable_label.isHidden() is False
+        # Radio comes back: the daemon stops reporting it → panel hides.
+        page._on_status(_status())
+        assert page._unavailable_label.isHidden() is True
+
+    def test_summary_counts_unavailable_even_with_no_readable_sensors(self, qtbot):
+        # Regression: the "Sensors: —" early-return must not swallow the count.
+        page, _ = _make_page(qtbot)
+        page._on_sensors([])
+        page._on_status(
+            _status(
+                [
+                    UnavailableSensor(
+                        id="hwmon:ath12k_hwmon:phy0:temp1",
+                        label="temp1",
+                        reason="Network is down",
+                        unavailable_for_ms=1000,
+                    )
+                ]
+            )
+        )
+        assert "1 unavailable" in page._sensor_summary_label.text()
 
 
 # ─── Quirk / advisory chips ──────────────────────────────────────────────
