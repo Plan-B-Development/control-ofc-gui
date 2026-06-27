@@ -48,6 +48,7 @@ from control_ofc.api.models import (
     HwmonHeader,
     HwmonVerifyResult,
     SensorReading,
+    UnavailableSensor,
 )
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService, format_uptime
@@ -757,6 +758,9 @@ class DiagnosticsPage(QWidget):
         # table is fully re-rendered from this on every refresh so visibility
         # toggles never require a fresh daemon poll.
         self._all_sensors: list[SensorReading] = []
+        # DEC-193: sensors the daemon discovered but currently can't read (last
+        # payload from ``_on_status``). Surfaced display-only in the Sensors tab.
+        self._unavailable_sensors: list[UnavailableSensor] = []
         self._hidden_group_expanded = False
         self._sensor_detail_dialog: SensorDetailDialog | None = None
 
@@ -1015,6 +1019,15 @@ class DiagnosticsPage(QWidget):
         )
 
         layout.addWidget(self._sensor_table)
+
+        # DEC-193: display-only panel for sensors the daemon discovered but
+        # currently can't read (e.g. an ath12k WiFi temp with the radio off).
+        # Intentionally low-key — no dashboard banner, no popup — and hidden
+        # entirely unless something is actually unavailable.
+        self._unavailable_label = _transparent_label("", "Diagnostics_Label_unavailableSensors")
+        self._unavailable_label.setWordWrap(True)
+        self._unavailable_label.setVisible(False)
+        layout.addWidget(self._unavailable_label)
         return container
 
     def _build_fans_tab(self) -> QWidget:
@@ -1950,6 +1963,10 @@ class DiagnosticsPage(QWidget):
             active.append("Identify: " + ", ".join(id_lines))
         self._overrides_label.setText("\n".join(active) if active else "Overrides: \u2014")
 
+        # DEC-193: surface sensors the daemon can't currently read (display-only).
+        self._unavailable_sensors = list(status.unavailable_sensors)
+        self._render_unavailable_sensors()
+
     def _on_sensors(self, sensors: list) -> None:
         """Cache the latest sensor payload and trigger a full re-render
         (DEC-117). Visibility toggles, the hidden-group expander, and the
@@ -1957,6 +1974,39 @@ class DiagnosticsPage(QWidget):
         never need a fresh daemon poll."""
         self._all_sensors = list(sensors)
         self._render_sensors_table()
+
+    def _render_unavailable_sensors(self) -> None:
+        """Render the display-only 'Unavailable sensors' panel (DEC-193).
+
+        These are sensors the daemon discovered but currently cannot read — the
+        canonical case is an ``ath12k`` WiFi temperature returning ``ENETDOWN``
+        while the radio is soft-blocked. They are excluded from fan control and
+        shown here, low-key, so the user understands why a sensor "vanished"
+        without a dashboard banner or popup. Hidden entirely when none.
+        """
+        rows = self._unavailable_sensors
+        if not rows:
+            self._unavailable_label.setVisible(False)
+            self._unavailable_label.setText("")
+        else:
+            lines = [
+                f"⚠ Unavailable sensors ({len(rows)}) — discovered but not "
+                "readable, excluded from fan control:"
+            ]
+            for u in rows:
+                secs = max(0, u.unavailable_for_ms // 1000)
+                name = u.label or u.id
+                lines.append(f"   • {name} — {u.reason} (unavailable {secs}s)")
+            self._unavailable_label.setText("\n".join(lines))
+            self._unavailable_label.setVisible(True)
+
+        # Keep the header summary's "N unavailable" count in step with the
+        # status poll that drives this panel (the table re-render that normally
+        # owns the summary is driven by the separate sensors signal).
+        hidden_ids = self._hidden_sensor_ids()
+        visible = [s for s in self._all_sensors if s.id not in hidden_ids]
+        hidden = [s for s in self._all_sensors if s.id in hidden_ids]
+        self._recompute_sensor_summary(visible, hidden)
 
     # ── DEC-117: Sensors-tab helpers ─────────────────────────────────
 
@@ -2205,7 +2255,9 @@ class DiagnosticsPage(QWidget):
         """
         all_sensors = visible + hidden
         n = len(all_sensors)
-        if n == 0:
+        # DEC-193: still surface the unavailable count when *every* sensor is
+        # unavailable (n == 0) — otherwise the "—" early-return would hide it.
+        if n == 0 and not self._unavailable_sensors:
             self._sensor_summary_label.setText("Sensors: —")
             return
 
@@ -2242,6 +2294,10 @@ class DiagnosticsPage(QWidget):
             parts.append(f"{stale} stale")
         if low_conf:
             parts.append(f"{low_conf} low-confidence")
+        # DEC-193: count of discovered-but-unreadable sensors (shown in full in
+        # the panel below the table).
+        if self._unavailable_sensors:
+            parts.append(f"{len(self._unavailable_sensors)} unavailable")
         if hidden:
             parts.append(f"{len(hidden)} hidden")
         self._sensor_summary_label.setText("Sensors: " + " · ".join(parts))

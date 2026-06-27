@@ -186,6 +186,37 @@ def test_parse_status_overrides_ignore_unknown_fields():
     assert status.fan_identify[0].fan_id == "gpu:fan"
 
 
+def test_parse_status_unavailable_sensors():
+    """DEC-193: /status carries sensors the daemon discovered but can't read
+    (e.g. an ath12k WiFi temp while the radio is off). A non-empty payload must
+    round-trip so Diagnostics can surface them display-only."""
+    data = {
+        "overall_status": "ok",
+        "subsystems": [],
+        "unavailable_sensors": [
+            {
+                "id": "hwmon:ath12k_hwmon:phy0:temp1",
+                "label": "temp1",
+                "reason": "read error: Network is down (os error 100)",
+                "unavailable_for_ms": 4200,
+            },
+        ],
+    }
+    status = parse_status(data)
+    assert len(status.unavailable_sensors) == 1
+    u = status.unavailable_sensors[0]
+    assert u.id == "hwmon:ath12k_hwmon:phy0:temp1"
+    assert u.label == "temp1"
+    assert "Network is down" in u.reason
+    assert u.unavailable_for_ms == 4200
+
+
+def test_parse_status_missing_unavailable_sensors_defaults_to_empty():
+    """The daemon omits the Vec from the wire when empty — model defaults to []."""
+    status = parse_status({"overall_status": "ok", "subsystems": []})
+    assert status.unavailable_sensors == []
+
+
 def test_parse_sensors():
     data = {
         "sensors": [
@@ -204,6 +235,29 @@ def test_parse_sensors():
     assert sensors[0].id == "hwmon:k10temp:Tctl"
     assert sensors[0].value_c == 45.5
     assert sensors[0].freshness == Freshness.FRESH
+    # DEC-193: a sensor with no control_eligible field defaults to selectable.
+    assert sensors[0].control_eligible is True
+
+
+def test_parse_sensor_control_eligible_false():
+    """DEC-193: the daemon flags wireless-radio temps control_eligible=false so
+    the GUI drops them from the curve picker."""
+    data = {
+        "sensors": [
+            {
+                "id": "hwmon:ath12k_hwmon:phy0:temp1",
+                "kind": "mb_temp",
+                "label": "temp1",
+                "value_c": 48.0,
+                "source": "hwmon",
+                "age_ms": 100,
+                "chip_name": "ath12k_hwmon",
+                "control_eligible": False,
+            },
+        ]
+    }
+    sensors = parse_sensors(data)
+    assert sensors[0].control_eligible is False
 
 
 def test_parse_fans():

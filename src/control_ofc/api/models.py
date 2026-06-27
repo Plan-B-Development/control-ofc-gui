@@ -223,6 +223,24 @@ class IdentifyStatusEntry:
 
 
 @dataclass
+class UnavailableSensor:
+    """A sensor the daemon discovered but currently cannot read (DEC-193).
+
+    Mirrors the daemon's ``UnavailableSensorEntry`` on the ``/status`` +
+    ``/poll`` surface. The canonical case is a wireless-radio temperature
+    (e.g. an ``ath12k`` WiFi chip) that returns ``ENETDOWN`` whenever the radio
+    is soft-blocked. These are surfaced for *display only* (Diagnostics): the
+    daemon evicts them from the live ``sensors`` array so a stale value is never
+    served, and the GUI does not raise a staleness warning for them.
+    """
+
+    id: str = ""
+    label: str = ""
+    reason: str = ""
+    unavailable_for_ms: int = 0
+
+
+@dataclass
 class DaemonStatus:
     api_version: int = 1
     daemon_version: str = ""
@@ -241,6 +259,10 @@ class DaemonStatus:
     # the Controls page (display-only reconcile) and Diagnostics (DEC-169).
     overrides: list[OverrideStatusEntry] = field(default_factory=list)
     fan_identify: list[IdentifyStatusEntry] = field(default_factory=list)
+    # DEC-193: sensors discovered but currently unreadable (e.g. an ath12k WiFi
+    # temp while the radio is off). Omitted from the wire when empty (daemon
+    # skips empty Vecs) → defaults to []. Display-only; surfaced in Diagnostics.
+    unavailable_sensors: list[UnavailableSensor] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +336,12 @@ class SensorReading:
     # predates DEC-117 or when the chip exposes no attribute of interest
     # for this sensor.
     thresholds: SensorThresholds | None = None
+    # DEC-193: False when this temperature must not be offered as a fan-curve
+    # source (currently wireless-radio PHY temps such as ath12k WiFi, which read
+    # ENETDOWN whenever the radio is down). The Controls page drops these from
+    # the curve sensor picker; display is unaffected. Defaults True so a
+    # pre-2.3.0 daemon that omits the field leaves every sensor selectable.
+    control_eligible: bool = True
 
     @property
     def freshness(self) -> Freshness:
@@ -864,6 +892,12 @@ def parse_status(data: dict) -> DaemonStatus:
         fan_identify=[
             IdentifyStatusEntry(**_filter_fields(IdentifyStatusEntry, e))
             for e in data.get("fan_identify", [])
+            if isinstance(e, dict)
+        ],
+        # DEC-193: omitted from the wire when empty — default to [].
+        unavailable_sensors=[
+            UnavailableSensor(**_filter_fields(UnavailableSensor, e))
+            for e in data.get("unavailable_sensors", [])
             if isinstance(e, dict)
         ],
     )

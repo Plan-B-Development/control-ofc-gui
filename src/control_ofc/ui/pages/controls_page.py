@@ -1587,6 +1587,12 @@ class ControlsPage(QWidget):
             seen = set()
             items = []
             for s in sensors:
+                # DEC-193: never offer a control-ineligible sensor (e.g. an
+                # ath12k WiFi temp) as a curve source — it would strand the curve
+                # the moment the radio goes down. Existing curves already bound to
+                # one keep working and still show their live value below.
+                if not s.control_eligible:
+                    continue
                 if s.id not in seen:
                     items.append((s.id, self._sensor_combo_label(s)))
                     seen.add(s.id)

@@ -36,7 +36,7 @@ Two information cards:
 
 ![Diagnostics — Sensors Tab](../screenshots/auto/07_diagnostics_sensors.png)
 
-A 14-column diagnostic table of every temperature sensor reported by the daemon. A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · M hidden`.
+A 14-column diagnostic table of every temperature sensor reported by the daemon. A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · U unavailable · M hidden`.
 
 | Column | Meaning |
 |--------|---------|
@@ -56,6 +56,10 @@ A 14-column diagnostic table of every temperature sensor reported by the daemon.
 | **Details** | A per-row button that opens the **Sensor Detail** dialog |
 
 Stale sensors appear in yellow. Invalid sensors appear in red. This helps identify hardware that has stopped responding.
+
+### Unavailable sensors
+
+Some sensors exist but currently can't be read at all — the classic example is a Wi-Fi-radio temperature (an `ath12k` chip) that returns "Network is down" whenever the radio is switched off. Rather than letting the daemon log that failure endlessly, these are reported as **unavailable** and listed in a small panel below the table: each shows its label, the read-error reason, and how long it has been unavailable, and the count appears as `· U unavailable` on the header summary line. The panel is hidden entirely when nothing is unavailable. Because such a sensor can disappear the moment its device powers down, it is **never offered as a fan-curve source** in the Controls page (a curve already bound to one keeps working). This is display-only — there is no banner or pop-up — and an unavailable sensor re-appears in the table automatically the moment it becomes readable again.
 
 ### Sensor Detail dialog
 

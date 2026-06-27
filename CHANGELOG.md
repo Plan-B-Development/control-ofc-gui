@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.5.0] — 2026-06-27
+
+### Added
+- **Diagnostics surfaces "unavailable" sensors (DEC-193).** When the daemon discovers a sensor it
+  currently cannot read — the canonical case is an `ath12k` WiFi-radio temperature while the radio
+  is off — it now reports it on `/poll` as *unavailable* instead of letting it spam its own journal.
+  The Diagnostics ▸ Sensors tab shows these in a low-key panel below the table (label, read-error
+  reason, and how long it has been unavailable) and an "N unavailable" count on the header summary.
+  Deliberately display-only: no dashboard banner and no popup. Because the daemon evicts these from
+  the live sensor list, they no longer trip the GUI's staleness warnings either.
+
+### Changed
+- **Wireless-radio temperatures are no longer offered as fan-curve sources (DEC-193).** The daemon
+  flags such sensors `control_eligible = false` (they read `ENETDOWN` whenever the radio is down and
+  would strand a curve), and the Controls page drops them from the curve sensor picker — mirroring
+  how read-only hwmon headers are dropped from the member picker (DEC-102). A curve already bound to
+  one keeps working and still shows its live value. Pairs with `control-ofc-daemon` ≥ 2.3.0; against
+  an older daemon every sensor stays selectable and no unavailable panel appears.
+
 ## [2.4.0] — 2026-06-26
 
 ### Changed
