@@ -100,7 +100,7 @@ The horizontal banner at the top of every page shows:
 | **Connection indicator** | Green "Connected", yellow "Degraded", or red "Disconnected" |
 | **Profile name** | The currently active fan profile, or "No profile" |
 | **Mode** | "Automatic" (curve-driven), "Manual Override", "Read-only", or "Demo mode" |
-| **Warning count** | Number of active warnings (click to view details) |
+| **Warning count** | Number of active warnings. On the **Dashboard** this chip is clickable — click it to open the warnings dialog; on other pages it is display-only |
 | **DEMO badge** | Visible only in demo mode |
 
 > If the daemon's API version does not match the version this GUI was built for (an out-of-lockstep package upgrade), the Dashboard shows a warning banner asking you to align the `control-ofc-daemon` and `control-ofc-gui` package versions. This is non-fatal — the GUI keeps working — but some features may misbehave until the versions match.

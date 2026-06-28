@@ -149,8 +149,9 @@ AMD companion guide to Intel ROG boards.
 
 LGA1851 is the new Core Ultra socket. As of 2026-Q2 the `asus_ec_sensors`
 kernel allowlist has not yet added Z890 boards, so extra sensor labels
-come from `asus_wmi` (read-only) or the raw `nct6798` / `nct6799`
-labels. The Super I/O chip distribution is still settling — many SKUs
+come from the generic read-only `asus-wmi` platform driver (**not** the
+AMD-only `asus_wmi_sensors` hwmon driver discussed above, which does not
+bind on Intel) or the raw `nct6798` / `nct6799` labels. The Super I/O chip distribution is still settling — many SKUs
 ship NCT6798D or NCT6799D.
 
 ### MSI LGA1700 (Z690 / Z790)

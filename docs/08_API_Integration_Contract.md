@@ -11,6 +11,10 @@ This file defines how the GUI should consume the current daemon/API safely and p
 3. The UI never binds directly to raw JSON.
 4. The GUI must handle partial capability availability.
 5. The GUI must gracefully support absent hardware.
+6. **Every daemon success response carries a top-level `api_version` integer.**
+   The response examples below are abbreviated and may omit it (e.g.
+   activate/deactivate/active/override); the GUI tolerates its absence on older
+   daemons but the current daemon always sends it.
 
 ## Quick reference — curl examples
 
@@ -258,7 +262,7 @@ Expected fields:
 - rpm (optional, omitted when unavailable)
 - last_commanded_pwm (optional, omitted until first write)
 - age_ms
-- stall_detected (optional bool) — daemon-asserted; set when commanded PWM ≥5% but measured RPM is zero for ≥2 cycles. Surfaced by the GUI as an `error`-level warning.
+- stall_detected (optional bool) — daemon-asserted; set when commanded PWM is above the daemon's `STALL_PWM_THRESHOLD` (20%, i.e. ≥21%) but measured RPM is zero. Evaluated per-tick from the latest snapshot (no multi-cycle counter); `null`/omitted when RPM is not polled. Surfaced by the GUI as an `error`-level warning.
 
 Note: fans do **not** include `label` or `kind` from the daemon. Display names come from: user alias (GUI-owned) > hwmon header label (for hwmon fans) > fan id.
 
@@ -678,7 +682,7 @@ According to the provided daemon notes:
 - 0% allowed for max 8s (stop timeout queryable via `GET /capabilities` → `limits.openfan_stop_timeout_s`)
 - PWM 0–100 passed through — no clamping in the daemon. Role-aware floors are
   baked into the profile by the GUI and enforced by the daemon engine
-  (DEC-162; see `docs/09_State_Model_Control_Loop_and_Lease_Behaviour.md`).
+  (DEC-162; see `docs/09_State_Model_and_Control_Behaviour.md`).
 - the daemon engine coalesces duplicate writes internally — it skips the serial
   command when a channel's value matches the last commanded value (DEC-073 /
   DEC-108). The bare OpenFan write endpoints that returned a `coalesced` field

@@ -72,7 +72,7 @@ How roles, curves, and profiles fit together is covered in [Profiles and Curves]
 |---|---|---|
 | Controller not detected | Daemon started before the device was plugged in, or a non-standard port | Plug in the controller, then `sudo systemctl restart control-ofc-daemon`. Confirm the device exists with `ls /dev/ttyACM*`. If it only appears under a non-standard path, set `[serial] port` explicitly (see above) |
 | Detected, but no fans show RPM | Fans not connected to populated channels, or 3-pin fans with no tachometer | A `0` RPM on an empty or tach-less channel is normal. Connect a known-good 4-pin fan to confirm |
-| Worked, then stopped after unplug / replug | USB re-enumeration | The daemon detects the dropout and **auto-reconnects** — after a few failed reads it re-scans for the device with a backoff (about 1 s, up to 30 s) and resumes when it reappears. Pinning the `by-id` path makes reconnection reliable |
+| Worked, then stopped after unplug / replug | USB re-enumeration | The daemon detects the dropout and **auto-reconnects** — after 5 consecutive failed reads it re-scans for the device with a backoff (about 1 s, up to 30 s) and resumes when it reappears. Pinning the `by-id` path makes reconnection reliable |
 | Permission denied on the serial port | The service is not in the serial group (most likely on non-Arch distros) | Add the serial group via a systemd drop-in (see permissions above), then restart the daemon |
 | A fan briefly stops, then restarts on its own | The controller will not hold a fan at 0% for more than a few seconds (a built-in safety) | Expected. Set a small non-zero minimum if you want the fan to keep spinning |
 

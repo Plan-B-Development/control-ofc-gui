@@ -47,9 +47,11 @@ answer "what is this sensor, what is it doing, and is it reliable?" at a
 glance — without forcing the user to hover every cell (DEC-117).
 
 **Header summary line** above the table:
-`Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · M hidden`
+`Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · V unavailable · M hidden`
 (empty kind buckets are suppressed; the line collapses to `Sensors: —` when
-no sensors are reported.)
+no sensors are reported.) The `V unavailable` bucket counts daemon-reported
+`unavailable_sensors[]` entries (DEC-193) and is sourced from the status poll,
+not the sensor table re-render.
 
 **14-column table** (all visible by default; the last column hosts a per-row
 "Details" button widget):
@@ -112,6 +114,19 @@ mirrors again.
 
 Tooltip behaviour on each cell is unchanged (still uses
 `format_sensor_tooltip` for hover context).
+
+**Unavailable-sensors panel (DEC-193)** — a low-key, display-only label below
+the table lists sensors the daemon *discovered but currently cannot read*
+(canonically an `ath12k`/`iwlwifi` WiFi temperature returning `ENETDOWN` while
+the radio is soft-blocked). It is driven by the `unavailable_sensors[]` array
+on `GET /status` + `/poll` (`{id, label, reason, unavailable_for_ms}`), rendered
+as `⚠ Unavailable sensors (N) — discovered but not readable, excluded from fan
+control:` with one bullet per entry (`• <label> — <reason> (unavailable Ns)`).
+These sensors are evicted from the live `sensors` list, so they raise **no**
+staleness warning and **no** dashboard banner or popup — Diagnostics is the only
+surface. The panel is hidden entirely when none are reported (older daemons omit
+the field). The header summary's `N unavailable` count is kept in step with this
+panel from the same status poll.
 
 ### 5. Lease state (removed at 2.0.0 — DEC-165)
 The daemon owns the hwmon lease internally as of 2.0.0; the GUI holds none, so the diagnostics

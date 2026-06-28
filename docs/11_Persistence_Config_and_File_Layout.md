@@ -63,8 +63,9 @@ GUI runtime state currently lives almost entirely under `~/.config/control-ofc/`
 The XDG state and cache directories are created by `ensure_dirs()`. The GUI does
 **not** write to the XDG **state** dir — no on-disk log, no `last_session.json`
 snapshot, no `support_bundle_work/` staging directory. It **does** write to the
-XDG **cache** dir (`~/.cache/control-ofc-gui/`): `ui/theme.py` writes a themed
-combo-box arrow SVG (`combo-arrow-<digest>.svg`) there for the active theme. Support bundles are
+XDG **cache** dir — the canonical `paths.cache_dir()` (`~/.cache/control-ofc/`):
+`ui/theme.py` writes a themed combo-box arrow SVG (`combo-arrow-<digest>.svg`)
+there for the active theme. Support bundles are
 generated on demand and written to a user-selected export location.
 Aliases are persisted inside `app_settings.json` rather than a separate
 `aliases.json`; fan roles and their memberships are stored inside each

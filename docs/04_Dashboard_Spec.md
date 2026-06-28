@@ -42,8 +42,8 @@ Clicking a temperature card opens its sensor-binding picker.
 #### Row 2: primary chart area (DEC-181)
 A wide temperature / fan-speed-over-time chart with:
 - selectable time range
-- a curated default series subset on first run (CPU · GPU · one case temp) instead
-  of every series at once
+- a curated default series subset on first run (CPU · GPU · one motherboard temp ·
+  aggregate fan) instead of every series at once
 - **chart modes** (Combined [default] / Thermals / Fans / Diagnostics) + Reset — the
   selectors are the Show-mode combo and the Sensors tree (DEC-186 removed the
   per-series checkbox legend and the synthetic aggregate fan-RPM line)

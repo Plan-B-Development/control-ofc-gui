@@ -154,6 +154,14 @@ Each curve chooses exactly one sensor from the supported V1 categories:
 - Ambient
 - Disk
 
+**Control-eligibility filter (DEC-193):** the sensor dropdown drops any sensor
+the daemon marks `control_eligible: false` (API-derived from
+`is_wireless_phy_chip(chip_name)` — e.g. an `ath12k`/`iwlwifi` WiFi PHY temp).
+Offering one would strand the curve the moment the radio goes down. This is
+advisory and mirrors the DEC-102 member-picker drop; a curve already bound to
+such a sensor keeps working and still shows its live value. Older daemons omit
+the field → the GUI defaults `control_eligible = true` (nothing filtered).
+
 If a previously selected sensor disappears:
 - show the broken association clearly
 - keep the profile editable
@@ -186,7 +194,7 @@ Manual override is temporary and high-visibility.
 
 ### Manual override requirements
 - obvious enable action
-- obvious exit action labeled **Return to Automatic**
+- obvious exit action — a single checkable **Manual** toggle per control card (`ControlCard_Btn_manual_*`): checking it enters manual override, unchecking it reverts that role to its curve
 - visible page-wide state when active
 - profile engine pauses or yields while manual override is active
 - override writes still go through daemon safety rules
