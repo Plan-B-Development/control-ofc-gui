@@ -164,7 +164,7 @@ The daemon runs concurrent async tasks on the Tokio multi-threaded runtime:
 | `/events` | SSE stream (real-time updates) | Streaming |
 | `/capabilities` | Device presence, feature flags, safety limits | Fast |
 | `/hwmon/headers` | Discovered PWM outputs | Fast |
-| `/hwmon/lease/status` | Lease holder and TTL | Fast |
+| `/hwmon/lease/status` | Lease holder and TTL — **retired at 2.0.0 (DEC-165)**; the daemon self-leases internally, no client lease route exists | Fast |
 | `/profile/active` | Currently active profile | Fast |
 
 **Write endpoints (POST):**
@@ -372,7 +372,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Debug line flooding | MAX_DEBUG_LINES=50 + wall-clock deadline | Returns `SerialError::Protocol` | Write fails, logged | Cannot recover without restart |
 | 0% PWM > 8 seconds | Per-channel `stop_started_at` tracking | Reject further 0% commands | Fan restarts at last non-zero | Only protects API writes, not direct sysfs |
 | Stale sensor (>2× interval) | Health computation in staleness.rs | Status → Warn/Crit | Warning in diagnostics | No automatic fallback PWM |
-| Client hwmon PWM write attempt | No public write route (engine is sole writer since 2.0.0 — DEC-165) | 404 `validation_error` | Not possible | Verify path uses the daemon's own internal lease (DEC-170) |
+| Client hwmon PWM write attempt | No public write route (engine is sole writer since 2.0.0 — DEC-165) | 404 `not_found` (unknown route — `validation_error` is for bad payloads on *known* routes) | Not possible | Verify path uses the daemon's own internal lease (DEC-170) |
 | Concurrent calibration | `AtomicBool` guard | 409 Conflict | Second request rejected | None |
 | Corrupted config file | Config parser returns error | Daemon exits with code 1 | Must fix config | No fallback to defaults on parse error |
 | Missing config file | `ErrorKind::NotFound` check | Use defaults silently | Daemon runs with defaults | Correct behavior |
@@ -425,10 +425,10 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 |---------|--------|-------|
 | OpenFan serial control | **Implemented** | PWM, RPM, target RPM, calibration |
 | hwmon sensor reading | **Implemented** | All temp*_input files |
-| hwmon PWM writing (via GUI lease) | **Implemented** | With readback verification |
-| hwmon PWM writing (headless/profile) | **Not implemented** | Requires daemon auto-lease |
+| hwmon PWM writing (via GUI lease) | **Removed at 2.0.0** | GUI no longer writes PWM or holds a lease (DEC-165) |
+| hwmon PWM writing (headless/profile) | **Implemented** | Daemon profile engine self-leases and writes headlessly (DEC-159/165) |
 | Thermal safety evaluation | **Implemented** | Evaluates in profile engine loop |
-| Thermal safety fan writes | **Partially implemented** | Writes to OpenFan only (no hwmon) |
+| Thermal safety fan writes | **Implemented** | Forces all OpenFan channels + writable hwmon headers to 100% at 105°C; GPU excluded (DEC-130) |
 | Profile persistence across reboot | **Implemented** | `/var/lib/control-ofc/daemon_state.json` |
 | Profile activation via API | **Implemented** | `POST /profile/activate` |
 | SSE event stream | **Implemented** | `GET /events` |
@@ -459,7 +459,6 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | `serial.port` | None (auto-detect) | — | path |
 | `serial.timeout_ms` | 500 | ≥50 | ms |
 | `polling.poll_interval_ms` | 1000 | ≥100 | ms |
-| `polling.publish_interval_ms` | 5000 | ≥poll_interval | ms |
 | `ipc.socket_path` | `/run/control-ofc/control-ofc.sock` | — | path |
 
 ### Runtime Paths

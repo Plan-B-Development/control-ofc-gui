@@ -98,11 +98,10 @@ The app needs:
 
 ```text
 control_ofc/
-  app/
-    main.py
-    application.py
-    paths.py
-    constants.py
+  main.py            # entry point + QApplication wiring (no separate app/ package)
+  paths.py
+  constants.py
+  colors.py
   api/
     client.py
     models.py

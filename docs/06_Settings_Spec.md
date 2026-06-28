@@ -33,6 +33,13 @@ Implemented settings:
 *Removed:* "remember last active profile" — the daemon owns active-profile
 persistence (`daemon_state.json`), so a GUI-side toggle controlled nothing (DEC-138).
 
+*Persisted but not surfaced as page controls:* a few `AppSettings` keys are
+written by behaviour elsewhere rather than by a Settings widget — `fan_zones`,
+`fan_zone_order`, `fan_zones_collapsed` (Dashboard fan-zone layout, DEC-176/187)
+and `show_aio_pump_info` (the one-time "constant-speed pump" info popup, DEC-157,
+flips to `false` once dismissed). They still round-trip through
+`AppSettings.from_dict`/`to_dict` and the import/export trust boundary.
+
 ### B. Themes
 V1 requirements:
 - import theme
@@ -151,9 +158,11 @@ These belong to the daemon runtime/config:
   shareable preferences plus all profiles/themes. Machine/session state and
   hardware-id-keyed maps (`window_geometry`, `last_page_index`, data-dir
   overrides, `series_colors`, `card_sensor_bindings`, `controls_card_sizes`,
-  `diagnostics_hidden_sensor_ids`, `acknowledged_kernel_warnings`) are excluded;
-  `fan_aliases` and `hidden_chart_series` are kept portable. The full snapshot
-  still lives in the diagnostics support bundle.
+  `fan_zone_order`, `diagnostics_hidden_sensor_ids`, `sensor_class_overrides`,
+  `acknowledged_kernel_warnings`, `daemon_import_prompted`) are excluded — the
+  authoritative set is `MACHINE_SPECIFIC_KEYS` in `app_settings_service.py`;
+  `fan_aliases`, `fan_zones`, and `hidden_chart_series` are kept portable. The
+  full snapshot still lives in the diagnostics support bundle.
 - **Import merges, preserving local machine state:** imported values overlay the
   current settings, and machine-specific keys are stripped from the incoming
   data, so importing a shared (or legacy full) file never moves your window or

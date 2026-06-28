@@ -14,11 +14,12 @@ Launch it with the **Fan Wizard** button in the Controls page's Fan Roles header
 
 ### Step 1: Introduction
 
-Explains the process and runs pre-flight checks. The wizard will not proceed unless:
+Explains the process and runs pre-flight checks. The **Next** button stays disabled until two hard conditions are met:
 
-- the daemon is connected,
-- at least one controllable fan output was detected, and
-- no CPU sensor is above 85°C — your system should be **idle and cool**.
+- the daemon is connected, and
+- at least one controllable fan output was detected.
+
+The intro page also checks CPU temperature: if any CPU sensor is above 85°C it shows a red **"Cannot proceed"** warning urging you to let the system idle and cool. The 85°C limit is then *enforced* at the moment a fan test starts — the wizard **aborts the individual fan test** ("too hot to test safely") rather than spinning a fan down while the CPU is hot. Your system should be **idle and cool** before running it.
 
 When everything is in order it reports "Ready — *N* controllable fan(s) detected."
 

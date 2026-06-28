@@ -51,7 +51,11 @@ state_dir = "/var/lib/control-ofc"  # persistent state directory
 delay_secs = 0  # seconds to wait before device detection after boot (0-30)
 
 [profiles]
-search_dirs = ["/etc/control-ofc/profiles"]  # add user profile dirs via API
+# Two defaults: the system dir plus a home-relative dir derived from
+# XDG_CONFIG_HOME (or $HOME/.config, or /root/.config when HOME is unset for a
+# systemd service). The daemon also *prepends* its own store dir
+# (/var/lib/control-ofc/profiles/) at startup. Add more via the API.
+search_dirs = ["/etc/control-ofc/profiles", "/root/.config/control-ofc/profiles"]
 ```
 
 All fields are optional — defaults are shown above.
@@ -116,8 +120,8 @@ ls -la /dev/ttyACM0
 
 ### GUI activation flow
 When the user activates a profile in the GUI:
-1. GUI saves the profile locally to `~/.config/control-ofc/profiles/<id>.json` **and** uploads it to the daemon — the **store of record** (DEC-160) — via `PUT /profiles/<id>` (or `POST /profiles` to create it)
-2. GUI calls `POST /profile/activate {"profile_path": "/home/user/.config/control-ofc/profiles/<id>.json"}`
+1. GUI saves the profile to its local draft cache (`~/.config/control-ofc/profiles/<id>.json`) **and** uploads it to the daemon — the **store of record** (DEC-160) — via `PUT /profiles/<id>` (or `POST /profiles` to create it). The daemon writes it into its own store dir (`/var/lib/control-ofc/profiles/`).
+2. GUI calls `POST /profile/activate {"profile_id": "<id>"}` — the daemon resolves the id from its own store/search dirs. (Activation also accepts a `profile_path`, but it must lie **within a daemon search dir**; the GUI user's `~/.config/...` path is *not* one of the root daemon's search dirs, so a user-HOME `profile_path` would be rejected. Activate by `profile_id`.)
 3. Daemon validates, applies, and persists the active selection to `/var/lib/control-ofc/daemon_state.json`
 4. Profile survives daemon restart, reboot, and GUI close; the daemon can re-hydrate the full profile document from its own store via `GET /profiles/<id>` (DEC-175)
 
@@ -185,6 +189,6 @@ The daemon enforces a single thermal safety rule (non-negotiable, not configurab
 - **Fallback**: Force 40% PWM (OpenFan + hwmon) if no CPU sensor is reachable for 5 consecutive poll cycles
 - **Visibility**: `GET /status` reports `thermal_state` (`normal` / `recovery` / `emergency` / `no_sensor_fallback`); the GUI has no fan control to pause and only **shows** a poll-driven thermal-protection banner while protection is active (DEC-165, superseding the retired DEC-132 GUI stand-down)
 
-There are no per-header PWM floors. The daemon reports `min_pwm_percent: 0` for every hwmon header. Any safety-floor enforcement is the GUI's responsibility (curve validation, profile constraints) — the daemon never refuses a write on the basis of a per-header floor.
+There are no per-*header* PWM floors: the daemon reports `min_pwm_percent: 0` for every hwmon header. The **role-aware minimum** is different. The GUI *bakes* a role-aware default into each control's `LogicalControl.minimum_pct` (30% for CPU/pump-labelled members, 20% for chassis/openfan, 0% for GPU-only — DEC-095), and as of 2.0.0 the **daemon enforces and backstops** it (DEC-162): a profile whose pump/CPU control sets `minimum_pct` below the hard 30% floor (`HARD_PUMP_CPU_FLOOR_PCT`) is rejected with `400 validation_error` (`FLOOR_TOO_LOW`), and the profile engine independently re-clamps every eval tick (`member_effective_floor` → `max(minimum_pct, 30%)`). So floor enforcement is **not** purely the GUI's responsibility — the daemon does refuse and re-floor on the role-aware minimum.
 
 The thermal trigger/release thresholds are reported by `GET /diagnostics/hardware` in its thermal-safety section (`emergency_threshold_c`, `release_threshold_c`, plus `state` and `cpu_sensor_found`). They are **not** in `GET /capabilities`: the `limits` object there carries only `pwm_percent_min`, `pwm_percent_max`, and `openfan_stop_timeout_s`. The live override state is also surfaced as `thermal_state` in `GET /status`.

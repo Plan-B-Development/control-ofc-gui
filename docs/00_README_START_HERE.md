@@ -13,7 +13,7 @@ This pack is the **working source of truth** for building the Linux-first deskto
 6. `06_Settings_Spec.md`
 7. `07_Diagnostics_Spec.md`
 8. `08_API_Integration_Contract.md`
-9. `09_State_Model_Control_Loop_and_Lease_Behaviour.md`
+9. `09_State_Model_and_Control_Behaviour.md`
 10. `10_Demo_Mode_Spec.md`
 11. `11_Persistence_Config_and_File_Layout.md`
 12. `12_Implementation_Plan_and_Module_Structure.md`
