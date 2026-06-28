@@ -165,8 +165,12 @@ class TestFanTableHeaderTooltips:
         # Freshness moved from column 4 to column 5 after the Control method
         # column was added at index 2 (DIAGNOSTICS_REMEDIATION.md P1.2).
         tip = table.horizontalHeaderItem(5).toolTip()
-        assert "ok" in tip.lower()
+        assert "freshness" in tip.lower()
         assert "stale" in tip.lower()
+        # Thresholds must match FanReading.freshness() (2 s / 10 s), not the old
+        # 2-5 s / >5 s text the tooltip used to claim.
+        assert "2-10 s" in tip
+        assert ">10 s" in tip
 
 
 class TestFanTableCellTooltips:

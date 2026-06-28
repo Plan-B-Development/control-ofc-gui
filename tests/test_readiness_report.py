@@ -346,6 +346,20 @@ class TestComboArrow:
         assert "<svg" in content
         assert "#abcdef" in content  # colour is baked into the stroke
 
+    def test_svg_written_under_canonical_cache_dir(self, tmp_path, monkeypatch):
+        # Regression: theme.py used to hardcode ~/.cache/control-ofc-gui/,
+        # bypassing paths.cache_dir(). It must now agree with the one canonical
+        # cache dir (~/.cache/control-ofc/) so every cache consumer matches.
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        from control_ofc.paths import cache_dir
+        from control_ofc.ui.theme import combo_arrow_svg_path
+
+        path = combo_arrow_svg_path("#abcdef")
+        assert path is not None
+        assert Path(path).parent == cache_dir()
+        assert Path(path).parent == tmp_path / "control-ofc"
+        assert "control-ofc-gui" not in path
+
     def test_stylesheet_includes_down_arrow_rule(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
         from control_ofc.ui.theme import build_stylesheet, default_dark_theme

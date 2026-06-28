@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QSplitter, QTableWidget
 
-from control_ofc.api.models import ConnectionState, OperationMode
+from control_ofc.api.models import ConnectionState, FanReading, Freshness, OperationMode
 from control_ofc.services.app_state import AppState
 from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
 
@@ -66,3 +66,29 @@ def test_readiness_frame_not_in_fans_tab_but_on_page(qtbot):
     assert fans_tab.findChild(QFrame, "Diagnostics_Frame_hwReadiness") is None
     # ...but it does exist elsewhere on the page (the Troubleshooting tab).
     assert page.findChild(QFrame, "Diagnostics_Frame_hwReadiness") is not None
+
+
+def _fan_reading(age_ms: int) -> FanReading:
+    return FanReading(id="openfan:ch00", source="openfan", rpm=1200, age_ms=age_ms)
+
+
+def test_fan_reading_freshness_boundaries_are_2s_and_10s():
+    # Pins the real thresholds the Freshness tooltip must describe (2000/10000 ms).
+    assert _fan_reading(1999).freshness == Freshness.FRESH
+    assert _fan_reading(2000).freshness == Freshness.STALE
+    assert _fan_reading(9999).freshness == Freshness.STALE
+    assert _fan_reading(10000).freshness == Freshness.INVALID
+
+
+def test_fan_freshness_tooltip_matches_real_thresholds(qtbot):
+    # Regression: the Freshness-column tooltip used to claim "2-5 s / >5 s",
+    # contradicting FanReading.freshness() (2-10 s / >10 s).
+    page = _make_page(qtbot)
+    table = page.findChild(QTableWidget, "Diagnostics_Table_fans")
+    freshness_col = table.columnCount() - 1
+    tip = table.horizontalHeaderItem(freshness_col).toolTip()
+    assert "freshness" in tip.lower()
+    assert "2-10 s" in tip
+    assert ">10 s" in tip
+    assert "2-5 s" not in tip
+    assert ">5 s" not in tip
