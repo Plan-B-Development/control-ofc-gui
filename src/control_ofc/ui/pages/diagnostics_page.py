@@ -1691,7 +1691,7 @@ class DiagnosticsPage(QWidget):
                 "Hardware-measured fan speed in RPM.\n'—' means no tachometer or fan stopped.",
                 "Last PWM duty cycle commanded by the daemon (0-100%).\n"
                 "'—' means no command sent yet.",
-                "Data freshness: ok (<2 s), stale (2-5 s), invalid (>5 s or never updated)",
+                "Data freshness: fresh (<2 s), stale (2-10 s), invalid (>10 s or never updated)",
             ],
         )
         fan_pane_layout.addWidget(self._fan_table, 1)

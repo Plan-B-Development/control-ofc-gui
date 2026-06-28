@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -499,13 +498,15 @@ def combo_arrow_svg_path(color: str) -> str | None:
         'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
     )
     try:
-        cache_root = os.environ.get("XDG_CACHE_HOME") or os.path.join(
-            os.path.expanduser("~"), ".cache"
-        )
-        cache_dir = Path(cache_root) / "control-ofc-gui"
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        # Use the canonical XDG cache dir (~/.cache/control-ofc/) from the paths
+        # module rather than a hardcoded "-gui" variant, so every cache consumer
+        # agrees on one location (DEC-113).
+        from control_ofc.paths import cache_dir
+
+        arrow_dir = cache_dir()
+        arrow_dir.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha1(color.encode("utf-8")).hexdigest()[:12]
-        path = cache_dir / f"combo-arrow-{digest}.svg"
+        path = arrow_dir / f"combo-arrow-{digest}.svg"
         if not path.exists() or path.read_text(encoding="utf-8") != svg:
             path.write_text(svg, encoding="utf-8")
         # Forward slashes only — Qt stylesheet url() wants them on every OS.

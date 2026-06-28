@@ -196,13 +196,41 @@ class TestFieldViolations:
     def test_parses_from_details(self):
         details = {
             "field_violations": [
-                {"field": "minimum_pct", "reason": "FLOOR_TOO_LOW", "description": "pump < 30%"}
+                {
+                    "field": "minimum_pct",
+                    "reason": "FLOOR_TOO_LOW",
+                    "description": "pump < 30%",
+                    "severity": "error",
+                }
             ]
         }
         violations = parse_field_violations(details)
         assert len(violations) == 1
         assert violations[0].field == "minimum_pct"
         assert violations[0].reason == "FLOOR_TOO_LOW"
+        assert violations[0].severity == "error"
+
+    def test_parses_warning_severity(self):
+        # Regression: the daemon sends a `severity` tier (DEC-160) and it must
+        # survive parsing — it used to be silently dropped by _filter_fields.
+        details = {
+            "field_violations": [
+                {
+                    "field": "controls[0].sensor_id",
+                    "reason": "UNKNOWN_SENSOR",
+                    "description": "sensor not present on this machine",
+                    "severity": "warning",
+                }
+            ]
+        }
+        violations = parse_field_violations(details)
+        assert violations[0].severity == "warning"
+
+    def test_severity_defaults_to_error_when_omitted(self):
+        # Older daemons omit `severity`; a 400-rejection violation defaults to error.
+        details = {"field_violations": [{"field": "x", "reason": "OUT_OF_RANGE"}]}
+        violations = parse_field_violations(details)
+        assert violations[0].severity == "error"
 
     def test_empty_for_non_violation_shapes(self):
         assert parse_field_violations(None) == []

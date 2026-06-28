@@ -452,11 +452,17 @@ class IdentifyResult:
 
 @dataclass
 class FieldViolation:
-    """One validation error from ``error.details.field_violations`` (DEC-160)."""
+    """One validation finding from ``error.details.field_violations`` (DEC-160).
+
+    ``severity`` is the daemon's lowercase ``"error"`` | ``"warning"`` tier
+    (DEC-160). It defaults to ``"error"`` for older daemons that omit it — a
+    violation surfaced on a 400 rejection is an error unless told otherwise.
+    """
 
     field: str = ""
     reason: str = ""
     description: str = ""
+    severity: str = "error"
 
 
 @dataclass
