@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.5.1] — 2026-07-01
+
+### Fixed
+- **Fan-table freshness tooltip corrected.** The Diagnostics ▸ Fans freshness-column tooltip claimed
+  "ok (<2 s), stale (2-5 s), invalid (>5 s)" but the underlying `FanReading.freshness()` bands are
+  2 s / 10 s. It now reads "fresh (<2 s), stale (2-10 s), invalid (>10 s or never updated)".
+- **Validation findings keep their `severity` tier (DEC-160).** A `FieldViolation` parsed from a
+  daemon `400` rejection was silently dropping the daemon's `severity` field; it is now preserved,
+  defaulting to `"error"` for older daemons that omit it.
+- **Combo-box arrow cache unified onto the canonical cache dir (DEC-113).** The theme's SVG arrow
+  cache wrote to a hardcoded `~/.cache/control-ofc-gui/` instead of the shared `paths.cache_dir()`
+  (`~/.cache/control-ofc/`), so every cache consumer now agrees on one location.
+
+Also corrects documentation-correctness drift across `docs/` and `manual/`. No API or contract
+change; pairs with `control-ofc-daemon` ≥ v2.3.0.
+
 ## [2.5.0] — 2026-06-27
 
 ### Added
