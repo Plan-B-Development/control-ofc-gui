@@ -263,6 +263,14 @@ class DaemonStatus:
     # temp while the radio is off). Omitted from the wire when empty (daemon
     # skips empty Vecs) → defaults to []. Display-only; surfaced in Diagnostics.
     unavailable_sensors: list[UnavailableSensor] = field(default_factory=list)
+    # DEC-194: the daemon's active profile, mirrored onto every /poll status so an
+    # external activation (CLI --profile, another client, systemd) shows within
+    # ~1 s instead of the slow /profile/active refresh. `None` (not "") when the
+    # key is ABSENT — an older daemon that never sends it, or genuinely no active
+    # profile — which is how the polling worker knows to leave the /profile/active
+    # fallback authoritative instead of clobbering it with a blank.
+    active_profile_id: str | None = None
+    active_profile_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -906,6 +914,11 @@ def parse_status(data: dict) -> DaemonStatus:
             for e in data.get("unavailable_sensors", [])
             if isinstance(e, dict)
         ],
+        # DEC-194: absent key (older daemon, or no active profile) → None, so the
+        # polling fast-path leaves the /profile/active fallback authoritative. A
+        # present value updates the active profile every poll.
+        active_profile_id=data.get("active_profile_id"),
+        active_profile_name=data.get("active_profile_name"),
     )
 
 

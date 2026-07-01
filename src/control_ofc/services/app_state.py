@@ -119,6 +119,14 @@ class AppState(QObject):
 
     def set_status(self, status: DaemonStatus) -> None:
         self.daemon_status = status
+        # DEC-194: reflect the daemon's active profile on every poll when it is
+        # mirrored onto the status, so an external activation shows within ~1 s
+        # instead of the slow /profile/active refresh. `None` means an older
+        # daemon or no active profile → leave the /profile/active fallback
+        # (_on_active_profile) authoritative rather than clobbering it. Cheap:
+        # set_active_profile is edge-triggered, so the signal fires only on change.
+        if status.active_profile_name is not None:
+            self.set_active_profile(status.active_profile_name)
         self.status_updated.emit(status)
 
     def set_sensors(self, sensors: list[SensorReading]) -> None:
