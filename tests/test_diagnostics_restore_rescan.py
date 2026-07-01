@@ -282,10 +282,9 @@ class _RestoreSyncClient:
 
 
 class TestGpuRestoreRun:
-    def test_success_renders_and_clears_session_flag(self, qtbot):
+    def test_success_renders_and_logs(self, qtbot):
         client = _RestoreSyncClient(GpuFanResetResult(gpu_id="0000:2d:00.0", reset=True))
         state = _page_state()
-        state.gui_wrote_gpu_fan = True
         page = _make_page(qtbot, state=state, client=client)
         page._gpu_verify_bdf = "0000:2d:00.0"
 
@@ -296,17 +295,14 @@ class TestGpuRestoreRun:
         assert not label.isHidden()
         assert "restored to automatic" in label.text().lower()
         assert label.property("class") == "SuccessChip"
-        # D5: the close-time auto-reset is now redundant.
-        assert state.gui_wrote_gpu_fan is False
         # The action lands in the event log.
         assert any(e.source == "gpu" and "restored" in e.message.lower() for e in page._diag.events)
         assert page._gpu_restore_btn.isEnabled()
         assert page._gpu_restore_btn.text() == "Restore GPU Fan to Automatic"
 
-    def test_daemon_noop_shows_warning_and_keeps_flag(self, qtbot):
+    def test_daemon_noop_shows_warning(self, qtbot):
         client = _RestoreSyncClient(GpuFanResetResult(gpu_id="0000:2d:00.0", reset=False))
         state = _page_state()
-        state.gui_wrote_gpu_fan = True
         page = _make_page(qtbot, state=state, client=client)
         page._gpu_verify_bdf = "0000:2d:00.0"
 
@@ -314,14 +310,12 @@ class TestGpuRestoreRun:
 
         label = page.findChild(QLabel, "Diagnostics_Label_restoreGpuResult")
         assert label.property("class") == "WarningChip"
-        assert state.gui_wrote_gpu_fan is True
 
     def test_daemon_error_shows_critical(self, qtbot):
         client = _RestoreSyncClient(
             error=DaemonError(code="hardware_unavailable", message="sysfs gone", status=503)
         )
         state = _page_state()
-        state.gui_wrote_gpu_fan = True
         page = _make_page(qtbot, state=state, client=client)
         page._gpu_verify_bdf = "0000:2d:00.0"
 
@@ -331,7 +325,6 @@ class TestGpuRestoreRun:
         assert not label.isHidden()
         assert "sysfs gone" in label.text()
         assert label.property("class") == "CriticalChip"
-        assert state.gui_wrote_gpu_fan is True  # nothing was restored
         assert page._gpu_restore_btn.isEnabled()  # never stuck disabled
         assert any(e.level == "error" and e.source == "gpu" for e in page._diag.events)
 

@@ -281,8 +281,8 @@ class PollingService(QObject):
         if was_connected is False:
             # DEC-146 P3-2: a true reconnect (not the first-ever connect)
             # invalidates session-scoped state — the daemon may have restarted
-            # (resetting GPU fans to auto on its way down), so session min/max
-            # and gui_wrote_gpu_fan describe a session that no longer exists.
+            # (resetting GPU fans to auto on its way down), so the session
+            # min/max describe a session that no longer exists.
             self._state.reset_session_stats()
         # DEC-111: emit a single event per disconnect→connect transition so
         # the event log reads "Daemon connected" rather than appending one
