@@ -44,8 +44,11 @@ def test_fixture_copies_are_byte_identical():
     """The GUI and daemon parity fixtures must be byte-identical (DEC-126).
 
     Asserting the same oracle on both sides only proves cross-stack parity if
-    both load the *same* bytes. Skipped in GUI-only CI; enforced locally and at
-    /release via sha256.
+    both load the *same* bytes. This test runs whenever both repos are checked
+    out as siblings — locally and during /release (which runs the pytest gate
+    with the daemon repo present). It is skipped in single-repo CI; that hole is
+    covered instead by each repo's `.github/workflows/parity.yml`, which checks
+    out the peer repo and byte-compares this fixture on any change to it.
     """
     assert FIXTURE.read_bytes() == _DAEMON_FIXTURE.read_bytes(), (
         "parity_vectors.json drifted between the GUI and daemon copies"

@@ -64,6 +64,36 @@ def test_graph_curve_interpolates_at_sensor_temp(qtbot):
     assert demo._fan_pwm["openfan:ch00"] == 60
 
 
+def test_mix_curve_falls_back_to_flat_output(qtbot):
+    """Demo mode uses the stateless interpolate() only; a Mix curve needs a
+    multi-curve resolution context it doesn't have, so it returns its
+    flat_output_pct (documented in CLAUDE.md + interpolate()'s docstring). Pin the
+    degenerate behavior so a regression (raise / 0 / wrong input) can't slip."""
+    curve = CurveConfig(id="c", type=CurveType.MIX, sensor_id="cpu", flat_output_pct=60.0)
+    ctrl = LogicalControl(
+        id="lc",
+        curve_id="c",
+        members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+    )
+    dc, demo = _setup(curve, ctrl)
+    dc.tick()
+    assert demo._fan_pwm["openfan:ch00"] == 60
+
+
+def test_sync_curve_falls_back_to_flat_output(qtbot):
+    """Demo mode Sync curves likewise return flat_output_pct (Sync mirrors another
+    control's output, which the stateless demo evaluator can't resolve)."""
+    curve = CurveConfig(id="c", type=CurveType.SYNC, sensor_id="cpu", flat_output_pct=45.0)
+    ctrl = LogicalControl(
+        id="lc",
+        curve_id="c",
+        members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+    )
+    dc, demo = _setup(curve, ctrl)
+    dc.tick()
+    assert demo._fan_pwm["openfan:ch00"] == 45
+
+
 def test_manual_pin_overrides_curve(qtbot):
     dc, demo = _setup(*_flat_control())
 
