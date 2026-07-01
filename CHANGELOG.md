@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.6.1] — 2026-07-01
 
 ### Internal
 - **Diagnostics de-god-objecting + dead-vestige cleanup (Cluster C).** Removed the
@@ -9,6 +9,8 @@
   `diagnostics_workers.py`; and moved the reclaim-severity helpers + the 353-line
   `_populate_hw_diagnostics` routine to `diagnostics_readiness.py`. `diagnostics_page.py`
   drops from 3984 to 3315 LOC. Pure structural change, no behaviour change.
+
+Internal refactor only — no behaviour or API change. Pairs with `control-ofc-daemon` ≥ v2.4.0.
 
 ## [2.6.0] — 2026-07-01
 
