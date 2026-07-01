@@ -1,0 +1,37 @@
+name: Parity oracle sync
+
+# The GUI demo-evaluator and the daemon control loop are pinned to a SHARED
+# golden file (parity_vectors.json, DEC-126) — one copy in each repo, required
+# byte-identical. Each repo's own tests validate against their OWN copy, and the
+# GUI's byte-identity check (test_evaluator_parity.py) skips when the daemon repo
+# isn't checked out — so a drift between the two copies is invisible to
+# single-repo CI. This closes that hole: whenever THIS repo's copy changes, check
+# out the peer repo and assert the two copies are byte-identical. Path-filtered,
+# so unrelated PRs never trigger it. control-ofc-daemon is public, so the default
+# token can read it.
+
+on:
+  pull_request:
+    paths: ['tests/fixtures/parity_vectors.json']
+  push:
+    branches: [main]
+    paths: ['tests/fixtures/parity_vectors.json']
+
+permissions:
+  contents: read
+
+jobs:
+  byte-identical:
+    name: parity_vectors.json byte-identical with daemon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: Plan-B-Development/control-ofc-daemon
+          path: _daemon
+      - name: Compare oracle copies
+        run: |
+          cmp tests/fixtures/parity_vectors.json \
+              _daemon/daemon/tests/fixtures/parity_vectors.json \
+            || { echo "::error::parity_vectors.json drifted between the GUI and daemon copies — they must be byte-identical (DEC-126). Update both in lockstep (daemon-first)."; exit 1; }

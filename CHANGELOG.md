@@ -10,6 +10,16 @@
   `GET /profile/active` fetch is retained as a fallback. Requires `control-ofc-daemon` ≥ v2.4.0; against
   an older daemon the previous ~5-minute refresh still applies.
 
+### Internal
+- **Parity-oracle drift guard (`.github/workflows/parity.yml`, DEC-195).** On any change to
+  `tests/fixtures/parity_vectors.json`, CI checks out the daemon repo and asserts the two
+  `parity_vectors.json` copies (DEC-126) are byte-identical. The `test_evaluator_parity.py` docstring was
+  corrected to describe the real enforcement (siblings locally / at `/release`, plus this CI check)
+  instead of a `/release` sha256 step that was never implemented.
+- **Demo-mode Mix/Sync regression tests.** Pin the documented "composite curves fall back to
+  `flat_output_pct` in demo mode" behavior (the stateless evaluator can't resolve Mix/Sync), previously
+  unpinned by any test.
+
 ## [2.5.1] — 2026-07-01
 
 ### Fixed
