@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.6.0] — 2026-07-01
 
 ### Added
 - **Active profile updates within ~1 s (DEC-194).** The daemon now mirrors the active profile onto the
@@ -19,6 +19,10 @@
 - **Demo-mode Mix/Sync regression tests.** Pin the documented "composite curves fall back to
   `flat_output_pct` in demo mode" behavior (the stateless evaluator can't resolve Mix/Sync), previously
   unpinned by any test.
+
+GUI-side consumption of the daemon's new poll field plus test/CI hardening; no GUI API change. Pairs
+with `control-ofc-daemon` ≥ v2.4.0 (the active-profile fast path requires it; against an older daemon
+the previous ~5-minute `/profile/active` refresh still applies).
 
 ## [2.5.1] — 2026-07-01
 
