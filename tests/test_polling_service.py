@@ -568,25 +568,21 @@ class TestPeriodicCapabilitiesRefresh:
 
 class TestSessionStatsResetOnReconnect:
     """A true reconnect resets session-scoped state (the daemon may have
-    restarted, invalidating session min/max and ``gui_wrote_gpu_fan``); the
-    very first connect must not reset."""
+    restarted, invalidating session min/max); the very first connect must
+    not reset."""
 
     def test_reconnect_resets_session_state(self):
         state = AppState()
-        state.gui_wrote_gpu_fan = True
         svc = _make_polling_service(state)
         svc._was_connected = False  # we were connected before and lost it
         with patch.object(state, "reset_session_stats", wraps=state.reset_session_stats) as spy:
             svc._on_connected()
         spy.assert_called_once()
-        assert state.gui_wrote_gpu_fan is False
 
     def test_first_connect_does_not_reset(self):
         state = AppState()
-        state.gui_wrote_gpu_fan = True  # set artificially to observe
         svc = _make_polling_service(state)
         svc._was_connected = None  # first-ever cycle
         with patch.object(state, "reset_session_stats", wraps=state.reset_session_stats) as spy:
             svc._on_connected()
         spy.assert_not_called()
-        assert state.gui_wrote_gpu_fan is True

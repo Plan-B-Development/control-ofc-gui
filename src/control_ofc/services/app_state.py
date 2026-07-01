@@ -80,12 +80,6 @@ class AppState(QObject):
         # /etc/sensors.d entry matches.
         self.board_info: BoardInfo = BoardInfo()
 
-        # Session flag — set to True when the GUI has successfully written
-        # a GPU fan PWM this session. Used by ``MainWindow.closeEvent`` to
-        # decide whether to reset the GPU fan on exit when no profile is
-        # active (M9). Reset to False by ``reset_session_stats``.
-        self.gui_wrote_gpu_fan: bool = False
-
         # Per-sensor session min/max tracker (resets on reconnect)
         self.session_stats = SessionStatsTracker()
 
@@ -138,7 +132,6 @@ class AppState(QObject):
     def reset_session_stats(self) -> None:
         """Reset session statistics (call on reconnect)."""
         self.session_stats.reset()
-        self.gui_wrote_gpu_fan = False
 
     def set_fans(self, fans: list[FanReading]) -> None:
         self.fans = fans
