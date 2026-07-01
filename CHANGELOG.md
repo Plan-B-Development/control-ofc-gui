@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Internal
+- **Diagnostics de-god-objecting + dead-vestige cleanup (Cluster C).** Removed the
+  dead `gui_wrote_gpu_fan` flag (never set since the 2.0.0 sole-writer cutover) and
+  its stale "M9" comments; extracted the 3 background QObject workers to
+  `diagnostics_workers.py`; and moved the reclaim-severity helpers + the 353-line
+  `_populate_hw_diagnostics` routine to `diagnostics_readiness.py`. `diagnostics_page.py`
+  drops from 3984 to 3315 LOC. Pure structural change, no behaviour change.
+
 ## [2.6.0] — 2026-07-01
 
 ### Added
