@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Active profile updates within ~1 s (DEC-194).** The daemon now mirrors the active profile onto the
+  `/status` + `/poll` surface (`active_profile_id` / `active_profile_name`), so a profile activated
+  *outside* this GUI — the `control-ofc` CLI, another GUI instance, or a systemd unit — is reflected in
+  the dashboard status strip within one poll instead of after up to ~5 minutes. The periodic
+  `GET /profile/active` fetch is retained as a fallback. Requires `control-ofc-daemon` ≥ v2.4.0; against
+  an older daemon the previous ~5-minute refresh still applies.
+
 ## [2.5.1] — 2026-07-01
 
 ### Fixed

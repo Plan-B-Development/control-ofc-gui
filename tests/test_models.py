@@ -217,6 +217,30 @@ def test_parse_status_missing_unavailable_sensors_defaults_to_empty():
     assert status.unavailable_sensors == []
 
 
+def test_parse_status_active_profile_present():
+    """DEC-194: when the daemon mirrors the active profile onto the status, the
+    id+name round-trip so the GUI reflects an external activation every poll."""
+    status = parse_status(
+        {
+            "overall_status": "ok",
+            "subsystems": [],
+            "active_profile_id": "silent",
+            "active_profile_name": "Silent",
+        }
+    )
+    assert status.active_profile_id == "silent"
+    assert status.active_profile_name == "Silent"
+
+
+def test_parse_status_active_profile_absent_is_none():
+    """DEC-194: an absent key (older daemon, or genuinely no active profile) parses
+    to None — NOT "" — so the polling fast-path leaves the /profile/active fallback
+    authoritative rather than clobbering the shown profile with a blank."""
+    status = parse_status({"overall_status": "ok", "subsystems": []})
+    assert status.active_profile_id is None
+    assert status.active_profile_name is None
+
+
 def test_parse_sensors():
     data = {
         "sensors": [

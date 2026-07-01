@@ -163,6 +163,7 @@ Use for:
 - daemon thermal override state
 - active manual overrides / fan-identify holds (DEC-163/166)
 - sensors discovered but currently unreadable (DEC-193)
+- the active profile id + name (DEC-194)
 
 This endpoint feeds:
 - header status strip
@@ -213,6 +214,17 @@ served) and the daemon suppresses its own per-tick read-failure logging for them
 consumes this **display-only**: Diagnostics ▸ Sensors shows a low-key panel + an "N unavailable"
 summary count, and these sensors do **not** raise a staleness warning (they are absent from the live
 sensor list). Older daemons omit the array — the GUI defaults it to empty.
+
+`active_profile_id` and `active_profile_name` (daemon ≥ 2.4.0, additive — `api_version` unchanged,
+**both omitted when no profile is active**) mirror the daemon's currently-active profile onto the
+`/status` + `/poll` surface (DEC-194). This lets the GUI reflect an *external* activation (another
+client, `--profile`, a systemd unit) within one 1 Hz poll instead of waiting up to the ~5-minute
+`GET /profile/active` refresh. The GUI reads them from every `/poll`: a present `active_profile_name`
+updates the shown profile immediately (edge-triggered), while an **absent** key — an older daemon that
+never sends it, *or* genuinely no active profile — is parsed as `None` and leaves the periodic
+`GET /profile/active` fetch authoritative (so the field is never misread as "no profile" against a
+pre-2.4.0 daemon). `GET /profile/active` remains the canonical query and the fallback. Note the fast
+path covers activation; external *deactivation* still reconciles on the periodic fallback.
 
 ### GET /sensors
 Use as the primary sensor snapshot source.

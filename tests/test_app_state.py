@@ -256,3 +256,29 @@ def test_set_active_profile(qtbot):
     with qtbot.waitSignal(state.active_profile_changed, timeout=1000):
         state.set_active_profile("Balanced")
     assert state.active_profile_name == "Balanced"
+
+
+def test_set_status_reflects_active_profile_fast_path(qtbot):
+    """DEC-194: a poll status carrying the active profile updates it that cycle
+    (edge-triggered), so an external activation shows within ~1 s instead of the
+    slow /profile/active refresh."""
+    from control_ofc.api.models import DaemonStatus
+
+    state = AppState()
+    status = DaemonStatus(active_profile_id="silent", active_profile_name="Silent")
+    with qtbot.waitSignal(state.active_profile_changed, timeout=1000) as blocker:
+        state.set_status(status)
+    assert blocker.args == ["Silent"]
+    assert state.active_profile_name == "Silent"
+
+
+def test_set_status_absent_active_profile_does_not_clobber(qtbot):
+    """DEC-194: a status WITHOUT the active-profile field (older daemon, or no
+    active profile) must not overwrite a name already set via the /profile/active
+    fallback — active_profile_name defaults to None, so the fast-path is skipped."""
+    from control_ofc.api.models import DaemonStatus
+
+    state = AppState()
+    state.set_active_profile("Balanced")  # e.g. established by the fallback fetch
+    state.set_status(DaemonStatus())  # poll status omits the field → default None
+    assert state.active_profile_name == "Balanced"
