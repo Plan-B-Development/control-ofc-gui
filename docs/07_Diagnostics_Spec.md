@@ -53,8 +53,10 @@ no sensors are reported.) The `V unavailable` bucket counts daemon-reported
 `unavailable_sensors[]` entries (DEC-193) and is sourced from the status poll,
 not the sensor table re-render.
 
-**14-column table** (all visible by default; the last column hosts a per-row
-"Details" button widget):
+**10-column table** (all visible by default; the last column hosts a per-row
+"Details" button widget). Row height is derived from a polished probe button
+at build time and re-derived on theme change, so the themed Details button is
+never vertically clipped at any font size (DEC-196):
 
 1. **Label** — sensor label reported by the kernel driver. Prefixed with `⚠ `
    for bogus-quirk sensors (e.g. ASUS NCT6776F CPUTIN) and `? ` for
@@ -64,26 +66,25 @@ not the sensor table re-render.
 3. **Source class** — pretty-printed classification from the sensor knowledge
    base (`CPU die`, `VRM`, `External probe`, `Board thermistor`, …). Unknown
    classes pass through verbatim for forward compatibility.
-4. **Kind** — coarse daemon classification (`cpu_temp` / `mb_temp` /
-   `gpu_temp` / `disk_temp`).
-5. **Source** — daemon source subsystem (`hwmon` / `amd_gpu`).
-6. **Chip** — kernel driver / chip name (`k10temp`, `nct6798`, …). Em-dash
+4. **Source** — daemon source subsystem (`hwmon` / `amd_gpu`).
+5. **Chip** — kernel driver / chip name (`k10temp`, `nct6798`, …). Em-dash
    when missing.
-7. **Driver type** — human label for `tempN_type` (`diode (3)`,
-   `thermistor (4)`, `AMD TSI (5)`, `Intel PECI (6)`, em-dash when absent).
-8. **Value (°C)** — current reading. When `crit_alarm` is asserted OR the
+6. **Value (°C)** — current reading. When `crit_alarm` is asserted OR the
    live value has crossed the reported `crit_c`, the cell appends
    `⚠ ALARM` in `status_crit` colour.
-9. **Trend** — smoothed change rate (`↑ +0.6 °C/s`); suppressed below
-   ±0.1 °C/s to match the existing tooltip rule.
-10. **Session min/max** — lowest and highest values observed since daemon
-    start (`21.0 - 78.5 °C`).
-11. **Age (ms)** — time since the daemon last polled this sensor.
-12. **Freshness** — `fresh`/`stale`/`invalid`, paint-coloured.
-13. **Confidence** — classification confidence (`High` / `Medium-High` /
-    `Medium` / `Low`).
-14. **Details** — per-row button opening the **Sensor Detail dialog**
+7. **Session min/max** — lowest and highest values observed since daemon
+   start (`21.0 - 78.5 °C`).
+8. **Age (ms)** — time since the daemon last polled this sensor.
+9. **Confidence** — classification confidence (`High` / `Medium-High` /
+   `Medium` / `Low`).
+10. **Details** — per-row button opening the **Sensor Detail dialog**
     (`Diagnostics_SensorDetail_Dialog`).
+
+DEC-196 removed the former Kind, Driver type, Trend, and Freshness columns
+(and the per-row stale/invalid warn/crit paint that rode on Freshness). All
+four fields remain in the Sensor Detail dialog, trend also in the every-cell
+hover tooltip, and staleness in aggregate as the header summary's `K stale`
+count. The Fans-tab freshness column and its colouring are unchanged.
 
 **Sensor Detail dialog** (DEC-117) — opens on Details-button click, row
 double-click, or right-click → "Open detail…". A `QTextBrowser` that mirrors

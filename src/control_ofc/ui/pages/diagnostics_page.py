@@ -85,7 +85,6 @@ from control_ofc.ui.sensor_knowledge import (
     classify_sensor,
     classify_sensor_with_overrides,
     format_sensor_tooltip,
-    temp_type_label,
 )
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
@@ -206,8 +205,10 @@ class _SensorColumn(NamedTuple):
     tooltip: str
 
 
-# DEC-117: the 14-column table for Diagnostics > Sensors. The "Details"
-# column at the end hosts a per-row button widget.
+# DEC-117: the expanded table for Diagnostics > Sensors; DEC-196 trimmed it
+# from 14 to 10 columns (Kind / Driver type / Trend / Freshness now live in
+# the detail dialog, the hover tooltip, and the summary line's stale count).
+# The "Details" column at the end hosts a per-row button widget.
 _SENSOR_COLUMNS: list[_SensorColumn] = [
     _SensorColumn("Label", "Sensor label reported by the kernel driver"),
     _SensorColumn(
@@ -219,10 +220,6 @@ _SENSOR_COLUMNS: list[_SensorColumn] = [
         "Source classification from the sensor knowledge base (cpu_die, vrm, board_thermistor, …)",
     ),
     _SensorColumn(
-        "Kind",
-        "Coarse daemon classification (CpuTemp / MbTemp / GpuTemp / DiskTemp)",
-    ),
-    _SensorColumn(
         "Source",
         "Daemon source subsystem (hwmon, amd_gpu)",
     ),
@@ -230,24 +227,12 @@ _SENSOR_COLUMNS: list[_SensorColumn] = [
         "Chip",
         "Kernel driver / chip providing the reading (k10temp, nct6798, etc.)",
     ),
-    _SensorColumn(
-        "Driver type",
-        "Sysfs tempN_type value (diode, thermistor, AMD TSI, Intel PECI)",
-    ),
     _SensorColumn("Value (°C)", "Current temperature in °C"),
-    _SensorColumn(
-        "Trend",
-        "Smoothed temperature change rate (suppressed below ±0.1 °C/s)",
-    ),
     _SensorColumn(
         "Session min/max",
         "Lowest and highest values observed since the daemon started",
     ),
     _SensorColumn("Age (ms)", "Time since the daemon last polled this sensor"),
-    _SensorColumn(
-        "Freshness",
-        "Data freshness: fresh (<2 s), stale (2-10 s), invalid (>10 s)",
-    ),
     _SensorColumn(
         "Confidence",
         "Classification confidence from the sensor knowledge base. "
@@ -645,7 +630,7 @@ class DiagnosticsPage(QWidget):
 
         ``Summary line (counts) \u2502 [Mirror hidden to dashboard]``
         ``------------------------------------------------------------``
-        ``13-column data table + 14th Details-button column``
+        ``9-column data table + 10th Details-button column``
         ``  (visible sensors, then a single toggle row, then optionally``
         ``  hidden sensors when the group is expanded)``
 
@@ -678,7 +663,7 @@ class DiagnosticsPage(QWidget):
         header_row.addWidget(self._mirror_hidden_btn)
         layout.addLayout(header_row)
 
-        # 14-column data table (13 data columns + Details button column).
+        # 10-column data table (9 data columns + Details button column).
         self._sensor_table = QTableWidget(0, len(_SENSOR_COLUMNS))
         self._sensor_table.setObjectName("Diagnostics_Table_sensors")
         self._sensor_table.setHorizontalHeaderLabels([c.header for c in _SENSOR_COLUMNS])
@@ -700,6 +685,11 @@ class DiagnosticsPage(QWidget):
             self._sensor_table,
             [c.tooltip for c in _SENSOR_COLUMNS],
         )
+
+        # DEC-196: rows must fit the per-row themed Details button, which the
+        # QSS pads past the style's default section size.
+        self._sensor_row_base_height = self._sensor_table.verticalHeader().defaultSectionSize()
+        self._apply_sensor_row_height()
 
         layout.addWidget(self._sensor_table)
 
@@ -1591,8 +1581,10 @@ class DiagnosticsPage(QWidget):
 
     @staticmethod
     def _apply_freshness_color(item: QTableWidgetItem, freshness: Freshness) -> None:
-        """Colour a freshness cell: warn when stale, crit when invalid, else
-        primary. Re-read from :func:`active_theme` so a theme switch repaints."""
+        """Colour a Fans-tab freshness cell: warn when stale, crit when
+        invalid, else primary. Re-read from :func:`active_theme` so a theme
+        switch repaints. (The fan table is the sole caller since DEC-196
+        removed the sensors-table Freshness column.)"""
         theme = active_theme()
         if freshness == Freshness.STALE:
             item.setForeground(QColor(theme.status_warn))
@@ -1616,6 +1608,24 @@ class DiagnosticsPage(QWidget):
             item = table.horizontalHeaderItem(col)
             if item:
                 item.setToolTip(tip)
+
+    def _apply_sensor_row_height(self) -> None:
+        """Fit sensor-table rows to the themed per-row Details button (DEC-196).
+
+        The theme QSS pads ``QPushButton`` past the style's default
+        vertical-header section size, and Qt clips embedded cell widgets to
+        the cell rect instead of growing the row. Measure a polished probe
+        button (app-level QSS applies to parentless widgets too) so the
+        height tracks the user's ``base_font_size_pt`` rather than a
+        hardcoded pixel value; never shrink below the style's own default.
+        Called at build time and again from :meth:`set_theme`, which the
+        main window invokes after re-applying the app stylesheet.
+        """
+        probe = QPushButton("Details")
+        probe.ensurePolished()
+        self._sensor_table.verticalHeader().setDefaultSectionSize(
+            max(self._sensor_row_base_height, probe.sizeHint().height() + 2)
+        )
 
     def _on_status(self, status: DaemonStatus) -> None:
         self._daemon_status_label.setText(f"Status: {status.overall_status}")
@@ -1806,10 +1816,8 @@ class DiagnosticsPage(QWidget):
             classification.source_class, classification.source_class
         )
         table.item(row, _SENSOR_COL_INDEX["Source class"]).setText(source_class_text)
-        table.item(row, _SENSOR_COL_INDEX["Kind"]).setText(s.kind or "—")
         table.item(row, _SENSOR_COL_INDEX["Source"]).setText(s.source or "—")
         table.item(row, _SENSOR_COL_INDEX["Chip"]).setText(s.chip_name or "—")
-        table.item(row, _SENSOR_COL_INDEX["Driver type"]).setText(temp_type_label(s.temp_type))
 
         # ── Value cell with optional alarm suffix ────────────────────
         value_text = f"{s.value_c:.1f}"
@@ -1819,16 +1827,6 @@ class DiagnosticsPage(QWidget):
         value_item = table.item(row, _SENSOR_COL_INDEX["Value (°C)"])
         value_item.setText(value_text)
 
-        # ── Trend cell ───────────────────────────────────────────────
-        rate = s.rate_c_per_s
-        if rate is not None and abs(rate) >= 0.1:
-            arrow = "↑" if rate > 0 else "↓"
-            sign = "+" if rate > 0 else ""
-            trend_text = f"{arrow} {sign}{rate:.1f} °C/s"
-        else:
-            trend_text = "—"
-        table.item(row, _SENSOR_COL_INDEX["Trend"]).setText(trend_text)
-
         # ── Session min/max ──────────────────────────────────────────
         if s.session_min_c is not None and s.session_max_c is not None:
             sess_text = f"{s.session_min_c:.1f} - {s.session_max_c:.1f} °C"
@@ -1837,10 +1835,6 @@ class DiagnosticsPage(QWidget):
         table.item(row, _SENSOR_COL_INDEX["Session min/max"]).setText(sess_text)
 
         table.item(row, _SENSOR_COL_INDEX["Age (ms)"]).setText(str(s.age_ms))
-
-        freshness_item = table.item(row, _SENSOR_COL_INDEX["Freshness"])
-        freshness_item.setText(s.freshness.value)
-        self._apply_freshness_color(freshness_item, s.freshness)
 
         confidence_text = _CONFIDENCE_DISPLAY.get(
             classification.confidence, classification.confidence
@@ -1854,19 +1848,13 @@ class DiagnosticsPage(QWidget):
             "Label",
             "Sensor ID",
             "Source class",
-            "Kind",
             "Source",
             "Chip",
-            "Driver type",
-            "Trend",
             "Session min/max",
             "Age (ms)",
             "Confidence",
         ):
             table.item(row, _SENSOR_COL_INDEX[col_name]).setForeground(QColor(row_color))
-        # Re-apply freshness colour after the loop to preserve its warn/crit
-        # paint (the loop above would clobber it otherwise).
-        self._apply_freshness_color(freshness_item, s.freshness)
 
         # Quirk / alarm chips override the row colour on the Label / Value
         # cells so they stand out even in a dimmed hidden row.
@@ -3070,15 +3058,19 @@ class DiagnosticsPage(QWidget):
         """Force a re-render of theme-coloured cells after a theme change.
 
         Sensor and fan tables are repainted from the latest cached readings
-        so the freshness column foreground colours pick up the new
-        ``status_warn`` / ``status_crit`` / ``text_primary`` values from
-        :func:`active_theme` (DEC-109). The reclaim-count card depends on
-        ``reclaim_severity_color`` and is refreshed by re-populating from
-        the cached hardware diagnostics result if one has been fetched.
+        so the fan table's freshness colours and the sensor table's
+        dim/quirk/alarm foregrounds pick up the new ``status_warn`` /
+        ``status_crit`` / ``text_primary`` values from :func:`active_theme`
+        (DEC-109). Sensor-table row heights are re-derived because a
+        font-size change resizes the per-row Details buttons (DEC-196).
+        The reclaim-count card depends on ``reclaim_severity_color`` and is
+        refreshed by re-populating from the cached hardware diagnostics
+        result if one has been fetched.
 
         DEC-111: also repaint the event-log severity column so a theme
         switch updates the per-row Info/Warning/Error colours.
         """
+        self._apply_sensor_row_height()
         if self._state is not None:
             if self._state.sensors:
                 self._on_sensors(self._state.sensors)

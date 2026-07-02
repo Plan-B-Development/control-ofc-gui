@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.7.0] — 2026-07-02
+
+### Changed
+- **Diagnostics ▸ Sensors table slimmed from 14 to 10 columns (DEC-196).** The Kind,
+  Driver type, Trend, and Freshness columns are removed, along with the per-row
+  yellow/red stale/invalid paint that rode on Freshness. All four fields stay
+  reachable: the per-row Details dialog shows every one, the hover tooltip carries
+  the trend, and the header summary keeps the aggregate `K stale` count. The Fans
+  tab freshness column and its colouring are unchanged.
+
+### Fixed
+- **Diagnostics ▸ Sensors rows no longer clip the per-row "Details" button.** Row
+  height is derived from a polished probe button (the theme QSS pads buttons past
+  the style's default row height) at build time and re-derived on theme change, so
+  it tracks the user's font-size setting instead of hard-coding pixels.
+
+GUI-only — no daemon or API change. Pairs with `control-ofc-daemon` ≥ v2.4.0.
+
 ## [2.6.2] — 2026-07-02
 
 ### Fixed

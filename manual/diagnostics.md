@@ -36,26 +36,22 @@ Two information cards:
 
 ![Diagnostics — Sensors Tab](../screenshots/auto/07_diagnostics_sensors.png)
 
-A 14-column diagnostic table of every temperature sensor reported by the daemon. A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · U unavailable · M hidden`.
+A 10-column diagnostic table of every temperature sensor reported by the daemon. A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · U unavailable · M hidden`.
 
 | Column | Meaning |
 |--------|---------|
 | **Label** | Sensor label reported by the kernel driver (e.g., "Tctl", "edge"). Prefixed with `⚠ ` for a sensor with a documented bogus-quirk (e.g. the ASUS NCT6776F `CPUTIN` case) and `? ` for a low-confidence classification |
 | **Sensor ID** | Stable identifier (e.g. `hwmon:<chip>:<dev_id>:<label>`) — the id profiles use to bind a curve to this sensor |
 | **Source class** | Fine-grained classification from the sensor knowledge base (`cpu_die`, `vrm`, `board_thermistor`, `gpu_package`, …) |
-| **Kind** | Coarse daemon classification: CpuTemp, GpuTemp, MbTemp, or DiskTemp |
 | **Source** | Daemon source subsystem: `hwmon`, `amd_gpu`, or `intel_gpu` |
 | **Chip** | Kernel driver / chip providing the reading (e.g., `k10temp`, `nct6798`, `amdgpu`, `xe`) |
-| **Driver type** | The sysfs `tempN_type` (diode, thermistor, AMD TSI, Intel PECI) where the driver exposes it |
 | **Value (°C)** | Current temperature in °C. Suffixed `⚠ ALARM` when the daemon reports a critical alarm or the live value has crossed the reported critical threshold |
-| **Trend** | Smoothed rate of change, suppressed below ±0.1 °C/s |
 | **Session min/max** | Lowest and highest values observed since the daemon started |
 | **Age (ms)** | Time since the daemon last read this sensor |
-| **Freshness** | "fresh" (under 2s), "stale" (2-10s), or "invalid" (over 10s) |
 | **Confidence** | How certain the GUI is about how to interpret this sensor: `high`, `medium`, `low`, or `unknown`. Lower confidence usually means the sensor's chip has known quirks (e.g., the ASUS NCT6776F `CPUTIN` reading is a board temperature, not the CPU) |
 | **Details** | A per-row button that opens the **Sensor Detail** dialog |
 
-Stale sensors appear in yellow. Invalid sensors appear in red. This helps identify hardware that has stopped responding.
+The `K stale` count on the header summary line is the quick check for sensors that have stopped updating. Per-sensor kind, driver type, trend, and freshness are not table columns — open the row's **Details** dialog to see them (trend also appears in the hover tooltip).
 
 ### Unavailable sensors
 
@@ -88,7 +84,7 @@ The fan table has the following columns:
 | **Control method** | How this fan can be controlled: `openfan`, `hwmon` (with PWM-only or full read/write), `amd_gpu` (PMFW or legacy pwm1), `read_only`, or `unknown`. Read-only entries cannot be commanded — **Test PWM Control** on the [Troubleshooting](#troubleshooting-tab) tab explains why |
 | **RPM** | Hardware-measured speed (dash if not available). Writable hwmon headers reading 0 RPM are annotated `(no fan detected)` so you don't accidentally assign a curve to an empty header |
 | **PWM (%)** | Last commanded speed percentage (dash if not set) |
-| **Freshness** | Data freshness indicator, same as the sensors table |
+| **Freshness** | "fresh" (under 2 s), "stale" (2-10 s, shown in yellow), or "invalid" (over 10 s, shown in red) |
 
 Hover any cell for a tooltip explaining what the value means and, for read-only fans, why the GUI cannot drive them.
 

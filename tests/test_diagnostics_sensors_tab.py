@@ -1,8 +1,9 @@
 """Tests for the DEC-117 Diagnostics > Sensors tab expansion.
 
-Covers the new 14-column layout, header summary line, inline quirk chips,
-hidden-group toggle behaviour, per-row Details button + double-click +
-right-click menu, and the AppSettings persistence of the hide-list.
+Covers the 10-column layout (DEC-117 as trimmed by DEC-196), header summary
+line, inline quirk chips, hidden-group toggle behaviour, per-row Details
+button + double-click + right-click menu (including the DEC-196 row-height
+fit), and the AppSettings persistence of the hide-list.
 
 Existing classification / column-index tests live in
 ``test_diagnostics_enumeration.py`` — those use the new ``_col(page, …)``
@@ -295,23 +296,10 @@ class TestAlarmChip:
         assert "ALARM" not in value_text
 
 
-# ─── Trend + session-range cells ─────────────────────────────────────────
+# ─── Session-range cells ─────────────────────────────────────────────────
 
 
-class TestTrendAndSessionCells:
-    def test_trend_renders_arrow_and_rate(self, qtbot):
-        page, _ = _make_page(qtbot)
-        page._on_sensors([_sensor("hwmon:k10temp:Tctl", rate_c_per_s=0.6)])
-        trend_text = page._sensor_table.item(0, _SENSOR_COL_INDEX["Trend"]).text()
-        assert trend_text.startswith("↑")
-        assert "0.6" in trend_text
-
-    def test_trend_suppresses_quiet_rate(self, qtbot):
-        page, _ = _make_page(qtbot)
-        page._on_sensors([_sensor("hwmon:k10temp:Tctl", rate_c_per_s=0.05)])
-        # Below 0.1 °C/s → em-dash (matches the tooltip suppression rule).
-        assert page._sensor_table.item(0, _SENSOR_COL_INDEX["Trend"]).text() == "—"
-
+class TestSessionRangeCells:
     def test_session_range_formatted_with_min_max(self, qtbot):
         page, _ = _make_page(qtbot)
         page._on_sensors([_sensor("hwmon:k10temp:Tctl", session_min_c=20.0, session_max_c=78.5)])
@@ -323,24 +311,6 @@ class TestTrendAndSessionCells:
         page, _ = _make_page(qtbot)
         page._on_sensors([_sensor("hwmon:k10temp:Tctl")])
         assert page._sensor_table.item(0, _SENSOR_COL_INDEX["Session min/max"]).text() == "—"
-
-
-# ─── Driver type column ──────────────────────────────────────────────────
-
-
-class TestDriverTypeColumn:
-    def test_amd_tsi_temp_type_renders_label(self, qtbot):
-        page, _ = _make_page(qtbot)
-        page._on_sensors(
-            [_sensor("hwmon:nct6683:AMD TSI Addr 98h", chip_name="nct6683", temp_type=5)]
-        )
-        text = page._sensor_table.item(0, _SENSOR_COL_INDEX["Driver type"]).text()
-        assert "AMD TSI" in text
-
-    def test_missing_temp_type_renders_emdash(self, qtbot):
-        page, _ = _make_page(qtbot)
-        page._on_sensors([_sensor("hwmon:k10temp:Tctl", temp_type=None)])
-        assert page._sensor_table.item(0, _SENSOR_COL_INDEX["Driver type"]).text() == "—"
 
 
 # ─── Hidden-group + Mirror to dashboard ──────────────────────────────────
@@ -419,6 +389,26 @@ class TestRowInteractions:
         widget = page._sensor_table.cellWidget(0, _SENSOR_COL_INDEX["Details"])
         assert widget is not None
         assert widget.text() == "Details"
+
+    def test_row_height_fits_details_button_under_theme_qss(self, qtbot):
+        """DEC-196: the theme QSS pads QPushButton past the style's default
+        row height, which used to vertically clip the per-row Details
+        buttons. Build the page with the real stylesheet active and assert
+        rows are tall enough for the button's themed size hint."""
+        from PySide6.QtWidgets import QApplication
+
+        from control_ofc.ui.theme import active_theme, build_stylesheet
+
+        app = QApplication.instance()
+        old = app.styleSheet()
+        app.setStyleSheet(build_stylesheet(active_theme()))
+        try:
+            page, _ = _make_page(qtbot)
+            page._on_sensors([_sensor("hwmon:k10temp:Tctl")])
+            btn = page._sensor_table.cellWidget(0, _SENSOR_COL_INDEX["Details"])
+            assert page._sensor_table.rowHeight(0) >= btn.sizeHint().height()
+        finally:
+            app.setStyleSheet(old)
 
     def test_double_click_opens_sensor_detail_dialog(self, qtbot):
         page, _ = _make_page(qtbot)

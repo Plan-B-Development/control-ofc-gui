@@ -407,12 +407,11 @@ class TestOverviewHwmonRuntimeReality:
 def _col(page, header_text: str) -> int:
     """Resolve a Sensors-table column index by header text.
 
-    DEC-117 expanded the table from 7→14 columns and made the order
-    (Label · Sensor ID · Source class · Kind · Source · Chip · Driver
-    type · Value · Trend · Session min/max · Age · Freshness · Confidence
-    · Details). Looking columns up by name keeps these tests stable
-    against future re-ordering and removes the hard-coded indexes that
-    were the audit's red flag.
+    DEC-117 expanded the table from 7→14 columns; DEC-196 trimmed it to 10
+    (Label · Sensor ID · Source class · Source · Chip · Value ·
+    Session min/max · Age · Confidence · Details). Looking columns up by
+    name keeps these tests stable against future re-ordering and removes
+    the hard-coded indexes that were the audit's red flag.
     """
     table = page._sensor_table
     for i in range(table.columnCount()):
@@ -423,17 +422,18 @@ def _col(page, header_text: str) -> int:
 
 
 class TestSensorsTableStructure:
-    def test_sensors_table_has_dec117_columns(self, qtbot):
-        """DEC-117: the Sensors table grew from 7 → 14 columns (13 data
-        + 1 Details-button column). Locks the columnCount so a future
-        accidental removal of a column blocks before regressing the UX."""
+    def test_sensors_table_has_dec196_columns(self, qtbot):
+        """DEC-196 trimmed the DEC-117 table from 14 → 10 columns (9 data
+        + 1 Details-button column). Locks the columnCount so an accidental
+        column addition or removal blocks before regressing the UX."""
         page, _ = _make_page(qtbot)
-        assert page._sensor_table.columnCount() == 14
+        assert page._sensor_table.columnCount() == 10
 
     def test_required_columns_present(self, qtbot):
-        """Each named column from DEC-117 §A1 is present in the header row.
-        Locks the *set* of headers — order is asserted separately so a
-        deliberate re-ordering doesn't fail the wrong test."""
+        """Each named DEC-117 column that survived the DEC-196 trim is
+        present in the header row, and the four removed ones stay gone.
+        Locks the *set* of headers so a deliberate re-ordering doesn't
+        fail this test."""
         page, _ = _make_page(qtbot)
         headers = [
             page._sensor_table.horizontalHeaderItem(i).text()
@@ -443,19 +443,19 @@ class TestSensorsTableStructure:
             "Label",
             "Sensor ID",
             "Source class",
-            "Kind",
             "Source",
             "Chip",
-            "Driver type",
             "Value (°C)",
-            "Trend",
             "Session min/max",
             "Age (ms)",
-            "Freshness",
             "Confidence",
             "Details",
         }
         assert expected.issubset(set(headers))
+        # DEC-196 regression pin: these moved to the detail dialog / hover
+        # tooltip / summary stale count — they must not silently return.
+        removed = {"Kind", "Driver type", "Trend", "Freshness"}
+        assert removed.isdisjoint(set(headers))
 
 
 class TestSensorClassification:
