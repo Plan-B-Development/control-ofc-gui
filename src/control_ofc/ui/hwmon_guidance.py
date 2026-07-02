@@ -327,9 +327,9 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_url="https://github.com/frankcrawford/it87",
         bios_tips=[
             "Gigabyte boards: enable 'Full Speed' fan mode in BIOS.",
-            "If 'Full Speed' is unavailable, configure a degenerate BIOS fan curve: "
-            "set all 7 points to PWM 40 / Temp 0-90-90-90-90-90-90 with the final "
-            "point at PWM 100 / Temp 90. This disables the EC's own curve evaluation.",
+            "If 'Full Speed' is unavailable, flatten the BIOS fan curve so the EC "
+            "stops evaluating it: set every curve vector's temperature to 90 (the "
+            "IT8689E workaround documented in frankcrawford/it87 issue #96).",
             "ACPI conflicts: keep the driver current first — 2026-03+ builds default "
             "MMIO on, which sidesteps the port claim on this chip generation "
             "(frankcrawford/it87 issue #92). If the bind still fails, prefer the "
@@ -337,16 +337,18 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "'acpi_enforce_resources=lax' kernel parameter.",
         ],
         known_issues=[
-            "Out-of-tree driver required for fan control. Mainline gains IT8689E "
-            "*sensor* support in kernel 7.1 (commit 66b8eaf, 2026-03-31) — no "
-            "released stable kernel ships it yet, and Gigabyte fan control still "
-            "needs the DKMS build.",
+            "Mainline it87 gained IT8689E fan *control* — six PWM channels, "
+            "FEAT_FANCTL_ONOFF — in kernel 7.1 (commit 66b8eaf, merged 2026-03-31; "
+            "7.1 released 2026-06-14), not just sensors. The DKMS build is still "
+            "recommended: 7.1 is very new (common kernels are the 6.12 / 6.18 LTS "
+            "lines) and it also covers the board-specific quirks below.",
             "IT8689E Rev 1 (e.g. X670E Aorus Master): the EC's vector-curve control "
             "overrides the chip's manual-mode register, so PWM writes are silently "
-            "accepted with zero effect while a normal BIOS curve is active. Upstream "
-            "now documents a working fix (frankcrawford/it87 issue #96, 2026-03): a "
-            "flat 7-point BIOS curve (PWM 40/40/40/40/40/40 with the final point at "
-            "100) restores driver manual control.",
+            "accepted with zero effect while a normal BIOS curve is active. The "
+            "maintainer's documented stopgap (frankcrawford/it87 issue #96) is to set "
+            "every IT8689E fan-curve vector's temperature to 90 — but that only "
+            "reliably restored the CPU-fan header; other headers still need the "
+            "pending driver-side fix (frankcrawford/it87 PR #114).",
             "IT8689E Rev 2 (e.g. B650 Eagle AX): BIOS overrides PWM values unless "
             "'Full Speed' or degenerate fan curve is configured.",
             "Some Gigabyte boards have a separate fan-control chip — Linux can read "
@@ -393,8 +395,8 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_url="https://github.com/frankcrawford/it87",
         notes=(
             "ITE IT8625E — requires out-of-tree driver. Mainlining is in "
-            "flight (lore v2 patch series) but not landed as of 2026-06 "
-            "(kernel 7.1-rc)."
+            "flight (lore v2 patch series) but not landed as of kernel 7.1 / "
+            "7.2-rc1 (July 2026)."
         ),
     ),
     # DEC-144: IT87952E — the secondary Super-I/O on dual-chip Gigabyte
@@ -452,7 +454,7 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         ),
     ),
     # DEC-144: IT8622E is in the mainline it87 enum (verified against
-    # torvalds/linux drivers/hwmon/it87.c v6.17 `enum chips`) — no DKMS
+    # torvalds/linux drivers/hwmon/it87.c v7.1 / 7.2-rc1 `enum chips`) — no DKMS
     # build required. Listed so boards with this chip resolve to honest
     # "built-in" guidance instead of the generic it87 fallthrough.
     ChipGuidance(
@@ -463,35 +465,34 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_url="https://www.kernel.org/doc/html/latest/hwmon/it87.html",
         notes="ITE IT8622E — supported in the mainline kernel it87 driver.",
     ),
-    # DEC-106 (D4.A), refreshed DEC-144: IT8883 is a new ITE chip that
-    # ships on Gigabyte X870 AORUS STEALTH ICE as the secondary Super-I/O
-    # (alongside IT8696E; dmesg shows DEVIDs 0x8696 + 0x8883). Re-checked
-    # 2026-06: still NO Linux driver — zero matches in frankcrawford/it87
-    # master and mainline `it87`. This entry exists so the GUI can name
-    # the chip and explain the situation rather than rendering "Unknown
-    # chip" and leaving users guessing. Tracking: frankcrawford/it87
-    # issue #81 (open). Re-evaluate when a driver ships.
+    # DEC-106 (D4.A), corrected 2026-07 (verified against frankcrawford/it87
+    # issues #81 + #70): there is NO "IT8883" chip. Device-ID 0x8883 is what a
+    # secondary Super-I/O reports when it is left stuck in configuration mode
+    # (commonly by sensors-detect); a clean read is 0x8695 (IT87952E early ID).
+    # On the X870 AORUS STEALTH ICE the real pair is IT8696E + IT87952E, both
+    # controllable once the driver is loaded with mmio=on. This entry survives
+    # so a lookup on a bogus "it8883" chip name explains the situation.
     ChipGuidance(
         chip_prefix="it8883",
-        driver_name="(none — chip unsupported on Linux as of 2026-06)",
+        driver_name="it87",
         in_mainline=False,
-        driver_package="(no driver available)",
+        driver_package="it87-dkms-git (AUR) — load with mmio=on",
         driver_url="https://github.com/frankcrawford/it87/issues/81",
         known_issues=[
-            "No Linux driver currently supports this chip — fan headers "
-            "and sensors wired through IT8883 are not visible to Linux.",
-            "Some Gigabyte X870 boards (X870 AORUS STEALTH ICE) pair this "
-            "chip as a secondary alongside IT8696E. On current (2026-04+) "
-            "it87-dkms-git builds the primary IT8696E headers — including "
-            "ones that previously refused control — are fully controllable; "
-            "IT8883-attached headers (e.g. the water-pump header) remain "
-            "unreachable.",
-            "Tracking upstream: frankcrawford/it87 issue #81 (open as of 2026-06).",
+            "There is no 'IT8883' chip: device-ID 0x8883 is what a secondary "
+            "Super-I/O reports when left in configuration mode (commonly after "
+            "running sensors-detect). A clean read is 0x8695 (IT87952E).",
+            "Seen on Gigabyte X870 AORUS STEALTH ICE, whose real chips are "
+            "IT8696E + IT87952E — both controllable once the driver is loaded "
+            "with mmio=on (the merged H2RAM/MMIO path).",
+            "Fix: install a current it87-dkms-git build, load it with mmio=on, "
+            "and avoid running sensors-detect mid-session (frankcrawford/it87 "
+            "issue #81).",
         ],
         notes=(
-            "ITE IT8883 — preliminary entry (DEC-106 / D4.A, refreshed "
-            "DEC-144). No driver available as of 2026-06. Users with this "
-            "chip should not expect Linux fan control on its headers."
+            "ITE 0x8883 — not a real chip; the stuck-in-config-mode symptom of "
+            "a secondary Super-I/O (DEC-106, corrected 2026-07 per issues "
+            "#81/#70). Recover with mmio=on."
         ),
     ),
     ChipGuidance(
@@ -644,15 +645,16 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "IT8689E Rev 1 (e.g. X670E Aorus Master): the EC's vector-curve "
             "control overrides the chip's manual-mode register, so PWM writes "
             "are silently accepted with zero hardware effect while a normal "
-            "BIOS fan curve is active. Upstream now documents a working fix "
-            "(frankcrawford/it87 issue #96, 2026-03): configure a FLAT "
-            "7-point BIOS curve — PWM 40/40/40/40/40/40 with the final point "
-            "at 100 — and driver manual control works again.",
+            "BIOS fan curve is active. The maintainer's documented stopgap "
+            "(frankcrawford/it87 issue #96) is to flatten the BIOS curve by "
+            "setting every fan-curve vector's temperature to 90 — but this "
+            "only reliably restored the CPU-fan header; other headers await "
+            "the driver-side fix (frankcrawford/it87 PR #114).",
             "IT8689E Rev 2 (e.g. B650 Eagle AX): BIOS overrides unless a "
             "degenerate fan curve is configured in BIOS Smart Fan settings.",
-            "Workaround: In BIOS → Smart Fan 6, set all temperature points to "
-            "the same value (e.g. 40°C) and all duty/PWM to 0% except the "
-            "final point at 100%. This effectively disables the EC curve.",
+            "Workaround: In BIOS → Smart Fan 6, set every temperature point to "
+            "90 (final point pinned to 100% PWM as a safety backstop). This "
+            "flattens the EC curve; treat it as partial (see above).",
         ],
     ),
     VendorQuirk(
@@ -1005,15 +1007,15 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         severity="info",
         summary="MSI AM5 800-series + nct6687d — msi_alt1 auto-allowlist",
         details=[
-            "nct6687d v2.x ships an auto-enabled board allowlist covering "
+            "Current nct6687d builds ship an auto-enabled board allowlist covering "
             "33 MSI AM5 boards across B840 / B850 / X870 / Z890 (see "
-            "Fred78290/nct6687d source: `nct6687.c::msi_alt1_dmi_table`). "
+            "Fred78290/nct6687d source: `nct6687.c::nct6687_msi_alt_boards[]`). "
             "On listed boards the driver enables the alt1 register layout "
             "automatically — no module parameter required.",
             "If your MSI X870/B850 board is NOT on the allowlist and "
             "system fans don't respond to PWM writes, try loading with "
-            "msi_alt1=1 (or msi_fan_brute_force=1 on older driver builds): "
-            "`sudo modprobe -r nct6687 && sudo modprobe nct6687 msi_alt1=1`. "
+            "fan_config=msi_alt1 (or msi_fan_brute_force=1 on older driver builds): "
+            "`sudo modprobe -r nct6687 && sudo modprobe nct6687 fan_config=msi_alt1`. "
             "Persist via /etc/modprobe.d/nct6687.conf.",
             "Per the same upstream source, `msi_fan_brute_force=1` remains "
             "the manual override for unlisted boards.",
@@ -1111,21 +1113,18 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
     VendorQuirk(
         vendor_pattern="gigabyte",
         chip_prefix="it8696",
-        severity="medium",
-        summary="Gigabyte X870 AORUS STEALTH ICE + IT8883 — unsupported secondary chip",
+        severity="low",
+        summary="Gigabyte X870 AORUS STEALTH ICE — secondary Super-I/O, load with mmio=on",
         details=[
-            "Gigabyte X870 AORUS STEALTH ICE pairs the primary IT8696E "
-            "(supported via it87-dkms-git) with a SECONDARY IT8883 chip "
-            "that has NO Linux driver as of 2026-06 (dmesg shows DEVIDs "
-            "0x8696 + 0x8883). Fan headers wired through IT8883 are "
-            "uncontrollable from Linux.",
-            "On current (2026-04+) it87-dkms-git builds the primary "
-            "IT8696E headers — including ones that previously refused "
-            "control on this board — are fully controllable.",
-            "Tracking upstream: frankcrawford/it87 issue #81 (open).",
-            "Practical advice: use only the primary-chip fan headers, or "
-            "attach IT8883-wired fans (e.g. the water pump) to an "
-            "OpenFanController / external controller.",
+            "X870 AORUS STEALTH ICE pairs the primary IT8696E with a secondary "
+            "IT87952E — both controllable via it87-dkms-git. There is no "
+            "'IT8883' chip.",
+            "If a utility (commonly sensors-detect) leaves the secondary "
+            "Super-I/O in config mode, its DEVID misreads as 0x8883; a clean "
+            "read is 0x8695 (IT87952E early ID).",
+            "Fix (frankcrawford/it87 issue #81): load a current build with "
+            "mmio=on (the merged H2RAM/MMIO path) and avoid running "
+            "sensors-detect mid-session — both chips are then fully controllable.",
         ],
     ),
     # ── DEC-144: B650 GAMING X AX V2 ACPI bind failure ──────────────
@@ -1212,7 +1211,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         platform="intel",
         summary="MSI Intel Z690/Z790 + NCT6687D (plain) — auto-detect, no msi_alt1",
         details=[
-            "Per Fred78290/nct6687d (nct6687.c::msi_alt1_dmi_table), "
+            "Per Fred78290/nct6687d (nct6687.c::nct6687_msi_alt_boards[]), "
             "the plain NCT6687D chip on MSI Intel Z690/Z790 boards "
             "(MAG MORTAR, MPG EDGE, MEG ACE, PRO-A) is auto-detected "
             "without `msi_alt1` — the default register mapping is "
@@ -1232,18 +1231,18 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         severity="high",
         platform="intel",
         board_pattern="Z890",
-        summary="MSI Z890 + NCT6687DR — needs msi_alt1 module parameter",
+        summary="MSI Z890 + NCT6687DR — needs fan_config=msi_alt1",
         details=[
             "MSI Z890 boards ship NCT6687DR (NCT6687D-Refresh). Per "
-            "Fred78290/nct6687d (nct6687.c::msi_alt1_dmi_table), the "
+            "Fred78290/nct6687d (nct6687.c::nct6687_msi_alt_boards[]), the "
             "alt1 register layout is required for correct PWM and "
-            "fan-tach register addressing. v2.x of the out-of-tree "
+            "fan-tach register addressing. Current builds of the out-of-tree "
             "driver auto-enables it on the Z890 allowlist.",
             "If your specific Z890 SKU is NOT yet on the upstream "
-            "allowlist, load the driver with msi_alt1=1: "
+            "allowlist, load the driver with fan_config=msi_alt1: "
             "`sudo modprobe -r nct6687 && sudo modprobe nct6687 "
-            "msi_alt1=1`. Persist via /etc/modprobe.d/nct6687.conf: "
-            "`options nct6687 msi_alt1=1`.",
+            "fan_config=msi_alt1`. Persist via /etc/modprobe.d/nct6687.conf: "
+            "`options nct6687 fan_config=msi_alt1`.",
             "Symptoms of msi_alt1 being needed-but-missing: PWM writes "
             "are accepted but fan RPM does not change, or fan-tach "
             "values read back as 0 / 65535. Check `dmesg | grep nct6687`.",
@@ -1569,10 +1568,11 @@ def verification_guidance(
                 "PWM writes were accepted but fan speed did not change. On Gigabyte "
                 "IT8689E Rev 1 boards (e.g. X670E Aorus Master), the EC's vector-curve "
                 "control overrides manual mode while a normal BIOS fan curve is active. "
-                "Fix: configure a FLAT 7-point BIOS curve (PWM 40/40/40/40/40/40 with "
-                "the final point at 100) — driver manual control then works "
-                "(frankcrawford/it87 issue #96). Alternatively use a different fan "
-                "header or an external fan controller."
+                "The maintainer's stopgap (frankcrawford/it87 issue #96) is to flatten "
+                "the BIOS curve by setting every vector's temperature to 90 — but this "
+                "only reliably restored the CPU-fan header; other headers await the "
+                "driver-side fix (frankcrawford/it87 PR #114). Meanwhile use a different "
+                "fan header or an external fan controller."
             )
         if "asrock" in vendor_lower and chip_lower.startswith("nct6"):
             return (

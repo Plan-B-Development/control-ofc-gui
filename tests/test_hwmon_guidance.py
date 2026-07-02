@@ -174,10 +174,12 @@ class TestNewChipEntries:
         assert g is not None
         assert any("X470" in issue or "stop" in issue for issue in g.known_issues)
 
-    def test_it8689_has_degenerate_curve_values(self):
+    def test_it8689_documents_temp_flatten_stopgap(self):
         g = lookup_chip_guidance("it8689")
         assert g is not None
-        assert any("40" in tip and "90" in tip for tip in g.bios_tips)
+        assert any("90" in tip for tip in g.bios_tips), (
+            "IT8689E guidance must document the temps-to-90 BIOS-curve stopgap"
+        )
 
     def test_it8689_has_ignore_resource_conflict_tip(self):
         g = lookup_chip_guidance("it8689")

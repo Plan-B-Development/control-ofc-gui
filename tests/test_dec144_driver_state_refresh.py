@@ -9,7 +9,8 @@ Locks in the four behavioural commitments of the refresh:
    remediation for the maintainer-confirmed MMIO regression (issue #106).
 3. New/updated chip knowledge: IT8622E (mainline), IT87952E (mainline
    enumeration ≥ 6.4, DKMS for dual-chip control), IT8689E Rev 1
-   (flat-curve fix replaces the "no software workaround" dead end).
+   (control mainline since 7.1; temps-to-90 partial stopgap, real fix
+   pending frankcrawford/it87 PR #114).
 4. New vendor quirk: Gigabyte B650 GAMING X AX V2 ACPI bind failure
    (issue #92) — AMD-platform + board-scoped.
 """
@@ -147,18 +148,20 @@ class TestChipKnowledgeUpdates:
         g = lookup_chip_guidance("it8689")
         assert g is not None
         flat = " ".join(g.known_issues)
-        assert "No known software workaround" not in flat, (
-            "DEC-144: the Rev 1 dead-end framing is obsolete — issue #96 "
-            "documents the BIOS flat-curve fix"
-        )
-        assert "manual control" in flat, "must state the flat-curve fix outcome"
+        assert "No known software workaround" not in flat, "the Rev 1 dead-end framing is obsolete"
+        # Corrected 2026-07: mainline 7.1 gives IT8689E fan *control*; the
+        # Rev 1 stopgap is partial (temps-to-90, CPU fan only) with the real
+        # driver-side fix pending in frankcrawford/it87 PR #114.
+        assert "control" in flat
+        assert "PR #114" in flat, "must point to the pending driver-side fix"
 
-    def test_it8689_quirk_documents_flat_curve_fix(self):
+    def test_it8689_quirk_documents_partial_stopgap(self):
         quirks = lookup_vendor_quirks(VENDOR_GB, "it8689")
         assert len(quirks) == 1
         flat = " ".join(quirks[0].details)
         assert "No known software workaround" not in flat
-        assert "40/40/40/40/40/40" in flat, "quirk must spell out the upstream 7-point flat curve"
+        assert "temperature" in flat.lower(), "quirk must document the temps-to-90 stopgap"
+        assert "PR #114" in flat, "quirk must point to the pending driver-side fix"
 
     def test_it8883_entry_refreshed_not_stale_dated(self):
         g = lookup_chip_guidance("it8883")

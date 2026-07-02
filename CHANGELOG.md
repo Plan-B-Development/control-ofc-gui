@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.6.2] — 2026-07-02
+
+### Fixed
+- **Linux driver-state documentation refreshed to July 2026, verified against primary
+  sources.** Corrected the biggest stale claim: **IT8689E is fan-*control*-capable in
+  mainline kernel 7.1** (commit `66b8eaf` — six PWM channels + `FEAT_FANCTL_ONOFF`;
+  released 2026-06-14), not "sensors only" — fixed in the in-app chip guidance
+  (`hwmon_guidance.py`) and the hardware docs (`docs/19/20/21/23`, `manual/driver-setup.md`).
+- **Corrected the "IT8883" myth.** There is no such chip: device-ID `0x8883` is a
+  secondary Super-I/O left stuck in config mode (a clean read is `0x8695`, the IT87952E
+  early ID), recovered with `mmio=on` (frankcrawford/it87 #81/#70). The X870 AORUS
+  STEALTH ICE guidance now documents the `mmio=on` fix instead of a false dead end.
+- **Corrected the IT8689E Rev 1 workaround.** The documented stopgap is flattening the
+  BIOS-curve *temperatures* to 90 — a partial, CPU-fan-only fix; the "PWM 40×6" curve was
+  a failed attempt, and the real driver-side fix is pending in frankcrawford/it87 PR #114.
+- **Fixed `nct6687d` details**: parameter is `fan_config=msi_alt1` (not `msi_alt1=1`),
+  the DMI table is `nct6687_msi_alt_boards[]`, the source is root `nct6687.c`, and the
+  non-existent "v2.x" version line was dropped (it is unversioned, `MODULE_VERSION 1.0.0`).
+- **Refreshed the kernel timeline** (stable 7.1.2 / mainline 7.2-rc1; newest LTS 6.18) and
+  the mainline `it87` enum (`it8689` now included; verified against v7.1 / 7.2-rc1); marked
+  frankcrawford/it87 issues #89/#92 closed and added PRs #110/#114.
+
+Pinning tests updated to assert the corrected state. `it8689` deliberately still reports
+`in_mainline=False` (DEC-144 policy — 7.1 is not yet the common kernel), so there is no
+behaviour change. Pairs with `control-ofc-daemon` ≥ v2.4.2.
+
 ## [2.6.1] — 2026-07-01
 
 ### Internal

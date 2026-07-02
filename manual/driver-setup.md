@@ -148,7 +148,7 @@ Two ways out — read the trade-offs before picking:
 
 A correctly-installed driver still loses to BIOS firmware that keeps rewriting fan registers. One-time BIOS setup by vendor:
 
-- **Gigabyte (Smart Fan 5/6):** set each header you want Linux to control to **Full Speed** mode, and make sure "FAN Control by" is **not** set to "Temperature". On IT8689E **Rev 1** boards (e.g. X670E AORUS MASTER), manual control only works after configuring a **flat 7-point BIOS curve** — PWM `40/40/40/40/40/40` with the final point at `100` ([issue #96](https://github.com/frankcrawford/it87/issues/96)).
+- **Gigabyte (Smart Fan 5/6):** set each header you want Linux to control to **Full Speed** mode, and make sure "FAN Control by" is **not** set to "Temperature". On IT8689E **Rev 1** boards (e.g. X670E AORUS MASTER), the maintainer's stopgap ([issue #96](https://github.com/frankcrawford/it87/issues/96)) is to flatten the BIOS curve by setting **every vector's temperature to 90** — but this only reliably restored the CPU-fan header; other headers await the driver-side fix ([PR #114](https://github.com/frankcrawford/it87/pull/114)).
 - **MSI:** BIOS → Hardware Monitor → **disable "Smart Fan Mode"** for each header, or all headers report read-only.
 - **ASUS / ASRock:** set Q-Fan / Smart Fan to manual or full speed for headers that appear read-only.
 
@@ -163,7 +163,7 @@ Most users on current driver builds need **none** of these. The exceptions, all 
 | Dual-chip Gigabyte board, **old (pre-2026-03)** it87 build, secondary chip missing | `options it87 mmio=on` | [DEC-101 / issue #70](https://github.com/frankcrawford/it87/issues/70) — current builds default this on; update the driver instead |
 | **IT8665E** board (X399 era, e.g. ROG Zenith Extreme) — PWM writes garbled on current builds | `options it87 mmio=off` | [issue #106](https://github.com/frankcrawford/it87/issues/106) |
 | `modprobe it87` fails with *Device or resource busy* (ACPI conflict, e.g. B650 GAMING X AX V2) | `options it87 ignore_resource_conflict=1` | [issue #92](https://github.com/frankcrawford/it87/issues/92) — prefer this driver-local option over the system-wide `acpi_enforce_resources=lax` |
-| MSI X870/B850/Z890 system fans ignore writes and the board is not on the driver's auto-allowlist | `options nct6687 msi_alt1=1` | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) |
+| MSI X870/B850/Z890 system fans ignore writes and the board is not on the driver's auto-allowlist | `options nct6687 fan_config=msi_alt1` | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) |
 
 Two warnings: never use the it87 `force_id` parameter outside testing, and never run `sensors-detect` after boot on a dual-chip Gigabyte board (it can wedge the SuperIO bridge so the secondary chip vanishes until reboot).
 

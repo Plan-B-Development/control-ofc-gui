@@ -56,7 +56,7 @@ temperature path (which is always `coretemp` on Intel).
 |---|---|---|---|
 | **LGA1700 600-series** (Z690, B660, H670, H610) | ASUS ROG STRIX / TUF GAMING / PRIME Z690; MSI MAG/MEG/MPG Z690; Gigabyte Z690 AORUS; ASRock Z690 Steel Legend/Taichi/Extreme | `nct6775` (mainline) on NCT6798D / NCT6796D-E boards; `nct6683` then `nct6687d-dkms-git` on MSI Z690 (plain NCT6687D — auto-detect, no module parameter); `it87-dkms-git` on Gigabyte IT8689E + IT87952E dual-chip; `asus_ec_sensors` (mainline) for extra ASUS Z690 sensors | Strong mainline coverage. Z690 has the only LGA1700-era ASRock board with an upstream lm-sensors config (Z690 Extreme). |
 | **LGA1700 700-series** (Z790, B760, H770, H610 refresh) | ASUS ROG STRIX Z790-E/-H/-I; MSI MAG Z790 TOMAHAWK / MPG Z790 EDGE WIFI; Gigabyte Z790 AORUS ELITE/MASTER/XTREME; ASRock Z790 Steel Legend/Taichi | Same chip distribution as Z690. MSI Z790 ships plain NCT6687D — auto-detect. Gigabyte Z790 AORUS dual-chip (IT8689E + IT87952E): 2026-03+ `it87-dkms-git` builds work by default (older builds need `mmio=on`). | Kernel `asus_ec_sensors` allowlist extends to ROG STRIX Z790-E/-H/-I WIFI II. |
-| **LGA1851 800-series** (Z890, B860, H810) | MSI MAG/MEG/MPG Z890; ASUS ROG STRIX Z890; Gigabyte Z890 AORUS; ASRock Z890 Taichi/Steel Legend | MSI Z890 ships NCT6687DR — **requires `msi_alt1=1`** module parameter (auto-enabled in nct6687d v2.x for boards on the upstream allowlist). Gigabyte Z890 AORUS uses IT8696E + IT87952E (same as AMD X870E generation). | Newest platform — many specifics still settling. Treat upstream support as evolving. |
+| **LGA1851 800-series** (Z890, B860, H810) | MSI MAG/MEG/MPG Z890; ASUS ROG STRIX Z890; Gigabyte Z890 AORUS; ASRock Z890 Taichi/Steel Legend | MSI Z890 ships NCT6687DR — **requires `fan_config=msi_alt1`** module parameter (auto-enabled in current nct6687d builds for boards on the upstream allowlist). Gigabyte Z890 AORUS uses IT8696E + IT87952E (same as AMD X870E generation). | Newest platform — many specifics still settling. Treat upstream support as evolving. |
 
 The `coretemp` mainline driver covers CPU temperature reporting on all of
 these generations (per-core + Package id 0). It is **not** a fan-control
@@ -98,10 +98,10 @@ sudo pacman -S dkms linux-cachyos-headers
 
 > **Z890 caveat:** the upstream nct6687d driver's auto-allowlist is still
 > filling in for new MSI Z890 SKUs. If your board is not yet on it,
-> load with `msi_alt1=1`:
+> load with `fan_config=msi_alt1`:
 >
 > ```bash
-> echo 'options nct6687 msi_alt1=1' | sudo tee /etc/modprobe.d/nct6687.conf
+> echo 'options nct6687 fan_config=msi_alt1' | sudo tee /etc/modprobe.d/nct6687.conf
 > sudo modprobe -r nct6687 && sudo modprobe nct6687
 > ```
 
@@ -163,7 +163,7 @@ reads sensors; PWM writes commonly require the out-of-tree
 
 **Key Z690/Z790 fact:** per
 [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) source
-(`nct6687.c::msi_alt1_dmi_table`), MSI Z690 and Z790 boards use the
+(`nct6687.c::nct6687_msi_alt_boards[]`), MSI Z690 and Z790 boards use the
 **default** register layout — the `msi_alt1` module parameter is
 **not** required and not auto-enabled. Z890 is the platform that needs
 it (see below).
@@ -179,9 +179,9 @@ it (see below).
 
 **Primary chip:** Nuvoton **NCT6687DR**, distinct from the Z690/Z790
 NCT6687D. Per the upstream
-`nct6687.c::msi_alt1_dmi_table`, NCT6687DR requires the alt1 register
-layout — the v2.x driver auto-enables it on the Z890 allowlist; if your
-SKU is not yet listed, load with `msi_alt1=1`.
+`nct6687.c::nct6687_msi_alt_boards[]`, NCT6687DR requires the alt1 register
+layout — current nct6687d builds auto-enable it on the Z890 allowlist; if your
+SKU is not yet listed, load with `fan_config=msi_alt1`.
 
 **Symptoms of `msi_alt1` being needed-but-missing:**
 - PWM writes are accepted but fan RPM does not change.
@@ -192,7 +192,7 @@ SKU is not yet listed, load with `msi_alt1=1`.
 **Workaround:**
 
 ```bash
-echo 'options nct6687 msi_alt1=1' | sudo tee /etc/modprobe.d/nct6687.conf
+echo 'options nct6687 fan_config=msi_alt1' | sudo tee /etc/modprobe.d/nct6687.conf
 sudo modprobe -r nct6687 && sudo modprobe nct6687
 ```
 
@@ -201,9 +201,11 @@ automatically on MSI boards with `board_name` containing `Z890`.
 
 ### Gigabyte LGA1700 (Z690 / Z790 AORUS)
 
-**Primary chip:** ITE **IT8689E** on Z690 / Z790 AORUS boards. **Always
-out-of-tree** — `it87-dkms-git` (frankcrawford fork) is required. The
-in-kernel `it87` driver does not support IT8689E.
+**Primary chip:** ITE **IT8689E** on Z690 / Z790 AORUS boards.
+**Out-of-tree recommended** — `it87-dkms-git` (frankcrawford fork).
+Mainline `it87` gained IT8689E fan *control* in kernel 7.1 (commit
+`66b8eaf`), but the DKMS build stays the safe choice on the 6.12 / 6.18
+LTS kernels most distros ship, and it handles board-specific quirks.
 
 **Secondary chip:** **IT87952E** on most AORUS tiers (PRO, ELITE AX,
 MASTER, XTREME). The dual-chip topology matches the AMD X670E AORUS
@@ -330,7 +332,7 @@ plane uses `coretemp` exclusively.
    Full Speed (Gigabyte), Disable Smart Fan (MSI, ASRock), Q-Fan
    Manual (ASUS).
 5. **Z890 specifically:** if PWM writes are accepted but fans don't
-   change speed, try the `msi_alt1=1` workaround before assuming the
+   change speed, try the `fan_config=msi_alt1` workaround before assuming the
    board is unsupported.
 
 ---

@@ -4,9 +4,9 @@ This pass extends DEC-105 (AM4 400-series) to the rest of the AMD x500
 (AM4 500-series), x600 (AM5 600-series), and the directly-shipping
 x800 (AM5 800-series) chip topologies. Adds narrower chip-prefix entries
 for NCT6796D / NCT6798D / NCT6799D / IT8883, vendor quirks covering the
-ASRock dual-Nuvoton legitimate config (X870E Taichi Lite), MSI
-auto-allowlist for nct6687d v2.x, IT8689E Rev 1 silent-writes dead end,
-and IT8883 unsupported-secondary-chip note. Also exercises the refined
+ASRock dual-Nuvoton legitimate config (X870E Taichi Lite), the MSI
+nct6687d auto-allowlist, the IT8689E Rev 1 partial stopgap (temps-to-90),
+and the IT8883-is-a-config-mode-symptom note. Also exercises the refined
 daemon `module_collisions` detector behaviour through the GUI parser.
 
 All sources cited are verifiable: kernel hwmon docs, frankcrawford/it87
@@ -79,19 +79,18 @@ class TestNarrowerChipGuidance:
         # to the generic `nct679` entry.
         assert g.chip_prefix == "nct679"
 
-    def test_it8883_preliminary_entry_marked_unsupported(self):
-        # D4.A: ship a preliminary entry for IT8883 so users see a chip
-        # name rather than "Unknown chip", AND the entry must make the
-        # no-driver situation unambiguous.
+    def test_it8883_entry_explains_config_mode_symptom(self):
+        # Corrected 2026-07 (frankcrawford/it87 issues #81/#70): there is no
+        # "IT8883" chip — 0x8883 is a secondary Super-I/O stuck in config
+        # mode. The entry must explain that and point to the mmio=on recovery.
         g = lookup_chip_guidance("it8883")
         assert g is not None
         assert g.chip_prefix == "it8883"
         flat = " ".join([g.notes or "", *g.known_issues]).lower()
-        assert "no" in flat and "driver" in flat, (
-            "IT8883 guidance must state no Linux driver is available"
+        assert "config" in flat and "mmio=on" in flat, (
+            "IT8883 entry must explain 0x8883 is a config-mode symptom "
+            "recovered with mmio=on, not a driverless chip"
         )
-        # Cite the upstream tracking issue so the entry can be revisited
-        # when a driver ships.
         assert "frankcrawford/it87" in g.driver_url or "issue" in g.driver_url
 
 
@@ -106,7 +105,7 @@ class TestX500X600X800VendorQuirks:
         quirks = lookup_vendor_quirks("Micro-Star International Co., Ltd.", "nct6687")
         info_quirks = [q for q in quirks if q.severity == "info"]
         assert info_quirks, (
-            f"Expected a new INFO-severity MSI+nct6687 quirk for the v2.x "
+            f"Expected a new INFO-severity MSI+nct6687 quirk for the "
             f"auto-allowlist; got: {[(q.severity, q.summary) for q in quirks]}"
         )
         msi_alt1 = [
@@ -114,8 +113,8 @@ class TestX500X600X800VendorQuirks:
         ]
         assert msi_alt1, (
             "Expected the INFO MSI+nct6687 quirk to mention msi_alt1 "
-            "specifically — that is the v2.x auto-enabled module "
-            "parameter the user needs to know about"
+            "specifically — that is the auto-enabled fan_config=msi_alt1 "
+            "mode the user needs to know about"
         )
         # And the 33-board count anchors the upstream source we cited
         # (`nct6687.c::msi_alt1_dmi_table`).
@@ -153,16 +152,14 @@ class TestX500X600X800VendorQuirks:
             f"specifically; got: {[q.summary for q in critical]}"
         )
 
-    def test_gigabyte_it8883_unsupported_quirk(self):
-        # X870 AORUS STEALTH ICE secondary IT8883 has no driver — the
-        # IT8696E primary works fine, so the quirk fires on the primary
-        # chip lookup so users see the warning when checking that chip.
+    def test_gigabyte_stealth_ice_quirk_documents_mmio_on(self):
+        # X870 AORUS STEALTH ICE secondary is an it8696 + it87952 pair (not
+        # "IT8883"); 0x8883 is a config-mode symptom recovered with mmio=on
+        # (frankcrawford/it87 #81/#70). The quirk fires on the primary chip.
         quirks = lookup_vendor_quirks("Gigabyte Technology Co., Ltd.", "it8696")
         flat = " ".join(q.summary + " ".join(q.details) for q in quirks).lower()
-        assert "stealth ice" in flat or "it8883" in flat, (
-            "Expected Gigabyte+IT8696E quirks to mention the IT8883 "
-            "secondary chip / STEALTH ICE board"
-        )
+        assert "stealth ice" in flat
+        assert "mmio=on" in flat, "STEALTH ICE quirk must document the mmio=on recovery"
 
     def test_asrock_nct6798_supported_info(self):
         # AM4 500-series ASRock NCT6798D boards: mainline coverage is

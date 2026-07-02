@@ -368,17 +368,18 @@ Most AM5 600-series Gigabyte AORUS boards ship the **IT8689E** (X670E
 AORUS MASTER, X670E AORUS PRO X) or the **IT8696E** (newer X670 /
 B650 boards). Many pair with a secondary **IT87952E**.
 
-**Critical: IT8689E Rev 1 — EC override, BIOS flat-curve fix.** The
+**Critical: IT8689E Rev 1 — EC override, partial BIOS-curve stopgap.** The
 IT8689E silicon shipped on X670E AORUS MASTER (and some other AM5
 600-series Gigabyte boards) silently ACCEPTS PWM writes with zero
 effect on fan speed **while a normal BIOS fan curve is active** — the
 EC's vector-curve control overrides the chip's manual-mode register.
-This was long believed to be a hard dead end; the issue #96 thread
-(2026-03) and the driver README now document a working fix:
-**configure a FLAT 7-point BIOS curve (PWM 40/40/40/40/40/40 with the
-final point at 100)**. With the EC curve degenerate, driver manual
-control works again. If the flat-curve workaround is not viable on
-your BIOS revision, fallback options remain:
+The maintainer's documented stopgap (frankcrawford/it87 issue #96) is to
+**flatten the BIOS fan curve by setting every curve vector's temperature
+to 90**. On the reporter's board this only reliably restored the
+**CPU-fan** header; the other headers stayed unresponsive, and the
+40%-flat-PWM curve alone was insufficient. The proper driver-side fix is
+pending in [PR #114](https://github.com/frankcrawford/it87/pull/114).
+Until it lands, treat this as partial and keep fallbacks ready:
 
 - Use a different fan header on the secondary IT87952E if your board
   has one.
@@ -452,12 +453,12 @@ The notable additions specific to this generation:
 
 ### MSI nct6687d auto-allowlist
 
-The `nct6687d` driver (v2.x) ships an **auto-enabled board allowlist
+The `nct6687d` driver ships an **auto-enabled board allowlist
 of AM5 800-series MSI boards** across B840 / B850 / X870 / Z890
 chipsets. On listed boards, the `msi_alt1` register layout is selected
 automatically without a module parameter. The list keeps growing
 (B850 GAMING PRO WIFI6E and MAG B860M Mortar WiFi were added in
-2026-05/06) — the source of truth is `nct6687.c::msi_alt1_dmi_table`
+2026-05/06) — the source of truth is `nct6687.c::nct6687_msi_alt_boards[]`
 in the Fred78290/nct6687d repository; check it rather than trusting
 any point-in-time count.
 
@@ -466,9 +467,9 @@ don't respond to PWM writes, manually enable:
 
 ```bash
 sudo modprobe -r nct6687
-sudo modprobe nct6687 msi_alt1=1
+sudo modprobe nct6687 fan_config=msi_alt1
 # persist:
-sudo tee /etc/modprobe.d/nct6687.conf <<<'options nct6687 msi_alt1=1'
+sudo tee /etc/modprobe.d/nct6687.conf <<<'options nct6687 fan_config=msi_alt1'
 ```
 
 The legacy `msi_fan_brute_force=1` parameter remains a manual override
@@ -481,23 +482,20 @@ The ASRock X870 Nova ships **NCT6796D-S** as its primary chip
 cleanly; do not load `nct6687d` here. The DEC-105 collision logic
 applies.
 
-### Gigabyte X870 AORUS STEALTH ICE — IT8883 secondary unsupported
+### Gigabyte X870 AORUS STEALTH ICE — secondary Super-I/O, use `mmio=on`
 
-X870 AORUS STEALTH ICE pairs the primary **IT8696E** (controllable
-via `it87-dkms-git`) with a SECONDARY **IT8883** chip that has NO
-Linux driver as of 2026-06 (frankcrawford/it87 issue #81, still open;
-dmesg on this board shows DEVIDs `0x8696` + `0x8883`). Fans wired
-through IT8883 — including the water-pump header — are uncontrollable
-from Linux. On current (2026-04+) driver builds the primary IT8696E
-headers, including ones that previously refused control on this
-board, are fully controllable. Use only the primary-chip fan headers
-or move IT8883-attached fans to an external controller.
+X870 AORUS STEALTH ICE pairs the primary **IT8696E** with a secondary
+**IT87952E** — both controllable via `it87-dkms-git`. There is no
+"IT8883" chip: when a utility (commonly `sensors-detect`) leaves the
+secondary Super-I/O in configuration mode, its DEVID misreads as
+`0x8883`; a clean read is `0x8695` (the IT87952E early ID). Per
+frankcrawford/it87 issue #81, load a current build with `mmio=on` (the
+merged H2RAM/MMIO path) and avoid running `sensors-detect` mid-session —
+both chips are then fully controllable.
 
-The daemon does NOT enroll this board in the dual-chip warning table
-(it would always fire a permanent "missing chip" banner with no
-remediation possible). The chip is named in the GUI's chip-guidance
-database with a "no driver available" note so users searching for
-IT8883 see the explanation.
+The GUI's chip-guidance database explains what a `0x8883` reading means
+(a secondary stuck in config mode, recovered with `mmio=on`), so users
+who searched for "IT8883" find the resolution rather than a dead end.
 
 ---
 
@@ -763,17 +761,22 @@ fan RPMs are visible — the EC's vector-curve control overrides the chip's
 manual-mode register. This is documented by the `it87` project maintainer
 (issue #96 and the driver README).
 
-For affected boards, the BIOS flat-curve workaround **restores driver
-manual control**:
+For affected boards, the maintainer's documented stopgap is to flatten the
+BIOS fan curve by setting **every curve vector's temperature to 90**, which
+stops the EC evaluating its own curve. On the reporter's board this only
+reliably restored the **CPU-fan** header — the other headers stayed
+unresponsive, and manipulating only the PWM percentages (e.g. a flat 40%
+curve) was **not** sufficient. Treat it as a partial workaround; the proper
+driver-side fix is pending in
+[PR #114](https://github.com/frankcrawford/it87/pull/114).
+
+A representative degenerate curve (all vector temperatures at 90; point 7
+pinned to 100% as a safety backstop):
 
 | Point | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 |---|---:|---:|---:|---:|---:|---:|---:|
+| Temp (C) | 90 | 90 | 90 | 90 | 90 | 90 | 90 |
 | PWM | 40 | 40 | 40 | 40 | 40 | 40 | 100 |
-| Temp (C) | 0 | 90 | 90 | 90 | 90 | 90 | 90 |
-
-This creates a degenerate BIOS fan curve that effectively disables the EC's
-own curve evaluation, allowing the Linux driver to control the fans via PWM
-writes. Set point 7 to 100% at 90C as a safety backstop.
 
 Some boards do not allow setting temperatures above 90C in the BIOS fan
 curve editor, which means manual control may stop functioning above that
@@ -976,8 +979,9 @@ limitations.
      fixed there.
    - Check for module conflicts (two drivers claiming the same device).
    - For MSI X870/B850: try `msi_fan_brute_force=1`.
-   - For Gigabyte IT8689E: apply the BIOS flat-curve workaround
-     (restores driver manual control on Rev 1 silicon).
+   - For Gigabyte IT8689E (Rev 1): flatten the BIOS curve (set every
+     vector's temperature to 90) — a partial stopgap (CPU-fan header
+     only); the driver-side fix is pending (frankcrawford/it87 PR #114).
    - For IT8665E (X399-era): current builds break PWM writes with MMIO
      on — set `options it87 mmio=off` (frankcrawford/it87 issue #106).
    - For ASRock: try nct6686d or asrock-nct6683 alternative drivers.
@@ -1025,11 +1029,13 @@ for the full table and mitigation guidance.
 - frankcrawford/it87: https://github.com/frankcrawford/it87
   - PR #95 (MMIO default on, 2026-03): https://github.com/frankcrawford/it87/pull/95
   - PR #102 (ISA-bridge MMIO/H2RAM merge, 2026-04): https://github.com/frankcrawford/it87/pull/102
+  - PR #110 (force_pwm parameter, open): https://github.com/frankcrawford/it87/pull/110
+  - PR #114 (IT8689E/IT8696E manual PWM, open): https://github.com/frankcrawford/it87/pull/114
   - issue #64 (secondary-chip fan control, closed 2025-12): https://github.com/frankcrawford/it87/issues/64
-  - issue #89 (X870E AORUS ELITE X3D dual-chip report): https://github.com/frankcrawford/it87/issues/89
-  - issue #92 (B650 GAMING X AX V2 ACPI bind failure): https://github.com/frankcrawford/it87/issues/92
+  - issue #89 (X870E AORUS ELITE X3D dual-chip report, closed 2026-01-13): https://github.com/frankcrawford/it87/issues/89
+  - issue #92 (B650 GAMING X AX V2 ACPI bind failure, closed 2026-02-23): https://github.com/frankcrawford/it87/issues/92
   - issue #94 (DKMS module-path quirk, CachyOS-LTS/Tumbleweed): https://github.com/frankcrawford/it87/issues/94
-  - issue #96 (IT8689E Rev 1 + BIOS flat-curve fix): https://github.com/frankcrawford/it87/issues/96
+  - issue #96 (IT8689E Rev 1 — temps-to-90 partial stopgap): https://github.com/frankcrawford/it87/issues/96
   - issue #99 (IT8792 suspend/resume, open): https://github.com/frankcrawford/it87/issues/99
   - issue #103 (X870E AORUS MASTER label mapping): https://github.com/frankcrawford/it87/issues/103
   - issue #106 (IT8665E mmio-default regression): https://github.com/frankcrawford/it87/issues/106
