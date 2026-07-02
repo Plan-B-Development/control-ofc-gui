@@ -24,7 +24,7 @@
 
 Pinning tests updated to assert the corrected state. `it8689` deliberately still reports
 `in_mainline=False` (DEC-144 policy — 7.1 is not yet the common kernel), so there is no
-behaviour change. Pairs with `control-ofc-daemon` ≥ v2.4.2.
+behaviour change. Pairs with `control-ofc-daemon` ≥ v2.4.0.
 
 ## [2.6.1] — 2026-07-01
 
