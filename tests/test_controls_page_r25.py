@@ -415,6 +415,31 @@ class TestManualOverrideLiveWiring:
         client.override_take.assert_called_once_with("lc1", 80)
 
 
+class TestCurveEditorSensorLabel:
+    """Curve-editor sensor-combo label formatting (`_sensor_combo_label`)."""
+
+    def test_renders_zero_celsius_and_hides_missing(self, qtbot, app_state, profile_service):
+        """B2: a real 0.0 °C reading must render in the combo label (regression —
+        a falsy `if s.value_c` dropped 0.0). A genuinely absent reading (None) stays
+        hidden, and a normal value is unaffected."""
+        from control_ofc.api.models import SensorReading
+
+        page = ControlsPage(state=app_state, profile_service=profile_service)
+        qtbot.addWidget(page)
+        zero = SensorReading(
+            id="cpu", kind="CpuTemp", label="Tctl", value_c=0.0, chip_name="k10temp"
+        )
+        warm = SensorReading(
+            id="cpu", kind="CpuTemp", label="Tctl", value_c=42.5, chip_name="k10temp"
+        )
+        missing = SensorReading(
+            id="cpu", kind="CpuTemp", label="Tctl", value_c=None, chip_name="k10temp"
+        )  # type: ignore[arg-type]
+        assert "0.0" in page._sensor_combo_label(zero)  # was absent before the fix
+        assert "42.5" in page._sensor_combo_label(warm)  # format unchanged
+        assert "°C" not in page._sensor_combo_label(missing)  # None stays hidden
+
+
 class TestOfflineDraftUX:
     """Offline Save/Activate UX (slice 6) built on the 6b daemon-backed
     persistence accessors (offline / unpublished_ids / is_published)."""

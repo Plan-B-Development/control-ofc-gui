@@ -26,7 +26,6 @@ _TOKEN_MIGRATION: dict[str, str] = {
     "selection": "selected_bg",
     "disabled_fg": "disabled_text",
     "disabled_surface": "disabled_bg",
-    "chart_grid": "chart_grid",
     "chart_axis": "chart_axis_text",
     "manual_override_highlight": "status_warn",
     "demo_mode_highlight": "status_info",
@@ -250,7 +249,7 @@ def load_theme(path: Path) -> ThemeTokens:
 def _migrate_tokens(data: dict) -> dict:
     """Migrate old token names to new spec names.
 
-    Bumps the schema version to v3 when an old file is loaded so the GUI
+    Bumps the schema version to v2 when an old file is loaded so the GUI
     can later detect themes that predate DEC-109's WCAG-AA pass.
     """
     result = dict(data)

@@ -1566,7 +1566,7 @@ class ControlsPage(QWidget):
         (DEC-157). Selection is still free; this only highlights."""
         from control_ofc.ui.sensor_knowledge import classify_sensor_with_overrides
 
-        val_text = f" \u2014 {s.value_c:.1f}\u00b0C" if s.value_c else ""
+        val_text = f" \u2014 {s.value_c:.1f}\u00b0C" if s.value_c is not None else ""
         overrides = self._state.sensor_class_overrides if self._state else {}
         cls = classify_sensor_with_overrides(
             s.id, chip_name=s.chip_name, label=s.label, overrides=overrides

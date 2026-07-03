@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.7.1] — 2026-07-03
+
+### Fixed
+- **Custom chart gridline colour no longer lost on every theme load.** The theme
+  token-migration map carried a stray identity entry (`chart_grid` → `chart_grid`)
+  that routed the token through the "renamed/obsolete" delete branch, so a saved or
+  imported theme's customised `chart_grid` was dropped and reverted to the default on
+  every `load_theme`. The entry is removed; `chart_grid` now passes through untouched.
+- **Curve-editor sensor list now shows a genuine 0.0 °C reading** instead of hiding it.
+  A falsy `if s.value_c` check treated a real 0 °C sensor value as "no reading" and
+  omitted the temperature from the dropdown label; it now guards on `is not None`.
+
+GUI-only — no daemon or API change. Pairs with `control-ofc-daemon` ≥ v2.4.0.
+
 ## [2.7.0] — 2026-07-02
 
 ### Changed

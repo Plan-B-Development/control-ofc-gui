@@ -209,6 +209,24 @@ class TestTokenMigration:
         assert tokens.surface_1 == "#1a1a1a"
         assert tokens.text_primary == "#f0f0f0"
 
+    def test_migrate_preserves_unchanged_chart_grid(self):
+        """B1: chart_grid is not renamed, so migration must NOT drop a custom
+        value. Regression — an identity entry in the token map deleted it on
+        every load."""
+        migrated = _migrate_tokens({"name": "X", "version": 2, "chart_grid": "#ff0000"})
+        assert migrated["chart_grid"] == "#ff0000"
+
+    def test_load_theme_preserves_custom_chart_grid(self, tmp_path):
+        """B1 end-to-end: a saved theme's custom gridline colour must survive
+        load_theme. The direct-construction test in test_chart_theme_adherence
+        cannot catch this — it bypasses migration."""
+        import json
+
+        path = tmp_path / "grid.json"
+        path.write_text(json.dumps({"name": "Grid", "version": 2, "chart_grid": "#ff0000"}))
+        tokens = load_theme(path)
+        assert tokens.chart_grid == "#ff0000"
+
 
 # ---------------------------------------------------------------------------
 # Save/Load roundtrip
