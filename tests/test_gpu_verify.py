@@ -292,9 +292,13 @@ class TestGpuVerifyResultRendering:
         assert "restore" in label.text().lower()
 
 
-class _SyncClient:
-    """Fake client exposing verify_gpu_fan but NO socket_path, so _run_gpu_verify
-    takes the synchronous (demo/test) path instead of spinning a worker thread."""
+class _VerifyFakeClient:
+    """Fake client exposing verify_gpu_fan with a truthy ``socket_path`` so the
+    page spins its worker thread; the test injects this instance into the
+    worker (see ``_drive_via_worker``) so the canned result flows without a
+    real DaemonClient / socket."""
+
+    socket_path = "/tmp/control-ofc-gpu-verify-test.sock"
 
     def __init__(self, result: GpuVerifyResult) -> None:
         self._result = result
@@ -305,25 +309,50 @@ class _SyncClient:
         return self._result
 
 
+def _drive_via_worker(qtbot, page, ensure, worker_attr, fake, trigger, done, timeout=3000):
+    """Run a diagnostics action through its real worker thread.
+
+    Creates the worker via *ensure*, injects *fake* as the worker's client (so
+    it is used instead of a real ``DaemonClient``), fires *trigger*, then spins
+    the event loop until *done* holds — i.e. until the page has rendered the
+    worker's result. The caller is responsible for ``page.cleanup()``.
+    """
+    assert ensure()
+    getattr(page, worker_attr)._client = fake
+    trigger()
+    qtbot.waitUntil(done, timeout=timeout)
+
+
 class TestGpuVerifyRun:
     def test_run_calls_verify_and_renders(self, qtbot):
-        client = _SyncClient(GpuVerifyResult(gpu_id="0000:2d:00.0", result="effective"))
+        client = _VerifyFakeClient(GpuVerifyResult(gpu_id="0000:2d:00.0", result="effective"))
         page = _make_page(qtbot, client=client)
         page._gpu_verify_bdf = "0000:2d:00.0"
-
-        page._run_gpu_verify()
-
-        assert client.calls == ["0000:2d:00.0"]
         label = page.findChild(QLabel, "Diagnostics_Label_verifyGpuResult")
-        assert "working" in label.text().lower()
+
+        try:
+            _drive_via_worker(
+                qtbot,
+                page,
+                page._ensure_gpu_verify_worker,
+                "_gpu_verify_worker",
+                client,
+                page._run_gpu_verify,
+                lambda: "working" in label.text().lower(),
+            )
+            assert client.calls == ["0000:2d:00.0"]
+        finally:
+            page.cleanup()
 
     def test_run_without_bdf_shows_message(self, qtbot):
-        page = _make_page(qtbot, client=_SyncClient(GpuVerifyResult(result="effective")))
+        # No BDF → the method returns before any worker is created.
+        page = _make_page(qtbot, client=_VerifyFakeClient(GpuVerifyResult(result="effective")))
         page._gpu_verify_bdf = None
         page._run_gpu_verify()
         label = page.findChild(QLabel, "Diagnostics_Label_verifyGpuResult")
         assert not label.isHidden()
         assert "no gpu" in label.text().lower()
+        assert page._gpu_verify_worker is None
 
 
 class TestGpuVerifyWorkerLifecycle:

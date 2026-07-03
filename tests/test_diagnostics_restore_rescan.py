@@ -4,14 +4,13 @@ Covers the restored ``hwmon_rescan`` client wrapper (path + parsing), the
 control loop's ``manages_gpu_target()`` gate query, the diagnostics-page
 wiring for both buttons (visibility, D2 gating, click paths, result
 rendering, state side-effects), the demo stubs, and the failure paths.
-Hardware is never touched — page tests drive synthetic results through
-fake clients with no ``socket_path`` so every call takes the synchronous
-fallback instead of spinning a worker thread.
+Hardware is never touched — page tests drive synthetic results through fake
+clients injected into the real worker thread (``_drive_via_worker``), so the
+daemon-owns-writes worker path is exercised without a real socket.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -167,6 +166,20 @@ def _non_gpu_ps() -> ProfileService:
     return ps
 
 
+def _drive_via_worker(qtbot, page, ensure, worker_attr, fake, trigger, done, timeout=3000):
+    """Run a diagnostics action through its real worker thread.
+
+    Creates the worker via *ensure*, injects *fake* as the worker's client (so
+    it is used instead of a real ``DaemonClient``), fires *trigger*, then spins
+    the event loop until *done* holds — i.e. until the page has rendered the
+    worker's result. The caller is responsible for ``page.cleanup()``.
+    """
+    assert ensure()
+    getattr(page, worker_attr)._client = fake
+    trigger()
+    qtbot.waitUntil(done, timeout=timeout)
+
+
 # ── GPU restore: visibility ──────────────────────────────────────────
 
 
@@ -249,7 +262,7 @@ class TestGpuRestoreGate:
     def test_click_recheck_refuses_when_managed(self, qtbot):
         """A stale-enabled button must not slip a restore through: the click
         handler re-checks the gate and refuses without calling the client."""
-        client = _RestoreSyncClient(GpuFanResetResult(gpu_id="0000:2d:00.0", reset=True))
+        client = _RestoreFakeClient(GpuFanResetResult(gpu_id="0000:2d:00.0", reset=True))
         page = _make_page(qtbot, client=client, profile_service=_gpu_controlling_ps())
         page._gpu_verify_bdf = "0000:2d:00.0"
 
@@ -265,9 +278,13 @@ class TestGpuRestoreGate:
 # ── GPU restore: run paths ───────────────────────────────────────────
 
 
-class _RestoreSyncClient:
-    """Fake client exposing reset_gpu_fan but NO socket_path, so the page
-    takes the synchronous (demo/test) path instead of a worker thread."""
+class _RestoreFakeClient:
+    """Fake client exposing reset_gpu_fan with a truthy ``socket_path`` so the
+    page spins its GPU worker; the test injects this instance into the worker
+    (see ``_drive_via_worker``) so the canned result/error flows without a real
+    DaemonClient / socket."""
+
+    socket_path = "/tmp/control-ofc-gpu-restore-test.sock"
 
     def __init__(self, result: GpuFanResetResult | None = None, error: Exception | None = None):
         self._result = result
@@ -284,58 +301,90 @@ class _RestoreSyncClient:
 
 class TestGpuRestoreRun:
     def test_success_renders_and_logs(self, qtbot):
-        client = _RestoreSyncClient(GpuFanResetResult(gpu_id="0000:2d:00.0", reset=True))
+        client = _RestoreFakeClient(GpuFanResetResult(gpu_id="0000:2d:00.0", reset=True))
         state = _page_state()
         page = _make_page(qtbot, state=state, client=client)
         page._gpu_verify_bdf = "0000:2d:00.0"
-
-        page._run_gpu_restore()
-
-        assert client.calls == ["0000:2d:00.0"]
         label = page.findChild(QLabel, "Diagnostics_Label_restoreGpuResult")
-        assert not label.isHidden()
-        assert "restored to automatic" in label.text().lower()
-        assert label.property("class") == "SuccessChip"
-        # The action lands in the event log.
-        assert any(e.source == "gpu" and "restored" in e.message.lower() for e in page._diag.events)
-        assert page._gpu_restore_btn.isEnabled()
-        assert page._gpu_restore_btn.text() == "Restore GPU Fan to Automatic"
+
+        try:
+            _drive_via_worker(
+                qtbot,
+                page,
+                page._ensure_gpu_verify_worker,
+                "_gpu_verify_worker",
+                client,
+                page._run_gpu_restore,
+                lambda: "restored to automatic" in label.text().lower(),
+            )
+
+            assert client.calls == ["0000:2d:00.0"]
+            assert not label.isHidden()
+            assert label.property("class") == "SuccessChip"
+            # The action lands in the event log.
+            assert any(
+                e.source == "gpu" and "restored" in e.message.lower() for e in page._diag.events
+            )
+            assert page._gpu_restore_btn.isEnabled()
+            assert page._gpu_restore_btn.text() == "Restore GPU Fan to Automatic"
+        finally:
+            page.cleanup()
 
     def test_daemon_noop_shows_warning(self, qtbot):
-        client = _RestoreSyncClient(GpuFanResetResult(gpu_id="0000:2d:00.0", reset=False))
+        client = _RestoreFakeClient(GpuFanResetResult(gpu_id="0000:2d:00.0", reset=False))
         state = _page_state()
         page = _make_page(qtbot, state=state, client=client)
         page._gpu_verify_bdf = "0000:2d:00.0"
-
-        page._run_gpu_restore()
-
         label = page.findChild(QLabel, "Diagnostics_Label_restoreGpuResult")
-        assert label.property("class") == "WarningChip"
+
+        try:
+            _drive_via_worker(
+                qtbot,
+                page,
+                page._ensure_gpu_verify_worker,
+                "_gpu_verify_worker",
+                client,
+                page._run_gpu_restore,
+                lambda: label.property("class") == "WarningChip",
+            )
+        finally:
+            page.cleanup()
 
     def test_daemon_error_shows_critical(self, qtbot):
-        client = _RestoreSyncClient(
+        client = _RestoreFakeClient(
             error=DaemonError(code="hardware_unavailable", message="sysfs gone", status=503)
         )
         state = _page_state()
         page = _make_page(qtbot, state=state, client=client)
         page._gpu_verify_bdf = "0000:2d:00.0"
-
-        page._run_gpu_restore()
-
         label = page.findChild(QLabel, "Diagnostics_Label_restoreGpuResult")
-        assert not label.isHidden()
-        assert "sysfs gone" in label.text()
-        assert label.property("class") == "CriticalChip"
-        assert page._gpu_restore_btn.isEnabled()  # never stuck disabled
-        assert any(e.level == "error" and e.source == "gpu" for e in page._diag.events)
+
+        try:
+            _drive_via_worker(
+                qtbot,
+                page,
+                page._ensure_gpu_verify_worker,
+                "_gpu_verify_worker",
+                client,
+                page._run_gpu_restore,
+                lambda: "sysfs gone" in label.text(),
+            )
+
+            assert label.property("class") == "CriticalChip"
+            assert page._gpu_restore_btn.isEnabled()  # never stuck disabled
+            assert any(e.level == "error" and e.source == "gpu" for e in page._diag.events)
+        finally:
+            page.cleanup()
 
     def test_without_bdf_shows_message(self, qtbot):
-        page = _make_page(qtbot, client=_RestoreSyncClient())
+        # No BDF → the method returns before any worker is created.
+        page = _make_page(qtbot, client=_RestoreFakeClient())
         page._gpu_verify_bdf = None
         page._run_gpu_restore()
         label = page.findChild(QLabel, "Diagnostics_Label_restoreGpuResult")
         assert not label.isHidden()
         assert "no gpu" in label.text().lower()
+        assert page._gpu_verify_worker is None
 
     def test_without_client_shows_message(self, qtbot):
         page = _make_page(qtbot, client=None)
@@ -348,12 +397,13 @@ class TestGpuRestoreRun:
 # ── Hwmon rescan: run paths ──────────────────────────────────────────
 
 
-class _RescanSyncClient:
-    """Fake client exposing hwmon_rescan + hardware_diagnostics with an empty
-    socket_path — exercises the synchronous fallback (no worker thread) and the
-    post-rescan diagnostics-refetch chain."""
+class _RescanFakeClient:
+    """Fake client exposing hwmon_rescan + hardware_diagnostics with a truthy
+    ``socket_path`` so the page spins its hardware-diagnostics worker; injected
+    into that worker by the test so the rescan and its chained diagnostics
+    refetch both flow through the real worker thread without a socket."""
 
-    socket_path = ""  # falsy -> _ensure_hw_diag_worker() takes the sync fallback
+    socket_path = "/tmp/control-ofc-rescan-test.sock"
 
     def __init__(self, headers: list[HwmonHeader] | None = None, error: Exception | None = None):
         self._headers = headers if headers is not None else []
@@ -378,84 +428,96 @@ class TestHwmonRescanRun:
             HwmonHeader(id="hwmon:nct6775:pwm1", label="CPU_FAN", is_writable=True),
             HwmonHeader(id="hwmon:nct6775:pwm2", label="SYS_FAN1", is_writable=True),
         ]
-        client = _RescanSyncClient(headers=fresh)
+        client = _RescanFakeClient(headers=fresh)
         state = _page_state()
         page = _make_page(qtbot, state=state, client=client)
 
         emitted: list[list] = []
         state.headers_updated.connect(emitted.append)
-
-        page._run_hwmon_rescan()
-
-        assert client.rescan_calls == 1
-        # Headers flow through AppState so every consumer sees them.
-        assert state.hwmon_headers == fresh
-        assert emitted == [fresh]
         label = page.findChild(QLabel, "Diagnostics_Label_rescanResult")
-        assert not label.isHidden()
-        assert "2 PWM header(s)" in label.text()
-        assert "daemon restart" in label.text()  # honest control-hardware caveat
-        assert label.property("class") == "SuccessChip"
-        # D3: a diagnostics refetch is chained after a successful rescan.
-        assert client.diag_calls == 1
-        assert page._rescan_btn.isEnabled()
-        assert page._rescan_btn.text() == "Rescan Hardware"
-        assert any(e.source == "hwmon" and "rescan" in e.message.lower() for e in page._diag.events)
+
+        try:
+            # rescan → rescan_ok → chained diagnostics refetch → fetch_ok, all on
+            # the one _HwDiagWorker; wait for the chained refetch to land.
+            _drive_via_worker(
+                qtbot,
+                page,
+                page._ensure_hw_diag_worker,
+                "_hw_diag_worker",
+                client,
+                page._run_hwmon_rescan,
+                lambda: client.diag_calls == 1,
+            )
+
+            assert client.rescan_calls == 1
+            # Headers flow through AppState so every consumer sees them.
+            assert state.hwmon_headers == fresh
+            assert emitted == [fresh]
+            assert not label.isHidden()
+            assert "2 PWM header(s)" in label.text()
+            assert "daemon restart" in label.text()  # honest control-hardware caveat
+            assert label.property("class") == "SuccessChip"
+            assert page._rescan_btn.isEnabled()
+            assert page._rescan_btn.text() == "Rescan Hardware"
+            assert any(
+                e.source == "hwmon" and "rescan" in e.message.lower() for e in page._diag.events
+            )
+        finally:
+            page.cleanup()
 
     def test_failure_keeps_existing_headers(self, qtbot):
         old = [HwmonHeader(id="hwmon:it8696:pwm1", label="CHA_FAN1", is_writable=True)]
-        client = _RescanSyncClient(
+        client = _RescanFakeClient(
             error=DaemonError(code="internal_error", message="scan failed", status=500)
         )
         state = _page_state()
         state.set_hwmon_headers(old)
         page = _make_page(qtbot, state=state, client=client)
-
-        page._run_hwmon_rescan()
-
-        assert state.hwmon_headers == old  # never clobbered on failure
         label = page.findChild(QLabel, "Diagnostics_Label_rescanResult")
-        assert "scan failed" in label.text()
-        assert label.property("class") == "CriticalChip"
-        assert client.diag_calls == 0  # no refetch chained on failure
-        assert page._rescan_btn.isEnabled()
-        assert any(e.level == "error" and e.source == "hwmon" for e in page._diag.events)
+
+        try:
+            _drive_via_worker(
+                qtbot,
+                page,
+                page._ensure_hw_diag_worker,
+                "_hw_diag_worker",
+                client,
+                page._run_hwmon_rescan,
+                lambda: "scan failed" in label.text(),
+            )
+
+            assert state.hwmon_headers == old  # never clobbered on failure
+            assert label.property("class") == "CriticalChip"
+            assert client.diag_calls == 0  # no refetch chained on failure
+            assert page._rescan_btn.isEnabled()
+            assert any(e.level == "error" and e.source == "hwmon" for e in page._diag.events)
+        finally:
+            page.cleanup()
 
     def test_unavailable_shows_message(self, qtbot):
-        client = _RescanSyncClient(error=DaemonUnavailable())
+        client = _RescanFakeClient(error=DaemonUnavailable())
         page = _make_page(qtbot, client=client)
-        page._run_hwmon_rescan()
         label = page.findChild(QLabel, "Diagnostics_Label_rescanResult")
-        assert "daemon unavailable" in label.text().lower()
-        assert page._rescan_btn.isEnabled()
+
+        try:
+            _drive_via_worker(
+                qtbot,
+                page,
+                page._ensure_hw_diag_worker,
+                "_hw_diag_worker",
+                client,
+                page._run_hwmon_rescan,
+                lambda: "daemon unavailable" in label.text().lower(),
+            )
+            assert page._rescan_btn.isEnabled()
+        finally:
+            page.cleanup()
 
     def test_without_client_shows_message(self, qtbot):
         page = _make_page(qtbot, client=None)
         page._run_hwmon_rescan()
         label = page.findChild(QLabel, "Diagnostics_Label_rescanResult")
         assert "no daemon connection" in label.text().lower()
-
-    def test_client_without_rescan_method(self, qtbot):
-        # Falsy socket_path reaches the sync fallback; the client has no
-        # hwmon_rescan method, so the page must report "does not support".
-        page = _make_page(qtbot, client=SimpleNamespace(socket_path=""))
-        page._run_hwmon_rescan()
-        label = page.findChild(QLabel, "Diagnostics_Label_rescanResult")
-        assert "does not support" in label.text().lower()
-        assert page._rescan_btn.isEnabled()
-
-    def test_fake_daemon_client_chain_does_not_crash(self, qtbot, fake_client):
-        """FakeDaemonClient has hwmon_rescan but no hardware_diagnostics —
-        the chained refetch must degrade to a message, not AttributeError."""
-        state = _page_state()
-        page = _make_page(qtbot, state=state, client=fake_client)
-
-        page._run_hwmon_rescan()
-
-        assert ("hwmon_rescan", (), {}) in fake_client.calls
-        label = page.findChild(QLabel, "Diagnostics_Label_rescanResult")
-        assert label.property("class") == "SuccessChip"
-        assert "does not support" in page._hw_ready_summary.text().lower()
 
 
 # ── Worker signal surface ────────────────────────────────────────────

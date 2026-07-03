@@ -22,13 +22,16 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class _VerifyWorker(QObject):
-    """Runs in a QThread — executes the blocking ~3s verify_hwmon_pwm call off
-    the UI thread so the rest of the GUI (polling, splitter, menus) keeps
-    reacting during the hardware probe."""
+class _SocketWorker(QObject):
+    """Shared base for the Diagnostics QThread workers.
 
-    verify_ok = Signal(object)  # HwmonVerifyResult
-    verify_error = Signal(str, str)  # category ('unavailable'|'error'), message
+    Holds the per-thread client machinery every worker duplicated: it stores
+    only the daemon socket path (no back-reference to the page), lazily builds
+    its own ``DaemonClient`` on first use so the heavy ``api.client`` import
+    stays out of the module top-level and off the UI thread, and closes that
+    client on :meth:`shutdown`. Subclasses declare only their own result
+    signals and ``do_*`` slots.
+    """
 
     def __init__(self, socket_path: str) -> None:
         super().__init__()
@@ -41,6 +44,21 @@ class _VerifyWorker(QObject):
         if self._client is None:
             self._client = _DaemonClient(socket_path=self._socket_path)
         return self._client
+
+    def shutdown(self) -> None:
+        if self._client is not None:
+            with contextlib.suppress(Exception):
+                self._client.close()
+            self._client = None
+
+
+class _VerifyWorker(_SocketWorker):
+    """Runs in a QThread — executes the blocking ~3s verify_hwmon_pwm call off
+    the UI thread so the rest of the GUI (polling, splitter, menus) keeps
+    reacting during the hardware probe."""
+
+    verify_ok = Signal(object)  # HwmonVerifyResult
+    verify_error = Signal(str, str)  # category ('unavailable'|'error'), message
 
     @Slot(str)
     def do_verify(self, header_id: str) -> None:
@@ -72,14 +90,8 @@ class _VerifyWorker(QObject):
             self._client = None
             self.verify_error.emit("unavailable", "Connection lost during verify")
 
-    def shutdown(self) -> None:
-        if self._client is not None:
-            with contextlib.suppress(Exception):
-                self._client.close()
-            self._client = None
 
-
-class _GpuVerifyWorker(QObject):
+class _GpuVerifyWorker(_SocketWorker):
     """Runs in a QThread — executes the blocking GPU fan calls off the UI
     thread: the ~6s ``verify_gpu_fan`` probe (DEC-120) and the
     ``reset_gpu_fan`` restore-to-automatic (DEC-147), mirroring
@@ -90,18 +102,6 @@ class _GpuVerifyWorker(QObject):
     verify_error = Signal(str, str)
     reset_ok = Signal(object)  # GpuFanResetResult
     reset_error = Signal(str, str)  # category ('unavailable' | 'error'), message
-
-    def __init__(self, socket_path: str) -> None:
-        super().__init__()
-        self._socket_path = socket_path
-        self._client: DaemonClient | None = None
-
-    def _ensure_client(self) -> DaemonClient:
-        from control_ofc.api.client import DaemonClient as _DaemonClient
-
-        if self._client is None:
-            self._client = _DaemonClient(socket_path=self._socket_path)
-        return self._client
 
     @Slot(str)
     def do_verify(self, gpu_id: str) -> None:
@@ -167,14 +167,8 @@ class _GpuVerifyWorker(QObject):
             self._client = None
             self.reset_error.emit("unavailable", "Connection lost during GPU restore")
 
-    def shutdown(self) -> None:
-        if self._client is not None:
-            with contextlib.suppress(Exception):
-                self._client.close()
-            self._client = None
 
-
-class _HwDiagWorker(QObject):
+class _HwDiagWorker(_SocketWorker):
     """Runs in a QThread — executes the blocking GET /diagnostics/hardware call
     off the UI thread. The daemon performs several sysfs/procfs reads to build
     the report, so a synchronous fetch on a slow/contended daemon would freeze
@@ -190,18 +184,6 @@ class _HwDiagWorker(QObject):
     fetch_error = Signal(str, str)  # category ('unavailable'|'error'), message
     rescan_ok = Signal(object)  # list[HwmonHeader]
     rescan_error = Signal(str, str)  # category ('unavailable'|'error'), message
-
-    def __init__(self, socket_path: str) -> None:
-        super().__init__()
-        self._socket_path = socket_path
-        self._client: DaemonClient | None = None
-
-    def _ensure_client(self) -> DaemonClient:
-        from control_ofc.api.client import DaemonClient as _DaemonClient
-
-        if self._client is None:
-            self._client = _DaemonClient(socket_path=self._socket_path)
-        return self._client
 
     @Slot()
     def do_fetch(self) -> None:
@@ -245,9 +227,3 @@ class _HwDiagWorker(QObject):
                     self._client.close()
             self._client = None
             self.rescan_error.emit("unavailable", "Connection lost during hardware rescan")
-
-    def shutdown(self) -> None:
-        if self._client is not None:
-            with contextlib.suppress(Exception):
-                self._client.close()
-            self._client = None

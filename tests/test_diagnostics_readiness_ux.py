@@ -62,13 +62,17 @@ def _problem() -> HardwareDiagnosticsResult:
 
 
 class _MockClient:
-    """Minimal client exposing hardware_diagnostics() for auto-fetch tests."""
+    """Minimal client exposing hardware_diagnostics() for auto-fetch tests.
+
+    A truthy ``socket_path`` makes the page spin its worker thread; the fetch
+    test injects this instance into that worker so the fetch runs off-thread
+    (the real, daemon-owns-writes path) without a socket.
+    """
 
     def __init__(self, diag: HardwareDiagnosticsResult) -> None:
         self._diag = diag
         self.calls = 0
-        # Falsy socket_path -> the page's auto-fetch takes the sync fallback.
-        self.socket_path = ""
+        self.socket_path = "/tmp/control-ofc-autofetch-test.sock"
 
     def hardware_diagnostics(self) -> HardwareDiagnosticsResult:
         self.calls += 1
@@ -158,14 +162,21 @@ class TestAutoFetch:
     def test_fetches_once_on_troubleshooting_tab(self, qtbot):
         client = _MockClient(_healthy())
         page = _page(qtbot, client=client)
-        # Simulate opening the Troubleshooting tab (index 3, DEC-124).
-        page._on_diag_tab_changed(3)
-        assert client.calls == 1
-        assert page._diag.last_hw_diagnostics is not None
-        # Switching away and back must not re-fetch.
-        page._on_diag_tab_changed(0)
-        page._on_diag_tab_changed(3)
-        assert client.calls == 1
+        # Pre-create the worker and make it use the fake, so the off-thread
+        # fetch runs against the canned diagnostics (worker path, DEC-165).
+        assert page._ensure_hw_diag_worker()
+        page._hw_diag_worker._client = client
+        try:
+            # Simulate opening the Troubleshooting tab (index 3, DEC-124).
+            page._on_diag_tab_changed(3)
+            qtbot.waitUntil(lambda: page._diag.last_hw_diagnostics is not None, timeout=3000)
+            assert client.calls == 1
+            # Switching away and back must not re-fetch (guarded, synchronous).
+            page._on_diag_tab_changed(0)
+            page._on_diag_tab_changed(3)
+            assert client.calls == 1
+        finally:
+            page.cleanup()
 
     def test_non_troubleshooting_tab_does_not_fetch(self, qtbot):
         client = _MockClient(_healthy())

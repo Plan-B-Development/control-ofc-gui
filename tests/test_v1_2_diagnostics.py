@@ -3,6 +3,7 @@ PWM verify, and support bundle enhancements."""
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock, patch
 
 from PySide6.QtWidgets import QComboBox, QLabel, QPushButton
@@ -590,6 +591,58 @@ class TestDiagnosticsPageVerifyWorker:
         page.cleanup()
         assert page._verify_thread is None
         assert page._verify_worker is None
+
+    def test_teardown_during_inflight_call_delivers_no_result(self, qtbot):
+        """F-1: tearing a worker down while a ``do_*`` is in flight on the worker
+        thread must not deliver a result onto the closing page.
+
+        ``cleanup()`` disconnects the worker's result signals *before* the
+        in-flight verify can emit, then closes the per-thread client. Here the
+        client's blocking verify is released by that very ``close()``, so the
+        disconnect→emit ordering is deterministic with no sleeps: a result
+        emitted after teardown reaches no connected slot.
+        """
+
+        class _BlockingVerifyClient:
+            socket_path = "/tmp/control-ofc-f1-inflight.sock"
+
+            def __init__(self) -> None:
+                self.started = threading.Event()
+                self.closed = threading.Event()
+
+            def verify_hwmon_pwm(self, header_id):
+                self.started.set()
+                # Block until shutdown() closes us — models an in-flight probe
+                # that outlives the teardown request.
+                self.closed.wait(5)
+                return HwmonVerifyResult(header_id=header_id, result="effective")
+
+            def close(self) -> None:
+                self.closed.set()
+
+        client = _BlockingVerifyClient()
+        page, _ = _make_page(qtbot, client=client)
+        assert page._ensure_verify_worker()
+        worker = page._verify_worker
+        worker._client = client  # use the blocking fake, not a real DaemonClient
+
+        # Spy on the worker's result signal — a proxy for the page slot it feeds.
+        got: list = []
+        worker.verify_ok.connect(got.append)
+
+        # Kick do_verify onto the worker thread; it blocks in-flight.
+        page._verify_request.emit("hwmon:x:pwm1")
+        qtbot.waitUntil(client.started.is_set, timeout=2000)
+
+        # Tear down while the call is in flight. cleanup() disconnects first,
+        # then close() releases the blocked call, whose now-disconnected emit
+        # must reach no one.
+        page.cleanup()
+
+        assert got == []  # in-flight verify_ok reached no connected slot
+        assert client.closed.is_set()  # per-thread client was closed on teardown
+        assert page._verify_worker is None
+        assert page._verify_thread is None
 
     def test_on_verify_ok_re_enables_button(self, qtbot):
         """Successful verify result re-enables the button and updates label."""

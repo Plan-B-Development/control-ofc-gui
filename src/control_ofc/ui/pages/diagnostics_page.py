@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
     from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.profile_service import ProfileService
     from control_ofc.ui.hwmon_guidance import VendorQuirk
-from PySide6.QtCore import QPoint, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QPoint, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QComboBox,
@@ -2301,43 +2302,20 @@ class DiagnosticsPage(QWidget):
     def _fetch_hardware_diagnostics(self) -> None:
         """Fetch hardware diagnostics from the daemon and populate the UI.
 
-        Production runs the blocking GET on a worker thread so the UI stays
-        responsive (including the once-per-session auto-fetch when the Fans tab
-        is first shown). When no socket path is available (e.g. tests with a
-        mock client), falls back to a synchronous fetch so behaviour there is
-        unchanged.
+        The blocking GET runs on a worker thread (DEC-165) so the UI stays
+        responsive, including the once-per-session auto-fetch when the Fans tab
+        is first shown. The daemon is the sole PWM writer; this is a read.
         """
         if not self._client:
             self._hw_ready_summary.setText("Cannot fetch: no daemon connection")
             return
-
-        # Off-thread path (production).
-        if self._ensure_hw_diag_worker():
-            self._status_label.setText("Refreshing hardware diagnostics…")
-            self._hw_diag_request.emit()
+        if not self._ensure_hw_diag_worker():
+            # Unreachable in production (DaemonClient always has a socket path);
+            # defensive so the summary never silently stalls.
+            self._hw_ready_summary.setText("Cannot fetch: no daemon socket path")
             return
-
-        # Synchronous fallback — no socket path (e.g. mock-client tests).
-        # getattr: a minimal client (e.g. the DEC-147 rescan chain running
-        # against a test fake) may not expose the diagnostics endpoint.
-        fetch = getattr(self._client, "hardware_diagnostics", None)
-        if fetch is None:
-            self._hw_ready_summary.setText(
-                "Cannot fetch: this client does not support hardware diagnostics"
-            )
-            return
-        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
-
-        try:
-            result = fetch()
-        except DaemonTimeout:
-            self._on_hw_diag_error("unavailable", "Diagnostics fetch timed out")
-        except DaemonUnavailable:
-            self._on_hw_diag_error("unavailable", "Daemon unavailable — cannot fetch diagnostics")
-        except DaemonError as e:
-            self._on_hw_diag_error("error", e.message)
-        else:
-            self._on_hw_diag_ok(result)
+        self._status_label.setText("Refreshing hardware diagnostics…")
+        self._hw_diag_request.emit()
 
     @Slot(object)
     def _on_hw_diag_ok(self, result: HardwareDiagnosticsResult) -> None:
@@ -2433,73 +2411,66 @@ class DiagnosticsPage(QWidget):
         # Fire queued signal to worker running on its own thread.
         self._verify_request.emit(header_id)
 
+    def _ensure_worker(
+        self,
+        worker: QObject | None,
+        thread: QThread | None,
+        worker_cls: type,
+        connect: Callable[[QObject], None],
+    ) -> tuple[QObject | None, QThread | None, bool]:
+        """Shared lazy factory for the 3 diagnostics workers.
+
+        Returns ``(worker, thread, True)`` when the worker already exists or was
+        just created; ``(None, None, False)`` when no daemon socket path is
+        available. Production ``DaemonClient`` always exposes ``socket_path`` —
+        a falsy value means there is no client. ``connect(worker)`` wires the
+        per-family request/result signals via queued connections.
+        """
+        if worker is not None:
+            return worker, thread, True
+        socket_path = self._client.socket_path if self._client else None
+        if not socket_path:
+            return None, None, False
+
+        thread = QThread(self)
+        worker = worker_cls(socket_path)
+        worker.moveToThread(thread)
+        connect(worker)
+        thread.start()
+        return worker, thread, True
+
     def _ensure_verify_worker(self) -> bool:
         """Create the verify worker + thread on first use. Returns False if no
         socket path is available to construct the worker."""
-        if self._verify_worker is not None:
-            return True
-        socket_path = self._client.socket_path if self._client else None
-        if not socket_path:
-            return False
 
-        self._verify_thread = QThread(self)
-        self._verify_worker = _VerifyWorker(socket_path)
-        self._verify_worker.moveToThread(self._verify_thread)
+        def connect(w: _VerifyWorker) -> None:
+            # Main thread → worker thread; worker thread → main thread. All
+            # queued so nothing blocks the UI and results land on the UI thread.
+            self._verify_request.connect(w.do_verify, Qt.ConnectionType.QueuedConnection)
+            w.verify_ok.connect(self._on_verify_ok, Qt.ConnectionType.QueuedConnection)
+            w.verify_error.connect(self._on_verify_error, Qt.ConnectionType.QueuedConnection)
 
-        # Main thread → worker thread via queued connection.
-        self._verify_request.connect(
-            self._verify_worker.do_verify, Qt.ConnectionType.QueuedConnection
+        self._verify_worker, self._verify_thread, ok = self._ensure_worker(
+            self._verify_worker, self._verify_thread, _VerifyWorker, connect
         )
-        # Worker thread → main thread via queued connections.
-        self._verify_worker.verify_ok.connect(
-            self._on_verify_ok, Qt.ConnectionType.QueuedConnection
-        )
-        self._verify_worker.verify_error.connect(
-            self._on_verify_error, Qt.ConnectionType.QueuedConnection
-        )
-
-        self._verify_thread.start()
-        return True
+        return ok
 
     def _ensure_hw_diag_worker(self) -> bool:
         """Create the hardware-diagnostics worker + thread on first use. Returns
-        False if no socket path is available (callers then fall back to a
-        synchronous fetch)."""
-        if self._hw_diag_worker is not None:
-            return True
-        # DaemonClient always exposes socket_path; it is None only when there is
-        # no client, in which case callers fall back to a synchronous fetch.
-        socket_path = self._client.socket_path if self._client else None
-        if not socket_path:
-            return False
+        False if no socket path is available to construct the worker."""
 
-        self._hw_diag_thread = QThread(self)
-        self._hw_diag_worker = _HwDiagWorker(socket_path)
-        self._hw_diag_worker.moveToThread(self._hw_diag_thread)
+        def connect(w: _HwDiagWorker) -> None:
+            self._hw_diag_request.connect(w.do_fetch, Qt.ConnectionType.QueuedConnection)
+            self._rescan_request.connect(w.do_rescan, Qt.ConnectionType.QueuedConnection)
+            w.fetch_ok.connect(self._on_hw_diag_ok, Qt.ConnectionType.QueuedConnection)
+            w.fetch_error.connect(self._on_hw_diag_error, Qt.ConnectionType.QueuedConnection)
+            w.rescan_ok.connect(self._on_rescan_ok, Qt.ConnectionType.QueuedConnection)
+            w.rescan_error.connect(self._on_rescan_error, Qt.ConnectionType.QueuedConnection)
 
-        # Main thread → worker thread via queued connections.
-        self._hw_diag_request.connect(
-            self._hw_diag_worker.do_fetch, Qt.ConnectionType.QueuedConnection
+        self._hw_diag_worker, self._hw_diag_thread, ok = self._ensure_worker(
+            self._hw_diag_worker, self._hw_diag_thread, _HwDiagWorker, connect
         )
-        self._rescan_request.connect(
-            self._hw_diag_worker.do_rescan, Qt.ConnectionType.QueuedConnection
-        )
-        # Worker thread → main thread via queued connections.
-        self._hw_diag_worker.fetch_ok.connect(
-            self._on_hw_diag_ok, Qt.ConnectionType.QueuedConnection
-        )
-        self._hw_diag_worker.fetch_error.connect(
-            self._on_hw_diag_error, Qt.ConnectionType.QueuedConnection
-        )
-        self._hw_diag_worker.rescan_ok.connect(
-            self._on_rescan_ok, Qt.ConnectionType.QueuedConnection
-        )
-        self._hw_diag_worker.rescan_error.connect(
-            self._on_rescan_error, Qt.ConnectionType.QueuedConnection
-        )
-
-        self._hw_diag_thread.start()
-        return True
+        return ok
 
     @Slot(object)
     def _on_verify_ok(self, result: HwmonVerifyResult) -> None:
@@ -2694,62 +2665,31 @@ class DiagnosticsPage(QWidget):
         self._gpu_verify_btn.setText("Testing...")
         self._gpu_verify_result_label.setVisible(False)
 
-        if self._ensure_gpu_verify_worker():
-            self._gpu_verify_request.emit(bdf)
-            return
-
-        # No socket path (demo / test client): fall back to a synchronous call
-        # if the client exposes verify_gpu_fan, mirroring the hw-diag fallback.
-        verify = getattr(self._client, "verify_gpu_fan", None)
-        if verify is None:
-            self._gpu_verify_result_label.setText("GPU verify unavailable: no socket path")
+        if not self._ensure_gpu_verify_worker():
+            # Unreachable in production (DaemonClient always has a socket path).
+            self._gpu_verify_result_label.setText("GPU verify unavailable: no daemon socket path")
             self._gpu_verify_result_label.setVisible(True)
             self._gpu_verify_btn.setEnabled(True)
             self._gpu_verify_btn.setText("Test GPU Fan Control")
             return
-        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
-
-        try:
-            result = verify(bdf)
-        except (DaemonError, DaemonTimeout, DaemonUnavailable, OSError, ConnectionError) as e:
-            self._on_gpu_verify_error("error", getattr(e, "message", str(e)))
-        else:
-            self._on_gpu_verify_ok(result)
+        self._gpu_verify_request.emit(bdf)
 
     def _ensure_gpu_verify_worker(self) -> bool:
         """Create the GPU verify worker + thread on first use. Returns False if
         no socket path is available to construct the worker."""
-        if self._gpu_verify_worker is not None:
-            return True
-        socket_path = getattr(self._client, "socket_path", None) if self._client else None
-        if not socket_path:
-            return False
 
-        self._gpu_verify_thread = QThread(self)
-        self._gpu_verify_worker = _GpuVerifyWorker(socket_path)
-        self._gpu_verify_worker.moveToThread(self._gpu_verify_thread)
+        def connect(w: _GpuVerifyWorker) -> None:
+            self._gpu_verify_request.connect(w.do_verify, Qt.ConnectionType.QueuedConnection)
+            self._gpu_reset_request.connect(w.do_reset, Qt.ConnectionType.QueuedConnection)
+            w.verify_ok.connect(self._on_gpu_verify_ok, Qt.ConnectionType.QueuedConnection)
+            w.verify_error.connect(self._on_gpu_verify_error, Qt.ConnectionType.QueuedConnection)
+            w.reset_ok.connect(self._on_gpu_restore_ok, Qt.ConnectionType.QueuedConnection)
+            w.reset_error.connect(self._on_gpu_restore_error, Qt.ConnectionType.QueuedConnection)
 
-        self._gpu_verify_request.connect(
-            self._gpu_verify_worker.do_verify, Qt.ConnectionType.QueuedConnection
+        self._gpu_verify_worker, self._gpu_verify_thread, ok = self._ensure_worker(
+            self._gpu_verify_worker, self._gpu_verify_thread, _GpuVerifyWorker, connect
         )
-        self._gpu_reset_request.connect(
-            self._gpu_verify_worker.do_reset, Qt.ConnectionType.QueuedConnection
-        )
-        self._gpu_verify_worker.verify_ok.connect(
-            self._on_gpu_verify_ok, Qt.ConnectionType.QueuedConnection
-        )
-        self._gpu_verify_worker.verify_error.connect(
-            self._on_gpu_verify_error, Qt.ConnectionType.QueuedConnection
-        )
-        self._gpu_verify_worker.reset_ok.connect(
-            self._on_gpu_restore_ok, Qt.ConnectionType.QueuedConnection
-        )
-        self._gpu_verify_worker.reset_error.connect(
-            self._on_gpu_restore_error, Qt.ConnectionType.QueuedConnection
-        )
-
-        self._gpu_verify_thread.start()
-        return True
+        return ok
 
     @Slot(object)
     def _on_gpu_verify_ok(self, result: GpuVerifyResult) -> None:
@@ -2882,25 +2822,12 @@ class DiagnosticsPage(QWidget):
         self._gpu_restore_btn.setText("Restoring...")
         self._gpu_restore_result_label.setVisible(False)
 
-        if self._ensure_gpu_verify_worker():
-            self._gpu_reset_request.emit(bdf)
-            return
-
-        # No socket path (demo / test client): fall back to a synchronous call
-        # if the client exposes reset_gpu_fan, mirroring _run_gpu_verify.
-        reset = getattr(self._client, "reset_gpu_fan", None)
-        if reset is None:
-            self._show_gpu_restore_message("GPU restore unavailable: no socket path")
+        if not self._ensure_gpu_verify_worker():
+            # Unreachable in production (DaemonClient always has a socket path).
+            self._show_gpu_restore_message("GPU restore unavailable: no daemon socket path")
             self._finish_gpu_restore()
             return
-        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
-
-        try:
-            result = reset(bdf)
-        except (DaemonError, DaemonTimeout, DaemonUnavailable, OSError, ConnectionError) as e:
-            self._on_gpu_restore_error("error", getattr(e, "message", str(e)))
-        else:
-            self._on_gpu_restore_ok(result)
+        self._gpu_reset_request.emit(bdf)
 
     def _show_gpu_restore_message(self, text: str, css_class: str = "CardMeta") -> None:
         """Show a restore outcome/refusal line under the GPU controls."""
@@ -2951,28 +2878,12 @@ class DiagnosticsPage(QWidget):
         self._rescan_btn.setText("Rescanning...")
         self._rescan_result_label.setVisible(False)
 
-        if self._ensure_hw_diag_worker():
-            self._rescan_request.emit()
-            return
-
-        # Synchronous fallback — no socket path (demo / mock-client tests).
-        rescan = getattr(self._client, "hwmon_rescan", None)
-        if rescan is None:
-            self._show_rescan_message("Rescan unavailable: this client does not support it")
+        if not self._ensure_hw_diag_worker():
+            # Unreachable in production (DaemonClient always has a socket path).
+            self._show_rescan_message("Rescan unavailable: no daemon socket path")
             self._finish_rescan()
             return
-        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
-
-        try:
-            headers = rescan()
-        except DaemonTimeout:
-            self._on_rescan_error("unavailable", "Hardware rescan timed out")
-        except DaemonUnavailable:
-            self._on_rescan_error("unavailable", "Daemon unavailable — cannot rescan hardware")
-        except DaemonError as e:
-            self._on_rescan_error("error", e.message)
-        else:
-            self._on_rescan_ok(headers)
+        self._rescan_request.emit()
 
     def _show_rescan_message(self, text: str, css_class: str = "CardMeta") -> None:
         """Show a rescan outcome line under the Hardware Readiness header row."""
@@ -3045,39 +2956,40 @@ class DiagnosticsPage(QWidget):
         if getattr(self, "_event_log_view", None) is not None:
             self._event_log_view.refresh_theme()
 
+    def _teardown_worker(self, worker: QObject | None, thread: QThread | None, label: str) -> None:
+        """Stop one diagnostics worker + its QThread, race-free (F-1).
+
+        Sever the worker's result signals FIRST so a ``do_*`` still in flight on
+        the worker thread cannot deliver a verify/fetch result onto this closing
+        page (its queued ``*_ok`` / ``*_error`` would otherwise land on
+        torn-down widgets), then close the per-thread client and stop the
+        thread. Mirrors :meth:`PollingService.shutdown`'s
+        stop-the-source-before-close ordering.
+        """
+        if worker is not None:
+            # Disconnect every worker→page connection (worker as sender) in one
+            # call so no in-flight result reaches the closing page.
+            QObject.disconnect(worker, None, None, None)
+            worker.shutdown()
+        if thread is not None:
+            thread.quit()
+            if not thread.wait(2000):
+                log.warning("%s thread did not stop within 2s, terminating", label)
+                thread.terminate()
+                thread.wait(1000)
+
     def cleanup(self) -> None:
-        """Stop the verify + hardware-diagnostics worker threads. Called from the
-        main window closeEvent."""
-        if self._verify_worker is not None:
-            self._verify_worker.shutdown()
-        if self._verify_thread is not None:
-            self._verify_thread.quit()
-            if not self._verify_thread.wait(2000):
-                log.warning("Verify thread did not stop within 2s, terminating")
-                self._verify_thread.terminate()
-                self._verify_thread.wait(1000)
-            self._verify_thread = None
-            self._verify_worker = None
-        if self._hw_diag_worker is not None:
-            self._hw_diag_worker.shutdown()
-        if self._hw_diag_thread is not None:
-            self._hw_diag_thread.quit()
-            if not self._hw_diag_thread.wait(2000):
-                log.warning("HW diagnostics thread did not stop within 2s, terminating")
-                self._hw_diag_thread.terminate()
-                self._hw_diag_thread.wait(1000)
-            self._hw_diag_thread = None
-            self._hw_diag_worker = None
-        if self._gpu_verify_worker is not None:
-            self._gpu_verify_worker.shutdown()
-        if self._gpu_verify_thread is not None:
-            self._gpu_verify_thread.quit()
-            if not self._gpu_verify_thread.wait(2000):
-                log.warning("GPU verify thread did not stop within 2s, terminating")
-                self._gpu_verify_thread.terminate()
-                self._gpu_verify_thread.wait(1000)
-            self._gpu_verify_thread = None
-            self._gpu_verify_worker = None
+        """Stop the verify + hardware-diagnostics + GPU verify worker threads.
+        Called from the main window closeEvent."""
+        self._teardown_worker(self._verify_worker, self._verify_thread, "Verify")
+        self._verify_worker = None
+        self._verify_thread = None
+        self._teardown_worker(self._hw_diag_worker, self._hw_diag_thread, "HW diagnostics")
+        self._hw_diag_worker = None
+        self._hw_diag_thread = None
+        self._teardown_worker(self._gpu_verify_worker, self._gpu_verify_thread, "GPU verify")
+        self._gpu_verify_worker = None
+        self._gpu_verify_thread = None
 
     def _show_verify_result(self, result: HwmonVerifyResult) -> None:
         """Display the result of a PWM verification test.

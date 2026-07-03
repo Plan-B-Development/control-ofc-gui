@@ -355,8 +355,9 @@ class TestGigabyteIt8696QuirkAutoShow:
 
 class TestHwDiagAsyncFetch:
     """Finding D: the hardware-diagnostics fetch runs on a worker thread so the
-    blocking GET never freezes the UI, with a synchronous fallback that
-    preserves behaviour when no socket path is available (mock-client tests)."""
+    blocking GET never freezes the UI. The result-apply / error slots are
+    driven directly here; the worker lifecycle (create + race-free teardown) is
+    covered by ``test_worker_lifecycle_create_and_cleanup``."""
 
     def _diag(self) -> HardwareDiagnosticsResult:
         return HardwareDiagnosticsResult(
@@ -382,22 +383,6 @@ class TestHwDiagAsyncFetch:
         text = page._hw_ready_summary.text().lower()
         assert "boom" in text
         assert "error" in text
-
-    def test_fetch_uses_sync_fallback_without_socket(self, app) -> None:
-        # A mock client with no socket_path must not spin up a worker thread;
-        # the fetch falls back to a synchronous call and applies the result.
-        page = DiagnosticsPage()
-        diag = self._diag()
-        client = MagicMock()
-        client.socket_path = None
-        client.hardware_diagnostics.return_value = diag
-        page._client = client
-
-        page._fetch_hardware_diagnostics()
-
-        client.hardware_diagnostics.assert_called_once()
-        assert page._diag.last_hw_diagnostics is diag
-        assert page._hw_diag_worker is None  # no worker created on the sync path
 
     def test_worker_lifecycle_create_and_cleanup(self, app) -> None:
         # With a socket path the worker + thread are created and started; the
