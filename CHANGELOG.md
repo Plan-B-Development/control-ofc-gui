@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.8.1] — 2026-07-04
+
+Audit-2026-07-03 Cluster 4: contract + docs truth. Mostly documentation; one behaviour completion.
+
+### Fixed
+- **External profile activations (CLI / another client) now update the GUI's profile picker and
+  active-profile marker**, not just the banner — the daemon's reported `active_profile_id` is now
+  surfaced through `AppState` (completing DEC-194).
+
+### Removed
+- The dead `DaemonClient.validate_profile()` method (unused) + its stale "pre-save validation gate"
+  comment — profile validation is server-side on publish.
+
+### Changed
+- Documentation-truth pass: docs/08 now documents activation-by-path, the `POST /profiles` 201/200
+  status codes, and the two `validate_only` response shapes; docs/02/07/14 drop references to the
+  removed `gui_wrote_gpu_fan` flag and list the diagnostics modules; stale "control loop" comments
+  corrected. (The daemon docs were corrected in lockstep — false config-migration claims + stale
+  module maps.)
+
+GUI-only — no daemon or API change. Pairs with `control-ofc-daemon` ≥ v2.4.0.
+
 ## [2.8.0] — 2026-07-04
 
 Audit-2026-07-03 Cluster 3: GUI consolidation. Mostly internal cleanup, with a few user-facing fixes.

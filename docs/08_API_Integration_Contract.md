@@ -524,7 +524,7 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
   warning, not an error (profiles stay portable across machines).
 - **Two outcome shapes by validity:**
   - **Invalid** (any request, with or without `validate_only`) → `400 validation_error` **error
-    envelope** with the hard violations under `error.details.field_violations` (see Error model). A
+    envelope** with the field violations (errors, plus any warnings) under `error.details.field_violations` (see Error model). A
     `validate_only` request fails exactly when a real one would (AIP-163).
   - **Valid `?validate_only=true`** → `200` with a **top-level** body
     `{"api_version": N, "valid": true, "field_violations": [<soft warnings>]}` (the soft `warnings`

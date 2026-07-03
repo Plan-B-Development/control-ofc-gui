@@ -373,8 +373,9 @@ Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
   route predates every supported daemon), and **disabled with an explanatory
   tooltip while the active profile owns an `amd_gpu:` member** (the daemon
   engine would silently re-assert its curve within seconds). The click
-  handler (`_on_gpu_restore_ok` / `_on_gpu_restore_error`) re-checks that gate,
-  then reports the daemon's result: a reset shows a success chip, a
+  handler (`_run_gpu_restore`) re-checks that gate; the async result callbacks
+  (`_on_gpu_restore_ok` / `_on_gpu_restore_error`) then report the daemon's
+  result: a reset shows a success chip, a
   daemon-reported no-op shows a warning chip, and an error shows a critical
   chip — every outcome lands in the event log. There is **no** session flag and
   **no** close-time auto-reset: the GUI never writes GPU PWM (DEC-165), so there
