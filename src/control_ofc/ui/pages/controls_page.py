@@ -393,39 +393,25 @@ class ControlsPage(QWidget):
         profile_id = self._profile_combo.currentData()
         if not profile_id:
             return
-
-        # Save first so the daemon reads the latest version
         profile = self._profile_service.get_profile(profile_id)
         if not profile:
             return
-        self._profile_service.save_profile(profile)
 
-        # Remember previous selection so we can revert on failure
+        # Remember the current active id so we can revert the combo on failure.
         prev_active_id = self._profile_service.active_id
 
-        # Send activation to daemon API
-        profile_path = str(self._profile_service.profile_path(profile_id))
-        if self._client:
-            try:
-                result = self._client.activate_profile(profile_path)
-                if not result.activated:
-                    self._log.warning("Daemon rejected profile activation: %s", profile_id)
-                    self._unsaved_label.setText("Activation rejected by daemon")
-                    set_chip_class(self._unsaved_label, "CriticalChip")
-                    self._refresh_profile_combo(selected_id=prev_active_id)
-                    return
-                self._log.info("Profile activated on daemon: %s", result.profile_name)
-            except DaemonError as exc:
-                self._log.error("Profile activation failed: %s", exc)
-                self._unsaved_label.setText(f"Activation failed: {exc.message or 'unknown error'}")
-                set_chip_class(self._unsaved_label, "CriticalChip")
-                self._refresh_profile_combo(selected_id=prev_active_id)
-                return
-        else:
-            self._log.debug("No daemon client — profile activated locally only")
+        # Delegate the save → daemon-confirm → set-active flow to the shared
+        # service path (ProfileService.activate); this page owns only its own
+        # visual feedback. Behaviour is identical to the former inline flow.
+        res = self._profile_service.activate(profile_id, client=self._client)
+        if not res.activated:
+            self._log.warning("Profile activation failed for %s: %s", profile_id, res.error)
+            self._unsaved_label.setText(res.error or "Activation failed")
+            set_chip_class(self._unsaved_label, "CriticalChip")
+            self._refresh_profile_combo(selected_id=prev_active_id)
+            return
 
-        # Update local state only after daemon confirms (or if no client)
-        self._profile_service.set_active(profile_id)
+        self._log.info("Profile activated: %s", profile_id)
         self._refresh_profile_combo(selected_id=profile_id)
         self._refresh_all()
         if self._state:

@@ -25,6 +25,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import QObject, Signal
+
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.constants import DEFAULT_CURVE_POINTS
 from control_ofc.paths import atomic_write, load_json_capped, profiles_dir
@@ -1168,7 +1170,22 @@ def collect_local_profiles_for_import(directory: Path | None = None) -> ImportCo
     return coll
 
 
-class ProfileService:
+@dataclass
+class ProfileActivateOutcome:
+    """Result of :meth:`ProfileService.activate` — a small, UI-agnostic verdict
+    the pages branch on.
+
+    ``activated`` is the only success signal; ``error`` is a human-readable
+    reason on failure (``None`` on success); ``local_only`` marks the no-client
+    (demo) path where activation was applied without a daemon confirmation.
+    """
+
+    activated: bool
+    error: str | None = None
+    local_only: bool = False
+
+
+class ProfileService(QObject):
     """Manages profile loading, saving, and selection.
 
     Persistence is daemon-backed when a :class:`DaemonClient` is supplied (the
@@ -1180,9 +1197,20 @@ class ProfileService:
     migration Decision 3). With ``client=None`` the service is purely local —
     byte-for-byte the pre-migration behaviour — which keeps demo mode and the
     existing unit tests unchanged.
+
+    It is a :class:`QObject` (mirroring :class:`AppState`) so it can emit signals
+    when its data changes, letting every page observe profile CRUD / activation
+    from one place instead of reaching into each other.
     """
 
+    # active_changed fires when the active profile id changes; profiles_changed
+    # fires when the profile *list* changes (create / duplicate / rename / save /
+    # delete). Both keep cross-page views (e.g. the dashboard combo) in sync.
+    active_changed = Signal(str)  # active profile id
+    profiles_changed = Signal()  # the profile list changed (CRUD)
+
     def __init__(self, client: DaemonClient | None = None) -> None:
+        super().__init__()
         self._profiles: dict[str, Profile] = {}
         self._active_id: str = ""
         self._client = client
@@ -1413,28 +1441,31 @@ class ProfileService:
         Decision 3). With no client this is a pure local write.
         """
         self._write_local(profile)
-        if self._client is None:
-            return
-        try:
-            self._publish(profile)
-        except (DaemonUnavailable, DaemonTimeout):
-            self._offline = True
-            self._unpublished.add(profile.id)
-            log.info(
-                "Profile %s saved as a local draft — daemon offline, not published",
-                profile.id,
-            )
-        except DaemonError as e:
-            # Daemon reached but rejected the document (validation / conflict).
-            # Keep the local draft so the edit is never lost; the Controls page
-            # validates before save (Phase 6c) and surfaces field_violations.
-            self._unpublished.add(profile.id)
-            log.warning(
-                "Profile %s rejected by the daemon (%s): %s — kept as a local draft",
-                profile.id,
-                e.code,
-                e.message,
-            )
+        if self._client is not None:
+            try:
+                self._publish(profile)
+            except (DaemonUnavailable, DaemonTimeout):
+                self._offline = True
+                self._unpublished.add(profile.id)
+                log.info(
+                    "Profile %s saved as a local draft — daemon offline, not published",
+                    profile.id,
+                )
+            except DaemonError as e:
+                # Daemon reached but rejected the document (validation / conflict).
+                # Keep the local draft so the edit is never lost; the Controls page
+                # validates before save (Phase 6c) and surfaces field_violations.
+                self._unpublished.add(profile.id)
+                log.warning(
+                    "Profile %s rejected by the daemon (%s): %s — kept as a local draft",
+                    profile.id,
+                    e.code,
+                    e.message,
+                )
+        # A save can create, rename, or otherwise mutate the profile list —
+        # notify observers once, after the write. create/duplicate reach this via
+        # their save_profile call, so they need no separate emit (non-recursive).
+        self.profiles_changed.emit()
 
     def _publish(self, profile: Profile) -> None:
         """Upload a profile to the daemon store (replace existing, else create)."""
@@ -1457,13 +1488,63 @@ class ProfileService:
 
     def set_active(self, profile_id: str) -> bool:
         if profile_id in self._profiles:
-            self._active_id = profile_id
+            if profile_id != self._active_id:
+                self._active_id = profile_id
+                self.active_changed.emit(profile_id)
             return True
         return False
+
+    def activate(self, profile_id: str, *, client: DaemonClient | None) -> ProfileActivateOutcome:
+        """Activate a profile end-to-end: persist it, confirm with the daemon,
+        then set it active *locally* — in that order.
+
+        This is the single activation path shared by the Controls and Dashboard
+        pages (they own only their own visual feedback). The ordering is
+        load-bearing and must not change:
+
+        1. save first, so the daemon reads the latest edited version;
+        2. with no client (demo / local mode) set active immediately and report
+           ``local_only`` — there is no daemon to confirm with;
+        3. otherwise ask the daemon and set active *only after* it confirms, so a
+           rejected or failed activation never desyncs local state from the
+           daemon (daemon-confirm-before-local).
+
+        ``client`` is passed in rather than read from ``self._client`` because the
+        pages hold the live daemon client, whereas the service's own client
+        governs profile persistence. Never raises for a daemon error — the reason
+        is captured into :attr:`ProfileActivateOutcome.error` for the caller to
+        surface. ``set_active`` (fired here) still emits ``active_changed``.
+        """
+        profile = self.get_profile(profile_id)
+        if profile is None:
+            return ProfileActivateOutcome(activated=False, error="Profile not found")
+
+        # Save first so the daemon reads the latest version.
+        self.save_profile(profile)
+
+        if client is None:
+            # Local-only branch (demo mode): no daemon to confirm with.
+            self.set_active(profile_id)
+            log.debug("No daemon client — profile %s activated locally only", profile_id)
+            return ProfileActivateOutcome(activated=True, local_only=True)
+
+        profile_path = str(self.profile_path(profile_id))
+        try:
+            result = client.activate_profile(profile_path)
+        except DaemonError as exc:
+            return ProfileActivateOutcome(activated=False, error=exc.message or "unknown error")
+        if not result.activated:
+            return ProfileActivateOutcome(activated=False, error="Activation rejected by daemon")
+
+        # Local state is updated only after the daemon confirms.
+        self.set_active(profile_id)
+        return ProfileActivateOutcome(activated=True)
 
     def create_profile(self, name: str) -> Profile:
         p = Profile(name=name)
         self._profiles[p.id] = p
+        # save_profile emits profiles_changed, so create is observed downstream
+        # without a second emit here (keeps emissions minimal / non-recursive).
         self.save_profile(p)
         return p
 
@@ -1509,6 +1590,8 @@ class ProfileService:
         self._unpublished.discard(profile_id)
         if self._active_id == profile_id:
             self._active_id = next(iter(self._profiles), "")
+        # delete does not go through save_profile, so emit here for observers.
+        self.profiles_changed.emit()
         return True
 
     def get_profile(self, profile_id: str) -> Profile | None:

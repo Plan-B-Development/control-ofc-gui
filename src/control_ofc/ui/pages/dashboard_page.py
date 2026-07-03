@@ -176,6 +176,16 @@ class DashboardPage(QWidget):
             self._state.fan_zones_changed.connect(self._on_fan_zones_changed)
             self._state.fan_alias_changed.connect(self._on_fan_alias_changed)
 
+        # Keep the dashboard profile combo in sync with changes made elsewhere
+        # (e.g. profile CRUD / activation on the Controls page). profiles_changed
+        # rebuilds the item list — previously the combo was populated once at
+        # startup and went stale after any create/rename/delete; active_changed
+        # re-selects by id (complements the by-name AppState.active_profile_changed
+        # wiring above).
+        if self._profile_service:
+            self._profile_service.profiles_changed.connect(self.populate_profiles)
+            self._profile_service.active_changed.connect(self._on_active_id_changed)
+
         # Chart refresh timer — visibility-gated for performance (R48)
         self._chart_timer = QTimer(self)
         self._chart_timer.setInterval(1000)
@@ -1284,51 +1294,36 @@ class DashboardPage(QWidget):
                 item.setText(new_name.strip())
 
     def _on_apply_profile(self) -> None:
-        """Apply the selected profile with visual feedback."""
+        """Apply the selected profile (by id) with transient button feedback.
+
+        Delegates the save → daemon-confirm → set-active flow to the shared
+        ProfileService.activate(). On failure it reverts the combo to the
+        previously-active profile (bug fix — the combo used to stay on the failed
+        pick) and surfaces the real reason to the log (previously lost)."""
         import logging
 
         log = logging.getLogger(__name__)
 
-        profile_name = self._profile_combo.currentText()
-        if not profile_name or not self._profile_service:
+        if not self._profile_service:
+            return
+        profile_id = self._profile_combo.currentData()
+        if not profile_id:
             return
 
-        # Find profile by name
-        target = None
-        for p in self._profile_service.profiles:
-            if p.name == profile_name:
-                target = p
-                break
-
-        if not target:
+        # Capture the active id up-front so a rejected switch reverts cleanly.
+        prev_active_id = self._profile_service.active_id
+        res = self._profile_service.activate(profile_id, client=self._client)
+        if not res.activated:
+            log.warning("Profile activation failed for %s: %s", profile_id, res.error)
+            self._revert_profile_combo(prev_active_id)
+            self._apply_btn.setText("Failed")
+            self._apply_btn.setEnabled(False)
+            QTimer.singleShot(1500, self._reset_apply_btn)
             return
 
-        # Save latest version then send to daemon
-        self._profile_service.save_profile(target)
-        profile_path = str(self._profile_service.profile_path(target.id))
-
-        if self._client:
-            try:
-                from control_ofc.api.errors import DaemonError
-
-                result = self._client.activate_profile(profile_path)
-                if not result.activated:
-                    log.warning("Daemon rejected profile: %s", target.name)
-                    self._apply_btn.setText("Rejected")
-                    self._apply_btn.setEnabled(False)
-                    QTimer.singleShot(1500, self._reset_apply_btn)
-                    return
-                log.info("Profile activated on daemon: %s", result.profile_name)
-            except DaemonError as exc:
-                log.error("Profile activation failed: %s", exc)
-                self._apply_btn.setText("Failed")
-                self._apply_btn.setEnabled(False)
-                QTimer.singleShot(1500, self._reset_apply_btn)
-                return
-
-        # Only update local state after daemon confirms (or no client)
-        self._profile_service.set_active(target.id)
-        if self._state:
+        # Mirror the new active into AppState so the whole UI reflects it.
+        target = self._profile_service.get_profile(profile_id)
+        if self._state and target:
             self._state.set_active_profile(target.name)
         # The daemon re-evaluates the activated profile itself (DEC-165); the
         # GUI no longer forces a local control-loop re-evaluation.
@@ -1336,23 +1331,54 @@ class DashboardPage(QWidget):
         self._apply_btn.setEnabled(False)
         QTimer.singleShot(1500, self._reset_apply_btn)
 
+    def _revert_profile_combo(self, profile_id: str) -> None:
+        """Re-select ``profile_id`` in the combo, blocking signals so the
+        reversion never re-triggers the apply handler."""
+        idx = self._profile_combo.findData(profile_id)
+        if idx >= 0:
+            with block_signals(self._profile_combo):
+                self._profile_combo.setCurrentIndex(idx)
+
+    def _on_active_id_changed(self, profile_id: str) -> None:
+        """Reflect a service-side active-profile change in the combo by id
+        (blocking signals so it never re-triggers apply)."""
+        idx = self._profile_combo.findData(profile_id)
+        if idx >= 0:
+            with block_signals(self._profile_combo):
+                self._profile_combo.setCurrentIndex(idx)
+
     def _reset_apply_btn(self) -> None:
         self._apply_btn.setText("Apply")
         self._apply_btn.setEnabled(True)
 
     def populate_profiles(self) -> None:
-        """Fill the profile combo from ProfileService. Call after profiles are loaded."""
+        """(Re)build the profile combo from ProfileService, tagging each item with
+        its profile id (userData) so the apply flow is by-id, not by-name.
+
+        Wired to ``ProfileService.profiles_changed`` so profile CRUD on the
+        Controls page keeps this combo current. Preserves the current selection
+        across the rebuild where possible, else falls back to the active
+        profile."""
         if not self._profile_service:
             return
         with block_signals(self._profile_combo):
+            prev_id = self._profile_combo.currentData()
+            active = self._profile_service.active_profile
+            active_id = active.id if active else ""
+            target_id = prev_id or active_id
             self._profile_combo.clear()
-            for p in self._profile_service.profiles:
-                self._profile_combo.addItem(p.name)
-            # Select the active one
-            if self._profile_service.active_profile:
-                idx = self._profile_combo.findText(self._profile_service.active_profile.name)
-                if idx >= 0:
-                    self._profile_combo.setCurrentIndex(idx)
+            select_idx = -1
+            for i, p in enumerate(self._profile_service.profiles):
+                self._profile_combo.addItem(p.name, p.id)
+                if p.id == target_id:
+                    select_idx = i
+            # If the remembered selection is gone, fall back to the active profile.
+            if select_idx < 0 and active_id:
+                select_idx = self._profile_combo.findData(active_id)
+            if select_idx < 0 and self._profile_combo.count() > 0:
+                select_idx = 0
+            if select_idx >= 0:
+                self._profile_combo.setCurrentIndex(select_idx)
 
     def _show_content(self) -> None:
         if not self._has_data:
