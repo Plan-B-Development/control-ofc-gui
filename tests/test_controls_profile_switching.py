@@ -273,3 +273,75 @@ class TestDeleteProfileSwitchesToActive:
         viewed = controls_page._get_current_profile()
         assert viewed is not None
         assert viewed.id == active.id
+
+
+class TestUnsavedGuardOnProfileSwitch:
+    """Switching profiles with unsaved edits prompts before discarding them."""
+
+    def test_keep_editing_blocks_switch(self, controls_page, profile_service, monkeypatch):
+        """Declining the discard prompt reverts the combo and keeps edits."""
+        profiles = profile_service.profiles
+        active = profile_service.active_profile
+        assert active is not None
+        assert len(profiles) >= 2
+        other = next(p for p in profiles if p.id != active.id)
+
+        # View the active profile, then simulate in-progress curve edits.
+        _select_profile_by_id(controls_page, active.id)
+        start_id = _combo_profile_id(controls_page)
+        controls_page._set_unsaved(True)
+
+        # User chooses "Keep editing" (do not discard).
+        monkeypatch.setattr(controls_page, "_confirm_discard_unsaved", lambda: False)
+
+        # Attempt to switch away — the guard must veto it.
+        _select_profile_by_id(controls_page, other.id)
+
+        assert _combo_profile_id(controls_page) == start_id
+        assert controls_page._has_unsaved is True
+        assert controls_page._get_current_profile().id == start_id
+
+    def test_discard_allows_switch(self, controls_page, profile_service, monkeypatch):
+        """Confirming the discard prompt performs the switch and clears edits."""
+        profiles = profile_service.profiles
+        active = profile_service.active_profile
+        assert active is not None
+        assert len(profiles) >= 2
+        other = next(p for p in profiles if p.id != active.id)
+
+        _select_profile_by_id(controls_page, active.id)
+        controls_page._set_unsaved(True)
+
+        # User chooses "Discard".
+        monkeypatch.setattr(controls_page, "_confirm_discard_unsaved", lambda: True)
+
+        _select_profile_by_id(controls_page, other.id)
+
+        assert _combo_profile_id(controls_page) == other.id
+        assert controls_page._has_unsaved is False
+        assert controls_page._get_current_profile().id == other.id
+
+    def test_switch_without_unsaved_does_not_prompt(
+        self, controls_page, profile_service, monkeypatch
+    ):
+        """With no unsaved edits the guard never calls the confirm dialog."""
+        profiles = profile_service.profiles
+        active = profile_service.active_profile
+        assert active is not None
+        assert len(profiles) >= 2
+        other = next(p for p in profiles if p.id != active.id)
+
+        _select_profile_by_id(controls_page, active.id)
+        controls_page._set_unsaved(False)
+
+        called = {"n": 0}
+
+        def _boom() -> bool:
+            called["n"] += 1
+            return True
+
+        monkeypatch.setattr(controls_page, "_confirm_discard_unsaved", _boom)
+        _select_profile_by_id(controls_page, other.id)
+
+        assert called["n"] == 0
+        assert _combo_profile_id(controls_page) == other.id

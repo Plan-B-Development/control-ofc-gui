@@ -60,14 +60,11 @@ class ThemeTokens:
 
     # ─── Borders & separators ────────────────────────────────────────
     border_default: str = "#2a3a5c"
-    border_focus: str = "#2f73c4"
-    divider: str = "#2a3a5c"
 
     # ─── Interactive states ──────────────────────────────────────────
     hover_bg: str = "#253552"
     pressed_bg: str = "#1d5fa9"
     selected_bg: str = "#1a3a6a"
-    focus_ring: str = "#2f73c4"
     disabled_bg: str = "#1e1e30"
     disabled_text: str = "#505868"
 
@@ -89,8 +86,6 @@ class ThemeTokens:
     # chart_axis_text: bumped from #606878 (2.8:1) to #8a92a4 (4.5:1)
     # so chart axis labels meet WCAG AA non-text contrast (DEC-109).
     chart_axis_text: str = "#8a92a4"
-    chart_line_primary: str = "#5fa4ec"
-    chart_point: str = "#5fa4ec"
     chart_point_selected: str = "#ffffff"
     chart_point_hover: str = "#ffffff"
     chart_crosshair: str = "#8a92a4"
@@ -132,7 +127,6 @@ class ThemeTokens:
     input_border_focus: str = "#2f73c4"
 
     # ─── Modals / dialogs ────────────────────────────────────────────
-    modal_overlay: str = "#000000aa"
     modal_bg: str = "#1f2b47"
     modal_border: str = "#2a3a5c"
 
@@ -151,11 +145,6 @@ class ThemeTokens:
     # (e.g. the systemctl enable hint on the dashboard). Token-driven so
     # light themes can swap to a lighter tint instead of pure black (DEC-109).
     code_block_bg: str = "#0d1224"
-
-    # ─── Brand ───────────────────────────────────────────────────────
-    brand_primary: str = "#2f73c4"
-    brand_secondary: str = "#7ec8e3"
-    brand_accent: str = "#1a3a6a"
 
     # ─── Typography ──────────────────────────────────────────────────
     font_family: str = ""  # empty = system default
@@ -398,8 +387,6 @@ def check_contrast_warnings(tokens: ThemeTokens) -> list[str]:
         ("chart_axis_text", "chart_bg", 3.0),
         # ─── Chart hover-tooltip text on its plate (AA: 4.5:1) ────
         ("text_primary", "chart_tooltip_bg", 4.5),
-        # ─── Focus indicator (AA non-text: 3:1) ───────────────────
-        ("focus_ring", "app_bg", 3.0),
     ]
     for fg_name, bg_name, min_ratio in pairs:
         fg = getattr(tokens, fg_name, "")

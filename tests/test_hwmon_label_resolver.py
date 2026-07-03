@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from control_ofc.ui.hwmon_label_resolver import (
+from control_ofc.knowledge.hwmon_label_resolver import (
     HWMON_LABEL_FALLBACK,
     BoardKey,
     FallbackLabel,
@@ -415,7 +415,7 @@ class TestCache:
     def test_default_paths_cached(self, tmp_path, monkeypatch):
         """Calling load_libsensors_configs() with no paths argument caches
         the result. Subsequent calls return the same list without re-reading."""
-        from control_ofc.ui import hwmon_label_resolver as r
+        from control_ofc.knowledge import hwmon_label_resolver as r
 
         cfg = tmp_path / "fake.conf"
         cfg.write_text('chip "it8696-isa-0a40"\n    label fan1 "CACHED_FAN"\n')
@@ -435,7 +435,7 @@ class TestCache:
     def test_explicit_paths_bypass_cache(self, tmp_path):
         """Tests pass ``paths=`` so they never read or pollute the
         process cache."""
-        from control_ofc.ui import hwmon_label_resolver as r
+        from control_ofc.knowledge import hwmon_label_resolver as r
 
         a = tmp_path / "a.conf"
         a.write_text('chip "it8696-isa-0a40"\n    label fan1 "A_LABEL"\n')

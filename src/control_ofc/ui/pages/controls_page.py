@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import ConnectionState, DaemonStatus
+from control_ofc.knowledge.sensor_knowledge import classify_sensor_with_overrides
 from control_ofc.services.app_state import AppState
 from control_ofc.services.profile_service import (
     CONTROL_ROLE_GPU,
@@ -98,6 +99,10 @@ class ControlsPage(QWidget):
         self._curve_cards: dict[str, CurveCard] = {}
         self._selected_control_id: str | None = None
         self._has_unsaved: bool = False
+        # Profile id whose content the page currently displays. Tracked so the
+        # unsaved-edit guard in _on_profile_selected can revert the combo to the
+        # prior selection when the user declines to discard in-progress edits.
+        self._loaded_profile_id: str | None = None
         # Last-known card-writability. Cards are disabled when the daemon reports
         # no writable backend OR is not autonomous (pre-2.0, where override is
         # unsupported — DEC-163); tracked here so a rebuild (profile switch) and a
@@ -383,11 +388,49 @@ class ControlsPage(QWidget):
     def _on_profile_selected(self, index: int) -> None:
         if index < 0:
             return
+        new_id = self._profile_combo.currentData()
+        # Guard in-progress curve edits: switching profiles rebuilds the page
+        # and would silently drop them. Prompt before leaving the current
+        # profile; on "Keep editing" revert the combo and stay put.
+        if (
+            self._has_unsaved
+            and new_id != self._loaded_profile_id
+            and not self._confirm_discard_unsaved()
+        ):
+            self._restore_combo_selection(self._loaded_profile_id)
+            return
         # Do NOT call _refresh_profile_combo() here — it would destroy the
         # user's selection. The combo already has the correct index; just
         # refresh the page content for the newly selected profile.
         self._refresh_all()
         self._set_unsaved(False)
+
+    def _confirm_discard_unsaved(self) -> bool:
+        """Ask whether to discard in-progress edits before switching profiles.
+
+        Returns True to discard and proceed with the switch, False to keep
+        editing. Isolated behind a method so tests can drive the decision
+        without spinning a real modal (see the tests/conftest.py modal guard).
+        """
+        from PySide6.QtWidgets import QMessageBox
+
+        result = QMessageBox.question(
+            self,
+            "Discard unsaved changes?",
+            "This profile has unsaved changes. Discard them and switch profiles?",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return result == QMessageBox.StandardButton.Discard
+
+    def _restore_combo_selection(self, target_id: str | None) -> None:
+        """Re-select *target_id* in the profile combo without re-entering
+        _on_profile_selected (used to revert a declined profile switch)."""
+        with block_signals(self._profile_combo):
+            for i in range(self._profile_combo.count()):
+                if self._profile_combo.itemData(i) == target_id:
+                    self._profile_combo.setCurrentIndex(i)
+                    break
 
     def _on_activate(self) -> None:
         profile_id = self._profile_combo.currentData()
@@ -590,6 +633,7 @@ class ControlsPage(QWidget):
         profile = self._get_current_profile()
         if not profile:
             return
+        self._loaded_profile_id = profile.id
         self._refresh_controls_grid(profile)
         self._refresh_curves_grid(profile)
 
@@ -663,7 +707,6 @@ class ControlsPage(QWidget):
             build_aio_controls,
             detect_aio_setup,
         )
-        from control_ofc.ui.sensor_knowledge import classify_sensor_with_overrides
         from control_ofc.ui.widgets.aio_config_dialog import AioConfigDialog
 
         overrides = self._state.sensor_class_overrides
@@ -1550,7 +1593,6 @@ class ControlsPage(QWidget):
         """Curve-editor sensor-combo label, marking coolant + CPU sensors as
         preferred (\u2605) \u2014 the recommended bindings for AIO/radiator curves
         (DEC-157). Selection is still free; this only highlights."""
-        from control_ofc.ui.sensor_knowledge import classify_sensor_with_overrides
 
         val_text = f" \u2014 {s.value_c:.1f}\u00b0C" if s.value_c is not None else ""
         overrides = self._state.sensor_class_overrides if self._state else {}

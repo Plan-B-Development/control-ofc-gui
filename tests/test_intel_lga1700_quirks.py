@@ -12,9 +12,9 @@ nct6775 docs, lm-sensors upstream configs, Fred78290/nct6687d source.
 from __future__ import annotations
 
 from control_ofc.api.models import HardwareDiagnosticsResult, parse_hardware_diagnostics
+from control_ofc.knowledge.hwmon_label_resolver import resolve_label_from_fallback
+from control_ofc.knowledge.sensor_knowledge import classify_sensor, lookup_board_override
 from control_ofc.ui.hwmon_guidance import lookup_vendor_quirks
-from control_ofc.ui.hwmon_label_resolver import resolve_label_from_fallback
-from control_ofc.ui.sensor_knowledge import classify_sensor, lookup_board_override
 
 
 class TestDaemonCpuVendorRoundTrip:

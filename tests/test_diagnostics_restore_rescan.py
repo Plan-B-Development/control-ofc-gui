@@ -549,3 +549,27 @@ def test_demo_reset_gpu_fan_reports_success():
 def test_demo_hwmon_rescan_returns_demo_headers():
     demo = DemoService()
     assert [h.id for h in demo.hwmon_rescan()] == [h.id for h in demo.hwmon_headers()]
+
+
+# ── Rescan drops the cached /etc/sensors.d labels ────────────────────
+
+
+class TestHwmonRescanClearsLibsensorsCache:
+    """A rescan may follow a /etc/sensors.d relabel, so _on_rescan_ok must drop
+    the module-global libsensors cache — relabelled headers then re-resolve
+    without a GUI restart."""
+
+    def test_rescan_ok_clears_libsensors_cache(self, qtbot, monkeypatch):
+        from control_ofc.knowledge import hwmon_label_resolver as hlr
+
+        page = _make_page(qtbot, client=None)
+        # Isolate the cache-clear: skip the chained hardware-diagnostics worker.
+        monkeypatch.setattr(page, "_fetch_hardware_diagnostics", lambda: None)
+
+        # Prime the module-global cache; monkeypatch auto-restores it afterwards.
+        monkeypatch.setattr(hlr, "_libsensors_cache", ["sentinel"], raising=False)
+        assert hlr._libsensors_cache is not None
+
+        page._on_rescan_ok([])
+
+        assert hlr._libsensors_cache is None

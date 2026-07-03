@@ -4,6 +4,11 @@ parsing, and the liquid-cooler role floor. Outcome-focused; no real hardware."""
 from __future__ import annotations
 
 from control_ofc.api.models import parse_capabilities, parse_hwmon_headers
+from control_ofc.knowledge.sensor_knowledge import (
+    classify_sensor,
+    classify_sensor_with_overrides,
+    is_liquid_cooler_chip,
+)
 from control_ofc.services.app_settings_service import (
     MACHINE_SPECIFIC_KEYS,
     AppSettings,
@@ -16,11 +21,6 @@ from control_ofc.services.profile_service import (
     ControlMember,
     control_minimum_pct,
     infer_member_role,
-)
-from control_ofc.ui.sensor_knowledge import (
-    classify_sensor,
-    classify_sensor_with_overrides,
-    is_liquid_cooler_chip,
 )
 
 # ---------------------------------------------------------------------------

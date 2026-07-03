@@ -15,7 +15,7 @@ from control_ofc.api.models import (
     SensorReading,
     SensorThresholds,
 )
-from control_ofc.ui.sensor_knowledge import kernel_doc_url_for_chip, temp_type_label
+from control_ofc.knowledge.sensor_knowledge import kernel_doc_url_for_chip, temp_type_label
 from control_ofc.ui.widgets.sensor_detail_dialog import (
     SensorDetailDialog,
     build_sensor_detail_html,

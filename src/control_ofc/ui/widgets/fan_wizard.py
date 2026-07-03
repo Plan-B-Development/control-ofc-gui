@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QProgressBar,
     QPushButton,
     QTableWidget,
@@ -89,7 +88,6 @@ class FanConfigWizard(QWizard):
         self._targets = self._build_targets()
         self._selected_indices: list[int] = []  # set by discovery page
         self._labels: dict[str, str] = {}  # fan_id → label
-        self._notes: dict[str, str] = {}  # fan_id → notes
         self._current_test_idx = 0
         # True once the user has entered the identify (test) page, so closing
         # the wizard restores any fan still stopped. Identify is per-fan and
@@ -424,18 +422,6 @@ class IdentifyFanPage(QWizardPage):
             self._label_combo.addItem(preset)
         label_row.addWidget(self._label_combo, 1)
         label_group.addLayout(label_row)
-
-        self._multi_cb = QCheckBox("Multiple physical fans moved (splitter/hub)")
-        self._multi_cb.setObjectName("Wizard_Check_multiFan")
-        label_group.addWidget(self._multi_cb)
-
-        notes_row = QHBoxLayout()
-        notes_row.addWidget(QLabel("Notes:"))
-        self._notes_edit = QLineEdit()
-        self._notes_edit.setObjectName("Wizard_Edit_notes")
-        self._notes_edit.setPlaceholderText("Optional notes (e.g., 'controls 3 fans via splitter')")
-        notes_row.addWidget(self._notes_edit, 1)
-        label_group.addLayout(notes_row)
         layout.addLayout(label_group)
 
         # Fan cycling buttons
@@ -483,8 +469,6 @@ class IdentifyFanPage(QWizardPage):
         self._test_btn.setEnabled(True)
         self._abort_btn.setEnabled(False)
         self._label_combo.setCurrentText("")
-        self._multi_cb.setChecked(False)
-        self._notes_edit.clear()
         self._testing = False
         self._all_done = False
         self._next_fan_btn.setVisible(True)
@@ -578,17 +562,12 @@ class IdentifyFanPage(QWizardPage):
         log.info("Wizard: test aborted for %s", target["id"] if target else "unknown")
 
     def _save_current_label(self) -> None:
-        """Save the label and notes for the current fan target."""
+        """Save the label for the current fan target."""
         target = self._wizard.current_target()
         if target:
             label = self._label_combo.currentText().strip()
             if label:
                 self._wizard._labels[target["id"]] = label
-            notes = self._notes_edit.text().strip()
-            if self._multi_cb.isChecked():
-                notes = f"[splitter/hub] {notes}".strip()
-            if notes:
-                self._wizard._notes[target["id"]] = notes
 
     def _next_fan(self) -> None:
         """Save label for current fan, advance to next fan or finish."""
@@ -630,8 +609,8 @@ class ReviewPage(QWizardPage):
 
         layout = QVBoxLayout(self)
 
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["ID", "Source", "New Label", "Notes"])
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["ID", "Source", "New Label"])
         self._table.setObjectName("Wizard_Table_review")
         from PySide6.QtWidgets import QHeaderView
 
@@ -643,7 +622,6 @@ class ReviewPage(QWizardPage):
         targets = self._wizard._targets
         selected = self._wizard._selected_indices
         labels = self._wizard._labels
-        notes = self._wizard._notes
 
         rows = [targets[i] for i in selected] if selected else targets
         self._table.setRowCount(len(rows))
@@ -654,8 +632,6 @@ class ReviewPage(QWizardPage):
             label = labels.get(t["id"], "")
             item = QTableWidgetItem(label)
             self._table.setItem(i, 2, item)
-            note = notes.get(t["id"], "")
-            self._table.setItem(i, 3, QTableWidgetItem(note))
 
     def validatePage(self) -> bool:
         # Read back any edits the user made in the review table

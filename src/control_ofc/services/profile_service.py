@@ -29,6 +29,10 @@ from PySide6.QtCore import QObject, Signal
 
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.constants import DEFAULT_CURVE_POINTS
+from control_ofc.knowledge.sensor_knowledge import (
+    classify_sensor_with_overrides,
+    is_liquid_cooler_chip,
+)
 from control_ofc.paths import atomic_write, load_json_capped, profiles_dir
 
 if TYPE_CHECKING:
@@ -357,10 +361,6 @@ def _member_is_aio_header(member: ControlMember) -> bool:
     """
     if member.source != "hwmon":
         return False
-    # Local import mirrors app_state's hwmon_label_resolver usage — keeps the
-    # cooler chip-name set in one place without a module-load import cycle.
-    from control_ofc.ui.sensor_knowledge import is_liquid_cooler_chip
-
     parts = member.member_id.split(":")
     chip = parts[1] if len(parts) > 1 else ""
     return is_liquid_cooler_chip(chip)
@@ -867,8 +867,6 @@ def detect_aio_setup(
     coolant-override map. The pump is the writable AIO header labelled "pump"
     (else the lowest pwm index); other writable AIO headers are radiator fans.
     """
-    from control_ofc.ui.sensor_knowledge import classify_sensor_with_overrides
-
     overrides = sensor_overrides or {}
     aio_headers = [h for h in headers if h.is_aio]
     writable = [h for h in aio_headers if h.is_writable]

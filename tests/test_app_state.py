@@ -59,7 +59,7 @@ def test_fan_display_name_uses_label_resolver_when_sysfs_label_empty():
     inject an empty path list via the resolver's cache instead). On
     the X870E AORUS MASTER, IT8696E pwm1 should resolve to CPU_FAN."""
     from control_ofc.api.models import BoardInfo
-    from control_ofc.ui.hwmon_label_resolver import (
+    from control_ofc.knowledge.hwmon_label_resolver import (
         clear_libsensors_cache,
         load_libsensors_configs,
     )
@@ -93,7 +93,7 @@ def test_fan_display_name_unverified_suffix_for_secondary_chip():
     (frankcrawford/it87 issue #103, DEC-144) and must carry the
     (unverified) suffix until silkscreen tracing confirms."""
     from control_ofc.api.models import BoardInfo
-    from control_ofc.ui.hwmon_label_resolver import clear_libsensors_cache
+    from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
 
     clear_libsensors_cache()
     try:
@@ -125,7 +125,7 @@ def test_fan_display_name_alias_overrides_resolver():
     """User aliases take absolute precedence — they win even over a
     high-confidence resolver match."""
     from control_ofc.api.models import BoardInfo
-    from control_ofc.ui.hwmon_label_resolver import clear_libsensors_cache
+    from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
 
     clear_libsensors_cache()
     try:
@@ -155,7 +155,7 @@ def test_fan_display_name_sysfs_label_wins_over_resolver():
     """Daemon-supplied sysfs label has priority over the resolver — if
     the kernel driver exposes a fanN_label, the resolver does not run."""
     from control_ofc.api.models import BoardInfo
-    from control_ofc.ui.hwmon_label_resolver import clear_libsensors_cache
+    from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
 
     clear_libsensors_cache()
     try:

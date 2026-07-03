@@ -50,6 +50,12 @@ from control_ofc.api.models import (
     SensorReading,
     UnavailableSensor,
 )
+from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
+from control_ofc.knowledge.sensor_knowledge import (
+    classify_sensor,
+    classify_sensor_with_overrides,
+    format_sensor_tooltip,
+)
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService, format_uptime
 from control_ofc.services.series_selection import SeriesSelectionModel
@@ -83,11 +89,6 @@ from control_ofc.ui.pages.diagnostics_workers import (
     _VerifyWorker,
 )
 from control_ofc.ui.qt_util import set_chip_class
-from control_ofc.ui.sensor_knowledge import (
-    classify_sensor,
-    classify_sensor_with_overrides,
-    format_sensor_tooltip,
-)
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.event_log_view import EventLogView
@@ -2901,7 +2902,15 @@ class DiagnosticsPage(QWidget):
         AppState (feeding the member picker, profile sanitization, and every
         other ``headers_updated`` consumer), then chain a hardware-diagnostics
         refetch so the readiness report reflects the post-rescan reality (D3).
+
+        A rescan is also the natural moment to drop the cached libsensors label
+        config (the ``knowledge/hwmon_label_resolver`` module global): an edit
+        to ``/etc/sensors.d`` that relabels a header must then surface on the
+        next label resolve without needing a GUI restart.
         """
+        # Force /etc/sensors.d to be re-read the next time a header label is
+        # resolved, so relabelled sensors reflect the post-rescan reality.
+        clear_libsensors_cache()
         if self._state is not None:
             self._state.set_hwmon_headers(headers)
         n = len(headers)

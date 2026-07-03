@@ -13,7 +13,7 @@ import re
 
 # Accept #RGB, #RGBA, #RRGGBB and #RRGGBBAA (leading '#' required). This covers
 # every theme token in the bundled themes — including 8-digit ARGB values such
-# as ``modal_overlay = "#000000aa"`` — while rejecting named colours ("red"),
+# as ``"#000000aa"`` (a translucent overlay) — while rejecting named colours ("red"),
 # CSS functions ("rgb(...)"), and any QSS-injection payload.
 _HEX_COLOR_RE = re.compile(r"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})")
 

@@ -21,6 +21,7 @@ from control_ofc.api.models import (
     OperationMode,
     SensorReading,
 )
+from control_ofc.knowledge.hwmon_label_resolver import resolve_hwmon_header_label
 from control_ofc.services.session_stats import SessionStatsTracker
 
 
@@ -211,12 +212,6 @@ class AppState(QObject):
             if h.id == fan_id:
                 if h.label:
                     return h.label
-                # Lazy import — keeps the resolver out of the hot path
-                # for OpenFan-only systems and keeps app_state import-light.
-                from control_ofc.ui.hwmon_label_resolver import (
-                    resolve_hwmon_header_label,
-                )
-
                 return resolve_hwmon_header_label(
                     sysfs_label="",
                     chip_name=h.chip_name,

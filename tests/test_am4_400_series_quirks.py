@@ -18,12 +18,12 @@ from control_ofc.api.models import (
     ModuleCollisionInfo,
     parse_hardware_diagnostics,
 )
+from control_ofc.knowledge.hwmon_label_resolver import resolve_label_from_fallback
 from control_ofc.ui.hwmon_guidance import (
     detect_module_conflicts,
     lookup_chip_guidance,
     lookup_vendor_quirks,
 )
-from control_ofc.ui.hwmon_label_resolver import resolve_label_from_fallback
 
 
 class TestMsiNct6797MisIdQuirk:

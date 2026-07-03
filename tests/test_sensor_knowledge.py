@@ -1,6 +1,6 @@
 """Tests for the sensor reading interpretation knowledge base."""
 
-from control_ofc.ui.sensor_knowledge import (
+from control_ofc.knowledge.sensor_knowledge import (
     SensorClassification,
     classify_sensor,
     format_sensor_tooltip,

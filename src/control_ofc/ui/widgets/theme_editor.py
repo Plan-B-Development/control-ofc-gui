@@ -41,8 +41,6 @@ _TOKEN_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         "Borders & Separators",
         [
             ("border_default", "Default border"),
-            ("border_focus", "Focus border"),
-            ("divider", "Divider lines"),
         ],
     ),
     (
@@ -51,7 +49,6 @@ _TOKEN_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
             ("hover_bg", "Hover background"),
             ("pressed_bg", "Pressed / active background"),
             ("selected_bg", "Selected item background"),
-            ("focus_ring", "Focus ring colour"),
             ("disabled_bg", "Disabled background"),
             ("disabled_text", "Disabled text"),
         ],
@@ -71,8 +68,6 @@ _TOKEN_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
             ("chart_bg", "Chart background"),
             ("chart_grid", "Chart gridlines"),
             ("chart_axis_text", "Chart axis labels"),
-            ("chart_line_primary", "Primary chart line"),
-            ("chart_point", "Chart point"),
             ("chart_point_selected", "Selected point ring"),
             ("chart_point_hover", "Hover point ring"),
             ("chart_crosshair", "Hover crosshair"),

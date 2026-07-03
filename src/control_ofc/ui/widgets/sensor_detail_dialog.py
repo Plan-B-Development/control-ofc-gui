@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.ui.sensor_knowledge import (
+from control_ofc.knowledge.sensor_knowledge import (
     BOARD_SENSOR_OVERRIDES,
     classify_sensor,
     kernel_doc_url_for_chip,

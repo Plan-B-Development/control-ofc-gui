@@ -22,9 +22,9 @@ def test_strict_rejects_bad_chart_series_entry():
 def test_strict_accepts_8digit_and_chart_series():
     t = ThemeTokens()
     _apply_token_dict(
-        t, {"modal_overlay": "#11223344", "chart_series": ["#abc", "#aabbcc"]}, strict=True
+        t, {"modal_bg": "#11223344", "chart_series": ["#abc", "#aabbcc"]}, strict=True
     )
-    assert t.modal_overlay == "#11223344"
+    assert t.modal_bg == "#11223344"
     assert t.chart_series == ["#abc", "#aabbcc"]
 
 

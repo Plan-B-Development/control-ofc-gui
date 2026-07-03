@@ -20,10 +20,10 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.api.models import FanReading, SensorReading
+from control_ofc.knowledge.sensor_knowledge import classify_sensor, format_sensor_tooltip
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.qt_util import block_signals
-from control_ofc.ui.sensor_knowledge import classify_sensor, format_sensor_tooltip
 
 if TYPE_CHECKING:
     from control_ofc.services.app_settings_service import AppSettingsService
