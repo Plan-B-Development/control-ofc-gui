@@ -372,10 +372,13 @@ Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
   shown for any writable AMD GPU with **no** daemon version floor (the reset
   route predates every supported daemon), and **disabled with an explanatory
   tooltip while the active profile owns an `amd_gpu:` member** (the daemon
-  engine would silently re-assert its curve within seconds). The
-  click handler re-checks that gate, a success clears the session's
-  `gui_wrote_gpu_fan` flag (making the close-time auto-reset a no-op until
-  the next GUI GPU write), and both outcomes land in the event log.
+  engine would silently re-assert its curve within seconds). The click
+  handler (`_on_gpu_restore_ok` / `_on_gpu_restore_error`) re-checks that gate,
+  then reports the daemon's result: a reset shows a success chip, a
+  daemon-reported no-op shows a warning chip, and an error shows a critical
+  chip — every outcome lands in the event log. There is **no** session flag and
+  **no** close-time auto-reset: the GUI never writes GPU PWM (DEC-165), so there
+  is nothing to undo on close.
 - **Liability disclaimer** (`Diagnostics_Label_readinessDisclaimer`, DEC-158) —
   one calm, persistent note at the bottom of the card (`REMEDIATION_DISCLAIMER`,
   `CardMeta` weight): the checklist fixes, advisory details, and chip guidance

@@ -498,20 +498,38 @@ client lease error.
 ### Profile storage (CRUD — DEC-160, daemon ≥ 1.19.0)
 The daemon is the profile **store of record** (`/var/lib/control-ofc/profiles/`). The GUI uploads and
 validates full profile documents; it keeps a local draft cache but does not treat it as authoritative.
+
+**Activation currently runs the GUI-local copy, by path.** Even though the daemon is the store of
+record, the GUI activates by `profile_path` pointing at its own
+`~/.config/control-ofc/profiles/{id}.json` (`ControlsPage` / `ProfileService.activate_profile`), not
+by `profile_id` against the store. The daemon accepts that path because the GUI registers
+`~/.config/control-ofc/profiles/` as a profile **search dir** on every connect/reconnect
+(`polling._register_profile_search_dir`). So if the GUI-local copy and the daemon-store copy of the
+same id ever diverge, activation applies the **local** copy — not necessarily the one under
+`/var/lib/control-ofc/profiles/`.
 - `GET /profiles` — list stored profiles as `{id, name, description}` summaries (no controls or
   curves); `GET /profiles/{id}` — fetch one profile's full document. On load the GUI lists, then
   **hydrates** each id via `GET /profiles/{id}` before parsing — a summary alone has no controls or
   curves (DEC-175).
-- `POST /profiles` — create (`409 already_exists` on a duplicate id)
-- `PUT /profiles/{id}` — replace stored desired-state (no hot-reload — re-activate to apply)
+- `POST /profiles` — create → **201 Created** (`409 already_exists` on a duplicate id)
+- `PUT /profiles/{id}` — create-or-replace stored desired-state → **200 OK** (no hot-reload —
+  re-activate to apply)
 - `DELETE /profiles/{id}` — `409 profile_in_use` if it is the active profile
 - Profile ids are filesystem-safe stems: non-empty, ≤128 bytes, no `/` `\` `..` or control
   characters, else `400 validation_error` (DEC-173). The GUI auto-generates 8-char hex ids, so this
   only constrains hand-authored/imported ids.
-- `POST` / `PUT` accept `?validate_only=true` — runs the real validation, persists nothing
+- `POST` / `PUT` accept `?validate_only=true` — runs the real validation, persists nothing, and
+  returns **200** on success (validation short-circuits before the persist step)
 - Validation returns hard `errors` (reject) + soft `warnings` (accept). An unknown `sensor_id` is a
-  warning, not an error (profiles stay portable across machines). Field-level detail rides the error
-  envelope's `field_violations` (see Error model).
+  warning, not an error (profiles stay portable across machines).
+- **Two outcome shapes by validity:**
+  - **Invalid** (any request, with or without `validate_only`) → `400 validation_error` **error
+    envelope** with the hard violations under `error.details.field_violations` (see Error model). A
+    `validate_only` request fails exactly when a real one would (AIP-163).
+  - **Valid `?validate_only=true`** → `200` with a **top-level** body
+    `{"api_version": N, "valid": true, "field_violations": [<soft warnings>]}` (the soft `warnings`
+    ride the `field_violations` key here; nothing is persisted). A valid real create/update returns
+    its persisted-result body (`created`/`updated`, `profile_id`, `warnings`, …) instead.
 
 ### Profile activation
 - `POST /profile/activate` — `{"profile_path": "/path/to/profile.json"}` or `{"profile_id": "quiet"}`
@@ -540,7 +558,8 @@ daemon's clock); a stale token cannot re-pin (fencing).
 
 - `POST /control/{control_id}/override` — body `{"pwm_percent": 0..100, "ttl_secs"?: N}` →
   `200 {"control_id","override_token","pwm_percent","ttl_secs","renew_secs","expires_in_secs"}`.
-  `404` if the control is not in the active profile; `400` if `pwm_percent` out of range.
+  `404` (wire code `validation_error`, not `not_found`) if the control is not in the active profile;
+  `400` if `pwm_percent` out of range.
   The override PWM is still clamped by the daemon's hard pump/CPU floor (≥30 %) and GPU 0 % floor.
 - `POST /control/{control_id}/override/renew` — body `{"override_token": N}` →
   `200 {"control_id","override_token","ttl_secs","expires_in_secs"}`. Renew at ~`renew_secs`
@@ -787,6 +806,7 @@ These feed the dashboard, charts, and freshness indicators. The daemon (not the 
 The daemon's profile engine (`profile_engine.rs`) evaluates fan curves and is the sole writer whenever a profile is active (DEC-159). The GUI:
 - Stores profiles on the daemon via the CRUD surface above (`/profiles`, DEC-160) — the daemon is the store of record (`/var/lib/control-ofc/profiles/`)
 - Activates a profile: `POST /profile/activate`; queries it: `GET /profile/active`
+  - The GUI activates **by path** (`profile_path` = its own `~/.config/control-ofc/profiles/{id}.json`), which the daemon resolves because the GUI registers that directory as a profile search dir on connect. If the GUI-local and daemon-store copies of an id diverge, activation runs the **local** copy — not necessarily the `/var/lib/control-ofc/profiles/` one.
 - The daemon persists the active-profile *pointer* to `/var/lib/control-ofc/daemon_state.json`
 
 Profile *storage of record* moved to the daemon at 2.0.0 (DEC-160); the GUI keeps a local draft cache and uploads / validates through the CRUD API.

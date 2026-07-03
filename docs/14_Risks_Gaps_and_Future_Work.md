@@ -177,11 +177,10 @@ while the active profile owns an `amd_gpu:` member (the daemon engine
 would silently re-assert its curve), and re-checked at click time.
 
 **Post-2.0.0 note:** the GUI no longer writes GPU PWM at all — the daemon engine
-is the sole writer (DEC-165) — so the original close-time auto-reset (M9) is gone
-and the `gui_wrote_gpu_fan` session flag is now only a vestige that a true
-reconnect clears (`polling.py`). The Diagnostics action itself remains useful for
-handing a GPU left in a static/manual state back to PMFW automatic without
-restarting the daemon.
+is the sole writer (DEC-165) — so the original close-time auto-reset (M9) is gone,
+along with the `gui_wrote_gpu_fan` session flag it depended on (deleted in v2.6.1).
+The Diagnostics action itself remains useful for handing a GPU left in a
+static/manual state back to PMFW automatic without restarting the daemon.
 
 **Remaining (optional) surface:** a secondary "Restore to automatic" action in
 the fan wizard / fan role editor for GPU fans. Deferred — that surface only

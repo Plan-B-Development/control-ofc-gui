@@ -132,6 +132,8 @@ control_ofc/
       controls_page.py
       settings_page.py
       diagnostics_page.py
+      diagnostics_readiness.py     # readiness/Troubleshooting populate logic, extracted from diagnostics_page (Cluster C)
+      diagnostics_workers.py       # background QThread workers (verify / rescan / GPU reset) for the Diagnostics page
     widgets/
       control_card.py          # fan role card (theme-derived size, user-resizable — DEC-128/129)
       curve_card.py            # curve card (theme-derived size, user-resizable — DEC-128/129)

@@ -257,8 +257,10 @@ class DaemonClient:
 
         Exactly one of ``profile_path`` or ``profile_id`` must be provided.
         The GUI normally passes ``profile_path`` (canonical for on-disk
-        profiles); ``profile_id`` is supported for daemon-bundled profiles
-        and for symmetry with the daemon's documented contract (M8).
+        profiles); ``profile_id`` is resolved by the daemon as a filename
+        stem across every registered profile search dir (the daemon store
+        under ``/var/lib/control-ofc/profiles/`` first) — there is no
+        separate "bundled" profile set.
         """
         if (profile_path is None) == (profile_id is None):
             raise ValueError("activate_profile requires exactly one of profile_path or profile_id")
