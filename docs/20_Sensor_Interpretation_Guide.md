@@ -9,7 +9,7 @@ user-facing explanation of sensor classes, confidence levels, and quirks.
 
 This document defines the sensor classification model used by the GUI to provide
 truthful, provenance-aware descriptions of hardware temperature readings. The
-model is implemented in `src/control_ofc/ui/sensor_knowledge.py` and drives
+model is implemented in `src/control_ofc/knowledge/sensor_knowledge.py` and drives
 tooltips, series panel annotations, and diagnostic displays.
 
 The goal is to tell the user what a sensor reading *actually represents* at the
@@ -400,7 +400,7 @@ precedence.
 | Gigabyte | B550 | temp1 | vendor_wmi_unlabeled | low |
 
 > This table is a representative subset. The authoritative list is
-> `BOARD_SENSOR_OVERRIDES` in `src/control_ofc/ui/sensor_knowledge.py`,
+> `BOARD_SENSOR_OVERRIDES` in `src/control_ofc/knowledge/sensor_knowledge.py`,
 > which also carries the DEC-110 Intel/LGA1700 ASUS EC anchors (Z690/Z790).
 
 ### How to add new entries
@@ -410,7 +410,7 @@ precedence.
    - Board vendor manual or BIOS sensor labels
    - Controlled load testing showing clear temperature correlation
 2. Add a `BoardSensorOverride` entry to `BOARD_SENSOR_OVERRIDES` in
-   `src/control_ofc/ui/sensor_knowledge.py`
+   `src/control_ofc/knowledge/sensor_knowledge.py`
 3. Set confidence to `high` only when source documentation is definitive
 4. Include a note citing the verification source
 5. Add a test in the test suite confirming the override is returned

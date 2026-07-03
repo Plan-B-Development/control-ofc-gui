@@ -50,6 +50,12 @@ class _PollWorker(QObject):
         self._client: DaemonClient | None = None
         self._poll_count = 0
         self._consecutive_failures = 0
+        # F-5: in-flight guard. The 1 Hz timer→poll() connection is queued, so a
+        # poll that runs longer than the interval would otherwise pile up behind
+        # it and fire as a back-to-back burst. While one poll() is running, the
+        # next invocation is skipped outright. The worker lives on a single
+        # thread, so a plain bool is race-free (no lock needed).
+        self._in_flight = False
         self._caps_interval = max(1, CAPABILITIES_REFRESH_INTERVAL_S * 1000 // POLL_INTERVAL_MS)
         self._history = history
         # P2-D: dirs already announced to the daemon. Logged at INFO the
@@ -65,7 +71,24 @@ class _PollWorker(QObject):
         return self._client
 
     def poll(self) -> None:
-        """Execute one poll cycle — called from the timer thread."""
+        """Execute one poll cycle — called from the timer thread.
+
+        F-5: skip this invocation entirely if a prior poll() is still running.
+        A poll slower than the 1 Hz interval would otherwise queue behind the
+        timer and fire as a burst; the guard drops the overlapping tick instead.
+        The flag is set here and cleared in ``finally`` so a raising cycle can
+        never wedge polling off permanently.
+        """
+        if self._in_flight:
+            return
+        self._in_flight = True
+        try:
+            self._poll_once()
+        finally:
+            self._in_flight = False
+
+    def _poll_once(self) -> None:
+        """Body of one poll cycle (see ``poll`` for the in-flight guard)."""
         # Exponential backoff: skip cycles when daemon is unreachable.
         # After first failure: retry every 2nd cycle, then 4th, capped at 8s.
         # 8s cap is appropriate for local Unix socket (not network service).

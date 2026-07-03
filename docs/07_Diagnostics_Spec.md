@@ -245,7 +245,7 @@ Auto-scroll behaviour: the view follows the bottom only when the user is already
 
 | Source | Emits when |
 |--------|------------|
-| `gui` | GUI start/exit; theme changed; manual override entered; demo mode activated; kernel warning acknowledged |
+| `gui` | GUI start/exit; theme changed; demo mode activated; kernel warning acknowledged |
 | `polling` | First connection established; disconnected (after a prior connect); daemon-reported active profile detected |
 | `profile` | Activated/deactivated; profile load error |
 
@@ -400,11 +400,11 @@ button text so it inherits the themed `.CollapsibleSectionHeader` colour, and
 so the text left-aligns — `QToolButton` ignores stylesheet `text-align`)
 toggling a content container. Multiple sections may be open at once (unlike
 `QToolBox`). The toggle is instant (no animation) for deterministic tests. A
-section may also carry a **persistent area** (`add_persistent_widget`,
-DEC-115) — widgets between the header and the content that stay visible
-regardless of collapse state. (DEC-124 retired the readiness card's use of this:
-the verdict + alerts are now always-visible siblings, not a persistent area; the
-feature remains available to other sections.) Because Qt's `QWidget.isHidden()`
+section historically supported a **persistent area** (`add_persistent_widget`,
+DEC-115) — widgets between the header and the content that stayed visible
+regardless of collapse state. DEC-124 retired the readiness card's use of it (the
+verdict + alerts are now always-visible siblings), and with no remaining caller the
+add-persistent API was removed in v2.8.0. Because Qt's `QWidget.isHidden()`
 reflects a widget's
 *own* show/hide flag rather than an ancestor's collapsed state, the
 visibility-gated labels keep working unchanged inside the sections.

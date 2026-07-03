@@ -46,12 +46,11 @@ The wizard works through your selected fans one at a time. For each fan:
 3. Watch your case to see **which physical fan stopped**
 4. The fan is **restored automatically** when the test period ends
 5. Pick a **label** — a preset (CPU Cooler, Rear Exhaust, Front Intake Top, …) or any custom text
-6. If several fans changed at once (they share a splitter or hub), tick **"Multiple physical fans moved (splitter/hub)"** and add an optional note
-7. Press **Save Label & Next Fan** — or **Skip — couldn't identify** to move on without saving a label (you can re-run the test first; nothing limits retries)
+6. Press **Save Label & Next Fan** — or **Skip — couldn't identify** to move on without saving a label (you can re-run the test first; nothing limits retries)
 
 ### Step 4: Review Labels
 
-A summary table (ID, Source, New Label, Notes) where every label and note is still editable — including for fans you skipped. Click **Finish** to save all labels, or **Cancel** to discard everything.
+A summary table (ID, Source, New Label) where every label is still editable — including for fans you skipped. Click **Finish** to save all labels, or **Cancel** to discard everything.
 
 ## Safety Features
 

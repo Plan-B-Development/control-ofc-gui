@@ -327,7 +327,7 @@ class TestManualOverrideLiveWiring:
         btn.setChecked(True)
         btn.setChecked(False)
 
-        client.override_release.assert_called_once_with("lc1", 7)
+        client.override_release.assert_called_once_with("lc1", 7, timeout=2.0)
         assert "lc1" not in page._overrides
         assert not page._override_renew_timer.isActive()
 
@@ -394,7 +394,7 @@ class TestManualOverrideLiveWiring:
         # so card state never diverges from the daemon.
         page._refresh_controls_grid(Profile(id="p", name="P", controls=[], curves=[]))
 
-        client.override_release.assert_called_once_with("lc1", 7)
+        client.override_release.assert_called_once_with("lc1", 7, timeout=2.0)
         assert not page._overrides
 
     def test_slider_drag_debounces_into_one_repin(self, qtbot, app_state, profile_service):
@@ -412,7 +412,102 @@ class TestManualOverrideLiveWiring:
         page._on_card_manual_value("lc1", 80)
         page._flush_override_values()
 
-        client.override_take.assert_called_once_with("lc1", 80)
+        client.override_take.assert_called_once_with("lc1", 80, timeout=2.0)
+
+    def test_renew_interval_is_min_across_held_grants(self, qtbot, app_state, profile_service):
+        """F-2: with heterogeneous renew cadences the single shared renew timer
+        fires on the MIN cadence — a later, larger renew_secs must NOT stretch
+        the interval past an earlier, shorter override's TTL (the old
+        last-writer-wins bug, which setInterval would compound by also resetting
+        the running countdown)."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        page = self._live_page(qtbot, app_state, profile_service, client)
+
+        # Take the shorter-cadence override first (5 s), then a longer one (10 s).
+        client.override_take.return_value = self._grant(token=1, renew_secs=5)
+        page._take_override("lc1", 50)
+        assert page._override_renew_timer.interval() == 5000
+
+        client.override_take.return_value = self._grant(token=2, renew_secs=10)
+        page._take_override("lc2", 50)
+
+        # MIN(5, 10) = 5 s — NOT the last grant's 10 s.
+        assert page._override_renew_timer.interval() == 5000
+        assert page._override_renew_secs == {"lc1": 5, "lc2": 10}
+
+    def test_renew_interval_tightens_when_shorter_grant_added(
+        self, qtbot, app_state, profile_service
+    ):
+        """F-2: adding a shorter-cadence override to an existing longer one
+        tightens the running timer down to the new minimum."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        page = self._live_page(qtbot, app_state, profile_service, client)
+
+        client.override_take.return_value = self._grant(token=1, renew_secs=10)
+        page._take_override("lc1", 50)
+        assert page._override_renew_timer.interval() == 10000
+
+        client.override_take.return_value = self._grant(token=2, renew_secs=5)
+        page._take_override("lc2", 50)
+        assert page._override_renew_timer.interval() == 5000  # tightened to the min
+
+    def test_release_drops_renew_secs_entry(self, qtbot, app_state, profile_service):
+        """The per-grant renew_secs bookkeeping is dropped in lockstep with the
+        override token so a stale entry can't skew a later MIN."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7, renew_secs=5)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+
+        page._take_override("lc1", 50)
+        assert page._override_renew_secs == {"lc1": 5}
+
+        page._release_override("lc1")
+        assert page._override_renew_secs == {}
+
+    def test_take_uses_bounded_http_timeout(self, qtbot, app_state, profile_service):
+        """F-3: override_take passes an explicit ~2 s HTTP timeout so a slow or
+        half-dead daemon can only freeze the Qt main thread for ~2 s, not the
+        full 5 s client default."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.ui.pages.controls_page import _OVERRIDE_HTTP_TIMEOUT_S
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+
+        page._take_override("lc1", 50)
+
+        assert client.override_take.call_args.kwargs["timeout"] == _OVERRIDE_HTTP_TIMEOUT_S
+        assert _OVERRIDE_HTTP_TIMEOUT_S == 2.0
+
+    def test_renew_and_release_use_bounded_http_timeout(self, qtbot, app_state, profile_service):
+        """F-3: renew and release also pass the bounded timeout (renew loops over
+        every held override, so an unbounded call there is the worst freeze)."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.models import OverrideRenewResult
+        from control_ofc.ui.pages.controls_page import _OVERRIDE_HTTP_TIMEOUT_S
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        client.override_renew.return_value = OverrideRenewResult(
+            control_id="lc1", override_token=8, ttl_secs=15, expires_in_secs=15
+        )
+        page = self._live_page(qtbot, app_state, profile_service, client)
+
+        page._take_override("lc1", 50)
+        page._renew_overrides()
+        page._release_override("lc1")
+
+        assert client.override_renew.call_args.kwargs["timeout"] == _OVERRIDE_HTTP_TIMEOUT_S
+        assert client.override_release.call_args.kwargs["timeout"] == _OVERRIDE_HTTP_TIMEOUT_S
 
 
 class TestCurveEditorSensorLabel:

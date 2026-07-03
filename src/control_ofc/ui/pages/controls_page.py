@@ -64,6 +64,14 @@ if TYPE_CHECKING:
     from control_ofc.services.demo_controller import DemoController
 
 
+# F-3: manual-override take/renew/release run synchronously on the Qt main
+# thread (moving them off-thread is out of scope). Bound their HTTP timeout well
+# under the 5 s client default so a slow or half-dead daemon can only freeze the
+# UI for ~2 s per call — and ``_renew_overrides`` iterates every held override —
+# instead of the full default.
+_OVERRIDE_HTTP_TIMEOUT_S = 2.0
+
+
 class ControlsPage(QWidget):
     """FanControl-style controls: profile bar, control cards grid, curve cards grid."""
 
@@ -116,6 +124,13 @@ class ControlsPage(QWidget):
         # daemon restarted), so the card reverts. The value timer debounces a
         # live slider drag into a single re-pin.
         self._overrides: dict[str, int] = {}
+        # F-2: per-held-grant advised renew cadence (control_id -> renew_secs),
+        # kept in lockstep with ``_overrides``. The single shared renew timer is
+        # driven from the MIN across all held grants so a longer-cadence grant
+        # can never stretch a renew past a shorter override's TTL (setInterval
+        # also resets the running countdown, so we always recompute from the
+        # tightest grant).
+        self._override_renew_secs: dict[str, int | None] = {}
         self._override_pending: dict[str, int] = {}
         # DEC-169: daemon-held overrides this session does NOT own (control_id ->
         # pwm), discovered by reconciling `/status.overrides[]`. Distinct from
@@ -1456,12 +1471,31 @@ class ControlsPage(QWidget):
             self._demo_controller.set_control_manual(control_id, float(pct))
 
     # ── Manual override via the daemon API (DEC-163) ─────────────────────
+    def _recompute_renew_interval(self) -> None:
+        """Drive the shared renew timer from the MIN renew cadence across every
+        held grant (F-2).
+
+        One timer serves all overrides, and ``setInterval`` resets the running
+        countdown, so it must fire fast enough for the shortest-TTL grant.
+        Last-writer-wins on a heterogeneous set (a later, larger ``renew_secs``)
+        could otherwise stretch a renew past an earlier override's shorter TTL
+        and let it lapse. Grants missing ``renew_secs`` fall back to
+        ``_OVERRIDE_RENEW_FALLBACK_MS``; the floor stays 1000 ms.
+        """
+        if not self._override_renew_secs:
+            return
+        interval_ms = min(
+            (secs * 1000) if secs else self._OVERRIDE_RENEW_FALLBACK_MS
+            for secs in self._override_renew_secs.values()
+        )
+        self._override_renew_timer.setInterval(max(1000, interval_ms))
+
     def _take_override(self, control_id: str, pct: int) -> None:
         """Pin a control to a fixed PWM on the daemon and start renewing."""
         if self._client is None:
             return
         try:
-            grant = self._client.override_take(control_id, pct)
+            grant = self._client.override_take(control_id, pct, timeout=_OVERRIDE_HTTP_TIMEOUT_S)
         except DaemonError as exc:
             self._log.warning(
                 "Override of control %s failed (%s): %s", control_id, exc.code, exc.message
@@ -1469,10 +1503,10 @@ class ControlsPage(QWidget):
             self._revert_card_manual(control_id)
             return
         self._overrides[control_id] = grant.override_token
-        interval = (
-            (grant.renew_secs * 1000) if grant.renew_secs else self._OVERRIDE_RENEW_FALLBACK_MS
-        )
-        self._override_renew_timer.setInterval(max(1000, interval))
+        self._override_renew_secs[control_id] = grant.renew_secs
+        # F-2: recompute from ALL held grants, not just this one — the shared
+        # timer must renew on the tightest cadence held.
+        self._recompute_renew_interval()
         if not self._override_renew_timer.isActive():
             self._override_renew_timer.start()
 
@@ -1480,12 +1514,13 @@ class ControlsPage(QWidget):
         """Release a held override; the daemon reverts the control to its curve."""
         self._override_pending.pop(control_id, None)
         token = self._overrides.pop(control_id, None)
+        self._override_renew_secs.pop(control_id, None)
         if not self._overrides:
             self._override_renew_timer.stop()
         if token is None or self._client is None:
             return
         try:
-            self._client.override_release(control_id, token)
+            self._client.override_release(control_id, token, timeout=_OVERRIDE_HTTP_TIMEOUT_S)
         except DaemonError as exc:
             # Offline / already lapsed — the daemon deadman reverts it anyway.
             self._log.info("Override release for %s not confirmed (%s)", control_id, exc.code)
@@ -1504,10 +1539,13 @@ class ControlsPage(QWidget):
             return
         for control_id, token in list(self._overrides.items()):
             try:
-                result = self._client.override_renew(control_id, token)
+                result = self._client.override_renew(
+                    control_id, token, timeout=_OVERRIDE_HTTP_TIMEOUT_S
+                )
             except DaemonError as exc:
                 self._log.info("Override on %s lapsed (%s) — reverting card", control_id, exc.code)
                 self._overrides.pop(control_id, None)
+                self._override_renew_secs.pop(control_id, None)
                 self._override_pending.pop(control_id, None)
                 self._revert_card_manual(control_id)
                 continue
@@ -1527,15 +1565,21 @@ class ControlsPage(QWidget):
             if control_id not in self._overrides:
                 continue
             try:
-                grant = self._client.override_take(control_id, pct)
+                grant = self._client.override_take(
+                    control_id, pct, timeout=_OVERRIDE_HTTP_TIMEOUT_S
+                )
             except DaemonError as exc:
                 self._log.info(
                     "Override re-pin on %s failed (%s) — reverting", control_id, exc.code
                 )
                 self._overrides.pop(control_id, None)
+                self._override_renew_secs.pop(control_id, None)
                 self._revert_card_manual(control_id)
                 continue
             self._overrides[control_id] = grant.override_token
+            # F-2: a re-pin supersedes the grant; keep the renew cadence current.
+            self._override_renew_secs[control_id] = grant.renew_secs
+            self._recompute_renew_interval()
 
     def _revert_card_manual(self, control_id: str) -> None:
         """Visually exit Manual on a card whose override lapsed/failed, without

@@ -305,6 +305,64 @@ class TestPollWorkerReconnect:
         ok_client.capabilities.assert_called_once()
 
 
+class TestPollWorkerInFlightGuard:
+    """F-5: a poll still in flight causes the next invocation to be skipped,
+    not queued/run a second time. The guard is cleared in a ``finally`` so a
+    failed cycle can't wedge polling off permanently."""
+
+    def test_reentrant_poll_is_skipped(self, qtbot):
+        """A poll() that re-enters while the first is still running short-circuits
+        — the batch endpoint fires once, not twice."""
+        mock_client = _make_mock_client()
+        worker = _make_worker(mock_client)
+
+        reentrant_results: list = []
+
+        def _reenter(*_args, **_kwargs):
+            # Called from inside the first poll(), while _in_flight is set. The
+            # guard must drop this re-entrant call rather than run a 2nd cycle.
+            reentrant_results.append(worker.poll())
+            return (
+                DaemonStatus(overall_status="ok"),
+                [SensorReading(id="cpu", value_c=45.0, age_ms=100)],
+                [FanReading(id="fan0", rpm=1200, age_ms=100)],
+            )
+
+        mock_client.poll.side_effect = _reenter
+
+        worker.poll()
+
+        # The re-entrant poll() returned immediately (None) without issuing a
+        # second batch call.
+        assert reentrant_results == [None]
+        assert mock_client.poll.call_count == 1
+
+    def test_busy_flag_makes_poll_a_noop(self, qtbot):
+        """With the guard already set, poll() does nothing — no client is even
+        obtained."""
+        mock_client = _make_mock_client()
+        worker = _make_worker(mock_client)
+        worker._in_flight = True
+
+        worker.poll()
+
+        worker._ensure_client.assert_not_called()
+        mock_client.poll.assert_not_called()
+
+    def test_flag_cleared_after_successful_poll(self, qtbot):
+        """A normal cycle releases the guard so the next tick can run."""
+        worker = _make_worker(_make_mock_client())
+        worker.poll()
+        assert worker._in_flight is False
+
+    def test_flag_cleared_after_failed_poll(self, qtbot):
+        """The ``finally`` clears the guard even when the cycle raises, so a
+        transient failure can't wedge polling off permanently."""
+        worker = _make_worker(_make_failing_client())
+        worker.poll()
+        assert worker._in_flight is False
+
+
 # ---------------------------------------------------------------------------
 # PollingService tests
 # ---------------------------------------------------------------------------

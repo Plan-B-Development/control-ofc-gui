@@ -117,6 +117,9 @@ control_ofc/
     profile_import_service.py  # one-time local->daemon profile import — DEC-161
     profile_service.py         # daemon-backed profile CRUD + local draft cache — DEC-160/161
     series_selection.py
+  knowledge/                   # pure (stdlib-only) hardware-knowledge modules — no Qt/services deps (moved out of ui/ in v2.8.0)
+    sensor_knowledge.py        # sensor classification + board-override database
+    hwmon_label_resolver.py    # libsensors / hwmon fan-header label resolution
   # Persistence (JSON repos, XDG paths) lives inside services/ and the
   # app_settings_service module rather than a separate persistence/ package.
   # See persistence layout details in docs/11_Persistence_Config_and_File_Layout.md.
@@ -145,7 +148,6 @@ control_ofc/
       event_log_view.py
       error_banner.py
       readiness_report.py
-      warnings_dialog.py
       theme_editor.py
       aio_config_dialog.py
       collapsible_section.py

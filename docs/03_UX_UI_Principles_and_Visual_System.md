@@ -159,8 +159,7 @@ contrast pair `check_contrast_warnings()` evaluates.** The thresholds:
 - **3:1** — large text, focus indicators, chart axis labels, and
   non-text UI components. Applies to `text_muted` on cards,
   `text_secondary` on cards, `nav_text_active` on `nav_item_active`,
-  `chart_axis_text` on `chart_bg`, `input_placeholder` on `input_bg`,
-  and `focus_ring` on `app_bg`.
+  `chart_axis_text` on `chart_bg`, and `input_placeholder` on `input_bg`.
 - **Disabled controls are exempt** — WCAG itself exempts them, so
   `disabled_text` / `disabled_bg` is not enforced.
 

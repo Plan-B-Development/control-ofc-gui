@@ -1,5 +1,40 @@
 # Changelog
 
+## [2.8.0] — 2026-07-04
+
+Audit-2026-07-03 Cluster 3: GUI consolidation. Mostly internal cleanup, with a few user-facing fixes.
+
+### Fixed
+- **Applying a profile from the Dashboard now reverts the picker on failure** and surfaces the
+  daemon's actual error, instead of silently leaving the combo on the rejected choice with a 1.5 s
+  "Rejected" flash. Activation is now a single `ProfileService.activate()` shared by the Dashboard
+  and Controls pages (the two had drifted).
+- **The Dashboard profile picker refreshes when profiles are created / renamed / deleted** instead
+  of going stale until the next launch.
+- **Switching profiles no longer silently discards unsaved curve edits** — the Controls page now
+  prompts to keep or discard.
+- **A hwmon rescan now re-reads `/etc/sensors.d`**, so relabelled sensors surface without a GUI
+  restart.
+- Hardened the diagnostics worker shutdown against a teardown race (an in-flight verify/fetch can no
+  longer deliver a result onto a torn-down page); bounded the manual-override HTTP calls with a 2 s
+  timeout so a slow daemon can't freeze the UI; the 1 Hz poll now skips rather than queues when a
+  poll overruns.
+
+### Removed
+- The unused per-fan **Notes** field in the Add-Fan wizard (it was collected and shown but never saved).
+- 9 inert theme tokens + 5 Theme-Editor colour rows that painted nothing.
+- A large amount of v2.0.0 dead code: the never-displayed PWM history series, orphan verify signals,
+  unused SeriesSelectionModel methods, the dead MANUAL_OVERRIDE display path, `warnings_dialog.py`,
+  and several write-only fields/exports.
+
+### Changed
+- Internal consolidation (no behaviour change): `ProfileService` is now a `QObject`; the two pure
+  hardware-knowledge modules moved from `ui/` to a new `knowledge/` package; and the diagnostics
+  async-worker machinery, the chip-styling idiom (`qt_util.set_chip_class`), the HTTP client
+  wrappers, and several `AppState`/dashboard helpers were de-duplicated.
+
+GUI-only — no daemon or API change. Pairs with `control-ofc-daemon` ≥ v2.4.0.
+
 ## [2.7.1] — 2026-07-03
 
 ### Fixed
