@@ -452,8 +452,9 @@ a fan) and runs a few diagnostics / maintenance calls (calibrate, verify, GPU re
 - `POST /gpu/{gpu_id}/fan/pwm` — bare GPU static-speed write (replaced by override / identify)
 
 Note: `POST /fans/openfan/{ch}/target_rpm` is **not** in this list because it was never an HTTP route.
-Closed-loop RPM targeting exists only as an internal serial method (`set_target_rpm` /
-`Command::SetTargetRpm`); no GUI ever consumed it and the daemon never exposed it over HTTP.
+Closed-loop RPM targeting was an internal-only serial method (`set_target_rpm` /
+`Command::SetTargetRpm`) that no GUI ever consumed and the daemon never exposed over HTTP; it was
+deleted as dead code in daemon v2.5.0.
 
 ### OpenFan calibrate
 - `POST /fans/openfan/{ch}/calibrate` — PWM-to-RPM calibration sweep
