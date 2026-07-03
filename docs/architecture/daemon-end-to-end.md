@@ -53,7 +53,7 @@ The Control-OFC daemon (`control-ofc-daemon`) is a Rust service that provides ha
 |--------|-------|---------------|
 | `main.rs` | 1 | Entry point, config loading, task spawning, shutdown |
 | `config` | 1 | TOML configuration with validation |
-| `api` | 5 | HTTP handlers, server, SSE, responses, calibration |
+| `api` | 5 | HTTP handlers, server, responses, calibration |
 | `serial` | 5 | OpenFanController serial protocol and transport |
 | `hwmon` | 9 | Linux hwmon sysfs discovery, reading, PWM writing, lease, GPU detection, PMFW fan control |
 | `health` | 4 | StateCache, staleness computation, history ring |
@@ -161,7 +161,6 @@ The daemon runs concurrent async tasks on the Tokio multi-threaded runtime:
 | `/fans` | All fan states (RPM, PWM, stall detection) | Fast |
 | `/poll` | Combined status+sensors+fans (batch) | Fast |
 | `/sensors/history` | Time-series ring buffer (250 points) | Fast |
-| `/events` | SSE stream (real-time updates) | Streaming |
 | `/capabilities` | Device presence, feature flags, safety limits | Fast |
 | `/hwmon/headers` | Discovered PWM outputs | Fast |
 | `/hwmon/lease/status` | Lease holder and TTL — **retired at 2.0.0 (DEC-165)**; the daemon self-leases internally, no client lease route exists | Fast |
@@ -431,7 +430,6 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Thermal safety fan writes | **Implemented** | Forces all OpenFan channels + writable hwmon headers to 100% at 105°C; GPU excluded (DEC-130) |
 | Profile persistence across reboot | **Implemented** | `/var/lib/control-ofc/daemon_state.json` |
 | Profile activation via API | **Implemented** | `POST /profile/activate` |
-| SSE event stream | **Implemented** | `GET /events` |
 | Auto-reconnect on serial disconnect | **Implemented (R43)** | After 5 consecutive errors the daemon enters reconnect mode (auto-detect + backoff); no restart needed |
 | AIO pump support | **Placeholder only** | Struct exists, no implementation |
 | udev hotplug detection | **Not implemented** | Static detection at startup only |

@@ -432,17 +432,10 @@ and the GUI parser defaults safely:
   explanation of why fan control is unavailable). `null` when no Intel GPU is
   present or the daemon predates the field.
 
-### GET /events (SSE) — daemon-only, not consumed by GUI
-The daemon exposes a Server-Sent Events stream at `GET /events` for other clients
-(custom integrations, future tooling, etc.).
-- Event type: `update` (combined sensors + fans payload)
-- Heartbeat every 5 seconds
-
-The V1 GUI does **not** consume this stream. All data flows through the 1 Hz
-`PollingService` using the combined `GET /poll` endpoint. The planned
-`EventStreamService` was never wired up and its `httpx-sse` dependency was
-removed (see DEC-023, DEC-024, CHANGELOG v1.0.0). SSE consumption is tracked as
-deferred work in `docs/14_Risks_Gaps_and_Future_Work.md`.
+> **Note — `GET /events` (SSE) removed.** The daemon exposed a Server-Sent Events
+> stream that no client ever consumed (the GUI is poll-only; DEC-164 deferred SSE
+> past 2.0.0). It was removed entirely in daemon v2.5.0 (DEC-198). All data flows
+> through the 1 Hz `PollingService` over `GET /poll`.
 
 ## Write endpoints
 
@@ -671,7 +664,6 @@ Error codes and HTTP statuses:
 - 500 `internal_error` (source: `"internal"`, retryable: true)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)
 - 503 `persistence_failed` (source: `"internal"`, retryable: true) — returned by `POST /config/*` when the daemon cannot persist the runtime configuration file
-- 503 `too_many_clients` (source: `"internal"`, retryable: true) — `GET /events` SSE stream only; returned when the server-side concurrent-client cap is reached. Not consumed by the V1 GUI, but documented for external clients integrating with SSE.
 
 ## Trust model
 
@@ -741,9 +733,9 @@ The GUI must reflect these constraints honestly.
 - **Primary data (sensors/fans/status):** 1 Hz via `GET /poll` (combined batch endpoint)
 - **Capabilities/headers:** startup + on reconnect only
 
-The `PollingService` owns the full read path (`/poll`, history). No SSE stream is consumed — the GUI
-is poll-only and detects transitions by poll-diff (DEC-164 defers SSE past 2.0.0; see the `/events`
-note above and DEC-023/DEC-024).
+The `PollingService` owns the full read path (`/poll`, history). The GUI is poll-only and detects
+transitions by poll-diff. (SSE was never consumed — DEC-164 deferred it past 2.0.0, and the `/events`
+endpoint was removed entirely in daemon v2.5.0, DEC-198.)
 
 ## Model normalisation
 Define internal view-model friendly data classes for:
