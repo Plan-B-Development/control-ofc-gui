@@ -358,15 +358,6 @@ class DaemonClient:
         """DELETE /profiles/{id} — remove a stored profile."""
         return self._delete(f"/profiles/{profile_id}")
 
-    def validate_profile(self, document: dict[str, Any]) -> dict[str, Any]:
-        """POST /profiles?validate_only=true — run the daemon's real validate, persist nothing.
-
-        Returns the daemon's success body on a valid document; raises
-        ``DaemonError`` with ``field_violations`` in ``.details`` (parse with
-        ``models.parse_field_violations``) on a 400 ``validation_error`` (DEC-160).
-        """
-        return self._post("/profiles", json=document, params={"validate_only": "true"})
-
     def override_take(
         self,
         control_id: str,

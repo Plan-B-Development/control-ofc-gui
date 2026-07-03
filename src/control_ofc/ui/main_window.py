@@ -176,6 +176,15 @@ class MainWindow(QWidget):
         self._state.active_profile_changed.connect(self.status_banner.set_active_profile)
         self._state.warning_count_changed.connect(self.status_banner.set_warning_count)
 
+        # DEC-194: route the daemon-authoritative active-profile id through the
+        # ProfileService so an external activation (CLI --profile, another client,
+        # systemd) moves the id-based UI — the dashboard combo selection and the
+        # Controls `*`-active marker — with no extra page wiring. set_active is
+        # edge-triggered and a silent no-op for an id the GUI doesn't know locally
+        # (dashboard findData → -1, combo left as-is), so an unknown id never
+        # crashes or desyncs.
+        self._state.active_profile_id_changed.connect(self._profile_service.set_active)
+
         # DEC-111: surface profile + mode transitions in the event log.
         self._state.active_profile_changed.connect(self._on_active_profile_for_events)
         self._state.mode_changed.connect(self._on_mode_for_events)

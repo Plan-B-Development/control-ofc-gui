@@ -89,7 +89,7 @@ def _handle_uncaught(exc_type, exc, tb) -> None:
     """Last-resort hook for exceptions that escape a Qt slot or worker thread.
 
     Daemon-disconnect handling proper lives in the API client (transport errors
-    → ``DaemonUnavailable``) and the polling / control-loop workers. This net
+    → ``DaemonUnavailable``) and the polling workers. This net
     exists so a *future* uncaught exception surfaces in the log and the support
     bundle instead of silently killing a worker thread — PySide6 routes
     unhandled slot exceptions through ``sys.excepthook``. ``KeyboardInterrupt``
@@ -145,7 +145,7 @@ def main() -> None:
     # Defense-in-depth: a last-resort exception hook so nothing fails silently
     # on a worker thread, plus routing Qt's own log messages into Python
     # logging. The primary daemon-disconnect handling is in the API client and
-    # the polling / control-loop workers (see _handle_uncaught). Installed
+    # the polling workers (see _handle_uncaught). Installed
     # before QApplication so even early startup errors are captured.
     from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 

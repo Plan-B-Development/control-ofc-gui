@@ -138,20 +138,6 @@ class TestFanIdentifyClient:
 
 
 class TestProfileCrudClient:
-    def test_validate_sets_query_param(self):
-        seen: dict = {}
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen["method"] = request.method
-            seen["path"] = request.url.path
-            seen["params"] = dict(request.url.params)
-            return httpx.Response(200, json={"valid": True})
-
-        _client(handler).validate_profile({"id": "p1"})
-        assert seen["method"] == "POST"
-        assert seen["path"] == "/profiles"
-        assert seen["params"] == {"validate_only": "true"}
-
     def test_delete_uses_delete_method(self):
         seen: dict = {}
 

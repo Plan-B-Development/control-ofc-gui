@@ -282,3 +282,116 @@ def test_set_status_absent_active_profile_does_not_clobber(qtbot):
     state.set_active_profile("Balanced")  # e.g. established by the fallback fetch
     state.set_status(DaemonStatus())  # poll status omits the field → default None
     assert state.active_profile_name == "Balanced"
+
+
+def test_set_active_profile_id_edge_triggered(qtbot):
+    """DEC-194 (C1): the id setter mirrors set_active_profile — it stores the id
+    and emits only when the value actually changes (edge-triggered)."""
+    state = AppState()
+    fired: list[str] = []
+    state.active_profile_id_changed.connect(fired.append)
+    with qtbot.waitSignal(state.active_profile_id_changed, timeout=1000):
+        state.set_active_profile_id("quiet")
+    assert state.active_profile_id == "quiet"
+    # A repeat of the same id is a silent no-op.
+    state.set_active_profile_id("quiet")
+    assert fired == ["quiet"]
+
+
+def test_set_status_reflects_active_profile_id_fast_path(qtbot):
+    """DEC-194 (C1): a poll status carrying active_profile_id updates
+    AppState.active_profile_id and fires active_profile_id_changed once
+    (edge-triggered) — a repeat id does NOT re-fire, a new id fires again."""
+    from control_ofc.api.models import DaemonStatus
+
+    state = AppState()
+    fired: list[str] = []
+    state.active_profile_id_changed.connect(fired.append)
+
+    with qtbot.waitSignal(state.active_profile_id_changed, timeout=1000) as blocker:
+        state.set_status(DaemonStatus(active_profile_id="silent", active_profile_name="Silent"))
+    assert blocker.args == ["silent"]
+    assert state.active_profile_id == "silent"
+    assert fired == ["silent"]
+
+    # Repeat id → no re-fire.
+    state.set_status(DaemonStatus(active_profile_id="silent", active_profile_name="Silent"))
+    assert fired == ["silent"]
+
+    # New id → fires again.
+    state.set_status(DaemonStatus(active_profile_id="loud", active_profile_name="Loud"))
+    assert fired == ["silent", "loud"]
+    assert state.active_profile_id == "loud"
+
+
+def test_set_status_absent_active_profile_id_does_not_clobber(qtbot):
+    """DEC-194 (C1): a status WITHOUT active_profile_id (older daemon, or no active
+    profile) must not overwrite an id already established — the field defaults to
+    None, so the id fast-path is skipped."""
+    from control_ofc.api.models import DaemonStatus
+
+    state = AppState()
+    state.set_active_profile_id("balanced")
+    state.set_status(DaemonStatus())  # poll status omits the field → default None
+    assert state.active_profile_id == "balanced"
+
+
+def test_external_activation_moves_id_based_ui(qtbot, app_state, profile_service, settings_service):
+    """DEC-194 (C1) wiring: an external activation surfaced on /poll (active_profile_id
+    changes) routes AppState → ProfileService.set_active, moving both the service's
+    active_id and the dashboard combo selection — reusing the existing active_changed
+    consumers, with no new page wiring."""
+    from control_ofc.api.models import DaemonStatus
+    from control_ofc.ui.main_window import MainWindow
+
+    win = MainWindow(
+        state=app_state,
+        profile_service=profile_service,
+        settings_service=settings_service,
+        demo_mode=False,
+    )
+    qtbot.addWidget(win)
+
+    combo = win.dashboard_page._profile_combo
+    # Precondition: the seeded default set is present and 'balanced' is not active.
+    assert profile_service.active_id != "balanced"
+    assert combo.findData("balanced") >= 0
+
+    # External activation (CLI --profile / another client) surfaced on the poll status.
+    app_state.set_status(DaemonStatus(active_profile_id="balanced", active_profile_name="Balanced"))
+
+    assert profile_service.active_id == "balanced"
+    assert combo.currentData() == "balanced"
+
+
+def test_external_activation_unknown_id_no_crash(
+    qtbot, app_state, profile_service, settings_service
+):
+    """DEC-194 (C1) edge case: an externally-activated id the GUI doesn't know
+    locally must not crash or desync — ProfileService.set_active is a no-op for an
+    unknown id and the dashboard combo (findData → -1) is left as-is. The AppState
+    mirror still records the daemon's id."""
+    from control_ofc.api.models import DaemonStatus
+    from control_ofc.ui.main_window import MainWindow
+
+    win = MainWindow(
+        state=app_state,
+        profile_service=profile_service,
+        settings_service=settings_service,
+        demo_mode=False,
+    )
+    qtbot.addWidget(win)
+
+    combo = win.dashboard_page._profile_combo
+    before_id = profile_service.active_id
+    before_idx = combo.currentIndex()
+
+    app_state.set_status(
+        DaemonStatus(active_profile_id="ghost_profile", active_profile_name="Ghost")
+    )
+
+    # Unknown id rejected by set_active → local active_id + combo selection unmoved.
+    assert profile_service.active_id == before_id
+    assert combo.currentIndex() == before_idx
+    # AppState still mirrors the daemon-authoritative id (edge-triggered).
+    assert app_state.active_profile_id == "ghost_profile"

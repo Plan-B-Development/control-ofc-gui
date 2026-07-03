@@ -37,6 +37,7 @@ class AppState(QObject):
     fans_updated = Signal(list)  # list[FanReading]
     headers_updated = Signal(list)  # list[HwmonHeader]
     active_profile_changed = Signal(str)  # profile name
+    active_profile_id_changed = Signal(str)  # active profile id
     warning_count_changed = Signal(int)
     warnings_cleared = Signal()
     fan_alias_changed = Signal(str, str)  # fan_id, display_name
@@ -55,6 +56,7 @@ class AppState(QObject):
         self.fans: list[FanReading] = []
         self.hwmon_headers: list[HwmonHeader] = []
         self.active_profile_name: str = ""
+        self.active_profile_id: str = ""
         self.warning_count: int = 0
         self.active_warnings: list[dict] = []  # [{timestamp, level, source, message}]
         self._acknowledged: set[str] = set()  # keys of acknowledged warnings
@@ -116,10 +118,14 @@ class AppState(QObject):
         self.daemon_status = status
         # DEC-194: reflect the daemon's active profile on every poll when it is
         # mirrored onto the status, so an external activation shows within ~1 s
-        # instead of the slow /profile/active refresh. `None` means an older
-        # daemon or no active profile → leave the /profile/active fallback
-        # (_on_active_profile) authoritative rather than clobbering it. Cheap:
-        # set_active_profile is edge-triggered, so the signal fires only on change.
+        # instead of the slow /profile/active refresh. The name drives the status
+        # banner; the id (routed by main_window → ProfileService.set_active) drives
+        # the id-based combo selection + the Controls `*`-active marker. `None`
+        # means an older daemon or no active profile → leave the /profile/active
+        # fallback (_on_active_profile) authoritative rather than clobbering it.
+        # Cheap: both setters are edge-triggered, so a signal fires only on change.
+        if status.active_profile_id is not None:
+            self.set_active_profile_id(status.active_profile_id)
         if status.active_profile_name is not None:
             self.set_active_profile(status.active_profile_name)
         self.status_updated.emit(status)
@@ -147,6 +153,11 @@ class AppState(QObject):
         if name != self.active_profile_name:
             self.active_profile_name = name
             self.active_profile_changed.emit(name)
+
+    def set_active_profile_id(self, profile_id: str) -> None:
+        if profile_id != self.active_profile_id:
+            self.active_profile_id = profile_id
+            self.active_profile_id_changed.emit(profile_id)
 
     @staticmethod
     def _set_or_clear(mapping: dict[str, str], key: str, value: str) -> str:
@@ -222,7 +233,7 @@ class AppState(QObject):
         return fan_id
 
     def add_warning(self, level: str, source: str, message: str, key: str = "") -> None:
-        """Add an ad-hoc warning from a service (e.g., control loop write failure).
+        """Add an ad-hoc warning from a service (e.g. a profile-load or daemon-poll failure).
 
         Recomputes ``active_warnings`` and emits ``warning_count_changed``
         immediately rather than waiting for the next polling tick — callers
@@ -320,7 +331,7 @@ class AppState(QObject):
                     f"Fan '{f.id}' stall detected (RPM=0 while PWM commanded)",
                 )
 
-        # Merge ad-hoc warnings from services (e.g., control loop write failures)
+        # Merge ad-hoc warnings from services
         for w in self._external_warnings:
             if w.get("_key") not in self._acknowledged:
                 warnings.append(w)

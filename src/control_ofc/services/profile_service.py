@@ -1451,8 +1451,10 @@ class ProfileService(QObject):
                 )
             except DaemonError as e:
                 # Daemon reached but rejected the document (validation / conflict).
-                # Keep the local draft so the edit is never lost; the Controls page
-                # validates before save (Phase 6c) and surfaces field_violations.
+                # Keep the local draft so the edit is never lost. Validation is
+                # server-side on publish (POST/PUT) — there is no pre-save gate, so
+                # the reject reason is not surfaced here; the profile simply stays
+                # an unpublished draft until a later save succeeds.
                 self._unpublished.add(profile.id)
                 log.warning(
                     "Profile %s rejected by the daemon (%s): %s — kept as a local draft",
