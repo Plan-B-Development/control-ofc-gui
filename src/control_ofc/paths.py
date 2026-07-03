@@ -85,10 +85,6 @@ def config_dir() -> Path:
     return _xdg("XDG_CONFIG_HOME", str(Path.home() / ".config")) / _APP
 
 
-def state_dir() -> Path:
-    return _xdg("XDG_STATE_HOME", str(Path.home() / ".local" / "state")) / _APP
-
-
 def cache_dir() -> Path:
     return _xdg("XDG_CACHE_HOME", str(Path.home() / ".cache")) / _APP
 
@@ -128,7 +124,7 @@ def assets_dir() -> Path:
 
 def ensure_dirs() -> None:
     """Create all required directories if they don't exist."""
-    for d in [config_dir(), profiles_dir(), themes_dir(), state_dir(), cache_dir()]:
+    for d in [config_dir(), profiles_dir(), themes_dir(), cache_dir()]:
         d.mkdir(parents=True, exist_ok=True)
 
 

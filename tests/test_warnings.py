@@ -111,43 +111,6 @@ class TestClearWarnings:
         assert warn_state.warning_count == 1  # new warning from s2
 
 
-class TestWarningsDialog:
-    def test_dialog_shows_warnings(self, qtbot, warn_state):
-        from control_ofc.ui.widgets.warnings_dialog import WarningsDialog
-
-        warn_state.set_sensors(
-            [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=50.0, age_ms=5000),
-            ]
-        )
-        dialog = WarningsDialog(warn_state)
-        qtbot.addWidget(dialog)
-        assert dialog._table.rowCount() == 1
-        assert "stale" in dialog._table.item(0, 3).text().lower()
-
-    def test_dialog_empty_state(self, qtbot, warn_state):
-        from control_ofc.ui.widgets.warnings_dialog import WarningsDialog
-
-        dialog = WarningsDialog(warn_state)
-        qtbot.addWidget(dialog)
-        # The dialog should not crash and should show something meaningful
-        assert dialog is not None
-        assert not hasattr(dialog, "_table")  # no table when empty
-
-    def test_dialog_clear_resets_count(self, qtbot, warn_state):
-        from control_ofc.ui.widgets.warnings_dialog import WarningsDialog
-
-        warn_state.set_sensors(
-            [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=50.0, age_ms=5000),
-            ]
-        )
-        dialog = WarningsDialog(warn_state)
-        qtbot.addWidget(dialog)
-        dialog._on_clear()
-        assert warn_state.warning_count == 0
-
-
 class TestDashboardFanFiltering:
     def test_fan_with_rpm_zero_is_hidden(self, qtbot):
         """RPM=0 (no spinning evidence) should be hidden from dashboard."""

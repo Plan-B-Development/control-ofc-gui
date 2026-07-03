@@ -27,7 +27,6 @@ _TOKEN_MIGRATION: dict[str, str] = {
     "disabled_fg": "disabled_text",
     "disabled_surface": "disabled_bg",
     "chart_axis": "chart_axis_text",
-    "manual_override_highlight": "status_warn",
     "demo_mode_highlight": "status_info",
     "card_bg": "surface_2",
     "card_border": "border_default",
@@ -173,7 +172,6 @@ def font_sizes(base: int) -> dict[str, int]:
     - card_title: card name labels (1.1x)
     - small: card metadata, status chips (0.9x)
     - card_value: dashboard summary card reading (2.2x)
-    - brand: sidebar brand text (1.4x)
     """
     return {
         "title": round(base * 1.6),
@@ -182,7 +180,6 @@ def font_sizes(base: int) -> dict[str, int]:
         "card_title": round(base * 1.1),
         "small": round(base * 0.9),
         "card_value": round(base * 2.2),
-        "brand": round(base * 1.4),
     }
 
 
@@ -945,11 +942,6 @@ def build_stylesheet(t: ThemeTokens) -> str:
 
     .DemoBadge {{
         color: {t.status_info};
-        font-weight: bold;
-    }}
-
-    .ManualBadge {{
-        color: {t.status_warn};
         font-weight: bold;
     }}
 

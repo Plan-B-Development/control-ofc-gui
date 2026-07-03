@@ -17,12 +17,11 @@ def test_record_sensors():
     assert series[0].value == 45.0
 
 
-def test_record_fans_rpm_and_pwm():
+def test_record_fans_rpm():
     store = HistoryStore()
-    fans = [FanReading(id="openfan:ch00", source="openfan", rpm=800, last_commanded_pwm=40)]
+    fans = [FanReading(id="openfan:ch00", source="openfan", rpm=800)]
     store.record_fans(fans)
     assert len(store.get_series("fan:openfan:ch00:rpm")) == 1
-    assert len(store.get_series("fan:openfan:ch00:pwm")) == 1
 
 
 def test_record_fan_no_rpm():

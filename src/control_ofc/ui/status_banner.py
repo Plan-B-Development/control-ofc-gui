@@ -22,7 +22,6 @@ CONNECTION_CHIP: dict[ConnectionState, str] = {
 }
 MODE_LABELS: dict[OperationMode, str] = {
     OperationMode.AUTOMATIC: "Automatic",
-    OperationMode.MANUAL_OVERRIDE: "Manual Override",
     OperationMode.READ_ONLY: "Read-only",
     OperationMode.DEMO: "Demo mode",
 }
@@ -74,12 +73,6 @@ class StatusBanner(QWidget):
 
     def set_operation_mode(self, mode: OperationMode) -> None:
         self._mode_label.setText(MODE_LABELS.get(mode, ""))
-
-        is_manual = mode == OperationMode.MANUAL_OVERRIDE
-        self._mode_label.setProperty("class", "ManualBadge" if is_manual else "")
-        self._mode_label.style().unpolish(self._mode_label)
-        self._mode_label.style().polish(self._mode_label)
-
         self._demo_badge.setVisible(mode == OperationMode.DEMO)
 
     def set_warning_count(self, count: int) -> None:

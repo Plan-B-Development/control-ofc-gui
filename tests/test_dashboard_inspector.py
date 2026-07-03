@@ -135,18 +135,3 @@ class TestInspectorContent:
         # The former Events/Warnings tab pages are gone (DEC-184).
         assert page._inspector.findChild(QWidget, "Inspector_Tab_events") is None
         assert page._inspector.findChild(QWidget, "Inspector_Tab_warnings") is None
-
-    def test_diagnostics_service_still_accepted_and_stored(self, qtbot, app_state):
-        """DEC-111: the page accepts MainWindow's shared DiagnosticsService even
-        though the dashboard no longer renders an event log (DEC-184)."""
-        from control_ofc.services.diagnostics_service import DiagnosticsService
-
-        diag = DiagnosticsService(app_state)
-        page = DashboardPage(state=app_state, diagnostics_service=diag)
-        qtbot.addWidget(page)
-        assert page._diag is diag
-
-    def test_diagnostics_service_falls_back_when_absent(self, qtbot, app_state):
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-        assert page._diag is not None

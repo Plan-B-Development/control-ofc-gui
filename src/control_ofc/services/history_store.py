@@ -13,7 +13,7 @@ from control_ofc.api.models import FanReading, HistoryPoint, SensorReading
 from control_ofc.constants import HISTORY_DURATION_S
 
 
-@dataclass
+@dataclass(slots=True)
 class TimestampedReading:
     timestamp: float  # monotonic seconds
     value: float
@@ -40,8 +40,6 @@ class HistoryStore:
         for f in fans:
             if f.rpm is not None:
                 self._append(f"fan:{f.id}:rpm", now, float(f.rpm))
-            if f.last_commanded_pwm is not None:
-                self._append(f"fan:{f.id}:pwm", now, float(f.last_commanded_pwm))
 
     def get_series(self, key: str) -> list[TimestampedReading]:
         """Return the time series for a given key, pruned to max_age."""

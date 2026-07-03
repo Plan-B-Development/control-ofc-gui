@@ -31,7 +31,6 @@ class TestDaemonServiceStateSemantics:
         # can_check=False short-circuits — even a fully "disabled" snapshot
         # must not claim the actionable case if we couldn't probe reliably.
         state = DaemonServiceState(
-            socket_exists=False,
             service_enabled=False,
             service_active=False,
             can_check=False,
@@ -40,7 +39,6 @@ class TestDaemonServiceStateSemantics:
 
     def test_installed_but_not_enabled_true_when_disabled(self):
         state = DaemonServiceState(
-            socket_exists=False,
             service_enabled=False,
             service_active=False,
             can_check=True,
@@ -49,7 +47,6 @@ class TestDaemonServiceStateSemantics:
 
     def test_installed_but_not_enabled_false_when_enabled(self):
         state = DaemonServiceState(
-            socket_exists=True,
             service_enabled=True,
             service_active=True,
             can_check=True,
@@ -61,7 +58,6 @@ class TestDaemonServiceStateSemantics:
         # show the hint — service is up; the user clearly knows what they're
         # doing.
         state = DaemonServiceState(
-            socket_exists=True,
             service_enabled=False,
             service_active=True,
             can_check=True,
@@ -82,14 +78,6 @@ class TestCheckDaemonServiceState:
         assert state.can_check is False
         assert state.service_enabled is False
         assert state.service_active is False
-
-    def test_socket_existence_observed(self, tmp_path):
-        present = tmp_path / "present.sock"
-        present.touch()
-        absent = tmp_path / "absent.sock"
-        with patch("control_ofc.services.daemon_service_check.shutil.which", return_value=None):
-            assert check_daemon_service_state(present).socket_exists is True
-            assert check_daemon_service_state(absent).socket_exists is False
 
     def test_enabled_active(self, tmp_path):
         socket = tmp_path / "control-ofc.sock"
@@ -198,8 +186,10 @@ class TestCheckDaemonServiceState:
         socket = tmp_path / "control-ofc.sock"
         socket.touch()
         with patch("control_ofc.services.daemon_service_check.shutil.which", return_value=None):
-            assert check_daemon_service_state(str(socket)).socket_exists is True
-            assert check_daemon_service_state(Path(socket)).socket_exists is True
+            # No systemctl → can_check False; the point is that both str and
+            # Path inputs are accepted without raising.
+            assert check_daemon_service_state(str(socket)).can_check is False
+            assert check_daemon_service_state(Path(socket)).can_check is False
 
 
 class TestEnableCommand:

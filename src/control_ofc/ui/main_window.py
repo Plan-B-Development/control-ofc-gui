@@ -121,7 +121,6 @@ class MainWindow(QWidget):
             profile_service=self._profile_service,
             settings_service=self._settings_service,
             client=self._client,
-            diagnostics_service=self._diag,
         )
         self.controls_page = ControlsPage(
             state=self._state,
@@ -279,13 +278,10 @@ class MainWindow(QWidget):
         """Mirror notable mode transitions into the event log.
 
         AUTOMATIC/READ_ONLY churn during reconnects is already captured by
-        the polling connect/disconnect events, so this only records
-        MANUAL_OVERRIDE and DEMO — the two modes that change what the user
-        can do at the control surface.
+        the polling connect/disconnect events, so this only records DEMO —
+        the mode that changes what the user can do at the control surface.
         """
-        if mode == OperationMode.MANUAL_OVERRIDE:
-            self._diag.log_event("info", "gui", "Manual override enabled")
-        elif mode == OperationMode.DEMO:
+        if mode == OperationMode.DEMO:
             self._diag.log_event("info", "gui", "Demo mode active")
 
     def _on_connection_changed(self, state: ConnectionState) -> None:

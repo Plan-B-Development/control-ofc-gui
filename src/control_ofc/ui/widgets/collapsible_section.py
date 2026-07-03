@@ -22,12 +22,6 @@ Design notes:
   ``QWidget.isHidden()`` reflects a widget's *own* explicit show/hide flag, not
   whether an ancestor is collapsed, so a populated label inside a collapsed
   section still reports ``isHidden() is False``.
-- An optional *persistent area* sits between the header and the collapsible
-  content: widgets added via ``add_persistent_widget`` stay visible even when
-  the section is collapsed, so a section can fold its detail away while keeping
-  a one-line summary (and any critical alerts) on screen. (DEC-124 retired the
-  readiness card's use of this — its verdict + alerts are now always-visible
-  siblings — but the feature remains available to other sections.)
 """
 
 from __future__ import annotations
@@ -39,12 +33,10 @@ from PySide6.QtWidgets import QPushButton, QSizePolicy, QVBoxLayout, QWidget
 class CollapsibleSection(QWidget):
     """A titled, collapsible container for progressive disclosure.
 
-    Add collapsible content with :meth:`add_widget` / :meth:`add_layout`, and
-    always-visible content (a summary or critical alerts that must stay on
-    screen while folded) with :meth:`add_persistent_widget` /
-    :meth:`add_persistent_layout`. Query or change the open state with
-    :meth:`is_expanded` / :meth:`set_expanded`. The :attr:`toggled` signal
-    emits ``True`` on expand and ``False`` on collapse.
+    Add collapsible content with :meth:`add_widget` / :meth:`add_layout`.
+    Query or change the open state with :meth:`is_expanded` /
+    :meth:`set_expanded`. The :attr:`toggled` signal emits ``True`` on expand
+    and ``False`` on collapse.
     """
 
     toggled = Signal(bool)  # True when expanded, False when collapsed
@@ -118,22 +110,6 @@ class CollapsibleSection(QWidget):
     def add_layout(self, layout) -> None:
         """Append a nested layout to the section's content area."""
         self._content_layout.addLayout(layout)
-
-    def add_persistent_widget(self, widget: QWidget) -> None:
-        """Append a widget that stays visible regardless of collapsed state.
-
-        Persistent widgets render between the header and the collapsible
-        content; collapsing the section hides only the content, never these.
-        Use for a summary line or critical alerts that must remain on screen
-        when the section is folded.
-        """
-        self._persistent_layout.addWidget(widget)
-        self._persistent.setVisible(True)
-
-    def add_persistent_layout(self, layout) -> None:
-        """Append a nested layout to the always-visible persistent area."""
-        self._persistent_layout.addLayout(layout)
-        self._persistent.setVisible(True)
 
     def is_expanded(self) -> bool:
         """Return whether the content area is currently shown."""

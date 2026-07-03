@@ -52,9 +52,9 @@ class _VerifyWorker(QObject):
         except DaemonTimeout:
             # DEC-098: a verify timeout means the daemon was slow — the write
             # may still have landed. Don't say "unavailable", which implies
-            # the daemon is gone. The category stays "unavailable" so the
-            # main_window's resume-writes path (paired with verify_completed)
-            # still fires; only the message is rewritten.
+            # the daemon is gone. The category stays "unavailable" so the page's
+            # error handler shows this softened message verbatim instead of
+            # prefixing it as a hard "Verify error"; only the message is rewritten.
             self.verify_error.emit(
                 "unavailable",
                 "Verify timed out (>8s). The daemon may have completed the "

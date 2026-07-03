@@ -41,7 +41,6 @@ from control_ofc.services.daemon_service_check import (
     ENABLE_COMMAND,
     check_daemon_service_state,
 )
-from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.fan_grouping import build_fan_groups
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import ChartMode, SeriesSelectionModel
@@ -122,7 +121,6 @@ class DashboardPage(QWidget):
         profile_service: ProfileService | None = None,
         settings_service: AppSettingsService | None = None,
         client: DaemonClient | None = None,
-        diagnostics_service: DiagnosticsService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -132,14 +130,6 @@ class DashboardPage(QWidget):
         self._profile_service = profile_service
         self._settings_service = settings_service
         self._client = client
-        # Shared with MainWindow so the dashboard + diagnostics event logs read one
-        # deque (DEC-111). Tests build the page without one, so fall back like
-        # MainWindow does rather than make the Events tab conditional.
-        self._diag = diagnostics_service or DiagnosticsService(
-            state,
-            settings_service=settings_service,
-            profile_service=profile_service,
-        )
         self._fan_ids: list[str] = []  # Track fan IDs for table row mapping
         self._displayable_fan_keys: list[str] = []  # Fan series keys for selection
         self._has_data = False

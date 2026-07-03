@@ -389,12 +389,6 @@ class DiagnosticsPage(QWidget):
     # hardware-diagnostics worker's thread.
     _rescan_request = Signal()
 
-    # Public signals used by main_window to coordinate the GUI control loop —
-    # the loop pauses writes to the header under verify so its 1Hz tick does
-    # not race the daemon's 6-second verify wait (A1, DEC-101).
-    verify_started = Signal(str)  # header_id
-    verify_completed = Signal(str)  # header_id
-
     def __init__(
         self,
         state: AppState | None = None,
@@ -439,19 +433,18 @@ class DiagnosticsPage(QWidget):
         # _ensure_hw_diag_worker) — keeps the blocking GET off the UI thread.
         self._hw_diag_thread: QThread | None = None
         self._hw_diag_worker: _HwDiagWorker | None = None
-        # Header currently under verify — used to emit verify_completed with
-        # the right id from both ok and error paths (the error signal does not
-        # carry the header_id).
+        # Header currently under verify — tracked so the batch-verify error
+        # path can attribute a failure to the right header (the error signal
+        # does not carry the header_id), and cleared when the verify settles.
         self._verify_active_header: str | None = None
 
         # DEC-120: lazy-created GPU verify worker + thread; the BDF of the GPU
-        # whose verify control is currently shown; the active control-loop pause
-        # key (``amd_gpu:{bdf}``); and a session flag that hides the control if
-        # the connected daemon turns out not to support the route (404).
+        # whose verify control is currently shown; and a session flag that hides
+        # the control if the connected daemon turns out not to support the route
+        # (404).
         self._gpu_verify_thread: QThread | None = None
         self._gpu_verify_worker: _GpuVerifyWorker | None = None
         self._gpu_verify_bdf: str | None = None
-        self._gpu_verify_active_key: str | None = None
         self._gpu_verify_unsupported = False
 
         # DEC-101 (2E): batch verification state. ``_verify_all_queue`` is
@@ -2446,7 +2439,6 @@ class DiagnosticsPage(QWidget):
         # for the test window, so the GUI neither holds an hwmon lease nor pauses
         # anything. We still track the active header for UI state.
         self._verify_active_header = header_id
-        self.verify_started.emit(header_id)
 
         # Fire queued signal to worker running on its own thread.
         self._verify_request.emit(header_id)
@@ -2621,7 +2613,6 @@ class DiagnosticsPage(QWidget):
             f"Testing {index}/{self._verify_all_total}: {header_id}"
         )
         self._verify_active_header = header_id
-        self.verify_started.emit(header_id)
         self._verify_request.emit(header_id)
 
     def _show_verify_all_summary(self) -> None:
@@ -2661,12 +2652,12 @@ class DiagnosticsPage(QWidget):
         self._set_class(self._verify_all_progress_label, css_class)
 
     def _emit_verify_completed(self) -> None:
-        """Resume the control loop's writes for the header that was under
-        verify (A1). Both ok and error paths must call this, so it lives in a
-        single helper."""
-        header = self._verify_active_header
-        if header:
-            self.verify_completed.emit(header)
+        """Clear the under-verify header tracking once a verify settles.
+
+        Both the ok and error paths call this, so it lives in a single helper.
+        The header id was previously broadcast to main_window to resume control-
+        loop writes; that path was retired (DEC-165 — the daemon self-coordinates
+        the verify), leaving only the state reset."""
         self._verify_active_header = None
 
     # ── DEC-120: GPU fan-control verification ────────────────────────
@@ -2713,13 +2704,6 @@ class DiagnosticsPage(QWidget):
         self._gpu_verify_btn.setText("Testing...")
         self._gpu_verify_result_label.setVisible(False)
 
-        # Pause the GUI control loop's writes to this GPU so the daemon's 6s
-        # verify wait is not stomped by our own 1Hz tick. The key matches the
-        # control loop's GPU dispatch key (``amd_gpu:{bdf}``); the loop's 9s
-        # safety auto-resume bounds a hung verify (DEC-120).
-        self._gpu_verify_active_key = f"amd_gpu:{bdf}"
-        self.verify_started.emit(self._gpu_verify_active_key)
-
         if self._ensure_gpu_verify_worker():
             self._gpu_verify_request.emit(bdf)
             return
@@ -2732,7 +2716,6 @@ class DiagnosticsPage(QWidget):
             self._gpu_verify_result_label.setVisible(True)
             self._gpu_verify_btn.setEnabled(True)
             self._gpu_verify_btn.setText("Test GPU Fan Control")
-            self._emit_gpu_verify_completed()
             return
         from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 
@@ -2783,7 +2766,6 @@ class DiagnosticsPage(QWidget):
         self._show_gpu_verify_result(result)
         self._gpu_verify_btn.setEnabled(True)
         self._gpu_verify_btn.setText("Test GPU Fan Control")
-        self._emit_gpu_verify_completed()
 
     @Slot(str, str)
     def _on_gpu_verify_error(self, category: str, message: str) -> None:
@@ -2800,7 +2782,6 @@ class DiagnosticsPage(QWidget):
             self._gpu_verify_result_label.setVisible(True)
         self._gpu_verify_btn.setEnabled(True)
         self._gpu_verify_btn.setText("Test GPU Fan Control")
-        self._emit_gpu_verify_completed()
 
     def _show_gpu_verify_result(self, result: GpuVerifyResult) -> None:
         """Display a GPU fan verify outcome (DEC-120). All guidance is
@@ -2856,14 +2837,6 @@ class DiagnosticsPage(QWidget):
         self._gpu_verify_result_label.setText("\n".join(lines))
         self._set_class(self._gpu_verify_result_label, css_class)
         self._gpu_verify_result_label.setVisible(True)
-
-    def _emit_gpu_verify_completed(self) -> None:
-        """Resume the control loop's writes for the GPU that was under verify
-        (DEC-120). Both ok and error paths call this."""
-        key = self._gpu_verify_active_key
-        if key:
-            self.verify_completed.emit(key)
-        self._gpu_verify_active_key = None
 
     # ─── GPU restore-to-automatic + hwmon rescan (DEC-147) ──────────────
 

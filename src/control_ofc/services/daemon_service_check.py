@@ -30,10 +30,6 @@ class DaemonServiceState:
     """Snapshot of the system view of ``control-ofc-daemon.service``.
 
     Attributes:
-        socket_exists: True if the daemon's IPC socket is present on disk.
-            A bound socket is the strongest signal that the daemon is up;
-            absence does not, on its own, mean the service is disabled
-            (it could simply be starting).
         service_enabled: True if ``systemctl is-enabled`` reports the unit
             is enabled, static, or alias. False for "disabled", "masked",
             "not-found", or any error path.
@@ -45,7 +41,6 @@ class DaemonServiceState:
             the data is unreliable.
     """
 
-    socket_exists: bool
     service_enabled: bool
     service_active: bool
     can_check: bool
@@ -79,13 +74,9 @@ def check_daemon_service_state(
         on the Qt main thread — both probes complete in single-digit
         milliseconds on a healthy system.
     """
-    socket = Path(socket_path)
-    socket_exists = socket.exists()
-
     resolved = systemctl_path if systemctl_path is not None else shutil.which("systemctl")
     if not resolved:
         return DaemonServiceState(
-            socket_exists=socket_exists,
             service_enabled=False,
             service_active=False,
             can_check=False,
@@ -96,14 +87,12 @@ def check_daemon_service_state(
 
     if enabled is None or active is None:
         return DaemonServiceState(
-            socket_exists=socket_exists,
             service_enabled=False,
             service_active=False,
             can_check=False,
         )
 
     return DaemonServiceState(
-        socket_exists=socket_exists,
         service_enabled=enabled in {"enabled", "static", "alias", "enabled-runtime"},
         service_active=active == "active",
         can_check=True,

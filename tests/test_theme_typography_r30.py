@@ -26,7 +26,6 @@ class TestFontSizesComputation:
         assert fs["small"] == 9  # 10 * 0.9
         assert fs["card_title"] == 11  # 10 * 1.1
         assert fs["card_value"] == 22  # 10 * 2.2
-        assert fs["brand"] == 14  # 10 * 1.4
 
     def test_larger_base_scales_proportionally(self):
         fs = font_sizes(14)

@@ -51,8 +51,3 @@ class SessionStatsTracker:
     def reset(self) -> None:
         """Clear all stats (call on reconnect)."""
         self._stats.clear()
-
-    @property
-    def sensor_count(self) -> int:
-        """Number of sensors tracked."""
-        return len(self._stats)

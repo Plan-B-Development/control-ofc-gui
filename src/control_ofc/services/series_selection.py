@@ -78,9 +78,6 @@ class SeriesSelectionModel(QObject):
         if changed:
             self.selection_changed.emit()
 
-    def toggle(self, key: str) -> None:
-        self.set_visible(key, not self.is_visible(key))
-
     def visible_keys(self) -> set[str]:
         return self._known_keys - self._hidden_keys
 
@@ -88,39 +85,9 @@ class SeriesSelectionModel(QObject):
         """Return all keys the selection model knows about (displayable entities)."""
         return set(self._known_keys)
 
-    # -- group operations --
-
-    def set_group_visible(self, group: SeriesGroup, visible: bool) -> None:
-        changed = False
-        for key in self._known_keys:
-            if self.classify(key) == group:
-                if visible and key in self._hidden_keys:
-                    self._hidden_keys.discard(key)
-                    changed = True
-                elif not visible and key not in self._hidden_keys:
-                    self._hidden_keys.add(key)
-                    changed = True
-        if changed:
-            self.selection_changed.emit()
-
-    def is_group_fully_visible(self, group: SeriesGroup) -> bool:
-        group_keys = {k for k in self._known_keys if self.classify(k) == group}
-        return bool(group_keys) and not group_keys.intersection(self._hidden_keys)
-
-    def is_group_partially_visible(self, group: SeriesGroup) -> bool:
-        group_keys = {k for k in self._known_keys if self.classify(k) == group}
-        visible = group_keys - self._hidden_keys
-        return bool(visible) and visible != group_keys
-
     def select_all(self) -> None:
         if self._hidden_keys:
             self._hidden_keys.clear()
-            self.selection_changed.emit()
-
-    def select_none(self) -> None:
-        new_hidden = set(self._known_keys)
-        if new_hidden != self._hidden_keys:
-            self._hidden_keys = new_hidden
             self.selection_changed.emit()
 
     # -- chart modes (DEC-181) --

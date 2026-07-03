@@ -47,9 +47,6 @@ def test_mode_chip_text(qtbot):
     qtbot.addWidget(s)
     s.set_operation_mode(OperationMode.AUTOMATIC)
     assert s._mode.text() == "Automatic"
-    s.set_operation_mode(OperationMode.MANUAL_OVERRIDE)
-    assert s._mode.text() == "Manual Override"
-    assert s._mode.property("class") == "ManualBadge"
     s.set_operation_mode(OperationMode.READ_ONLY)
     assert s._mode.text() == "Read-only"
     s.set_operation_mode(OperationMode.DEMO)

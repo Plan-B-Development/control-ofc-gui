@@ -212,10 +212,6 @@ class TestModeBadge:
         app_state.set_mode(OperationMode.DEMO)
         assert "Demo" in window.dashboard_page._status_strip._mode.text()
 
-    def test_manual_override_shows_label(self, qtbot, window, app_state):
-        app_state.set_mode(OperationMode.MANUAL_OVERRIDE)
-        assert "Manual" in window.dashboard_page._status_strip._mode.text()
-
     def test_automatic_mode_shows_label(self, qtbot, window, app_state):
         app_state.set_mode(OperationMode.AUTOMATIC)
         assert window.dashboard_page._status_strip._mode.text() == "Automatic"

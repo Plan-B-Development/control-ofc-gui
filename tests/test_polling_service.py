@@ -325,16 +325,6 @@ class TestPollingServiceConnected:
         assert state.connection == ConnectionState.CONNECTED
         assert state.mode == OperationMode.AUTOMATIC
 
-    def test_on_connected_does_not_override_manual(self, qtbot):
-        """MANUAL_OVERRIDE mode is preserved -- _on_connected does not overwrite it."""
-        state = AppState()
-        state.set_mode(OperationMode.MANUAL_OVERRIDE)
-
-        svc = _make_polling_service(state)
-        svc._on_connected()
-
-        assert state.mode == OperationMode.MANUAL_OVERRIDE
-
 
 class TestPollingServiceDisconnected:
     """_on_disconnected transitions AUTOMATIC -> READ_ONLY."""
@@ -350,18 +340,6 @@ class TestPollingServiceDisconnected:
 
         assert state.connection == ConnectionState.DISCONNECTED
         assert state.mode == OperationMode.READ_ONLY
-
-    def test_on_disconnected_does_not_override_manual(self, qtbot):
-        """MANUAL_OVERRIDE is not changed to READ_ONLY on disconnect."""
-        state = AppState()
-        state.set_connection(ConnectionState.CONNECTED)
-        state.set_mode(OperationMode.MANUAL_OVERRIDE)
-
-        svc = _make_polling_service(state)
-        svc._on_disconnected()
-
-        assert state.connection == ConnectionState.DISCONNECTED
-        assert state.mode == OperationMode.MANUAL_OVERRIDE
 
 
 class TestPollingServiceActiveProfile:

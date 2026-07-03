@@ -306,23 +306,14 @@ class _SyncClient:
 
 
 class TestGpuVerifyRun:
-    def test_run_emits_pause_key_and_renders(self, qtbot):
+    def test_run_calls_verify_and_renders(self, qtbot):
         client = _SyncClient(GpuVerifyResult(gpu_id="0000:2d:00.0", result="effective"))
         page = _make_page(qtbot, client=client)
         page._gpu_verify_bdf = "0000:2d:00.0"
 
-        started: list[str] = []
-        completed: list[str] = []
-        page.verify_started.connect(started.append)
-        page.verify_completed.connect(completed.append)
-
         page._run_gpu_verify()
 
-        # The control-loop pause/resume key must be the GPU dispatch key.
-        assert started == ["amd_gpu:0000:2d:00.0"]
-        assert completed == ["amd_gpu:0000:2d:00.0"]
         assert client.calls == ["0000:2d:00.0"]
-        assert page._gpu_verify_active_key is None
         label = page.findChild(QLabel, "Diagnostics_Label_verifyGpuResult")
         assert "working" in label.text().lower()
 

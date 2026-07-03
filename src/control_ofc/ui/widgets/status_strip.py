@@ -157,11 +157,7 @@ class DashboardStatusStrip(QWidget):
 
     def set_operation_mode(self, mode: OperationMode) -> None:
         self._mode.setText(MODE_LABELS.get(mode, ""))
-        css = ""
-        if mode == OperationMode.MANUAL_OVERRIDE:
-            css = "ManualBadge"
-        elif mode == OperationMode.DEMO:
-            css = "DemoBadge"
+        css = "DemoBadge" if mode == OperationMode.DEMO else ""
         _refresh_chip(self._mode, css)
 
     def set_thermal_state(self, thermal: str) -> None:

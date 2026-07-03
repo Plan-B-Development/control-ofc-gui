@@ -30,7 +30,6 @@ from control_ofc.ui.pages.dashboard_page import DashboardPage
 
 def _state(*, enabled: bool, active: bool, can_check: bool = True) -> DaemonServiceState:
     return DaemonServiceState(
-        socket_exists=False,
         service_enabled=enabled,
         service_active=active,
         can_check=can_check,
