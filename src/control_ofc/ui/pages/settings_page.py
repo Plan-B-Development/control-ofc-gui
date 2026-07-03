@@ -44,6 +44,7 @@ from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.profile_import_service import import_profiles
 from control_ofc.services.profile_service import ImportCollection, collect_local_profiles_for_import
+from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.theme import ThemeTokens, load_theme, save_theme
 
 log = logging.getLogger(__name__)
@@ -1042,11 +1043,7 @@ class SettingsPage(QWidget):
 
     def _set_export_result(self, text: str, css_class: str) -> None:
         self._export_result_label.setText(text)
-        old_class = self._export_result_label.property("class")
-        if old_class != css_class:
-            self._export_result_label.setProperty("class", css_class)
-            self._export_result_label.style().unpolish(self._export_result_label)
-            self._export_result_label.style().polish(self._export_result_label)
+        set_chip_class(self._export_result_label, css_class, skip_if_unchanged=True)
 
     def _set_status(self, msg: str) -> None:
         self._status_label.setText(msg)

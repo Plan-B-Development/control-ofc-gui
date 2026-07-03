@@ -11,6 +11,7 @@ fallback instead of spinning a worker thread.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -348,9 +349,11 @@ class TestGpuRestoreRun:
 
 
 class _RescanSyncClient:
-    """Fake client exposing hwmon_rescan + hardware_diagnostics but NO
-    socket_path — exercises the synchronous fallback and the post-rescan
-    diagnostics-refetch chain."""
+    """Fake client exposing hwmon_rescan + hardware_diagnostics with an empty
+    socket_path — exercises the synchronous fallback (no worker thread) and the
+    post-rescan diagnostics-refetch chain."""
+
+    socket_path = ""  # falsy -> _ensure_hw_diag_worker() takes the sync fallback
 
     def __init__(self, headers: list[HwmonHeader] | None = None, error: Exception | None = None):
         self._headers = headers if headers is not None else []
@@ -433,7 +436,9 @@ class TestHwmonRescanRun:
         assert "no daemon connection" in label.text().lower()
 
     def test_client_without_rescan_method(self, qtbot):
-        page = _make_page(qtbot, client=object())
+        # Falsy socket_path reaches the sync fallback; the client has no
+        # hwmon_rescan method, so the page must report "does not support".
+        page = _make_page(qtbot, client=SimpleNamespace(socket_path=""))
         page._run_hwmon_rescan()
         label = page.findChild(QLabel, "Diagnostics_Label_rescanResult")
         assert "does not support" in label.text().lower()

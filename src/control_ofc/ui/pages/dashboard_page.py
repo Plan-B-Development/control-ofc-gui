@@ -46,7 +46,7 @@ from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import ChartMode, SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
-from control_ofc.ui.qt_util import block_signals
+from control_ofc.ui.qt_util import block_signals, repolish, set_chip_class
 from control_ofc.ui.status_banner import MODE_LABELS
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.dashboard_inspector import DashboardInspector, WarningsView
@@ -265,8 +265,6 @@ class DashboardPage(QWidget):
         Called once at construction time and again from ``set_theme`` so the
         background tint follows light/dark theme changes (DEC-109).
         """
-        if not hasattr(self, "_enable_cmd_label") or self._enable_cmd_label is None:
-            return
         from control_ofc.ui.theme import active_theme
 
         tokens = active_theme()
@@ -283,8 +281,7 @@ class DashboardPage(QWidget):
         the new colours (DEC-109).
         """
         self._apply_enable_cmd_style()
-        if hasattr(self, "_chart") and self._chart is not None:
-            self._chart.set_theme(tokens)
+        self._chart.set_theme(tokens)
 
     def _copy_enable_command(self) -> None:
         clipboard = QApplication.clipboard()
@@ -297,8 +294,6 @@ class DashboardPage(QWidget):
         (non-systemd system, missing systemctl) or when the service is
         already enabled — in both cases the existing 'waiting' text is
         sufficient and we don't want to mislead the user."""
-        if not hasattr(self, "_service_hint_frame"):
-            return
         try:
             socket_path = (
                 self._client.socket_path if self._client is not None else DEFAULT_SOCKET_PATH
@@ -632,19 +627,32 @@ class DashboardPage(QWidget):
         keys += self._displayable_fan_keys
         self._selection.update_known_keys(keys)
 
+    def _resolve_card_sensor(
+        self,
+        category: str,
+        kinds: tuple[str, ...],
+        sensors: list[SensorReading],
+        sensor_by_id: dict[str, SensorReading],
+    ) -> SensorReading | None:
+        """The sensor that represents a card category: the card's binding if set
+        and present, else the first sensor whose ``kind`` matches. Shared by the
+        summary-card renderer (:meth:`_update_card`) and the curated-chart subset
+        (:meth:`_curated_sensor_id`) so the chart's default line matches the card."""
+        binding = self._card_bindings.get(category, "")
+        if binding and binding in sensor_by_id:
+            return sensor_by_id[binding]
+        for s in sensors:
+            if s.kind in kinds:
+                return s
+        return None
+
     def _curated_sensor_id(
         self, category: str, kinds: tuple[str, ...], sensors: list[SensorReading]
     ) -> str | None:
         """The one sensor id that represents a card category in the curated chart
-        subset — the card's binding if set, else the first by kind (mirrors
-        ``_update_card`` so the chart's default line matches the card)."""
-        binding = self._card_bindings.get(category, "")
-        if binding and any(s.id == binding for s in sensors):
-            return binding
-        for s in sensors:
-            if s.kind in kinds:
-                return s.id
-        return None
+        subset (see :meth:`_resolve_card_sensor`)."""
+        sensor = self._resolve_card_sensor(category, kinds, sensors, {s.id: s for s in sensors})
+        return sensor.id if sensor else None
 
     def _curated_chart_keys(self) -> set[str]:
         """The curated default series (refinement §7.3 / B-fork DEC-181): CPU temp,
@@ -725,8 +733,7 @@ class DashboardPage(QWidget):
             self._gpu_card.set_title(f"{caps.intel_gpu.display_label} Temp")
 
         for lbl in (self._sub_openfan_label, self._sub_hwmon_label):
-            lbl.style().unpolish(lbl)
-            lbl.style().polish(lbl)
+            repolish(lbl)
 
         # Hwmon info banner on live page
         if not hw.present:
@@ -802,15 +809,11 @@ class DashboardPage(QWidget):
             if sub.name == "openfan" and sub.status != "ok":
                 reason = f" ({sub.reason})" if sub.reason else ""
                 self._sub_openfan_label.setText(f"OpenFan: {sub.status}{reason}")
-                self._sub_openfan_label.setProperty("class", "WarningChip")
-                self._sub_openfan_label.style().unpolish(self._sub_openfan_label)
-                self._sub_openfan_label.style().polish(self._sub_openfan_label)
+                set_chip_class(self._sub_openfan_label, "WarningChip")
             elif sub.name == "hwmon" and sub.status != "ok":
                 reason = f" ({sub.reason})" if sub.reason else ""
                 self._sub_hwmon_label.setText(f"hwmon: {sub.status}{reason}")
-                self._sub_hwmon_label.setProperty("class", "WarningChip")
-                self._sub_hwmon_label.style().unpolish(self._sub_hwmon_label)
-                self._sub_hwmon_label.style().polish(self._sub_hwmon_label)
+                set_chip_class(self._sub_hwmon_label, "WarningChip")
 
     def _on_sensors_updated(self, sensors: list[SensorReading]) -> None:
         if sensors:
@@ -1064,13 +1067,7 @@ class DashboardPage(QWidget):
     ) -> None:
         """Update a summary card from binding or auto-match by kind."""
         binding = self._card_bindings.get(category, "")
-        sensor: SensorReading | None = None
-        if binding and binding in sensor_by_id:
-            sensor = sensor_by_id[binding]
-        else:
-            matches = [s for s in sensors if s.kind in kinds]
-            if matches:
-                sensor = matches[0]
+        sensor = self._resolve_card_sensor(category, kinds, sensors, sensor_by_id)
         if sensor:
             freshness = sensor.freshness
             # Trend glyph only while the reading is live — a stale rate is not

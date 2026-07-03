@@ -21,6 +21,7 @@ from control_ofc.ui.hwmon_guidance import (
     dual_chip_warning_html,
     lookup_chip_guidance,
 )
+from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.readiness_report import (
     advisory_rows,
@@ -153,7 +154,7 @@ def populate_hw_diagnostics(page: DiagnosticsPage, diag: HardwareDiagnosticsResu
     )
     if dual_chip_html:
         page._dual_chip_warning_label.setText(dual_chip_html)
-        page._set_class(page._dual_chip_warning_label, "WarningChip")
+        set_chip_class(page._dual_chip_warning_label, "WarningChip")
         page._dual_chip_warning_label.setVisible(True)
     else:
         page._dual_chip_warning_label.setVisible(False)
@@ -221,7 +222,7 @@ def populate_hw_diagnostics(page: DiagnosticsPage, diag: HardwareDiagnosticsResu
                 "or disable ACPI hardware monitoring in BIOS."
             )
         page._acpi_label.setText("\n".join(lines))
-        page._set_class(page._acpi_label, "WarningChip")
+        set_chip_class(page._acpi_label, "WarningChip")
         page._acpi_label.setVisible(True)
     else:
         page._acpi_label.setVisible(False)
@@ -250,7 +251,7 @@ def populate_hw_diagnostics(page: DiagnosticsPage, diag: HardwareDiagnosticsResu
                 f"<i>Remediation:</i> {escape(col.remediation)}"
             )
         page._module_collision_label.setText("".join(parts))
-        page._set_class(page._module_collision_label, "CriticalChip")
+        set_chip_class(page._module_collision_label, "CriticalChip")
         page._module_collision_label.setVisible(True)
     else:
         page._module_collision_label.setVisible(False)
@@ -274,7 +275,7 @@ def populate_hw_diagnostics(page: DiagnosticsPage, diag: HardwareDiagnosticsResu
         for mc in mod_conflicts:
             lines.append(f"  {mc.module_a} + {mc.module_b}: {mc.explanation}")
         page._module_conflict_label.setText("\n".join(lines))
-        page._set_class(page._module_conflict_label, "CriticalChip")
+        set_chip_class(page._module_conflict_label, "CriticalChip")
         page._module_conflict_label.setVisible(True)
     else:
         page._module_conflict_label.setVisible(False)
@@ -307,7 +308,7 @@ def populate_hw_diagnostics(page: DiagnosticsPage, diag: HardwareDiagnosticsResu
             f"(highest: {max_count} reverts, {top_severity.upper()})"
         )
         page._revert_headline_label.setText(headline)
-        page._set_class(page._revert_headline_label, severity_class)
+        set_chip_class(page._revert_headline_label, severity_class)
         page._revert_headline_label.setVisible(True)
 
         page._revert_label.setText(body_html)
@@ -461,7 +462,7 @@ def populate_hw_diagnostics(page: DiagnosticsPage, diag: HardwareDiagnosticsResu
     # pop-out now that a diagnostics result is available.
     verdict_text, verdict_cls = readiness_verdict(diag)
     page._readiness_verdict_label.setText(verdict_text)
-    page._set_class(page._readiness_verdict_label, verdict_cls)
+    set_chip_class(page._readiness_verdict_label, verdict_cls)
 
     # DEC-124: render the always-visible issue checklist (the promoted
     # "To fix" content) from the same GUI-authored problem list the verdict

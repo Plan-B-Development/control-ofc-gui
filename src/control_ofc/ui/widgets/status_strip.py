@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.api.models import ConnectionState, OperationMode
+from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.status_banner import CONNECTION_CHIP, CONNECTION_LABELS, MODE_LABELS
 
 # DaemonStatus.thermal_state -> (label, chip class). The daemon reports
@@ -53,13 +54,6 @@ def format_poll_age(seconds_ago: float | None) -> str:
     if seconds_ago < 3600:
         return f"Updated {int(seconds_ago // 60)}m ago"
     return f"Updated {int(seconds_ago // 3600)}h ago"
-
-
-def _refresh_chip(label: QLabel, css_class: str) -> None:
-    """Apply a QSS chip class and force a style repolish so it takes effect."""
-    label.setProperty("class", css_class)
-    label.style().unpolish(label)
-    label.style().polish(label)
 
 
 class DashboardStatusStrip(QWidget):
@@ -150,7 +144,7 @@ class DashboardStatusStrip(QWidget):
 
     def set_connection_state(self, state: ConnectionState) -> None:
         self._connection.setText(CONNECTION_LABELS.get(state, "Unknown"))
-        _refresh_chip(self._connection, CONNECTION_CHIP.get(state, ""))
+        set_chip_class(self._connection, CONNECTION_CHIP.get(state, ""))
 
     def set_active_profile(self, name: str) -> None:
         self._profile.setText(name if name else "No profile")
@@ -158,12 +152,12 @@ class DashboardStatusStrip(QWidget):
     def set_operation_mode(self, mode: OperationMode) -> None:
         self._mode.setText(MODE_LABELS.get(mode, ""))
         css = "DemoBadge" if mode == OperationMode.DEMO else ""
-        _refresh_chip(self._mode, css)
+        set_chip_class(self._mode, css)
 
     def set_thermal_state(self, thermal: str) -> None:
         label, css = THERMAL_STATES.get(thermal or "normal", (f"Thermal: {thermal}", "InfoChip"))
         self._thermal.setText(label)
-        _refresh_chip(self._thermal, css)
+        set_chip_class(self._thermal, css)
 
     def set_warning_count(self, count: int) -> None:
         if count > 0:

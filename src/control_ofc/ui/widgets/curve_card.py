@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.profile_service import CurveConfig, CurveType
+from control_ofc.ui.qt_util import repolish
 from control_ofc.ui.theme import active_theme, default_dark_theme
 from control_ofc.ui.widgets.card_metrics import (
     DEFAULT_CARD_SIZE,
@@ -359,8 +360,7 @@ class CurveCard(QFrame):
             self._used_by_label.setText("Not assigned")
             self._status_label.setText("Unassigned")
             self._status_label.setProperty("class", "PageSubtitle")
-        self._status_label.style().unpolish(self._status_label)
-        self._status_label.style().polish(self._status_label)
+        repolish(self._status_label)
 
     def update_curve(self, curve: CurveConfig) -> None:
         self._curve = curve

@@ -81,6 +81,7 @@ from control_ofc.ui.pages.diagnostics_workers import (
     _HwDiagWorker,
     _VerifyWorker,
 )
+from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.sensor_knowledge import (
     classify_sensor,
     classify_sensor_with_overrides,
@@ -1553,24 +1554,13 @@ class DiagnosticsPage(QWidget):
 
         text, warn = _hwmon_overview_text(caps.hwmon, writable)
         self._hwmon_label.setText(text)
-        self._set_class(self._hwmon_label, "WarningChip" if warn else "")
+        set_chip_class(self._hwmon_label, "WarningChip" if warn else "")
 
         self._features_label.setText(_features_line_text(caps, writable))
 
     # ── Shared widget helpers ────────────────────────────────────────
     # Small, repeatedly-needed Qt idioms factored out so the populate/
     # handler methods read declaratively rather than repeating boilerplate.
-
-    @staticmethod
-    def _set_class(widget: QWidget, css_class: str) -> None:
-        """Set a widget's themed ``class`` property and repolish in place.
-
-        Qt only re-evaluates stylesheet rules on an explicit unpolish/polish
-        cycle, so changing ``class`` without this leaves stale styling.
-        """
-        widget.setProperty("class", css_class)
-        widget.style().unpolish(widget)
-        widget.style().polish(widget)
 
     @staticmethod
     def _apply_freshness_color(item: QTableWidgetItem, freshness: Freshness) -> None:
@@ -2477,9 +2467,9 @@ class DiagnosticsPage(QWidget):
         synchronous fetch)."""
         if self._hw_diag_worker is not None:
             return True
-        # getattr: real DaemonClient always has socket_path; test mocks may not,
-        # in which case callers fall back to a synchronous fetch.
-        socket_path = getattr(self._client, "socket_path", None) if self._client else None
+        # DaemonClient always exposes socket_path; it is None only when there is
+        # no client, in which case callers fall back to a synchronous fetch.
+        socket_path = self._client.socket_path if self._client else None
         if not socket_path:
             return False
 
@@ -2578,7 +2568,7 @@ class DiagnosticsPage(QWidget):
         self._verify_btn.setEnabled(False)
         self._verify_all_btn.setEnabled(False)
         self._verify_all_btn.setText("Testing...")
-        self._set_class(self._verify_all_progress_label, "CardMeta")
+        set_chip_class(self._verify_all_progress_label, "CardMeta")
         self._verify_all_progress_label.setVisible(True)
 
         self._step_pwm_verify_all()
@@ -2649,7 +2639,7 @@ class DiagnosticsPage(QWidget):
             lines.append(f"  • {header_id}: {short}")
 
         self._verify_all_progress_label.setText("\n".join(lines))
-        self._set_class(self._verify_all_progress_label, css_class)
+        set_chip_class(self._verify_all_progress_label, css_class)
 
     def _emit_verify_completed(self) -> None:
         """Clear the under-verify header tracking once a verify settles.
@@ -2835,7 +2825,7 @@ class DiagnosticsPage(QWidget):
                 "set it manually if needed."
             )
         self._gpu_verify_result_label.setText("\n".join(lines))
-        self._set_class(self._gpu_verify_result_label, css_class)
+        set_chip_class(self._gpu_verify_result_label, css_class)
         self._gpu_verify_result_label.setVisible(True)
 
     # ─── GPU restore-to-automatic + hwmon rescan (DEC-147) ──────────────
@@ -2915,7 +2905,7 @@ class DiagnosticsPage(QWidget):
     def _show_gpu_restore_message(self, text: str, css_class: str = "CardMeta") -> None:
         """Show a restore outcome/refusal line under the GPU controls."""
         self._gpu_restore_result_label.setText(text)
-        self._set_class(self._gpu_restore_result_label, css_class)
+        set_chip_class(self._gpu_restore_result_label, css_class)
         self._gpu_restore_result_label.setVisible(True)
 
     def _finish_gpu_restore(self) -> None:
@@ -2987,7 +2977,7 @@ class DiagnosticsPage(QWidget):
     def _show_rescan_message(self, text: str, css_class: str = "CardMeta") -> None:
         """Show a rescan outcome line under the Hardware Readiness header row."""
         self._rescan_result_label.setText(text)
-        self._set_class(self._rescan_result_label, css_class)
+        set_chip_class(self._rescan_result_label, css_class)
         self._rescan_result_label.setVisible(True)
 
     def _finish_rescan(self) -> None:
@@ -3172,7 +3162,7 @@ class DiagnosticsPage(QWidget):
             lines.append(dual_hint)
 
         self._verify_result_label.setText("\n".join(lines))
-        self._set_class(self._verify_result_label, css_class)
+        set_chip_class(self._verify_result_label, css_class)
         self._verify_result_label.setVisible(True)
 
     # ─── Actions ─────────────────────────────────────────────────────

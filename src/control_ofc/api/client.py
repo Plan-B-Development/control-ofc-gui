@@ -86,6 +86,51 @@ class DaemonClient:
     # UI can distinguish "daemon is slow" from "daemon is gone" — a verify
     # call that times out client-side may still have completed on the daemon.
 
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Issue one request and map transport faults to daemon errors.
+
+        Dispatches via ``httpx.Client.request`` so a DELETE can carry a body
+        (override release sends ``override_token``) and every verb shares one
+        code path. The error mapping is identical for all verbs:
+
+        - ``TimeoutException`` -> ``DaemonTimeout`` ("daemon is slow" — a verify
+          that times out client-side may still have completed daemon-side).
+        - ``ConnectError`` and every other ``RequestError`` -> ``DaemonUnavailable``
+          ("the daemon is gone", retryable). ``RequestError`` is httpx's
+          documented base for any fault raised while issuing a request — a
+          ``RemoteProtocolError`` on mid-body death (the common case when the
+          daemon is SIGKILLed/restarts) or a partial-I/O ``ReadError``/
+          ``WriteError`` — so it routes into the same disconnect/reconnect
+          handling as ``ConnectError``: the control-loop write worker emits
+          ``OUTCOME_UNAVAILABLE`` and drops the client for a clean reconnect.
+          ``InvalidURL`` and other non-``RequestError`` httpx faults are our own
+          bugs and surface raw.
+        """
+        try:
+            kwargs: dict[str, Any] = {}
+            if json is not None:
+                kwargs["json"] = json
+            if params is not None:
+                kwargs["params"] = params
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            resp = self._client.request(method, path, **kwargs)
+        except httpx.TimeoutException as e:
+            raise DaemonTimeout(message=str(e), endpoint=path, method=method) from e
+        except httpx.ConnectError as e:
+            raise DaemonUnavailable(message=str(e), endpoint=path, method=method) from e
+        except httpx.RequestError as e:
+            raise DaemonUnavailable(message=str(e), endpoint=path, method=method) from e
+        return self._handle(resp, method, path)
+
     def _get(
         self,
         path: str,
@@ -93,29 +138,7 @@ class DaemonClient:
         params: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        try:
-            kwargs: dict[str, Any] = {}
-            if params is not None:
-                kwargs["params"] = params
-            if timeout is not None:
-                kwargs["timeout"] = timeout
-            resp = self._client.get(path, **kwargs)
-        except httpx.TimeoutException as e:
-            raise DaemonTimeout(message=str(e), endpoint=path, method="GET") from e
-        except httpx.ConnectError as e:
-            raise DaemonUnavailable(message=str(e), endpoint=path, method="GET") from e
-        except httpx.RequestError as e:
-            # Any other transport/protocol failure mid-request: the daemon
-            # dropped the connection or sent an incomplete/garbled response
-            # (RemoteProtocolError on mid-body death — the most common real
-            # failure when the daemon is SIGKILLed/restarts — or ReadError/
-            # WriteError on partial I/O). Semantically "the daemon is gone",
-            # retryable, so it routes into the same disconnect/reconnect handling
-            # as DaemonUnavailable. httpx.RequestError is the documented base of
-            # every error raised while issuing a request; InvalidURL and other
-            # non-RequestError httpx faults are our own bugs and surface raw.
-            raise DaemonUnavailable(message=str(e), endpoint=path, method="GET") from e
-        return self._handle(resp, "GET", path)
+        return self._request("GET", path, params=params, timeout=timeout)
 
     def _post(
         self,
@@ -125,24 +148,7 @@ class DaemonClient:
         params: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        try:
-            kwargs: dict[str, Any] = {}
-            if params is not None:
-                kwargs["params"] = params
-            if timeout is not None:
-                kwargs["timeout"] = timeout
-            resp = self._client.post(path, json=json, **kwargs)
-        except httpx.TimeoutException as e:
-            raise DaemonTimeout(message=str(e), endpoint=path, method="POST") from e
-        except httpx.ConnectError as e:
-            raise DaemonUnavailable(message=str(e), endpoint=path, method="POST") from e
-        except httpx.RequestError as e:
-            # Daemon dropped the connection / sent an incomplete response on a
-            # write. See _get for the full rationale; mapping to DaemonUnavailable
-            # makes the control-loop write worker emit OUTCOME_UNAVAILABLE and
-            # drop the client for a clean reconnect.
-            raise DaemonUnavailable(message=str(e), endpoint=path, method="POST") from e
-        return self._handle(resp, "POST", path)
+        return self._request("POST", path, json=json, params=params, timeout=timeout)
 
     def _put(
         self,
@@ -151,18 +157,7 @@ class DaemonClient:
         *,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        try:
-            kwargs: dict[str, Any] = {}
-            if timeout is not None:
-                kwargs["timeout"] = timeout
-            resp = self._client.put(path, json=json, **kwargs)
-        except httpx.TimeoutException as e:
-            raise DaemonTimeout(message=str(e), endpoint=path, method="PUT") from e
-        except httpx.ConnectError as e:
-            raise DaemonUnavailable(message=str(e), endpoint=path, method="PUT") from e
-        except httpx.RequestError as e:
-            raise DaemonUnavailable(message=str(e), endpoint=path, method="PUT") from e
-        return self._handle(resp, "PUT", path)
+        return self._request("PUT", path, json=json, timeout=timeout)
 
     def _delete(
         self,
@@ -171,21 +166,7 @@ class DaemonClient:
         *,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        try:
-            kwargs: dict[str, Any] = {}
-            if timeout is not None:
-                kwargs["timeout"] = timeout
-            # httpx's ``.delete()`` convenience method takes no ``json=``; a
-            # DELETE with a body (override release carries ``override_token``)
-            # must go through the generic ``request()`` entrypoint.
-            resp = self._client.request("DELETE", path, json=json, **kwargs)
-        except httpx.TimeoutException as e:
-            raise DaemonTimeout(message=str(e), endpoint=path, method="DELETE") from e
-        except httpx.ConnectError as e:
-            raise DaemonUnavailable(message=str(e), endpoint=path, method="DELETE") from e
-        except httpx.RequestError as e:
-            raise DaemonUnavailable(message=str(e), endpoint=path, method="DELETE") from e
-        return self._handle(resp, "DELETE", path)
+        return self._request("DELETE", path, json=json, timeout=timeout)
 
     @staticmethod
     def _handle(resp: httpx.Response, method: str, path: str) -> dict[str, Any]:

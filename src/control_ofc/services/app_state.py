@@ -147,13 +147,21 @@ class AppState(QObject):
             self.active_profile_name = name
             self.active_profile_changed.emit(name)
 
+    @staticmethod
+    def _set_or_clear(mapping: dict[str, str], key: str, value: str) -> str:
+        """Store the stripped *value* under *key*, or drop the key when the value
+        is empty/whitespace-only. Returns the cleaned value so callers can emit
+        their own signal from it (or from a derived payload)."""
+        cleaned = value.strip() if value else ""
+        if cleaned:
+            mapping[key] = cleaned
+        else:
+            mapping.pop(key, None)
+        return cleaned
+
     def set_fan_alias(self, fan_id: str, alias: str) -> None:
         """Set or clear a fan alias. Empty/whitespace-only string clears."""
-        cleaned = alias.strip() if alias else ""
-        if cleaned:
-            self.fan_aliases[fan_id] = cleaned
-        else:
-            self.fan_aliases.pop(fan_id, None)
+        self._set_or_clear(self.fan_aliases, fan_id, alias)
         self.fan_alias_changed.emit(fan_id, self.fan_display_name(fan_id))
 
     def set_fan_zone(self, fan_id: str, zone: str) -> None:
@@ -162,11 +170,7 @@ class AppState(QObject):
         Empty/whitespace-only ``zone`` unassigns the fan (it then falls back to
         role/source grouping in the dashboard). Mirrors :meth:`set_fan_alias`.
         """
-        cleaned = zone.strip() if zone else ""
-        if cleaned:
-            self.fan_zones[fan_id] = cleaned
-        else:
-            self.fan_zones.pop(fan_id, None)
+        cleaned = self._set_or_clear(self.fan_zones, fan_id, zone)
         self.fan_zones_changed.emit(fan_id, cleaned)
 
     def set_sensor_class_override(self, sensor_id: str, source_class: str) -> None:
@@ -176,11 +180,7 @@ class AppState(QObject):
         string clears the override (revert to auto-classification). GUI-owned
         user policy — the daemon stays hardware-truthful.
         """
-        cleaned = source_class.strip() if source_class else ""
-        if cleaned:
-            self.sensor_class_overrides[sensor_id] = cleaned
-        else:
-            self.sensor_class_overrides.pop(sensor_id, None)
+        cleaned = self._set_or_clear(self.sensor_class_overrides, sensor_id, source_class)
         self.sensor_class_override_changed.emit(sensor_id, cleaned)
 
     def fan_display_name(self, fan_id: str) -> str:
@@ -274,60 +274,56 @@ class AppState(QObject):
             self.warning_count_changed.emit(0)
         self.warnings_cleared.emit()
 
+    def _make_warning(
+        self, warnings: list[dict], key: str, level: str, source: str, message: str
+    ) -> None:
+        """Append a ``{timestamp, level, source, message, _key}`` entry to
+        *warnings*, unless *key* is acknowledged. Records the key's first-seen
+        time on first sight so a persistent warning keeps its original timestamp."""
+        if key in self._acknowledged:
+            return
+        if key not in self._warning_first_seen:
+            self._warning_first_seen[key] = time.time()
+        warnings.append(
+            {
+                "timestamp": self._warning_first_seen[key],
+                "level": level,
+                "source": source,
+                "message": message,
+                "_key": key,
+            }
+        )
+
     def _update_warnings(self) -> None:
         warnings: list[dict] = []
-        now = time.time()
 
         for s in self.sensors:
             if s.freshness != Freshness.FRESH:
-                key = f"sensor_stale:{s.id}"
-                if key not in self._acknowledged:
-                    if key not in self._warning_first_seen:
-                        self._warning_first_seen[key] = now
-                    warnings.append(
-                        {
-                            "timestamp": self._warning_first_seen[key],
-                            "level": "warning",
-                            "source": "sensor",
-                            "message": (
-                                f"Sensor '{s.label or s.id}' is "
-                                f"{s.freshness.name.lower()} (age {s.age_ms}ms)"
-                            ),
-                            "_key": key,
-                        }
-                    )
+                self._make_warning(
+                    warnings,
+                    f"sensor_stale:{s.id}",
+                    "warning",
+                    "sensor",
+                    f"Sensor '{s.label or s.id}' is {s.freshness.name.lower()} (age {s.age_ms}ms)",
+                )
 
         for f in self.fans:
             if f.freshness != Freshness.FRESH:
-                key = f"fan_stale:{f.id}"
-                if key not in self._acknowledged:
-                    if key not in self._warning_first_seen:
-                        self._warning_first_seen[key] = now
-                    warnings.append(
-                        {
-                            "timestamp": self._warning_first_seen[key],
-                            "level": "warning",
-                            "source": "fan",
-                            "message": (
-                                f"Fan '{f.id}' is {f.freshness.name.lower()} (age {f.age_ms}ms)"
-                            ),
-                            "_key": key,
-                        }
-                    )
+                self._make_warning(
+                    warnings,
+                    f"fan_stale:{f.id}",
+                    "warning",
+                    "fan",
+                    f"Fan '{f.id}' is {f.freshness.name.lower()} (age {f.age_ms}ms)",
+                )
             if f.stall_detected:
-                key = f"fan_stall:{f.id}"
-                if key not in self._acknowledged:
-                    if key not in self._warning_first_seen:
-                        self._warning_first_seen[key] = now
-                    warnings.append(
-                        {
-                            "timestamp": self._warning_first_seen[key],
-                            "level": "error",
-                            "source": "fan",
-                            "message": f"Fan '{f.id}' stall detected (RPM=0 while PWM commanded)",
-                            "_key": key,
-                        }
-                    )
+                self._make_warning(
+                    warnings,
+                    f"fan_stall:{f.id}",
+                    "error",
+                    "fan",
+                    f"Fan '{f.id}' stall detected (RPM=0 while PWM commanded)",
+                )
 
         # Merge ad-hoc warnings from services (e.g., control loop write failures)
         for w in self._external_warnings:

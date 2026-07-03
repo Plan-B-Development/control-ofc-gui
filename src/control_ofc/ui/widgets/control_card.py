@@ -25,6 +25,7 @@ from control_ofc.services.profile_service import (
     infer_control_role,
     infer_member_role,
 )
+from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.card_metrics import (
     DEFAULT_CARD_SIZE,
@@ -330,9 +331,7 @@ class ControlCard(QFrame):
     def _apply_chip(self, text: str, cls: str) -> None:
         """Set the status chip text + style class and repolish."""
         self._status_chip.setText(text)
-        self._status_chip.setProperty("class", cls)
-        self._status_chip.style().unpolish(self._status_chip)
-        self._status_chip.style().polish(self._status_chip)
+        set_chip_class(self._status_chip, cls)
 
     def _on_manual_toggled(self, checked: bool) -> None:
         """Reveal/hide the inline slider and signal the transient manual state."""
@@ -446,9 +445,7 @@ class ControlCard(QFrame):
         if not control.members:
             self._output_label.setText("Assign outputs to enable")
             self._status_chip.setText("No members")
-            self._status_chip.setProperty("class", "PageSubtitle")
-            self._status_chip.style().unpolish(self._status_chip)
-            self._status_chip.style().polish(self._status_chip)
+            set_chip_class(self._status_chip, "PageSubtitle")
 
     def _update_min_pwm_badge(self, control: LogicalControl) -> None:
         """Refresh the inline minimum-PWM badge from the control's effective floor."""

@@ -353,7 +353,7 @@ class MainWindow(QWidget):
         )
         self._demo_controller.outputs_changed.connect(self.controls_page.update_control_outputs)
         self._demo_controller.start()
-        self.controls_page._demo_controller = self._demo_controller
+        self.controls_page.set_demo_controller(self._demo_controller)
 
         # Load initial demo data
         self._state.set_capabilities(self._demo_service.capabilities())

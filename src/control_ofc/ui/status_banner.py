@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from control_ofc.api.models import ConnectionState, OperationMode
+from control_ofc.ui.qt_util import set_chip_class
 
 # Shared label/chip maps so the dashboard's DashboardStatusStrip (DEC-176/177)
 # renders connection + mode identically to this global banner. A single source
@@ -63,10 +64,7 @@ class StatusBanner(QWidget):
 
     def set_connection_state(self, state: ConnectionState) -> None:
         self._connection_label.setText(CONNECTION_LABELS.get(state, "Unknown"))
-        self._connection_label.setProperty("class", CONNECTION_CHIP.get(state, ""))
-        # Force style refresh
-        self._connection_label.style().unpolish(self._connection_label)
-        self._connection_label.style().polish(self._connection_label)
+        set_chip_class(self._connection_label, CONNECTION_CHIP.get(state, ""))
 
     def set_active_profile(self, name: str) -> None:
         self._profile_label.setText(name if name else "No profile")

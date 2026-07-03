@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.ui.qt_util import repolish
 from control_ofc.ui.theme import ThemeTokens, check_contrast_warnings, default_dark_theme
 
 # Token display groups and their human-readable descriptions
@@ -445,8 +446,7 @@ class ThemeEditorWidget(QWidget):
         else:
             self._warnings_label.setText("No contrast issues detected")
             self._warnings_label.setProperty("class", "SuccessChip")
-        self._warnings_label.style().unpolish(self._warnings_label)
-        self._warnings_label.style().polish(self._warnings_label)
+        repolish(self._warnings_label)
 
     def _update_preview(self) -> None:
         from control_ofc.ui.theme import build_stylesheet

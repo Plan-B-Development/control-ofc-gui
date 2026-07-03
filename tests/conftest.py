@@ -43,6 +43,9 @@ class FakeDaemonClient:
 
     calls: list[tuple[str, tuple, dict]] = field(default_factory=list)
     _errors: dict[str, Exception] = field(default_factory=dict)
+    # Real DaemonClient exposes socket_path; empty here so diagnostics-page
+    # callers take the synchronous fallback (no worker thread) in tests.
+    socket_path: str = ""
 
     def _record(self, method: str, *args: object, **kwargs: object) -> None:
         self.calls.append((method, args, kwargs))

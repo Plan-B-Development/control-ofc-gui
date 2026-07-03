@@ -5,6 +5,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout
 
+from control_ofc.ui.qt_util import set_chip_class
+
 # Trend glyphs are text/shape (not colour-only) so direction is conveyed without
 # relying on colour (WCAG 1.4.1). Empty string hides the glyph.
 _TREND_GLYPHS: dict[str, str] = {"up": "↑", "down": "↓", "flat": "→", "": ""}
@@ -122,11 +124,8 @@ class SummaryCard(QFrame):
 
     def set_status_class(self, css_class: str) -> None:
         """Set a semantic class like WarningChip, CriticalChip, SuccessChip."""
-        if self._value_label.property("class") == css_class:
-            return  # Avoid unnecessary repolish that can dismiss popups
-        self._value_label.setProperty("class", css_class)
-        self._value_label.style().unpolish(self._value_label)
-        self._value_label.style().polish(self._value_label)
+        # skip_if_unchanged avoids an unnecessary repolish that can dismiss popups.
+        set_chip_class(self._value_label, css_class, skip_if_unchanged=True)
 
     def mousePressEvent(self, event) -> None:
         if self._category:

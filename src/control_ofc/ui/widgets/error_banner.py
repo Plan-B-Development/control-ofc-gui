@@ -5,6 +5,8 @@ from __future__ import annotations
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
+from control_ofc.ui.qt_util import set_chip_class
+
 
 class ErrorBanner(QWidget):
     """A horizontal banner that shows error/warning messages with auto-dismiss."""
@@ -39,9 +41,7 @@ class ErrorBanner(QWidget):
     def show_error(self, message: str, auto_dismiss_ms: int = 0) -> None:
         self._icon_label.setText("[!]")
         self._message_label.setText(message)
-        self._message_label.setProperty("class", "CriticalChip")
-        self._message_label.style().unpolish(self._message_label)
-        self._message_label.style().polish(self._message_label)
+        set_chip_class(self._message_label, "CriticalChip")
         self.setVisible(True)
         if auto_dismiss_ms > 0:
             self._auto_dismiss_timer.start(auto_dismiss_ms)
@@ -49,9 +49,7 @@ class ErrorBanner(QWidget):
     def show_warning(self, message: str, auto_dismiss_ms: int = 0) -> None:
         self._icon_label.setText("[*]")
         self._message_label.setText(message)
-        self._message_label.setProperty("class", "WarningChip")
-        self._message_label.style().unpolish(self._message_label)
-        self._message_label.style().polish(self._message_label)
+        set_chip_class(self._message_label, "WarningChip")
         self.setVisible(True)
         if auto_dismiss_ms > 0:
             self._auto_dismiss_timer.start(auto_dismiss_ms)
@@ -59,9 +57,7 @@ class ErrorBanner(QWidget):
     def show_info(self, message: str, auto_dismiss_ms: int = 5000) -> None:
         self._icon_label.setText("[i]")
         self._message_label.setText(message)
-        self._message_label.setProperty("class", "SuccessChip")
-        self._message_label.style().unpolish(self._message_label)
-        self._message_label.style().polish(self._message_label)
+        set_chip_class(self._message_label, "SuccessChip")
         self.setVisible(True)
         if auto_dismiss_ms > 0:
             self._auto_dismiss_timer.start(auto_dismiss_ms)

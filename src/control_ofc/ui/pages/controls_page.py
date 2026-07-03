@@ -51,7 +51,7 @@ from control_ofc.ui.fan_presence import (
     classify_fan_presence,
 )
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
-from control_ofc.ui.qt_util import block_signals
+from control_ofc.ui.qt_util import block_signals, repolish, set_chip_class
 from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
@@ -298,6 +298,15 @@ class ControlsPage(QWidget):
             # TTL) shows on the card instead of a stale "Curve".
             self._state.status_updated.connect(self._on_status_reconcile)
 
+    def set_demo_controller(self, demo_controller: DemoController | None) -> None:
+        """Inject the demo-mode mini-evaluator (DEC-165).
+
+        The ctor param remains for tests; ``main_window`` uses this setter to
+        wire the controller after construction instead of poking the private
+        attribute.
+        """
+        self._demo_controller = demo_controller
+
     # ─── Profile bar ─────────────────────────────────────────────────
 
     def _build_profile_bar(self) -> QHBoxLayout:
@@ -402,18 +411,14 @@ class ControlsPage(QWidget):
                 if not result.activated:
                     self._log.warning("Daemon rejected profile activation: %s", profile_id)
                     self._unsaved_label.setText("Activation rejected by daemon")
-                    self._unsaved_label.setProperty("class", "CriticalChip")
-                    self._unsaved_label.style().unpolish(self._unsaved_label)
-                    self._unsaved_label.style().polish(self._unsaved_label)
+                    set_chip_class(self._unsaved_label, "CriticalChip")
                     self._refresh_profile_combo(selected_id=prev_active_id)
                     return
                 self._log.info("Profile activated on daemon: %s", result.profile_name)
             except DaemonError as exc:
                 self._log.error("Profile activation failed: %s", exc)
                 self._unsaved_label.setText(f"Activation failed: {exc.message or 'unknown error'}")
-                self._unsaved_label.setProperty("class", "CriticalChip")
-                self._unsaved_label.style().unpolish(self._unsaved_label)
-                self._unsaved_label.style().polish(self._unsaved_label)
+                set_chip_class(self._unsaved_label, "CriticalChip")
                 self._refresh_profile_combo(selected_id=prev_active_id)
                 return
         else:
@@ -430,9 +435,7 @@ class ControlsPage(QWidget):
         # control-loop re-evaluation. (Demo mode reflects it on its next tick.)
         self.profile_activated.emit(profile_id)
         self._unsaved_label.setText("Profile activated")
-        self._unsaved_label.setProperty("class", "SuccessChip")
-        self._unsaved_label.style().unpolish(self._unsaved_label)
-        self._unsaved_label.style().polish(self._unsaved_label)
+        set_chip_class(self._unsaved_label, "SuccessChip")
 
     def _on_manage_profiles(self) -> None:
         menu = QMenu(self)
@@ -545,8 +548,7 @@ class ControlsPage(QWidget):
         else:
             self._unsaved_label.setText("Settings saved")
             self._unsaved_label.setProperty("class", "SuccessChip")
-        self._unsaved_label.style().unpolish(self._unsaved_label)
-        self._unsaved_label.style().polish(self._unsaved_label)
+        repolish(self._unsaved_label)
         # Reflect the new published/draft state in the combo badge.
         self._refresh_profile_combo()
 
@@ -1244,9 +1246,7 @@ class ControlsPage(QWidget):
         self._has_unsaved = unsaved
         self._unsaved_label.setText("Unsaved changes" if unsaved else "")
         if unsaved:
-            self._unsaved_label.setProperty("class", "WarningChip")
-            self._unsaved_label.style().unpolish(self._unsaved_label)
-            self._unsaved_label.style().polish(self._unsaved_label)
+            set_chip_class(self._unsaved_label, "WarningChip")
 
     def update_control_outputs(
         self,
@@ -1303,7 +1303,7 @@ class ControlsPage(QWidget):
     def _card_size_tier(self) -> str:
         """Current card-size density tier from settings (default comfortable)."""
         if self._settings_service is not None:
-            return getattr(self._settings_service.settings, "card_size", DEFAULT_CARD_SIZE)
+            return self._settings_service.settings.card_size
         return DEFAULT_CARD_SIZE
 
     # ─── Per-card user sizes (DEC-129) ───────────────────────────────
@@ -1361,7 +1361,7 @@ class ControlsPage(QWidget):
         additionally repaint their preview in the new accent colour.
         """
         self._curve_editor.set_theme(tokens)
-        base_pt = getattr(tokens, "base_font_size_pt", 10)
+        base_pt = tokens.base_font_size_pt
         tier = self._card_size_tier()
         for card in self._control_cards.values():
             card.apply_card_size(base_pt, tier)

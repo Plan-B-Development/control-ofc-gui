@@ -868,8 +868,8 @@ def detect_aio_setup(
     from control_ofc.ui.sensor_knowledge import classify_sensor_with_overrides
 
     overrides = sensor_overrides or {}
-    aio_headers = [h for h in headers if getattr(h, "is_aio", False)]
-    writable = [h for h in aio_headers if getattr(h, "is_writable", False)]
+    aio_headers = [h for h in headers if h.is_aio]
+    writable = [h for h in aio_headers if h.is_writable]
 
     pump_header = None
     if writable:

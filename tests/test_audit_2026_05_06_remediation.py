@@ -217,6 +217,13 @@ class _FakeHttpClient:
 
         return _Resp()
 
+    def request(self, method: str, path: str, *, json=None, **kwargs):
+        # DaemonClient dispatches every verb through httpx.Client.request now;
+        # delegate to the per-verb recorders so the timeout assertions still hold.
+        if method == "GET":
+            return self.get(path, **kwargs)
+        return self.post(path, json=json, **kwargs)
+
     def close(self):
         pass
 
@@ -282,6 +289,9 @@ class _RaisingHttpClient:
         raise self._exc
 
     def get(self, *_args, **_kwargs):
+        raise self._exc
+
+    def request(self, *_args, **_kwargs):
         raise self._exc
 
     def close(self):

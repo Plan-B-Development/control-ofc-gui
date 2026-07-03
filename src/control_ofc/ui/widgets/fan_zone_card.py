@@ -48,6 +48,7 @@ from control_ofc.services.profile_service import (
     CONTROL_ROLE_CPU_PUMP,
     CONTROL_ROLE_GPU,
 )
+from control_ofc.ui.qt_util import repolish
 from control_ofc.ui.widgets.flow_layout import FlowLayout
 from control_ofc.ui.widgets.reorderable_flow import ReorderableFlow
 
@@ -90,13 +91,6 @@ def _sanitize(token: str) -> str:
     while "__" in body:
         body = body.replace("__", "_")
     return body.strip("_") or "x"
-
-
-def _restyle(widget: QWidget) -> None:
-    """Re-apply QSS after a dynamic ``class`` property change."""
-    style = widget.style()
-    style.unpolish(widget)
-    style.polish(widget)
 
 
 class FanTile(QFrame):
@@ -165,7 +159,7 @@ class FanTile(QFrame):
         self._status_label.setProperty("class", f"FanTileStatus {css}".strip())
         # Accessible name carries the state in text so it is not colour-only.
         self.setAccessibleName(f"{vm.display_name}: {vm.state.value}")
-        _restyle(self._status_label)
+        repolish(self._status_label)
 
     # ── detail text (pure, unit-testable) ────────────────────────────
     def detail_text(self) -> str:
@@ -364,7 +358,7 @@ class FanGroupCard(QFrame):
         glyph, css = _STATE_PRESENTATION.get(vm.state, ("", ""))
         self._chip.setText(f"{glyph} {vm.state.value}".strip())
         self._chip.setProperty("class", f"FanGroupChip {css}".strip())
-        _restyle(self._chip)
+        repolish(self._chip)
 
         self._counts.setText(f"{vm.fans_online}/{vm.fans_expected} online")
         avg_parts = []

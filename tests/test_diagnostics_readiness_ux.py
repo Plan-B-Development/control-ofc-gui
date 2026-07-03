@@ -67,6 +67,8 @@ class _MockClient:
     def __init__(self, diag: HardwareDiagnosticsResult) -> None:
         self._diag = diag
         self.calls = 0
+        # Falsy socket_path -> the page's auto-fetch takes the sync fallback.
+        self.socket_path = ""
 
     def hardware_diagnostics(self) -> HardwareDiagnosticsResult:
         self.calls += 1
