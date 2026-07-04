@@ -10,6 +10,7 @@ import pytest
 from control_ofc import paths
 from control_ofc.paths import (
     atomic_write,
+    cache_dir,
     config_dir,
     ensure_dirs,
     profiles_dir,
@@ -36,6 +37,37 @@ def test_ensure_dirs_creates_directories(tmp_path, monkeypatch):
     assert (tmp_path / "config" / "control-ofc" / "profiles").is_dir()
     assert (tmp_path / "config" / "control-ofc" / "themes").is_dir()
     assert (tmp_path / "cache" / "control-ofc").is_dir()
+
+
+def test_ensure_dirs_creates_private_directories(tmp_path, monkeypatch):
+    """Config/cache dirs must be created 0o700 (not world-listable) — they can
+    hold profile drafts and app settings. Deterministic regardless of umask
+    because ensure_dirs chmods after mkdir."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    # A permissive umask would normally leave 0o777 dirs; the explicit chmod in
+    # ensure_dirs must still pin them to 0o700.
+    old_umask = os.umask(0)
+    try:
+        ensure_dirs()
+    finally:
+        os.umask(old_umask)
+    for d in (config_dir(), profiles_dir(), themes_dir(), cache_dir()):
+        assert stat.S_IMODE(d.stat().st_mode) == 0o700, f"{d} is not 0o700"
+
+
+def test_ensure_dirs_tightens_preexisting_directory(tmp_path, monkeypatch):
+    """A config dir created before the hardening (0o755) must be tightened to
+    0o700 on the next ensure_dirs — mkdir(exist_ok=True) ignores mode for an
+    existing dir, so the explicit chmod is what does the work."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    cfg = config_dir()
+    cfg.mkdir(parents=True)
+    os.chmod(cfg, 0o755)
+    assert stat.S_IMODE(cfg.stat().st_mode) == 0o755  # precondition
+    ensure_dirs()
+    assert stat.S_IMODE(cfg.stat().st_mode) == 0o700
 
 
 # ---------------------------------------------------------------------------

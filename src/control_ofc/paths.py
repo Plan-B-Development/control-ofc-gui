@@ -123,9 +123,17 @@ def assets_dir() -> Path:
 
 
 def ensure_dirs() -> None:
-    """Create all required directories if they don't exist."""
+    """Create all required directories if they don't exist.
+
+    Directories are created (and, if already present, tightened) to ``0o700``:
+    they hold profile drafts, exported settings, and cached themes and must not
+    be world-listable. ``mkdir``'s ``mode`` is umask-masked and is ignored for a
+    pre-existing directory, so an explicit ``chmod`` follows to guarantee the
+    mode either way — matching the daemon's private-directory posture.
+    """
     for d in [config_dir(), profiles_dir(), themes_dir(), cache_dir()]:
-        d.mkdir(parents=True, exist_ok=True)
+        d.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(d, 0o700)
 
 
 def atomic_write(filepath: Path, content: str) -> None:
@@ -147,7 +155,11 @@ def atomic_write(filepath: Path, content: str) -> None:
     the old name on next mount even though the new file's data is durable.
     """
     dirpath = str(filepath.parent)
-    filepath.parent.mkdir(parents=True, exist_ok=True)
+    # Create the parent 0o700 when it does not yet exist (config/profile dirs
+    # must not be world-listable). No chmod here: atomic_write also targets
+    # user-chosen export locations (support bundles, settings export), and
+    # mkdir(exist_ok=True) already leaves an existing directory's mode untouched.
+    filepath.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     fd, tmp_path = tempfile.mkstemp(suffix=".tmp", prefix=".", dir=dirpath)
     try:

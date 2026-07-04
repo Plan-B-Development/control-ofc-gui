@@ -129,6 +129,17 @@ jobs:
           fi
           echo "PKGBUILD pkgver matches tag: $pkgbuild_ver"
 
+      - name: Verify pyproject version matches tag
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          pyproject_ver="$(grep '^version' pyproject.toml | cut -d'"' -f2)"
+          if [[ "$pyproject_ver" != "$version" ]]; then
+            echo "::error file=pyproject.toml::version is '$pyproject_ver' but tag is 'v${version}'. Bump pyproject.toml before tagging."
+            exit 1
+          fi
+          echo "pyproject version matches tag: $pyproject_ver"
+
       - name: Publish to AUR
         uses: KSXGitHub/github-actions-deploy-aur@da03e160361ce01bf087e790b6ffd196d7dccff7 # v4.1.3
         with:

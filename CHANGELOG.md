@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.8.3] — 2026-07-04
+
+Audit-2026-07-03 Cluster 6 Phase 2: GUI packaging + config-directory hardening.
+
+### Security
+- **GUI config/data directories are now created with `0700` permissions** (were world-listable at
+  the default `0755`) and pre-existing directories are tightened on startup — they can hold profile
+  drafts and app settings, so they should not be readable by other local users.
+
+### Changed
+- Packaging: dropped an unreachable `conflicts` entry (the `depends` floor already enforces a
+  stricter daemon bound) and added a build-time `compileall` `check()` so the clean-room AUR build
+  exercises the package before publish.
+- Release CI now asserts the `pyproject.toml` version matches the release tag, mirroring the
+  existing PKGBUILD `pkgver` check.
+
+GUI-only — no daemon or API change. Pairs with `control-ofc-daemon` ≥ v2.4.0.
+
 ## [2.8.2] — 2026-07-04
 
 Audit-2026-07-03 Cluster 5: test hardening + one override-UX fix.
