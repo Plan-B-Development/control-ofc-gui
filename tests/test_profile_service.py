@@ -992,3 +992,33 @@ def test_load_resaves_when_migrating_from_v3(tmp_path, monkeypatch):
     # File on disk should now report the current schema version.
     rewritten = json.loads(legacy.read_text())
     assert rewritten["version"] == PROFILE_SCHEMA_VERSION
+
+
+@pytest.mark.parametrize("version", [4, 5, 6])
+def test_load_resaves_when_migrating_from_older_schema(tmp_path, monkeypatch, version):
+    """Loading any pre-v7 profile from disk must re-save it at the current schema
+    version — not just v3 (the resave fires for every ``version < PROFILE_SCHEMA_VERSION``
+    in ``_load_from_local``)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    profiles_dir = tmp_path / "control-ofc" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    legacy = profiles_dir / "legacy.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "id": "legacy",
+                "name": "Legacy",
+                "version": version,
+                "controls": [],
+                "curves": [],
+            }
+        )
+    )
+
+    svc = ProfileService()
+    errors = svc.load()
+    assert errors == []
+
+    # File on disk should now report the current schema version.
+    rewritten = json.loads(legacy.read_text())
+    assert rewritten["version"] == PROFILE_SCHEMA_VERSION

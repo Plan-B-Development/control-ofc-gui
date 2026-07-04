@@ -364,6 +364,119 @@ class TestManualOverrideLiveWiring:
         assert "lc1" not in page._overrides
         assert not page._control_cards["lc1"]._manual_btn.isChecked()
 
+    def test_thermal_abort_surfaces_message_take_path(self, qtbot, app_state, profile_service):
+        """T1b (take path): a thermal_abort on override_take must revert the card
+        AND surface the safety message on the page status chip (not a silent
+        revert like a benign lapse)."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+
+        client = MagicMock()
+        client.override_take.side_effect = DaemonError(
+            code="thermal_abort", message="held", status=409
+        )
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        assert page._unsaved_label.text() == ""  # baseline: nothing surfaced yet
+
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        # Card reverts to auto.
+        assert "lc1" not in page._overrides
+        assert not page._control_cards["lc1"]._manual_btn.isChecked()
+        # Thermal message surfaced.
+        assert "thermal emergency" in page._unsaved_label.text()
+
+    def test_thermal_abort_surfaces_message_renew_path(self, qtbot, app_state, profile_service):
+        """T1b (renew path): a thermal_abort on override_renew must revert the card
+        AND surface the safety message."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        client.override_renew.side_effect = DaemonError(
+            code="thermal_abort", message="held", status=409
+        )
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+        assert page._control_cards["lc1"]._manual_btn.isChecked()
+
+        page._renew_overrides()
+
+        assert "lc1" not in page._overrides
+        assert not page._control_cards["lc1"]._manual_btn.isChecked()
+        assert "thermal emergency" in page._unsaved_label.text()
+
+    def test_stale_token_surfaces_message_and_expiry_is_silent(
+        self, qtbot, app_state, profile_service
+    ):
+        """T1e: a stale_fencing_token renew reject shows the 'superseded' message,
+        whereas an override_expired reject stays SILENT — the distinctness that
+        separates client supersession from a benign lapse. Both still revert."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+
+        # stale_fencing_token → superseded message on the chip.
+        stale_client = MagicMock()
+        stale_client.override_take.return_value = self._grant(token=7)
+        stale_client.override_renew.side_effect = DaemonError(
+            code="stale_fencing_token", message="superseded", status=409
+        )
+        stale_page = self._live_page(qtbot, app_state, profile_service, stale_client)
+        stale_page._control_cards["lc1"]._manual_btn.setChecked(True)
+        stale_page._renew_overrides()
+        assert "lc1" not in stale_page._overrides
+        assert not stale_page._control_cards["lc1"]._manual_btn.isChecked()
+        assert "superseded" in stale_page._unsaved_label.text()
+
+        # override_expired → quiet revert, NO message (the distinctness).
+        expired_client = MagicMock()
+        expired_client.override_take.return_value = self._grant(token=7)
+        expired_client.override_renew.side_effect = DaemonError(
+            code="override_expired", message="gone", status=404
+        )
+        expired_page = self._live_page(qtbot, app_state, profile_service, expired_client)
+        expired_page._control_cards["lc1"]._manual_btn.setChecked(True)
+        expired_page._renew_overrides()
+        assert "lc1" not in expired_page._overrides
+        assert not expired_page._control_cards["lc1"]._manual_btn.isChecked()
+        assert expired_page._unsaved_label.text() == ""
+        # Compare surfaces: supersession speaks, expiry stays silent.
+        assert expired_page._unsaved_label.text() != stale_page._unsaved_label.text()
+
+    def test_activation_success_clears_live_overrides(self, qtbot, app_state, profile_service):
+        """T1c: a successful profile activation clears all held overrides and stops
+        the renew timer (via _on_activate → _refresh_all → _refresh_controls_grid →
+        _release_all_overrides). There is no _on_profile_activated method."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.services.profile_service import ProfileActivateOutcome
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+
+        # Hold a live override.
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+        assert page._overrides == {"lc1": 7}
+        assert page._override_renew_timer.isActive()
+
+        # A real profile so the combo + _get_current_profile resolve naturally;
+        # mock only activate() so the daemon round-trip "succeeds".
+        prof = page._profile_service.create_profile("Activate-Me")
+        page._refresh_profile_combo(selected_id=prof.id)
+        page._profile_service.activate = MagicMock(
+            return_value=ProfileActivateOutcome(activated=True)
+        )
+
+        page._on_activate()
+
+        assert page._overrides == {}
+        assert page._override_renew_timer.isActive() is False
+
     def test_renew_updates_token(self, qtbot, app_state, profile_service):
         from unittest.mock import MagicMock
 

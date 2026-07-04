@@ -1490,6 +1490,35 @@ class ControlsPage(QWidget):
         )
         self._override_renew_timer.setInterval(max(1000, interval_ms))
 
+    def _surface_override_rejection(self, control_id: str, exc: DaemonError) -> None:
+        """Surface a *user-actionable* override rejection on the page status chip.
+
+        Most rejections are benign races the card revert already communicates
+        (``override_expired`` / ``not_found`` — the daemon deadman reverts the
+        control anyway), so they stay a quiet revert (today's behaviour). Only
+        two codes tell the user something the card flipping back to auto cannot:
+
+        * ``thermal_abort`` — safety is holding the fans; the override was refused.
+        * ``stale_fencing_token`` — another client superseded this override.
+
+        Keeping every other code silent is exactly what makes a *superseded*
+        override (message) distinct from a lapsed one (quiet revert) (DEC-163).
+        The status chip is the page's shared daemon-feedback surface — the same
+        label activation/save outcomes use; the card revert stays owned by the
+        caller (this method never touches card state).
+        """
+        if exc.code == "thermal_abort":
+            message = "Override blocked — thermal emergency (fans held by safety)"
+            css_class = "CriticalChip"
+        elif exc.code == "stale_fencing_token":
+            message = "Override superseded by another client"
+            css_class = "WarningChip"
+        else:
+            return
+        self._log.debug("Override on %s surfaced to user (%s)", control_id, exc.code)
+        self._unsaved_label.setText(message)
+        set_chip_class(self._unsaved_label, css_class)
+
     def _take_override(self, control_id: str, pct: int) -> None:
         """Pin a control to a fixed PWM on the daemon and start renewing."""
         if self._client is None:
@@ -1501,6 +1530,7 @@ class ControlsPage(QWidget):
                 "Override of control %s failed (%s): %s", control_id, exc.code, exc.message
             )
             self._revert_card_manual(control_id)
+            self._surface_override_rejection(control_id, exc)
             return
         self._overrides[control_id] = grant.override_token
         self._override_renew_secs[control_id] = grant.renew_secs
@@ -1548,6 +1578,7 @@ class ControlsPage(QWidget):
                 self._override_renew_secs.pop(control_id, None)
                 self._override_pending.pop(control_id, None)
                 self._revert_card_manual(control_id)
+                self._surface_override_rejection(control_id, exc)
                 continue
             self._overrides[control_id] = result.override_token
         if not self._overrides:
