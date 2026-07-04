@@ -95,7 +95,7 @@ When using `--profile <name>`, the daemon searches (in order):
 ## Permissions and groups
 
 ### hwmon sysfs access
-The daemon reads from and writes to `/sys/class/hwmon/hwmonN/pwmN`. Running as root (via systemd) provides the necessary permissions.
+The daemon reads from and writes to the motherboard PWM nodes (`/sys/class/hwmon/hwmonN/pwmN`, which are symlinks resolving to `/sys/devices/...`). Running as root (via systemd) provides the necessary permissions, **and** the packaged unit's sandbox must expose the device tree for writing — `ReadWritePaths=/sys/devices` (daemon ≥ v2.5.2; see "Motherboard/GPU fans discovered but not responding" under Troubleshooting, DEC-199).
 
 ### Serial device access
 The systemd service includes `SupplementaryGroups=uucp` for `/dev/ttyACM*` access. Ensure the `uucp` group has access to your serial device:
@@ -166,6 +166,22 @@ sudo journalctl -u control-ofc-daemon -f
 - Check sysfs exists: `ls /sys/class/hwmon/`
 - Check PWM files: `find /sys/class/hwmon -name 'pwm[0-9]' 2>/dev/null`
 - Request rescan: `curl -X POST --unix-socket /run/control-ofc/control-ofc.sock http://localhost/hwmon/rescan`
+
+### Motherboard/GPU fans discovered but not responding
+If a header or GPU fan appears in the dashboard but never changes speed, and the daemon journal repeats a line like:
+
+```
+[WARN] hwmon write failed for hwmon:it8696:pwm1: … /sys/class/hwmon/hwmonN/pwm1_enable: Read-only file system (os error 30)
+```
+
+then the packaged daemon is older than **v2.5.2**: its systemd sandbox carved out `/sys/class/hwmon` / `/sys/class/drm` (symlink directories) instead of the real device tree, so every fan write hit `EROFS` and the fans stayed in BIOS/PMFW automatic mode. **Upgrade the daemon package** — the fix sets `ReadWritePaths=/sys/devices` (DEC-199). If you cannot upgrade immediately, a systemd drop-in restores control:
+```bash
+sudo systemctl edit control-ofc-daemon
+#   [Service]
+#   ReadWritePaths=/sys/devices
+sudo systemctl daemon-reload && sudo systemctl restart control-ofc-daemon
+```
+If writes still fail **after** upgrading, the cause is hardware prerequisites rather than the sandbox — open **Diagnostics ▸ Hardware Readiness**, which detects a missing Super I/O driver, `acpi_enforce_resources=lax`, or `amdgpu.ppfeaturemask` and shows the exact fix.
 
 ### GUI shows "Daemon disconnected"
 - Check daemon is running: `systemctl is-active control-ofc-daemon`
