@@ -65,6 +65,7 @@ The **Manual** button on each card is a toggle: switch it on and a slider replac
 - it is **floor-clamped** — the requested speed is raised to the role's stall-protection minimum if you ask for less (see [role-aware minimums](profiles-and-curves.md#role-aware-minimum-stall-protection))
 - it is **expiring** — the GUI keeps the override alive while the slider is up; if the GUI closes or stops renewing it, the daemon lets the override lapse and the curve resumes on its own
 - it is **not saved** to the profile, and it clears the moment you toggle it off or switch profiles — the daemon snaps that role straight back to its curve
+- if the daemon **refuses** the override — thermal safety is holding the fans, or another client superseded your control — the card reverts and the page status shows why ("Override blocked — thermal emergency…" or "Override superseded by another client"); a normally-lapsing override just reverts quietly
 
 Use it for quick experiments ("what does 80% sound like?") without touching the saved profile. To make a role *permanently* fixed-speed, set its mode to Manual in the Edit dialog instead.
 

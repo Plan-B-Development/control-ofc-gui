@@ -240,7 +240,7 @@ table only with authoritatively-verified device-ID → name pairs.
 | hwmon redundant sysfs writes in steady state | Per-header coalescing (pwm_enable + PWM value) | v0.5.4 (sanity check) |
 | OpenFan dual-writer when GUI + profile engine active | Profile engine defers to GUI (30s check) | v0.5.4 (sanity check) |
 | hwmon pwm_enable not restored on daemon shutdown | Shutdown handler writes pwm_enable=2 for all headers | v0.5.4 (V4 audit P0) |
-| Thermal safety override errors silently dropped | Errors logged at ERROR level with THERMAL SAFETY prefix | v0.5.4 (V4 audit P1) |
+| Thermal safety override errors silently dropped | Controls-page status chip surfaces "Override blocked — thermal emergency (fans held by safety)" when the daemon refuses a `thermal_abort` override (the earlier ERROR-log mitigation was retired) | GUI v2.8.2 (audit-2026-07-03) |
 | GPU write endpoints missing from API docs | Added to CLAUDE.md, 08_API_Contract, 09_State_Model | v0.69.0 (V4 audit G2) |
 | Dead code: unused signals, client method, fixtures | Removed with full removal log | v0.69.0 (V4 audit G3) |
 | Journal unit name wrong (control-ofc-daemon.service → control-ofc-daemon) | Fixed in code and spec | v0.71.0 (R51) |

@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.8.2] — 2026-07-04
+
+Audit-2026-07-03 Cluster 5: test hardening + one override-UX fix.
+
+### Fixed
+- **A rejected manual override now tells you why.** When the daemon refuses an override take/renew
+  the card still reverts to automatic, but the page status now shows the reason — a thermal
+  emergency ("Override blocked — thermal emergency (fans held by safety)") or supersession by
+  another client ("Override superseded by another client"). A normally-lapsing override stays a
+  quiet revert (unchanged).
+
+### Tests
+- Pinned profile schema resave-on-load for v4/v5/v6 (previously only v3); the DEC-189 activation
+  clears live overrides + stops the renew timer; `thermal_abort` / `stale_fencing_token` override
+  rejections; and the daemon's semantic 400 `validation_error` envelope shape.
+
+GUI-only user-visible change — no daemon or API change. Pairs with `control-ofc-daemon` ≥ v2.4.0.
+
 ## [2.8.1] — 2026-07-04
 
 Audit-2026-07-03 Cluster 4: contract + docs truth. Mostly documentation; one behaviour completion.

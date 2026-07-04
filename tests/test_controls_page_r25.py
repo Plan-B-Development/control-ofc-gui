@@ -344,6 +344,9 @@ class TestManualOverrideLiveWiring:
 
         assert "lc1" not in page._overrides
         assert not page._control_cards["lc1"]._manual_btn.isChecked()
+        # A non-actionable code (not_found) stays SILENT on the take path — only
+        # thermal_abort / stale_fencing_token surface a message.
+        assert page._unsaved_label.text() == ""
 
     def test_renew_failure_reverts_card(self, qtbot, app_state, profile_service):
         from unittest.mock import MagicMock
@@ -406,6 +409,8 @@ class TestManualOverrideLiveWiring:
         page._renew_overrides()
 
         assert "lc1" not in page._overrides
+        # renew_secs bookkeeping drained in lockstep on the failure path.
+        assert "lc1" not in page._override_renew_secs
         assert not page._control_cards["lc1"]._manual_btn.isChecked()
         assert "thermal emergency" in page._unsaved_label.text()
 
