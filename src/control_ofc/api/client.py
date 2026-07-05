@@ -16,11 +16,14 @@ from control_ofc.api.models import (
     GpuVerifyResult,
     HardwareDiagnosticsResult,
     HwmonHeader,
+    HwmonInventory,
     HwmonVerifyResult,
     IdentifyResult,
+    InventoryReadiness,
     OverrideGrant,
     OverrideReleaseResult,
     OverrideRenewResult,
+    PreferredSensorResult,
     ProfileActivateResult,
     ProfileDeactivateResult,
     ProfileSearchDirsResult,
@@ -34,11 +37,14 @@ from control_ofc.api.models import (
     parse_gpu_verify_result,
     parse_hardware_diagnostics,
     parse_hwmon_headers,
+    parse_hwmon_inventory,
     parse_hwmon_verify_result,
     parse_identify_result,
+    parse_inventory_readiness,
     parse_override_grant,
     parse_override_release,
     parse_override_renew,
+    parse_preferred_sensor,
     parse_profile_activate,
     parse_profile_deactivate,
     parse_profile_search_dirs,
@@ -286,6 +292,35 @@ class DaemonClient:
     def hardware_diagnostics(self) -> HardwareDiagnosticsResult:
         """GET /diagnostics/hardware — hardware readiness and driver diagnostics."""
         return parse_hardware_diagnostics(self._get("/diagnostics/hardware"))
+
+    def inventory_hwmon(self) -> HwmonInventory:
+        """GET /inventory/hwmon — classified temp sensors, the default-CPU
+        recommendation, and the persisted preferred-sensor selections (DEC-200).
+
+        Additive/read-only. Raises ``DaemonError`` with ``.status == 404`` on a
+        daemon that predates the endpoint — callers hide the new UI in that case.
+        """
+        return parse_hwmon_inventory(self._get("/inventory/hwmon"))
+
+    def inventory_readiness(self) -> InventoryReadiness:
+        """GET /inventory/readiness — the daemon's structured hardware-readiness
+        items with an ``overall`` rollup (DEC-200). 404 on pre-2.6 daemons."""
+        return parse_inventory_readiness(self._get("/inventory/readiness"))
+
+    def set_preferred_cpu_sensor(self, sensor_id: str | None) -> PreferredSensorResult:
+        """POST /config/preferred-cpu-sensor — pin (id) or clear (``None``) the
+        preferred CPU temperature sensor (DEC-200). Validated daemon-side against
+        the live sensor set (unknown id → 400); advisory only."""
+        return parse_preferred_sensor(
+            self._post("/config/preferred-cpu-sensor", json={"sensor_id": sensor_id})
+        )
+
+    def set_preferred_mb_sensor(self, sensor_id: str | None) -> PreferredSensorResult:
+        """POST /config/preferred-mb-sensor — pin (id) or clear (``None``) the
+        preferred motherboard temperature sensor (DEC-200)."""
+        return parse_preferred_sensor(
+            self._post("/config/preferred-mb-sensor", json={"sensor_id": sensor_id})
+        )
 
     def verify_hwmon_pwm(self, header_id: str) -> HwmonVerifyResult:
         """POST /hwmon/{header_id}/verify — test PWM write effectiveness (~6s).

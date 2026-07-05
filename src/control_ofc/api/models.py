@@ -800,6 +800,110 @@ class HardwareDiagnosticsResult:
 
 
 # ---------------------------------------------------------------------------
+# Hwmon inventory + readiness (Phase 4 — DEC-200)
+#
+# Daemon-authoritative, additive: GET /inventory/hwmon and /inventory/readiness.
+# Distinct from the GUI-authored ``readiness_report`` (derived from
+# /diagnostics/hardware) — these are the daemon's own structured views.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class InventoryTempSensor:
+    """A temperature sensor from GET /inventory/hwmon, carrying the daemon's
+    fine-grained classification refinement (advisory; the daemon's ``kind`` and
+    thermal safety are unchanged)."""
+
+    id: str = ""
+    kind: str = ""
+    label: str = ""
+    value_c: float = 0.0
+    source: str = ""
+    chip_name: str = ""
+    classification: str = ""  # cpu_tctl / cpu_package / vrm_temp / motherboard_temp / ...
+    confidence: str = ""  # high | medium | low | unknown
+    rationale: str = ""
+    # DEC-193: default True so a pre-field daemon leaves sensors selectable.
+    control_eligible: bool = True
+
+
+@dataclass
+class DefaultCpuSensor:
+    """The daemon's default-CPU recommendation from GET /inventory/hwmon.
+
+    ``source`` is ``"user"`` when it echoes the persisted preferred CPU sensor,
+    else ``"auto"`` for the deterministic auto-pick.
+    """
+
+    sensor_id: str = ""
+    confidence: str = ""
+    rationale: str = ""
+    source: str = "auto"
+
+
+@dataclass
+class InventoryPreferences:
+    """The user's persisted preferred sensors, echoed on GET /inventory/hwmon.
+
+    Each id may be stale (check the sensor list / readiness items).
+    """
+
+    cpu_sensor_id: str | None = None
+    mb_sensor_id: str | None = None
+
+
+@dataclass
+class HwmonInventory:
+    """Response from GET /inventory/hwmon — the Phase-4 subset the GUI consumes:
+    classified temp sensors + default-CPU recommendation + persisted
+    preferences. ``pwm_controls``/``monitor_only_fans`` are not modelled yet."""
+
+    api_version: int = 1
+    temp_sensors: list[InventoryTempSensor] = field(default_factory=list)
+    default_cpu: DefaultCpuSensor | None = None
+    preferences: InventoryPreferences | None = None
+
+
+@dataclass
+class ReadinessItem:
+    """One structured readiness finding from GET /inventory/readiness."""
+
+    code: str = ""
+    # Conservative default: an entry missing its severity is treated as ``info``
+    # (never falsely "ok"/healthy nor over-alarming as "critical"). Mirrors the
+    # ``ModuleCollisionInfo.severity`` convention.
+    severity: str = "info"  # ok | info | warning | critical
+    component: str = ""  # cpu | pwm | hwmon | sensor
+    summary: str = ""
+    detail: str = ""
+    recommended_action: str = ""
+    can_automate: bool = False
+    blocks_monitoring: bool = False
+    blocks_control: bool = False
+    affects_safety: bool = False
+    reboot_may_be_required: bool = False
+
+
+@dataclass
+class InventoryReadiness:
+    """Response from GET /inventory/readiness — the daemon's structured,
+    read-only hardware-readiness list plus an ``overall`` rollup severity."""
+
+    api_version: int = 1
+    overall: str = "ok"  # ok | info | warning | critical
+    items: list[ReadinessItem] = field(default_factory=list)
+
+
+@dataclass
+class PreferredSensorResult:
+    """Response from POST /config/preferred-{cpu,mb}-sensor."""
+
+    updated: bool = False
+    role: str = ""  # "cpu" | "mb"
+    preferred_sensor: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
@@ -1144,6 +1248,48 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         cpu_vendor=str(data.get("cpu_vendor") or ""),
         amd_pci_devices=amd_pci_devices,
         amdgpu_module_loaded=bool(data.get("amdgpu_module_loaded", False)),
+    )
+
+
+def parse_hwmon_inventory(data: dict) -> HwmonInventory:
+    temp_sensors = [
+        InventoryTempSensor(**_filter_fields(InventoryTempSensor, s))
+        for s in data.get("temp_sensors", [])
+        if isinstance(s, dict)
+    ]
+    default_cpu = None
+    dc_raw = data.get("default_cpu")
+    if isinstance(dc_raw, dict) and dc_raw:
+        default_cpu = DefaultCpuSensor(**_filter_fields(DefaultCpuSensor, dc_raw))
+    preferences = None
+    pref_raw = data.get("preferences")
+    if isinstance(pref_raw, dict) and pref_raw:
+        preferences = InventoryPreferences(**_filter_fields(InventoryPreferences, pref_raw))
+    return HwmonInventory(
+        api_version=data.get("api_version", 1),
+        temp_sensors=temp_sensors,
+        default_cpu=default_cpu,
+        preferences=preferences,
+    )
+
+
+def parse_inventory_readiness(data: dict) -> InventoryReadiness:
+    return InventoryReadiness(
+        api_version=data.get("api_version", 1),
+        overall=str(data.get("overall", "ok")),
+        items=[
+            ReadinessItem(**_filter_fields(ReadinessItem, i))
+            for i in data.get("items", [])
+            if isinstance(i, dict)
+        ],
+    )
+
+
+def parse_preferred_sensor(data: dict) -> PreferredSensorResult:
+    return PreferredSensorResult(
+        updated=bool(data.get("updated", False)),
+        role=str(data.get("role", "")),
+        preferred_sensor=data.get("preferred_sensor"),
     )
 
 

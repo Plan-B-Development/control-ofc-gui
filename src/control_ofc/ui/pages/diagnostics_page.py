@@ -47,6 +47,8 @@ from control_ofc.api.models import (
     HwmonCapability,
     HwmonHeader,
     HwmonVerifyResult,
+    InventoryReadiness,
+    InventoryTempSensor,
     SensorReading,
     UnavailableSensor,
 )
@@ -86,12 +88,14 @@ from control_ofc.ui.pages.diagnostics_readiness import (
 from control_ofc.ui.pages.diagnostics_workers import (
     _GpuVerifyWorker,
     _HwDiagWorker,
+    _ReadinessWorker,
     _VerifyWorker,
 )
 from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.event_log_view import EventLogView
+from control_ofc.ui.widgets.inventory_readiness_view import InventoryReadinessView
 from control_ofc.ui.widgets.readiness_report import (
     ReadinessReportDialog,
     build_readiness_report_html,
@@ -392,6 +396,10 @@ class DiagnosticsPage(QWidget):
     # hardware-diagnostics worker's thread.
     _rescan_request = Signal()
 
+    # Phase 4 (DEC-200): kicks the readiness worker (its own QThread) so the
+    # blocking GET /inventory/readiness never freezes the UI.
+    _readiness_request = Signal()
+
     def __init__(
         self,
         state: AppState | None = None,
@@ -428,6 +436,10 @@ class DiagnosticsPage(QWidget):
         self._unavailable_sensors: list[UnavailableSensor] = []
         self._hidden_group_expanded = False
         self._sensor_detail_dialog: SensorDetailDialog | None = None
+        # Phase 4 (DEC-200): daemon per-sensor classification, lazily fetched
+        # once on first detail-open and shown additively in the detail dialog.
+        self._daemon_classifications: dict[str, InventoryTempSensor] = {}
+        self._daemon_classifications_loaded = False
 
         # Lazy-created verify worker + thread (see _ensure_verify_worker).
         self._verify_thread: QThread | None = None
@@ -465,6 +477,17 @@ class DiagnosticsPage(QWidget):
         self._hw_diag_auto_fetched = False
         self._report_dialog: ReadinessReportDialog | None = None
 
+        # Phase 4 (DEC-200): daemon hardware-readiness (GET /inventory/readiness).
+        # Lazy worker + thread, a once-per-session auto-fetch guard, and a session
+        # flag that hides the view if the daemon predates the endpoint (404).
+        self._readiness_thread: QThread | None = None
+        self._readiness_worker: _ReadinessWorker | None = None
+        self._readiness_auto_fetched = False
+        self._readiness_unsupported = False
+        # Phase 4 (DEC-200): learned-once flag hiding the "set preferred sensor"
+        # context-menu actions on a daemon predating /config/preferred-*-sensor.
+        self._preferred_sensor_unsupported = False
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(8)
@@ -483,6 +506,7 @@ class DiagnosticsPage(QWidget):
         self._tabs.addTab(self._build_sensors_tab(), "Sensors")
         self._tabs.addTab(self._build_fans_tab(), "Fans")
         self._tabs.addTab(self._build_troubleshooting_tab(), "Troubleshooting")
+        self._tabs.addTab(self._build_readiness_tab(), "Readiness")
         self._tabs.addTab(self._build_logs_tab(), "Event Log")
         layout.addWidget(self._tabs, 1)
         # DEC-124: the Hardware Readiness content lives in its own Troubleshooting
@@ -490,6 +514,9 @@ class DiagnosticsPage(QWidget):
         # the first time that tab is shown, so the verdict + issue checklist
         # populate without the user clicking Refresh.
         self._troubleshooting_tab_index = 3
+        # Phase 4: the daemon hardware-readiness view is its own tab (index 4,
+        # after Troubleshooting; Event Log shifts to 5).
+        self._readiness_tab_index = 4
         self._tabs.currentChanged.connect(self._on_diag_tab_changed)
 
         # Action buttons
@@ -1975,6 +2002,22 @@ class DiagnosticsPage(QWidget):
             return True
         return t.crit_c is not None and s.value_c >= t.crit_c
 
+    def _ensure_daemon_classifications(self) -> None:
+        """Fetch the daemon's per-sensor classification once (GET /inventory/hwmon),
+        cached by sensor id, for the detail dialog's additive daemon-classification
+        section (DEC-200). Best-effort: on any failure the cache stays empty and the
+        section is simply omitted."""
+        if self._daemon_classifications_loaded or self._client is None:
+            return
+        self._daemon_classifications_loaded = True
+        from control_ofc.api.errors import DaemonError
+
+        try:
+            inv = self._client.inventory_hwmon()
+        except (DaemonError, ConnectionError, OSError):
+            return
+        self._daemon_classifications = {s.id: s for s in inv.temp_sensors}
+
     def _open_sensor_detail(self, sensor_id: str) -> None:
         """Open the :class:`SensorDetailDialog` for ``sensor_id``.
 
@@ -1988,11 +2031,13 @@ class DiagnosticsPage(QWidget):
         board = None
         if self._diag.last_hw_diagnostics is not None:
             board = self._diag.last_hw_diagnostics.board
+        self._ensure_daemon_classifications()
+        daemon_cls = self._daemon_classifications.get(sensor_id)
         if self._sensor_detail_dialog is None:
-            self._sensor_detail_dialog = SensorDetailDialog(sensor, board, parent=self)
+            self._sensor_detail_dialog = SensorDetailDialog(sensor, board, daemon_cls, parent=self)
             self._sensor_detail_dialog.finished.connect(self._on_sensor_detail_closed)
         else:
-            self._sensor_detail_dialog.set_sensor(sensor, board)
+            self._sensor_detail_dialog.set_sensor(sensor, board, daemon_cls)
         self._sensor_detail_dialog.show()
         self._sensor_detail_dialog.raise_()
         self._sensor_detail_dialog.activateWindow()
@@ -2068,7 +2113,50 @@ class DiagnosticsPage(QWidget):
             )
             menu.addAction(coolant_action)
 
+        # Phase 4 (DEC-200): pin this sensor as the daemon's preferred CPU /
+        # motherboard reference (advisory — thermal safety still uses the hottest
+        # CPU sensor). Hidden once the daemon is learned to predate the endpoint.
+        if self._client is not None and not self._preferred_sensor_unsupported:
+            menu.addSeparator()
+            pref_cpu_action = QAction("Set as preferred CPU sensor", self)
+            pref_cpu_action.setObjectName("Diagnostics_Action_setPreferredCpu")
+            pref_cpu_action.triggered.connect(
+                lambda: self._set_preferred_sensor_from_menu(sensor.id, "cpu")
+            )
+            menu.addAction(pref_cpu_action)
+            pref_mb_action = QAction("Set as preferred motherboard sensor", self)
+            pref_mb_action.setObjectName("Diagnostics_Action_setPreferredMb")
+            pref_mb_action.triggered.connect(
+                lambda: self._set_preferred_sensor_from_menu(sensor.id, "mb")
+            )
+            menu.addAction(pref_mb_action)
+
         menu.exec(self._sensor_table.viewport().mapToGlobal(pos))
+
+    def _set_preferred_sensor_from_menu(self, sensor_id: str, role: str) -> None:
+        """POST a preferred CPU/motherboard sensor chosen from the Sensors
+        context menu (Phase 4 / DEC-200). Advisory; thermal safety unchanged."""
+        if self._client is None:
+            return
+        from control_ofc.api.errors import DaemonError
+
+        try:
+            if role == "cpu":
+                self._client.set_preferred_cpu_sensor(sensor_id)
+            else:
+                self._client.set_preferred_mb_sensor(sensor_id)
+        except DaemonError as e:
+            if getattr(e, "status", None) == 404:
+                self._preferred_sensor_unsupported = True
+                self._status_label.setText("Preferred sensors are not supported by this daemon.")
+            else:
+                self._status_label.setText(f"Could not set preferred sensor: {e.message}")
+            return
+        except (ConnectionError, OSError):
+            self._status_label.setText("Daemon unavailable — preferred sensor not set.")
+            return
+        label = "CPU" if role == "cpu" else "motherboard"
+        self._status_label.setText(f"Preferred {label} sensor set.")
 
     def _row_to_sensor(self, row: int) -> SensorReading | None:
         """Resolve a table row index back to the underlying ``SensorReading``.
@@ -2356,11 +2444,14 @@ class DiagnosticsPage(QWidget):
         readiness verdict + issue checklist populate without the user clicking
         Refresh (DEC-124).
         """
-        if index != self._troubleshooting_tab_index or self._hw_diag_auto_fetched:
-            return
-        self._hw_diag_auto_fetched = True
-        if self._client and self._diag.last_hw_diagnostics is None:
-            self._fetch_hardware_diagnostics()
+        if index == self._troubleshooting_tab_index and not self._hw_diag_auto_fetched:
+            self._hw_diag_auto_fetched = True
+            if self._client and self._diag.last_hw_diagnostics is None:
+                self._fetch_hardware_diagnostics()
+        elif index == self._readiness_tab_index and not self._readiness_auto_fetched:
+            # Phase 4: populate the daemon readiness view on first view.
+            self._readiness_auto_fetched = True
+            self._fetch_readiness()
 
     def _open_readiness_report(self) -> None:
         """Open the full hardware-readiness report in its own window (DEC-113)."""
@@ -2472,6 +2563,83 @@ class DiagnosticsPage(QWidget):
             self._hw_diag_worker, self._hw_diag_thread, _HwDiagWorker, connect
         )
         return ok
+
+    # ─── Hardware readiness (Phase 4 / DEC-200) ────────────────────────
+
+    def _build_readiness_tab(self) -> QWidget:
+        """The daemon's structured hardware-readiness view (GET /inventory/readiness).
+
+        A dedicated verdict + actionable-checklist tab, distinct from the
+        GUI-authored Troubleshooting report — it surfaces what the daemon itself
+        reports as ready / blocked, with the recommended next step per item.
+        """
+        tab = QWidget()
+        tab.setObjectName("Diagnostics_Tab_readiness")
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(4, 8, 4, 4)
+        layout.setSpacing(8)
+
+        intro = QLabel(
+            "The daemon's read-only assessment of your cooling hardware — what is "
+            "ready, what needs attention, and the recommended next step. Nothing "
+            "here changes your system."
+        )
+        intro.setObjectName("Diagnostics_Label_readinessIntro")
+        intro.setProperty("class", "PageSubtitle")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        btn_row = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh Readiness")
+        refresh_btn.setObjectName("Diagnostics_Btn_refreshReadiness")
+        refresh_btn.clicked.connect(self._fetch_readiness)
+        btn_row.addWidget(refresh_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+        self._readiness_view = InventoryReadinessView("Diagnostics_Readiness_view")
+        layout.addWidget(self._readiness_view, 1)
+        return tab
+
+    def _fetch_readiness(self) -> None:
+        """Fetch the daemon hardware-readiness report on a worker thread."""
+        if self._readiness_unsupported:
+            self._readiness_view.set_unsupported()
+            return
+        if not self._client:
+            self._readiness_view.set_error("Cannot fetch readiness: no daemon connection")
+            return
+        if not self._ensure_readiness_worker():
+            self._readiness_view.set_error("Cannot fetch readiness: no daemon socket path")
+            return
+        self._readiness_view.set_status("Fetching hardware readiness…")
+        self._readiness_request.emit()
+
+    def _ensure_readiness_worker(self) -> bool:
+        """Create the readiness worker + thread on first use. Returns False when
+        no daemon socket path is available to construct the worker."""
+
+        def connect(w: _ReadinessWorker) -> None:
+            self._readiness_request.connect(w.do_fetch, Qt.ConnectionType.QueuedConnection)
+            w.fetch_ok.connect(self._on_readiness_ok, Qt.ConnectionType.QueuedConnection)
+            w.fetch_error.connect(self._on_readiness_error, Qt.ConnectionType.QueuedConnection)
+
+        self._readiness_worker, self._readiness_thread, ok = self._ensure_worker(
+            self._readiness_worker, self._readiness_thread, _ReadinessWorker, connect
+        )
+        return ok
+
+    @Slot(object)
+    def _on_readiness_ok(self, result: InventoryReadiness) -> None:
+        self._readiness_view.set_readiness(result)
+
+    @Slot(str, str)
+    def _on_readiness_error(self, category: str, message: str) -> None:
+        if category == "unsupported":
+            self._readiness_unsupported = True
+            self._readiness_view.set_unsupported()
+        else:
+            self._readiness_view.set_error(message)
 
     @Slot(object)
     def _on_verify_ok(self, result: HwmonVerifyResult) -> None:
@@ -2999,6 +3167,9 @@ class DiagnosticsPage(QWidget):
         self._teardown_worker(self._gpu_verify_worker, self._gpu_verify_thread, "GPU verify")
         self._gpu_verify_worker = None
         self._gpu_verify_thread = None
+        self._teardown_worker(self._readiness_worker, self._readiness_thread, "Readiness")
+        self._readiness_worker = None
+        self._readiness_thread = None
 
     def _show_verify_result(self, result: HwmonVerifyResult) -> None:
         """Display the result of a PWM verification test.

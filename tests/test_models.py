@@ -9,6 +9,9 @@ from control_ofc.api.models import (
     parse_calibration_result,
     parse_capabilities,
     parse_fans,
+    parse_hwmon_inventory,
+    parse_inventory_readiness,
+    parse_preferred_sensor,
     parse_sensor_history,
     parse_sensors,
     parse_status,
@@ -560,3 +563,93 @@ class TestParserFailureModes:
         assert len(result.points) == 1
         assert result.points[0].ts == 1234
         assert result.points[0].v == 0.0
+
+
+# --- Phase 4 (DEC-200): inventory + readiness + preferred-sensor parsers ---
+
+
+def test_parse_hwmon_inventory_full():
+    data = {
+        "api_version": 1,
+        "temp_sensors": [
+            {
+                "id": "hwmon:k10temp:x:Tctl",
+                "label": "Tctl",
+                "kind": "cpu_temp",
+                "classification": "cpu_tctl",
+                "confidence": "high",
+                "rationale": "k10temp Tctl control temperature",
+            }
+        ],
+        "default_cpu": {
+            "sensor_id": "hwmon:k10temp:x:Tctl",
+            "confidence": "high",
+            "source": "user",
+        },
+        "preferences": {"cpu_sensor_id": "hwmon:k10temp:x:Tctl"},
+    }
+    inv = parse_hwmon_inventory(data)
+    assert inv.temp_sensors[0].classification == "cpu_tctl"
+    assert inv.temp_sensors[0].control_eligible is True  # absent → default True
+    assert inv.default_cpu.source == "user"
+    assert inv.preferences.cpu_sensor_id == "hwmon:k10temp:x:Tctl"
+    assert inv.preferences.mb_sensor_id is None
+
+
+def test_parse_hwmon_inventory_absent_optionals_default_none():
+    inv = parse_hwmon_inventory({"api_version": 1, "temp_sensors": []})
+    assert inv.default_cpu is None
+    assert inv.preferences is None
+    assert inv.temp_sensors == []
+
+
+def test_parse_hwmon_inventory_ignores_unknown_fields():
+    # Forward-compat: unknown daemon fields (incl. unmodelled pwm_controls /
+    # monitor_only_fans) must not break parsing.
+    data = {
+        "temp_sensors": [{"id": "s1", "classification": "vrm_temp", "future_field": 99}],
+        "pwm_controls": [{"id": "p1"}],
+        "monitor_only_fans": [{"id": "f1"}],
+    }
+    inv = parse_hwmon_inventory(data)
+    assert inv.temp_sensors[0].classification == "vrm_temp"
+
+
+def test_parse_inventory_readiness_and_defensive_entries():
+    data = {
+        "api_version": 1,
+        "overall": "critical",
+        "items": [
+            {
+                "code": "cpu_sensor_missing",
+                "severity": "critical",
+                "component": "cpu",
+                "summary": "No CPU temperature sensor detected",
+                "recommended_action": "Load the CPU driver",
+                "affects_safety": True,
+            },
+            "not-a-dict",  # defensive: non-dict entries dropped
+        ],
+    }
+    r = parse_inventory_readiness(data)
+    assert r.overall == "critical"
+    assert len(r.items) == 1
+    assert r.items[0].affects_safety is True
+    assert r.items[0].blocks_control is False  # absent → default False
+
+
+def test_parse_inventory_readiness_missing_severity_defaults_info():
+    r = parse_inventory_readiness({"overall": "ok", "items": [{"code": "x"}]})
+    assert r.items[0].severity == "info"
+
+
+def test_parse_preferred_sensor_set_and_clear():
+    set_res = parse_preferred_sensor(
+        {"updated": True, "role": "cpu", "preferred_sensor": "hwmon:x:Tctl"}
+    )
+    assert set_res.updated is True
+    assert set_res.role == "cpu"
+    assert set_res.preferred_sensor == "hwmon:x:Tctl"
+
+    clear_res = parse_preferred_sensor({"updated": True, "role": "mb", "preferred_sensor": None})
+    assert clear_res.preferred_sensor is None

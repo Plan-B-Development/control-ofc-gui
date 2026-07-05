@@ -14,7 +14,7 @@ from control_ofc.api.models import ConnectionState, FanReading, Freshness, Opera
 from control_ofc.services.app_state import AppState
 from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
 
-EXPECTED_TABS = ["Overview", "Sensors", "Fans", "Troubleshooting", "Event Log"]
+EXPECTED_TABS = ["Overview", "Sensors", "Fans", "Troubleshooting", "Readiness", "Event Log"]
 FANS_TAB_INDEX = 2
 TROUBLESHOOTING_TAB_INDEX = 3
 

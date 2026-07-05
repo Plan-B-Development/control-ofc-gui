@@ -81,7 +81,12 @@ class _VerifyWorker(_SocketWorker):
         except DaemonUnavailable:
             self.verify_error.emit("unavailable", "Daemon unavailable during verify")
         except DaemonError as e:
-            self.verify_error.emit("error", e.message)
+            # DEC-201: a thermal_abort is a safety refusal, not a failure — show
+            # the daemon's "let it cool" message verbatim (soft), not as an error.
+            if getattr(e, "code", "") == "thermal_abort":
+                self.verify_error.emit("unavailable", e.message)
+            else:
+                self.verify_error.emit("error", e.message)
         except (ConnectionError, OSError) as e:
             log.warning("Verify worker connection error: %s", e)
             with contextlib.suppress(Exception):
@@ -126,6 +131,9 @@ class _GpuVerifyWorker(_SocketWorker):
                     "unsupported",
                     "This daemon version does not support GPU fan verification.",
                 )
+            elif getattr(e, "code", "") == "thermal_abort":
+                # DEC-201: safety refusal — show the "let it cool" message verbatim.
+                self.verify_error.emit("unavailable", e.message)
             else:
                 self.verify_error.emit("error", e.message)
         except (ConnectionError, OSError) as e:
@@ -227,3 +235,42 @@ class _HwDiagWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.rescan_error.emit("unavailable", "Connection lost during hardware rescan")
+
+
+class _ReadinessWorker(_SocketWorker):
+    """Runs in a QThread — executes the blocking GET /inventory/readiness call
+    off the UI thread (the daemon does sysfs classification + PWM/fan probing to
+    build the list). Phase 4 / DEC-200."""
+
+    fetch_ok = Signal(object)  # InventoryReadiness
+    # category ('unavailable' | 'error' | 'unsupported'), message
+    fetch_error = Signal(str, str)
+
+    @Slot()
+    def do_fetch(self) -> None:
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            result = self._ensure_client().inventory_readiness()
+            self.fetch_ok.emit(result)
+        except DaemonTimeout:
+            self.fetch_error.emit("unavailable", "Readiness fetch timed out")
+        except DaemonUnavailable:
+            self.fetch_error.emit("unavailable", "Daemon unavailable — cannot fetch readiness")
+        except DaemonError as e:
+            # A daemon predating /inventory/readiness answers 404 not_found —
+            # signal 'unsupported' so the page hides the readiness view.
+            if getattr(e, "status", None) == 404 or getattr(e, "code", "") == "not_found":
+                self.fetch_error.emit(
+                    "unsupported",
+                    "This daemon version does not provide the hardware-readiness report.",
+                )
+            else:
+                self.fetch_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Readiness worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.fetch_error.emit("unavailable", "Connection lost during readiness fetch")

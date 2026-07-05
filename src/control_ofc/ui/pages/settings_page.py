@@ -95,6 +95,11 @@ class SettingsPage(QWidget):
         self._state = state
         self._settings_svc = settings_service or AppSettingsService()
         self._client = client
+        # Phase 4 (DEC-200): preferred-sensor selector state. ``_populating_prefs``
+        # suppresses the change→POST while the combos are filled programmatically;
+        # ``_prefs_loaded`` gates the one-time lazy fetch on first show.
+        self._populating_prefs = False
+        self._prefs_loaded = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 16, 24, 16)
@@ -254,6 +259,9 @@ class SettingsPage(QWidget):
         layout.addLayout(
             self._dir_picker_row("Default export:", self._export_dir_label, self._browse_export_dir)
         )
+
+        # ─── Preferred sensors (daemon) ──────────────────────────
+        layout.addWidget(self._build_preferred_sensors_group())
 
         # Save button
         save_btn = QPushButton("Save Application Settings")
@@ -519,6 +527,151 @@ class SettingsPage(QWidget):
                 return
 
         self._set_status("Application settings saved")
+
+    # ─── Preferred sensors (daemon, DEC-200) ───────────────────────
+
+    def _build_preferred_sensors_group(self) -> QWidget:
+        group = QWidget()
+        group.setObjectName("Settings_Group_preferredSensors")
+        v = QVBoxLayout(group)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+
+        header = QLabel("Preferred sensors (daemon)")
+        header.setStyleSheet("font-weight: bold; margin-top: 12px;")
+        v.addWidget(header)
+
+        note = QLabel(
+            "Pin which temperature sensor the daemon treats as your CPU and "
+            "motherboard reference. Persisted by the daemon and shared across "
+            "clients. Advisory only — thermal safety always uses the hottest CPU "
+            "sensor. Leave on Automatic to use the daemon's recommendation."
+        )
+        note.setWordWrap(True)
+        note.setProperty("class", "PageSubtitle")
+        v.addWidget(note)
+
+        cpu_row = QHBoxLayout()
+        cpu_row.addWidget(QLabel("Preferred CPU sensor:"))
+        self._pref_cpu_combo = QComboBox()
+        self._pref_cpu_combo.setObjectName("Settings_Combo_preferredCpu")
+        self._pref_cpu_combo.currentIndexChanged.connect(self._on_preferred_cpu_changed)
+        cpu_row.addWidget(self._pref_cpu_combo, 1)
+        v.addLayout(cpu_row)
+
+        mb_row = QHBoxLayout()
+        mb_row.addWidget(QLabel("Preferred motherboard sensor:"))
+        self._pref_mb_combo = QComboBox()
+        self._pref_mb_combo.setObjectName("Settings_Combo_preferredMb")
+        self._pref_mb_combo.currentIndexChanged.connect(self._on_preferred_mb_changed)
+        mb_row.addWidget(self._pref_mb_combo, 1)
+        v.addLayout(mb_row)
+
+        btn_row = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh from daemon")
+        refresh_btn.setObjectName("Settings_Btn_refreshPreferredSensors")
+        refresh_btn.clicked.connect(self._refresh_preferred_sensors)
+        btn_row.addWidget(refresh_btn)
+        self._pref_result_label = QLabel("")
+        self._pref_result_label.setObjectName("Settings_Label_preferredResult")
+        self._pref_result_label.setWordWrap(True)
+        btn_row.addWidget(self._pref_result_label, 1)
+        v.addLayout(btn_row)
+
+        return group
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Load preferred-sensor options from the daemon the first time Settings
+        # is shown — a light, cache-backed GET kept off the startup path.
+        if not self._prefs_loaded and self._client is not None:
+            self._refresh_preferred_sensors()
+
+    def _refresh_preferred_sensors(self) -> None:
+        """Fetch the classified sensor inventory and (re)populate the combos."""
+        if self._client is None:
+            self._set_pref_result(
+                "Daemon not connected — preferred sensors unavailable.", "CautionChip"
+            )
+            return
+        from control_ofc.api.errors import DaemonError
+
+        try:
+            inv = self._client.inventory_hwmon()
+        except DaemonError as e:
+            if getattr(e, "status", None) == 404:
+                self._set_pref_result(
+                    "This daemon version does not support preferred sensors.", "CautionChip"
+                )
+            else:
+                self._set_pref_result(f"Could not load sensors: {e.message}", "CriticalChip")
+            return
+        except (ConnectionError, OSError):
+            self._set_pref_result("Daemon unavailable — could not load sensors.", "CautionChip")
+            return
+
+        self._prefs_loaded = True
+        recommended = inv.default_cpu.sensor_id if inv.default_cpu else None
+        cpu_pref = inv.preferences.cpu_sensor_id if inv.preferences else None
+        mb_pref = inv.preferences.mb_sensor_id if inv.preferences else None
+        sensors = [s for s in inv.temp_sensors if s.control_eligible]
+
+        self._populating_prefs = True
+        try:
+            self._fill_pref_combo(self._pref_cpu_combo, sensors, recommended, cpu_pref)
+            self._fill_pref_combo(self._pref_mb_combo, sensors, None, mb_pref)
+        finally:
+            self._populating_prefs = False
+        self._set_pref_result("", "")
+
+    def _fill_pref_combo(self, combo, sensors, recommended, current) -> None:
+        combo.clear()
+        combo.addItem("Automatic (recommended)", None)
+        for s in sensors:
+            star = "★ " if recommended and s.id == recommended else ""
+            cls = f" — {s.classification}" if s.classification else ""
+            combo.addItem(f"{star}{s.label or s.id}{cls}", s.id)
+        idx = combo.findData(current) if current else 0
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _on_preferred_cpu_changed(self, _index: int) -> None:
+        if self._populating_prefs:
+            return
+        self._post_preferred("cpu", self._pref_cpu_combo.currentData())
+
+    def _on_preferred_mb_changed(self, _index: int) -> None:
+        if self._populating_prefs:
+            return
+        self._post_preferred("mb", self._pref_mb_combo.currentData())
+
+    def _post_preferred(self, role: str, sensor_id: str | None) -> None:
+        if self._client is None:
+            return
+        from control_ofc.api.errors import DaemonError
+
+        try:
+            if role == "cpu":
+                self._client.set_preferred_cpu_sensor(sensor_id)
+            else:
+                self._client.set_preferred_mb_sensor(sensor_id)
+        except DaemonError as e:
+            self._set_pref_result(
+                f"Could not save preferred {role} sensor: {e.message}", "CriticalChip"
+            )
+            return
+        except (ConnectionError, OSError):
+            self._set_pref_result("Daemon unavailable — preferred sensor not saved.", "CautionChip")
+            return
+        where = "cleared" if sensor_id is None else "saved"
+        label = "CPU" if role == "cpu" else "motherboard"
+        self._set_pref_result(f"Preferred {label} sensor {where}.", "SuccessChip")
+
+    def _set_pref_result(self, text: str, css: str) -> None:
+        from control_ofc.ui.qt_util import set_chip_class
+
+        self._pref_result_label.setText(text)
+        if css:
+            set_chip_class(self._pref_result_label, css, skip_if_unchanged=True)
 
     # ─── Directory picker handlers ─────────────────────────────────
 

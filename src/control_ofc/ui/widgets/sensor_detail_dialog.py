@@ -39,6 +39,7 @@ from control_ofc.ui.theme import active_theme
 if TYPE_CHECKING:
     from control_ofc.api.models import (
         BoardInfo,
+        InventoryTempSensor,
         SensorReading,
         SensorThresholds,
     )
@@ -135,6 +136,7 @@ def _headroom_html(value_c: float, t: SensorThresholds) -> str | None:
 def build_sensor_detail_html(
     sensor: SensorReading,
     board: BoardInfo | None,
+    daemon_classification: InventoryTempSensor | None = None,
 ) -> str:
     """Build the full self-contained HTML document for the detail dialog.
 
@@ -223,6 +225,32 @@ def build_sensor_detail_html(
         for note in classification.notes:
             parts.append(f"<li>{escape(note)}</li>")
         parts.append("</ul>")
+
+    # ── Daemon classification (DEC-200) ────────────────────────────
+    # The daemon's own authoritative classification, shown additively alongside
+    # this GUI's heuristic above. Daemon strings are HTML-escaped.
+    if daemon_classification is not None and daemon_classification.classification:
+        parts.append(h("Daemon classification"))
+        parts.append(
+            f'<div style="color:{t.text_secondary}">'
+            "The daemon's authoritative classification (this GUI's heuristic is "
+            "shown above).</div>"
+        )
+        dc_rows = [
+            ("Class", daemon_classification.classification),
+            ("Confidence", daemon_classification.confidence or "—"),
+        ]
+        parts.append('<table cellpadding="4">')
+        for label, value in dc_rows:
+            parts.append(
+                f'<tr><td style="color:{t.text_secondary}">{escape(label)}</td>'
+                f"<td>{escape(value)}</td></tr>"
+            )
+        parts.append("</table>")
+        if daemon_classification.rationale:
+            parts.append(
+                f'<div style="margin-top:4px">{escape(daemon_classification.rationale)}</div>'
+            )
 
     # ── Board override (if any) ────────────────────────────────────
     if board is not None:
@@ -321,6 +349,7 @@ class SensorDetailDialog(QDialog):
         self,
         sensor: SensorReading,
         board: BoardInfo | None,
+        daemon_classification: InventoryTempSensor | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -334,7 +363,7 @@ class SensorDetailDialog(QDialog):
         self._browser = QTextBrowser()
         self._browser.setObjectName("Diagnostics_SensorDetail_Browser")
         self._browser.setOpenExternalLinks(True)
-        self._browser.setHtml(build_sensor_detail_html(sensor, board))
+        self._browser.setHtml(build_sensor_detail_html(sensor, board, daemon_classification))
         layout.addWidget(self._browser, 1)
 
         btn_row = QHBoxLayout()
@@ -345,9 +374,14 @@ class SensorDetailDialog(QDialog):
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
-    def set_sensor(self, sensor: SensorReading, board: BoardInfo | None) -> None:
+    def set_sensor(
+        self,
+        sensor: SensorReading,
+        board: BoardInfo | None,
+        daemon_classification: InventoryTempSensor | None = None,
+    ) -> None:
         """Replace contents in place — used when the dialog is reopened on a
         different row of the table without rebuilding the widget."""
         title = sensor.label or sensor.id or "Sensor"
         self.setWindowTitle(f"Sensor Detail — {title}")
-        self._browser.setHtml(build_sensor_detail_html(sensor, board))
+        self._browser.setHtml(build_sensor_detail_html(sensor, board, daemon_classification))

@@ -127,3 +127,79 @@ class TestSensorHistoryEncoding:
         client._get.assert_called_once_with(
             "/sensors/history", params={"id": "hwmon:k10temp:Tctl", "last": 100}
         )
+
+
+class TestInventoryAndPreferredSensors:
+    """Phase 4 (DEC-200): inventory reads + preferred-sensor POSTs."""
+
+    def _make_client(self, *, get_return=None, post_return=None):
+        from control_ofc.api.client import DaemonClient
+
+        client = DaemonClient.__new__(DaemonClient)
+        client._get = MagicMock(return_value=get_return or {})
+        client._post = MagicMock(return_value=post_return or {})
+        return client
+
+    def test_inventory_hwmon_calls_get(self):
+        client = self._make_client(
+            get_return={
+                "api_version": 1,
+                "temp_sensors": [
+                    {
+                        "id": "hwmon:k10temp:x:Tctl",
+                        "classification": "cpu_tctl",
+                        "confidence": "high",
+                    }
+                ],
+                "default_cpu": {"sensor_id": "hwmon:k10temp:x:Tctl", "source": "auto"},
+            }
+        )
+        inv = client.inventory_hwmon()
+        client._get.assert_called_once_with("/inventory/hwmon")
+        assert inv.temp_sensors[0].classification == "cpu_tctl"
+        assert inv.default_cpu.source == "auto"
+
+    def test_inventory_readiness_calls_get(self):
+        client = self._make_client(
+            get_return={
+                "api_version": 1,
+                "overall": "warning",
+                "items": [
+                    {"code": "no_pwm_controls", "severity": "warning", "blocks_control": True}
+                ],
+            }
+        )
+        r = client.inventory_readiness()
+        client._get.assert_called_once_with("/inventory/readiness")
+        assert r.overall == "warning"
+        assert r.items[0].blocks_control is True
+
+    def test_set_preferred_cpu_sensor_posts_id(self):
+        client = self._make_client(
+            post_return={"updated": True, "role": "cpu", "preferred_sensor": "hwmon:x:Tctl"}
+        )
+        res = client.set_preferred_cpu_sensor("hwmon:x:Tctl")
+        client._post.assert_called_once_with(
+            "/config/preferred-cpu-sensor", json={"sensor_id": "hwmon:x:Tctl"}
+        )
+        assert res.updated is True
+        assert res.preferred_sensor == "hwmon:x:Tctl"
+
+    def test_set_preferred_cpu_sensor_clears_with_none(self):
+        client = self._make_client(
+            post_return={"updated": True, "role": "cpu", "preferred_sensor": None}
+        )
+        res = client.set_preferred_cpu_sensor(None)
+        client._post.assert_called_once_with(
+            "/config/preferred-cpu-sensor", json={"sensor_id": None}
+        )
+        assert res.preferred_sensor is None
+
+    def test_set_preferred_mb_sensor_posts_id(self):
+        client = self._make_client(
+            post_return={"updated": True, "role": "mb", "preferred_sensor": "hwmon:x:SYSTIN"}
+        )
+        client.set_preferred_mb_sensor("hwmon:x:SYSTIN")
+        client._post.assert_called_once_with(
+            "/config/preferred-mb-sensor", json={"sensor_id": "hwmon:x:SYSTIN"}
+        )
