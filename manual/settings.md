@@ -44,6 +44,14 @@ When you change the Profiles directory, the GUI also registers the new path with
 
 Click **Save Application Settings** to persist all changes.
 
+### Preferred Sensors (daemon)
+
+If your system exposes several CPU or motherboard temperature sensors, you can pin which one the daemon treats as the reference for each. Pick a **Preferred CPU sensor** and **Preferred motherboard sensor** from the drop-downs — the daemon's own recommendation is marked with a ★, and **Automatic (recommended)** hands the choice back to the daemon's auto-pick. Selections apply immediately and are saved by the daemon (shared across every client), so there is no separate Save step here.
+
+This is **advisory only**: thermal safety always uses the hottest CPU sensor regardless of your choice. The drop-downs populate from the daemon the first time you open Settings; on a daemon that predates this feature the section reports that it is unavailable. You can also set a preferred sensor straight from a sensor row in **Diagnostics ▸ Sensors** (right-click → *Set as preferred…*).
+
+Requires `control-ofc-daemon` ≥ v2.6.0.
+
 ## Themes Tab
 
 ![Settings — Themes Tab](../screenshots/auto/05_settings_themes.png)

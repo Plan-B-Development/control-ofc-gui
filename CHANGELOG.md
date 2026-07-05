@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.9.0] — 2026-07-05
+
+GUI consumption of the daemon's read-only hwmon discovery + readiness (DEC-200),
+plus surfacing the daemon's new verify thermal-abort (DEC-201). Additive and
+version-skew-tolerant — every new surface hides itself on a daemon that predates
+the endpoints (unknown routes 404).
+
+Pairs with `control-ofc-daemon` ≥ v2.6.0 for the new features; degrades
+gracefully on older daemons (the base app still works with ≥ v2.4.0).
+
+### Added
+- **Hardware Readiness tab (Diagnostics).** A dedicated view of the daemon's
+  structured `GET /inventory/readiness` report: an overall verdict plus a
+  severity-sorted, actionable checklist — each item shows a severity chip, a
+  one-line summary, and progressive-disclosure detail with the recommended next
+  step and impact flags. Read-only diagnose-and-guide; daemon strings render as
+  plain text.
+- **Preferred CPU / motherboard sensor selection.** Pin which temperature sensor
+  the daemon treats as your CPU and motherboard reference — from either
+  Settings ▸ Application (combo boxes, with the daemon's recommendation starred)
+  or the Diagnostics ▸ Sensors right-click menu. Persisted by the daemon;
+  advisory only — thermal safety still uses the hottest CPU sensor.
+- **Daemon classification in the sensor detail dialog.** The per-sensor detail
+  dialog now shows the daemon's own classification / confidence / rationale
+  additively, alongside the GUI's existing heuristic.
+
+### Changed
+- **Verify thermal-abort is surfaced softly.** When the daemon refuses a fan
+  verify because the system is too hot (`409 thermal_abort`, DEC-201), the GUI
+  shows its "let it cool, then retry" message as a safety notice rather than a
+  hard error.
+
 ## [2.8.3] — 2026-07-04
 
 Audit-2026-07-03 Cluster 6 Phase 2: GUI packaging + config-directory hardening.
