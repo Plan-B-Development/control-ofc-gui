@@ -50,6 +50,7 @@ from control_ofc.api.models import (
     InventoryReadiness,
     InventoryTempSensor,
     SensorReading,
+    SuperIoReport,
     UnavailableSensor,
 )
 from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
@@ -89,6 +90,7 @@ from control_ofc.ui.pages.diagnostics_workers import (
     _GpuVerifyWorker,
     _HwDiagWorker,
     _ReadinessWorker,
+    _SuperIoWorker,
     _VerifyWorker,
 )
 from control_ofc.ui.qt_util import set_chip_class
@@ -102,6 +104,7 @@ from control_ofc.ui.widgets.readiness_report import (
     gpu_verify_problems,
 )
 from control_ofc.ui.widgets.sensor_detail_dialog import SensorDetailDialog
+from control_ofc.ui.widgets.superio_view import SuperIoView
 
 _TRANSPARENT = "background: transparent;"
 
@@ -399,6 +402,7 @@ class DiagnosticsPage(QWidget):
     # Phase 4 (DEC-200): kicks the readiness worker (its own QThread) so the
     # blocking GET /inventory/readiness never freezes the UI.
     _readiness_request = Signal()
+    _superio_request = Signal()
 
     def __init__(
         self,
@@ -484,6 +488,10 @@ class DiagnosticsPage(QWidget):
         self._readiness_worker: _ReadinessWorker | None = None
         self._readiness_auto_fetched = False
         self._readiness_unsupported = False
+        self._superio_thread: QThread | None = None
+        self._superio_worker: _SuperIoWorker | None = None
+        self._superio_auto_fetched = False
+        self._superio_unsupported = False
         # Phase 4 (DEC-200): learned-once flag hiding the "set preferred sensor"
         # context-menu actions on a daemon predating /config/preferred-*-sensor.
         self._preferred_sensor_unsupported = False
@@ -507,6 +515,7 @@ class DiagnosticsPage(QWidget):
         self._tabs.addTab(self._build_fans_tab(), "Fans")
         self._tabs.addTab(self._build_troubleshooting_tab(), "Troubleshooting")
         self._tabs.addTab(self._build_readiness_tab(), "Readiness")
+        self._tabs.addTab(self._build_superio_tab(), "Super-I/O")
         self._tabs.addTab(self._build_logs_tab(), "Event Log")
         layout.addWidget(self._tabs, 1)
         # DEC-124: the Hardware Readiness content lives in its own Troubleshooting
@@ -515,8 +524,11 @@ class DiagnosticsPage(QWidget):
         # populate without the user clicking Refresh.
         self._troubleshooting_tab_index = 3
         # Phase 4: the daemon hardware-readiness view is its own tab (index 4,
-        # after Troubleshooting; Event Log shifts to 5).
+        # after Troubleshooting).
         self._readiness_tab_index = 4
+        # DEC-202: the passive Super-I/O detection view is its own tab (index 5,
+        # after Readiness; Event Log shifts to 6).
+        self._superio_tab_index = 5
         self._tabs.currentChanged.connect(self._on_diag_tab_changed)
 
         # Action buttons
@@ -2452,6 +2464,10 @@ class DiagnosticsPage(QWidget):
             # Phase 4: populate the daemon readiness view on first view.
             self._readiness_auto_fetched = True
             self._fetch_readiness()
+        elif index == self._superio_tab_index and not self._superio_auto_fetched:
+            # DEC-202: populate the Super-I/O detection view on first view.
+            self._superio_auto_fetched = True
+            self._fetch_superio()
 
     def _open_readiness_report(self) -> None:
         """Open the full hardware-readiness report in its own window (DEC-113)."""
@@ -2640,6 +2656,84 @@ class DiagnosticsPage(QWidget):
             self._readiness_view.set_unsupported()
         else:
             self._readiness_view.set_error(message)
+
+    # ─── Super-I/O detection (Phase 3 / DEC-202) ───────────────────────
+
+    def _build_superio_tab(self) -> QWidget:
+        """The daemon's passive Super-I/O detection view (GET /inventory/superio).
+
+        A focused "which motherboard sensor/fan driver do I need" surface: one
+        card per detected chip, with an allowlisted "load this driver"
+        recommendation for chips whose driver is not bound. Read-only — nothing
+        here changes the system; the daemon never loads a module or writes.
+        """
+        tab = QWidget()
+        tab.setObjectName("Diagnostics_Tab_superio")
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(4, 8, 4, 4)
+        layout.setSpacing(8)
+
+        intro = QLabel(
+            "Passive detection of your motherboard's Super-I/O sensor/fan chip and "
+            "which kernel driver it needs. Detection proves a chip is present — it "
+            "does not prove fan control is available. Nothing here changes your system."
+        )
+        intro.setObjectName("Diagnostics_Label_superioIntro")
+        intro.setProperty("class", "PageSubtitle")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        btn_row = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh Detection")
+        refresh_btn.setObjectName("Diagnostics_Btn_refreshSuperio")
+        refresh_btn.clicked.connect(self._fetch_superio)
+        btn_row.addWidget(refresh_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+        self._superio_view = SuperIoView("Diagnostics_Superio_view")
+        layout.addWidget(self._superio_view, 1)
+        return tab
+
+    def _fetch_superio(self) -> None:
+        """Fetch the daemon Super-I/O detection report on a worker thread."""
+        if self._superio_unsupported:
+            self._superio_view.set_unsupported()
+            return
+        if not self._client:
+            self._superio_view.set_error("Cannot detect Super-I/O: no daemon connection")
+            return
+        if not self._ensure_superio_worker():
+            self._superio_view.set_error("Cannot detect Super-I/O: no daemon socket path")
+            return
+        self._superio_view.set_status("Detecting Super-I/O chips…")
+        self._superio_request.emit()
+
+    def _ensure_superio_worker(self) -> bool:
+        """Create the Super-I/O worker + thread on first use. Returns False when
+        no daemon socket path is available to construct the worker."""
+
+        def connect(w: _SuperIoWorker) -> None:
+            self._superio_request.connect(w.do_fetch, Qt.ConnectionType.QueuedConnection)
+            w.fetch_ok.connect(self._on_superio_ok, Qt.ConnectionType.QueuedConnection)
+            w.fetch_error.connect(self._on_superio_error, Qt.ConnectionType.QueuedConnection)
+
+        self._superio_worker, self._superio_thread, ok = self._ensure_worker(
+            self._superio_worker, self._superio_thread, _SuperIoWorker, connect
+        )
+        return ok
+
+    @Slot(object)
+    def _on_superio_ok(self, result: SuperIoReport) -> None:
+        self._superio_view.set_report(result)
+
+    @Slot(str, str)
+    def _on_superio_error(self, category: str, message: str) -> None:
+        if category == "unsupported":
+            self._superio_unsupported = True
+            self._superio_view.set_unsupported()
+        else:
+            self._superio_view.set_error(message)
 
     @Slot(object)
     def _on_verify_ok(self, result: HwmonVerifyResult) -> None:
@@ -3170,6 +3264,9 @@ class DiagnosticsPage(QWidget):
         self._teardown_worker(self._readiness_worker, self._readiness_thread, "Readiness")
         self._readiness_worker = None
         self._readiness_thread = None
+        self._teardown_worker(self._superio_worker, self._superio_thread, "Super-I/O")
+        self._superio_worker = None
+        self._superio_thread = None
 
     def _show_verify_result(self, result: HwmonVerifyResult) -> None:
         """Display the result of a PWM verification test.

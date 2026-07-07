@@ -30,6 +30,7 @@ from control_ofc.api.models import (
     SensorHistory,
     SensorReading,
     StartupDelayResult,
+    SuperIoReport,
     parse_active_profile,
     parse_capabilities,
     parse_fans,
@@ -52,6 +53,7 @@ from control_ofc.api.models import (
     parse_sensors,
     parse_startup_delay,
     parse_status,
+    parse_superio_report,
 )
 from control_ofc.constants import API_TIMEOUT_S, DEFAULT_SOCKET_PATH
 
@@ -306,6 +308,16 @@ class DaemonClient:
         """GET /inventory/readiness — the daemon's structured hardware-readiness
         items with an ``overall`` rollup (DEC-200). 404 on pre-2.6 daemons."""
         return parse_inventory_readiness(self._get("/inventory/readiness"))
+
+    def superio_detect(self) -> SuperIoReport:
+        """GET /inventory/superio — passive Super-I/O chip detection with
+        allowlisted "load this driver" recommendations (DEC-202).
+
+        Read-only; the daemon never probes I/O ports, loads modules, or writes
+        hardware. Raises ``DaemonError`` with ``.status == 404`` on a daemon that
+        predates the endpoint — callers hide the Super-I/O panel in that case.
+        """
+        return parse_superio_report(self._get("/inventory/superio"))
 
     def set_preferred_cpu_sensor(self, sensor_id: str | None) -> PreferredSensorResult:
         """POST /config/preferred-cpu-sensor — pin (id) or clear (``None``) the

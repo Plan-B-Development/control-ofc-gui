@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+GUI consumption of the daemon's built-in Super-I/O chip detection (DEC-202).
+Additive and version-skew-tolerant — the new panel hides itself on a daemon that
+predates the endpoint (unknown route 404s). Pairs with a `control-ofc-daemon`
+that provides `GET /inventory/superio`.
+
+### Added
+- **Super-I/O tab (Diagnostics).** A dedicated, read-only panel that shows the
+  daemon's passive Super-I/O detection: one card per detected motherboard
+  sensor/fan chip (vendor, confidence, bound/unbound status) with an
+  allowlisted "how to enable" recommendation — the exact driver and copy-paste
+  command — for chips whose driver is not loaded. Auto-fetches on first view;
+  fetched off the UI thread. Every daemon-supplied string is rendered as
+  PlainText (defence-in-depth against markup injection). The panel is honest
+  that detection proves a chip is present, not that fan control is available,
+  and it changes nothing on your system.
+
+_Version: deferred — batched with the Super-I/O feature under [Unreleased]._
+
 ## [2.9.0] — 2026-07-05
 
 GUI consumption of the daemon's read-only hwmon discovery + readiness (DEC-200),

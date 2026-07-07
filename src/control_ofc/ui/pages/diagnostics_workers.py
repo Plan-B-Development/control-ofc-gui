@@ -274,3 +274,42 @@ class _ReadinessWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.fetch_error.emit("unavailable", "Connection lost during readiness fetch")
+
+
+class _SuperIoWorker(_SocketWorker):
+    """Runs in a QThread — executes the blocking GET /inventory/superio call off
+    the UI thread (the daemon reads /proc, /sys and /dev/kmsg to compose the
+    passive detection report). Phase 3 / DEC-202."""
+
+    fetch_ok = Signal(object)  # SuperIoReport
+    # category ('unavailable' | 'error' | 'unsupported'), message
+    fetch_error = Signal(str, str)
+
+    @Slot()
+    def do_fetch(self) -> None:
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            result = self._ensure_client().superio_detect()
+            self.fetch_ok.emit(result)
+        except DaemonTimeout:
+            self.fetch_error.emit("unavailable", "Super-I/O detection timed out")
+        except DaemonUnavailable:
+            self.fetch_error.emit("unavailable", "Daemon unavailable — cannot detect Super-I/O")
+        except DaemonError as e:
+            # A daemon predating /inventory/superio answers 404 not_found —
+            # signal 'unsupported' so the page hides the Super-I/O view.
+            if getattr(e, "status", None) == 404 or getattr(e, "code", "") == "not_found":
+                self.fetch_error.emit(
+                    "unsupported",
+                    "This daemon version does not provide Super-I/O detection.",
+                )
+            else:
+                self.fetch_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Super-I/O worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.fetch_error.emit("unavailable", "Connection lost during Super-I/O detection")

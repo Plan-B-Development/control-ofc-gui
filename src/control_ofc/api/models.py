@@ -904,6 +904,57 @@ class PreferredSensorResult:
 
 
 # ---------------------------------------------------------------------------
+# Super-I/O detection (Phase 3 — DEC-202)
+#
+# Daemon-authoritative, additive, read-only: GET /inventory/superio. The daemon
+# owns every string here (chip names, recommendations, caveats), so the view
+# renders them as PlainText — never markup.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SuperIoRecommendation:
+    """A "load this driver" recommendation for an unbound Super-I/O chip."""
+
+    module: str = ""
+    in_mainline: bool = False
+    load_hint: str = ""
+    reason: str = ""
+    risk_notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SuperIoChip:
+    """One detected Super-I/O chip from GET /inventory/superio."""
+
+    chip_name: str = ""
+    vendor: str = ""  # ite|nuvoton|winbond|smsc|national|fintek|unknown
+    evidence: list[str] = field(default_factory=list)  # dmi_board_table|kernel_log|bound_hwmon
+    confidence: str = ""  # high|medium|low|unknown
+    bound_driver: str | None = None
+    expected_module: str = ""
+    module_loaded: bool = False
+    hwmon_present: bool = False
+    recommendation: SuperIoRecommendation | None = None
+    caveats: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SuperIoReport:
+    """Response from GET /inventory/superio — passive Super-I/O detection.
+
+    ``arch_supported`` is False on non-x86 daemons (with an empty ``chips``).
+    Read-only: detection proves a chip is present, never that fan control works.
+    """
+
+    api_version: int = 1
+    arch_supported: bool = True
+    chips: list[SuperIoChip] = field(default_factory=list)
+    acpi_conflict_drivers: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
@@ -1290,6 +1341,34 @@ def parse_preferred_sensor(data: dict) -> PreferredSensorResult:
         updated=bool(data.get("updated", False)),
         role=str(data.get("role", "")),
         preferred_sensor=data.get("preferred_sensor"),
+    )
+
+
+def parse_superio_report(data: dict) -> SuperIoReport:
+    chips: list[SuperIoChip] = []
+    for c in data.get("chips", []):
+        if not isinstance(c, dict):
+            continue
+        rec = None
+        rec_raw = c.get("recommendation")
+        if isinstance(rec_raw, dict) and rec_raw:
+            rec = SuperIoRecommendation(**_filter_fields(SuperIoRecommendation, rec_raw))
+        # Parse the nested recommendation explicitly; keep the rest via _filter_fields.
+        chip_fields = {
+            k: v for k, v in _filter_fields(SuperIoChip, c).items() if k != "recommendation"
+        }
+        chips.append(SuperIoChip(**chip_fields, recommendation=rec))
+    return SuperIoReport(
+        # Safe default: an absent support-flag reads as unsupported (AIP-180,
+        # matching capability flags). The daemon always emits it, so this only
+        # guards a malformed in-range response from falsely rendering the panel.
+        api_version=data.get("api_version", 1),
+        arch_supported=bool(data.get("arch_supported", False)),
+        chips=chips,
+        acpi_conflict_drivers=[
+            str(d) for d in data.get("acpi_conflict_drivers", []) if isinstance(d, str)
+        ],
+        notes=[str(n) for n in data.get("notes", []) if isinstance(n, str)],
     )
 
 
