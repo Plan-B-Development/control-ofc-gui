@@ -3,9 +3,9 @@
 ## [Unreleased]
 
 GUI consumption of the daemon's built-in Super-I/O chip detection (DEC-202).
-Additive and version-skew-tolerant — the new panel hides itself on a daemon that
-predates the endpoint (unknown route 404s). Pairs with a `control-ofc-daemon`
-that provides `GET /inventory/superio`.
+Additive and version-skew-tolerant — on a daemon that predates the endpoint the
+panel shows an "unavailable" message (the unknown route 404s). Pairs with a
+`control-ofc-daemon` that provides `GET /inventory/superio`.
 
 ### Added
 - **Super-I/O tab (Diagnostics).** A dedicated, read-only panel that shows the
@@ -24,8 +24,8 @@ _Version: deferred — batched with the Super-I/O feature under [Unreleased]._
 
 GUI consumption of the daemon's read-only hwmon discovery + readiness (DEC-200),
 plus surfacing the daemon's new verify thermal-abort (DEC-201). Additive and
-version-skew-tolerant — every new surface hides itself on a daemon that predates
-the endpoints (unknown routes 404).
+version-skew-tolerant — on a daemon that predates the endpoints, each new surface
+shows an "unavailable" / "not supported" indication (unknown routes 404).
 
 Pairs with `control-ofc-daemon` ≥ v2.6.0 for the new features; degrades
 gracefully on older daemons (the base app still works with ≥ v2.4.0).

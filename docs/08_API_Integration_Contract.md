@@ -437,6 +437,61 @@ and the GUI parser defaults safely:
 > past 2.0.0). It was removed entirely in daemon v2.5.0 (DEC-198). All data flows
 > through the 1 Hz `PollingService` over `GET /poll`.
 
+### GET /inventory/hwmon (DEC-200, daemon ≥ 2.6.0)
+
+Structured, read-only inventory of hwmon-visible hardware — the daemon's own
+classified view, distinct from the live `/sensors` + `/fans` polls. One-shot,
+fetched on demand (Settings ▸ preferred sensors; Diagnostics), never at 1 Hz.
+Full field set in the daemon's `responses.rs::HwmonInventoryResponse`. **404-only
+gated** — a daemon predating the endpoint 404s and the GUI shows the dependent UI
+as unavailable. The daemon never writes hardware to build this report.
+
+- `api_version: int` — always `1`.
+- `temp_sensors: list` — the live temperature sensors (same identity/fields as
+  `/sensors`) enriched with an advisory `classification` (`cpu_package |
+  cpu_core | cpu_tctl | cpu_tdie | motherboard_temp | vrm_temp | chipset_temp |
+  gpu_temp | disk_temp | coolant_temp | unknown_temp`), a `confidence` (`high |
+  medium | low | unknown`), a plain-English `rationale`, and `control_eligible:
+  bool` (DEC-193 — a wireless-PHY temp is dropped from the curve sensor picker).
+  The classification **refines** the coarse `kind` and never contradicts it.
+- `pwm_controls: list` — controllable PWM headers (same shape as
+  `/hwmon/headers`).
+- `monitor_only_fans: list[{id, source:"hwmon", chip_name, label, fan_index}]` —
+  `fanN_input` tachometers with no matching `pwmN` (otherwise invisible to the
+  API). Omitted when empty (additive).
+- `default_cpu: {sensor_id, confidence, rationale, source}?` — the daemon's
+  default-CPU recommendation; `source` is `"user"` when it echoes the persisted
+  preferred CPU sensor, else `"auto"`. Omitted when no CPU sensor is present.
+- `preferences: {cpu_sensor_id, mb_sensor_id}?` — the user's persisted preferred
+  CPU/motherboard sensors (pinned via the `POST /config/preferred-{cpu,mb}-sensor`
+  writes). Either id may be stale — cross-check against the live sensor list.
+  Omitted when none are set.
+
+### GET /inventory/readiness (DEC-200, daemon ≥ 2.6.0)
+
+A structured, read-only diagnose-and-guide list: the daemon's assessment of the
+CPU/hwmon/PWM inventory as actionable items, for the GUI's first-run guide and
+the Diagnostics **Readiness** tab. Never mutates the system. 404-only gated. Full
+shape in `responses.rs::ReadinessResponse`.
+
+- `api_version: int` — always `1`.
+- `overall: str` — the rollup severity (`ok | info | warning | critical`), equal
+  to the most severe item's severity.
+- `items: list[ReadinessItem]` — each item is:
+  - `code: str` — a **stable machine key** the GUI keys knowledge-base entries and
+    acknowledgement state off (e.g. `cpu_sensor_missing`, `cpu_sensor_present`,
+    `no_pwm_controls`, `pwm_read_only`, `monitor_only_fans_present`, and — when a
+    Super-I/O chip is detected without its driver — `superio_driver_unloaded` /
+    `superio_acpi_conflict`, DEC-202).
+  - `severity: str` — `ok | info | warning | critical`.
+  - `component: str` — `cpu | pwm | hwmon | sensor`.
+  - `summary`, `detail`, `recommended_action: str`.
+  - impact flags: `can_automate`, `blocks_monitoring`, `blocks_control`,
+    `affects_safety`, `reboot_may_be_required: bool`.
+
+Forward-compatible: parse each item with a field filter (unknown daemon keys
+dropped) and default an absent `severity` to `info` (never falsely `ok`).
+
 ### GET /inventory/superio (DEC-202, daemon ≥ post-2.6.0)
 
 Passive Super-I/O chip detection. **Read-only** — the daemon composes signals it
