@@ -437,6 +437,54 @@ and the GUI parser defaults safely:
 > past 2.0.0). It was removed entirely in daemon v2.5.0 (DEC-198). All data flows
 > through the 1 Hz `PollingService` over `GET /poll`.
 
+### GET /inventory/superio (DEC-202, daemon ≥ post-2.6.0)
+
+Passive Super-I/O chip detection. **Read-only** — the daemon composes signals it
+already has (DMI board table, bound hwmon chips, `/proc/modules`, `/dev/kmsg`,
+ACPI `/proc/ioports` overlaps) into a per-chip report; it never probes an I/O
+port, loads a module, or writes hardware. One-shot and off the poll loop — the
+GUI fetches it on demand (a dedicated Diagnostics panel), never at 1 Hz.
+
+**Gating:** 404-only, like the other `/inventory/*` routes — no capability flag.
+A `404 not_found` means the daemon predates the feature; the GUI hides the panel.
+
+Fields (`responses.rs::SuperIoResponse`; additive fields use
+`skip_serializing_if`, so a client defaults them to empty/absent):
+
+- `api_version: int` — always `1`.
+- `arch_supported: bool` — `false` on non-x86 (with `chips: []`); Super-I/O
+  detection is an x86/ISA concept.
+- `chips: list[SuperIoChip]` — each: `chip_name`, `vendor`
+  (`ite|nuvoton|winbond|smsc|national|fintek|unknown`), `evidence: list[str]`
+  (`dmi_board_table|kernel_log|bound_hwmon`), `confidence`
+  (`high|medium|low|unknown`), `bound_driver: str?` (inferred; present only when
+  the chip is bound *and* its driver is recognized), `expected_module`,
+  `module_loaded: bool`, `hwmon_present: bool`,
+  `recommendation: SuperIoRecommendation?` (present only for an unbound,
+  allowlisted chip — `module`, `in_mainline`, `load_hint`, `reason`,
+  `risk_notes: list[str]`), and `caveats: list[str]`.
+- `acpi_conflict_drivers: list[str]` — driver names whose ISA I/O range collides
+  with an ACPI OperationRegion (omitted when empty).
+- `notes: list[str]` — report-level notes; on x86 always includes the honest
+  "detection proves a chip is present, not that fan control is available" caveat
+  (on non-x86, where `arch_supported:false`, it instead carries a single
+  "unsupported architecture" note). Omitted when empty.
+
+The same detection also enriches **`GET /inventory/readiness`** with up to two
+**aggregate** items (one per code, regardless of how many chips match):
+`superio_driver_unloaded` (severity `warning`, `reboot_may_be_required: true` —
+loading a module often needs a reboot to re-run the Super-I/O scan; the matched
+chips are listed in the item's `detail`) and `superio_acpi_conflict` (severity
+`warning`, `reboot_may_be_required: false`). Board-specific "load *this* driver"
+guidance thus joins the generic `no_pwm_controls` item. These items use the same
+`ReadinessItem` shape (`code`, `severity`, `component`, `summary`, `detail`,
+`recommended_action`, and the `blocks_monitoring` / `blocks_control` /
+`affects_safety` / `reboot_may_be_required` flags) as the existing DEC-200
+`/inventory/readiness` endpoint. **Detection is not control:** a recommendation
+means a chip is present and a driver exists — never that PWM control is proven.
+Loading the driver, or the daemon's separate verify path, is what confirms
+control.
+
 ## Write endpoints
 
 As of **2.0.0** the daemon is the sole writer (DEC-159, DEC-165). The GUI has **no bare PWM write
