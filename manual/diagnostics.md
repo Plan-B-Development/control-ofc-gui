@@ -122,6 +122,20 @@ It is similar in spirit to the Troubleshooting tab but comes from a different so
 
 This tab is read-only and never changes your system. On a daemon that predates the feature it reports that hardware readiness is unavailable. Requires `control-ofc-daemon` ≥ v2.6.0.
 
+## Super-I/O Tab
+
+The **Super-I/O** tab answers *"which motherboard sensor/fan chip do I have, and is its driver loaded?"*. Most desktop boards route their fan headers and temperature sensors through a Super-I/O chip (ITE, Nuvoton/Winbond, SMSC, …); if its kernel driver is not loaded, the daemon can't see those fans at all. This tab reads the daemon's `/inventory/superio` detection and shows **one card per detected chip** — its vendor, a confidence level, and whether its driver is bound. For a chip whose driver is *not* loaded, the card expands a **How to enable** section with the exact driver name and a copy-paste command to load it.
+
+- The report is **passive and read-only** — the daemon composes signals it already has (DMI board table, bound hwmon chips, `/proc/modules`, `/dev/kmsg`, ACPI port overlaps). It never loads a module or changes your system.
+- **Detection is not control.** A card means a chip is present and a driver exists — it does *not* prove fan control works. Loading the driver (and the Troubleshooting tab's PWM test) is what confirms that.
+- On a non-x86 machine, or a daemon that predates the feature, the tab reports that detection is unavailable.
+
+### Probe Ports (advanced)
+
+Passive detection can't see a chip whose driver never loaded and that never appeared in the kernel log. For that case an **opt-in active probe** can read the Super-I/O configuration ports directly to identify an unbound chip. The **Probe Ports (advanced)** button runs it — but it is **off by default** and stays disabled (with the reason in its tooltip) unless the daemon operator has deliberately enabled it, because it requires a root-equivalent capability (`CAP_SYS_RAWIO`). Enabling it needs two steps on the daemon host: set `allow_port_probe = true` in `/etc/control-ofc/daemon.toml` **and** install the opt-in `superio-port-probe.conf.example` systemd drop-in (shipped in the daemon package's docs). Even when enabled, the probe only reads chip-ID registers, never touches a port a driver or the firmware is already using, and changes nothing. Clicking the button asks for confirmation first.
+
+This tab requires `control-ofc-daemon` ≥ v2.7.0.
+
 ## Event Log Tab
 
 ![Diagnostics — Event Log Tab](../screenshots/auto/10_diagnostics_event_log.png)

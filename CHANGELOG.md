@@ -1,11 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [2.10.0] — 2026-07-07
 
 GUI consumption of the daemon's built-in Super-I/O chip detection (DEC-202/203).
-Additive and version-skew-tolerant — on a daemon that predates the endpoint the
-panel shows an "unavailable" message (the unknown route 404s). Pairs with a
-`control-ofc-daemon` that provides `GET /inventory/superio`.
+Additive and version-skew-tolerant — on a daemon that predates the endpoints the
+panel shows an "unavailable" message (the unknown route 404s).
+
+Pairs with `control-ofc-daemon` ≥ v2.7.0.
 
 ### Added
 - **Super-I/O tab (Diagnostics).** A dedicated, read-only panel that shows the
