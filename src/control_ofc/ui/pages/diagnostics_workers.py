@@ -313,3 +313,38 @@ class _SuperIoWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.fetch_error.emit("unavailable", "Connection lost during Super-I/O detection")
+
+    @Slot()
+    def do_probe(self) -> None:
+        """DEC-203: the opt-in ACTIVE port probe (POST). Reuses the fetch signals
+        — it returns the same SuperIoReport (enriched with probe-detected chips).
+        Daemon-side gating means a disabled probe returns a normal report, not an
+        error."""
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            result = self._ensure_client().superio_probe()
+            self.fetch_ok.emit(result)
+        except DaemonTimeout:
+            self.fetch_error.emit("unavailable", "Super-I/O port probe timed out")
+        except DaemonUnavailable:
+            self.fetch_error.emit("unavailable", "Daemon unavailable — cannot run the port probe")
+        except DaemonError as e:
+            # A 404 on the PROBE endpoint must NOT flip the passive panel's
+            # `unsupported` flag (that permanently hides the whole Super-I/O tab
+            # even though passive GET works). Report it as a transient error so
+            # the panel survives (CON review, DEC-203).
+            if getattr(e, "status", None) == 404 or getattr(e, "code", "") == "not_found":
+                self.fetch_error.emit(
+                    "error",
+                    "This daemon version does not support the active port probe.",
+                )
+            else:
+                self.fetch_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Super-I/O probe worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.fetch_error.emit("unavailable", "Connection lost during Super-I/O port probe")

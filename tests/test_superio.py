@@ -106,6 +106,30 @@ def test_client_superio_detect_calls_get_and_parses():
     assert report.chips[0].chip_name == "it8688"
 
 
+def test_client_superio_probe_posts_and_parses():
+    from control_ofc.api.client import DaemonClient
+
+    client = DaemonClient.__new__(DaemonClient)
+    client._post = MagicMock(
+        return_value={
+            "arch_supported": True,
+            "chips": [{"chip_name": "it8688", "evidence": ["port_probe"]}],
+            "port_probe_available": True,
+            "port_probe_reason": "available",
+        }
+    )
+    report = client.superio_probe()
+    client._post.assert_called_once_with("/inventory/superio/probe", json={})
+    assert report.port_probe_available is True
+    assert report.chips[0].evidence == ["port_probe"]
+
+
+def test_parse_superio_report_port_probe_fields_default_false():
+    r = parse_superio_report({"chips": []})
+    assert r.port_probe_available is False
+    assert r.port_probe_reason == ""
+
+
 # ── Page integration (off-thread worker) ─────────────────────────────
 
 
@@ -138,11 +162,26 @@ class _MockClient:
     """Exposes superio_detect() + a truthy socket_path so the page spins its
     worker thread; injected into that worker to run the off-thread fetch path."""
 
-    def __init__(self, report: SuperIoReport | None = None, error: Exception | None = None):
+    def __init__(
+        self,
+        report: SuperIoReport | None = None,
+        error: Exception | None = None,
+        probe_error: Exception | None = None,
+    ):
         self._report = report if report is not None else _report()
         self._error = error
+        self._probe_error = probe_error
         self.calls = 0
+        self.probe_calls = 0
         self.socket_path = "/tmp/control-ofc-superio-test.sock"
+
+    def superio_probe(self) -> SuperIoReport:
+        self.probe_calls += 1
+        if self._probe_error is not None:
+            raise self._probe_error
+        if self._error is not None:
+            raise self._error
+        return self._report
 
     def superio_detect(self) -> SuperIoReport:
         self.calls += 1
@@ -224,3 +263,101 @@ def test_fetch_superio_without_client_shows_error(qtbot):
     page._fetch_superio()
     status = page._superio_view.findChild(QLabel, "Superio_Label_status")
     assert "no daemon connection" in status.text()
+
+
+# ── DEC-203: active probe button + gating ────────────────────────────
+
+
+def test_superio_probe_button_reflects_availability(qtbot):
+    page = _page(qtbot, client=_MockClient())
+    # A report saying the probe is available enables the button.
+    page._on_superio_ok(SuperIoReport(arch_supported=True, chips=[], port_probe_available=True))
+    assert page._superio_probe_btn.isEnabled()
+    # Unavailable → disabled, with the daemon's reason as the tooltip.
+    page._on_superio_ok(
+        SuperIoReport(
+            arch_supported=True,
+            chips=[],
+            port_probe_available=False,
+            port_probe_reason="needs CAP_SYS_RAWIO",
+        )
+    )
+    assert not page._superio_probe_btn.isEnabled()
+    assert "CAP_SYS_RAWIO" in page._superio_probe_btn.toolTip()
+
+
+def test_superio_probe_runs_after_confirmation_and_renders_result(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox, QWidget
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    # A report carrying a probe-detected chip so we can assert it is displayed.
+    report = SuperIoReport(arch_supported=True, chips=_report().chips, port_probe_available=True)
+    client = _MockClient(report)
+    page = _page(qtbot, client=client)
+    assert page._ensure_superio_worker()
+    page._superio_worker._client = client
+    try:
+        page._run_superio_probe()
+        qtbot.waitUntil(lambda: client.probe_calls == 1, timeout=3000)
+        # The probe result actually reached the view (a chip card was rendered).
+        qtbot.waitUntil(
+            lambda: any(
+                w.objectName().startswith("Superio_ChipCard_")
+                for w in page._superio_view.findChildren(QWidget)
+            ),
+            timeout=3000,
+        )
+    finally:
+        page.cleanup()
+
+
+def test_superio_probe_declined_does_not_run(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    client = _MockClient()
+    page = _page(qtbot, client=client)
+    assert page._ensure_superio_worker()
+    page._superio_worker._client = client
+    try:
+        page._run_superio_probe()
+        assert client.probe_calls == 0
+    finally:
+        page.cleanup()
+
+
+def test_superio_probe_404_does_not_mark_passive_unsupported(qtbot, monkeypatch):
+    """A 404 on the PROBE endpoint must not permanently hide the passive panel."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from control_ofc.api.errors import DaemonError
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    err = DaemonError(code="not_found", message="unknown route", status=404)
+    client = _MockClient(probe_error=err)
+    page = _page(qtbot, client=client)
+    assert page._ensure_superio_worker()
+    page._superio_worker._client = client
+    status = page._superio_view.findChild(QLabel, "Superio_Label_status")
+    try:
+        page._run_superio_probe()
+        qtbot.waitUntil(
+            lambda: "does not support the active port probe" in status.text(), timeout=3000
+        )
+        # The passive Super-I/O tab is NOT permanently disabled by a probe 404.
+        assert page._superio_unsupported is False
+    finally:
+        page.cleanup()
+
+
+def test_run_superio_probe_without_client_is_a_noop(qtbot):
+    page = _page(qtbot, client=None)
+    # No client → the guard returns early; no crash, nothing dispatched.
+    page._run_superio_probe()
+    assert page._superio_probe_btn.isEnabled() is False
+
+
+def test_superio_probe_button_disabled_by_default(qtbot):
+    page = _page(qtbot, client=_MockClient())
+    # Before any fetch reports availability, the advanced probe button is off.
+    assert page._superio_probe_btn.isEnabled() is False

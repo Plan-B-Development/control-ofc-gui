@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -403,6 +404,7 @@ class DiagnosticsPage(QWidget):
     # blocking GET /inventory/readiness never freezes the UI.
     _readiness_request = Signal()
     _superio_request = Signal()
+    _superio_probe_request = Signal()
 
     def __init__(
         self,
@@ -2688,6 +2690,18 @@ class DiagnosticsPage(QWidget):
         refresh_btn.setObjectName("Diagnostics_Btn_refreshSuperio")
         refresh_btn.clicked.connect(self._fetch_superio)
         btn_row.addWidget(refresh_btn)
+
+        # DEC-203: the opt-in active port probe. Disabled until a fetch reports
+        # `port_probe_available` (off by default; needs CAP_SYS_RAWIO).
+        self._superio_probe_btn = QPushButton("Probe Ports (advanced)")
+        self._superio_probe_btn.setObjectName("Diagnostics_Btn_superioProbe")
+        self._superio_probe_btn.setEnabled(False)
+        self._superio_probe_btn.setToolTip(
+            "The active /dev/port probe is off by default (it needs CAP_SYS_RAWIO)."
+        )
+        self._superio_probe_btn.clicked.connect(self._run_superio_probe)
+        btn_row.addWidget(self._superio_probe_btn)
+
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
@@ -2715,6 +2729,7 @@ class DiagnosticsPage(QWidget):
 
         def connect(w: _SuperIoWorker) -> None:
             self._superio_request.connect(w.do_fetch, Qt.ConnectionType.QueuedConnection)
+            self._superio_probe_request.connect(w.do_probe, Qt.ConnectionType.QueuedConnection)
             w.fetch_ok.connect(self._on_superio_ok, Qt.ConnectionType.QueuedConnection)
             w.fetch_error.connect(self._on_superio_error, Qt.ConnectionType.QueuedConnection)
 
@@ -2726,6 +2741,14 @@ class DiagnosticsPage(QWidget):
     @Slot(object)
     def _on_superio_ok(self, result: SuperIoReport) -> None:
         self._superio_view.set_report(result)
+        # DEC-203: gate the advanced probe button on daemon-reported availability,
+        # with the daemon's reason as the tooltip when it is unavailable.
+        self._superio_probe_btn.setEnabled(bool(result.port_probe_available))
+        self._superio_probe_btn.setToolTip(
+            "Run the opt-in active /dev/port probe to identify an unbound chip."
+            if result.port_probe_available
+            else (result.port_probe_reason or "The active port probe is unavailable.")
+        )
 
     @Slot(str, str)
     def _on_superio_error(self, category: str, message: str) -> None:
@@ -2734,6 +2757,29 @@ class DiagnosticsPage(QWidget):
             self._superio_view.set_unsupported()
         else:
             self._superio_view.set_error(message)
+
+    def _run_superio_probe(self) -> None:
+        """DEC-203: run the opt-in active port probe, behind a confirmation.
+
+        The probe reads the motherboard's raw Super-I/O I/O ports, so require an
+        explicit OK. The daemon still refuses ports a driver or ACPI owns.
+        """
+        if not self._client or not self._ensure_superio_worker():
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Run active Super-I/O port probe?",
+            "This performs a one-shot read of the motherboard's Super-I/O "
+            "configuration ports (0x2E/0x4E) to identify a chip whose driver is "
+            "not loaded. It only touches ports no driver or ACPI is using, and "
+            "changes nothing. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self._superio_view.set_status("Probing Super-I/O ports…")
+        self._superio_probe_request.emit()
 
     @Slot(object)
     def _on_verify_ok(self, result: HwmonVerifyResult) -> None:

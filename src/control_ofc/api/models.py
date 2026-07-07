@@ -929,7 +929,9 @@ class SuperIoChip:
 
     chip_name: str = ""
     vendor: str = ""  # ite|nuvoton|winbond|smsc|national|fintek|unknown
-    evidence: list[str] = field(default_factory=list)  # dmi_board_table|kernel_log|bound_hwmon
+    evidence: list[str] = field(
+        default_factory=list
+    )  # dmi_board_table|kernel_log|bound_hwmon|port_probe (opaque; DEC-203 added port_probe)
     confidence: str = ""  # high|medium|low|unknown
     bound_driver: str | None = None
     expected_module: str = ""
@@ -952,6 +954,10 @@ class SuperIoReport:
     chips: list[SuperIoChip] = field(default_factory=list)
     acpi_conflict_drivers: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # DEC-203: whether the opt-in active /dev/port probe can run right now, and
+    # (when it can't) why. Default False/"" so an older daemon degrades safely.
+    port_probe_available: bool = False
+    port_probe_reason: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -1369,6 +1375,8 @@ def parse_superio_report(data: dict) -> SuperIoReport:
             str(d) for d in data.get("acpi_conflict_drivers", []) if isinstance(d, str)
         ],
         notes=[str(n) for n in data.get("notes", []) if isinstance(n, str)],
+        port_probe_available=bool(data.get("port_probe_available", False)),
+        port_probe_reason=str(data.get("port_probe_reason", "")),
     )
 
 

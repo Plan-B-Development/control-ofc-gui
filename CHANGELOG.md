@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-GUI consumption of the daemon's built-in Super-I/O chip detection (DEC-202).
+GUI consumption of the daemon's built-in Super-I/O chip detection (DEC-202/203).
 Additive and version-skew-tolerant — on a daemon that predates the endpoint the
 panel shows an "unavailable" message (the unknown route 404s). Pairs with a
 `control-ofc-daemon` that provides `GET /inventory/superio`.
@@ -17,6 +17,14 @@ panel shows an "unavailable" message (the unknown route 404s). Pairs with a
   PlainText (defence-in-depth against markup injection). The panel is honest
   that detection proves a chip is present, not that fan control is available,
   and it changes nothing on your system.
+- **Opt-in active port probe (advanced).** The Super-I/O panel adds a "Probe
+  Ports (advanced)" button that runs the daemon's active `/dev/port` probe
+  (`POST /inventory/superio/probe`, DEC-203) to identify an *unbound* chip that
+  passive detection can't see. It is gated on the daemon-reported
+  `port_probe_available` (disabled, with the daemon's reason as its tooltip, when
+  off) and sits behind a confirmation dialog. The probe is **off by default**
+  daemon-side (it needs `CAP_SYS_RAWIO`), so on a normal install the button stays
+  disabled — no behaviour change unless an operator deliberately enables it.
 
 _Version: deferred — batched with the Super-I/O feature under [Unreleased]._
 

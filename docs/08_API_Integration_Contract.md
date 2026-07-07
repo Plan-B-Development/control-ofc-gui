@@ -496,9 +496,11 @@ dropped) and default an absent `severity` to `info` (never falsely `ok`).
 
 Passive Super-I/O chip detection. **Read-only** — the daemon composes signals it
 already has (DMI board table, bound hwmon chips, `/proc/modules`, `/dev/kmsg`,
-ACPI `/proc/ioports` overlaps) into a per-chip report; it never probes an I/O
-port, loads a module, or writes hardware. One-shot and off the poll loop — the
-GUI fetches it on demand (a dedicated Diagnostics panel), never at 1 Hz.
+ACPI `/proc/ioports` overlaps) into a per-chip report; it never runs a port
+protocol, loads a module, or writes hardware. (When the active probe is *enabled*
+it does transiently open `/dev/port` here to report `port_probe_available`
+accurately — an open/close only, no port I/O.) One-shot and off the poll loop —
+the GUI fetches it on demand (a dedicated Diagnostics panel), never at 1 Hz.
 
 **Gating:** 404-only, like the other `/inventory/*` routes — no capability flag.
 A `404 not_found` means the daemon predates the feature; the GUI hides the panel.
@@ -524,6 +526,12 @@ Fields (`responses.rs::SuperIoResponse`; additive fields use
   "detection proves a chip is present, not that fan control is available" caveat
   (on non-x86, where `arch_supported:false`, it instead carries a single
   "unsupported architecture" note). Omitted when empty.
+- `port_probe_available: bool` — whether the opt-in ACTIVE probe (below) can run
+  right now. Off by default. The GUI gates its advanced "probe ports" affordance
+  on this.
+- `port_probe_reason: str` — `"available"`, or a plain-English reason it is not
+  (flag off / no `CAP_SYS_RAWIO` / kernel lockdown / no `/dev/port`). Show this
+  as the disabled button's tooltip.
 
 The same detection also enriches **`GET /inventory/readiness`** with up to two
 **aggregate** items (one per code, regardless of how many chips match):
@@ -539,6 +547,32 @@ guidance thus joins the generic `no_pwm_controls` item. These items use the same
 means a chip is present and a driver exists — never that PWM control is proven.
 Loading the driver, or the daemon's separate verify path, is what confirms
 control.
+
+### POST /inventory/superio/probe (DEC-203, opt-in, daemon ≥ post-2.6.0)
+
+The **opt-in ACTIVE** Super-I/O probe — a *deliberate, one-shot* action (never
+polled) that reads the Super-I/O config ports (0x2E/0x4E) to identify an
+**unbound** chip the passive `GET` cannot see. It is a `POST` because it is a
+deliberate side-effecting action (it writes the chip's enter/exit protocol
+bytes), not a passive read.
+
+**Off by default.** It runs only when the operator has BOTH set
+`[detection] allow_port_probe = true` and installed the `CAP_SYS_RAWIO` systemd
+drop-in. When it cannot run it returns the normal report with
+`port_probe_available: false` and a `notes[]` entry explaining why — it never
+errors for being disabled. It refuses to touch a port owned by a bound driver or
+reserved by ACPI, and never writes a configuration value or `force_id`.
+
+**Response:** the same `SuperIoResponse` shape as the `GET`, with any
+probe-identified chips appended to `chips[]` (each carries `evidence: ["port_probe"]`
+and, for an unbound chip, a load `recommendation`). ITE chips are identified
+precisely (DEVID → chip name → driver + DKMS status); the Nuvoton/Winbond family
+is identified at vendor level with the raw DEVID and an `nct6775` recommendation.
+
+**GUI usage:** gate an advanced "Probe ports" button on `port_probe_available`;
+disable it with `port_probe_reason` as the tooltip when false. Because the probe
+touches raw I/O ports, present a confirmation before POSTing. **Detection is
+still not control.**
 
 ## Write endpoints
 

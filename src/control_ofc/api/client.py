@@ -319,6 +319,15 @@ class DaemonClient:
         """
         return parse_superio_report(self._get("/inventory/superio"))
 
+    def superio_probe(self) -> SuperIoReport:
+        """POST /inventory/superio/probe — the opt-in ACTIVE Super-I/O probe
+        (DEC-203). A deliberate one-shot `/dev/port` read that identifies an
+        unbound chip. Off by default daemon-side: when disabled it returns the
+        normal report with ``port_probe_available == False`` (it does not error).
+        404 on daemons predating the endpoint.
+        """
+        return parse_superio_report(self._post("/inventory/superio/probe", json={}))
+
     def set_preferred_cpu_sensor(self, sensor_id: str | None) -> PreferredSensorResult:
         """POST /config/preferred-cpu-sensor — pin (id) or clear (``None``) the
         preferred CPU temperature sensor (DEC-200). Validated daemon-side against
