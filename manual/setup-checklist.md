@@ -52,6 +52,7 @@ Open **Diagnostics → Troubleshooting** (the report fetches automatically the f
 | AMD RDNA3+ dGPU (RX 7000 / 9000) and GPU diagnostics flags `ppfeaturemask` | GPU fan-curve writes need a one-time kernel parameter | [Driver Setup — AMD GPU prerequisite](driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3) |
 | OpenFan Controller | **Nothing to do** — the daemon auto-detects it on `/dev/ttyACM*` / `/dev/ttyUSB*`, and the service ships with serial access | [OpenFan Controller](openfan-controller.md) → Step 5 |
 | Intel Arc dGPU | Monitor-only **by design** (firmware-managed fan; the kernel exposes no write interface) | [Why](hardware-troubleshooting.md#intel-arc-gpus-are-monitor-only) |
+| NVIDIA dGPU | Monitor-only (the writable `nouveau` `pwm1` is excluded for safety; the NVML path is telemetry-only and off by default) | [Why](hardware-troubleshooting.md#nvidia-gpus-are-monitor-only) |
 
 ## Step 5 — Stop competing fan-control software
 

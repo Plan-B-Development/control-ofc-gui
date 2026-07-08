@@ -35,7 +35,7 @@ A table of every testable fan, with a checkbox per row (all selected by default)
 | **RPM** | Current measured speed |
 | **Current Label** | Existing alias or daemon-supplied label |
 
-Headers reporting 0 RPM (nothing plugged in) and read-only fans (e.g. firmware-managed Intel Arc GPU fans) are excluded automatically.
+Headers reporting 0 RPM (nothing plugged in) and read-only fans (e.g. firmware-managed Intel Arc and NVIDIA GPU fans) are excluded automatically.
 
 ### Step 3: Identify Each Fan
 

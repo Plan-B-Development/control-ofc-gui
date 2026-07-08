@@ -29,6 +29,7 @@ Two information cards:
 | **hwmon** | Whether motherboard fan headers are detected, the header count, and their write capability |
 | **AMD GPU** | Whether an AMD discrete GPU is detected, its model, PCI address, and fan control method (`pmfw` or legacy `pwm1`) |
 | **Intel GPU** | Whether an Intel Arc discrete GPU is detected, its model, and PCI address. Intel GPU fans are always reported `read_only (firmware-managed)` — the `xe`/`i915` drivers expose no fan-control path |
+| **NVIDIA GPU** | Whether an NVIDIA discrete GPU is detected (via the open `nouveau` driver or the opt-in NVML backend), its model, driver, and PCI address. NVIDIA GPU fans are always reported `read-only` — `nouveau`'s writable `pwm1` is excluded for safety and the NVML backend is telemetry-only |
 | **Liquid cooling** | Whether a liquid cooler (AIO) is detected via hwmon, and whether its pump/fan is writable, monitor-only (a read-only driver such as NZXT Kraken2), or not detected. USB-only coolers are out of scope and shown as not detected |
 | **Features** | Summary of write capabilities (OpenFan writes, hwmon writes) |
 
@@ -43,7 +44,7 @@ A 10-column diagnostic table of every temperature sensor reported by the daemon.
 | **Label** | Sensor label reported by the kernel driver (e.g., "Tctl", "edge"). Prefixed with `⚠ ` for a sensor with a documented bogus-quirk (e.g. the ASUS NCT6776F `CPUTIN` case) and `? ` for a low-confidence classification |
 | **Sensor ID** | Stable identifier (e.g. `hwmon:<chip>:<dev_id>:<label>`) — the id profiles use to bind a curve to this sensor |
 | **Source class** | Fine-grained classification from the sensor knowledge base (`cpu_die`, `vrm`, `board_thermistor`, `gpu_package`, …) |
-| **Source** | Daemon source subsystem: `hwmon`, `amd_gpu`, or `intel_gpu` |
+| **Source** | Daemon source subsystem: `hwmon`, `amd_gpu`, `intel_gpu`, or `nvidia_gpu` |
 | **Chip** | Kernel driver / chip providing the reading (e.g., `k10temp`, `nct6798`, `amdgpu`, `xe`) |
 | **Value (°C)** | Current temperature in °C. Suffixed `⚠ ALARM` when the daemon reports a critical alarm or the live value has crossed the reported critical threshold |
 | **Session min/max** | Lowest and highest values observed since the daemon started |
@@ -82,7 +83,7 @@ The fan table has the following columns:
 | Column | Meaning |
 |--------|---------|
 | **ID** | Display name (user alias if set, otherwise hardware label or fan ID) |
-| **Source** | Connection type: openfan, hwmon, amd_gpu, or intel_gpu |
+| **Source** | Connection type: openfan, hwmon, amd_gpu, intel_gpu, or nvidia_gpu |
 | **Control method** | How this fan can be controlled: `openfan`, `hwmon` (with PWM-only or full read/write), `amd_gpu` (PMFW or legacy pwm1), `read_only`, or `unknown`. Read-only entries cannot be commanded — **Test PWM Control** on the [Troubleshooting](#troubleshooting-tab) tab explains why |
 | **RPM** | Hardware-measured speed (dash if not available). Writable hwmon headers reading 0 RPM are annotated `(no fan detected)` so you don't accidentally assign a curve to an empty header |
 | **PWM (%)** | Last commanded speed percentage (dash if not set) |

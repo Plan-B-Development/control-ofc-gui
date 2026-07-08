@@ -1,12 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [2.11.0] — 2026-07-08
 
 NVIDIA GPU support — GUI consumption (DEC-204, P1e). Consumes the daemon's
 read-only NVIDIA capability/diagnostics/telemetry so an NVIDIA GPU appears like
-AMD/Intel. **Ships coordinated with the daemon** (feat/nvidia-support) — additive
-and version-skew tolerant: on a daemon without the NVIDIA fields the parser
-yields `present=False` and the fan/duty fields are simply absent.
+AMD/Intel. **Ships coordinated with daemon v2.8.0. Pairs with
+`control-ofc-daemon` ≥ v2.8.0.** Additive and version-skew tolerant: on a daemon
+without the NVIDIA fields the parser yields `present=False` and the fan/duty
+fields are simply absent.
 
 ### Added
 - **NVIDIA GPU presentation (DEC-204).** NVIDIA discrete GPUs now appear

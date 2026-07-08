@@ -79,6 +79,21 @@ This is by design, not a bug or a missing driver. The Linux `xe`/`i915` hwmon in
 
 Only the Arc **B580** currently maps to a specific model name; other Intel discrete GPUs display as "Intel D-GPU" until an authoritative device-ID → name mapping is confirmed for them.
 
+## NVIDIA GPUs are monitor-only
+
+If you have an NVIDIA discrete GPU, Control-OFC **monitors** it but does not drive its fan:
+
+- Its temperature appears in the dashboard chart and Diagnostics → Sensors, and can be selected as a **curve sensor** to drive *other* fans.
+- Its fan shows up in the dashboard fan table and Diagnostics → Fans with control method **read-only**. The NVML path also reports the firmware's *measured* fan duty (shown as "N% duty"), which is distinct from a commanded value and may exceed 100%.
+- It is **never** offered as a controllable curve member and is never written to.
+
+This is by design. NVIDIA presents two mutually-exclusive driver worlds, and Control-OFC treats both as read-only:
+
+- **`nouveau`** (the open driver) publishes an hwmon node whose `pwm1` *is* writable, but Control-OFC deliberately **excludes** it from control — GPU fans are owned by the GPU subsystem, the same safety rule applied to AMD (DEC-102).
+- **Proprietary NVIDIA** exposes no hwmon fan node; where enabled, Control-OFC reads temperature and fan telemetry through the **NVML** userspace library. This path is **opt-in and off by default** (`[detection] enable_nvidia_telemetry` in the daemon config, plus a `/dev/nvidia*` systemd drop-in) and is **experimental** — built and tested, but not yet verified against NVIDIA hardware. It never writes to the GPU.
+
+Fan *write* control for NVIDIA is a possible future addition, deliberately deferred until it can be validated on real hardware.
+
 ## Per-header pwm_enable reclaim count
 
 Some boards (most commonly Gigabyte AM5 with Smart Fan 6) repeatedly reset `pwm_enable` from manual back to automatic. Each reset is a "reclaim" — the daemon sets it back, but the EC keeps stealing it.

@@ -87,7 +87,7 @@ bottom of the page — advanced detail, one click away. It lists every detected 
 | Column | Meaning |
 |--------|---------|
 | **Label** | User-assigned alias or hardware label/ID — double-click a row to rename |
-| **Source** | Where the fan is connected: OpenFan, hwmon, AMD GPU, or Intel GPU |
+| **Source** | Where the fan is connected: OpenFan, hwmon, AMD GPU, Intel GPU, or NVIDIA GPU |
 | **RPM** | Hardware-measured rotational speed |
 | **PWM%** | Last commanded speed percentage |
 
