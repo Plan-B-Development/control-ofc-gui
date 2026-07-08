@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from control_ofc.api.models import FanReading
 
-# Discrete-GPU fan sources. AMD (amd_gpu) and Intel (intel_gpu, DEC-121) fans
-# are always shown (zero-RPM idle is normal) and dedup hwmon shadows by BDF.
-GPU_FAN_SOURCES = ("amd_gpu", "intel_gpu")
+# Discrete-GPU fan sources. AMD (amd_gpu), Intel (intel_gpu, DEC-121) and NVIDIA
+# (nvidia_gpu, DEC-204) fans are always shown (zero-RPM idle is normal) and dedup
+# hwmon shadows by BDF.
+GPU_FAN_SOURCES = ("amd_gpu", "intel_gpu", "nvidia_gpu")
 
 
 def filter_displayable_fans(

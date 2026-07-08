@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+NVIDIA GPU support — GUI consumption (DEC-204, P1e). Consumes the daemon's
+read-only NVIDIA capability/diagnostics/telemetry so an NVIDIA GPU appears like
+AMD/Intel. **Ships coordinated with the daemon** (feat/nvidia-support) — additive
+and version-skew tolerant: on a daemon without the NVIDIA fields the parser
+yields `present=False` and the fan/duty fields are simply absent.
+
+### Added
+- **NVIDIA GPU presentation (DEC-204).** NVIDIA discrete GPUs now appear
+  throughout the GUI, mirroring the Intel Arc read-only pattern (DEC-121):
+  - `nvidia_gpu` fans are always-displayable — fixes an idle NVIDIA fan being
+    hidden by the auto-hide filter (**DEC-047 regression fix**) — grouped under
+    "NVIDIA GPU", named from the capability model, and de-duplicated against
+    their hwmon shadow by PCI BDF. GPU temperatures group under the GPU bucket.
+  - New `NvidiaGpuCapability` + `NvidiaGpuDiagnosticsInfo` models + parse
+    branches; the dashboard GPU-temp card and the Diagnostics device summary /
+    fan table / GPU section surface the NVIDIA identity (model name, `driver`
+    kernel-module name `"nouveau"`/`"nvidia"`, driver version).
+  - The new measured **`duty_pct`** (firmware-reported fan duty %, NVIDIA via
+    NVML) is shown on the fan tile as "N% duty" — kept distinct from a
+    daemon-commanded PWM; may exceed 100.
+  - Read-only safety: NVIDIA fans are excluded from the fan-identify wizard and
+    the controls curve-member + AIO-radiator pickers, report "read-only" as their
+    fan-control method, and classify as GPU role. Demo mode gains an NVIDIA GPU.
+
 ## [2.10.0] — 2026-07-07
 
 GUI consumption of the daemon's built-in Super-I/O chip detection (DEC-202/203).

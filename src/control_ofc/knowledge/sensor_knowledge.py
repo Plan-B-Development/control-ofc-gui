@@ -150,6 +150,10 @@ def classify_sensor(
     if chip_name in ("xe", "i915"):
         return _classify_intel_gpu(chip_name, label)
 
+    # -- nouveau / nvml: NVIDIA discrete GPU sensors (DEC-204) --------
+    if chip_name in ("nouveau", "nvml"):
+        return _classify_nvidia_gpu(chip_name, label)
+
     # -- nvme: Disk sensors -------------------------------------------
     if chip_name == "nvme":
         return SensorClassification(
@@ -339,6 +343,21 @@ def _classify_intel_gpu(chip_name: str, label: str) -> SensorClassification:
     return SensorClassification(
         source_class="gpu_other",
         display_description=f"Intel GPU temperature ({label})",
+        confidence="high",
+    )
+
+
+def _classify_nvidia_gpu(chip_name: str, label: str) -> SensorClassification:
+    """Classify NVIDIA discrete GPU temperature sensors (DEC-204).
+
+    The open ``nouveau`` driver exposes ``temp1`` (the GPU package temperature);
+    the proprietary NVML backend surfaces a single synthetic GPU temperature.
+    Both are read-only. Grouping already flows from the daemon's ``GpuTemp``
+    kind; this classifier only enriches the per-sensor tooltip/detail.
+    """
+    return SensorClassification(
+        source_class="gpu_package",
+        display_description=f"NVIDIA GPU temperature ({label})",
         confidence="high",
     )
 

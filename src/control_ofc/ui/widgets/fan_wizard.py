@@ -115,9 +115,10 @@ class FanConfigWizard(QWizard):
             # Skip amdgpu hwmon entries — GPU fans use PMFW, not hwmon pwm1
             if fan.source == "hwmon" and "amdgpu" in fan.id:
                 continue
-            # Skip Intel discrete GPU fans — read-only (firmware-managed,
-            # DEC-121), so they cannot be stopped for identification.
-            if fan.source == "intel_gpu":
+            # Skip read-only discrete GPU fans — Intel (firmware-managed,
+            # DEC-121) and NVIDIA (DEC-204) have no userspace write path, so
+            # they cannot be stopped for identification.
+            if fan.source in ("intel_gpu", "nvidia_gpu"):
                 continue
             targets.append(
                 {

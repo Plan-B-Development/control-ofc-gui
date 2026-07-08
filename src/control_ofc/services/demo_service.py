@@ -31,6 +31,8 @@ from control_ofc.api.models import (
     IntelGpuCapability,
     IntelGpuDiagnosticsInfo,
     KernelModuleInfo,
+    NvidiaGpuCapability,
+    NvidiaGpuDiagnosticsInfo,
     OpenfanCapability,
     SafetyLimits,
     SensorReading,
@@ -58,6 +60,9 @@ _DEMO_FANS: list[dict] = [
     # Intel discrete GPU (DEC-121) — read-only fan; demonstrates the
     # "(read-only)" treatment and firmware-managed messaging.
     {"id": "intel_gpu:0000:03:00.0", "source": "intel_gpu", "label": "Arc B580 Fan"},
+    # NVIDIA discrete GPU (DEC-204) — read-only fan; exercises the measured
+    # duty_pct display and the read-only wizard/member exclusions.
+    {"id": "nvidia_gpu:0000:01:00.0", "source": "nvidia_gpu", "label": "RTX 4080 Fan"},
 ]
 
 _DEMO_SENSORS: list[dict] = [
@@ -103,6 +108,14 @@ _DEMO_SENSORS: list[dict] = [
         "label": "temp3",
         "source": "intel_gpu",
         "chip_name": "xe",
+    },
+    # NVIDIA discrete GPU (DEC-204) — via the open nouveau driver hwmon node.
+    {
+        "id": "hwmon:nouveau:0000:01:00.0:temp1",
+        "kind": "GpuTemp",
+        "label": "temp1",
+        "source": "nvidia_gpu",
+        "chip_name": "nouveau",
     },
     {
         "id": "hwmon:it8696:it87.2624:temp1",
@@ -246,6 +259,17 @@ class DemoService:
                 fan_rpm_available=True,
                 is_discrete=True,
             ),
+            nvidia_gpu=NvidiaGpuCapability(
+                present=True,
+                model_name="NVIDIA GeForce RTX 4080",
+                display_label="NVIDIA GeForce RTX 4080",
+                pci_id="0000:01:00.0",
+                driver="nvidia",
+                driver_version="565.77",
+                fan_control_method="read_only",
+                fan_rpm_available=True,
+                is_discrete=True,
+            ),
             aio_hwmon=AioHwmonCapability(
                 present=True,
                 status="supported",
@@ -309,15 +333,18 @@ class DemoService:
         for f in _DEMO_FANS:
             pwm = self._fan_pwm.get(f["id"], 40)
             base_rpm = int(pwm * 18 + random.gauss(0, 15))
-            # Intel discrete GPU fans are read-only (DEC-121): the daemon never
-            # commands them, so report no last_commanded_pwm (matches reality).
-            read_only = f["source"] == "intel_gpu"
+            # Intel (DEC-121) + NVIDIA (DEC-204) discrete GPU fans are read-only:
+            # the daemon never commands them, so report no last_commanded_pwm.
+            # NVIDIA additionally exposes a firmware-reported *measured* duty %.
+            read_only = f["source"] in ("intel_gpu", "nvidia_gpu")
+            duty_pct = pwm if f["source"] == "nvidia_gpu" else None
             fans.append(
                 FanReading(
                     id=f["id"],
                     source=f["source"],
                     rpm=max(0, base_rpm),
                     last_commanded_pwm=None if read_only else pwm,
+                    duty_pct=duty_pct,
                     age_ms=random.randint(100, 800),
                 )
             )
@@ -376,6 +403,20 @@ class DemoService:
                     "Intel GPU fan control is managed autonomously by on-card firmware and is "
                     "not exposed to Linux userspace (the xe/i915 drivers register no PWM "
                     "interface). Temperature and fan RPM are read-only."
+                ),
+            ),
+            nvidia_gpu=NvidiaGpuDiagnosticsInfo(
+                pci_bdf="0000:01:00.0",
+                model_name="NVIDIA GeForce RTX 4080",
+                driver="nvidia",
+                driver_version="565.77",
+                fan_control_method="read_only",
+                fan_rpm_available=True,
+                fan_control_note=(
+                    "NVIDIA GPU fan control is not exposed to this daemon: the open nouveau "
+                    "driver's writable pwm1 is deliberately excluded for safety, and the "
+                    "proprietary NVML backend is read-only telemetry. Temperature and fan "
+                    "telemetry are read-only."
                 ),
             ),
             thermal_safety=ThermalSafetyInfo(

@@ -734,13 +734,16 @@ class DashboardPage(QWidget):
             self._sub_hwmon_label.setText("hwmon: not detected")
             self._sub_hwmon_label.setProperty("class", "PageSubtitle")
 
-        # Update GPU card title from detected GPU model. AMD takes priority
-        # when both vendors are present; otherwise fall back to Intel (DEC-121).
+        # Update GPU card title from detected GPU model. AMD takes priority when
+        # multiple vendors are present; otherwise fall back to Intel (DEC-121)
+        # then NVIDIA (DEC-204).
         gpu = caps.amd_gpu
         if gpu.present:
             self._gpu_card.set_title(f"{gpu.display_label} Temp")
         elif caps.intel_gpu.present:
             self._gpu_card.set_title(f"{caps.intel_gpu.display_label} Temp")
+        elif caps.nvidia_gpu.present:
+            self._gpu_card.set_title(f"{caps.nvidia_gpu.display_label} Temp")
 
         for lbl in (self._sub_openfan_label, self._sub_hwmon_label):
             repolish(lbl)

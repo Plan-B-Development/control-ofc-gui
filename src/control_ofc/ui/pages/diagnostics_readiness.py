@@ -403,6 +403,18 @@ def populate_hw_diagnostics(page: DiagnosticsPage, diag: HardwareDiagnosticsResu
         if ig.fan_control_note:
             lines.append(f"  {ig.fan_control_note}")
 
+    # DEC-204: NVIDIA discrete GPU diagnostics — read-only (nouveau + NVML).
+    if diag.nvidia_gpu:
+        ng = diag.nvidia_gpu
+        driver_bits = ng.driver
+        if ng.driver_version:
+            driver_bits = f"{ng.driver} {ng.driver_version}"
+        ng_name = ng.model_name or "NVIDIA D-GPU"
+        lines.append(f"NVIDIA GPU: {ng_name} (PCI {ng.pci_bdf}, driver {driver_bits})")
+        lines.append(f"  Fan control: {ng.fan_control_method} (read-only)")
+        if ng.fan_control_note:
+            lines.append(f"  {ng.fan_control_note}")
+
     if lines:
         page._gpu_diag_label.setText("\n".join(lines))
         page._gpu_diag_label.setVisible(True)

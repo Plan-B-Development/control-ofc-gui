@@ -270,6 +270,22 @@ References:
 - https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-driver-intel-xe-hwmon
 - https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-driver-intel-i915-hwmon
 
+### nouveau / nvml (NVIDIA discrete GPU driver)
+
+Read-only temperatures from NVIDIA **discrete** GPUs (DEC-204). Surfaced as
+sensor source `nvidia_gpu`, kind `gpu_temp`, and classified `gpu_package` at
+`high` confidence. Two `chip_name`s appear, one per driver world:
+
+| `chip_name` | Origin | Channels |
+|---|---|---|
+| `nouveau` | sysfs hwmon `name` file (open `nouveau` DRM driver) | `temp1` (GPU package); some cards also expose fan RPM |
+| `nvml` | a **daemon-synthetic** identifier for the proprietary NVML polling path (no sysfs hwmon node) | one temperature, plus a measured fan **duty %** (`duty_pct`) |
+
+All NVIDIA GPU temperatures are read-only. Fan control is unavailable through
+the daemon — `nouveau`'s writable `pwm1` is deliberately excluded and the NVML
+backend is telemetry-only. See `19_Hardware_Compatibility.md` § NVIDIA discrete
+GPU monitoring.
+
 ### nvme (NVMe drive controller)
 
 All readings classify as `disk_composite` at `high` confidence. NVMe drives

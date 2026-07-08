@@ -219,6 +219,10 @@ class AppState(QObject):
             if self.capabilities and self.capabilities.intel_gpu.present:
                 return f"{self.capabilities.intel_gpu.display_label} Fan"
             return "Intel D-GPU Fan"
+        if fan_id.startswith("nvidia_gpu:"):
+            if self.capabilities and self.capabilities.nvidia_gpu.present:
+                return f"{self.capabilities.nvidia_gpu.display_label} Fan"
+            return "NVIDIA D-GPU Fan"
         for h in self.hwmon_headers:
             if h.id == fan_id:
                 if h.label:

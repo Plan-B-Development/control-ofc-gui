@@ -73,6 +73,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "hwmon": "Motherboard",
     "amd_gpu": "AMD GPU",
     "intel_gpu": "Intel GPU",
+    "nvidia_gpu": "NVIDIA GPU",
 }
 _ROLE_LABELS: dict[str, str] = {
     CONTROL_ROLE_CPU_PUMP: "CPU / Pump",
@@ -151,7 +152,15 @@ class FanTile(QFrame):
         self._name_label.setText(vm.display_name)
         self._name_label.setToolTip(vm.fan_id)
         rpm = f"{vm.rpm} rpm" if vm.rpm is not None else _EM_DASH
-        pwm = f"{vm.pwm_pct}%" if vm.pwm_pct is not None else _EM_DASH
+        # Prefer the daemon-commanded PWM; for read-only sources with only a
+        # firmware-reported duty readback (NVIDIA/NVML, DEC-204) show that,
+        # labelled "duty" so it is never mistaken for a commanded value.
+        if vm.pwm_pct is not None:
+            pwm = f"{vm.pwm_pct}%"
+        elif vm.duty_pct is not None:
+            pwm = f"{vm.duty_pct}% duty"
+        else:
+            pwm = _EM_DASH
         src = _SOURCE_LABELS.get(vm.source, vm.source)
         self._metrics_label.setText(f"{rpm} · {pwm} · {src}")
         glyph, css = _STATE_PRESENTATION.get(vm.state, ("", ""))
@@ -168,7 +177,15 @@ class FanTile(QFrame):
         src = _SOURCE_LABELS.get(vm.source, vm.source)
         role = _ROLE_LABELS.get(vm.role, vm.role) if vm.role else _EM_DASH
         rpm = f"{vm.rpm} rpm" if vm.rpm is not None else _EM_DASH
-        pwm = f"{vm.pwm_pct}%" if vm.pwm_pct is not None else _EM_DASH
+        # Prefer the daemon-commanded PWM; for read-only sources with only a
+        # firmware-reported duty readback (NVIDIA/NVML, DEC-204) show that,
+        # labelled "duty" so it is never mistaken for a commanded value.
+        if vm.pwm_pct is not None:
+            pwm = f"{vm.pwm_pct}%"
+        elif vm.duty_pct is not None:
+            pwm = f"{vm.duty_pct}% duty"
+        else:
+            pwm = _EM_DASH
         lines = [
             f"Fan: {vm.display_name}",
             f"ID: {vm.fan_id}",

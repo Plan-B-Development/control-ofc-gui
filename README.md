@@ -18,6 +18,7 @@ Control-OFC controls fans in a few different places, and it helps to know which 
 - **Motherboard fan headers** — the fan connectors on your motherboard, reached through Linux's hwmon interface. Full control on most boards; some need a driver and/or one BIOS setting first. → [Understanding Motherboard Fan Control](manual/understanding-fan-control.md)
 - **AMD GPU fans** — the fan on a discrete AMD graphics card. Full control (RDNA3+ cards need a one-time kernel setting).
 - **Intel Arc GPU fans** — **monitor only.** Control-OFC shows their temperature and RPM, but Intel's firmware owns the fan and no Linux tool can set its speed.
+- **NVIDIA GPU fans** — **monitor only.** Control-OFC shows their temperature and RPM (via the open `nouveau` driver or NVIDIA's NVML), but the fan is not driven through this daemon.
 
 Just curious, or have no hardware yet? Explore the whole app with **demo mode** (`control-ofc-gui --demo`) — no daemon or hardware required.
 
@@ -26,7 +27,7 @@ Just curious, or have no hardware yet? Explore the whole app with **demo mode** 
 - **Dashboard** — real-time sensor temperatures, fan RPM, active profile, system health with per-sensor freshness indicators; a dual-axis telemetry chart with latest-value markers and a hover tooltip
 - **Controls** — profile switching, seven curve types (graph, stepped, linear, flat, trigger, plus mix/sync composites), fan roles, manual override; drag-resizable cards that snap to a shared grid (double-click the grip to reset)
 - **Multi-source fan control** — OpenFan Controller channels, motherboard hwmon headers (daemon-managed), and AMD discrete GPU fans (PMFW `fan_curve` / legacy `pwm1`)
-- **GPU monitoring** — AMD and Intel Arc discrete GPU temperatures and fan RPM (Intel Arc fans are firmware-managed and read-only)
+- **GPU monitoring** — AMD, Intel Arc, and NVIDIA discrete GPU temperatures and fan RPM (Intel Arc and NVIDIA fans are read-only — the GPU firmware owns them)
 - **Settings** — GUI preferences, daemon runtime config, full theme editor with contrast checking, import/export
 - **Diagnostics** — connection health, subsystem status, 10-column sensor table, Test PWM Control / Test GPU Fan Control, Restore GPU Fan to Automatic, hardware rescan, hardware-readiness reporting, support bundle export
 - **Fan Wizard** — guided fan identification and labelling

@@ -311,8 +311,30 @@ class DiagnosticsService(QObject):
         else:
             lines.append("  No Intel discrete GPU detected by daemon.")
 
-        # GPU fan state from fans list (AMD + Intel discrete fans)
-        gpu_fans = [f for f in self._state.fans if f.source in ("amd_gpu", "intel_gpu")]
+        # NVIDIA discrete GPU (DEC-204) — read-only monitoring (nouveau + NVML).
+        ngpu = caps.nvidia_gpu
+        lines.append("")
+        lines.append("NVIDIA GPU:")
+        lines.append(f"  Detected: {'Yes' if ngpu.present else 'No'}")
+        if ngpu.present:
+            lines.append(f"  Model: {ngpu.model_name or 'Unknown'}")
+            lines.append(f"  Display label: {ngpu.display_label}")
+            if ngpu.pci_id:
+                lines.append(f"  PCI ID: {ngpu.pci_id}")
+            if ngpu.driver:
+                lines.append(f"  Driver: {ngpu.driver}")
+            if ngpu.driver_version:
+                lines.append(f"  Driver version: {ngpu.driver_version}")
+            lines.append(f"  Fan control method: {ngpu.fan_control_method}")
+            lines.append(f"  Fan RPM available: {'Yes' if ngpu.fan_rpm_available else 'No'}")
+            lines.append("  Fan write supported: No (read-only telemetry, no write path)")
+        else:
+            lines.append("  No NVIDIA discrete GPU detected by daemon.")
+
+        # GPU fan state from fans list (AMD + Intel + NVIDIA discrete fans)
+        gpu_fans = [
+            f for f in self._state.fans if f.source in ("amd_gpu", "intel_gpu", "nvidia_gpu")
+        ]
         if gpu_fans:
             lines.append("")
             lines.append("GPU Fan State:")

@@ -438,6 +438,53 @@ confirmed.
 - [`drivers/gpu/drm/xe/xe_hwmon.c`](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/xe/xe_hwmon.c)
 - [`include/drm/intel/pciids.h`](https://github.com/torvalds/linux/blob/master/include/drm/intel/pciids.h)
 
+## NVIDIA discrete GPU monitoring
+
+NVIDIA **discrete** GPUs are supported for **read-only** monitoring only —
+temperatures and fan telemetry. Added in GUI v2.11.0 / daemon v2.8.0 (DEC-204).
+The NVML path is **experimental** (built and fake-tested; not yet verified
+against NVIDIA hardware).
+
+### Drivers
+
+NVIDIA GPUs live in one of two mutually-exclusive driver worlds:
+
+| Driver | Telemetry path | `driver` field | `chip_name` |
+|---|---|---|---|
+| `nouveau` (open) | Kernel DRM driver with an hwmon node (`temp1`, and on some cards fan RPM) | `"nouveau"` | `nouveau` |
+| Proprietary NVIDIA | No sysfs hwmon; temperature + measured fan **duty %** via the NVML userspace library (`libnvidia-ml.so.1`) | `"nvidia"` | `nvml` |
+
+The `driver` field on the capability/diagnostics is always the **kernel module
+name** (`"nouveau"`/`"nvidia"`), never the `nvml` library. The proprietary NVML
+backend is **opt-in and off by default** (`[detection] enable_nvidia_telemetry`
+in the daemon config) and needs the daemon to reach `/dev/nvidia*` (a packaged
+systemd drop-in grants this).
+
+### Supported (read-only)
+
+- **Temperature monitoring** — sensor source `"nvidia_gpu"`, kind `gpu_temp`
+  (chip name `nouveau` or `nvml`).
+- **Fan telemetry** — one fan entity per GPU as `nvidia_gpu:{pci_bdf}`. RPM when
+  the card exposes it; the NVML path additionally reports a **measured fan
+  duty %** (`duty_pct`, may exceed 100 — NVML expresses it as a % of the max
+  noise tolerance), distinct from a commanded PWM (there is none).
+
+### Not supported — fan control
+
+There is **no user-controllable fan interface** through this daemon. `nouveau`
+*does* expose a writable `pwm1`, but the daemon deliberately **excludes** it from
+discovery for safety (the GPU subsystem owns it, mirroring the AMD rule); the
+NVML backend is telemetry-only (no fan-write symbol is bound). The daemon always
+reports `fan_control_method` `"read_only"` (fan present) or `"none"`. NVIDIA GPU
+fans are never writable and never offered as controllable curve members; the
+GPU's **temperatures** remain usable as curve *sensors*. Fan **write** support is
+a deliberately deferred Phase 2, gated on NVIDIA hardware for validation.
+
+### Model names
+
+`model_name` and `driver_version` are available only from the proprietary NVML
+driver; the open `nouveau` leg shows the generic "NVIDIA D-GPU" label.
+
 ## Liquid cooling (AIO) — hwmon
 
 Phase 1 (DEC-156, daemon ≥ 1.18.0 / GUI ≥ 1.39.0) supports **hwmon-attached** liquid coolers.

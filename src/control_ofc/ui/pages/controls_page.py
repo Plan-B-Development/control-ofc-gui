@@ -734,7 +734,7 @@ class ControlsPage(QWidget):
         header_by_id = {h.id: h for h in self._state.hwmon_headers}
         seen: set[str] = set()
         for fan in self._state.fans:
-            if fan.source in ("amd_gpu", "intel_gpu"):
+            if fan.source in ("amd_gpu", "intel_gpu", "nvidia_gpu"):
                 continue
             if fan.source == "hwmon":
                 h = header_by_id.get(fan.id)
@@ -906,12 +906,13 @@ class ControlsPage(QWidget):
                     h = header_by_id.get(fan.id)
                     if h is not None and not h.is_writable:
                         continue
-                # DEC-121: Intel discrete GPU fans have no kernel write path
-                # (firmware-managed). Never offer them as controllable members.
-                # Unlike an AMD read-only GPU (a fixable ppfeaturemask state),
-                # this is permanent. The GPU's temperature sensors remain
-                # available as curve sensors.
-                if fan.source == "intel_gpu":
+                # DEC-121/DEC-204: Intel and NVIDIA discrete GPU fans have no
+                # kernel write path (firmware-managed / read-only telemetry).
+                # Never offer them as controllable members. Unlike an AMD
+                # read-only GPU (a fixable ppfeaturemask state), this is
+                # permanent. The GPU's temperature sensors remain available as
+                # curve sensors.
+                if fan.source in ("intel_gpu", "nvidia_gpu"):
                     continue
                 label = self._state.fan_display_name(fan.id)
                 if fan.source == "amd_gpu" and not gpu_writable:

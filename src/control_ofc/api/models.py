@@ -113,6 +113,31 @@ class IntelGpuCapability:
 
 
 @dataclass
+class NvidiaGpuCapability:
+    """NVIDIA discrete GPU capability (DEC-204).
+
+    Read-only, like the Intel Arc capability (DEC-121) — NVIDIA fan control is
+    never offered (nouveau's writable ``pwm1`` is excluded from discovery; the
+    NVML backend is telemetry-only), so there is deliberately no
+    ``fan_write_supported`` field. ``model_name``/``driver_version`` come only
+    from the proprietary NVML driver; the open ``nouveau`` leg yields the
+    generic ``"NVIDIA D-GPU"`` label. ``driver`` is the kernel module name
+    (``"nouveau"`` or ``"nvidia"``) — not the ``nvml`` userspace library. Older
+    daemons that predate the field yield ``present=False`` via parser tolerance.
+    """
+
+    present: bool = False
+    model_name: str | None = None
+    display_label: str = "NVIDIA D-GPU"
+    pci_id: str | None = None
+    driver: str | None = None  # "nouveau" | "nvidia" (kernel module)
+    driver_version: str | None = None
+    fan_control_method: str = "none"  # "read_only" | "none" — never writable
+    fan_rpm_available: bool = False
+    is_discrete: bool = False
+
+
+@dataclass
 class UnsupportedCapability:
     present: bool = False
     status: str = "unsupported"
@@ -180,6 +205,7 @@ class Capabilities:
     hwmon: HwmonCapability = field(default_factory=HwmonCapability)
     amd_gpu: AmdGpuCapability = field(default_factory=AmdGpuCapability)
     intel_gpu: IntelGpuCapability = field(default_factory=IntelGpuCapability)
+    nvidia_gpu: NvidiaGpuCapability = field(default_factory=NvidiaGpuCapability)
     aio_hwmon: AioHwmonCapability = field(default_factory=AioHwmonCapability)
     aio_usb: UnsupportedCapability = field(default_factory=UnsupportedCapability)
     features: FeatureFlags = field(default_factory=FeatureFlags)
@@ -366,6 +392,12 @@ class FanReading:
     source: str = ""
     rpm: int | None = None
     last_commanded_pwm: int | None = None
+    # DEC-204: firmware-reported *measured* current fan duty % (NVIDIA via NVML),
+    # distinct from ``last_commanded_pwm`` (daemon-commanded) — never conflate.
+    # May exceed 100 (NVML expresses it as a % of max noise tolerance). ``None``
+    # for sources without a duty readback (openfan/hwmon/amd/intel/nouveau) and
+    # on pre-DEC-204 daemons (absent from the wire).
+    duty_pct: int | None = None
     age_ms: int = 0
     stall_detected: bool | None = None
 
@@ -626,6 +658,27 @@ class IntelGpuDiagnosticsInfo:
 
 
 @dataclass
+class NvidiaGpuDiagnosticsInfo:
+    """NVIDIA discrete GPU diagnostics (DEC-204).
+
+    Read-only by nature — no fan write path (nouveau's ``pwm1`` is excluded from
+    discovery; the NVML backend is telemetry-only). ``fan_control_note`` is a
+    daemon-supplied, user-facing explanation of why fan control is unavailable.
+    ``driver`` is the kernel module name (``"nouveau"``/``"nvidia"``). No
+    ``pci_device_id``/``pci_revision`` — the daemon has no NVIDIA device-id →
+    model table. ``model_name``/``driver_version`` are NVML-only.
+    """
+
+    pci_bdf: str = ""
+    model_name: str | None = None
+    driver: str = ""  # "nouveau" | "nvidia" (kernel module)
+    driver_version: str | None = None
+    fan_control_method: str = "none"
+    fan_rpm_available: bool = False
+    fan_control_note: str = ""
+
+
+@dataclass
 class AmdPciDeviceInfo:
     """An AMD VGA-class PCI device and its bound driver (DEC-119).
 
@@ -758,6 +811,9 @@ class HardwareDiagnosticsResult:
     # DEC-121: Intel discrete GPU diagnostics. None when no Intel GPU present
     # or the daemon predates the field.
     intel_gpu: IntelGpuDiagnosticsInfo | None = None
+    # DEC-204: NVIDIA discrete GPU diagnostics. None when no NVIDIA GPU present
+    # or the daemon predates the field.
+    nvidia_gpu: NvidiaGpuDiagnosticsInfo | None = None
     thermal_safety: ThermalSafetyInfo = field(default_factory=ThermalSafetyInfo)
     kernel_modules: list[KernelModuleInfo] = field(default_factory=list)
     acpi_conflicts: list[AcpiConflictInfo] = field(default_factory=list)
@@ -1019,6 +1075,11 @@ def parse_capabilities(data: dict) -> Capabilities:
     intel_gpu = IntelGpuCapability(
         **_filter_fields(IntelGpuCapability, _coalesce_pci_bdf(devices.get("intel_gpu", {})))
     )
+    # DEC-204: NVIDIA discrete GPU capability (additive, read-only). Same
+    # tolerance as intel_gpu — absent key / old daemon → present=False.
+    nvidia_gpu = NvidiaGpuCapability(
+        **_filter_fields(NvidiaGpuCapability, _coalesce_pci_bdf(devices.get("nvidia_gpu", {})))
+    )
 
     return Capabilities(
         api_version=data.get("api_version", 1),
@@ -1028,6 +1089,7 @@ def parse_capabilities(data: dict) -> Capabilities:
         hwmon=HwmonCapability(**_filter_fields(HwmonCapability, devices.get("hwmon", {}))),
         amd_gpu=amd_gpu,
         intel_gpu=intel_gpu,
+        nvidia_gpu=nvidia_gpu,
         aio_hwmon=AioHwmonCapability(
             **_filter_fields(AioHwmonCapability, devices.get("aio_hwmon", {}))
         ),
@@ -1248,6 +1310,14 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
             **_filter_fields(IntelGpuDiagnosticsInfo, _coalesce_pci_bdf(intel_gpu_raw))
         )
 
+    # DEC-204: NVIDIA discrete GPU diagnostics (additive, read-only).
+    nvidia_gpu_raw = data.get("nvidia_gpu")
+    nvidia_gpu = None
+    if isinstance(nvidia_gpu_raw, dict) and nvidia_gpu_raw:
+        nvidia_gpu = NvidiaGpuDiagnosticsInfo(
+            **_filter_fields(NvidiaGpuDiagnosticsInfo, _coalesce_pci_bdf(nvidia_gpu_raw))
+        )
+
     thermal_raw = data.get("thermal_safety", {})
     thermal = ThermalSafetyInfo(**_filter_fields(ThermalSafetyInfo, thermal_raw))
 
@@ -1289,6 +1359,7 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         hwmon=hwmon,
         gpu=gpu,
         intel_gpu=intel_gpu,
+        nvidia_gpu=nvidia_gpu,
         thermal_safety=thermal,
         kernel_modules=[
             KernelModuleInfo(**_filter_fields(KernelModuleInfo, m))

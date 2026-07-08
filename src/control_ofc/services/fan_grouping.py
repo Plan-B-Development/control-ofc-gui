@@ -66,7 +66,7 @@ _STATE_RANK: dict[FanState, int] = {
     FanState.OFFLINE: 5,
 }
 
-_GPU_SOURCES = ("amd_gpu", "intel_gpu")
+_GPU_SOURCES = ("amd_gpu", "intel_gpu", "nvidia_gpu")
 
 # Role-bucket labels (fallback when a fan is unzoned but a profile classifies it).
 _ROLE_LABELS: dict[str, str] = {
@@ -81,6 +81,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "hwmon": "Motherboard (hwmon)",
     "amd_gpu": "AMD GPU",
     "intel_gpu": "Intel GPU",
+    "nvidia_gpu": "NVIDIA GPU",
 }
 
 # Fixed display order for the fallback (non-user-zone) buckets. User zones always
@@ -93,6 +94,7 @@ _FALLBACK_ORDER = [
     "Motherboard (hwmon)",
     "AMD GPU",
     "Intel GPU",
+    "NVIDIA GPU",
 ]
 
 
@@ -106,6 +108,10 @@ class FanTileVM:
     source: str
     rpm: int | None
     pwm_pct: int | None  # from FanReading.last_commanded_pwm (already a percent)
+    # DEC-204: firmware-reported *measured* duty % (NVIDIA via NVML), distinct
+    # from the daemon-commanded ``pwm_pct``. ``None`` for sources without a duty
+    # readback. May exceed 100 (NVML % of max noise tolerance).
+    duty_pct: int | None
     state: FanState
     age_ms: int | None
     role: str | None  # infer_member_role result, or None when no profile/member
@@ -253,6 +259,7 @@ def build_fan_groups(
             source=fan.source,
             rpm=fan.rpm,
             pwm_pct=fan.last_commanded_pwm,
+            duty_pct=fan.duty_pct,
             state=state,
             age_ms=fan.age_ms,
             role=role,
@@ -271,6 +278,7 @@ def build_fan_groups(
             source=source,
             rpm=None,
             pwm_pct=None,
+            duty_pct=None,
             state=FanState.OFFLINE,
             age_ms=None,
             role=role,

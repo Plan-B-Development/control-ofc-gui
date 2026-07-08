@@ -282,6 +282,14 @@ def _fan_control_method(fan: FanReading, state: AppState | None) -> str:
             method = state.capabilities.intel_gpu.fan_control_method
             return {"read_only": "read-only", "none": "no fan control"}.get(method, "read-only")
         return "read-only"
+    if fan.source == "nvidia_gpu":
+        # NVIDIA discrete GPU fans are read-only (nouveau's pwm1 is excluded for
+        # safety; the NVML backend is telemetry-only, DEC-204). The source is
+        # authoritative here.
+        if state and state.capabilities and state.capabilities.nvidia_gpu.present:
+            method = state.capabilities.nvidia_gpu.fan_control_method
+            return {"read_only": "read-only", "none": "no fan control"}.get(method, "read-only")
+        return "read-only"
     if fan.source == "hwmon":
         if not state:
             return "unknown"
@@ -645,6 +653,11 @@ class DiagnosticsPage(QWidget):
             "Intel GPU: \u2014", "Diagnostics_Label_intelGpu"
         )
         device_layout.addWidget(self._intel_gpu_label)
+
+        self._nvidia_gpu_label = _transparent_label(
+            "NVIDIA GPU: \u2014", "Diagnostics_Label_nvidiaGpu"
+        )
+        device_layout.addWidget(self._nvidia_gpu_label)
 
         # DEC-156: liquid cooling (AIO) \u2014 hwmon-only, honest about control.
         self._aio_label = _transparent_label("Liquid cooling: \u2014", "Diagnostics_Label_aio")
@@ -1566,6 +1579,20 @@ class DiagnosticsPage(QWidget):
         else:
             self._intel_gpu_label.setText("Intel GPU: Not detected")
 
+        # NVIDIA discrete GPU (DEC-204) — read-only telemetry (nouveau + NVML).
+        ngpu = caps.nvidia_gpu
+        if ngpu.present:
+            ngpu_parts = [ngpu.display_label]
+            if ngpu.pci_id:
+                ngpu_parts.append(f"PCI {ngpu.pci_id}")
+            ngpu_fan = {"read_only": "read-only", "none": "no fan control"}.get(
+                ngpu.fan_control_method, "read-only"
+            )
+            ngpu_parts.append(f"fan: {ngpu_fan}")
+            self._nvidia_gpu_label.setText(f"NVIDIA GPU: {', '.join(ngpu_parts)}")
+        else:
+            self._nvidia_gpu_label.setText("NVIDIA GPU: Not detected")
+
         # DEC-156: liquid cooling (AIO) — hwmon-only and honest about
         # controllability. USB-only coolers (liquidctl/USB-HID) are out of scope:
         # the daemon does not probe USB, so they simply read as not detected —
@@ -2387,6 +2414,17 @@ class DiagnosticsPage(QWidget):
                     if igpu.pci_id:
                         parts.append(f"PCI: {igpu.pci_id}")
                     parts.append("Fan: read-only (firmware-managed)")
+            elif fan.source == "nvidia_gpu":
+                caps = self._state.capabilities
+                if caps and caps.nvidia_gpu.present:
+                    ngpu = caps.nvidia_gpu
+                    parts.append(f"GPU: {ngpu.display_label}")
+                    if ngpu.pci_id:
+                        parts.append(f"PCI: {ngpu.pci_id}")
+                    ngpu_fan = {"read_only": "read-only", "none": "no fan control"}.get(
+                        ngpu.fan_control_method, "read-only"
+                    )
+                    parts.append(f"Fan: {ngpu_fan}")
         return "\n".join(parts)
 
     def _format_rpm_cell(self, fan, presence: FanPresence) -> str:

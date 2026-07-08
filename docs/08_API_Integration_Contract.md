@@ -89,6 +89,17 @@ Notable fields:
   There is deliberately **no** `fan_write_supported`/PMFW/overdrive/zero-RPM/
   kernel-warning field — Intel GPU fans are firmware-managed and never writable.
   Omitted/`present:false` on daemons that predate the field (parser-tolerant).
+- `devices.nvidia_gpu` (DEC-204, daemon ≥ 2.8.0) describes an NVIDIA **discrete**
+  GPU (the open `nouveau` driver or the opt-in proprietary NVML backend).
+  Read-only monitoring: fields are `present`, `model_name`, `display_label`,
+  `pci_id`/`pci_bdf`, `driver` (the **kernel module** — `"nouveau"` or
+  `"nvidia"`, *not* the `nvml` userspace library), `driver_version` (NVML only),
+  `fan_control_method` (`"read_only"`/`"none"`), `fan_rpm_available`, and
+  `is_discrete`. There is deliberately **no** `fan_write_supported`/`pci_device_id`
+  field — NVIDIA fans are never writable and the daemon has no NVIDIA
+  device-id → model table. `model_name`/`driver_version` are NVML-only (the
+  nouveau leg yields the generic `"NVIDIA D-GPU"` label). Omitted/`present:false`
+  on daemons that predate the field (parser-tolerant).
 - `devices.aio_hwmon` (DEC-156, daemon ≥ 1.18.0) describes hwmon-attached liquid
   cooling (AIO). Dynamic object: `present` (a liquid cooler or coolant sensor is
   detected), `status` (`"supported"` = a writable AIO pump/fan header exists;
@@ -236,12 +247,12 @@ Expected fields:
   layers its own richer `sensor_knowledge` classification on top.
 - label
 - value_c
-- source — `"hwmon"`, `"amd_gpu"`, or `"intel_gpu"` (DEC-121; Intel discrete GPU temps via the `xe`/`i915` hwmon node, kind `gpu_temp`).
+- source — `"hwmon"`, `"amd_gpu"`, `"intel_gpu"` (DEC-121; Intel discrete GPU temps via the `xe`/`i915` hwmon node, kind `gpu_temp`), or `"nvidia_gpu"` (DEC-204; NVIDIA discrete GPU temps via the `nouveau` hwmon node or the NVML backend, kind `gpu_temp`).
 - age_ms
 - rate_c_per_s (optional, float) — smoothed temperature change rate in °C/s; omitted (`skip_serializing_if`) until computable
 - session_min_c (optional, float) — lowest value seen for this sensor since daemon start; omitted until set
 - session_max_c (optional, float) — highest value seen for this sensor since daemon start; omitted until set
-- chip_name — hwmon driver name from sysfs (e.g. `k10temp`, `nct6798`, `it8689`). Always present; `"amdgpu"` for AMD GPU sources and `"xe"`/`"i915"` for Intel GPU sources.
+- chip_name — hwmon driver name from sysfs (e.g. `k10temp`, `nct6798`, `it8689`). Always present; `"amdgpu"` for AMD GPU sources, `"xe"`/`"i915"` for Intel GPU sources, and `"nouveau"` (open) or `"nvml"` (proprietary) for NVIDIA GPU sources.
 - temp_type (optional, integer) — thermistor type code from `tempN_type` sysfs. Values: 3 = diode, 4 = thermistor, 5 = AMD TSI, 6 = Intel PECI. Absent when the driver does not expose type information.
 - thresholds (optional object) — DEC-117 curated subset of hwmon temperature-threshold sysfs attributes. The daemon reads these once at discovery and re-reads them on `POST /hwmon/rescan`. Implausible values (<-50 °C, >200 °C) and the `it87`-family `tempN_max == 0` placeholder are filtered at the daemon side. The whole object is omitted when no attribute was readable for this sensor (k10temp typically exposes none). When present, every sub-field is also omitted-when-None so the on-wire shape is the minimal honest set. Sub-fields (all optional):
   - `max_c`, `min_c` — typical upper/lower warning thresholds (°C)
@@ -273,12 +284,13 @@ Expected fields:
 - source
 - rpm (optional, omitted when unavailable)
 - last_commanded_pwm (optional, omitted until first write)
+- duty_pct (optional; DEC-204) — firmware-**measured** current fan duty %, present only for sources with a duty readback (NVIDIA via NVML). Distinct from `last_commanded_pwm` (commanded) — never conflate. May exceed 100 (NVML expresses it as a % of max noise tolerance). Omitted when absent (and on pre-DEC-204 daemons).
 - age_ms
 - stall_detected (optional bool) — daemon-asserted; set when commanded PWM is above the daemon's `STALL_PWM_THRESHOLD` (20%, i.e. ≥21%) but measured RPM is zero. Evaluated per-tick from the latest snapshot (no multi-cycle counter); `null`/omitted when RPM is not polled. Surfaced by the GUI as an `error`-level warning.
 
 Note: fans do **not** include `label` or `kind` from the daemon. Display names come from: user alias (GUI-owned) > hwmon header label (for hwmon fans) > fan id.
 
-Fan `source` is `"openfan"`, `"hwmon"`, `"amd_gpu"`, or `"intel_gpu"`. GPU fan IDs embed the PCI BDF: `amd_gpu:{bdf}` and `intel_gpu:{bdf}`. Intel GPU fans (DEC-121) are **read-only** — `rpm` is reported (from `fan1_input`) but `last_commanded_pwm` is always absent; the GUI must never issue a write to an `intel_gpu:` target.
+Fan `source` is `"openfan"`, `"hwmon"`, `"amd_gpu"`, `"intel_gpu"`, or `"nvidia_gpu"`. GPU fan IDs embed the PCI BDF: `amd_gpu:{bdf}`, `intel_gpu:{bdf}`, and `nvidia_gpu:{bdf}`. Intel (DEC-121) and NVIDIA (DEC-204) GPU fans are **read-only** — `rpm` is reported when available (and NVIDIA additionally reports a measured `duty_pct`), but `last_commanded_pwm` is always absent; the GUI must never issue a write to an `intel_gpu:`/`nvidia_gpu:` target.
 
 ### GET /hwmon/headers
 Use to discover:
@@ -431,6 +443,12 @@ and the GUI parser defaults safely:
   `fan_rpm_available`, and `fan_control_note` (a daemon-supplied, display-ready
   explanation of why fan control is unavailable). `null` when no Intel GPU is
   present or the daemon predates the field.
+- `nvidia_gpu: object | null` (DEC-204, daemon ≥ 2.8.0) — NVIDIA discrete GPU
+  diagnostics: `pci_bdf`/`pci_id`, `model_name`, `driver` (kernel module —
+  `"nouveau"`/`"nvidia"`), `driver_version` (NVML only), `fan_control_method`
+  (`"read_only"`/`"none"`), `fan_rpm_available`, and `fan_control_note`. No
+  `pci_device_id`/`pci_revision`. `null` when no NVIDIA GPU is present or the
+  daemon predates the field.
 
 > **Note — `GET /events` (SSE) removed.** The daemon exposed a Server-Sent Events
 > stream that no client ever consumed (the GUI is poll-only; DEC-164 deferred SSE
@@ -874,6 +892,21 @@ According to the provided daemon notes:
 - `fan_control_method` is always `"read_only"` (fan present) or `"none"`.
 - The GUI must not offer Intel GPU fans as controllable curve members and must
   never write to an `intel_gpu:` target; the GPU's temperatures remain usable as
+  curve *sensors*.
+
+### NVIDIA GPU (read-only, DEC-204)
+- **No write path exists (by design).** The open `nouveau` driver *does* expose
+  a writable `pwm1`, but the daemon deliberately excludes it from hwmon discovery
+  for safety; the opt-in proprietary NVML backend is telemetry-only. NVIDIA fans
+  are never written.
+- `fan_control_method` is always `"read_only"` (fan present) or `"none"`.
+- Temps arrive with `source: "nvidia_gpu"`, kind `gpu_temp`, `chip_name`
+  `"nouveau"` (open) or `"nvml"` (proprietary); fans as `nvidia_gpu:{bdf}` with a
+  measured `duty_pct` (may exceed 100) but no `last_commanded_pwm`.
+- The `driver` field on the capability/diagnostics is the **kernel module name**
+  (`"nouveau"`/`"nvidia"`), not the `nvml` library.
+- The GUI must not offer NVIDIA GPU fans as controllable curve members and must
+  never write to a `nvidia_gpu:` target; the GPU's temperatures remain usable as
   curve *sensors*.
 
 The GUI must reflect these constraints honestly.
