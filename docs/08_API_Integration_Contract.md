@@ -284,7 +284,7 @@ Expected fields:
 - source
 - rpm (optional, omitted when unavailable)
 - last_commanded_pwm (optional, omitted until first write)
-- duty_pct (optional; DEC-204) — firmware-**measured** current fan duty %, present only for sources with a duty readback (NVIDIA via NVML). Distinct from `last_commanded_pwm` (commanded) — never conflate. May exceed 100 (NVML expresses it as a % of max noise tolerance). Omitted when absent (and on pre-DEC-204 daemons).
+- duty_pct (optional; DEC-204) — firmware-**measured** current fan duty %, present only for sources with a duty readback (NVIDIA via NVML). Distinct from `last_commanded_pwm` (commanded) — never conflate. May exceed 100 (NVML expresses it as a % of max noise tolerance), but it is a `u8` on the wire (`responses.rs`) and so saturates at **255** — a larger reading is not representable. Omitted when absent (and on pre-DEC-204 daemons).
 - age_ms
 - stall_detected (optional bool) — daemon-asserted; set when commanded PWM is above the daemon's `STALL_PWM_THRESHOLD` (20%, i.e. ≥21%) but measured RPM is zero. Evaluated per-tick from the latest snapshot (no multi-cycle counter); `null`/omitted when RPM is not polled. Surfaced by the GUI as an `error`-level warning.
 
@@ -987,6 +987,7 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
 
 - `POST /config/profile-search-dirs` — add directories to the daemon's profile search path (persisted to `runtime.toml` per ADR-002)
 - `POST /config/startup-delay` — set the daemon startup delay in seconds (persisted to `runtime.toml`, takes effect on next restart). The GUI pushes this best-effort on **both** Settings → Save and Settings → Import; a `DaemonError` is logged and surfaced in the save status, never fatal (Settings page wires the daemon client as of the 2026-06 audit, F2/F11).
+- `POST /config/preferred-cpu-sensor` / `POST /config/preferred-mb-sensor` — persist the user's preferred CPU / motherboard temperature sensor by stable id (body `{"sensor_id": string | null}`; `null` clears the preference). The id is validated against the live sensor set — an unknown id (or a missing key) is `400 validation_error`; a persistence failure is `503 persistence_failed`. Advisory only (thermal safety still keys off `kind`) — reflected in `/inventory/hwmon` `default_cpu` (`source: "user"`) + `preferences` and the readiness `selected_cpu_sensor_missing` item. Daemon ≥ 2.6.0 (DEC-200); older daemons answer `404` and the GUI hides the feature for the session. The GUI offers these from the Diagnostics ▸ Sensors context menu and Settings.
 
 ## GUI startup behaviour
 

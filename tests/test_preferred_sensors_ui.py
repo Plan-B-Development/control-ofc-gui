@@ -132,3 +132,29 @@ def test_context_menu_404_hides_feature(qtbot):
     page = _diag_page(qtbot, client)
     page._set_preferred_sensor_from_menu("x", "cpu")
     assert page._preferred_sensor_unsupported is True
+
+
+def test_context_menu_mb_404_hides_feature(qtbot):
+    # The motherboard leg must gate the feature on 404 exactly like the CPU leg.
+    class _OldClient(_StubClient):
+        def set_preferred_mb_sensor(self, sensor_id):
+            raise DaemonError(code="not_found", message="no route", status=404)
+
+    client = _OldClient()
+    page = _diag_page(qtbot, client)
+    page._set_preferred_sensor_from_menu("x", "mb")
+    assert page._preferred_sensor_unsupported is True
+
+
+def test_context_menu_non_404_error_keeps_feature(qtbot):
+    # A non-404 error is a transient failure, NOT a version gap: the feature must
+    # stay enabled and the error surface in the status label.
+    class _FlakyClient(_StubClient):
+        def set_preferred_cpu_sensor(self, sensor_id):
+            raise DaemonError(code="internal_error", message="disk full", status=500)
+
+    client = _FlakyClient()
+    page = _diag_page(qtbot, client)
+    page._set_preferred_sensor_from_menu("x", "cpu")
+    assert page._preferred_sensor_unsupported is False
+    assert "Could not set preferred sensor" in page._status_label.text()

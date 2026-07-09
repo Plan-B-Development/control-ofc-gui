@@ -310,6 +310,32 @@ class TestDutyPct:
         # The same fallback drives the detail text — exercise both paths.
         assert "55% duty" in tile.detail_text()
 
+    def test_tile_shows_zero_duty(self, qtbot):
+        # Guard the 0-vs-None falsy trap: duty_pct=0 must render "0% duty", not be
+        # dropped as if absent (FanTile gates on `is not None`, not truthiness). A
+        # genuinely-stopped NVIDIA fan reads 0 and must still show a duty tile.
+        from control_ofc.services.fan_grouping import FanState, FanTileVM
+
+        vm = FanTileVM(
+            fan_id="nvidia_gpu:0000:01:00.0",
+            display_name="RTX 4080 Fan",
+            source="nvidia_gpu",
+            rpm=0,
+            pwm_pct=None,
+            duty_pct=0,
+            state=FanState.NORMAL,
+            age_ms=100,
+            role=None,
+            controlled_by_daemon=False,
+            curve_source=None,
+        )
+        tile = FanTile(vm)
+        qtbot.addWidget(tile)
+        metrics = tile._metrics_label.text()
+        assert "0% duty" in metrics
+        assert "NVIDIA GPU" in metrics
+        assert "0% duty" in tile.detail_text()
+
     def test_commanded_pwm_wins_over_duty(self, qtbot):
         # Precedence contract: when both are present, the daemon-commanded PWM
         # is shown (not the measured duty) — a hypothetical future source with

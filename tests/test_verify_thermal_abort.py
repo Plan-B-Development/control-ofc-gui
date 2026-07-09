@@ -50,3 +50,34 @@ def test_gpu_verify_thermal_abort_is_soft(qapp):
     seen = _capture(worker)
     worker.do_verify("0000:03:00.0")
     assert seen == [("unavailable", "too hot")]
+
+
+def test_gpu_verify_other_error_is_hard(qapp):
+    # The GPU analog of the hwmon "other error is hard" case: a non-404,
+    # non-thermal DaemonError must stay a hard 'error' (prefixed as a failure),
+    # not be softened like a thermal_abort.
+    worker = _GpuVerifyWorker("/tmp/x.sock")
+    client = MagicMock()
+    client.verify_gpu_fan.side_effect = DaemonError(
+        code="hardware_unavailable", message="nope", status=503
+    )
+    worker._ensure_client = MagicMock(return_value=client)
+    seen = _capture(worker)
+    worker.do_verify("0000:03:00.0")
+    assert seen == [("error", "nope")]
+
+
+def test_gpu_verify_404_is_unsupported(qapp):
+    # An old daemon predating the GPU-verify route answers 404 — the worker must
+    # map that to 'unsupported' (the page then hides the control for the session),
+    # NOT a hard 'error'. Complements the page-side test in test_gpu_verify.py,
+    # which covers what the page does once it receives 'unsupported'.
+    worker = _GpuVerifyWorker("/tmp/x.sock")
+    client = MagicMock()
+    client.verify_gpu_fan.side_effect = DaemonError(
+        code="not_found", message="no route", status=404
+    )
+    worker._ensure_client = MagicMock(return_value=client)
+    seen = _capture(worker)
+    worker.do_verify("0000:03:00.0")
+    assert seen == [("unsupported", "This daemon version does not support GPU fan verification.")]

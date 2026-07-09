@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.11.1] — 2026-07-09
+
+Documentation + test hardening from the 2026-07-08 audit (Wave 1). No behaviour
+change; pairs with `control-ofc-daemon` ≥ v2.8.1.
+
+### Documentation
+- `docs/08_API_Integration_Contract.md`: noted that the daemon caps the measured
+  `duty_pct` at 255 (it is a `u8` on the wire); documented `POST
+  /config/preferred-cpu-sensor` / `POST /config/preferred-mb-sensor` in the
+  Config-management section (body shape, unknown-id validation, 404
+  version-gating).
+
+### Tests
+- Added `test_gpu_verify_other_error_is_hard` — a non-404/non-thermal GPU verify
+  error stays a hard failure, matching the hwmon leg.
+- Added preferred-sensor context-menu cases: the motherboard 404 also hides the
+  feature, and a non-404 error keeps it enabled while surfacing the message.
+- Added a `duty_pct=0` fan-tile test guarding the 0-vs-None rendering trap.
+
 ## [2.11.0] — 2026-07-08
 
 NVIDIA GPU support — GUI consumption (DEC-204, P1e). Consumes the daemon's
