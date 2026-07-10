@@ -209,3 +209,61 @@ class TestRegistrationRunsInWorkerPollCycle:
             worker.poll()
 
         assert client.update_profile_search_dirs.call_count == 2
+
+
+class TestSettingsPageSearchDirError:
+    """The Settings page must SURFACE a daemon refusal of a search-dir change
+    (e.g. the DEC-205 home-confinement rejection) to the user, not swallow it.
+
+    This is the interactive path (user picks a new profiles directory), distinct
+    from the worker auto-registration above which tolerates errors silently.
+    """
+
+    def test_confinement_error_surfaces_in_dialog(
+        self, qapp, app_state, settings_service, monkeypatch, tmp_path
+    ):
+        from PySide6.QtWidgets import QLabel, QMessageBox
+
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        confinement_msg = (
+            "profile search directory must be within your home directory (/home/u): /tmp"
+        )
+
+        class _RefusingClient:
+            socket_path = "/tmp/x.sock"
+
+            def update_profile_search_dirs(self, add):
+                raise DaemonError(
+                    code="validation_error",
+                    message=confinement_msg,
+                    retryable=False,
+                    source="validation",
+                    status=400,
+                )
+
+        page = SettingsPage(
+            state=app_state, settings_service=settings_service, client=_RefusingClient()
+        )
+
+        # Re-patch the conftest-neutralized modal to record what the user sees.
+        # (The autouse fixture makes warning() a no-op; a per-test re-patch wins.)
+        captured: list[tuple] = []
+        monkeypatch.setattr(
+            QMessageBox,
+            "warning",
+            lambda parent, title, text, *a, **k: (
+                captured.append((title, text)) or QMessageBox.StandardButton.Ok
+            ),
+            raising=False,
+        )
+
+        label = QLabel()
+        old_dir = tmp_path / "nonexistent-old"  # absent → no file-migration branch
+        page._handle_dir_change("profiles", label, "/tmp/new-profiles", old_dir)
+
+        assert captured, "the daemon refusal must surface as a warning dialog"
+        _title, text = captured[-1]
+        assert "Failed to update daemon" in text
+        # The daemon's own message must reach the user verbatim.
+        assert "within your home directory" in text
