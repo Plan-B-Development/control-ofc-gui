@@ -46,7 +46,7 @@ Control-OFC ships with three default profiles (Quiet, Balanced, Performance) tha
 
 ### Profile Storage
 
-The daemon is the store of record for profiles — it holds the active profile and evaluates it. The GUI keeps a local draft cache of profiles as individual JSON files in your profiles directory (default: `~/.config/control-ofc/profiles/`) so you can author and edit them, including while disconnected; drafts reconcile with the daemon the next time the GUI connects.
+The daemon is the store of record for profiles — it holds the active profile and evaluates it. The GUI keeps a local draft cache of profiles as individual JSON files in your profiles directory (default: `~/.config/control-ofc/profiles/`) so you can author and edit them, including while disconnected. There is no background auto-sync: an offline draft is published only when you explicitly re-save it after the GUI reconnects, not automatically on connect.
 
 ## Fan Roles
 
@@ -90,7 +90,7 @@ The **Minimum** floor is chosen automatically from the role inferred for the fan
 - **20%** for chassis / OpenFan members
 - **0%** for GPU members — and in a *mixed* group, the GPU member idles to its own 0% floor in the same cycle the chassis/CPU members hold their floor (the GPU's firmware owns its real ~15% minimum)
 
-The daemon does **not** enforce these per-role floors itself; they are GUI-owned policy baked into the profile.
+These per-role floors are GUI-owned policy baked into the profile. The daemon additionally enforces the **pump/CPU 30% floor** as a hard backstop (DEC-162): it rejects a profile whose pump/CPU control declares a `minimum_pct` below 30% at validate time, and re-applies the 30% floor on every evaluation tick regardless of the declared value. The 20% chassis / 0% GPU floors remain GUI policy — the daemon does not enforce those.
 
 ## Curves
 

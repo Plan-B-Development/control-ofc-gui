@@ -354,7 +354,10 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "Some Gigabyte boards have a separate fan-control chip — Linux can read "
             "RPMs but not change speeds. This is a hardware limitation.",
         ],
-        notes="ITE IT8689E — found on Gigabyte Z390/Z490/Z690/B650/X670E boards.",
+        notes=(
+            "ITE IT8689E — found on Gigabyte Z690/Z790 AORUS (Intel LGA1700) "
+            "and X670/B650/X870 AORUS (AM5) boards."
+        ),
     ),
     ChipGuidance(
         chip_prefix="it8696",
@@ -1008,8 +1011,9 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         summary="MSI AM5 800-series + nct6687d — msi_alt1 auto-allowlist",
         details=[
             "Current nct6687d builds ship an auto-enabled board allowlist covering "
-            "33 MSI AM5 boards across B840 / B850 / X870 / Z890 (see "
-            "Fred78290/nct6687d source: `nct6687.c::nct6687_msi_alt_boards[]`). "
+            "a growing list of MSI AM5 boards across B840 / B850 / X870 / Z890 (see "
+            "Fred78290/nct6687d source: `nct6687.c::nct6687_msi_alt_boards[]` — the "
+            "authoritative, continuously-updated list; don't trust a point-in-time count). "
             "On listed boards the driver enables the alt1 register layout "
             "automatically — no module parameter required.",
             "If your MSI X870/B850 board is NOT on the allowlist and "

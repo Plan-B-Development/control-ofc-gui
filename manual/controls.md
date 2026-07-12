@@ -27,7 +27,7 @@ The top bar manages profiles:
 
 Next to Save, a status chip shows **"Unsaved changes"** whenever you have modified the profile without saving, and confirms afterwards with "Settings saved" / "Profile activated". Saving the active profile re-applies it and confirms with "Saved & reapplied to daemon" (or "Saved — reapply failed (see log)" if the daemon rejects the re-apply — your local edit is still kept). Activation failures are shown in red ("Activation failed: …") — the GUI never falsely marks a profile active.
 
-The daemon is the store of record for profiles; the GUI keeps a local draft cache so you can author and edit while disconnected. A profile saved while the daemon is unreachable is held as a **draft** and reconciled with the daemon automatically the next time the GUI connects. **Activate** is disabled while disconnected — you cannot make a profile active until the daemon can receive it.
+The daemon is the store of record for profiles; the GUI keeps a local draft cache so you can author and edit while disconnected. A profile saved while the daemon is unreachable is held as a **draft**; there is no background auto-sync — open it and **Save** again once the daemon reconnects to publish it. **Activate** is disabled while disconnected — you cannot make a profile active until the daemon can receive it.
 
 Deleting a profile asks for confirmation and cannot be undone; deleting the currently active profile deactivates it on the daemon first.
 

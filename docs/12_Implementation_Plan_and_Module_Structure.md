@@ -86,7 +86,7 @@ Settings page is functional and split clearly between GUI and daemon runtime opt
 Build:
 - health overview
 - sensor/fan health tables
-- lease status
+- ~~lease status~~ (removed at 2.0.0 — DEC-165; the daemon self-leases internally, no GUI-surfaced lease diagnostic — see the Phase 5 supersedure note)
 - hardware readiness report
 - recent logs / event log
 - support bundle export

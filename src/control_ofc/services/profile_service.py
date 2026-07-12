@@ -323,10 +323,12 @@ class ControlMember:
 # ---------------------------------------------------------------------------
 #
 # Pumps and CPU headers stall below ~30% PWM; chassis/case fans are unsafe
-# below ~20%. The daemon enforces only the 105°C thermal-emergency rule —
-# per-fan stall protection is GUI policy via ``LogicalControl.minimum_pct``
-# (see DEC-095). Roles are inferred from member labels because the daemon's
-# header label is the only authoritative classifier we have.
+# below ~20%. These per-role floors are GUI policy via
+# ``LogicalControl.minimum_pct`` (see DEC-095); the daemon independently
+# enforces the pump/CPU 30% floor as a hard backstop at both validate time and
+# every eval tick (DEC-162), plus the 105°C thermal-emergency rule. The 20%
+# chassis / 0% GPU floors stay GUI-only. Roles are inferred from member labels
+# because the daemon's header label is the only authoritative classifier we have.
 
 CONTROL_ROLE_GPU = "gpu"
 CONTROL_ROLE_CPU_PUMP = "cpu_or_pump"

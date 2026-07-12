@@ -76,7 +76,7 @@ writes until resolved.
 | IT8665E | `it87` | **No** | `it87-dkms-git` (AUR) — **needs `mmio=off` on 2026-03+ builds** ([issue #106](https://github.com/frankcrawford/it87/issues/106)) |
 | IT8686E | `it87` | **No** | `it87-dkms-git` (AUR) |
 | IT8688E | `it87` | **No** | `it87-dkms-git` (AUR) |
-| IT8689E | `it87` | **Yes (control) since 7.1** — six PWM + `FEAT_FANCTL_ONOFF` (commit `66b8eaf`, merged 2026-03-31; 7.1 released 2026-06-14) | `it87-dkms-git` (AUR) still recommended pre-7.1 (6.12 / 6.18 LTS) and for board Rev 1 quirks |
+| IT8689E | `it87` | **Yes (control) since 7.1** — six PWM + `FEAT_FANCTL_ONOFF` (commit `66b8eaf`, merged 2026-03-31; 7.1 released 2026-06-14) | `it87-dkms-git` (AUR) still recommended pre-7.1 (6.12 / 6.18 LTS) and for board Rev 1 quirks; the GUI still labels it out-of-tree for this reason (DEC-144) |
 | IT8696E | `it87` | **No** | `it87-dkms-git` (AUR) — primary on AM5 800-series Gigabyte boards |
 | IT87952E | `it87` | **Yes since 6.4 for enumeration** (commit `d44cb4c`) — secondary-chip *control* on dual-IO Gigabyte boards needs the DKMS MMIO path | `it87-dkms-git` (AUR) for control — secondary chip on dual-IO Gigabyte boards (e.g. X870E AORUS MASTER) |
 | "IT8883" | *(not a real chip)* | — | Device-ID `0x8883` is the stuck-in-config-mode *symptom* of a secondary Super-I/O, not a chip ([#70](https://github.com/frankcrawford/it87/issues/70)); a clean read is `0x8695` (IT87952E). See the STEALTH ICE row below |
@@ -619,7 +619,7 @@ directory and the driver DMI tables cited inline above):
 - [torvalds/linux `drivers/hwmon/it87.c`](https://github.com/torvalds/linux/blob/master/drivers/hwmon/it87.c) — `enum chips` (v7.1 / 7.2-rc1 verified: includes `it8622`, `it8689`, `it87952`; excludes `it8625`, `it8665`, `it8686`, `it8688`, `it8696`)
 - IT87952E mainline since kernel **6.4** — commit [`d44cb4c`](https://github.com/torvalds/linux/commit/d44cb4c) (2023)
 - IT8689E mainline from kernel **7.1** — **fan control** (six PWM channels, `FEAT_SIX_PWM` + `FEAT_FANCTL_ONOFF`), not sensors-only; commit [`66b8eaf`](https://github.com/torvalds/linux/commit/66b8eaf) (author 2026-03-22, merged 2026-03-31), released in 7.1 on 2026-06-14. Separately, some Gigabyte **Rev 1** boards have an EC/BIOS quirk that overrides PWM writes ([issue #96](https://github.com/frankcrawford/it87/issues/96)); the maintainer's temps-to-90 stopgap is partial (CPU fan only), with the driver-side fix pending in [PR #114](https://github.com/frankcrawford/it87/pull/114)
-- IT8625E / IT8613E mainlining in flight: [lore IT8625E v2 thread](https://lore.kernel.org/lkml/b6c2731b-8fac-4e7a-ab0c-2f36e8a64a69@roeck-us.net/T/), [openwall IT8613E v3 series](https://mail.openwall.com/linux-kernel/2026/01/10/37) — neither landed as of 7.1 / 7.2-rc1 (July 2026)
+- IT8625E / IT8613E mainlining in flight: [lore IT8625E v2 thread](https://lore.kernel.org/lkml/b6c2731b-8fac-4e7a-ab0c-2f36e8a64a69@roeck-us.net/T/), [LWN: it87 IT8613E v4 series](https://lwn.net/Articles/1054427/) — neither landed as of 7.1 / 7.2-rc1 (July 2026)
 
 **GPU device IDs & kernel regressions**
 - AMD `amdgpu.ids` (libdrm) and `pci.ids` (hwdata) — Navi 48 `0x7550` (RX 9070 XT rev `0xC0` / RX 9070 rev `0xC3`) and `0x7551` (Radeon AI PRO R9700)

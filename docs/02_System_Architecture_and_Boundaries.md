@@ -138,6 +138,9 @@ control_ofc/
       control_card.py          # fan role card (theme-derived size, user-resizable — DEC-128/129)
       curve_card.py            # curve card (theme-derived size, user-resizable — DEC-128/129)
       summary_card.py          # dashboard summary tiles
+      status_strip.py          # dashboard always-visible status strip (DEC-177)
+      fan_zone_card.py         # dashboard zone-grouped fan cards (DEC-176/179)
+      dashboard_inspector.py   # collapsible dashboard side pane (Sensors browser)
       curve_editor.py
       curve_edit_dialog.py
       member_editor.py         # fan-role membership editor
@@ -150,11 +153,14 @@ control_ofc/
       event_log_view.py
       error_banner.py
       readiness_report.py
+      inventory_readiness_view.py  # hwmon inventory + readiness view (DEC-200)
+      superio_view.py          # Super-I/O detection diagnostics view (DEC-202)
       theme_editor.py
       aio_config_dialog.py
       collapsible_section.py
       flow_layout.py          # Qt FlowLayout — responsive card wrapping
       draggable_flow.py       # DraggableFlowContainer — drag-to-reorder
+      reorderable_flow.py     # ReorderableFlow — shared drag/reorder base (DEC-187)
       card_metrics.py         # shared card sizing helpers
       card_resize.py          # resize-grip support
   assets/

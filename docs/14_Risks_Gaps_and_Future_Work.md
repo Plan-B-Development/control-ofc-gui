@@ -205,6 +205,18 @@ The model-name table currently maps only the Arc **B580** (`0xE20B`); all
 other Intel discrete GPUs display as the generic "Intel D-GPU". Extend the
 table only with authoritatively-verified device-ID → name pairs.
 
+### 15. NVIDIA GPU writable fan control (deferred — DEC-204)
+
+Read-only NVIDIA sensing shipped in GUI v2.11.0 / daemon v2.8.0: temperatures
+(and, via the opt-in NVML backend, a fan `duty_pct` measurement) surface through
+two driver worlds — the open **nouveau** driver (hwmon, whose writable `pwm1` is
+deliberately *excluded* from control so the GPU subsystem owns it) and the
+proprietary driver via an opt-in, default-off **NVML** telemetry backend. Fan
+*writes* are **not** implemented — NVIDIA fan control (Phase 2) is deferred and
+hardware-blocked (no NVIDIA hardware to verify against). NVIDIA fans are never
+offered as writable curve members, mirroring the Intel Arc read-only pattern
+(§14).
+
 ## Resolved Gaps (previously listed as future work)
 
 > **Historical ledger.** Each row records a fix at the version in its Evidence
@@ -304,3 +316,7 @@ table only with authoritatively-verified device-ID → name pairs.
 | `_register_profile_search_dir` logged at INFO on every reconnect, cluttering the journal on a flapping socket | First registration per process logs INFO; subsequent re-registrations (same dir) log DEBUG. The HTTP call still fires every reconnect for daemon-restart safety | DEC-108 (GUI v1.13.0) |
 | The GUI and daemon curve evaluators were two hand-mirrored implementations with no test feeding the same input to both (the latent cause of DEC-096 / DEC-119 drift) | Shared, byte-identical `parity_vectors.json` asserted on both sides — GUI `tests/test_evaluator_parity.py` + daemon `profile_engine.rs` parity tests — covering curve interpolation and the full deadband/step/start-stop/mixed-GPU tuning sequence; daemon `evaluate_graph` fallthrough aligned to the GUI | DEC-126 (GUI 1.27.0 / daemon 1.12.2) |
 | Controls tab had no inline/transient manual override (only the persisted 6-step `ControlMode.MANUAL` flow), leaving the documented "how do I temporarily override?" UX unmet | Per-card Manual toggle + inline slider driving a new per-control `set_control_manual`/`clear_control_manual` loop API (not persisted, clears on profile change), distinct from the wizard's global override | DEC-127 (GUI 1.27.0) |
+| Present-but-unreadable sensors spammed the journal (ath12k WiFi temp at 1 Hz) | `SensorFailureTracker` quarantine → `unavailable_sensors[]` on /status+/poll + `control_eligible`; GUI Diagnostics-only panel + curve-picker filter (DEC-193) | daemon v2.3.0 / GUI v2.5.0 |
+| No structured hwmon inventory / CPU+mobo sensor selection / readiness surface | `GET /inventory/hwmon` + `GET /inventory/readiness` + preferred CPU/mobo sensor persistence; GUI Readiness tab + preferred-sensor pickers; thermal-guarded (safe) verify (DEC-200/201) | daemon v2.6.0 / GUI v2.9.0 |
+| Manual Super-I/O chip identification during setup | Passive Super-I/O detection (`GET /inventory/superio`) + opt-in active `/dev/port` probe (`POST /inventory/superio/probe`); GUI Super-I/O diagnostics tab (DEC-202/203) | daemon v2.7.0 / GUI v2.10.0 |
+| NVIDIA discrete GPU invisible | Read-only NVIDIA sensing — nouveau hwmon (control-excluded) + opt-in NVML telemetry, `duty_pct` wire field, `nvidia_gpu` caps/diag (DEC-204) | daemon v2.8.0 / GUI v2.11.0 |

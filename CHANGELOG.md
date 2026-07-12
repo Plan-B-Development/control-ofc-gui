@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.11.1] — 2026-07-09
+## [2.11.1] — 2026-07-11
 
 Documentation + test hardening from the 2026-07-08 audit (Wave 1). No behaviour
 change; pairs with `control-ofc-daemon` ≥ v2.8.1.

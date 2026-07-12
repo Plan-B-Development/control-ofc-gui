@@ -117,7 +117,7 @@ the AUR package — listed here for transparency):
   pyqtgraph imports it unconditionally even on Linux
 
 Development extras (`pip install -e ".[dev]"`):
-- `pytest >= 8.0`, `pytest-qt >= 4.3`, `pytest-timeout >= 2.3`, `ruff >= 0.4`, `pip-audit >= 2.7`, `mutmut >= 3.5`
+- `pytest >= 8.0`, `pytest-qt >= 4.3`, `pytest-timeout >= 2.3`, `pytest-cov >= 5`, `ruff >= 0.4`, `pip-audit >= 2.7`, `mutmut >= 3.5`
 
 ## Configuration
 

@@ -116,12 +116,15 @@ class TestX500X600X800VendorQuirks:
             "specifically — that is the auto-enabled fan_config=msi_alt1 "
             "mode the user needs to know about"
         )
-        # And the 33-board count anchors the upstream source we cited
-        # (`nct6687.c::msi_alt1_dmi_table`).
+        # And it must anchor the *authoritative upstream source* — the
+        # continuously-updated allowlist array — rather than a brittle
+        # point-in-time board count (the count goes stale as boards are added;
+        # the source-of-truth reference does not).
         flat_info = " ".join(q.summary + " ".join(q.details) for q in info_quirks)
-        assert "33" in flat_info, (
-            "Expected the INFO MSI+nct6687 quirk to cite the 33-board "
-            "allowlist count from Fred78290/nct6687d"
+        assert "nct6687_msi_alt_boards" in flat_info, (
+            "Expected the INFO MSI+nct6687 quirk to cite the authoritative "
+            "upstream allowlist source (`nct6687.c::nct6687_msi_alt_boards[]`) "
+            "from Fred78290/nct6687d, not a point-in-time count"
         )
 
     def test_asrock_dual_nuvoton_taichi_lite_quirk(self):

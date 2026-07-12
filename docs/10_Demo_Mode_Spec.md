@@ -35,8 +35,8 @@ When demo mode is active:
 Provide a believable synthetic environment. As shipped, demo mode includes:
 - OpenFan present, with 8 named channels in use
 - two writable hwmon headers (ITE chip: CPU Fan, CPU OPT / Pump)
-- an AMD discrete GPU (RX 7900 XTX) with a controllable fan, plus an Intel Arc B580 with a read-only fan
-- CPU / GPU (AMD + Intel) / motherboard / NVMe disk sensors
+- an AMD discrete GPU (RX 7900 XTX) with a controllable fan, plus an Intel Arc B580 and an NVIDIA RTX 4080, each with a read-only fan (the NVIDIA fan reports a `duty_pct` measurement — DEC-204)
+- CPU / GPU (AMD + Intel + NVIDIA) / motherboard / NVMe disk sensors
 - built-in profiles
 - realistic RPM and temperature motion over time
 
@@ -48,6 +48,7 @@ Provide a believable synthetic environment. As shipped, demo mode includes:
 - CPU Fan, CPU OPT / Pump (hwmon)
 - RX 7900 XTX Fan (AMD GPU)
 - Arc B580 Fan (Intel GPU, read-only)
+- RTX 4080 Fan (NVIDIA GPU, read-only)
 
 ## Suggested demo roles
 - Intake

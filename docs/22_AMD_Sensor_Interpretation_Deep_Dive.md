@@ -299,9 +299,13 @@ See the Fan Control Guide (doc 21) for details on when and how to use this.
 
 #### Newer ITE chips
 
-Some recent boards use ITE chips that are not yet fully supported by any
-driver. lm-sensors issue #454 notes recent Gigabyte boards using IT8689E
-and IT87952E where support is incomplete or evolving.
+Some recent boards pair two ITE Super-I/O chips (e.g. IT8689E + IT87952E on
+Gigabyte AORUS boards). Mainline `it87` gained IT8689E fan *control* in kernel
+7.1 (commit `66b8eaf`; six PWM channels, `FEAT_FANCTL_ONOFF`), and the
+out-of-tree `frankcrawford/it87` DKMS driver has driven the secondary chip on
+dual-IO Gigabyte boards since its 2026-03 MMIO merge (PR #95 / #102). lm-sensors
+issue #454 tracked the earlier, incomplete state; docs 19 and 23 carry the
+current per-chip support matrix.
 
 Reference: https://github.com/lm-sensors/lm-sensors/issues/454
 

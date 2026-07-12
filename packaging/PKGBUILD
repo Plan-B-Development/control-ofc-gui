@@ -11,7 +11,10 @@ license=('MIT')
 # (the platform check happens after the import). Arch's
 # `python-pyqtgraph` package omits the dep upstream; declaring it here
 # is load-bearing on clean systems. See DEC-103. Do not remove.
-depends=('control-ofc-daemon>=2.2.0' 'python' 'pyside6' 'python-httpx'
+# control-ofc-daemon floor tracks the README pairing (≥ v2.8.1 — the daemon
+# that shipped the NVIDIA duty_pct wire field + W1 audit hardening the current
+# GUI consumes). Bump in lockstep when the documented pairing floor moves.
+depends=('control-ofc-daemon>=2.8.1' 'python' 'pyside6' 'python-httpx'
          'python-pyqtgraph' 'python-numpy' 'python-colorama'
          'hicolor-icon-theme')
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools' 'scdoc')
