@@ -348,3 +348,91 @@ class _SuperIoWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.fetch_error.emit("unavailable", "Connection lost during Super-I/O port probe")
+
+
+class _HardwareReadinessWorker(_SocketWorker):
+    """Runs in a QThread — executes the blocking GET /inventory/hardware-readiness
+    call off the UI thread (the daemon runs a sysfs/procfs scan to build the
+    combined readiness + Super-I/O snapshot). DEC-207. Also hosts the opt-in ACTIVE
+    Super-I/O port probe (POST), whose result updates only the Super-I/O section
+    (dedicated ``probe_*`` signals) so the readiness snapshot is left untouched.
+    """
+
+    fetch_ok = Signal(object)  # HardwareReadiness
+    # category ('unavailable' | 'error' | 'unsupported'), message
+    fetch_error = Signal(str, str)
+    probe_ok = Signal(object)  # SuperIoReport (enriched with probe hits)
+    probe_error = Signal(str, str)  # category ('unavailable' | 'error'), message
+
+    @Slot()
+    def do_fetch(self) -> None:
+        """First-open / auto fetch — serves the daemon's cached assessment."""
+        self._fetch(force=False)
+
+    @Slot()
+    def do_refresh(self) -> None:
+        """The page's "Refresh hardware assessment" action — forces a fresh scan."""
+        self._fetch(force=True)
+
+    def _fetch(self, *, force: bool) -> None:
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            result = self._ensure_client().hardware_readiness(force=force)
+            self.fetch_ok.emit(result)
+        except DaemonTimeout:
+            self.fetch_error.emit("unavailable", "Hardware readiness fetch timed out")
+        except DaemonUnavailable:
+            self.fetch_error.emit(
+                "unavailable", "Daemon unavailable — cannot fetch hardware readiness"
+            )
+        except DaemonError as e:
+            # A daemon predating /inventory/hardware-readiness answers 404 not_found
+            # — signal 'unsupported' so the page shows an unavailable state.
+            if getattr(e, "status", None) == 404 or getattr(e, "code", "") == "not_found":
+                self.fetch_error.emit(
+                    "unsupported",
+                    "This daemon version does not provide the combined hardware-readiness report.",
+                )
+            else:
+                self.fetch_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Hardware readiness worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.fetch_error.emit("unavailable", "Connection lost during hardware readiness fetch")
+
+    @Slot()
+    def do_probe(self) -> None:
+        """DEC-203/207: the opt-in ACTIVE Super-I/O port probe (POST). Returns a
+        SuperIoReport enriched with any probe-detected chips — emitted on the
+        dedicated ``probe_*`` signals so the page refreshes only its Super-I/O
+        section. A daemon-disabled probe returns a normal report, not an error."""
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            result = self._ensure_client().superio_probe()
+            self.probe_ok.emit(result)
+        except DaemonTimeout:
+            self.probe_error.emit("unavailable", "Super-I/O port probe timed out")
+        except DaemonUnavailable:
+            self.probe_error.emit("unavailable", "Daemon unavailable — cannot run the port probe")
+        except DaemonError as e:
+            # A 404 on the PROBE endpoint must NOT flip the panel's unsupported flag
+            # (that hides the whole page even though the passive GET works). Report
+            # it as a transient error so the page survives (CON review, DEC-203).
+            if getattr(e, "status", None) == 404 or getattr(e, "code", "") == "not_found":
+                self.probe_error.emit(
+                    "error", "This daemon version does not support the active port probe."
+                )
+            else:
+                self.probe_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Hardware readiness probe worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.probe_error.emit("unavailable", "Connection lost during Super-I/O port probe")

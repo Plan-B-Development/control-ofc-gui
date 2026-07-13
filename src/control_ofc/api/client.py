@@ -15,6 +15,7 @@ from control_ofc.api.models import (
     GpuFanResetResult,
     GpuVerifyResult,
     HardwareDiagnosticsResult,
+    HardwareReadiness,
     HwmonHeader,
     HwmonInventory,
     HwmonVerifyResult,
@@ -37,6 +38,7 @@ from control_ofc.api.models import (
     parse_gpu_fan_reset,
     parse_gpu_verify_result,
     parse_hardware_diagnostics,
+    parse_hardware_readiness,
     parse_hwmon_headers,
     parse_hwmon_inventory,
     parse_hwmon_verify_result,
@@ -308,6 +310,18 @@ class DaemonClient:
         """GET /inventory/readiness — the daemon's structured hardware-readiness
         items with an ``overall`` rollup (DEC-200). 404 on pre-2.6 daemons."""
         return parse_inventory_readiness(self._get("/inventory/readiness"))
+
+    def hardware_readiness(self, force: bool = False) -> HardwareReadiness:
+        """GET /inventory/hardware-readiness — the combined readiness + Super-I/O
+        snapshot for the merged "Cooling Hardware Readiness" page (DEC-207), all
+        from ONE shared daemon scan. ``force`` (the page's "Refresh hardware
+        assessment" action) requests a fresh scan via ``?refresh=true``; otherwise
+        the daemon serves its cached assessment. Read-only. Raises ``DaemonError``
+        with ``.status == 404`` on a daemon that predates the endpoint — the page
+        shows an "unavailable" state in that case.
+        """
+        params = {"refresh": "true"} if force else None
+        return parse_hardware_readiness(self._get("/inventory/hardware-readiness", params=params))
 
     def superio_detect(self) -> SuperIoReport:
         """GET /inventory/superio — passive Super-I/O chip detection with

@@ -578,6 +578,37 @@ means a chip is present and a driver exists — never that PWM control is proven
 Loading the driver, or the daemon's separate verify path, is what confirms
 control.
 
+### GET /inventory/hardware-readiness (DEC-207, daemon ≥ 2.11.0)
+
+The **combined** readiness + Super-I/O snapshot the GUI's merged *Cooling Hardware
+Readiness* page fetches in **one** request, so both halves come from a single shared
+daemon scan (no cross-endpoint drift, no redundant detection). Read-only. Fields:
+
+- `api_version: int`
+- `rollup: ReadinessRollup` — the same compact object mirrored on `/status` + `/poll`
+  (`{overall, critical, warning, info, top_summary?, top_code?}`).
+- `overall: str` — the rollup severity (`ok` | `info` | `warning` | `critical`),
+  echoed for convenience.
+- `items: ReadinessItem[]` — identical to `GET /inventory/readiness`.
+- `superio: SuperIoResponse` — identical to `GET /inventory/superio` (including
+  `port_probe_available` / `port_probe_reason`).
+- `scanned_age_ms: int` — milliseconds since the underlying passive scan completed
+  (the GUI renders a "last scanned" time; matches the `age_ms` freshness convention).
+- `generation: int` — a monotonic scan id; it changes exactly when a new scan is
+  served, so the GUI can detect a fresh assessment without diffing.
+
+Query: `?refresh=true` forces a fresh (coalesced) scan — the page's "Refresh hardware
+assessment" action; anything else (or absent) serves the daemon's cached assessment.
+A malformed `refresh` value never 400s.
+
+**Shared snapshot (DEC-207):** since daemon v2.11.0 this endpoint, `GET
+/inventory/readiness`, `GET /inventory/superio`, and the `/status`+`/poll` rollup are
+all served from **one** cached passive scan, coalesced so simultaneous requests don't
+launch duplicate scans. The two older endpoints keep their exact response shapes (this
+combined endpoint does not replace them). Absent route ⇒ daemon predates the feature;
+the GUI feature-detects on `404` and shows an "unavailable" state, falling back to the
+existing endpoints only where a caller needs them.
+
 ### POST /inventory/superio/probe (DEC-203, opt-in, daemon ≥ 2.7.0)
 
 The **opt-in ACTIVE** Super-I/O probe — a *deliberate, one-shot* action (never

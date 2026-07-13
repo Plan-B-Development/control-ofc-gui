@@ -1047,6 +1047,30 @@ class SuperIoReport:
     port_probe_reason: str = ""
 
 
+@dataclass
+class HardwareReadiness:
+    """Response from GET /inventory/hardware-readiness (DEC-207) — the combined
+    readiness + Super-I/O snapshot the merged "Cooling Hardware Readiness" page
+    fetches in ONE atomic request, all from a single shared daemon scan.
+
+    Every field defaults so a pre-field daemon (or a malformed response) degrades
+    safely. Daemon-authored strings (readiness items + Super-I/O) render as
+    PlainText; only GUI-authored guidance is trusted rich text. ``scan_degraded`` /
+    ``sources_unavailable`` are optional partial-failure signals — absent on daemons
+    that do not emit them.
+    """
+
+    api_version: int = 1
+    overall: str = "ok"  # ok | info | warning | critical
+    rollup: ReadinessRollup = field(default_factory=ReadinessRollup)
+    items: list[ReadinessItem] = field(default_factory=list)
+    superio: SuperIoReport = field(default_factory=SuperIoReport)
+    scanned_age_ms: int = 0
+    generation: int = 0
+    scan_degraded: bool = False
+    sources_unavailable: list[str] = field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Parsing helpers
 # ---------------------------------------------------------------------------
@@ -1495,6 +1519,43 @@ def parse_superio_report(data: dict) -> SuperIoReport:
         notes=[str(n) for n in data.get("notes", []) if isinstance(n, str)],
         port_probe_available=bool(data.get("port_probe_available", False)),
         port_probe_reason=str(data.get("port_probe_reason", "")),
+    )
+
+
+def parse_hardware_readiness(data: dict) -> HardwareReadiness:
+    """Parse GET /inventory/hardware-readiness (DEC-207), reusing the readiness +
+    Super-I/O parsers so the nested shapes stay identical to their standalone
+    endpoints. Non-dict/absent nested objects degrade to empty defaults."""
+    rollup_raw = data.get("rollup")
+    rollup = (
+        ReadinessRollup(**_filter_fields(ReadinessRollup, rollup_raw))
+        if isinstance(rollup_raw, dict)
+        else ReadinessRollup()
+    )
+    superio_raw = data.get("superio")
+    superio = (
+        parse_superio_report(superio_raw) if isinstance(superio_raw, dict) else SuperIoReport()
+    )
+
+    def _int(v: object) -> int:
+        return v if isinstance(v, int) and not isinstance(v, bool) else 0
+
+    return HardwareReadiness(
+        api_version=data.get("api_version", 1),
+        overall=str(data.get("overall", "ok")),
+        rollup=rollup,
+        items=[
+            ReadinessItem(**_filter_fields(ReadinessItem, i))
+            for i in data.get("items", [])
+            if isinstance(i, dict)
+        ],
+        superio=superio,
+        scanned_age_ms=_int(data.get("scanned_age_ms")),
+        generation=_int(data.get("generation")),
+        scan_degraded=bool(data.get("scan_degraded", False)),
+        sources_unavailable=[
+            str(s) for s in data.get("sources_unavailable", []) if isinstance(s, str)
+        ],
     )
 
 

@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.13.0] — 2026-07-13
+
+The Diagnostics **Readiness** tab is now the merged **Cooling Hardware Readiness**
+page: the daemon's structured readiness list plus the (retired) standalone Super-I/O
+tab, fed by one combined daemon scan (`GET /inventory/hardware-readiness`). Pairs
+with `control-ofc-daemon` ≥ v2.11.0 (older daemons show an "unavailable" state).
+DEC-207.
+
+### Added
+- **Merged Cooling Hardware Readiness page (DEC-207).** One progressively-disclosed
+  page: an overall verdict summary (Hardware ready / Needs attention / Not ready)
+  with the single most-important next step, the last scan time, and one "Refresh
+  hardware assessment" action; a **Recommended actions** list where each finding
+  ends in a real action — deep-link to the preferred-sensor picker, jump to the
+  on-page Super-I/O details, or switch to the PWM-verification / Sensors views —
+  plus a "Learn how" documentation link; the complete **Hardware checks** list in
+  compact grouped rows; a **Super-I/O details** section with copy-paste driver-load
+  commands; and a collapsed **Advanced detection** section for the opt-in active
+  port probe (confirmation-gated). Read-only — nothing here changes the system.
+- **`docs/24_Cooling_Hardware_Readiness_Guide.md`** — plain-language guidance for
+  each readiness finding, linked from the page's "Learn how" actions.
+
+### Changed
+- **The standalone Diagnostics ▸ Super-I/O tab is retired** — its content is folded
+  into the merged Readiness page, which fetches readiness + Super-I/O in one request.
+
+### Fixed
+- **Ordinary hwmon chips (amdgpu / k10temp / nvme / spd5118) no longer appear as
+  Super-I/O chips.** The fix is daemon-side (v2.11.0, DEC-207); the merged page shows
+  a concise "no Super-I/O chip detected" result instead of a card per hwmon device.
+
 ## [2.12.0] — 2026-07-13
 
 New Dashboard cooling-readiness health chip, fed by the daemon's readiness rollup

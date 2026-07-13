@@ -480,6 +480,45 @@ editor, matching the existing GPU read-only pattern.
 ### Settings
 - `show_hardware_guidance: bool = True` — persisted in `app_settings.json`
 
+## Implementation: Cooling Hardware Readiness (merged Readiness + Super-I/O — DEC-207)
+
+Since GUI v2.13.0 the Diagnostics **Readiness** tab is the merged **Cooling Hardware
+Readiness** page (`ui/widgets/cooling_readiness_view.py`), and the standalone
+**Super-I/O** tab is retired — its content is folded in. The page fetches everything
+in one request from the daemon's combined `GET /inventory/hardware-readiness`
+(daemon ≥ v2.11.0), which serves a single shared, coalesced hardware-assessment scan
+(the older `/inventory/readiness` + `/inventory/superio` endpoints remain as compat
+readers over the same snapshot). Off-thread via `_HardwareReadinessWorker`; on a
+pre-v2.11.0 daemon the route `404`s and the page shows an "unavailable" state.
+
+Five sections, most-actionable first (`CoolingReadiness_*` object names):
+1. **Overall readiness summary** — a compact verdict banner (Hardware ready / Needs
+   attention / Not ready) with the top next step (`rollup.top_summary`), last scan
+   time (from `scanned_age_ms`), one "Refresh hardware assessment" action
+   (`refresh_requested` → a forced daemon scan), and a read-only note.
+2. **Recommended actions** — the actionable findings (critical → warning → info),
+   each an actionable card with impact chips, a primary action button
+   (`action_requested`), and a "Learn how" doc link. Actions route (in
+   `diagnostics_page._route_readiness_action`) to a cross-page deep-link
+   (`open_preferred_sensors` → Settings ▸ Preferred sensors), an in-surface scroll to
+   the Super-I/O section, or a switch to the Troubleshooting PWM-verify / Sensors tabs.
+   The pure code→action / doc / group mapping lives in `ui/cooling_readiness.py`.
+3. **Hardware checks** — the complete checklist in compact grouped rows (Temperature
+   monitoring / Fan monitoring and control / Super-I/O and kernel support / Sensor
+   configuration); passing checks stay one calm line.
+4. **Super-I/O details** — per-chip driver detection with copy-paste module-load
+   commands (mono label + "Copy command"; the page never runs it) and the measured
+   liability note.
+5. **Advanced detection** — a collapsed section hosting the opt-in active port probe,
+   behind an explicit confirmation (`probe_requested`); results update only this
+   section (`set_superio`).
+
+Security boundary preserved: daemon strings render `PlainText`; only GUI-authored doc
+links are `RichText`. Doc links use the existing `doc_url`/`doc_title` mechanism into
+`docs/24_Cooling_Hardware_Readiness_Guide.md`. The daemon (DEC-207) guarantees
+ordinary hwmon chips (amdgpu/k10temp/nvme/spd5118) are never listed as Super-I/O, so
+the section shows a concise result rather than a card per device.
+
 ## Nice-to-have later
 - background self-checks
 - one-click diagnostics redaction

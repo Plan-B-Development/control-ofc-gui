@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMenu,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -45,10 +44,10 @@ from control_ofc.api.models import (
     GpuFanResetResult,
     GpuVerifyResult,
     HardwareDiagnosticsResult,
+    HardwareReadiness,
     HwmonCapability,
     HwmonHeader,
     HwmonVerifyResult,
-    InventoryReadiness,
     InventoryTempSensor,
     SensorReading,
     SuperIoReport,
@@ -89,23 +88,21 @@ from control_ofc.ui.pages.diagnostics_readiness import (
 )
 from control_ofc.ui.pages.diagnostics_workers import (
     _GpuVerifyWorker,
+    _HardwareReadinessWorker,
     _HwDiagWorker,
-    _ReadinessWorker,
-    _SuperIoWorker,
     _VerifyWorker,
 )
 from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
+from control_ofc.ui.widgets.cooling_readiness_view import CoolingReadinessView
 from control_ofc.ui.widgets.event_log_view import EventLogView
-from control_ofc.ui.widgets.inventory_readiness_view import InventoryReadinessView
 from control_ofc.ui.widgets.readiness_report import (
     ReadinessReportDialog,
     build_readiness_report_html,
     gpu_verify_problems,
 )
 from control_ofc.ui.widgets.sensor_detail_dialog import SensorDetailDialog
-from control_ofc.ui.widgets.superio_view import SuperIoView
 
 _TRANSPARENT = "background: transparent;"
 
@@ -408,11 +405,17 @@ class DiagnosticsPage(QWidget):
     # hardware-diagnostics worker's thread.
     _rescan_request = Signal()
 
-    # Phase 4 (DEC-200): kicks the readiness worker (its own QThread) so the
-    # blocking GET /inventory/readiness never freezes the UI.
+    # Phase 4 / DEC-207: kicks the merged hardware-readiness worker (its own
+    # QThread) so the blocking GET /inventory/hardware-readiness never freezes the
+    # UI. ``_readiness_request`` = cached fetch, ``_readiness_refresh_request`` =
+    # forced scan, ``_readiness_probe_request`` = the opt-in active Super-I/O probe.
     _readiness_request = Signal()
-    _superio_request = Signal()
-    _superio_probe_request = Signal()
+    _readiness_refresh_request = Signal()
+    _readiness_probe_request = Signal()
+
+    # DEC-207: cross-page deep-link to Settings ▸ Preferred sensors for a readiness
+    # action; the arg is the role ("cpu" | "mb"). Handled by the main window.
+    open_preferred_sensors = Signal(str)
 
     def __init__(
         self,
@@ -495,13 +498,9 @@ class DiagnosticsPage(QWidget):
         # Lazy worker + thread, a once-per-session auto-fetch guard, and a session
         # flag that hides the view if the daemon predates the endpoint (404).
         self._readiness_thread: QThread | None = None
-        self._readiness_worker: _ReadinessWorker | None = None
+        self._readiness_worker: _HardwareReadinessWorker | None = None
         self._readiness_auto_fetched = False
         self._readiness_unsupported = False
-        self._superio_thread: QThread | None = None
-        self._superio_worker: _SuperIoWorker | None = None
-        self._superio_auto_fetched = False
-        self._superio_unsupported = False
         # Phase 4 (DEC-200): learned-once flag hiding the "set preferred sensor"
         # context-menu actions on a daemon predating /config/preferred-*-sensor.
         self._preferred_sensor_unsupported = False
@@ -525,20 +524,19 @@ class DiagnosticsPage(QWidget):
         self._tabs.addTab(self._build_fans_tab(), "Fans")
         self._tabs.addTab(self._build_troubleshooting_tab(), "Troubleshooting")
         self._tabs.addTab(self._build_readiness_tab(), "Readiness")
-        self._tabs.addTab(self._build_superio_tab(), "Super-I/O")
         self._tabs.addTab(self._build_logs_tab(), "Event Log")
         layout.addWidget(self._tabs, 1)
+        # Sensors is index 1 (target of the readiness "View sensors" action).
+        self._sensors_tab_index = 1
         # DEC-124: the Hardware Readiness content lives in its own Troubleshooting
         # tab (index 3, immediately after Fans). Auto-fetch hardware diagnostics
         # the first time that tab is shown, so the verdict + issue checklist
         # populate without the user clicking Refresh.
         self._troubleshooting_tab_index = 3
-        # Phase 4: the daemon hardware-readiness view is its own tab (index 4,
-        # after Troubleshooting).
+        # Phase 4 / DEC-207: the merged Cooling Hardware Readiness view (the daemon
+        # readiness list + the retired standalone Super-I/O tab folded in) is index
+        # 4; Event Log follows at 5.
         self._readiness_tab_index = 4
-        # DEC-202: the passive Super-I/O detection view is its own tab (index 5,
-        # after Readiness; Event Log shifts to 6).
-        self._superio_tab_index = 5
         self._tabs.currentChanged.connect(self._on_diag_tab_changed)
 
         # Action buttons
@@ -2506,13 +2504,10 @@ class DiagnosticsPage(QWidget):
             if self._client and self._diag.last_hw_diagnostics is None:
                 self._fetch_hardware_diagnostics()
         elif index == self._readiness_tab_index and not self._readiness_auto_fetched:
-            # Phase 4: populate the daemon readiness view on first view.
+            # Phase 4 / DEC-207: populate the merged Cooling Hardware Readiness view
+            # on first view (serves the daemon's cached assessment; not a forced scan).
             self._readiness_auto_fetched = True
             self._fetch_readiness()
-        elif index == self._superio_tab_index and not self._superio_auto_fetched:
-            # DEC-202: populate the Super-I/O detection view on first view.
-            self._superio_auto_fetched = True
-            self._fetch_superio()
 
     def _open_readiness_report(self) -> None:
         """Open the full hardware-readiness report in its own window (DEC-113)."""
@@ -2625,45 +2620,33 @@ class DiagnosticsPage(QWidget):
         )
         return ok
 
-    # ─── Hardware readiness (Phase 4 / DEC-200) ────────────────────────
+    # ─── Cooling Hardware Readiness (Phase 4 / DEC-207) ────────────────
+    # The merged readiness + Super-I/O view, fed by ONE combined daemon scan
+    # (GET /inventory/hardware-readiness). Retires the standalone Super-I/O tab.
 
     def _build_readiness_tab(self) -> QWidget:
-        """The daemon's structured hardware-readiness view (GET /inventory/readiness).
-
-        A dedicated verdict + actionable-checklist tab, distinct from the
-        GUI-authored Troubleshooting report — it surfaces what the daemon itself
-        reports as ready / blocked, with the recommended next step per item.
-        """
+        """The merged Cooling Hardware Readiness view (GET
+        /inventory/hardware-readiness): a verdict summary, recommended actions, the
+        full hardware-check list, Super-I/O details, and the opt-in advanced port
+        probe — all from one shared daemon scan. Read-only; nothing here changes the
+        system."""
         tab = QWidget()
         tab.setObjectName("Diagnostics_Tab_readiness")
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(4, 8, 4, 4)
         layout.setSpacing(8)
 
-        intro = QLabel(
-            "The daemon's read-only assessment of your cooling hardware — what is "
-            "ready, what needs attention, and the recommended next step. Nothing "
-            "here changes your system."
-        )
-        intro.setObjectName("Diagnostics_Label_readinessIntro")
-        intro.setProperty("class", "PageSubtitle")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-
-        btn_row = QHBoxLayout()
-        refresh_btn = QPushButton("Refresh Readiness")
-        refresh_btn.setObjectName("Diagnostics_Btn_refreshReadiness")
-        refresh_btn.clicked.connect(self._fetch_readiness)
-        btn_row.addWidget(refresh_btn)
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
-
-        self._readiness_view = InventoryReadinessView("Diagnostics_Readiness_view")
+        self._readiness_view = CoolingReadinessView("Diagnostics_Readiness_view")
+        self._readiness_view.refresh_requested.connect(self._refresh_readiness)
+        self._readiness_view.probe_requested.connect(self._run_readiness_probe)
+        self._readiness_view.action_requested.connect(self._route_readiness_action)
         layout.addWidget(self._readiness_view, 1)
         return tab
 
-    def _fetch_readiness(self) -> None:
-        """Fetch the daemon hardware-readiness report on a worker thread."""
+    def _fetch_readiness(self, *, force: bool = False) -> None:
+        """Fetch the combined hardware-readiness snapshot on a worker thread.
+        ``force`` requests a fresh daemon scan (the page's Refresh action);
+        otherwise the daemon's cached assessment is served."""
         if self._readiness_unsupported:
             self._readiness_view.set_unsupported()
             return
@@ -2673,26 +2656,40 @@ class DiagnosticsPage(QWidget):
         if not self._ensure_readiness_worker():
             self._readiness_view.set_error("Cannot fetch readiness: no daemon socket path")
             return
-        self._readiness_view.set_status("Fetching hardware readiness…")
-        self._readiness_request.emit()
+        self._readiness_view.set_status(
+            "Refreshing hardware assessment…" if force else "Fetching hardware readiness…"
+        )
+        (self._readiness_refresh_request if force else self._readiness_request).emit()
+
+    def _refresh_readiness(self) -> None:
+        """The view's "Refresh hardware assessment" action — force a fresh scan."""
+        self._fetch_readiness(force=True)
 
     def _ensure_readiness_worker(self) -> bool:
-        """Create the readiness worker + thread on first use. Returns False when
-        no daemon socket path is available to construct the worker."""
+        """Create the hardware-readiness worker + thread on first use. Returns False
+        when no daemon socket path is available to construct the worker."""
 
-        def connect(w: _ReadinessWorker) -> None:
+        def connect(w: _HardwareReadinessWorker) -> None:
             self._readiness_request.connect(w.do_fetch, Qt.ConnectionType.QueuedConnection)
+            self._readiness_refresh_request.connect(
+                w.do_refresh, Qt.ConnectionType.QueuedConnection
+            )
+            self._readiness_probe_request.connect(w.do_probe, Qt.ConnectionType.QueuedConnection)
             w.fetch_ok.connect(self._on_readiness_ok, Qt.ConnectionType.QueuedConnection)
             w.fetch_error.connect(self._on_readiness_error, Qt.ConnectionType.QueuedConnection)
+            w.probe_ok.connect(self._on_readiness_probe_ok, Qt.ConnectionType.QueuedConnection)
+            w.probe_error.connect(
+                self._on_readiness_probe_error, Qt.ConnectionType.QueuedConnection
+            )
 
         self._readiness_worker, self._readiness_thread, ok = self._ensure_worker(
-            self._readiness_worker, self._readiness_thread, _ReadinessWorker, connect
+            self._readiness_worker, self._readiness_thread, _HardwareReadinessWorker, connect
         )
         return ok
 
     @Slot(object)
-    def _on_readiness_ok(self, result: InventoryReadiness) -> None:
-        self._readiness_view.set_readiness(result)
+    def _on_readiness_ok(self, result: HardwareReadiness) -> None:
+        self._readiness_view.set_report(result)
 
     @Slot(str, str)
     def _on_readiness_error(self, category: str, message: str) -> None:
@@ -2702,127 +2699,42 @@ class DiagnosticsPage(QWidget):
         else:
             self._readiness_view.set_error(message)
 
-    # ─── Super-I/O detection (Phase 3 / DEC-202) ───────────────────────
-
-    def _build_superio_tab(self) -> QWidget:
-        """The daemon's passive Super-I/O detection view (GET /inventory/superio).
-
-        A focused "which motherboard sensor/fan driver do I need" surface: one
-        card per detected chip, with an allowlisted "load this driver"
-        recommendation for chips whose driver is not bound. Read-only — nothing
-        here changes the system; the daemon never loads a module or writes.
-        """
-        tab = QWidget()
-        tab.setObjectName("Diagnostics_Tab_superio")
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(4, 8, 4, 4)
-        layout.setSpacing(8)
-
-        intro = QLabel(
-            "Passive detection of your motherboard's Super-I/O sensor/fan chip and "
-            "which kernel driver it needs. Detection proves a chip is present — it "
-            "does not prove fan control is available. Nothing here changes your system."
-        )
-        intro.setObjectName("Diagnostics_Label_superioIntro")
-        intro.setProperty("class", "PageSubtitle")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-
-        btn_row = QHBoxLayout()
-        refresh_btn = QPushButton("Refresh Detection")
-        refresh_btn.setObjectName("Diagnostics_Btn_refreshSuperio")
-        refresh_btn.clicked.connect(self._fetch_superio)
-        btn_row.addWidget(refresh_btn)
-
-        # DEC-203: the opt-in active port probe. Disabled until a fetch reports
-        # `port_probe_available` (off by default; needs CAP_SYS_RAWIO).
-        self._superio_probe_btn = QPushButton("Probe Ports (advanced)")
-        self._superio_probe_btn.setObjectName("Diagnostics_Btn_superioProbe")
-        self._superio_probe_btn.setEnabled(False)
-        self._superio_probe_btn.setToolTip(
-            "The active /dev/port probe is off by default (it needs CAP_SYS_RAWIO)."
-        )
-        self._superio_probe_btn.clicked.connect(self._run_superio_probe)
-        btn_row.addWidget(self._superio_probe_btn)
-
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
-
-        self._superio_view = SuperIoView("Diagnostics_Superio_view")
-        layout.addWidget(self._superio_view, 1)
-        return tab
-
-    def _fetch_superio(self) -> None:
-        """Fetch the daemon Super-I/O detection report on a worker thread."""
-        if self._superio_unsupported:
-            self._superio_view.set_unsupported()
+    def _run_readiness_probe(self) -> None:
+        """Run the opt-in active Super-I/O port probe (already confirmed in the
+        view). A no-op without a daemon/socket."""
+        if not self._client or not self._ensure_readiness_worker():
             return
-        if not self._client:
-            self._superio_view.set_error("Cannot detect Super-I/O: no daemon connection")
-            return
-        if not self._ensure_superio_worker():
-            self._superio_view.set_error("Cannot detect Super-I/O: no daemon socket path")
-            return
-        self._superio_view.set_status("Detecting Super-I/O chips…")
-        self._superio_request.emit()
-
-    def _ensure_superio_worker(self) -> bool:
-        """Create the Super-I/O worker + thread on first use. Returns False when
-        no daemon socket path is available to construct the worker."""
-
-        def connect(w: _SuperIoWorker) -> None:
-            self._superio_request.connect(w.do_fetch, Qt.ConnectionType.QueuedConnection)
-            self._superio_probe_request.connect(w.do_probe, Qt.ConnectionType.QueuedConnection)
-            w.fetch_ok.connect(self._on_superio_ok, Qt.ConnectionType.QueuedConnection)
-            w.fetch_error.connect(self._on_superio_error, Qt.ConnectionType.QueuedConnection)
-
-        self._superio_worker, self._superio_thread, ok = self._ensure_worker(
-            self._superio_worker, self._superio_thread, _SuperIoWorker, connect
-        )
-        return ok
+        self._readiness_view.set_status("Probing Super-I/O ports…")
+        self._readiness_probe_request.emit()
 
     @Slot(object)
-    def _on_superio_ok(self, result: SuperIoReport) -> None:
-        self._superio_view.set_report(result)
-        # DEC-203: gate the advanced probe button on daemon-reported availability,
-        # with the daemon's reason as the tooltip when it is unavailable.
-        self._superio_probe_btn.setEnabled(bool(result.port_probe_available))
-        self._superio_probe_btn.setToolTip(
-            "Run the opt-in active /dev/port probe to identify an unbound chip."
-            if result.port_probe_available
-            else (result.port_probe_reason or "The active port probe is unavailable.")
-        )
+    def _on_readiness_probe_ok(self, result: SuperIoReport) -> None:
+        # The probe only enriches the Super-I/O half — update that section only,
+        # leaving the readiness snapshot untouched.
+        self._readiness_view.set_superio(result)
 
     @Slot(str, str)
-    def _on_superio_error(self, category: str, message: str) -> None:
-        if category == "unsupported":
-            self._superio_unsupported = True
-            self._superio_view.set_unsupported()
-        else:
-            self._superio_view.set_error(message)
+    def _on_readiness_probe_error(self, category: str, message: str) -> None:
+        # A probe failure must not blank the whole page — surface a transient status.
+        del category
+        self._readiness_view.set_status(message)
 
-    def _run_superio_probe(self) -> None:
-        """DEC-203: run the opt-in active port probe, behind a confirmation.
-
-        The probe reads the motherboard's raw Super-I/O I/O ports, so require an
-        explicit OK. The daemon still refuses ports a driver or ACPI owns.
-        """
-        if not self._client or not self._ensure_superio_worker():
-            return
-        confirm = QMessageBox.question(
-            self,
-            "Run active Super-I/O port probe?",
-            "This performs a one-shot read of the motherboard's Super-I/O "
-            "configuration ports (0x2E/0x4E) to identify a chip whose driver is "
-            "not loaded. It only touches ports no driver or ACPI is using, and "
-            "changes nothing. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
-        self._superio_view.set_status("Probing Super-I/O ports…")
-        self._superio_probe_request.emit()
+    def _route_readiness_action(self, action: object) -> None:
+        """Route a readiness action button to its target: a cross-page deep-link to
+        Settings ▸ Preferred sensors, an in-surface scroll to the Super-I/O details,
+        or a switch to a sibling Diagnostics tab (PWM verify / Sensors)."""
+        target = getattr(action, "target", "")
+        if target == "preferred_cpu":
+            self.open_preferred_sensors.emit("cpu")
+        elif target == "preferred_mb":
+            self.open_preferred_sensors.emit("mb")
+        elif target == "superio":
+            self._readiness_view.scroll_to_superio()
+        elif target == "pwm_verify":
+            # The fan-control verification workflow lives on the Troubleshooting tab.
+            self._tabs.setCurrentIndex(self._troubleshooting_tab_index)
+        elif target == "sensors":
+            self._tabs.setCurrentIndex(self._sensors_tab_index)
 
     @Slot(object)
     def _on_verify_ok(self, result: HwmonVerifyResult) -> None:
@@ -3353,9 +3265,6 @@ class DiagnosticsPage(QWidget):
         self._teardown_worker(self._readiness_worker, self._readiness_thread, "Readiness")
         self._readiness_worker = None
         self._readiness_thread = None
-        self._teardown_worker(self._superio_worker, self._superio_thread, "Super-I/O")
-        self._superio_worker = None
-        self._superio_thread = None
 
     def _show_verify_result(self, result: HwmonVerifyResult) -> None:
         """Display the result of a PWM verification test.

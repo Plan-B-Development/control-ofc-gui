@@ -204,6 +204,9 @@ class MainWindow(QWidget):
         # Wire dashboard "Open Diagnostics" to sidebar navigation
         self.dashboard_page.open_diagnostics.connect(self._open_diagnostics)
         self.dashboard_page.open_readiness.connect(self._open_readiness)
+        # DEC-207: a Cooling Hardware Readiness action deep-links to the preferred
+        # sensor picker in Settings.
+        self.diagnostics_page.open_preferred_sensors.connect(self._open_preferred_sensors)
 
         # Populate dashboard profile selector
         self.dashboard_page.populate_profiles()
@@ -354,6 +357,15 @@ class MainWindow(QWidget):
         self.page_stack.setCurrentIndex(PAGE_DIAGNOSTICS)
         self.sidebar.select_page(PAGE_DIAGNOSTICS)
         self.diagnostics_page.show_hardware_readiness_tab()
+
+    def _open_preferred_sensors(self, role: str) -> None:
+        """DEC-207: a Cooling Hardware Readiness action deep-links to Settings ▸
+        Preferred sensors (``role`` is "cpu" | "mb") so the user can pick a sensor."""
+        from control_ofc.constants import PAGE_SETTINGS
+
+        self.page_stack.setCurrentIndex(PAGE_SETTINGS)
+        self.sidebar.select_page(PAGE_SETTINGS)
+        self.settings_page.focus_preferred_sensors(role)
 
     def _start_demo_mode(self) -> None:
         self._demo_service = DemoService()

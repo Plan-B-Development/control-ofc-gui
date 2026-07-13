@@ -20,7 +20,7 @@ EXPECTED_TABS = [
     "Fans",
     "Troubleshooting",
     "Readiness",
-    "Super-I/O",
+    # DEC-207: the standalone Super-I/O tab was folded into the merged Readiness page.
     "Event Log",
 ]
 FANS_TAB_INDEX = 2
