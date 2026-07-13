@@ -23,6 +23,12 @@ A single header row across the top is the dashboard's command + status surface:
 - **Control mode** — Automatic / Manual Override / Demo / Read-only
 - **Thermal state** — the daemon's safety state (Thermal OK / Recovery / Emergency /
   No CPU sensor); click the chip for a read-only thermal-safety detail
+- **Cooling readiness** — a health chip summarising whether your cooling hardware is
+  set up and controllable: green **"Cooling ready"**, or amber/red **"Cooling: N to
+  fix"** naming how many readiness items need attention (hover for the most important
+  next step). Click it to jump to Diagnostics ▸ Hardware readiness. Shown only when
+  the connected daemon reports readiness (`control-ofc-daemon` ≥ v2.10.0); hidden in
+  demo mode
 - **"Updated Xs ago"** — time since the last successful poll, so you can tell live
   data from a stalled connection at a glance
 - A **warning chip** showing the active-warning count — click it to open the

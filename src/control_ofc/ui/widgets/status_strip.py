@@ -17,6 +17,8 @@ click/keyboard path never depends on hover (WCAG 1.4.13).
 
 from __future__ import annotations
 
+from html import escape
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
@@ -26,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.api.models import ConnectionState, OperationMode
+from control_ofc.api.models import ConnectionState, OperationMode, ReadinessRollup
 from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.status_banner import CONNECTION_CHIP, CONNECTION_LABELS, MODE_LABELS
 
@@ -61,6 +63,7 @@ class DashboardStatusStrip(QWidget):
 
     warning_clicked = Signal()
     thermal_clicked = Signal()
+    readiness_clicked = Signal()
     inspector_toggle_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -94,6 +97,20 @@ class DashboardStatusStrip(QWidget):
         self._thermal.setToolTip("Show thermal-safety detail")
         self._thermal.clicked.connect(self.thermal_clicked)
         layout.addWidget(self._thermal)
+
+        # Clickable cooling-readiness chip (DEC-206): a single at-a-glance "is my
+        # cooling set up & controllable" health indicator, fed by the daemon's
+        # compact readiness rollup on /poll. Mirrors the thermal chip (flat,
+        # focusable button → keyboard/click, WCAG 1.4.13). Hidden when the daemon
+        # sends no rollup (older daemon / pre-seed / demo). Click opens the merged
+        # Diagnostics ▸ Hardware readiness surface.
+        self._readiness = QPushButton("")
+        self._readiness.setObjectName("StatusStrip_Chip_readiness")
+        self._readiness.setFlat(True)
+        self._readiness.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._readiness.clicked.connect(self.readiness_clicked)
+        self._readiness.hide()
+        layout.addWidget(self._readiness)
 
         self._poll_age = QLabel("Not updated yet")
         self._poll_age.setObjectName("StatusStrip_Label_pollAge")
@@ -139,6 +156,7 @@ class DashboardStatusStrip(QWidget):
         # Sane initial render before the first poll.
         self.set_connection_state(ConnectionState.DISCONNECTED)
         self.set_thermal_state("normal")
+        self.set_readiness_rollup(None)  # hidden until the daemon sends a rollup
 
     # --- setters: the dashboard page wires AppState signals to these ---
 
@@ -158,6 +176,39 @@ class DashboardStatusStrip(QWidget):
         label, css = THERMAL_STATES.get(thermal or "normal", (f"Thermal: {thermal}", "InfoChip"))
         self._thermal.setText(label)
         set_chip_class(self._thermal, css)
+
+    def set_readiness_rollup(self, rollup: ReadinessRollup | None) -> None:
+        """Drive the Dashboard cooling-readiness chip (DEC-206).
+
+        Hidden entirely when the daemon sends no rollup (older daemon / pre-seed
+        / demo). Otherwise a green "Cooling ready" when all checks pass, else an
+        amber/red chip naming the number to fix, with the most-important next step
+        in the tooltip. The tooltip is a daemon string, so it is HTML-escaped
+        (``html.escape``) before ``setToolTip`` — Qt then renders it as plain text,
+        never as markup (defence-in-depth, mirroring the item views' PlainText rule).
+        """
+        if rollup is None:
+            self._readiness.hide()
+            return
+        overall = (rollup.overall or "ok").lower()
+        n = rollup.to_fix_count
+        if overall == "ok":
+            label, css = "✓ Cooling ready", "SuccessChip"
+        elif overall in ("warning", "critical"):
+            glyph = "⛔" if overall == "critical" else "⚠"
+            css = "CriticalChip" if overall == "critical" else "WarningChip"
+            label = f"{glyph} Cooling: {n} to fix" if n else f"{glyph} Cooling: needs attention"
+        else:  # info / unknown — advisory notes only
+            label, css = "Cooling: notes", "InfoChip"
+        self._readiness.setText(label)
+        set_chip_class(self._readiness, css)
+        # The tooltip carries the daemon's most-severe summary — HTML-escape it so
+        # Qt renders it verbatim and never as rich text (defence-in-depth, mirroring
+        # the item views' PlainText rule; a daemon string is never trusted markup).
+        self._readiness.setToolTip(
+            escape(rollup.top_summary or "Open Diagnostics ▸ Hardware readiness")
+        )
+        self._readiness.show()
 
     def set_warning_count(self, count: int) -> None:
         if count > 0:

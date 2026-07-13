@@ -203,6 +203,7 @@ class MainWindow(QWidget):
 
         # Wire dashboard "Open Diagnostics" to sidebar navigation
         self.dashboard_page.open_diagnostics.connect(self._open_diagnostics)
+        self.dashboard_page.open_readiness.connect(self._open_readiness)
 
         # Populate dashboard profile selector
         self.dashboard_page.populate_profiles()
@@ -344,6 +345,15 @@ class MainWindow(QWidget):
 
         self.page_stack.setCurrentIndex(PAGE_DIAGNOSTICS)
         self.sidebar.select_page(PAGE_DIAGNOSTICS)
+
+    def _open_readiness(self) -> None:
+        """DEC-206: the Dashboard cooling-readiness chip was clicked — open
+        Diagnostics and select the Hardware-readiness tab."""
+        from control_ofc.constants import PAGE_DIAGNOSTICS
+
+        self.page_stack.setCurrentIndex(PAGE_DIAGNOSTICS)
+        self.sidebar.select_page(PAGE_DIAGNOSTICS)
+        self.diagnostics_page.show_hardware_readiness_tab()
 
     def _start_demo_mode(self) -> None:
         self._demo_service = DemoService()

@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.12.0] — 2026-07-13
+
+New Dashboard cooling-readiness health chip, fed by the daemon's readiness rollup
+(DEC-206). Pairs with `control-ofc-daemon` ≥ v2.10.0 (the chip is hidden against
+older daemons that do not send the rollup).
+
+### Added
+- **Dashboard cooling-readiness chip (DEC-206).** A single at-a-glance health
+  indicator in the status strip — green "✓ Cooling ready", or amber/red "Cooling:
+  N to fix" naming how many readiness items need attention, with the most
+  important next step in the tooltip. It is driven live off the 1 Hz poll's new
+  `readiness` rollup, is hidden against older daemons and in demo mode, and opens
+  Diagnostics ▸ Hardware readiness when clicked. The Settings preferred-sensor
+  picker gained a `focus_preferred_sensors` entry point for deep-links.
+
 ## [2.11.1] — 2026-07-11
 
 Documentation + test hardening from the 2026-07-08 audit (Wave 1). No behaviour

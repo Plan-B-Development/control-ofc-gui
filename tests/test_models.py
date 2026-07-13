@@ -244,6 +244,49 @@ def test_parse_status_active_profile_absent_is_none():
     assert status.active_profile_name is None
 
 
+def test_parse_status_readiness_rollup_present():
+    """DEC-206: the daemon mirrors a compact readiness rollup onto the status for
+    the Dashboard chip; overall + counts + top_* round-trip."""
+    status = parse_status(
+        {
+            "overall_status": "ok",
+            "subsystems": [],
+            "readiness": {
+                "overall": "warning",
+                "critical": 0,
+                "warning": 2,
+                "info": 1,
+                "top_summary": "No motherboard PWM fan controls detected",
+                "top_code": "no_pwm_controls",
+            },
+        }
+    )
+    assert status.readiness is not None
+    assert status.readiness.overall == "warning"
+    assert status.readiness.warning == 2
+    assert status.readiness.to_fix_count == 2  # critical + warning, info excluded
+    assert status.readiness.top_code == "no_pwm_controls"
+
+
+def test_parse_status_readiness_absent_is_none():
+    """DEC-206: an absent readiness key (older daemon, or before the daemon's
+    startup seed runs) parses to None so the Dashboard chip stays hidden."""
+    status = parse_status({"overall_status": "ok", "subsystems": []})
+    assert status.readiness is None
+
+
+def test_parse_status_readiness_malformed_or_unknown_fields_tolerated():
+    """A non-dict readiness value → None (chip hidden); unknown nested fields are
+    dropped so a newer daemon that extends the rollup cannot break an older GUI."""
+    assert parse_status({"subsystems": [], "readiness": "nope"}).readiness is None
+    rollup = parse_status(
+        {"subsystems": [], "readiness": {"overall": "critical", "future_field": 9}}
+    ).readiness
+    assert rollup is not None
+    assert rollup.overall == "critical"
+    assert rollup.to_fix_count == 0  # counts absent → 0
+
+
 def test_parse_sensors():
     data = {
         "sensors": [

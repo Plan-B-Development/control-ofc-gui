@@ -491,3 +491,50 @@ class TestThermalBanner:
         app_state.set_status(DaemonStatus(thermal_state="normal"))
 
         assert dash._thermal_banner.isHidden()
+
+
+class TestReadinessChip:
+    """DEC-206: the Dashboard cooling-readiness chip + its deep-link to the merged
+    Diagnostics Hardware-readiness tab, driven by the poll rollup."""
+
+    def _status_with_readiness(self, **rollup):
+        payload = {"overall_status": "ok", "subsystems": []}
+        if rollup:
+            payload["readiness"] = rollup
+        return parse_status(payload)
+
+    def test_rollup_shows_chip_with_count(self, qtbot, window, app_state):
+        app_state.set_connection(ConnectionState.CONNECTED)
+        app_state.set_status(
+            self._status_with_readiness(overall="warning", warning=1, top_summary="Load it87")
+        )
+        chip = window.dashboard_page._status_strip._readiness
+        assert not chip.isHidden()
+        assert "1 to fix" in chip.text()
+
+    def test_absent_rollup_hides_chip(self, qtbot, window, app_state):
+        app_state.set_connection(ConnectionState.CONNECTED)
+        app_state.set_status(self._status_with_readiness())  # no readiness key
+        assert window.dashboard_page._status_strip._readiness.isHidden()
+
+    def test_demo_mode_hides_chip_even_with_rollup(self, qtbot, window, app_state):
+        app_state.set_mode(OperationMode.DEMO)
+        app_state.set_status(self._status_with_readiness(overall="critical", critical=1))
+        assert window.dashboard_page._status_strip._readiness.isHidden()
+
+    def test_chip_click_opens_readiness_tab(self, qtbot, window, app_state):
+        from control_ofc.constants import PAGE_DIAGNOSTICS
+
+        window.dashboard_page.open_readiness.emit()
+        assert window.page_stack.currentIndex() == PAGE_DIAGNOSTICS
+        diag = window.diagnostics_page
+        assert diag._tabs.currentIndex() == diag._readiness_tab_index
+
+    def test_clicking_the_actual_chip_fires_open_readiness(self, qtbot, window, app_state):
+        """End-to-end wiring: clicking the real chip button → readiness_clicked →
+        open_readiness (the strip→dashboard connection, not just the signal)."""
+        app_state.set_connection(ConnectionState.CONNECTED)
+        app_state.set_status(self._status_with_readiness(overall="warning", warning=1))
+        chip = window.dashboard_page._status_strip._readiness
+        with qtbot.waitSignal(window.dashboard_page.open_readiness, timeout=500):
+            chip.click()

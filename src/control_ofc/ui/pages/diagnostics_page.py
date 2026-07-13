@@ -2488,6 +2488,11 @@ class DiagnosticsPage(QWidget):
         else:
             self._hw_ready_summary.setText(f"Diagnostics error: {message}")
 
+    def show_hardware_readiness_tab(self) -> None:
+        """Select the Hardware-readiness tab — the target of the Dashboard
+        cooling-readiness chip's deep-link (DEC-206)."""
+        self._tabs.setCurrentIndex(self._readiness_tab_index)
+
     def _on_diag_tab_changed(self, index: int) -> None:
         """Auto-fetch hardware diagnostics the first time the Troubleshooting
         tab is shown.

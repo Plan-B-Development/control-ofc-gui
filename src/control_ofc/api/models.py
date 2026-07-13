@@ -267,6 +267,33 @@ class UnavailableSensor:
 
 
 @dataclass
+class ReadinessRollup:
+    """Compact hardware-readiness rollup from ``GET /status`` + ``/poll`` (DEC-206).
+
+    A cache-cheap summary the daemon mirrors onto the poll surface so the
+    Dashboard can show a single health chip without fetching the full
+    ``/inventory/readiness`` list. ``overall`` is the most severe item's
+    severity; ``top_summary`` / ``top_code`` name the single most-important next
+    step (both ``None`` when ``overall`` is ``"ok"``). The whole object is
+    ``None`` on daemons predating DEC-206 (and until the daemon's startup seed
+    runs) → the GUI hides the chip.
+    """
+
+    overall: str = "ok"  # ok | info | warning | critical
+    critical: int = 0
+    warning: int = 0
+    info: int = 0
+    top_summary: str | None = None
+    top_code: str | None = None
+
+    @property
+    def to_fix_count(self) -> int:
+        """Number of items that need attention (critical + warning); the chip's
+        ``N to fix``. Info-tier items are advisory and not counted."""
+        return self.critical + self.warning
+
+
+@dataclass
 class DaemonStatus:
     api_version: int = 1
     daemon_version: str = ""
@@ -297,6 +324,10 @@ class DaemonStatus:
     # fallback authoritative instead of clobbering it with a blank.
     active_profile_id: str | None = None
     active_profile_name: str | None = None
+    # DEC-206: compact hardware-readiness rollup for the Dashboard health chip,
+    # mirrored onto every /poll status. `None` when the key is ABSENT (older
+    # daemon, or before the daemon's startup seed runs) → the chip is hidden.
+    readiness: ReadinessRollup | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1142,7 +1173,23 @@ def parse_status(data: dict) -> DaemonStatus:
         # present value updates the active profile every poll.
         active_profile_id=data.get("active_profile_id"),
         active_profile_name=data.get("active_profile_name"),
+        # DEC-206: the compact readiness rollup for the Dashboard chip. Absent
+        # key (old daemon / pre-seed) or a malformed object → None ⇒ chip hidden.
+        readiness=_parse_readiness_rollup(data.get("readiness")),
     )
+
+
+def _parse_readiness_rollup(raw: object) -> ReadinessRollup | None:
+    """Parse the DEC-206 ``readiness`` rollup object, or ``None`` when absent or
+    malformed (old daemon / pre-seed) so the Dashboard chip stays hidden.
+
+    Defensive like the sibling status parsers: a non-dict (including the common
+    absent-key ``None``) yields ``None``; unknown fields are dropped so a newer
+    daemon that extends the rollup cannot break an older GUI.
+    """
+    if not isinstance(raw, dict):
+        return None
+    return ReadinessRollup(**_filter_fields(ReadinessRollup, raw))
 
 
 def parse_sensors(data: dict) -> list[SensorReading]:

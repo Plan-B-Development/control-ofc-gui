@@ -29,6 +29,7 @@ from control_ofc.api.models import (
     FanReading,
     Freshness,
     OperationMode,
+    ReadinessRollup,
     SensorReading,
 )
 from control_ofc.constants import (
@@ -107,6 +108,9 @@ class DashboardPage(QWidget):
     """Landing page showing fan speeds, temperatures, and profile status."""
 
     open_diagnostics = Signal()
+    # DEC-206: the Dashboard cooling-readiness chip was clicked — main_window
+    # switches to Diagnostics and selects the merged Hardware-readiness tab.
+    open_readiness = Signal()
 
     # Stack indices
     _IDX_DISCONNECTED = 0
@@ -433,6 +437,7 @@ class DashboardPage(QWidget):
         self._apply_btn.clicked.connect(self._on_apply_profile)
         self._status_strip.warning_clicked.connect(self._open_warnings)
         self._status_strip.thermal_clicked.connect(self._open_safety_detail)
+        self._status_strip.readiness_clicked.connect(self.open_readiness)
         self._status_strip.inspector_toggle_clicked.connect(self._toggle_inspector)
         content_layout.addWidget(self._status_strip)
 
@@ -611,6 +616,17 @@ class DashboardPage(QWidget):
         ds = self._state.daemon_status
         if ds:
             self._status_strip.set_thermal_state(ds.thermal_state)
+            self._status_strip.set_readiness_rollup(self._readiness_for_strip(ds))
+
+    def _readiness_for_strip(self, status: DaemonStatus) -> ReadinessRollup | None:
+        """The readiness rollup to show on the chip, or ``None`` to hide it.
+
+        Hidden in demo mode — synthetic hardware has no real readiness (DEC-206,
+        O-2) — and whenever the daemon sends no rollup (older daemon / pre-seed).
+        """
+        if self._state and self._state.mode == OperationMode.DEMO:
+            return None
+        return status.readiness
 
     def _reset_cards(self) -> None:
         """Clear card faces to a neutral "—" on disconnect so a stale
@@ -796,6 +812,9 @@ class DashboardPage(QWidget):
         # thermal_state leaves "normal", and clear it on the return.
         thermal = status.thermal_state or "normal"
         self._status_strip.set_thermal_state(thermal)
+        # DEC-206: drive the cooling-readiness chip from the poll rollup (hidden
+        # in demo, and when the daemon sends no rollup).
+        self._status_strip.set_readiness_rollup(self._readiness_for_strip(status))
         if thermal != self._last_thermal_state:
             self._last_thermal_state = thermal
             self._annotate(f"Thermal: {thermal}")

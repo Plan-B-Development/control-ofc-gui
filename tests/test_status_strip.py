@@ -84,6 +84,82 @@ def test_profile_label(qtbot):
     assert s._profile.text() == "No profile"
 
 
+def test_readiness_chip_hidden_without_rollup(qtbot):
+    """DEC-206: no rollup (older daemon / pre-seed / demo) → the chip is hidden."""
+    s = DashboardStatusStrip()
+    qtbot.addWidget(s)
+    assert s._readiness.isHidden()  # starts hidden before the first poll
+    s.set_readiness_rollup(None)
+    assert s._readiness.isHidden()
+
+
+def test_readiness_chip_ok_is_success(qtbot):
+    from control_ofc.api.models import ReadinessRollup
+
+    s = DashboardStatusStrip()
+    qtbot.addWidget(s)
+    s.set_readiness_rollup(ReadinessRollup(overall="ok"))
+    assert not s._readiness.isHidden()
+    assert s._readiness.text() == "✓ Cooling ready"
+    assert s._readiness.property("class") == "SuccessChip"
+
+
+def test_readiness_chip_warning_shows_count_and_tooltip(qtbot):
+    from control_ofc.api.models import ReadinessRollup
+
+    s = DashboardStatusStrip()
+    qtbot.addWidget(s)
+    s.set_readiness_rollup(
+        ReadinessRollup(overall="warning", warning=2, top_summary="Load the it87 driver")
+    )
+    assert s._readiness.property("class") == "WarningChip"
+    assert "2 to fix" in s._readiness.text()
+    assert "it87" in s._readiness.toolTip()  # daemon summary surfaced (as plain text)
+
+
+def test_readiness_chip_tooltip_escapes_daemon_string(qtbot):
+    """Security boundary: the tooltip carries a daemon string, so any markup in it
+    is HTML-escaped and rendered verbatim — never interpreted as rich text."""
+    from control_ofc.api.models import ReadinessRollup
+
+    s = DashboardStatusStrip()
+    qtbot.addWidget(s)
+    s.set_readiness_rollup(ReadinessRollup(overall="warning", warning=1, top_summary="<b>x</b>"))
+    tip = s._readiness.toolTip()
+    assert "&lt;b&gt;" in tip  # escaped
+    assert "<b>" not in tip  # raw markup never survives
+
+
+def test_readiness_chip_critical_counts_critical_plus_warning(qtbot):
+    from control_ofc.api.models import ReadinessRollup
+
+    s = DashboardStatusStrip()
+    qtbot.addWidget(s)
+    s.set_readiness_rollup(ReadinessRollup(overall="critical", critical=1, warning=1))
+    assert s._readiness.property("class") == "CriticalChip"
+    assert "2 to fix" in s._readiness.text()
+
+
+def test_readiness_chip_info_is_advisory(qtbot):
+    from control_ofc.api.models import ReadinessRollup
+
+    s = DashboardStatusStrip()
+    qtbot.addWidget(s)
+    s.set_readiness_rollup(ReadinessRollup(overall="info", info=1))
+    assert s._readiness.property("class") == "InfoChip"
+    assert s._readiness.text() == "Cooling: notes"
+
+
+def test_readiness_chip_click_emits(qtbot):
+    from control_ofc.api.models import ReadinessRollup
+
+    s = DashboardStatusStrip()
+    qtbot.addWidget(s)
+    s.set_readiness_rollup(ReadinessRollup(overall="warning", warning=1))
+    with qtbot.waitSignal(s.readiness_clicked, timeout=500):
+        s._readiness.click()
+
+
 # ---------------------------------------------------------------------------
 # Warning chip: count, singular/plural, visibility, click
 # ---------------------------------------------------------------------------

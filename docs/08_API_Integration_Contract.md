@@ -237,6 +237,18 @@ never sends it, *or* genuinely no active profile — is parsed as `None` and lea
 pre-2.4.0 daemon). `GET /profile/active` remains the canonical query and the fallback. Note the fast
 path covers activation; external *deactivation* still reconciles on the periodic fallback.
 
+`readiness` (daemon ≥ 2.10.0, additive — `api_version` unchanged, **omitted until the daemon has
+cached a rollup**, and by daemons predating the field) is a compact hardware-readiness rollup mirrored
+onto the `/status` + `/poll` surface for the GUI's Dashboard cooling-readiness health chip (DEC-206):
+`{overall, critical, warning, info, top_summary, top_code}` — the rollup severity (`ok`/`info`/
+`warning`/`critical`), the per-severity item counts, and the most-severe item's one-line summary +
+stable `code` (both omitted when `overall` is `ok`). It is derived from the same items
+`GET /inventory/readiness` returns and **cached** in the daemon: refreshed only on discovery-changing
+events (startup, a preferred-sensor change, and each `/inventory/readiness` GET), never recomputed on
+the 1 Hz poll. The **full** item list stays on `GET /inventory/readiness` — this rollup is a summary,
+not a replacement. The GUI parses an absent key to `None` and hides the chip (older daemon, demo, or
+before the daemon's startup seed runs); `top_summary` is a daemon string, rendered as plain text.
+
 ### GET /sensors
 Use as the primary sensor snapshot source.
 Expected fields:

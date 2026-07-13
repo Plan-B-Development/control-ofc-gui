@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
@@ -271,6 +271,9 @@ class SettingsPage(QWidget):
 
         layout.addStretch()
         scroll.setWidget(container)
+        # Kept so focus_preferred_sensors (DEC-206 deep-link) can scroll the
+        # preferred-sensors group into view within this tab.
+        self._app_scroll = scroll
         return scroll
 
     def _dir_picker_row(self, label_text: str, path_label: QLabel, browse_callback) -> QHBoxLayout:
@@ -578,7 +581,22 @@ class SettingsPage(QWidget):
         btn_row.addWidget(self._pref_result_label, 1)
         v.addLayout(btn_row)
 
+        self._pref_group = group  # for focus_preferred_sensors (DEC-206 deep-link)
         return group
+
+    def focus_preferred_sensors(self, role: str = "cpu") -> None:
+        """Reveal the preferred-sensors picker and focus the CPU or motherboard
+        combo — the target of the merged readiness view's "Pick a sensor"
+        deep-link (DEC-206). Selects the Application tab, refreshes the combos
+        from the daemon so the picker is populated when arrived at directly, then
+        scrolls the group into view and focuses the requested combo.
+        """
+        self._tabs.setCurrentIndex(0)  # Application tab hosts the picker
+        if self._client is not None:
+            self._refresh_preferred_sensors()
+        combo = self._pref_mb_combo if role == "mb" else self._pref_cpu_combo
+        self._app_scroll.ensureWidgetVisible(self._pref_group)
+        combo.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

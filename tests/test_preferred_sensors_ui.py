@@ -100,6 +100,17 @@ def test_selecting_automatic_clears(settings_page):
     assert client.cpu_calls == [None]
 
 
+def test_focus_preferred_sensors_selects_app_tab_and_populates(settings_page):
+    """DEC-206: the merged readiness view's 'Pick a sensor' deep-link lands on the
+    Application tab with the picker populated, for both roles."""
+    page, _client = settings_page
+    page.focus_preferred_sensors("cpu")
+    assert page._tabs.currentIndex() == 0  # Application tab hosts the picker
+    assert page._pref_cpu_combo.count() > 0  # refreshed from the daemon on arrival
+    page.focus_preferred_sensors("mb")  # MB role accepted too, still the App tab
+    assert page._tabs.currentIndex() == 0
+
+
 # ── Diagnostics ▸ Sensors context-menu ───────────────────────────────
 
 
