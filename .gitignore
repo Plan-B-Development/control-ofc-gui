@@ -43,3 +43,6 @@ docs/17_Claude_Kickoff_Prompt.md
 # /audit findings (cross-stack quality reports) — internal-only, not for
 # releases or AUR tarballs.
 AUDIT_*.md
+# Design authority + mockups driving the v2.22.0 redesign (DEC-208…216).
+# Working material, superseded by the shipped UI and screenshots/auto/.
+gui-redesign/
