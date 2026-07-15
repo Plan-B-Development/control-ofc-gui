@@ -87,3 +87,49 @@ def test_ribbon_alerts_opens_logs(window):
 
 def test_sidebar_profile_combo_populated(window, profile_service):
     assert window.sidebar.profile_combo.count() == len(profile_service.profiles)
+
+
+def test_startup_restores_divergent_page_and_highlights_nav(
+    qtbot, app_state, profile_service, settings_service
+):
+    """DEC-216: a persisted ``last_page_index`` at a *divergent* NAV/PAGE entry
+    (Logs: PAGE_LOGS=4 but NAV_LOGS=7) must, at construction, both show the right
+    stack page AND highlight the right sidebar entry. ``_resolve_startup_page`` and
+    ``select_page`` are each unit-tested; this pins their composition in the
+    constructor for a secondary page (audit Rank 3)."""
+    from control_ofc.constants import NAV_LOGS
+
+    settings_service.settings.restore_last_page = True
+    settings_service.settings.last_page_index = PAGE_LOGS
+
+    win = MainWindow(
+        state=app_state,
+        profile_service=profile_service,
+        settings_service=settings_service,
+        demo_mode=False,
+    )
+    qtbot.addWidget(win)
+
+    assert win.page_stack.currentIndex() == PAGE_LOGS
+    assert win.sidebar._group.checkedId() == NAV_LOGS
+
+
+def test_warning_count_propagates_to_ribbon_and_footer(window, app_state):
+    """DEC-208: ``AppState.warning_count_changed`` must drive BOTH the ribbon alert
+    badge and the footer health rollup through the live MainWindow wiring. The two
+    setters are unit-tested in isolation; this pins the cross-component chain (audit
+    Rank 5). ``isHidden()`` is used (not ``isVisible()``) so the assertions don't
+    depend on the never-shown window's ancestor visibility."""
+    # No warnings → ribbon badge hidden, footer nominal.
+    assert window.status_ribbon._alert_badge.isHidden() is True
+    assert window.footer._health_label.text() == "All systems nominal"
+
+    # One warning propagates to both surfaces.
+    app_state.add_warning("warning", "test", "sensor stale")
+    assert window.status_ribbon._alert_badge.isHidden() is False
+    assert window.footer._health_label.text() == "1 warning"
+
+    # Clearing it reverts both.
+    app_state.clear_warnings()
+    assert window.status_ribbon._alert_badge.isHidden() is True
+    assert window.footer._health_label.text() == "All systems nominal"

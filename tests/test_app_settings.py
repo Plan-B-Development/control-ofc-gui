@@ -63,6 +63,11 @@ def test_dec216_migration_boundaries_and_idempotence():
     # Index 3 (old Diagnostics) and below are NOT shifted.
     assert AppSettings.from_dict({"version": 1, "last_page_index": 3}).last_page_index == 3
     assert AppSettings.from_dict({"version": 1, "last_page_index": 2}).last_page_index == 2
+    # Index 4 is the FIRST shifted page (Overview) — the exact boundary that
+    # separates `>= 4` from `> 4`. Both fields must decrement here or a future
+    # off-by-one (`> 4`) would strand a restore on the wrong page (audit Rank 4).
+    b = AppSettings.from_dict({"version": 1, "last_page_index": 4, "default_startup_page": 4})
+    assert (b.last_page_index, b.default_startup_page) == (3, 3)
     # A versionless legacy file is treated as v1 and migrates.
     vless = AppSettings.from_dict({"last_page_index": 5})
     assert (vless.last_page_index, vless.version) == (4, 2)

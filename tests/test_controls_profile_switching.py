@@ -325,3 +325,33 @@ class TestUnsavedGuardOnProfileSwitch:
 
         assert called["n"] == 0
         assert profile_service.active_id == other.id
+
+
+class TestNavigationDoesNotGuardUnsaved:
+    """DEC-214 design lock: the unsaved-changes guard fires *only* on the sidebar
+    Apply (profile-switch) flow, NOT on plain page navigation. Navigating away from
+    Controls with in-progress edits silently proceeds. This pins that decision so a
+    future change in either direction (adding a nav guard, or removing the Apply
+    guard) trips a test rather than passing silently (audit Rank 2)."""
+
+    def test_navigating_away_with_unsaved_does_not_prompt(self, main_window, monkeypatch):
+        from control_ofc.constants import PAGE_LOGS
+
+        main_window.controls_page._set_unsaved(True)
+
+        calls = {"n": 0}
+
+        def _guard() -> bool:
+            calls["n"] += 1
+            return True
+
+        monkeypatch.setattr(main_window.controls_page, "_confirm_discard_unsaved", _guard)
+
+        # Route the sidebar to another page (Logs) exactly as a nav click would.
+        main_window._on_nav_activated(PAGE_LOGS, -1)
+
+        # The guard must NOT be consulted, the edits are silently retained, and the
+        # page switches regardless.
+        assert calls["n"] == 0
+        assert main_window.controls_page._has_unsaved is True
+        assert main_window.page_stack.currentIndex() == PAGE_LOGS

@@ -69,6 +69,38 @@ class TestDashboardComboRevert:
 
 
 # ---------------------------------------------------------------------------
+# Quick Actions right-rail shortcut activates a profile (audit Rank 1)
+# ---------------------------------------------------------------------------
+
+
+class TestDashboardQuickActionsWiring:
+    """DEC-213: the right-rail Quick Actions panel emits ``activate_requested(pid)``
+    and the dashboard must route it through the shared ``ProfileService.activate``
+    path — the same handler the status-strip Apply button uses.
+
+    This pins the ``_quick_actions.activate_requested.connect(...)`` edge in
+    ``dashboard_page``: without that one line the signal reaches nothing, the
+    profile never activates, and no other test fails (audit Rank 1)."""
+
+    def test_quick_action_signal_activates_profile(self, qtbot, app_state, profile_service):
+        client = MagicMock()
+        client.activate_profile.return_value = ProfileActivateResult(activated=True)
+        page = DashboardPage(state=app_state, profile_service=profile_service, client=client)
+        qtbot.addWidget(page)
+
+        target = _other_id(profile_service)
+        assert profile_service.active_id != target
+
+        # Fire the panel's signal exactly as a quick-action button click would; the
+        # dashboard's connect() must drive it into ProfileService.activate.
+        page._quick_actions.activate_requested.emit(target)
+
+        assert profile_service.active_id == target
+        assert app_state.active_profile_name == profile_service.get_profile(target).name
+        client.activate_profile.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # Bug fix 2 — Dashboard combo refreshes after CRUD elsewhere
 # ---------------------------------------------------------------------------
 
