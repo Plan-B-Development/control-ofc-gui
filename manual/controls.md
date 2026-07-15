@@ -14,26 +14,38 @@ The control model has three layers:
 
 A profile contains one or more fan roles, and each fan role references a curve from the profile's curve library. The [Profiles and Curves Reference](profiles-and-curves.md) explains the model in depth.
 
-## Profile Bar
+## Page Layout
 
-The top bar manages profiles:
+The page **header** carries the actions that apply to the whole profile:
 
-| Control | What it does |
-|---------|-------------|
-| **Profile dropdown** | Selects which profile to view and edit. The active profile is marked with `*` |
-| **Activate** | Uploads the selected profile to the daemon and makes it the active one. From that point the daemon's profile engine evaluates its curves every second and drives the fans — so your fans stay controlled even with the GUI closed. Disabled while disconnected (you cannot activate a profile the daemon cannot receive) |
-| **Save** | Writes the profile's changes to disk (`Ctrl+S`). Saving the **active** profile also re-applies it to the daemon, so an edited curve takes effect immediately instead of only after the next **Activate** |
-| **Manage Profiles…** | Menu with **New Profile**, **Rename Profile**, **Duplicate Profile**, and **Delete Profile** |
+| Button | What it does |
+|--------|-------------|
+| **Auto-Connect Wizard** | Opens the Fan Wizard to identify and label your physical fans — see [Fan Wizard](fan-wizard.md) |
+| **Configure AIO** | One-click liquid-cooler setup — shown only when a liquid cooler is detected (see [Configuring an AIO](#configuring-an-aio--liquid-cooler)) |
+| **Save Profile** | Writes the profile's changes to disk (`Ctrl+S`); saving the active profile also re-applies it to the daemon |
+| **⋮** | Profile-management menu (create / rename / duplicate / delete) |
 
-Next to Save, a status chip shows **"Unsaved changes"** whenever you have modified the profile without saving, and confirms afterwards with "Settings saved" / "Profile activated". Saving the active profile re-applies it and confirms with "Saved & reapplied to daemon" (or "Saved — reapply failed (see log)" if the daemon rejects the re-apply — your local edit is still kept). Activation failures are shown in red ("Activation failed: …") — the GUI never falsely marks a profile active.
+Below the header the page is a **three-pane** workspace:
 
-The daemon is the store of record for profiles; the GUI keeps a local draft cache so you can author and edit while disconnected. A profile saved while the daemon is unreachable is held as a **draft**; there is no background auto-sync — open it and **Save** again once the daemon reconnects to publish it. **Activate** is disabled while disconnected — you cannot make a profile active until the daemon can receive it.
+1. **Assign Roles** (left) — the fan-role cards; the pane header's **+** button creates a role.
+2. **Link Logic** (middle) — the curve library; the pane header's **+** button adds a curve.
+3. **Curve Editor** (right) — an always-mounted inline editor. Its header carries a **Test Curve** button, and until you pick a curve it reads *"Select a curve's Edit action to shape it here."*
 
-Deleting a profile asks for confirmation and cannot be undone; deleting the currently active profile deactivates it on the daemon first.
+(The earlier top-section / bottom-section split with a draggable divider is gone — roles, curves, and the editor now sit side by side.)
 
-## Fan Roles (Top Section)
+## Managing Profiles
 
-The section header has **Fan Wizard** (identify and label your physical fans — see [Fan Wizard](fan-wizard.md)), **Configure AIO** (shown only when a liquid cooler is detected — see [Configuring an AIO](#configuring-an-aio--liquid-cooler)), and **+ Fan Role**, which offers two kinds of role:
+**Selecting and activating** a profile no longer happens on this page — it moved to the sidebar's **Active Profile** selector (a dropdown plus an **Apply** button). Pick a profile there and click **Apply** to hand it to the daemon, whose profile engine then evaluates its curves every second and drives the fans, so they stay controlled even with the GUI closed. If the Controls page has unsaved edits when you switch the active profile from the sidebar, the GUI first asks whether to discard them — cancel, and the sidebar snaps back to the profile that is still active.
+
+**Saving** stays on this page. The header **Save Profile** button (`Ctrl+S`) writes your changes to disk. Saving the **active** profile also re-applies it to the daemon, so an edited curve takes effect immediately instead of only on the next activation. A status chip beside the button reads **"Unsaved changes"** whenever you have modified a profile without saving, then confirms afterwards: "Settings saved" for an inactive profile, "Saved & reapplied to daemon" for the active one (or "Saved — reapply failed (see log)" if the daemon rejects the re-apply — your local edit is still kept), and "Saved locally — daemon offline, not published" when the daemon is unreachable.
+
+**Creating, renaming, duplicating, and deleting** profiles live under the header's **⋮** menu — **New Profile**, **Rename Profile**, **Duplicate Profile**, and **Delete Profile**. Deleting a profile asks for confirmation and cannot be undone; deleting the currently active profile deactivates it on the daemon first.
+
+The daemon is the store of record for profiles; the GUI keeps a local draft cache so you can author and edit while disconnected. A profile saved while the daemon is unreachable is held as a **draft**; there is no background auto-sync — open it and **Save** again once the daemon reconnects to publish it. Activation (from the sidebar) is disabled while disconnected — you cannot make a profile active until the daemon can receive it.
+
+## Fan Roles (Assign Roles)
+
+The left **Assign Roles** pane lists your fan roles. Its **+** button offers two kinds of role:
 
 - **Single Output Fan Role** — one physical output
 - **Group Fan Role (Multi-Fan)** — several outputs acting together
@@ -50,7 +62,7 @@ Each fan role appears as a card:
 
 ### Configuring an AIO / liquid cooler
 
-When a liquid cooler (e.g. an NZXT Kraken or an Aquacomputer pump) is detected, a **Configure AIO** button appears in the Fan Roles header. It sets your cooler up in one step:
+When a liquid cooler (e.g. an NZXT Kraken or an Aquacomputer pump) is detected, a **Configure AIO** button appears in the page header. It sets your cooler up in one step:
 
 - A **pump** control at a **constant speed** — choose Low (30%), Mid (60%), High (80%, the default), or Max (100%). A pump runs best at a steady speed rather than a temperature curve, so these are fixed levels with a 30% minimum floor.
 - A **radiator-fan** control bound to a temperature sensor — the **coolant** sensor by default (recommended, since the radiator's job is to cool the loop), though any sensor is selectable and coolant/CPU are highlighted as preferred.
@@ -73,7 +85,7 @@ Use it for quick experiments ("what does 80% sound like?") without touching the 
 
 Click **Edit…** to open the role dialog:
 
-![Fan Role Dialog — Curve Mode](../screenshots/auto/12_fan_role_dialog_curve.png)
+![Fan Role Dialog — Curve Mode](../screenshots/auto/10_fan_role_dialog_curve.png)
 
 | Field | Description |
 |-------|-------------|
@@ -83,7 +95,7 @@ Click **Edit…** to open the role dialog:
 | **Manual Output** | Fixed percentage with slider and spinbox (Manual mode only) |
 | **Members** | Read-only summary, with an **Edit Members** button |
 
-![Fan Role Dialog — Manual Mode](../screenshots/auto/13_fan_role_dialog_manual.png)
+![Fan Role Dialog — Manual Mode](../screenshots/auto/11_fan_role_dialog_manual.png)
 
 When the role contains an AMD GPU fan, a **GPU fan idle behaviour** section appears with a per-GPU **Allow zero-RPM idle** checkbox: leave it checked to let the GPU's firmware stop the fan at idle (it spins up with the curve), or uncheck it so the fan tracks the curve continuously.
 
@@ -97,11 +109,11 @@ Each physical fan can belong to **only one role**: outputs already assigned else
 
 - **Drag a card** to reorder it within its section (a drop indicator shows the insertion point); the order is saved with the profile.
 - **Drag the grip** in a card's bottom-right corner to resize it — sizes snap to a shared 20px grid, so making several cards exactly the same size is easy. **Double-click the grip** to reset the card to its theme-derived size. Per-card sizes persist across restarts and profile switches.
-- The baseline card size follows the theme font size and the **Card size** preference (Compact / Comfortable / Large) in [Settings → Themes](settings.md#cards).
+- The baseline card size follows the theme font size and the **Card size** preference (Compact / Comfortable / Large) on the [Theme page](settings.md#theme-page).
 
-## Curves (Bottom Section)
+## Curves (Link Logic)
 
-The curve library lives in the lower half (the divider between the two sections is draggable). **+ Curve** offers the seven curve types:
+The curve library is the middle **Link Logic** pane. Its **+** button offers the seven curve types:
 
 | Type | Description | Use case |
 |------|-------------|----------|
@@ -115,24 +127,24 @@ The curve library lives in the lower half (the divider between the two sections 
 
 Mix and Sync are *composite* curves: they reference other curves (Mix) or another fan role (Sync) **by name**, and the editor only offers choices that cannot form a loop, so a composite can never depend on itself (DEC-150/151/152).
 
-Each curve card shows the curve's name and type, the bound sensor with its live reading (composites show no sensor), a preview, and which roles use it ("Used by: …" with an **Assigned** / **Unassigned** chip). The preview is a sparkline for graph curves, a staircase for stepped curves, and otherwise a short summary — for example "35°C→80°C: 30%→100%", "Flat: 65%", "Idle 30% <40° / Load 80% >60°", "Max of 3 curves" (Mix), or "Mirror control +5%" (Sync). The card's **Actions** menu has **Edit**, **Rename**, **Duplicate**, and **Delete**.
+Each curve card shows the curve's name and type, the bound sensor with its live reading (composites show no sensor), a preview, and which roles use it ("Used by: …" with an **Assigned** / **Unassigned** chip). The preview is a sparkline for graph curves, a staircase for stepped curves, and otherwise a short summary — for example "35°C→80°C: 30%→100%", "Flat: 65%", "Idle 30% <40° / Load 80% >60°", "Max of 3 curves" (Mix), or "Mirror control +5%" (Sync). The card's **Actions** menu has **Edit**, **Rename**, **Duplicate**, **Unlink** (detach the curve from every role using it), and **Delete**.
 
 ### Editing a Graph or Stepped Curve
 
-**Actions → Edit** on a graph or stepped curve opens the inline editor below the curve grid (a stepped curve uses the same point editor — only its preview line renders as a staircase):
+**Actions → Edit** on a graph or stepped curve loads it into the always-mounted **Curve Editor** pane on the right (a stepped curve uses the same point editor — only its preview line renders as a staircase):
 
 - **Drag points** on the graph, or type exact values in the numeric table beside it. **Double-click** empty graph space (or click **+ Add Point**) to add a point; **Remove Point** or the `Delete` key removes the selected one (a curve keeps at least 2 points)
 - The **sensor selector** chooses which temperature drives the curve; a live readout shows the current evaluation ("45.0°C → 62%")
 - **Presets** (Linear, Quiet, Aggressive) load a starting shape you can refine
 - **Undo / redo** with `Ctrl+Z` / `Ctrl+Shift+Z`
 - The valid range is 0–120°C and 0–100% output; if a role using this curve has a stall-protection minimum, the editor stops you dragging points below that floor
-- Click **Close Editor** when done — edits update the card preview immediately and mark the profile unsaved
+- Edits update the card preview immediately and mark the profile unsaved; the editor header's **Test Curve** button refreshes the live readout so you can check the curve's output at the current sensor temperature. To edit a different curve, pick its **Edit** action — it loads into the same pane
 
 ### Editing a Linear, Flat, Trigger, Mix, or Sync Curve
 
 These open a small parameter dialog instead:
 
-![Curve Edit Dialog](../screenshots/auto/14_curve_edit_dialog.png)
+![Curve Edit Dialog](../screenshots/auto/12_curve_edit_dialog.png)
 
 - **Linear** — name, a sensor, and start/end temperature and output values.
 - **Flat** — just a name and an output percentage (no sensor needed).
@@ -142,7 +154,7 @@ These open a small parameter dialog instead:
 
 ## Empty States
 
-A new profile shows "No fan roles configured. Click + Fan Role to create one." The Curves section stays hidden until at least one fan role exists — curves are always assigned *to* roles, so the page walks you through creating a role first.
+A new profile shows "No fan roles configured. Click + to create one." The Curves section stays hidden until at least one fan role exists — curves are always assigned *to* roles, so the page walks you through creating a role first.
 
 ---
 

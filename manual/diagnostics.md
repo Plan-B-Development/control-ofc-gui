@@ -1,14 +1,14 @@
-# Diagnostics
+# System Health (Overview, System State, Hardware & Logs)
 
-The Diagnostics page exposes the health and status of every subsystem. It is your primary tool for troubleshooting connection issues, stale sensors, and hardware detection problems.
+The application spreads the health and status of every subsystem across four standalone sidebar pages — **Overview**, **System State**, **Hardware**, and **Logs**. Together they are your primary tools for troubleshooting connection issues, stale sensors, and hardware detection problems. (In earlier versions these were tabs on a single **Diagnostics** page; that tabbed page was retired in the redesign and its content re-homed onto the four pages documented below.)
 
-> **Looking for help with a specific motherboard or fan controller?** Start with the [Hardware Troubleshooting](hardware-troubleshooting.md) page — it covers the Hardware Readiness checks on the **Troubleshooting** tab, Test PWM Control, vendor quirks, and what to do when fans report 0 RPM or refuse to change speed.
+> **Looking for help with a specific motherboard or fan controller?** Start with the [Hardware Troubleshooting](hardware-troubleshooting.md) page — it covers the Hardware Readiness checks on the **System State** page, Test PWM Control, vendor quirks, and what to do when fans report 0 RPM or refuse to change speed.
 
-![Diagnostics — Overview Tab](../screenshots/auto/04_diagnostics_overview.png)
+## Overview page
 
-## Overview Tab
+![Overview page](../screenshots/auto/03_overview.png)
 
-Two information cards:
+The **Overview** page answers *"is the daemon healthy, what hardware was found, and what are the sensors and fans doing?"*. It opens with two information cards — **Daemon Health** and **Device Discovery** — followed by the **Sensor Intelligence** and **Fan Status** sections.
 
 ### Daemon Health
 
@@ -33,9 +33,7 @@ Two information cards:
 | **Liquid cooling** | Whether a liquid cooler (AIO) is detected via hwmon, and whether its pump/fan is writable, monitor-only (a read-only driver such as NZXT Kraken2), or not detected. USB-only coolers are out of scope and shown as not detected |
 | **Features** | Summary of write capabilities (OpenFan writes, hwmon writes) |
 
-## Sensors Tab
-
-![Diagnostics — Sensors Tab](../screenshots/auto/07_diagnostics_sensors.png)
+### Sensor Intelligence
 
 A 10-column diagnostic table of every temperature sensor reported by the daemon. A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · U unavailable · M hidden`.
 
@@ -54,29 +52,27 @@ A 10-column diagnostic table of every temperature sensor reported by the daemon.
 
 The `K stale` count on the header summary line is the quick check for sensors that have stopped updating. Per-sensor kind, driver type, trend, and freshness are not table columns — open the row's **Details** dialog to see them (trend also appears in the hover tooltip).
 
-### Unavailable sensors
+#### Unavailable sensors
 
 Some sensors exist but currently can't be read at all — the classic example is a Wi-Fi-radio temperature (an `ath12k` chip) that returns "Network is down" whenever the radio is switched off. Rather than letting the daemon log that failure endlessly, these are reported as **unavailable** and listed in a small panel below the table: each shows its label, the read-error reason, and how long it has been unavailable, and the count appears as `· U unavailable` on the header summary line. The panel is hidden entirely when nothing is unavailable. Because such a sensor can disappear the moment its device powers down, it is **never offered as a fan-curve source** in the Controls page (a curve already bound to one keeps working). This is display-only — there is no banner or pop-up — and an unavailable sensor re-appears in the table automatically the moment it becomes readable again.
 
-### Sensor Detail dialog
+#### Sensor Detail dialog
 
 Open it via the per-row **Details** button, a row double-click, or right-click → **Open detail…**. It shows the full classification description and every classification note (not truncated like the hover tooltip), board context, a **Thresholds** section with a headroom-to-critical indicator, and a clickable kernel.org driver documentation link. On a daemon that reports its own classification (≥ v2.6.0), the dialog adds a **Daemon classification** section — the daemon's authoritative class, confidence, and rationale — shown alongside the GUI's own heuristic, not replacing it.
 
-### Hiding sensors
+#### Hiding sensors
 
-Right-click a row → **Hide sensor** to remove a sensor you don't care about (a duplicate, or a chip that always reads garbage). Hidden sensors are never silently dropped — they collapse into a `▸ N hidden sensors` toggle row at the bottom that you can expand again. This hide-list is **local to this tab**; the **Mirror hidden to dashboard** button in the header pushes the current hide-list into the shared dashboard series selection as a one-shot.
+Right-click a row → **Hide sensor** to remove a sensor you don't care about (a duplicate, or a chip that always reads garbage). Hidden sensors are never silently dropped — they collapse into a `▸ N hidden sensors` toggle row at the bottom that you can expand again. This hide-list is **local to this page**; the **Mirror hidden to dashboard** button in the header pushes the current hide-list into the shared dashboard series selection as a one-shot.
 
 Right-click also offers **Treat as coolant** / **Reset to auto** — force a sensor to be classified as a liquid-cooling **coolant** temperature (so it groups under *AIO / Liquid* on the dashboard) when the automatic classifier is too conservative, or clear that override. This is a local GUI preference.
 
-On a daemon ≥ v2.6.0 the menu also offers **Set as preferred CPU sensor** / **Set as preferred motherboard sensor** — the same daemon-persisted, advisory preference you can set from Settings ▸ Application (thermal safety still uses the hottest CPU sensor regardless).
+On a daemon ≥ v2.6.0 the menu also offers **Set as preferred CPU sensor** / **Set as preferred motherboard sensor** — the same daemon-persisted, advisory preference you can set from the **Settings** page (Preferred Sensors card); thermal safety still uses the hottest CPU sensor regardless.
 
 Hover any row to see a tooltip explaining the chip's source class, description, and any known driver quirks. For deeper sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
 
-## Fans Tab
+### Fan Status
 
-![Diagnostics — Fans Tab](../screenshots/auto/08_diagnostics_fans.png)
-
-The Fans tab is a single live view of every controllable fan output the daemon reports. (Hardware-health checks — chip detection, driver state, BIOS interference, and PWM verification — live on the separate [Troubleshooting](#troubleshooting-tab) tab.)
+The **Fan Status** section is a single live view of every controllable fan output the daemon reports. (Hardware-health checks — chip detection, driver state, BIOS interference, and PWM verification — live on the separate [System State](#system-state-page) page.)
 
 The fan table has the following columns:
 
@@ -84,62 +80,72 @@ The fan table has the following columns:
 |--------|---------|
 | **ID** | Display name (user alias if set, otherwise hardware label or fan ID) |
 | **Source** | Connection type: openfan, hwmon, amd_gpu, intel_gpu, or nvidia_gpu |
-| **Control method** | How this fan can be controlled: `openfan`, `hwmon` (with PWM-only or full read/write), `amd_gpu` (PMFW or legacy pwm1), `read_only`, or `unknown`. Read-only entries cannot be commanded — **Test PWM Control** on the [Troubleshooting](#troubleshooting-tab) tab explains why |
+| **Control method** | How this fan can be controlled: `openfan`, `hwmon` (with PWM-only or full read/write), `amd_gpu` (PMFW or legacy pwm1), `read_only`, or `unknown`. Read-only entries cannot be commanded — **Test PWM Control** on the [System State](#system-state-page) page explains why |
 | **RPM** | Hardware-measured speed (dash if not available). Writable hwmon headers reading 0 RPM are annotated `(no fan detected)` so you don't accidentally assign a curve to an empty header |
 | **PWM (%)** | Last commanded speed percentage (dash if not set) |
 | **Freshness** | "fresh" (under 2 s), "stale" (2-10 s, shown in yellow), or "invalid" (over 10 s, shown in red) |
 
 Hover any cell for a tooltip explaining what the value means and, for read-only fans, why the GUI cannot drive them.
 
-## Troubleshooting Tab
+## System State page
 
-![Diagnostics — Troubleshooting Tab](../screenshots/auto/08b_diagnostics_troubleshooting.png)
+![System State page](../screenshots/auto/04_system_state.png)
 
-The Troubleshooting tab is the **Hardware Readiness** health report — it answers *"is my fan-control hardware healthy, and if not, how do I fix it?"*. It fetches `/diagnostics/hardware` automatically the first time you open the tab (or on demand via **Refresh Hardware Diagnostics**).
+The **System State** page is the **Hardware Readiness** health report — it answers *"is my fan-control hardware healthy, and if not, how do I fix it?"*. It fetches `/diagnostics/hardware` automatically the first time you open the page (or on demand via **Refresh Hardware Diagnostics**).
 
 It leads with the answer and keeps the detail one click away:
 
 - **Verdict banner** — a green *✓ System ready* line, or an amber/red *⚠ N issue(s) need attention* — always on screen.
 - **Issue checklist** — one row per detected problem, each with a colour-coded severity badge (**CRITICAL** / **WARN**, icon + word + colour), a one-line **fix**, and a clickable link to the relevant documentation. A healthy system shows a single *✓ No issues detected* line. This is the fastest path from "something is wrong" to "here is what to change".
 - **Alerts & advisories** — blocking alerts (driver-module collisions, active BIOS interference) and informational notices (dual-chip setup, vendor quirks, ACPI conflicts) appear here when relevant. Vendor quirks render as per-advisory rows with a four-tier severity badge (**CRITICAL** red / **HIGH** orange / **MEDIUM** amber / **INFO** blue) and a collapsible detail. Safety-critical alerts are always visible — never hidden behind a collapse.
-- **Detail sections** (collapsed by default, expand on click): **Detected hardware** (chip + kernel-module tables), **BIOS interference detail** (shown only when the BIOS has been reclaiming fan control), **Thermal safety & GPU**, **Guidance & documentation**, and **PWM control test** — the **Test PWM Control** / **Verify All Writable** buttons, plus **Test GPU Fan Control** and **Restore GPU Fan to Automatic** when a writable AMD GPU is present.
+- **Detail sections** (collapsed by default, expand on click): **Detected hardware** (chip + kernel-module tables), **BIOS interference detail** (shown only when the BIOS has been reclaiming fan control), the **Interference Monitor**, **Thermal safety & GPU**, **Guidance & documentation**, and **PWM control test** — the **Test PWM Control** / **Verify All Writable** buttons, plus **Test GPU Fan Control** and **Restore GPU Fan to Automatic** when a writable AMD GPU is present.
 - **Restore GPU Fan to Automatic** hands the GPU fan back to the firmware's default curve — use it to undo a static GPU speed set this session without restarting the daemon. It is disabled (with the reason in its tooltip) while an active profile is driving the GPU fan: remove the GPU from its fan role or deactivate the profile first.
 - **Rescan Hardware** asks the daemon to re-enumerate hwmon sensors and PWM headers — use it right after loading a sensor kernel module (for example following a driver install). New sensors appear within a couple of poll cycles; brand-new fan-*control* hardware still requires a daemon restart.
 - **Open Full Report ↗** opens the complete readiness report in its own resizable window; every link in it is clickable.
 
-This tab is covered in depth on the [Hardware Troubleshooting](hardware-troubleshooting.md) page.
+This page is covered in depth on the [Hardware Troubleshooting](hardware-troubleshooting.md) page.
 
 > **Lease management is daemon-internal as of 2.0.0.** The daemon is the sole writer of motherboard fan headers, so it manages the hwmon lease entirely on its own — the GUI never holds one. The dedicated **Lease** tab that earlier versions showed here has been removed.
 
-## Readiness Tab
+## Hardware page
 
-The **Readiness** tab shows the daemon's own structured assessment of your cooling hardware — its answer to *"what is ready, what needs attention, and what should I do next?"*. It reads `/inventory/readiness` and populates the first time you open the tab (or via **Refresh Readiness**).
+![Hardware page](../screenshots/auto/05_hardware.png)
 
-It is similar in spirit to the Troubleshooting tab but comes from a different source: **Troubleshooting** is the GUI's own hardware-readiness report built from `/diagnostics/hardware` (drivers, chips, BIOS interference, PWM tests), while **Readiness** is the *daemon's* go/no-go checklist — CPU-sensor presence, default-CPU confidence, whether PWM controls are present / read-only / not-yet-verified, monitor-only fan tachometers, quarantined sensors, and any preferred sensor that has gone missing.
+The **Hardware** page merges two daemon-sourced, read-only views of your cooling hardware: the **System Readiness Checklist** (the daemon's go/no-go assessment from `/inventory/readiness`) and the **Super-I/O Architecture** report (motherboard sensor/fan-chip detection from `/inventory/superio`). Neither view ever changes your system.
+
+### System Readiness Checklist
+
+The **System Readiness Checklist** shows the daemon's own structured assessment of your cooling hardware — its answer to *"what is ready, what needs attention, and what should I do next?"*. It reads `/inventory/readiness` and populates the first time you open the page (or via **Refresh Readiness**).
+
+It is similar in spirit to the **System State** page but comes from a different source: the **System State** page is the GUI's own hardware-readiness report built from `/diagnostics/hardware` (drivers, chips, BIOS interference, PWM tests), while this checklist is the *daemon's* go/no-go assessment — CPU-sensor presence, default-CPU confidence, whether PWM controls are present / read-only / not-yet-verified, monitor-only fan tachometers, quarantined sensors, and any preferred sensor that has gone missing.
 
 - **Verdict banner** — an overall *Hardware ready* / *Needs attention* / *Not ready* line, colour- and glyph-coded, always on top.
 - **Item checklist** — one card per item, most severe first. Each shows a severity chip (**CRITICAL** / **WARN** / **OK**, icon + word + colour), a one-line summary, and — inside an expandable **Details** section — the technical detail, the recommended next step, and impact flags (*affects safety*, *blocks fan control*, *blocks monitoring*, *reboot may be required*). Warning and critical items open their detail automatically.
 - A healthy system shows *✓ All hardware-readiness checks passed.*
 
-This tab is read-only and never changes your system. On a daemon that predates the feature it reports that hardware readiness is unavailable. Requires `control-ofc-daemon` ≥ v2.6.0.
+Requires `control-ofc-daemon` ≥ v2.6.0. On a daemon that predates the feature the checklist reports that hardware readiness is unavailable.
 
-## Super-I/O Tab
+### Recommended Actions
 
-The **Super-I/O** tab answers *"which motherboard sensor/fan chip do I have, and is its driver loaded?"*. Most desktop boards route their fan headers and temperature sensors through a Super-I/O chip (ITE, Nuvoton/Winbond, SMSC, …); if its kernel driver is not loaded, the daemon can't see those fans at all. This tab reads the daemon's `/inventory/superio` detection and shows **one card per detected chip** — its vendor, a confidence level, and whether its driver is bound. For a chip whose driver is *not* loaded, the card expands a **How to enable** section with the exact driver name and a copy-paste command to load it.
+Each checklist item carries a recommended next step; the page gathers these into a **Recommended Actions** summary so you can work down the list from most to least urgent. Actions that need the hardware to be *exercised* — a **PWM control test** or a **GPU fan verification** — link *over* to the **System State** page, because that is where the Test PWM Control, Verify All Writable, and GPU-fan verify/restore actions live. The Hardware page itself only reports; it never writes to your fans.
+
+### Super-I/O Architecture
+
+The **Super-I/O Architecture** section answers *"which motherboard sensor/fan chip do I have, and is its driver loaded?"*. Most desktop boards route their fan headers and temperature sensors through a Super-I/O chip (ITE, Nuvoton/Winbond, SMSC, …); if its kernel driver is not loaded, the daemon can't see those fans at all. This section reads the daemon's `/inventory/superio` detection and shows **one card per detected chip** — its vendor, a confidence level, and whether its driver is bound. For a chip whose driver is *not* loaded, the card expands a **How to enable** section with the exact driver name and a copy-paste command to load it.
 
 - The report is **passive and read-only** — the daemon composes signals it already has (DMI board table, bound hwmon chips, `/proc/modules`, `/dev/kmsg`, ACPI port overlaps). It never loads a module or changes your system.
-- **Detection is not control.** A card means a chip is present and a driver exists — it does *not* prove fan control works. Loading the driver (and the Troubleshooting tab's PWM test) is what confirms that.
-- On a non-x86 machine, or a daemon that predates the feature, the tab reports that detection is unavailable.
+- **Detection is not control.** A card means a chip is present and a driver exists — it does *not* prove fan control works. Loading the driver (and the **System State** page's PWM test) is what confirms that.
+- On a non-x86 machine, or a daemon that predates the feature, the section reports that detection is unavailable.
 
-### Probe Ports (advanced)
+#### Probe Ports (advanced)
 
 Passive detection can't see a chip whose driver never loaded and that never appeared in the kernel log. For that case an **opt-in active probe** can read the Super-I/O configuration ports directly to identify an unbound chip. The **Probe Ports (advanced)** button runs it — but it is **off by default** and stays disabled (with the reason in its tooltip) unless the daemon operator has deliberately enabled it, because it requires a root-equivalent capability (`CAP_SYS_RAWIO`). Enabling it needs two steps on the daemon host: set `allow_port_probe = true` in `/etc/control-ofc/daemon.toml` **and** install the opt-in `superio-port-probe.conf.example` systemd drop-in (shipped in the daemon package's docs). Even when enabled, the probe only reads chip-ID registers, never touches a port a driver or the firmware is already using, and changes nothing. Clicking the button asks for confirmation first.
 
-This tab requires `control-ofc-daemon` ≥ v2.7.0.
+The Super-I/O Architecture section requires `control-ofc-daemon` ≥ v2.7.0.
 
-## Event Log Tab
+## Logs page
 
-![Diagnostics — Event Log Tab](../screenshots/auto/10_diagnostics_event_log.png)
+![Logs page](../screenshots/auto/08_logs.png)
 
 A live, filterable table of in-process GUI events: daemon connect/disconnect, profile activations and override actions, theme changes, and the like. The log retains up to 200 entries (oldest discarded first).
 
@@ -147,7 +153,7 @@ Three concepts that look similar but answer different questions:
 
 | Surface | Question it answers | Persistence |
 |---------|---------------------|-------------|
-| **Event Log** (this tab) | *What has the GUI been doing in this session?* | In-process only, capped at 200 |
+| **Event Log** (this page) | *What has the GUI been doing in this session?* | In-process only, capped at 200 |
 | **Active Warnings** (status-banner badge → dialog) | *What is wrong right now?* | Cleared when the condition resolves or is acknowledged |
 | **System Journal** (snapshot button below) | *What happened across restarts on the daemon side?* | Persisted by systemd |
 
@@ -183,9 +189,9 @@ A separate sub-section below the event log fetches on-demand detail dumps. Outpu
 | **System Journal** | Recent entries from the `control-ofc-daemon.service` systemd journal |
 | **Clear Snapshots** | Empty the snapshot view |
 
-## Export Support Bundle
+### Export Support Bundle
 
-The **Export Support Bundle** button (below all tabs) creates a JSON file containing:
+The **Export Support Bundle** button creates a JSON file containing:
 
 - System configuration
 - Daemon status and version
@@ -193,7 +199,7 @@ The **Export Support Bundle** button (below all tabs) creates a JSON file contai
 - Event log entries
 - Active profile information
 
-This file is useful for reporting issues. Review it before sharing — it may contain system-specific details.
+This file is useful for reporting issues. Review it before sharing — it may contain system-specific details. The same bundle is also reachable from the global footer's **Export Bundle** button.
 
 ---
 

@@ -16,7 +16,7 @@ If you already know your way around DKMS and modprobe, the condensed reference l
 
 Many boards work out of the box with mainline kernel drivers. Check first:
 
-1. Start the GUI and open **Diagnostics → Troubleshooting**.
+1. Start the GUI and open the **System State** page.
 2. Click **Refresh Hardware Diagnostics**.
 3. Look at the **Hardware Readiness** summary line.
 
@@ -48,7 +48,7 @@ Rule of thumb by vendor (full matrix: [Hardware Compatibility](../docs/19_Hardwa
 | ASUS | Nuvoton NCT6798D/NCT6799D | usually **none** — mainline `nct6775` |
 | ASRock | Nuvoton NCT6798D or NCT6686D | usually none; NCT6686D boards are board-specific — see the [ASRock notes](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) |
 
-> **Don't guess.** Installing the wrong out-of-tree driver can actively harm: the `nct6687`/`nct6775` chip-ID collision has bricked a CPU fan header in the wild (see the CRITICAL banner the Diagnostics page raises if both are loaded). Only install a driver the readiness report or the compatibility matrix recommends for your identified chip.
+> **Don't guess.** Installing the wrong out-of-tree driver can actively harm: the `nct6687`/`nct6775` chip-ID collision has bricked a CPU fan header in the wild (see the CRITICAL banner the **System State** page raises if both are loaded). Only install a driver the readiness report or the compatibility matrix recommends for your identified chip.
 
 ## Step 2 — Prerequisites (DKMS + kernel headers)
 
@@ -110,8 +110,8 @@ Boot-time loading is already handled for you: the `control-ofc-daemon` package s
 
 Then verify end-to-end in the GUI:
 
-1. **Restart the daemon** so it adopts the new chip's PWM headers: `sudo systemctl restart control-ofc-daemon`. (A **Rescan Hardware** click on Diagnostics → Troubleshooting is enough when you only need the chip's *sensors* — fan-control headers are discovered at daemon startup only.)
-2. **Diagnostics → Troubleshooting → Refresh Hardware Diagnostics** — the chips table should show your chip as *loaded* and the header count should match what the board physically has.
+1. **Restart the daemon** so it adopts the new chip's PWM headers: `sudo systemctl restart control-ofc-daemon`. (A **Rescan Hardware** click on the **System State** page is enough when you only need the chip's *sensors* — fan-control headers are discovered at daemon startup only.)
+2. **System State → Refresh Hardware Diagnostics** — the chips table should show your chip as *loaded* and the header count should match what the board physically has.
 3. Run **Test PWM Control** on a *non-critical chassis fan* header (not CPU/pump). A **"PWM control is working correctly"** result is the finish line.
 4. If the test reports the BIOS reverting control, go to Step 5.
 
@@ -196,7 +196,7 @@ BIOS changes are rolled back in BIOS setup (restore Smart Fan / Q-Fan to its def
 
 The rest of this page is about motherboard headers; AMD GPU fan control has exactly one prerequisite of its own. RDNA3 and newer cards (RX 7000 / RX 9000 series) only accept fan-curve writes through the PMFW interface, which the kernel locks behind an *overdrive* feature bit. Pre-RDNA3 cards (RX 6000 and older) need none of this.
 
-Check first — the readiness report's **GPU diagnostics** row (Diagnostics → Troubleshooting) says whether the bit is set, or from a terminal:
+Check first — the readiness report's **GPU diagnostics** row (on the **System State** page) says whether the bit is set, or from a terminal:
 
 ```bash
 cat /sys/module/amdgpu/parameters/ppfeaturemask
@@ -219,7 +219,7 @@ How to add a kernel parameter, per bootloader — the same steps as `man control
 | **rEFInd** | append to the options in `/boot/refind_linux.conf` (or the kernel argument list in `refind.conf`) | — |
 | **Limine** (as set up on CachyOS) | append to `KERNEL_CMDLINE` in `/etc/default/limine` | `sudo limine-mkinitcpio` |
 
-Reboot, confirm the parameter took effect with `cat /proc/cmdline`, then run **Test GPU Fan Control** (Diagnostics → Troubleshooting) to verify end-to-end. A wrong kernel command line can prevent the system from booting — the warning at the top of this page applies here in full.
+Reboot, confirm the parameter took effect with `cat /proc/cmdline`, then run **Test GPU Fan Control** (on the **System State** page) to verify end-to-end. A wrong kernel command line can prevent the system from booting — the warning at the top of this page applies here in full.
 
 ## Where to go next
 

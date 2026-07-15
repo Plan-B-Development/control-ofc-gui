@@ -88,7 +88,7 @@ These come up only on some systems, and the [Driver Setup](driver-setup.md) page
 
 You do not have to discover any of the above by hand. By design, the **control-ofc-daemon** owns all hardware access — it reads your hwmon chips, evaluates fan curves, and is the **only** component that writes PWM. The **control-ofc-gui** is a client: it shows you what the daemon sees and lets you author profiles and run tests. The GUI never writes to a fan directly.
 
-Three GUI features turn the concepts above into concrete answers, all under **Diagnostics → Troubleshooting**:
+Three GUI features turn the concepts above into concrete answers, all on the **System State** page:
 
 - **Hardware Readiness** — names your board and Super I/O chip, says which driver each chip needs and whether it is loaded, counts writable headers, and flags BIOS interference and ACPI conflicts. Start here.
 - **Test PWM Control** — writes a known value to a header you choose, waits a few seconds, and reports what actually happened: control works, the BIOS reverted it, or the value was ignored. This is how you confirm a header is genuinely controllable instead of guessing.

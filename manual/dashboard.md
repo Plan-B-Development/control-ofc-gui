@@ -26,7 +26,7 @@ A single header row across the top is the dashboard's command + status surface:
 - **Cooling readiness** — a health chip summarising whether your cooling hardware is
   set up and controllable: green **"Cooling ready"**, or amber/red **"Cooling: N to
   fix"** naming how many readiness items need attention (hover for the most important
-  next step). Click it to jump to Diagnostics ▸ Hardware readiness. Shown only when
+  next step). Click it to jump to the **Hardware** page. Shown only when
   the connected daemon reports readiness (`control-ofc-daemon` ≥ v2.10.0); hidden in
   demo mode
 - **"Updated Xs ago"** — time since the last successful poll, so you can tell live
@@ -63,7 +63,8 @@ for a read-only summary of the current thermal state and any active overrides.
 ## Fan Zone Cards
 
 Fans are shown as **zone-grouped cards** — the primary fan view. Each fan is a tile
-inside a zone card, and each tile shows a **state chip**:
+inside a zone card. A tile shows its speed alongside a small **RPM sparkline** of the
+fan's recent readings, plus a **state chip**:
 
 | State | Meaning |
 |-------|---------|
@@ -126,7 +127,7 @@ The **Range** dropdown selects the time window:
 The default time range (15m) is configurable in Settings. Each visible series carries a
 coloured **latest-value marker** on the right edge, and **hovering** the chart shows a
 crosshair and a themed tooltip listing every series value at that moment. The
-tooltip-plate and crosshair colours are themeable in Settings → Theme Editor → Charts.
+tooltip-plate and crosshair colours are themeable on the **Theme** page.
 
 ## Sensors panel
 
@@ -139,7 +140,12 @@ tagged **(AIO)**. Type in the "Search sensors…" box to filter; click a row's c
 show/hide its line on the chart; toggle a whole group to declutter. Hidden series persist
 across sessions.
 
-> The active **event log** lives on the [Diagnostics](diagnostics.md) page, and the
+The same toggleable rail holds two more panels below the sensor tree: a **Quick Actions**
+panel with one-click buttons that activate any of your saved profiles, and an inline
+**Alerts** panel listing the currently active warnings (the same set the status strip's
+warning chip counts).
+
+> The active **event log** lives on the [Logs page](diagnostics.md), and the
 > active **warnings** open in a dialog from the status strip's warning chip.
 
 ## Profile Selector
@@ -164,7 +170,7 @@ for the full behaviour.
 
 If the daemon is not reachable, the Dashboard shows a disconnected overlay with a
 reconnection message. If the daemon is connected but no controllable hardware is
-detected, it shows a "No hardware" message with a link to Diagnostics.
+detected, it shows a "No hardware" message with a link to the **Overview** page.
 
 ---
 

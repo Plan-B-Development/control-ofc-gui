@@ -21,8 +21,8 @@ before installing the daemon — it covers BIOS settings, kernel modules,
 and per-bootloader steps for the kernel parameter.
 
 If you have already installed the daemon, the quickest way to discover
-what your specific system needs is to launch the GUI and open
-**Diagnostics → Troubleshooting → Hardware Readiness** — it inspects your hardware
+what your specific system needs is to launch the GUI and open the
+**System State** page — its **Hardware Readiness** report inspects your hardware
 and recommends the exact AUR packages or kernel parameters required.
 
 For the complete ordered path — install → verify sensors → readiness check →
@@ -107,18 +107,22 @@ The horizontal banner at the top of every page shows:
 
 ## Navigation
 
-The left sidebar provides access to all four pages:
+The left sidebar provides access to all of the application's pages:
 
 | Page | Purpose |
 |------|---------|
 | **Dashboard** | At-a-glance monitoring: temperatures, fan speeds, charts |
+| **Overview** | Daemon health, device discovery, and live sensor and fan status |
 | **Controls** | Profile management, fan grouping, curve editing |
-| **Settings** | Application preferences, themes, backup/restore |
-| **Diagnostics** | Daemon health, sensor freshness, logs |
+| **System State** | Hardware Readiness report: chip and driver detection, PWM and GPU fan verification |
+| **Hardware** | Daemon readiness checklist and Super-I/O architecture |
+| **Settings** | Application preferences and backup/restore |
+| **Theme** | Fonts, sizes, and the colour-token editor |
+| **Logs** | Event log and support-bundle export |
 
 An **About** button at the bottom of the sidebar shows version and credit information:
 
-![About dialog](../screenshots/auto/11_about_dialog.png)
+![About dialog](../screenshots/auto/09_about_dialog.png)
 
 ---
 

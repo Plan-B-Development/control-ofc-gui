@@ -1,10 +1,10 @@
 # Hardware Troubleshooting
 
-This page covers the **Hardware Readiness** report on the Diagnostics → Troubleshooting tab and the situations it helps diagnose: chip detection, kernel driver state, missing sensors, BIOS interference, ACPI conflicts, vendor quirks, and verifying that fan headers actually respond to PWM writes.
+This page covers the **Hardware Readiness** report on the **System State** page and the situations it helps diagnose: chip detection, kernel driver state, missing sensors, BIOS interference, ACPI conflicts, vendor quirks, and verifying that fan headers actually respond to PWM writes.
 
 > **Quick navigation**
-> - The Hardware Readiness report lives at **Diagnostics → Troubleshooting**.
-> - Click **Refresh Hardware Diagnostics** in the tab header to fetch current state from the daemon.
+> - The Hardware Readiness report lives on the **System State** page.
+> - Click **Refresh Hardware Diagnostics** in the page header to fetch current state from the daemon.
 > - Click **Test PWM Control** to run a ~6-second write test against a selected motherboard header.
 > - Click **Test GPU Fan Control** to verify an AMD GPU fan actually responds (~6 s, no lease).
 
@@ -53,14 +53,14 @@ Just a connected daemon and a writable header to test. The daemon performs the w
 
 AMD GPU fan control fails *silently* far more often than motherboard headers: the driver accepts a `fan_curve` write but the firmware ignores it (missing `amdgpu.ppfeaturemask` bit `0x4000`), an SMU firmware/driver mismatch swallows it, or a BIOS overdrive lock blocks it. The static **GPU diagnostics** row can show that the *configuration* looks right while fan control still does not work.
 
-**Test GPU Fan Control** (Diagnostics → Troubleshooting — shown only when a writable AMD GPU is present and the daemon is ≥ 1.11.0) briefly drives the GPU fan to a test speed — always *upward*, so it never reduces cooling on a hot GPU — waits ~6 seconds, reads back the applied PMFW `fan_curve` (or legacy `pwm1`) and the `fan1_input` RPM, then restores the previous state. No lease is required. The result is one of:
+**Test GPU Fan Control** (on the **System State** page — shown only when a writable AMD GPU is present and the daemon is ≥ 1.11.0) briefly drives the GPU fan to a test speed — always *upward*, so it never reduces cooling on a hot GPU — waits ~6 seconds, reads back the applied PMFW `fan_curve` (or legacy `pwm1`) and the `fan1_input` RPM, then restores the previous state. No lease is required. The result is one of:
 
 | Result | Meaning & fix |
 |--------|---------------|
 | **GPU fan control is working** | The fan responded to the test. Nothing to do |
 | **Zero-RPM idle (normal)** | The curve applied but the fan stays stopped because the GPU is below its zero-RPM stop temperature. Expected — the fan spins up under load |
 | **No RPM sensor to corroborate** | The write was confirmed via curve read-back, but this GPU exposes no `fan1_input` to measure RPM |
-| **The GPU ignored the write** | Accepted at sysfs but not applied. Add `amdgpu.ppfeaturemask=0xffffffff` to the kernel command line and reboot; if it is already set, suspect an SMU firmware/driver mismatch or a BIOS overdrive lock (see the GPU advisories in the Troubleshooting tab) |
+| **The GPU ignored the write** | Accepted at sysfs but not applied. Add `amdgpu.ppfeaturemask=0xffffffff` to the kernel command line and reboot; if it is already set, suspect an SMU firmware/driver mismatch or a BIOS overdrive lock (see the GPU advisories on the **System State** page) |
 | **Fan did not respond** | The curve applied but RPM did not change with zero-RPM disabled — an SMU firmware issue or a known kernel regression for this GPU. Confirm the fan is physically connected and check your kernel version |
 | **BIOS/EC reclaimed control** (legacy `pwm1` GPUs) | `pwm1_enable` reverted to automatic — disable any vendor "Smart Fan" / EC fan-control option in firmware setup |
 | **Write was rejected** | The driver/firmware refused the write. Ensure `amdgpu.ppfeaturemask=0xffffffff` is set and that `amdgpu` (not `vfio-pci`) is bound to the GPU |
@@ -71,8 +71,8 @@ The firmware **OD_RANGE minimum** (commonly ~15%) and zero-RPM idle are reported
 
 If you have an Intel Arc discrete GPU (Battlemage / Arc B-series on the `xe` driver, or Alchemist / Arc A-series on `i915`), Control-OFC **monitors** it but cannot control its fan:
 
-- Its package / VRAM / memory-controller / PCIe temperatures appear in the dashboard chart and Diagnostics → Sensors, and any of them can be selected as a **curve sensor** to drive *other* fans.
-- Its fan shows up in the dashboard fan table and Diagnostics → Fans with control method **read-only (firmware-managed)**.
+- Its package / VRAM / memory-controller / PCIe temperatures appear in the dashboard chart and on the **Overview** page, and any of them can be selected as a **curve sensor** to drive *other* fans.
+- Its fan shows up in the dashboard fan table and on the **Overview** page with control method **read-only (firmware-managed)**.
 - It is **never** offered as a controllable curve member and is never written to.
 
 This is by design, not a bug or a missing driver. The Linux `xe`/`i915` hwmon interface exposes the GPU fan's RPM (`fan1_input`) as read-only and provides **no PWM/write attribute** — the card's fan is governed autonomously by an on-card firmware blob (shipped in `linux-firmware` as `fan_control_*.bin`). There is no kernel-side knob for Control-OFC, or any other Linux tool, to set its speed. So no lease, PMFW curve, `ppfeaturemask`, or overdrive setting applies to an Intel GPU, and there is no "Test GPU Fan Control" for it.
@@ -83,8 +83,8 @@ Only the Arc **B580** currently maps to a specific model name; other Intel discr
 
 If you have an NVIDIA discrete GPU, Control-OFC **monitors** it but does not drive its fan:
 
-- Its temperature appears in the dashboard chart and Diagnostics → Sensors, and can be selected as a **curve sensor** to drive *other* fans.
-- Its fan shows up in the dashboard fan table and Diagnostics → Fans with control method **read-only**. The NVML path also reports the firmware's *measured* fan duty (shown as "N% duty"), which is distinct from a commanded value and may exceed 100%.
+- Its temperature appears in the dashboard chart and on the **Overview** page, and can be selected as a **curve sensor** to drive *other* fans.
+- Its fan shows up in the dashboard fan table and on the **Overview** page with control method **read-only**. The NVML path also reports the firmware's *measured* fan duty (shown as "N% duty"), which is distinct from a commanded value and may exceed 100%.
 - It is **never** offered as a controllable curve member and is never written to.
 
 This is by design. NVIDIA presents two mutually-exclusive driver worlds, and Control-OFC treats both as read-only:
@@ -125,7 +125,7 @@ Modern boards ship with more PWM headers than most builds populate. The X870E AO
 
 To prevent users from accidentally assigning curves to empty headers, the GUI annotates any **writable** hwmon header that reads 0 RPM with `(no fan detected)`. This appears in:
 
-- Diagnostics → Fans → RPM column
+- Overview → Fan Status → RPM column
 - Controls → Fan Role member picker
 - Fan Wizard
 
@@ -156,9 +156,9 @@ If you see an `(unverified)` suffix on a header label, treat the assignment as a
 
 ## Sensors missing or fewer than expected
 
-Fan control depends on sensors: curves need temperatures, and the daemon's thermal safety needs a CPU sensor. If the Dashboard or Diagnostics → Sensors shows nothing — or less than you expect — work down this list:
+Fan control depends on sensors: curves need temperatures, and the daemon's thermal safety needs a CPU sensor. If the Dashboard or the **Overview** page shows nothing — or less than you expect — work down this list:
 
-- **No CPU temperature** — the CPU modules (`k10temp` for AMD, `coretemp` for Intel) are mainline and auto-load via device matching on essentially every distribution. If the readiness report's **Thermal safety** row says "no CPU sensor", try loading the module by hand (`sudo modprobe k10temp` or `sudo modprobe coretemp`) and check `sudo dmesg` for errors. Once the module loads, click **Rescan Hardware** (Diagnostics → Troubleshooting) — the daemon picks up the new sensor within a couple of poll cycles, no restart needed.
+- **No CPU temperature** — the CPU modules (`k10temp` for AMD, `coretemp` for Intel) are mainline and auto-load via device matching on essentially every distribution. If the readiness report's **Thermal safety** row says "no CPU sensor", try loading the module by hand (`sudo modprobe k10temp` or `sudo modprobe coretemp`) and check `sudo dmesg` for errors. Once the module loads, click **Rescan Hardware** (on the **System State** page) — the daemon picks up the new sensor within a couple of poll cycles, no restart needed.
 - **No motherboard temperatures or fan RPMs** — Super-I/O chip modules cannot auto-load (the chips sit on ISA I/O ports with no bus-enumerable trigger), so the daemon package ships `/etc/modules-load.d/control-ofc.conf`, which loads `nct6775`, `it87`, `w83627ehf`, and `drivetemp` at boot. Loading a module for a chip that is not present is harmless. If your chip needs an out-of-tree driver instead, the readiness chips table says so — see [Driver Setup](driver-setup.md).
 - **No drive temperatures** — NVMe drives report temperatures through the kernel `nvme` driver automatically; SATA/SAS drives need `drivetemp` (already in the daemon's modules-load list above).
 - **`lm_sensors` is optional** — the daemon reads `/sys/class/hwmon` directly and does not use libsensors. Installing `lm_sensors` gives you the `sensors` CLI, which is handy for cross-checking what the kernel exposes.
@@ -171,7 +171,7 @@ Prefer the readiness report first — it identifies your board's chips **without
 
 ### "All my hwmon headers show as read-only"
 
-Open Diagnostics → Troubleshooting, look at the **Hardware Readiness** report:
+Open the **System State** page, look at the **Hardware Readiness** report:
 
 - If the chips table shows the expected chip but **status is "not loaded"**, the kernel module is missing. The chip column lists which module to install (e.g., `it87-dkms-git` on AUR for Gigabyte AM5 boards).
 - If the status is "loaded" but **writable_headers is 0**, run **Test PWM Control** on a header. A `pwm_enable_reverted` result means the BIOS is overriding control — fix it in BIOS Smart Fan settings.
@@ -179,7 +179,7 @@ Open Diagnostics → Troubleshooting, look at the **Hardware Readiness** report:
 
 ### "Some of my fan headers are missing — only 5 of 8 show up"
 
-Open Diagnostics → Troubleshooting. If the **dual-chip warning banner** at the top of the Hardware Readiness report is visible, your motherboard is one of the dual-IO Gigabyte boards (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) where the secondary ITE chip silently failed to enumerate.
+Open the **System State** page. If the **dual-chip warning banner** at the top of the Hardware Readiness report is visible, your motherboard is one of the dual-IO Gigabyte boards (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) where the secondary ITE chip silently failed to enumerate.
 
 This usually means one of:
 
@@ -205,17 +205,17 @@ The daemon's thermal failsafe has two distinct triggers, with different fan spee
 - **Emergency (100%):** any CPU sensor reports ≥ 105°C. All OpenFan and writable hwmon fans are forced to 100% and held there until the hottest CPU sensor falls to 80°C or below, then run at a 60% recovery floor for two cycles (the release cycle and one more) before the active profile resumes. GPU fans are deliberately excluded — the GPU's own firmware handles GPU thermal protection.
 - **No-sensor fallback (40%):** no CPU sensor has been seen for 5 consecutive poll cycles. OpenFan and writable hwmon fans are set to a 40% safe floor — so fans sitting at a uniform ~40% (rather than 100%) usually mean a missing CPU sensor, not an overheat.
 
-Both overrides are owned and driven entirely by the daemon — it forces the fan speeds and holds them itself. The GUI simply reflects what the daemon reports: while an override is active it shows a "Daemon thermal override active" warning (in the Dashboard warning count and the Diagnostics event log), driven by the `thermal_state` field in the daemon's 1 Hz poll. Normal profile control resumes automatically once the daemon reports a normal thermal state again — fans pinned during an override are the daemon protecting the system, not a stuck profile.
+Both overrides are owned and driven entirely by the daemon — it forces the fan speeds and holds them itself. The GUI simply reflects what the daemon reports: while an override is active it shows a "Daemon thermal override active" warning (in the Dashboard warning count and the event log on the **Logs** page), driven by the `thermal_state` field in the daemon's 1 Hz poll. Normal profile control resumes automatically once the daemon reports a normal thermal state again — fans pinned during an override are the daemon protecting the system, not a stuck profile.
 
 Check the **Thermal safety** row of the Hardware Readiness report. If it reports "no CPU sensor", install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`). See [Sensors missing or fewer than expected](#sensors-missing-or-fewer-than-expected).
 
 ### "GPU fan control says feature_unavailable"
 
-Open Diagnostics → Troubleshooting, look at the **GPU diagnostics** row. If `amdgpu.ppfeaturemask` is missing bit `0x4000` (`PP_OVERDRIVE_MASK`), the kernel will not expose PMFW fan curves on RDNA3+ GPUs (RX 7000 / 9000 series). Add `amdgpu.ppfeaturemask=0xffffffff` to your kernel command line and reboot. See the [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) doc for the full kernel-parameter explanation.
+Open the **System State** page, look at the **GPU diagnostics** row. If `amdgpu.ppfeaturemask` is missing bit `0x4000` (`PP_OVERDRIVE_MASK`), the kernel will not expose PMFW fan curves on RDNA3+ GPUs (RX 7000 / 9000 series). Add `amdgpu.ppfeaturemask=0xffffffff` to your kernel command line and reboot. See the [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) doc for the full kernel-parameter explanation.
 
 ### "A popup said my kernel has a known regression — should I worry?"
 
-The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel_warnings.rs`, DEC-098). When the running kernel matches a known issue affecting your hardware, the GUI raises a one-time popup, and the warning stays listed on the Diagnostics page until you acknowledge it. The popup includes a Phoronix or upstream-issue reference link.
+The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel_warnings.rs`, DEC-098). When the running kernel matches a known issue affecting your hardware, the GUI raises a one-time popup, and the warning stays listed on the **Logs** page until you acknowledge it. The popup includes a Phoronix or upstream-issue reference link.
 
 Currently catalogued:
 

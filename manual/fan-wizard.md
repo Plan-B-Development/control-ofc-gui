@@ -2,11 +2,11 @@
 
 The Fan Configuration Wizard helps you identify and label your fans. It stops each fan one at a time so you can observe which physical fan changed, then lets you assign a meaningful name.
 
-![Fan Wizard — Intro](../screenshots/auto/15_fan_wizard_intro.png)
+![Fan Wizard — Intro](../screenshots/auto/13_fan_wizard_intro.png)
 
 ## Why Use the Wizard?
 
-Fan hardware IDs like `openfan:ch03` or `hwmon:it8696:pci0:pwm1:CHA_FAN1` are not helpful for daily use. The wizard lets you assign labels like "Rear Exhaust" or "CPU Cooler" that appear everywhere in the GUI — dashboard, controls, diagnostics, and profile editing.
+Fan hardware IDs like `openfan:ch03` or `hwmon:it8696:pci0:pwm1:CHA_FAN1` are not helpful for daily use. The wizard lets you assign labels like "Rear Exhaust" or "CPU Cooler" that appear everywhere in the GUI — dashboard, controls, the Overview page, and profile editing.
 
 Launch it with the **Fan Wizard** button in the Controls page's Fan Roles header.
 
@@ -62,7 +62,7 @@ A summary table (ID, Source, New Label) where every label is still editable — 
 
 | Setting | Location | Effect |
 |---------|----------|--------|
-| **Fan Wizard spin-down timer** | Settings → Application → Behaviour | How long each fan stays stopped (5–12 seconds, default 8) |
+| **Fan Wizard spin-down timer** | Settings → Operational Behavior | How long each fan stays stopped (5–12 seconds, default 8) |
 
 ## Where Labels Appear
 
@@ -70,7 +70,7 @@ Once saved, fan labels propagate across the entire application:
 
 - Dashboard fan zone cards, the raw fan table, and the Sensors panel
 - Controls page — fan role member lists
-- Diagnostics fan table
+- Overview page — fan status table
 - Profile files — member labels are snapshotted into the profile JSON
 
 Labels are stored as `fan_aliases` in `app_settings.json` and persist across sessions. Display names always prefer your alias, then the GPU model or hwmon header label, then the raw hardware ID.

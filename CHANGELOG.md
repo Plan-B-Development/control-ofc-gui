@@ -2,8 +2,27 @@
 
 ## [2.22.0] — 2026-07-15
 
-Stage 9 (final) of the presentation-only visual redesign (DEC-216): the nav-dead legacy **Diagnostics page** and
-assorted never-adopted scaffolding are removed, completing the redesign rollout. No daemon/API change.
+**This release ships the complete presentation-only GUI redesign** (Stages 1–9, DEC-208…216) — the first release
+since v2.13.0. It is presentation/UX only: no daemon, API, schema, or fan-control-behaviour change
+(`EXPECTED_API_VERSION` stays 1; the GUI remains poll-only and never writes PWM). Older settings migrate
+automatically. Redesign highlights across all nine stages:
+
+- **New app shell** — a flat sidebar (Dashboard · Overview · Controls · System State · Hardware · Settings ·
+  Theme · Logs), a status ribbon + footer, and refreshed theming with editable colour tokens and bundled fonts.
+- **The tabbed Diagnostics page is retired**, replaced by four focused pages: **Overview** (daemon health,
+  sensor intelligence, fan status), **System State** (the hardware-readiness report, BIOS-interference monitor,
+  and PWM/GPU verification), **Hardware** (the daemon's readiness checklist + Super-I/O detection), and **Logs**
+  (event log + diagnostic snapshots + support-bundle export).
+- **Restyled Dashboard** — fan-zone cards with RPM sparklines, plus a Quick Actions and inline Alerts rail.
+- **Restyled Controls** — a 3-pane Assign-Roles / Link-Logic / Curve-Editor layout; profile selection and
+  activation moved to the sidebar's Active-Profile selector.
+- **Settings split** into a card-based Settings page and a standalone Theme page (live UI Blueprint preview +
+  WCAG contrast diagnostics).
+
+The manual (`manual/`) and screenshots (`screenshots/auto/`) are refreshed for the new UI in this release.
+
+Stage 9 (final, DEC-216) — this version specifically retires the nav-dead legacy **Diagnostics page** and
+assorted never-adopted scaffolding, completing the redesign rollout:
 
 ### Removed
 - **Legacy Diagnostics page** — the old tabbed page (superseded stage-by-stage by the Overview / Logs / System

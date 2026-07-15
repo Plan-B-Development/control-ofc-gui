@@ -15,8 +15,8 @@ New to how Linux fan control works? [Understanding Motherboard Fan Control](unde
 You are done when all of these are true:
 
 - The [Dashboard](dashboard.md) shows live CPU (and, if present, GPU / motherboard / drive) temperatures.
-- Your fans appear in the dashboard fan table and in [Diagnostics → Fans](diagnostics.md) with RPM readings.
-- **Diagnostics → Troubleshooting** reports a non-zero *writable* header count (or an OpenFan / AMD GPU fan with a write path).
+- Your fans appear in the dashboard fan table and on [the Overview page](diagnostics.md) with RPM readings.
+- The **System State** page reports a non-zero *writable* header count (or an OpenFan / AMD GPU fan with a write path).
 - **Test PWM Control** (and **Test GPU Fan Control** if you have an AMD GPU) reports that control is working.
 - A profile is active and the fans respond when temperatures change.
 
@@ -35,12 +35,12 @@ Fan control depends on temperatures: the readiness checks, fan curves, and the d
 
 Launch the GUI and check:
 
-- **Temperatures visible** on the Dashboard and in **Diagnostics → Sensors**? Continue to Step 3.
+- **Temperatures visible** on the Dashboard and on the **Overview** page? Continue to Step 3.
 - **Missing or fewer than expected** (no CPU temperature, no motherboard temperatures, no drive temperatures)? → [Sensors missing or fewer than expected](hardware-troubleshooting.md#sensors-missing-or-fewer-than-expected), then come back here.
 
 ## Step 3 — Run the Hardware Readiness check
 
-Open **Diagnostics → Troubleshooting** (the report fetches automatically the first time; **Refresh Hardware Diagnostics** re-runs it) and read the **summary line** — chip count, writable header count, and any issues. [What each section of the report means](hardware-troubleshooting.md#what-the-hardware-readiness-report-shows).
+Open the **System State** page (the report fetches automatically the first time; **Refresh Hardware Diagnostics** re-runs it) and read the **summary line** — chip count, writable header count, and any issues. [What each section of the report means](hardware-troubleshooting.md#what-the-hardware-readiness-report-shows).
 
 ## Step 4 — Branch: what your hardware needs
 
@@ -76,7 +76,7 @@ Also worth knowing:
 
 ## Step 6 — Verify control end-to-end
 
-In **Diagnostics → Troubleshooting**:
+On the **System State** page:
 
 1. Run **Test PWM Control** on a **non-critical chassis fan** header (not CPU or pump). *"PWM control is working correctly"* is the finish line; every other verdict comes with a tailored next step — see [the result table](hardware-troubleshooting.md#test-pwm-control).
 2. If you have an AMD GPU with a write path, run **Test GPU Fan Control** (daemon ≥ 1.11.0) — see [its result table](hardware-troubleshooting.md#test-gpu-fan-control).
