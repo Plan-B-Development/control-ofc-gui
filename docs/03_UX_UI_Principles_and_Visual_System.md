@@ -66,9 +66,13 @@ Use a classic desktop shell:
 
 ### Sidebar items
 - Dashboard
+- Overview
 - Controls
+- System State
+- Hardware
 - Settings
-- Diagnostics
+- Theme
+- Logs
 
 ### Header/status strip
 A lightweight, always-visible status region should expose:

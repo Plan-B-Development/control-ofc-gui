@@ -1,6 +1,6 @@
 # Cooling Hardware Readiness — user guide
 
-The **Diagnostics ▸ Readiness** page (the *Cooling Hardware Readiness* page) is a
+The **Hardware** page (the *Cooling Hardware Readiness* page) is a
 read-only, plain-language assessment of your cooling hardware: what is ready, what
 needs attention, and the recommended next step. Opening or refreshing it **does not
 change your system** — it never loads kernel modules, installs packages, writes fan
@@ -35,7 +35,7 @@ The daemon's thermal safety relies on a CPU temperature sensor. If none is found
 emergency fan protection cannot key off CPU temperature.
 
 **What to do:** first check whether a CPU sensor exists but was not auto-selected —
-open **Diagnostics ▸ Sensors** and look for a `k10temp`/`coretemp`/`Tctl`/`Tdie`
+open the **Overview** page and look for a `k10temp`/`coretemp`/`Tctl`/`Tdie`
 reading. If one exists, set it as your preferred CPU sensor (see below). If none
 exists at all, your motherboard's Super-I/O driver may not be loaded — see *Loading
 an in-kernel Super-I/O driver*.
@@ -44,7 +44,7 @@ an in-kernel Super-I/O driver*.
 
 The daemon auto-picks a CPU (and motherboard) temperature sensor, but you can choose
 a specific one. The **Pick a CPU sensor** / **Pick a motherboard sensor** action
-opens **Settings ▸ Preferred sensors**. Your choice is persisted by the daemon and is
+opens the **Settings** page (Preferred Sensors card). Your choice is persisted by the daemon and is
 advisory — it never silently replaces a working sensor, and a selection that later
 disappears (a chip that stopped being detected) is flagged as *stale* here so you can
 re-pick. This changes only the daemon's own configuration file; no hardware is touched.
@@ -58,7 +58,7 @@ ACPI can all override the chip. Use the fan-control verification workflow to con
 ## Fan-control verification
 
 The **Test PWM control** action opens the fan-control verification workflow
-(Diagnostics ▸ Troubleshooting). It briefly nudges a fan and observes the RPM
+(on the **System State** page). It briefly nudges a fan and observes the RPM
 response to confirm the control path actually works — the honest way to turn
 "detected/writable" into "control verified". It is thermally guarded and reverts
 after the test.
@@ -122,7 +122,7 @@ is never confused with passive detection.
 - **Quarantined sensors** are sensors the daemon discovered but could not read (for
   example a WiFi chip's temperature while the radio is off). They are set aside so
   they don't spam logs or raise false staleness warnings; they appear, display-only,
-  under **Diagnostics ▸ Sensors**. No action is usually required.
+  on the **Overview** page. No action is usually required.
 - **Unclassified sensors** are temperature readings the daemon could not confidently
   categorise. They are still shown; if one is your CPU/motherboard sensor, set it as a
   preferred sensor (above) so it is used deliberately.

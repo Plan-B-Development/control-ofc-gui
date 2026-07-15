@@ -125,21 +125,40 @@ control_ofc/
   # See persistence layout details in docs/11_Persistence_Config_and_File_Layout.md.
   ui/
     main_window.py
-    sidebar.py
+    sidebar.py               # flat 8-entry sidebar nav + bottom Active-Profile selector (DEC-208/214)
+    status_ribbon.py         # global top status ribbon — brand + daemon-status LED + thermal/warnings (DEC-208)
     status_banner.py
+    cooling_readiness.py     # pure daemon-readiness → MergedReadinessItem mapping for the Hardware page (DEC-207)
+    readiness_merge.py       # pure merge of /inventory/readiness + /diagnostics/hardware into one actionable index (DEC-206)
+    components/              # shared redesign component library (DEC-208) — import per-submodule
+      badges.py             # filled status pill / badge
+      buttons.py            # button-variant factory (primary / secondary / ghost / danger)
+      cards.py              # Card frame + SectionHeader
+      dialog.py             # modal-dialog base (header/body/footer + translucent scrim)
+      footer.py             # global footer / status strip (version + kernel/arch + Rescan / Export)
+      gauges.py             # static radial (donut) gauge — custom-paint, never animated (DEC-211)
+      glow.py               # glow + pulsing-LED primitives + decorative-animation controller
+      tables.py             # dense data-table styling helper
+      toggle_switch.py      # iOS-style on/off ToggleSwitch (QCheckBox subclass — DEC-215)
     pages/
       dashboard_page.py
       controls_page.py
       settings_page.py
-      diagnostics_page.py
-      diagnostics_readiness.py     # readiness/Troubleshooting populate logic, extracted from diagnostics_page (Cluster C)
-      diagnostics_workers.py       # background QThread workers (verify / rescan / GPU reset) for the Diagnostics page
+      overview_page.py         # Overview page — daemon health + device discovery + sensor & fan tables (DEC-209)
+      logs_page.py             # Logs page — event stream + filters + diagnostic snapshots + Export Bundle (DEC-210)
+      system_state_page.py     # System State page — /diagnostics/hardware report + PWM/GPU verify + Rescan (DEC-211)
+      hardware_page.py         # Hardware page — /inventory/readiness checklist + Super-I/O + Probe Ports (DEC-212)
+      theme_page.py            # Theme page — theme editor + presets + typography + app-wide apply (DEC-215)
+      diagnostics_readiness.py # PWM-reclaim severity helpers (Diagnostics page retired — DEC-216); now feed System State
+      diagnostics_workers.py   # background QThread workers (verify / rescan / GPU reset) — now feed System State + Hardware
     widgets/
       control_card.py          # fan role card (theme-derived size, user-resizable — DEC-128/129)
       curve_card.py            # curve card (theme-derived size, user-resizable — DEC-128/129)
       summary_card.py          # dashboard summary tiles
       status_strip.py          # dashboard always-visible status strip (DEC-177)
       fan_zone_card.py         # dashboard zone-grouped fan cards (DEC-176/179)
+      quick_actions_panel.py   # dashboard one-click saved-profile activation (DEC-213)
+      rpm_sparkline.py         # static owner-drawn recent-RPM mini-plot for fan cards (DEC-213)
       dashboard_inspector.py   # collapsible dashboard side pane (Sensors browser)
       curve_editor.py
       curve_edit_dialog.py
@@ -150,11 +169,9 @@ control_ofc/
       sensor_series_panel.py
       series_chooser_dialog.py
       sensor_detail_dialog.py
-      event_log_view.py
       error_banner.py
       readiness_report.py
-      inventory_readiness_view.py  # hwmon inventory + readiness view (DEC-200)
-      superio_view.py          # Super-I/O detection diagnostics view (DEC-202)
+      inventory_readiness_view.py  # shared hwmon-readiness severity helpers only — view class removed (DEC-200/216)
       theme_editor.py
       aio_config_dialog.py
       collapsible_section.py

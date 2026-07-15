@@ -45,7 +45,7 @@ icon must:
 ## Typography
 - System default sans-serif by default
 - Base font size: 10pt
-- User-configurable font family and base size from Settings → Themes
+- User-configurable font family and base size from the Theme page
 - No decorative or script faces in operational UI
 
 ## Palette direction
@@ -60,7 +60,7 @@ icon must:
 - success: restrained green
 
 The default theme (`Default Dark`) is the canonical reference; custom themes
-can override individual tokens via the Settings → Themes editor.
+can override individual tokens via the Theme page editor.
 
 ## Avoid
 - decorative banners or images embedded in operational pages

@@ -149,7 +149,7 @@ yay -S nct6687d-dkms-git
 The B450 / X470 generation is mostly straightforward on Linux, but four
 generation-specific hazards are worth calling out before you wade into
 the per-vendor guidance below. All four are addressed by the daemon's
-`/diagnostics/hardware` endpoint and the GUI's Diagnostics page (DEC-104).
+`/diagnostics/hardware` endpoint and the GUI's System State page (DEC-104).
 
 ### 1. NCT6797D vs the out-of-tree `nct6687` driver
 
@@ -186,7 +186,7 @@ remediation below still applies.
   writing, does not ship one — do not assume your distro handles this
   for you.
 
-The Diagnostics page surfaces this as a CRITICAL `module_collisions`
+The System State page surfaces this as a CRITICAL `module_collisions`
 banner when both modules are loaded simultaneously, and discourages PWM
 writes until the user resolves the load ordering.
 
@@ -227,7 +227,7 @@ I/O 0x0a40 and a secondary **IT8792E** at 0x0a60. Both require the
 out-of-tree `it87-dkms-git` driver.
 
 If only N of the expected fan headers appear in `sensors`, the
-diagnostics page reports a dual-chip enumeration gap. The standard
+System State page reports a dual-chip enumeration gap. The standard
 remediation (DEC-101, re-ordered by DEC-144 now that current driver
 builds default MMIO on) applies here too:
 
@@ -246,7 +246,7 @@ to return `0xFFFF`, after which the `it87` driver silently skips it.
 
 The historic note that the secondary IT8792E was read-only on some AM4
 Gigabyte boards still applies; verify per-header writability via the
-PWM Verify action on the Diagnostics → Troubleshooting tab before assigning fans
+PWM Verify action on the System State page before assigning fans
 to it in a profile.
 
 ### 4. ASRock AM4 — generally smooth
@@ -973,7 +973,7 @@ limitations.
    - Check BIOS settings (Smart Fan Mode, Fan Control by Temperature).
 
 3. **Fan control headers present but writes have no effect:**
-   - Run the PWM verification test from the diagnostics page.
+   - Run the PWM verification test from the System State page.
    - Update the out-of-tree driver first — `-git` packages rebuild the
      current upstream snapshot, and many historical write failures are
      fixed there.

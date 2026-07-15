@@ -145,7 +145,7 @@ On those boards set `options it87 mmio=off` instead.
 
 The control-ofc daemon detects this case (DEC-101): when DMI matches
 a known dual-chip board but only one ITE chip enumerated, the
-Diagnostics → Troubleshooting tab surfaces a warning banner with the exact
+System State page surfaces a warning banner with the exact
 remediation steps. See `21_AMD_Motherboard_Fan_Control_Guide.md` §
 Gigabyte → Reported examples for the X870E AORUS MASTER worked
 example.
@@ -206,7 +206,7 @@ directory, or kernel `asus_*` driver allowlists.
 | | ASRock X870 Nova | **NCT6796D-S** | mainline `nct6775` |
 | | **ASRock X870E Taichi Lite — dual-Nuvoton** | NCT6686 + NCT6799 (separate chips) | `nct6687d` + mainline `nct6775` (DEC-106 collision-detector exemption) |
 
-The Diagnostics page (`/diagnostics/hardware`) reports the actual loaded
+The System State page (`/diagnostics/hardware`) reports the actual loaded
 modules and detected chips, so users should always cross-reference this
 generic table against their own system's output.
 
@@ -319,7 +319,7 @@ ports used by the `nct6775` driver (commonly 0x0290–0x0299).
 - Disable "ACPI Hardware Monitor" in BIOS (if available)
 
 The daemon's diagnostics endpoint detects these conflicts by parsing
-`/proc/ioports` and reports them in the Hardware Readiness section.
+`/proc/ioports` and reports them on the Hardware page.
 
 ### ASRock
 
@@ -502,7 +502,7 @@ fakes control. There is **no coolant safety rule** (CPU-only thermal safety is u
 | USB-only (much Corsair iCUE/Commander Core, some NZXT) | — | — | **out of scope** — no mainline hwmon driver; the daemon never opens USB-HID |
 
 For a coolant sensor the conservative auto-classifier misses, the user can right-click it in
-Diagnostics → **Treat as coolant**. Empirical write effectiveness is confirmable with
+the Overview page's sensor menu → **Treat as coolant**. Empirical write effectiveness is confirmable with
 `POST /hwmon/{id}/verify`.
 
 ## ACPI Resource Conflicts
@@ -549,7 +549,7 @@ Reference: https://github.com/frankcrawford/it87
 
 The daemon ships a module load configuration file at
 `/etc/modules-load.d/control-ofc.conf` which ensures required hwmon
-drivers are loaded at boot. The GUI's Hardware Readiness display shows
+drivers are loaded at boot. The GUI's Hardware page shows
 which modules are currently loaded by reading `/proc/modules`.
 
 ## Thermal Safety
@@ -569,7 +569,7 @@ DEC-098) that matches the running kernel against published amdgpu
 regressions and surfaces matches via
 `GET /capabilities` (`devices.amd_gpu.kernel_warnings`). The GUI raises a
 one-time `QMessageBox` when a high- or critical-severity warning fires,
-and lists every match on the Diagnostics page. Acknowledged warnings are
+and lists every match on the System State page. Acknowledged warnings are
 remembered in `app_settings.acknowledged_kernel_warnings` so the popup
 does not re-fire on every reconnect.
 

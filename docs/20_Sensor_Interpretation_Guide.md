@@ -301,7 +301,7 @@ reads per-core DTS (Digital Thermal Sensor) values from Intel CPUs.
 
 Three places consume this knowledge base:
 
-1. **Cell tooltips** on every Sensors-tab cell (`format_sensor_tooltip`).
+1. **Cell tooltips** on every Overview-page sensor-table cell (`format_sensor_tooltip`).
    The note list is capped at 3 entries for readability.
 2. **Sensor Detail dialog** (`Diagnostics_SensorDetail_Dialog`, DEC-117) —
    opens via the per-row Details button, row double-click, or

@@ -222,7 +222,7 @@ temperature returning `ENETDOWN` while the radio is soft-blocked. Each entry is 
 unavailable_for_ms}` where `reason` is the daemon's hwmon read error and `unavailable_for_ms` is the
 time since the sensor was quarantined. These are evicted from `/sensors` (so a stale value is never
 served) and the daemon suppresses its own per-tick read-failure logging for them (DEC-193). The GUI
-consumes this **display-only**: Diagnostics ▸ Sensors shows a low-key panel + an "N unavailable"
+consumes this **display-only**: the Overview page shows a low-key panel + an "N unavailable"
 summary count, and these sensors do **not** raise a staleness warning (they are absent from the live
 sensor list). Older daemons omit the array — the GUI defaults it to empty.
 
@@ -471,7 +471,7 @@ and the GUI parser defaults safely:
 
 Structured, read-only inventory of hwmon-visible hardware — the daemon's own
 classified view, distinct from the live `/sensors` + `/fans` polls. One-shot,
-fetched on demand (Settings ▸ preferred sensors; Diagnostics), never at 1 Hz.
+fetched on demand (the Settings page's preferred-sensor pickers; the Overview page), never at 1 Hz.
 Full field set in the daemon's `responses.rs::HwmonInventoryResponse`. **404-only
 gated** — a daemon predating the endpoint 404s and the GUI shows the dependent UI
 as unavailable. The daemon never writes hardware to build this report.
@@ -530,7 +530,7 @@ ACPI `/proc/ioports` overlaps) into a per-chip report; it never runs a port
 protocol, loads a module, or writes hardware. (When the active probe is *enabled*
 it does transiently open `/dev/port` here to report `port_probe_available`
 accurately — an open/close only, no port I/O.) One-shot and off the poll loop —
-the GUI fetches it on demand (a dedicated Diagnostics panel), never at 1 Hz.
+the GUI fetches it on demand (a dedicated panel on the Hardware page), never at 1 Hz.
 
 **Gating:** 404-only, like the other `/inventory/*` routes — no capability flag.
 A `404 not_found` means the daemon predates the feature; the GUI hides the panel.
@@ -790,7 +790,7 @@ freeze + raw writes.
 
 ### GPU fan reset
 - `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM). **AMD GPUs only** — an `nvidia_gpu:` / `intel_gpu:` BDF returns `404 validation_error` (read-only fans).
-  - GUI caller: Diagnostics ▸ Troubleshooting ▸ *Restore GPU Fan to Automatic* (DEC-147 — disabled
+  - GUI caller: the System State page's *Restore GPU Fan to Automatic* (DEC-147 — disabled
     while the **active profile** owns an `amd_gpu:` member, since the daemon is actively driving it).
 
 The bare `POST /gpu/{gpu_id}/fan/pwm` static-speed write is **retired at 2.0.0** — GPU fans are driven
@@ -840,7 +840,7 @@ Old daemons predating the route answer `404`, which the GUI treats as
 - `POST /hwmon/rescan` — re-enumerate hwmon devices
   - Response: `{"api_version": N, "headers": [...], "count": N}` — same
     header entry shape as `GET /hwmon/headers`.
-  - Called by Diagnostics ▸ Troubleshooting ▸ *Rescan Hardware* (DEC-147).
+  - Called by the System State page's *Rescan Hardware* (DEC-147).
     On success the GUI pushes the fresh list through
     `AppState.set_hwmon_headers` and chains a `/diagnostics/hardware`
     refetch.
@@ -1001,9 +1001,10 @@ Examples:
 Examples:
 - show the "daemon upgrade required" banner when `control.autonomous_control` is absent (DEC-165)
 - show the poll-driven thermal-protection banner from `thermal_state` (DEC-165)
-- reflect daemon-held overrides from `/status.overrides[]` on Controls cards — read-only
-  "External" chip for foreign overrides (no token → display-only + explicit take-over), plus
-  a read-only Diagnostics view of `overrides[]` / `fan_identify[]` (DEC-169)
+- reflect daemon-held overrides from `/status.overrides[]` on Controls cards — a read-only
+  "External" chip for foreign overrides (no token → display-only + explicit take-over) (DEC-169).
+  The legacy standalone read-only `overrides[]` / `fan_identify[]` table was retired with the
+  tabbed Diagnostics page in the redesign; override state now surfaces on the Controls cards
 
 ### /fans and /sensors are display inputs
 These feed the dashboard, charts, and freshness indicators. The daemon (not the GUI) consumes them for control.
@@ -1030,7 +1031,7 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
 
 - `POST /config/profile-search-dirs` — add directories to the daemon's profile search path (persisted to `runtime.toml` per ADR-002). Each added dir must be an absolute path with no `..`. **Peer-uid confined (daemon ≥ 2.9.0, DEC-205):** a non-root client may only add directories that exist and canonicalize to a path within its **own home directory** (resolved from the socket peer's `SO_PEERCRED` uid); root / CLI callers are exempt. An out-of-home dir, a nonexistent/unreadable dir, or a caller whose uid/home cannot be resolved is `400 validation_error`; a persistence failure is `503 persistence_failed`. Older daemons (< 2.9.0) accept any absolute dir. The GUI already surfaces the daemon's message to the user (Settings ▸ profiles-directory picker shows it prefixed with `Failed to update daemon:`), so no client change was needed.
 - `POST /config/startup-delay` — set the daemon startup delay in seconds (persisted to `runtime.toml`, takes effect on next restart). The GUI pushes this best-effort on **both** Settings → Save and Settings → Import; a `DaemonError` is logged and surfaced in the save status, never fatal (Settings page wires the daemon client as of the 2026-06 audit, F2/F11).
-- `POST /config/preferred-cpu-sensor` / `POST /config/preferred-mb-sensor` — persist the user's preferred CPU / motherboard temperature sensor by stable id (body `{"sensor_id": string | null}`; `null` clears the preference). The id is validated against the live sensor set — an unknown id (or a missing key) is `400 validation_error`; a persistence failure is `503 persistence_failed`. Advisory only (thermal safety still keys off `kind`) — reflected in `/inventory/hwmon` `default_cpu` (`source: "user"`) + `preferences` and the readiness `selected_cpu_sensor_missing` item. Daemon ≥ 2.6.0 (DEC-200); older daemons answer `404` and the GUI hides the feature for the session. The GUI offers these from the Diagnostics ▸ Sensors context menu and Settings.
+- `POST /config/preferred-cpu-sensor` / `POST /config/preferred-mb-sensor` — persist the user's preferred CPU / motherboard temperature sensor by stable id (body `{"sensor_id": string | null}`; `null` clears the preference). The id is validated against the live sensor set — an unknown id (or a missing key) is `400 validation_error`; a persistence failure is `503 persistence_failed`. Advisory only (thermal safety still keys off `kind`) — reflected in `/inventory/hwmon` `default_cpu` (`source: "user"`) + `preferences` and the readiness `selected_cpu_sensor_missing` item. Daemon ≥ 2.6.0 (DEC-200); older daemons answer `404` and the GUI hides the feature for the session. The GUI offers these from the Overview page's sensor-table context menu and the Settings page.
 
 ## GUI startup behaviour
 

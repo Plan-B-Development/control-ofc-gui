@@ -1,9 +1,9 @@
-# 07 — Diagnostics Spec
+# 07 — System-Health Pages Spec (Overview · System State · Hardware · Logs)
 
 **Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 ## Purpose
-Diagnostics helps the user understand:
+The system-health pages help the user understand:
 - whether the daemon/API is reachable
 - whether controllers are available
 - whether sensors are fresh
@@ -11,19 +11,43 @@ Diagnostics helps the user understand:
 - what the last errors were
 - what can be exported for support/debugging
 
-This page must feel intentionally designed, not like a raw log dump.
+The redesign retired the single tabbed **Diagnostics** page and split its
+content across four standalone sidebar pages (DEC-209…216). The features below
+still exist — only their page homes changed:
 
-## V1 diagnostic sections
+- **Overview** (`pages/overview_page.py`) — daemon/API health, controller &
+  device discovery, the sensor table + its right-click menu, and the live
+  fan-status table.
+- **System State** (`pages/system_state_page.py`) — the `/diagnostics/hardware`
+  report: verdict + issue checklist, BIOS-interference monitor, dual-chip
+  warnings, thermal safety & GPU, and the PWM/GPU verify + Rescan Hardware +
+  Open Full Report actions.
+- **Hardware** (`pages/hardware_page.py`) — the daemon `/inventory/readiness`
+  go/no-go checklist, Super-I/O chip detection, and the opt-in Probe Ports
+  action.
+- **Logs** (`pages/logs_page.py`) — the event-log stream + filters, diagnostic
+  snapshots, and Export Bundle.
 
-### 1. Overview
+These pages must feel intentionally designed, not like a raw log dump.
+
+## Overview page
+
+The **Overview** page answers "is the daemon reachable, what hardware was
+discovered, and are the sensors fresh?" It carries what the retired
+Diagnostics ▸ Overview / Connection / Controller / Sensors sub-views showed,
+plus the live fan-status table.
+
+### Summary cards
 Summary cards for:
 - overall daemon status
 - OpenFan availability
 - hwmon availability
-- thermal state
 - last error summary
 
-### 2. Connection and daemon health
+(The thermal-state chip moved to the **System State** page, alongside the rest
+of the thermal-safety report.)
+
+### Connection and daemon health
 Show:
 - daemon version
 - API version
@@ -32,7 +56,7 @@ Show:
 - subsystem freshness/age
 - health reasons if provided
 
-### 3. Controller and device discovery
+### Controller and device discovery
 Show:
 - OpenFan present / absent
 - channel count
@@ -41,7 +65,7 @@ Show:
 - discovered controllable headers
 - whether RPM support is available
 
-### 4. Sensor health
+### Sensor table
 A rich diagnostic table of every sensor the daemon reports, designed to
 answer "what is this sensor, what is it doing, and is it reliable?" at a
 glance — without forcing the user to hover every cell (DEC-117).
@@ -84,7 +108,8 @@ DEC-196 removed the former Kind, Driver type, Trend, and Freshness columns
 (and the per-row stale/invalid warn/crit paint that rode on Freshness). All
 four fields remain in the Sensor Detail dialog, trend also in the every-cell
 hover tooltip, and staleness in aggregate as the header summary's `K stale`
-count. The Fans-tab freshness column and its colouring are unchanged.
+count. The Overview page's fan-status table freshness column and its colouring
+are unchanged.
 
 **Sensor Detail dialog** (DEC-117) — opens on Details-button click, row
 double-click, or right-click → "Open detail…". A `QTextBrowser` that mirrors
@@ -106,12 +131,18 @@ the Hardware Readiness pop-out, surfacing:
 to `AppSettings.diagnostics_hidden_sensor_ids`. Hidden sensors collapse into
 a single toggle row at the bottom — `▸ N hidden sensor(s) (click to
 expand)` — that re-renders the rows in greyed-out form when expanded.
-Right-click → "Unhide sensor" reverses. The Diagnostics hide-list is
-**local to this tab** by default; the **Mirror hidden to dashboard** button
-in the header pushes the current hide-list into the shared
+Right-click → "Unhide sensor" reverses. The hide-list is **local to the
+Overview page's sensor table** by default; the **Mirror hidden to dashboard**
+button in the header pushes the current hide-list into the shared
 `SeriesSelectionModel` as a one-shot (so the dashboard chart hides the same
-sensors). Subsequent diagnostics-side changes stay local until the user
+sensors). Subsequent Overview-side changes stay local until the user
 mirrors again.
+
+**Classification right-click** — the same context menu offers **Set as
+preferred CPU sensor** / **Set as preferred motherboard sensor** and **Treat as
+coolant** (`Overview_Action_treatAsCoolant`), which persist to the daemon's
+`POST /config/*` preferences. These replace what used to require a trip to
+Settings ▸ Preferred sensors.
 
 Tooltip behaviour on each cell is unchanged (still uses
 `format_sensor_tooltip` for hover context).
@@ -124,18 +155,19 @@ on `GET /status` + `/poll` (`{id, label, reason, unavailable_for_ms}`), rendered
 as `⚠ Unavailable sensors (N) — discovered but not readable, excluded from fan
 control:` with one bullet per entry (`• <label> — <reason> (unavailable Ns)`).
 These sensors are evicted from the live `sensors` list, so they raise **no**
-staleness warning and **no** dashboard banner or popup — Diagnostics is the only
-surface. The panel is hidden entirely when none are reported (older daemons omit
+staleness warning and **no** dashboard banner or popup — the Overview page's
+sensor table is the only surface. The panel is hidden entirely when none are
+reported (older daemons omit
 the field). The header summary's `N unavailable` count is kept in step with this
 panel from the same status poll.
 
-### 5. Lease state (removed at 2.0.0 — DEC-165)
+### Lease state (removed at 2.0.0 — DEC-165)
 The daemon owns the hwmon lease internally as of 2.0.0; the GUI holds none, so the diagnostics
 **Lease tab was removed**. Lease state is no longer a GUI-surfaced diagnostic. (Pre-2.0 this section
 showed lease required / held / owner / TTL.)
 
-### 6. Logs and events
-Provide a readable log/event view for:
+## Logs page
+The **Logs** page provides a readable log/event view for:
 - recent app events
 - recent API failures
 - validation errors
@@ -159,7 +191,7 @@ If the daemon does not expose a runtime reload endpoint, do not fake a daemon co
 
 ### Reconnect controller
 The daemon exposes `POST /hwmon/rescan` (surfaced as *Rescan Hardware* on the
-Troubleshooting tab since DEC-147) for hwmon re-enumeration; serial-controller
+System State page since DEC-147) for hwmon re-enumeration; serial-controller
 reconnection remains daemon-automatic (5× backoff + runtime reconnect mode),
 so no GUI reconnect button exists:
 - refresh status
@@ -182,7 +214,7 @@ Create a structured bundle including:
 ### Copy last errors
 Should copy a concise but useful text summary, not an unreadable blob.
 
-## Diagnostics UX rules
+## System-health UX rules
 - use color for severity, but do not rely on it alone
 - keep critical information high on the page
 - use expandable detail regions for large raw payloads/logs
@@ -221,22 +253,28 @@ These differences are **expected behavior**, not a bug. The GUI poll cycle (1000
 ## Implementation: Event log + diagnostic snapshots (DEC-111)
 
 ### Three distinct concepts
-The Diagnostics > Event Log tab surfaces three closely-related but distinct streams. Confusing them is the original sin the DEC-111 rewrite cleared up:
+The Logs page surfaces three closely-related but distinct streams. Confusing them is the original sin the DEC-111 rewrite cleared up:
 
 | Surface | What it answers | Storage | Lifetime |
 |---------|-----------------|---------|----------|
-| Event Log (this tab) | What has the GUI been doing in this session? | In-process `collections.deque` (`MAX_EVENTS = 200`) | Session-only — cleared on GUI exit |
+| Event Log (the Logs page) | What has the GUI been doing in this session? | In-process `collections.deque` (`MAX_EVENTS = 200`) | Session-only — cleared on GUI exit |
 | Active Warnings (banner badge → dialog) | What is wrong **right now**? | `AppState.active_warnings` recomputed every poll | Cleared when the condition resolves or the user acknowledges |
 | System Journal (snapshot button) | What happened across daemon restarts? | systemd journal, fetched on demand via `journalctl -u control-ofc-daemon` | Daemon-owned; persistent |
 
-### EventLogView widget
-Located at `src/control_ofc/ui/widgets/event_log_view.py`. Backed by a `QStandardItemModel` (one row per `DiagEvent`) wrapped in a custom `QSortFilterProxyModel` (`_EventFilterProxy`) that ANDs three filters:
+### Event stream
+The event stream lives on the Logs page (`pages/logs_page.py`) as the
+`Logs_Table_events` table — the standalone `EventLogView` widget was retired in
+the redesign. It renders one row per `DiagEvent` from the shared
+`DiagnosticsService` deque (`event_appended` / `events_cleared`), filtered by
+three ANDed controls:
 
-- **Severity** — multi-select (`info` / `warning` / `error`) via checkable `QPushButton`s.
+- **Severity** — multi-select (`info` / `warning` / `error`) toggle buttons.
 - **Source** — single-select `QComboBox`; populates dynamically from observed sources, starting with "All sources".
-- **Search** — `QLineEdit` substring match against both message and source columns (case-insensitive).
+- **Search** — `QLineEdit` substring match against both message and source columns (case-insensitive) (`Logs_Edit_search`).
 
-Severity column foreground colours read from `active_theme()` on every repaint and on `refresh_theme()` (called from `DiagnosticsPage.set_theme`) so a theme switch picks up the new `status_ok` / `status_warn` / `status_crit` values without a restart.
+Severity foreground colours read from `active_theme()` so a theme switch picks
+up the new `status_ok` / `status_warn` / `status_crit` values without a restart
+(refreshed via the Logs page's `set_theme`).
 
 Auto-scroll behaviour: the view follows the bottom only when the user is already at the bottom before the new event lands. Scrolling up pauses the follow; scrolling back down resumes it.
 
@@ -249,10 +287,18 @@ Auto-scroll behaviour: the view follows the bottom only when the user is already
 | `polling` | First connection established; disconnected (after a prior connect); daemon-reported active profile detected |
 | `profile` | Activated/deactivated; profile load error |
 
-Per-cycle work (every poll, every write attempt) must continue to use Python `logging` directly — the in-process event log is for breadcrumbs the user opens Diagnostics to see, not the daemon journal.
+Per-cycle work (every poll, every write attempt) must continue to use Python `logging` directly — the in-process event log is for breadcrumbs the user opens the Logs page to see, not the daemon journal.
 
 ### Diagnostic Snapshots sub-section
-The four on-demand detail buttons (Daemon Status, Controller Status, GPU Status, System Journal) live in a separate sub-section below the event log, writing to their own `QPlainTextEdit` (`Diagnostics_Text_snapshotView`). `Clear Log` only clears the event-log table; `Clear Snapshots` clears the snapshot view. Before DEC-111 both shared one `QPlainTextEdit` and Clear Log wiped journal blocks the user had just fetched.
+The four on-demand snapshots (Daemon Status, Controller Status, GPU State,
+System Journal) each live in their own card below the event table on the Logs
+page (`Logs_Card_daemonStatus` / `Logs_Card_controllerStatus` /
+`Logs_Card_gpuStatus` / `Logs_Card_systemJournal`), writing to that card's own
+`QPlainTextEdit` (`Logs_Text_daemonStatus`, …) via its own Refresh/Fetch button
+(`Logs_Btn_daemonStatus`, …). `Clear Logs` (`Logs_Btn_clear`) only clears the
+event-log table; the per-card snapshots are independent, so clearing the log can
+never wipe a journal block the user just fetched — the original DEC-111 bug (one
+shared `QPlainTextEdit` wiped by Clear Log) is structurally impossible now.
 
 ### Journal access
 - Uses `subprocess.run()` with `--lines=100 --no-pager --output=short-iso`
@@ -270,7 +316,7 @@ cutover. The GUI no longer holds an hwmon lease — the daemon acquires, renews,
 internally as the sole writer, and runs hwmon write-verify under its own internal lease. There is no
 GUI-surfaced lease state to explain.
 
-## Implementation: Diagnostics theming (R34)
+## Implementation: System-health page theming (R34)
 
 ### Transparent labels
 All labels inside Card frames use `background: transparent` inline style. This prevents opaque label backgrounds from conflicting with the Card class background across themes.
@@ -282,19 +328,21 @@ All labels inside Card frames use `background: transparent` inline style. This p
 - Collapsible section headers: `.CollapsibleSectionHeader` class (DEC-112) —
   body-sized + semibold, subordinate to `.PageSubtitle` card titles, theme-
   derived font size (no hardcoded px), chevron in the button text
-- No hardcoded `font-size: Npx` on any Diagnostics label
+- No hardcoded `font-size: Npx` on any system-health-page label
 
 ### No inline font-size overrides
-All font sizing is inherited from the global theme stylesheet via CSS classes. Changing the theme text size changes Diagnostics page text consistently.
+All font sizing is inherited from the global theme stylesheet via CSS classes. Changing the theme text size changes the text on the Overview / System State / Hardware / Logs pages consistently.
 
-## Implementation: Hardware Readiness (v1.1.0; dedicated Troubleshooting tab in v1.26.0 — DEC-124)
+## Implementation: Hardware Readiness — System State page (v1.1.0; own tab in v1.26.0 — DEC-124; relocated to the System State page — DEC-211)
 
-### Overview
-The **Troubleshooting** tab (a dedicated Diagnostics tab inserted right after
-Fans, DEC-124) presents the "Hardware Readiness" health report. It fetches data
-from `GET /diagnostics/hardware` (daemon v1.2.0+) and presents a unified view of
-hardware compatibility and driver status. The sibling **Fans** tab now shows
-only the live Fan Status table.
+### What it shows
+The **System State** page (`pages/system_state_page.py`) presents the "Hardware
+Readiness" health report. It fetches data from `GET /diagnostics/hardware`
+(daemon v1.2.0+) and presents a unified view of hardware compatibility and
+driver status. The live Fan Status table now lives on the **Overview** page.
+(Historically — DEC-124 — this report lived on a dedicated Diagnostics
+**Troubleshooting** tab inserted right after Fans; the redesign moved it to its
+own page.)
 
 ### Card contents
 1. **Summary line** — total headers, writable count, warnings if all read-only
@@ -316,7 +364,7 @@ only the live Fan Status table.
    (`hwmon_guidance.py`). Shown per unique chip prefix.
 
 ### Layout: flattened health report (DEC-124, supersedes the DEC-115/DEC-116 card layout)
-On its own **Troubleshooting** tab nothing competes with a fan table for
+On its own **System State** page nothing competes with a fan table for
 vertical space, so the readiness content is a flat, always-readable health
 report rather than the deep accordion-in-accordion card of DEC-115/DEC-116.
 Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
@@ -327,8 +375,9 @@ Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
   row reports the header count, notes that sensors refresh on the next poll
   cycle, and repeats the daemon's caveat that new fan-*control* hardware still
   requires a daemon restart; a successful rescan pushes the fresh header list
-  through `AppState.set_hwmon_headers` and chains a diagnostics refetch), and
-  *Refresh Hardware Diagnostics* (GUI-side refetch only).
+  through `AppState.set_hwmon_headers` and chains a `/diagnostics/hardware`
+  refetch), and *Refresh Hardware Diagnostics* (GUI-side refetch only). These
+  actions all live in the System State page's header action row.
 - **Verdict banner** (DEC-113) — always visible, traffic-light coloured.
 - **Blocking-alert stack** — module collisions, module conflicts, and the
   BIOS-interference headline (those that mean "do not write PWM until resolved"
@@ -386,7 +435,7 @@ Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
   all describe kernel/driver/firmware changes applied at the user's own risk.
   Low-weight by design — heavy red styling is reserved for the real alerts above.
 
-The sibling **Fans** tab holds only the live *Fan Status* table.
+The live *Fan Status* table lives on the **Overview** page.
 
 Because the verdict, the blocking-alert stack, and the issue checklist are all
 **always visible** (no outer collapse), safety warnings can never be hidden
@@ -422,7 +471,7 @@ visibility-gated labels keep working unchanged inside the sections.
   detection lives in one place (`detect_readiness_problems`) so the verdict and
   the issue checklist can never disagree; **info-level vendor quirks are FYI
   notes and are not counted as problems**.
-- **Auto-fetch** — opening the Troubleshooting tab fetches `/diagnostics/hardware`
+- **Auto-fetch** — opening the System State page fetches `/diagnostics/hardware`
   once per session (guarded), so the verdict + checklist populate without a
   manual *Refresh* click.
 - **Issue checklist (inline "To fix")** — the always-visible checklist (above)
@@ -469,7 +518,7 @@ Fintek F71882FG, F718xx; SMSC SCH5627, SCH5636.
 
 ### Dashboard banner
 An `ErrorBanner` widget on the live dashboard content shows:
-- Info banner when hwmon is not detected (suggests checking Diagnostics → Troubleshooting)
+- Info banner when hwmon is not detected (suggests checking the System State page)
 - Warning banner when hwmon is detected but all headers are read-only
 - Hidden when writable headers are available
 
@@ -480,18 +529,22 @@ editor, matching the existing GPU read-only pattern.
 ### Settings
 - `show_hardware_guidance: bool = True` — persisted in `app_settings.json`
 
-## Implementation: Cooling Hardware Readiness (merged Readiness + Super-I/O — DEC-207)
+## Implementation: Cooling Hardware Readiness — Hardware page (merged Readiness + Super-I/O — DEC-207)
 
-Since GUI v2.13.0 the Diagnostics **Readiness** tab is the merged **Cooling Hardware
-Readiness** page (`ui/widgets/cooling_readiness_view.py`), and the standalone
-**Super-I/O** tab is retired — its content is folded in. The page fetches everything
-in one request from the daemon's combined `GET /inventory/hardware-readiness`
-(daemon ≥ v2.11.0), which serves a single shared, coalesced hardware-assessment scan
-(the older `/inventory/readiness` + `/inventory/superio` endpoints remain as compat
-readers over the same snapshot). Off-thread via `_HardwareReadinessWorker`; on a
-pre-v2.11.0 daemon the route `404`s and the page shows an "unavailable" state.
+The merged **Cooling Hardware Readiness** report (both the go/no-go readiness
+checklist and the former standalone Super-I/O detection) is the redesign's
+**Hardware** page (`pages/hardware_page.py`, DEC-212). It first appeared in GUI
+v2.13.0 as the Diagnostics ▸ Readiness tab (`ui/widgets/cooling_readiness_view.py`,
+retired) with the Super-I/O tab folded in; the redesign promoted it to its own
+page and the standalone view widget was removed (its rendering now lives in
+`hardware_page.py`). The page fetches everything in one request from the daemon's
+combined `GET /inventory/hardware-readiness` (daemon ≥ v2.11.0), which serves a
+single shared, coalesced hardware-assessment scan (the older `/inventory/readiness`
++ `/inventory/superio` endpoints remain as compat readers over the same snapshot).
+Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
+`404`s and the page shows an "unavailable" state.
 
-Five sections, most-actionable first (`CoolingReadiness_*` object names):
+Five sections, most-actionable first (`Hardware_*` object names):
 1. **Overall readiness summary** — a compact verdict banner (Hardware ready / Needs
    attention / Not ready) with the top next step (`rollup.top_summary`), last scan
    time (from `scanned_age_ms`), one "Refresh hardware assessment" action
@@ -499,9 +552,10 @@ Five sections, most-actionable first (`CoolingReadiness_*` object names):
 2. **Recommended actions** — the actionable findings (critical → warning → info),
    each an actionable card with impact chips, a primary action button
    (`action_requested`), and a "Learn how" doc link. Actions route (in
-   `diagnostics_page._route_readiness_action`) to a cross-page deep-link
-   (`open_preferred_sensors` → Settings ▸ Preferred sensors), an in-surface scroll to
-   the Super-I/O section, or a switch to the Troubleshooting PWM-verify / Sensors tabs.
+   `hardware_page._route_action`) to a cross-page deep-link (`open_preferred_sensors`
+   → the Settings page's Preferred Sensors card), an in-surface scroll to the
+   Super-I/O section on this page, or a jump to the System State page (PWM verify,
+   `open_system_state`) or the Overview page (sensor table, `open_overview`).
    The pure code→action / doc / group mapping lives in `ui/cooling_readiness.py`.
 3. **Hardware checks** — the complete checklist in compact grouped rows (Temperature
    monitoring / Fan monitoring and control / Super-I/O and kernel support / Sensor

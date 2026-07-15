@@ -25,7 +25,7 @@ column therefore reads N/A throughout. Live manual override and fan identify are
 | Serial startup retry | IMPLEMENTED | 5x exponential backoff (1-16s) |
 | **Serial runtime reconnect** | **IMPLEMENTED (R43)** | After 5 consecutive errors, enters reconnect mode with backoff |
 | hwmon manual rescan | IMPLEMENTED | `POST /hwmon/rescan` endpoint |
-| GUI rescan button | **IMPLEMENTED (DEC-147)** | Diagnostics ▸ Troubleshooting ▸ "Rescan Hardware" — restores the `DaemonClient.hwmon_rescan` wrapper, pushes fresh headers through `AppState`, chains a diagnostics refetch. New fan-*control* hardware still requires a daemon restart (daemon-side limit). |
+| GUI rescan button | **IMPLEMENTED (DEC-147)** | The System State page's "Rescan Hardware" — restores the `DaemonClient.hwmon_rescan` wrapper, pushes fresh headers through `AppState`, chains a diagnostics refetch. New fan-*control* hardware still requires a daemon restart (daemon-side limit). |
 | udev stable symlink | TEMPLATE ONLY | `packaging/99-control-ofc.rules` — requires user VID/PID |
 | udev hotplug trigger | ABSENT | No automatic device-event service start |
 | Runtime hwmon hotplug | ABSENT | Devices added after startup are invisible |
@@ -100,7 +100,7 @@ A dedicated wizard page that walks first-time users through the complete hardwar
 7. **Summary report** — show what works, what doesn't, recommended next steps, and offer to export as a support bundle
 
 **Why deferred:**
-- The existing Diagnostics → Troubleshooting → Hardware Readiness report already covers steps 1-6 in a single scrollable view with auto-populated guidance
+- The existing Hardware-page readiness report already covers steps 1-6 in a single scrollable view with auto-populated guidance
 - Most users only need this once during initial setup
 - The knowledge base (`CHIP_GUIDANCE_DB` / `VENDOR_QUIRKS_DB` in `hwmon_guidance.py`) provides the same information inline
 - A wizard adds a new page, new service, and significant test surface for a one-time workflow
@@ -108,7 +108,7 @@ A dedicated wizard page that walks first-time users through the complete hardwar
 - DEC-145 adds the ordered end-to-end setup path as a manual page ([`manual/setup-checklist.md`](../manual/setup-checklist.md)) — install → verify sensors → readiness → branch (driver / BIOS / GPU / OpenFan) → stop competing fan software → verify control → first profile, plus a "when to redo what" table. This closes the wizard's step-ordering share at the documentation level; the remaining delta to DEC-092 is only the interactive UI surface.
 
 **When to build:**
-- If user feedback shows the diagnostics page is insufficient for first-time setup
+- If user feedback shows the Hardware page (readiness) is insufficient for first-time setup
 - If we add automated driver installation (e.g. `yay -S` integration), a wizard becomes the natural home
 - If we support more vendors/platforms where the setup matrix grows beyond what inline guidance can cover
 
@@ -134,10 +134,10 @@ temperature point sits at the same value with all duty points at 0% except
 the final point at 100%. Either configuration disables the EC's own curve
 evaluation and stops the reclaim cycle entirely.
 
-The GUI surfaces the live reclaim count per header on Diagnostics →
-Hardware (v1.7.1 onwards) with a severity colour ramp; the daemon throttles
+The GUI surfaces the live reclaim count per header on the System State
+page (v1.7.1 onwards) with a severity colour ramp; the daemon throttles
 the matching log line so the journal is not spammed (daemon v1.5.2). The
-Diagnostics page also auto-shows the matching `VendorQuirk` card when the
+System State page also auto-shows the matching `VendorQuirk` card when the
 board+chip combination is recognised, pointing the operator at this BIOS
 setting.
 
@@ -169,7 +169,7 @@ across restarts, the daemon journal is the right place.
 
 ### 11. GUI surface for `reset_gpu_fan` (RESOLVED — DEC-147)
 
-Diagnostics ▸ Troubleshooting ▸ "Restore GPU Fan to Automatic" wires
+The System State page's "Restore GPU Fan to Automatic" wires
 `DaemonClient.reset_gpu_fan` to a user-facing action beside the GPU verify
 button: shown for any writable AMD GPU (no daemon version floor — the reset
 route predates every supported daemon), disabled with an explanatory tooltip

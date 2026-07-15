@@ -196,7 +196,7 @@ echo 'options nct6687 fan_config=msi_alt1' | sudo tee /etc/modprobe.d/nct6687.co
 sudo modprobe -r nct6687 && sudo modprobe nct6687
 ```
 
-The control-ofc-gui Diagnostics page surfaces this guidance
+The control-ofc-gui System State page surfaces this guidance
 automatically on MSI boards with `board_name` containing `Z890`.
 
 ### Gigabyte LGA1700 (Z690 / Z790 AORUS)
@@ -224,7 +224,7 @@ yay -S it87-dkms-git
 echo 'options it87 mmio=on' | sudo tee /etc/modprobe.d/it87.conf
 
 sudo systemctl reboot
-# Then in the GUI: Diagnostics → Refresh Hardware Diagnostics
+# Then in the GUI: System State → Refresh Hardware Diagnostics
 ```
 
 **BIOS tips:**
@@ -278,7 +278,7 @@ control-ofc-gui ships `verified=True` fallback labels for this board:
   or set fan mode to **Full Speed** / **Performance**.
 - Some Z690 Taichi-class boards expose monitoring but not PWM writes
   via the in-kernel driver. If writes are silently ignored, the GUI's
-  Diagnostics → Verify PWM result will report `no_rpm_effect` — at
+  System State → Verify PWM result will report `no_rpm_effect` — at
   that point an out-of-tree driver attempt is the right diagnostic
   direction.
 
@@ -305,8 +305,8 @@ truthful "Intel CPU temperature reported via the PECI bus" tooltip.
 
 The `intel_pch_thermal` driver registers a hwmon device exposing the
 PCH (Platform Controller Hub) temperature on Intel systems. It is
-**sensor enrichment only** — not a fan-control path. The daemon
-diagnostics page lists it honestly as "loaded (mainline)" when present.
+**sensor enrichment only** — not a fan-control path. The System State
+page lists it honestly as "loaded (mainline)" when present.
 
 The kernel `x86_pkg_temp_thermal` driver covers the same physical
 sensor as `coretemp` but registers with `.no_hwmon = true` — it only

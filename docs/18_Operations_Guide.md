@@ -181,7 +181,7 @@ sudo systemctl edit control-ofc-daemon
 #   ReadWritePaths=/sys/devices
 sudo systemctl daemon-reload && sudo systemctl restart control-ofc-daemon
 ```
-If writes still fail **after** upgrading, the cause is hardware prerequisites rather than the sandbox — open **Diagnostics ▸ Hardware Readiness**, which detects a missing Super I/O driver, `acpi_enforce_resources=lax`, or `amdgpu.ppfeaturemask` and shows the exact fix.
+If writes still fail **after** upgrading, the cause is hardware prerequisites rather than the sandbox — open the **Hardware** page, which detects a missing Super I/O driver, `acpi_enforce_resources=lax`, or `amdgpu.ppfeaturemask` and shows the exact fix.
 
 ### GUI shows "Daemon disconnected"
 - Check daemon is running: `systemctl is-active control-ofc-daemon`

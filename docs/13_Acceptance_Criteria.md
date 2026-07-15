@@ -12,7 +12,7 @@
 - [ ] Dark theme is the default
 
 ### Navigation
-- [ ] App has a left sidebar with Dashboard, Controls, Settings, Diagnostics
+- [ ] App has a left sidebar with Dashboard, Overview, Controls, System State, Hardware, Settings, Theme, Logs
 - [ ] Header/status strip clearly shows connection/control state
 - [ ] Disconnected and demo states are obvious
 
@@ -78,7 +78,7 @@
 - [ ] Each detail block is labeled with its source (R34)
 - [ ] Journal retrieval is bounded and handles permission errors truthfully (R34)
 - [ ] Diagnostics labels use transparent backgrounds and theme CSS classes (R34)
-- [ ] No hardcoded font-size pixel values on Diagnostics page (R34)
+- [ ] No hardcoded font-size pixel values on the distributed diagnostics pages — System State, Hardware, Logs, Overview (R34)
 
 ### Demo mode
 - [ ] Demo mode is available without hardware

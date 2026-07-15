@@ -26,7 +26,7 @@ Therefore `Controls` is the top-level navigation label, with profile management 
 ## V1 page zones
 
 ### Left column / upper-left area
-- Active profile selector
+- Active profile selection/activation — **moved to the sidebar Active-Profile selector (DEC-214)**; no longer on the Controls page
 - Profile list
 - New / Duplicate / Rename / Delete profile actions
 - Profile status indicators
@@ -331,7 +331,7 @@ Cards are **content-aware**, not a fixed pixel box (DEC-128):
   `base_font_size_pt` (7–16) by `card_metrics.card_dimensions()`, so cards
   honour the current text size automatically.
 - **Density tier** — a `card_size` preference (compact / comfortable / large,
-  default comfortable; Settings → Themes) multiplies the computed size. Live
+  default comfortable; the Theme page) multiplies the computed size. Live
   cards re-size when the theme/font or tier changes
   (`ControlsPage.set_theme` → `Card.apply_card_size`).
 - **Curve cards**: header, sensor, preview, footer.

@@ -41,6 +41,8 @@ flips to `false` once dismissed). They still round-trip through
 `AppSettings.from_dict`/`to_dict` and the import/export trust boundary.
 
 ### B. Themes
+**Now its own page (DEC-215):** theming moved out of Settings into a top-level **Theme** sidebar page. The V1 requirements and preset notes below still hold — they now describe that Theme page, not a Settings sub-section.
+
 V1 requirements:
 - import theme
 - export theme
@@ -85,6 +87,8 @@ Do not present these floors as editable settings.
 Syslog/telemetry settings removed (R52 de-scope).
 
 ### E. Import / export
+**Now the Settings page's Sync & Backup card (DEC-215):** import/export is no longer a separate Settings section — it is folded into the **Sync & Backup** card on the Settings page. The behaviour below is unchanged.
+
 Support:
 - export GUI settings
 - import GUI settings
@@ -154,7 +158,7 @@ These belong to the daemon runtime/config:
 - write-through to daemon settings should show success/failure state
 - **Import auto-backs-up first:** the current `app_settings.json` is copied to
   `config/backups/` before an import is applied.
-- **Export is portable (DEC-140):** the Settings → Export file carries only
+- **Export is portable (DEC-140):** the Settings page's Sync & Backup Export file carries only
   shareable preferences plus all profiles/themes. Machine/session state and
   hardware-id-keyed maps (`window_geometry`, `last_page_index`, data-dir
   overrides, `series_colors`, `card_sensor_bindings`, `controls_card_sizes`,
