@@ -29,7 +29,13 @@ from control_ofc.paths import themes_dir
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card
-from control_ofc.ui.theme import ThemeTokens, default_dark_theme, load_theme, save_theme
+from control_ofc.ui.theme import (
+    ThemeTokens,
+    default_dark_theme,
+    load_theme,
+    save_theme,
+    theme_file_path,
+)
 from control_ofc.ui.widgets.theme_editor import ThemeEditorWidget
 
 log = logging.getLogger(__name__)
@@ -185,8 +191,19 @@ class ThemePage(QWidget):
     def _save_current_theme(self) -> None:
         tokens = self._theme_editor.tokens
         name = tokens.name or "Custom"
-        dest = themes_dir() / f"{name.lower().replace(' ', '_')}.json"
-        save_theme(tokens, dest)
+        try:
+            dest = theme_file_path(name)
+            save_theme(tokens, dest)
+        except (ValueError, OSError) as e:
+            # theme_file_path rejects unsafe or over-long names (ValueError);
+            # save_theme can still hit a filesystem limit or full disk (OSError).
+            # Surface either instead of crashing the GUI. An unsafe name is
+            # normally dropped at the load boundary, but a name can arrive
+            # another way and the NAME_MAX byte cap is only enforced in
+            # theme_file_path (DEC-217).
+            log.warning("Could not save theme %r: %s", name, e)
+            self._set_status(f"Cannot save theme '{name}': {e}")
+            return
         self._refresh_theme_list()
         self._set_status(f"Theme '{name}' saved")
 

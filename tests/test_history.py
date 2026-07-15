@@ -211,7 +211,6 @@ def test_prune_boundary_keeps_entry_exactly_at_cutoff():
     """The prune predicate is `timestamp < cutoff` (strict less-than) — an
     entry whose timestamp equals the cutoff must be RETAINED. Locks down
     `<` vs `<=` on the prune loop's condition."""
-    import time as _time
     from collections import deque
     from unittest.mock import patch
 
@@ -219,8 +218,11 @@ def test_prune_boundary_keeps_entry_exactly_at_cutoff():
 
     store = HistoryStore(max_age_s=5)
 
-    # Establish a deterministic monotonic baseline by recording at t=0 (real).
-    base = _time.monotonic()
+    # A float-exact baseline: (base + 5.0) - 5.0 must round-trip to *exactly*
+    # `base` or the "entry sits on the cutoff" premise breaks. A live
+    # time.monotonic() carries enough fractional bits that the round-trip drifts
+    # by an ULP and the boundary entry is spuriously pruned — 1000.0 is exact.
+    base = 1000.0
 
     # Seed two entries at known monotonic timestamps:
     #   entry A: t = base (the future cutoff will land *exactly* here)
@@ -248,14 +250,15 @@ def test_prune_boundary_keeps_entry_exactly_at_cutoff():
 def test_prune_drops_entry_just_past_cutoff():
     """Companion to the boundary test: an entry whose timestamp is even
     1 nanosecond past the cutoff must be dropped."""
-    import time as _time
     from collections import deque
     from unittest.mock import patch
 
     from control_ofc.services.history_store import TimestampedReading
 
     store = HistoryStore(max_age_s=5)
-    base = _time.monotonic()
+    # Fixed, float-exact baseline so (base + 5.0) - 5.0 == base exactly (a live
+    # time.monotonic() can drift by an ULP and move the cutoff off `base`).
+    base = 1000.0
     store._series["sensor:cpu"] = deque(
         [
             TimestampedReading(timestamp=base - 0.001, value=10.0),  # past cutoff

@@ -260,6 +260,20 @@ def _migrate_tokens(data: dict) -> dict:
 _NON_COLOR_STR_FIELDS = frozenset({"name", "font_family", "font_family_heading"})
 _FONT_SIZE_MIN = 7
 _FONT_SIZE_MAX = 16
+_STR_FIELD_MAX_LEN = 256
+# NAME_MAX is a per-component *byte* limit (255 on Linux ext4/btrfs/xfs). The
+# load-boundary cap above counts characters, but a theme name becomes
+# "{stem}.json" on disk, so theme_file_path re-checks the final filename's byte
+# length — otherwise a long ASCII (>=251) or multi-byte (>=84 CJK) name reaches
+# save_theme and raises an uncaught OSError/ENAMETOOLONG (DEC-217).
+_NAME_MAX_BYTES = 255
+
+# Characters that would close the quoted QSS declaration that build_stylesheet
+# wraps font_family_heading in, letting an imported theme append arbitrary style
+# rules. Backslash is included because CSS treats it as an escape, so a trailing
+# one would swallow the closing quote (DEC-217). Colour tokens are already immune
+# via is_valid_color's strict hex match.
+_QSS_UNSAFE_CHARS = frozenset("'\";{}\\\n\r\x00")
 
 
 def _coerce_base_font_size(value: object, default: int) -> int:
@@ -269,17 +283,46 @@ def _coerce_base_font_size(value: object, default: int) -> int:
     return max(_FONT_SIZE_MIN, min(_FONT_SIZE_MAX, value))
 
 
+def _is_safe_theme_name(value: str) -> bool:
+    """Whether *value* is usable as a theme's on-disk file name.
+
+    ``ThemeTokens.name`` is not merely a label: it becomes the file stem under
+    ``themes_dir()`` (see :func:`theme_file_path`) and the identity key that
+    ``main.py`` matches the persisted ``theme_name`` against. A separator would
+    place the file outside the themes directory, and an all-dots name is a path
+    component rather than a name (DEC-217).
+    """
+    if not value.strip():
+        return False
+    if any(c in value for c in ("/", "\\", "\x00")):
+        return False
+    return value.strip(".").strip() != ""
+
+
+def _is_safe_font_family(value: str) -> bool:
+    """Whether *value* is safe to interpolate into the generated stylesheet.
+
+    ``font_family_heading`` lands inside a quoted QSS declaration in
+    :func:`build_stylesheet`; an unescaped quote or brace would close it early
+    and inject arbitrary rules (DEC-217). Empty is valid — it means "inherit the
+    app body font" (DEC-208).
+    """
+    return not any(c in value for c in _QSS_UNSAFE_CHARS)
+
+
 def _apply_token_dict(tokens: ThemeTokens, data: dict, *, strict: bool) -> None:
     """Apply a (migrated) token dict onto *tokens*, validating every value.
 
     Colour tokens — and each ``chart_series`` entry — must pass
     :func:`control_ofc.colors.is_valid_color`; ``base_font_size_pt`` is clamped
-    to 7-16 and ``name``/``font_family`` coerced to strings. With
-    ``strict=True`` (theme *import*) the first invalid colour raises
-    ``ValueError`` so the caller skips the whole theme; with ``strict=False``
-    (loading an on-disk theme) the offending token is dropped and the dataclass
-    default kept, so a hand-edited or corrupt file can never break the
-    stylesheet (DEC-142).
+    to 7-16; ``name``/``font_family``/``font_family_heading`` must be strings
+    and are length-capped, then content-validated against the sink each one
+    reaches — the filesystem for ``name`` and the generated stylesheet for the
+    font families (DEC-217). With ``strict=True`` (theme *import*) the first
+    invalid value raises ``ValueError`` so the caller skips the whole theme;
+    with ``strict=False`` (loading an on-disk theme) the offending token is
+    dropped and the dataclass default kept, so a hand-edited or corrupt file
+    can never break the stylesheet (DEC-142).
     """
     from control_ofc.colors import is_valid_color
 
@@ -295,7 +338,17 @@ def _apply_token_dict(tokens: ThemeTokens, data: dict, *, strict: bool) -> None:
             continue
         if key in _NON_COLOR_STR_FIELDS:
             if isinstance(value, str):
-                setattr(tokens, key, value[:256])
+                candidate = value[:_STR_FIELD_MAX_LEN]
+                safe = (
+                    _is_safe_theme_name(candidate)
+                    if key == "name"
+                    else _is_safe_font_family(candidate)
+                )
+                if safe:
+                    setattr(tokens, key, candidate)
+                elif strict:
+                    raise ValueError(f"unsafe value for token {key!r}: {value!r}")
+                # non-strict: drop the unsafe value, keep the dataclass default
             continue
         if key == "chart_series":
             if not isinstance(value, list):
@@ -314,6 +367,35 @@ def _apply_token_dict(tokens: ThemeTokens, data: dict, *, strict: bool) -> None:
         elif strict:
             raise ValueError(f"invalid colour for token {key!r}: {value!r}")
         # non-strict: drop the invalid colour, keep the default
+
+
+def theme_file_path(name: str, directory: Path | None = None) -> Path:
+    """Derive the on-disk path for a theme called *name*.
+
+    The one sanctioned way to turn a theme name into a file path. Call sites
+    must not hand-compose ``themes_dir() / f"{name}.json"``: *name* originates
+    in untrusted theme JSON, so a separator in it would place the file outside
+    the themes directory. :func:`_apply_token_dict` already rejects unsafe names
+    at the load boundary — this is the second line of defence for a name that
+    arrives another way, and it also catches a themes-dir entry that symlinks
+    outside, since containment is checked on the *resolved* destination
+    (DEC-217).
+
+    Raises ``ValueError`` when *name* has no safe representation.
+    """
+    from control_ofc.paths import themes_dir
+
+    target_dir = themes_dir() if directory is None else directory
+    stem = (name or "Custom").strip().lower().replace(" ", "_")
+    if not _is_safe_theme_name(stem):
+        raise ValueError(f"unsafe theme name: {name!r}")
+    filename = f"{stem}.json"
+    if len(filename.encode("utf-8")) > _NAME_MAX_BYTES:
+        raise ValueError(f"theme name too long for the filesystem: {name!r}")
+    dest = target_dir / filename
+    if not dest.resolve().is_relative_to(target_dir.resolve()):
+        raise ValueError(f"theme name escapes {target_dir}: {name!r}")
+    return dest
 
 
 def save_theme(tokens: ThemeTokens, path: Path) -> None:
