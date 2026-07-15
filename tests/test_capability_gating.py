@@ -65,8 +65,9 @@ def window(qtbot, app_state, profile_service, settings_service):
 class TestCapabilityGating:
     def test_controls_disabled_when_no_write_support(self, qtbot, window, app_state):
         """Autonomous daemon but no writable backend -> control cards disabled."""
-        # First ensure we have cards by selecting a profile
-        window.controls_page._profile_combo.setCurrentIndex(0)
+        # DEC-214: the active profile ("quiet") already provides a control card at
+        # construction — the page no longer has its own profile combo to select.
+        assert window.controls_page._control_cards  # non-vacuous
 
         app_state.set_capabilities(_no_write_caps())
 
@@ -75,7 +76,7 @@ class TestCapabilityGating:
 
     def test_controls_enabled_with_write_support(self, qtbot, window, app_state):
         """Autonomous daemon with write support -> control cards stay enabled."""
-        window.controls_page._profile_combo.setCurrentIndex(0)
+        assert window.controls_page._control_cards  # non-vacuous (active profile)
 
         app_state.set_capabilities(_write_caps())
 
@@ -91,8 +92,7 @@ class TestCapabilityGating:
         Manual override toggles must be non-interactive even though a writable
         backend is advertised. Isolates the autonomy dimension from write support.
         """
-        window.controls_page._profile_combo.setCurrentIndex(0)
-        assert window.controls_page._control_cards  # non-vacuous
+        assert window.controls_page._control_cards  # non-vacuous (active profile)
 
         caps = Capabilities(
             daemon_version="1.21.0",
@@ -112,8 +112,7 @@ class TestCapabilityGating:
         cards, so a transient/incomplete capabilities snapshot stranded them
         disabled for the rest of the session.
         """
-        window.controls_page._profile_combo.setCurrentIndex(0)
-        assert window.controls_page._control_cards  # non-vacuous
+        assert window.controls_page._control_cards  # non-vacuous (active profile)
 
         app_state.set_capabilities(_no_write_caps())
         assert not window.controls_page._cards_writable

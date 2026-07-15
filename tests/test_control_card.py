@@ -372,3 +372,63 @@ class TestControlCardGpuOutput:
         c = _card_with_member(qtbot, curves)
         c.set_output(20.0, sensor_name="CPU", sensor_value=40.0)
         assert "GPU" not in c._output_label.text()
+
+
+class TestControlCardCompact:
+    """DEC-214: compact mockup card — role dot, N-Fans pill, per-member RPM rows,
+    and details revealed only when the card is selected."""
+
+    def _role_with_members(self, qtbot, curves):
+        from control_ofc.services.profile_service import ControlMember
+
+        control = LogicalControl(
+            id="r9",
+            name="Intake",
+            mode=ControlMode.CURVE,
+            curve_id="c1",
+            members=[
+                ControlMember(source="openfan", member_id="openfan:ch00", member_label="Front-Top"),
+                ControlMember(source="openfan", member_id="openfan:ch01", member_label="Front-Bot"),
+            ],
+        )
+        c = ControlCard(control, curves)
+        qtbot.addWidget(c)
+        return c
+
+    def test_fan_count_pill(self, qtbot, curves):
+        c = self._role_with_members(qtbot, curves)
+        assert c._fan_count_label.text() == "2 Fans"
+
+    def test_fan_count_singular(self, qtbot, curves):
+        c = _card_with_member(qtbot, curves)
+        assert c._fan_count_label.text() == "1 Fan"
+
+    def test_member_rows_show_per_fan_rpm(self, qtbot, curves):
+        c = self._role_with_members(qtbot, curves)
+        c.set_member_rpms({"openfan:ch00": 1151, "openfan:ch01": 940})
+        assert c._member_row_rpm["openfan:ch00"].text() == "1151 RPM"
+        assert c._member_row_rpm["openfan:ch01"].text() == "940 RPM"
+
+    def test_member_rpm_unknown_stays_blank(self, qtbot, curves):
+        """No fabricated values — an unknown RPM shows an empty column."""
+        c = self._role_with_members(qtbot, curves)
+        c.set_member_rpms({"openfan:ch00": 1151})  # ch01 omitted
+        assert c._member_row_rpm["openfan:ch01"].text() == ""
+
+    def test_details_default_expanded(self, qtbot, curves):
+        """A standalone card is expanded so every widget is reachable (tests)."""
+        c = self._role_with_members(qtbot, curves)
+        assert c._expanded is True
+        assert not c._details.isHidden()
+
+    def test_set_selected_collapses_and_reveals_details(self, qtbot, curves):
+        c = self._role_with_members(qtbot, curves)
+        c.set_selected(False)
+        assert c._expanded is False
+        assert c._details.isHidden()
+        assert c.property("selected") is False
+        assert c._link_nub.isHidden()
+        c.set_selected(True)
+        assert not c._details.isHidden()
+        assert c.property("selected") is True
+        assert not c._link_nub.isHidden()

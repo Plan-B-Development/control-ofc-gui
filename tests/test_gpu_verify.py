@@ -2,8 +2,9 @@
 
 Covers the model parser (forward-compat), the client method (path + timeout),
 the GUI-authored readiness guidance, the daemon-version gate, the demo path,
-and the diagnostics-page wiring (button gating, control-loop pause key, result
-rendering). Hardware is never touched — the page tests drive synthetic results.
+and the GPU-verify page wiring — now owned by SystemStatePage, re-vehicled off
+the retired Diagnostics page (button gating, result rendering, worker
+lifecycle). Hardware is never touched — the page tests drive synthetic results.
 """
 
 from __future__ import annotations
@@ -11,7 +12,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtWidgets import QLabel, QPushButton
 
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.models import (
@@ -27,11 +27,12 @@ from control_ofc.api.models import (
 )
 from control_ofc.services.app_state import AppState
 from control_ofc.services.demo_service import DemoService
-from control_ofc.ui.pages.diagnostics_page import (
-    DiagnosticsPage,
-    _daemon_version_at_least,
-    _GpuVerifyWorker,
+from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.services.system_state_view import (
+    daemon_version_at_least as _daemon_version_at_least,
 )
+from control_ofc.ui.pages.diagnostics_workers import _GpuVerifyWorker
+from control_ofc.ui.pages.system_state_page import SystemStatePage
 from control_ofc.ui.widgets.readiness_report import gpu_verify_problems
 
 # ── Parser (forward/backward compatibility) ──────────────────────────
@@ -180,7 +181,7 @@ def test_demo_verify_gpu_fan_is_deterministic_effective():
     assert res.final_state.rpm and res.final_state.rpm > 0
 
 
-# ── Diagnostics page wiring ──────────────────────────────────────────
+# ── SystemStatePage GPU-verify wiring (re-vehicled off the Diagnostics page) ──
 
 
 def _state(daemon_version: str = "1.11.0") -> AppState:
@@ -189,8 +190,11 @@ def _state(daemon_version: str = "1.11.0") -> AppState:
     return state
 
 
-def _make_page(qtbot, state=None, client=None) -> DiagnosticsPage:
-    page = DiagnosticsPage(state=state or _state(), client=client)
+def _make_page(qtbot, state=None, client=None) -> SystemStatePage:
+    state = state or _state()
+    page = SystemStatePage(
+        state=state, diagnostics_service=DiagnosticsService(state), client=client
+    )
     qtbot.addWidget(page)
     return page
 
@@ -218,34 +222,24 @@ def _writable_gpu() -> GpuDiagnosticsInfo:
 
 
 class TestGpuVerifyButtonGating:
-    def test_button_exists_and_hidden_before_populate(self, qtbot):
-        page = _make_page(qtbot)
-        btn = page.findChild(QPushButton, "Diagnostics_Btn_verifyGpu")
-        assert btn is not None
-        assert btn.isHidden()
+    """Availability gating on the live owner (SystemStatePage). The
+    writable-GPU-shown and read-only-hidden branches are covered by
+    test_system_state_page.py::test_gpu_verify_availability_needs_writable_gpu_and_version;
+    these pin the no-GPU and old-daemon branches that live test omits."""
 
-    def test_button_shown_for_writable_gpu_and_new_daemon(self, qtbot):
+    def test_button_hidden_before_populate(self, qtbot):
         page = _make_page(qtbot)
-        page._populate_hw_diagnostics(_diag(gpu=_writable_gpu()))
-        assert not page._gpu_verify_btn.isHidden()
-        assert page._gpu_verify_bdf == "0000:2d:00.0"
-
-    def test_button_hidden_for_read_only_gpu(self, qtbot):
-        page = _make_page(qtbot)
-        page._populate_hw_diagnostics(
-            _diag(gpu=GpuDiagnosticsInfo(pci_bdf="0000:2d:00.0", fan_control_method="read_only"))
-        )
         assert page._gpu_verify_btn.isHidden()
-        assert page._gpu_verify_bdf is None
 
     def test_button_hidden_when_no_gpu(self, qtbot):
         page = _make_page(qtbot)
-        page._populate_hw_diagnostics(_diag(gpu=None))
+        page._update_gpu_verify_availability(_diag(gpu=None))
         assert page._gpu_verify_btn.isHidden()
+        assert page._gpu_verify_bdf is None
 
     def test_button_hidden_for_old_daemon(self, qtbot):
         page = _make_page(qtbot, state=_state(daemon_version="1.10.0"))
-        page._populate_hw_diagnostics(_diag(gpu=_writable_gpu()))
+        page._update_gpu_verify_availability(_diag(gpu=_writable_gpu()))
         assert page._gpu_verify_btn.isHidden()
 
 
@@ -274,7 +268,7 @@ class TestGpuVerifyResultRendering:
                 wait_seconds=6,
             )
         )
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyGpuResult")
+        label = page._gpu_verify_result_label
         assert not label.isHidden()
         assert needle in label.text().lower()
         assert label.property("class") == css
@@ -282,13 +276,13 @@ class TestGpuVerifyResultRendering:
     def test_failure_result_includes_fix_guidance(self, qtbot):
         page = _make_page(qtbot)
         page._show_gpu_verify_result(GpuVerifyResult(result="curve_not_applied"))
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyGpuResult")
+        label = page._gpu_verify_result_label
         assert "ppfeaturemask" in label.text()
 
     def test_restore_failed_is_surfaced(self, qtbot):
         page = _make_page(qtbot)
         page._show_gpu_verify_result(GpuVerifyResult(result="effective", restore_failed=True))
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyGpuResult")
+        label = page._gpu_verify_result_label
         assert "restore" in label.text().lower()
 
 
@@ -328,7 +322,7 @@ class TestGpuVerifyRun:
         client = _VerifyFakeClient(GpuVerifyResult(gpu_id="0000:2d:00.0", result="effective"))
         page = _make_page(qtbot, client=client)
         page._gpu_verify_bdf = "0000:2d:00.0"
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyGpuResult")
+        label = page._gpu_verify_result_label
 
         try:
             _drive_via_worker(
@@ -343,16 +337,6 @@ class TestGpuVerifyRun:
             assert client.calls == ["0000:2d:00.0"]
         finally:
             page.cleanup()
-
-    def test_run_without_bdf_shows_message(self, qtbot):
-        # No BDF → the method returns before any worker is created.
-        page = _make_page(qtbot, client=_VerifyFakeClient(GpuVerifyResult(result="effective")))
-        page._gpu_verify_bdf = None
-        page._run_gpu_verify()
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyGpuResult")
-        assert not label.isHidden()
-        assert "no gpu" in label.text().lower()
-        assert page._gpu_verify_worker is None
 
 
 class TestGpuVerifyWorkerLifecycle:

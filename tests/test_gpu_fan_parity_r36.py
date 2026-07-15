@@ -6,8 +6,6 @@ GPU fan entries, GPU Status event log button, fan role source compatibility.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QPushButton
-
 from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
@@ -17,7 +15,7 @@ from control_ofc.api.models import (
 )
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService
-from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
+from control_ofc.services.overview_view import build_fan_rows
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -83,67 +81,20 @@ class TestSensorPanelGpuFanGroup:
 
 
 # ---------------------------------------------------------------------------
-# Diagnostics GPU integration
+# GPU fan → fan-row parity (re-vehicled onto the live Overview view-model)
 # ---------------------------------------------------------------------------
 
 
 class TestDiagnosticsGpuFanTable:
-    """Diagnostics fan table shows GPU fan entries."""
+    """A GPU fan yields a fan row whose source column reads 'amd_gpu'."""
 
-    def test_gpu_fan_in_fan_table(self, qtbot):
-        state = _make_state()
-        page = DiagnosticsPage(state=state)
-        qtbot.addWidget(page)
-
-        state.set_fans([_gpu_fan()])
-
-        # Check the fan table has an entry
-        table = page._fan_table
-        assert table.rowCount() == 1
-        assert table.item(0, 1).text() == "amd_gpu"
-
-
-class TestDiagnosticsGpuStatusButton:
-    """GPU Status button exists and shows GPU info."""
-
-    def test_gpu_status_button_exists(self, qtbot):
-        state = _make_state()
-        page = DiagnosticsPage(state=state)
-        qtbot.addWidget(page)
-        btn = page.findChild(QPushButton, "Diagnostics_Btn_gpuStatus")
-        assert btn is not None
-        assert btn.isEnabled()
-        assert "gpu" in btn.text().lower()
-
-    def test_gpu_status_appends_to_log(self, qtbot):
-        state = _make_state()
-        state.set_capabilities(_gpu_caps())
-        diag = DiagnosticsService(state)
-        page = DiagnosticsPage(state=state, diagnostics_service=diag)
-        qtbot.addWidget(page)
-
-        page._fetch_gpu_status()
-
-        from PySide6.QtWidgets import QPlainTextEdit
-
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
-        text = log_view.toPlainText()
-        assert "GPU STATUS" in text
-        assert "9070XT" in text or "RX 9070 XT" in text
-
-    def test_gpu_status_no_gpu_detected(self, qtbot):
-        state = _make_state()
-        state.set_capabilities(_gpu_caps(present=False))
-        diag = DiagnosticsService(state)
-        page = DiagnosticsPage(state=state, diagnostics_service=diag)
-        qtbot.addWidget(page)
-
-        page._fetch_gpu_status()
-
-        from PySide6.QtWidgets import QPlainTextEdit
-
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
-        assert "No AMD" in log_view.toPlainText()
+    def test_gpu_fan_in_fan_table(self):
+        # Re-vehicled off the retired Diagnostics fan table onto the live
+        # Overview builder (services.overview_view.build_fan_rows); the page only
+        # rendered these rows into a QTableWidget.
+        rows = build_fan_rows([_gpu_fan()], [], None, display_name=lambda i: i)
+        assert len(rows) == 1
+        assert rows[0].source == "amd_gpu"
 
 
 # ---------------------------------------------------------------------------

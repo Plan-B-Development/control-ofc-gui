@@ -42,37 +42,40 @@ class ThemeTokens:
     version: int = 2
 
     # ─── Core ────────────────────────────────────────────────────────
-    app_bg: str = "#1a1a2e"
-    surface_1: str = "#16213e"
-    surface_2: str = "#1f2b47"
-    surface_3: str = "#253552"
-    text_primary: str = "#e0e0e8"
-    text_secondary: str = "#a0a8c0"
-    # text_muted: bumped from #606878 (2.5:1 on surface_2) to #8a92a4 to hit
-    # the WCAG AA 3:1 non-text target on cards (DEC-109).
-    text_muted: str = "#8a92a4"
-    # accent_primary: darkened from #4a90d9 (3.3:1 with white) to #2f73c4
-    # so primary-button text reaches WCAG AA 4.5:1 (DEC-109).
-    accent_primary: str = "#2f73c4"
-    # accent_secondary: previously #7ec8e3, used as primary-button hover
-    # (1.9:1 with white). Reused as a darker "pressed" tone (#1d5fa9, 5.7:1).
-    accent_secondary: str = "#1d5fa9"
+    # Control-OFC green palette (DEC-208). The built-in theme keeps the name
+    # "Default Dark" so existing users' saved theme_name adopts green with no
+    # migration; the old blue palette ships as the "Classic Blue" preset.
+    app_bg: str = "#0A0E08"
+    surface_1: str = "#0D1610"
+    surface_2: str = "#14241C"
+    surface_3: str = "#1B3325"
+    text_primary: str = "#C8D4C0"
+    text_secondary: str = "#8AAA92"
+    # text_muted: 3.38:1 on surface_2 — meets the WCAG AA 3:1 non-text target
+    # (DEC-109/DEC-208).
+    text_muted: str = "#5A7A62"
+    # accent_primary: the brand teal. Primary-button text is dark
+    # (primary_btn_text) so label-on-accent clears WCAG AA 4.5:1 (DEC-208).
+    accent_primary: str = "#1FB88A"
+    # accent_secondary: brighter primary-button hover tone (dark text 9.1:1).
+    accent_secondary: str = "#33C89B"
 
     # ─── Borders & separators ────────────────────────────────────────
-    border_default: str = "#2a3a5c"
+    border_default: str = "#1A2E20"
 
     # ─── Interactive states ──────────────────────────────────────────
-    hover_bg: str = "#253552"
-    pressed_bg: str = "#1d5fa9"
-    selected_bg: str = "#1a3a6a"
-    disabled_bg: str = "#1e1e30"
-    disabled_text: str = "#505868"
+    hover_bg: str = "#1B3325"
+    pressed_bg: str = "#102A1E"
+    selected_bg: str = "#123528"
+    disabled_bg: str = "#0F1A14"
+    disabled_text: str = "#3A5044"
 
     # ─── Status colours ──────────────────────────────────────────────
-    status_ok: str = "#4caf50"
-    status_warn: str = "#ff9800"
-    status_crit: str = "#ef5350"
-    status_info: str = "#7ec8e3"
+    # status_ok unifies with the brand accent in the green palette (DEC-208).
+    status_ok: str = "#1FB88A"
+    status_warn: str = "#FFAA00"
+    status_crit: str = "#FF4D4D"
+    status_info: str = "#00A8FF"
     # status_caution: amber/gold for the MEDIUM advisory tier (DEC-158). Placed
     # between status_warn (orange, HIGH) and status_info (blue, INFO) by hue so
     # the four advisory severities separate by colour as well as by icon + word
@@ -81,14 +84,14 @@ class ThemeTokens:
     status_caution: str = "#f5c518"
 
     # ─── Charts / Graphs ─────────────────────────────────────────────
-    chart_bg: str = "#16213e"
-    chart_grid: str = "#2a3a5c"
-    # chart_axis_text: bumped from #606878 (2.8:1) to #8a92a4 (4.5:1)
-    # so chart axis labels meet WCAG AA non-text contrast (DEC-109).
-    chart_axis_text: str = "#8a92a4"
+    chart_bg: str = "#0A0E08"
+    chart_grid: str = "#1A2E20"
+    # chart_axis_text: 4.07:1 on chart_bg — meets WCAG AA non-text contrast
+    # (DEC-109/DEC-208).
+    chart_axis_text: str = "#5A7A62"
     chart_point_selected: str = "#ffffff"
     chart_point_hover: str = "#ffffff"
-    chart_crosshair: str = "#8a92a4"
+    chart_crosshair: str = "#5A7A62"
     chart_series: list[str] = field(
         default_factory=lambda: [
             "#5fa4ec",
@@ -102,52 +105,56 @@ class ThemeTokens:
         ]
     )
     # chart_tooltip_bg / _border drive the hover-readout plate painted over
-    # the chart. Defaults match surface_2 / border_default so the chart
+    # the chart. Defaults match surface_1 / border_default so the chart
     # tooltip reads consistently with the app's QToolTip styling and inherits
-    # the already-validated text_primary-on-surface_2 contrast (DEC-118).
-    chart_tooltip_bg: str = "#1f2b47"
-    chart_tooltip_border: str = "#2a3a5c"
+    # the already-validated text_primary contrast (DEC-118).
+    chart_tooltip_bg: str = "#0D1610"
+    chart_tooltip_border: str = "#1A2E20"
 
     # ─── Sidebar / navigation ────────────────────────────────────────
-    nav_bg: str = "#16213e"
-    nav_text: str = "#a0a8c0"
-    # nav_text_active: brightened to reach 3:1 against nav_item_active so the
-    # selected sidebar item is legible (was 2.6:1 with #4a90d9) (DEC-109).
-    nav_text_active: str = "#a4caf5"
-    nav_item_hover: str = "#1f2b47"
-    nav_item_active: str = "#1a3a6a"
+    nav_bg: str = "#0D1610"
+    nav_text: str = "#8AAA92"
+    # nav_text_active: brand accent; 5.29:1 on nav_item_active (DEC-208).
+    nav_text_active: str = "#1FB88A"
+    nav_item_hover: str = "#14241C"
+    nav_item_active: str = "#123528"
 
     # ─── Inputs / controls ───────────────────────────────────────────
-    input_bg: str = "#1f2b47"
-    input_text: str = "#e0e0e8"
-    # input_placeholder: bumped from #606878 (2.5:1 on input_bg) to match the
-    # new text_muted at 3.3:1 — non-text contrast minimum (DEC-109).
-    input_placeholder: str = "#8a92a4"
-    input_border: str = "#2a3a5c"
-    input_border_focus: str = "#2f73c4"
+    input_bg: str = "#14241C"
+    input_text: str = "#C8D4C0"
+    # input_placeholder: matches text_muted (3:1 non-text minimum, DEC-208).
+    input_placeholder: str = "#5A7A62"
+    input_border: str = "#1A2E20"
+    input_border_focus: str = "#1FB88A"
 
     # ─── Modals / dialogs ────────────────────────────────────────────
-    modal_bg: str = "#1f2b47"
-    modal_border: str = "#2a3a5c"
+    modal_bg: str = "#0D1610"
+    modal_border: str = "#1A2E20"
 
     # ─── Tables ──────────────────────────────────────────────────────
-    table_header_bg: str = "#16213e"
-    table_row_bg: str = "#1a1a2e"
-    table_row_alt_bg: str = "#1f2b47"
-    table_row_hover_bg: str = "#253552"
-    table_text: str = "#e0e0e8"
+    table_header_bg: str = "#0D1610"
+    table_row_bg: str = "#0A0E08"
+    table_row_alt_bg: str = "#14241C"
+    table_row_hover_bg: str = "#1B3325"
+    table_text: str = "#C8D4C0"
 
     # ─── Primary button text ─────────────────────────────────────────
-    primary_btn_text: str = "#ffffff"
+    # Dark text on the teal accent — 7.67:1 (white would be 2.54:1, failing
+    # WCAG AA). Classic Blue keeps white (DEC-208).
+    primary_btn_text: str = "#0A0E08"
 
     # ─── Surfaces for inline code / commands ─────────────────────────
     # Used by widgets that need a "code block" tint over the app surface
     # (e.g. the systemctl enable hint on the dashboard). Token-driven so
     # light themes can swap to a lighter tint instead of pure black (DEC-109).
-    code_block_bg: str = "#0d1224"
+    code_block_bg: str = "#060A05"
 
     # ─── Typography ──────────────────────────────────────────────────
-    font_family: str = ""  # empty = system default
+    # font_family drives the app-wide body QFont; font_family_heading is applied
+    # via QSS to titles / section headers / numeric readouts (DEC-208). Both are
+    # bundled OFL fonts registered at startup; empty = system default.
+    font_family: str = "DM Sans"
+    font_family_heading: str = "Space Grotesk"
     base_font_size_pt: int = 10  # user-adjustable, range 7-16
 
 
@@ -250,7 +257,7 @@ def _migrate_tokens(data: dict) -> dict:
 
 
 # Theme string fields that are NOT colour tokens (skip hex validation).
-_NON_COLOR_STR_FIELDS = frozenset({"name", "font_family"})
+_NON_COLOR_STR_FIELDS = frozenset({"name", "font_family", "font_family_heading"})
 _FONT_SIZE_MIN = 7
 _FONT_SIZE_MAX = 16
 
@@ -498,9 +505,27 @@ def combo_arrow_svg_path(color: str) -> str | None:
         return None
 
 
+def _rgba(hex_color: str, alpha: float) -> str:
+    """Return a Qt-stylesheet ``rgba(r, g, b, a)`` string from a hex token.
+
+    Qt style sheets do not reliably parse 8-digit ``#RRGGBBAA`` hex, so
+    translucent tints are emitted as ``rgba()`` derived from a solid token
+    (DEC-208). Non-hex input degrades to fully-transparent black.
+    """
+    h = hex_color.lstrip("#")
+    if len(h) >= 6:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    else:
+        r = g = b = 0
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
 def build_stylesheet(t: ThemeTokens) -> str:
     """Generate a Qt stylesheet from theme tokens."""
     fs = font_sizes(t.base_font_size_pt)
+    # Heading font applied via QSS to titles / section headers / numeric
+    # readouts; an empty token inherits the app body font (DEC-208).
+    hf = f"font-family: '{t.font_family_heading}';" if t.font_family_heading else ""
     _arrow_path = combo_arrow_svg_path(t.text_secondary)
     combo_down_arrow = (
         f"QComboBox::down-arrow {{ image: url({_arrow_path}); width: 12px; height: 12px; }}"
@@ -570,6 +595,12 @@ def build_stylesheet(t: ThemeTokens) -> str:
         background-color: {t.surface_3};
     }}
 
+    /* The current/highlighted card (DEC-214): the selected Fan-Role card and the
+       ACTIVE/assigned curve card take a solid accent border (mockup treatment). */
+    .Card[active="true"], .Card[selected="true"] {{
+        border-color: {t.accent_primary};
+    }}
+
     /* Fan group cards (dashboard fan zones, DEC-187) — a calm card surface with a
        quieter inner tile; the one accent per card is its state chip. */
     .FanGroupCard {{
@@ -611,6 +642,7 @@ def build_stylesheet(t: ThemeTokens) -> str:
     /* Page titles */
     .PageTitle {{
         color: {t.text_primary};
+        {hf}
         font-size: {fs["title"]}pt;
         font-weight: 600;
     }}
@@ -621,6 +653,7 @@ def build_stylesheet(t: ThemeTokens) -> str:
     }}
 
     .SectionTitle {{
+        {hf}
         font-size: {fs["section"]}pt;
         font-weight: bold;
     }}
@@ -653,6 +686,7 @@ def build_stylesheet(t: ThemeTokens) -> str:
     }}
 
     .CardValue {{
+        {hf}
         font-size: {fs["card_value"]}pt;
         font-weight: bold;
     }}
@@ -946,5 +980,148 @@ def build_stylesheet(t: ThemeTokens) -> str:
 
     QListWidget::item:hover {{
         background-color: {t.hover_bg};
+    }}
+
+    /* ─── Redesign shared components (DEC-208) ───────────────────────── */
+
+    /* Bracket card: a calm surface with a left accent bar that intensifies on
+       hover; the one accent per card is its state. */
+    .BracketCard {{
+        background-color: {t.surface_2};
+        border: 1px solid {t.border_default};
+        border-left: 2px solid {t.border_default};
+        border-radius: 6px;
+    }}
+    .BracketCard:hover {{
+        border-left-color: {t.accent_primary};
+    }}
+    .BracketCard[warning="true"] {{
+        border-left-color: {t.status_warn};
+    }}
+
+    /* Section header: accent bar + uppercase heading-font label */
+    .SectionBar {{
+        background-color: {t.accent_primary};
+        border-radius: 1px;
+    }}
+    .SectionHeader {{
+        color: {t.text_secondary};
+        {hf}
+        font-size: {fs["small"]}pt;
+        font-weight: 600;
+    }}
+
+    /* Filled status pills (bg tint + border + uppercase heading font). Net-new;
+       the colour-only .*Chip classes above are kept for back-compat. */
+    .Pill_success, .Pill_warning, .Pill_critical, .Pill_info, .Pill_neutral {{
+        {hf}
+        font-size: {fs["small"]}pt;
+        font-weight: 600;
+        border-radius: 4px;
+        padding: 1px 6px;
+    }}
+    .Pill_success {{
+        color: {t.status_ok};
+        background-color: {_rgba(t.status_ok, 0.12)};
+        border: 1px solid {_rgba(t.status_ok, 0.30)};
+    }}
+    .Pill_warning {{
+        color: {t.status_warn};
+        background-color: {_rgba(t.status_warn, 0.12)};
+        border: 1px solid {_rgba(t.status_warn, 0.30)};
+    }}
+    .Pill_critical {{
+        color: {t.status_crit};
+        background-color: {_rgba(t.status_crit, 0.12)};
+        border: 1px solid {_rgba(t.status_crit, 0.30)};
+    }}
+    .Pill_info {{
+        color: {t.status_info};
+        background-color: {_rgba(t.status_info, 0.12)};
+        border: 1px solid {_rgba(t.status_info, 0.30)};
+    }}
+    .Pill_neutral {{
+        color: {t.text_muted};
+        background-color: {_rgba(t.text_muted, 0.12)};
+        border: 1px solid {_rgba(t.text_muted, 0.30)};
+    }}
+
+    /* Button variants — property-driven so a widget's objectName stays free for
+       tests; #PrimaryButton (objectName) above stays for existing callers. */
+    QPushButton[variant="primary"] {{
+        background-color: {t.accent_primary};
+        color: {t.primary_btn_text};
+        border: none;
+    }}
+    QPushButton[variant="primary"]:hover {{
+        background-color: {t.accent_secondary};
+    }}
+    QPushButton[variant="secondary"] {{
+        background-color: {t.surface_1};
+        color: {t.text_primary};
+        border: 1px solid {t.border_default};
+    }}
+    QPushButton[variant="secondary"]:hover {{
+        border-color: {t.accent_primary};
+        color: {t.accent_primary};
+    }}
+    QPushButton[variant="ghost"] {{
+        background-color: transparent;
+        color: {t.text_secondary};
+        border: 1px solid transparent;
+    }}
+    QPushButton[variant="ghost"]:hover {{
+        color: {t.text_primary};
+        background-color: {t.hover_bg};
+    }}
+    QPushButton[variant="danger"] {{
+        background-color: transparent;
+        color: {t.status_crit};
+        border: 1px solid {_rgba(t.status_crit, 0.40)};
+    }}
+    QPushButton[variant="danger"]:hover {{
+        background-color: {_rgba(t.status_crit, 0.14)};
+        border-color: {t.status_crit};
+    }}
+
+    /* Dense data table (Overview / Logs consume this later) */
+    .DenseTable {{
+        background-color: {t.surface_2};
+        gridline-color: transparent;
+    }}
+    .DenseTable QHeaderView::section {{
+        background-color: {t.surface_1};
+        color: {t.text_muted};
+        {hf}
+        font-size: {fs["small"]}pt;
+        font-weight: 600;
+        border: none;
+        border-bottom: 1px solid {t.border_default};
+        padding: 6px 10px;
+    }}
+    .DenseTable::item {{
+        padding: 5px 10px;
+    }}
+
+    /* Global shell chrome: top ribbon + bottom footer */
+    #StatusRibbon_Root {{
+        background-color: {t.surface_1};
+        border-bottom: 1px solid {t.border_default};
+    }}
+    .RibbonBrand {{
+        color: {t.text_primary};
+        {hf}
+        font-size: {fs["card_title"]}pt;
+        font-weight: 700;
+    }}
+    #StatusFooter_Root {{
+        background-color: {t.surface_1};
+        border-top: 1px solid {t.border_default};
+    }}
+
+    /* Modal scrim: a translucent dark veil behind a ModalDialog (no live blur —
+       Qt cannot do backdrop-filter efficiently). */
+    #ModalScrim {{
+        background-color: {_rgba(t.app_bg, 0.66)};
     }}
     """

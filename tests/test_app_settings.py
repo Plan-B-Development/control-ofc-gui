@@ -7,7 +7,7 @@ from control_ofc.services.app_settings_service import AppSettings, AppSettingsSe
 
 def test_default_settings():
     s = AppSettings()
-    assert s.version == 1
+    assert s.version == 2
     assert s.default_startup_page == 0
     assert s.restore_last_page is True
     assert s.theme_name == "Default Dark"
@@ -47,15 +47,35 @@ def test_legacy_display_keys_ignored():
 
 def test_from_dict_handles_missing_keys():
     restored = AppSettings.from_dict({})
-    assert restored.version == 1
+    assert restored.version == 2
     assert restored.default_startup_page == 0
+
+
+def test_dec216_page_index_migration_decrements_shifted_indices():
+    """DEC-216: removing the Diagnostics page (index 3) renumbered pages 4-8 down
+    to 3-7. A version-1 file's persisted page indices >= 4 decrement by one so
+    restore lands on the same page; the version bumps to 2."""
+    m = AppSettings.from_dict({"version": 1, "last_page_index": 6, "default_startup_page": 7})
+    assert (m.last_page_index, m.default_startup_page, m.version) == (5, 6, 2)
+
+
+def test_dec216_migration_boundaries_and_idempotence():
+    # Index 3 (old Diagnostics) and below are NOT shifted.
+    assert AppSettings.from_dict({"version": 1, "last_page_index": 3}).last_page_index == 3
+    assert AppSettings.from_dict({"version": 1, "last_page_index": 2}).last_page_index == 2
+    # A versionless legacy file is treated as v1 and migrates.
+    vless = AppSettings.from_dict({"last_page_index": 5})
+    assert (vless.last_page_index, vless.version) == (4, 2)
+    # An already-migrated (v2) file is untouched — idempotent.
+    v2 = AppSettings.from_dict({"version": 2, "last_page_index": 6, "default_startup_page": 7})
+    assert (v2.last_page_index, v2.default_startup_page, v2.version) == (6, 7, 2)
 
 
 def test_service_load_creates_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     svc = AppSettingsService()
     svc.load()
-    assert svc.settings.version == 1
+    assert svc.settings.version == 2
     assert svc.settings.theme_name == "Default Dark"
 
 

@@ -14,7 +14,7 @@ These tests cover the post-DEC-109 expectations:
 - ``_resolve_startup_theme`` returns the persisted theme when its name
   matches a JSON file in ``themes_dir()``, and degrades gracefully when
   the file is missing, corrupted, or has a different name.
-- The Diagnostics page and TimelineChart expose a ``set_theme`` method so
+- The Overview page and TimelineChart expose a ``set_theme`` method so
   the main window can re-render their theme-sensitive surfaces on the fly.
 """
 
@@ -79,14 +79,15 @@ class TestExpandedContrastChecks:
 
     def test_flags_primary_button_text_on_accent_below_aa(self):
         t = default_dark_theme()
-        # Light text on bright accent — should fail AA 4.5:1
-        t.accent_primary = "#7ec8e3"  # original cyan accent, 1.9:1 with white
+        # DEC-208: the primary-button label is now dark, so the failure mode is
+        # a too-dark accent (dark-on-dark), not a too-light one.
+        t.accent_primary = "#14241C"  # near-surface, ~1.2:1 with the dark label
         warnings = check_contrast_warnings(t)
         assert any("primary_btn_text" in w and "accent_primary" in w for w in warnings)
 
     def test_flags_primary_button_text_on_hover_below_aa(self):
         t = default_dark_theme()
-        t.accent_secondary = "#7ec8e3"
+        t.accent_secondary = "#14241C"
         warnings = check_contrast_warnings(t)
         assert any("primary_btn_text" in w and "accent_secondary" in w for w in warnings)
 
@@ -100,7 +101,7 @@ class TestExpandedContrastChecks:
 
     def test_flags_chart_axis_text_on_chart_bg_below_3(self):
         t = default_dark_theme()
-        t.chart_axis_text = "#606878"  # original failing colour
+        t.chart_axis_text = "#1A2E20"  # too dark against the near-black chart_bg
         warnings = check_contrast_warnings(t)
         assert any("chart_axis_text" in w and "chart_bg" in w for w in warnings)
 
@@ -300,14 +301,15 @@ class TestTimelineChartSetTheme:
         assert chart._theme.chart_bg == "#abcdef"
 
 
-class TestDiagnosticsPageSetTheme:
-    """DiagnosticsPage.set_theme must repaint freshness cells from cached
-    state so colours follow theme changes (previously stuck on default-dark)."""
+class TestOverviewPageSetTheme:
+    """OverviewPage.set_theme must repaint freshness cells from cached state so
+    colours follow theme changes. The freshness-cell rendering the retired
+    DiagnosticsPage owned moved here (previously stuck on default-dark)."""
 
     def test_set_theme_method_exists(self):
-        from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
+        from control_ofc.ui.pages.overview_page import OverviewPage
 
-        assert hasattr(DiagnosticsPage, "set_theme")
+        assert hasattr(OverviewPage, "set_theme")
 
 
 class TestDashboardPageSetTheme:
@@ -327,7 +329,7 @@ class TestDashboardPageSetTheme:
 
 class TestReclaimSeverityColorFollowsActiveTheme:
     def test_reclaim_color_changes_when_active_theme_changes(self):
-        from control_ofc.ui.pages.diagnostics_page import (
+        from control_ofc.ui.pages.diagnostics_readiness import (
             RECLAIM_SEVERITY_HIGH,
             RECLAIM_SEVERITY_OK,
             RECLAIM_SEVERITY_WARN,
@@ -358,10 +360,12 @@ class TestNoStaleDefaultDarkSnapshots:
     """The four offenders identified in the audit must no longer pin their
     theme to ``default_dark_theme()`` at import or construction time."""
 
-    def test_diagnostics_page_has_no_module_level_theme_snapshot(self):
-        src = Path("src/control_ofc/ui/pages/diagnostics_page.py").read_text()
-        # The previous module-level _THEME = default_dark_theme() snapshot
-        # is what made theme switches a no-op on the freshness columns.
+    def test_overview_page_has_no_module_level_theme_snapshot(self):
+        # Repointed off the retired Diagnostics page to its freshness-cell
+        # successor (OverviewPage). The previous module-level
+        # _THEME = default_dark_theme() snapshot is what made theme switches a
+        # no-op on the freshness columns.
+        src = Path("src/control_ofc/ui/pages/overview_page.py").read_text()
         assert "_THEME = default_dark_theme()" not in src
         # active_theme is the new source of truth
         assert "active_theme" in src

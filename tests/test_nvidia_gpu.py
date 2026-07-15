@@ -28,10 +28,21 @@ from control_ofc.knowledge.sensor_knowledge import classify_sensor
 from control_ofc.services.app_state import AppState
 from control_ofc.services.demo_service import DemoService
 from control_ofc.services.fan_grouping import build_fan_groups
+from control_ofc.services.overview_view import fan_control_method
 from control_ofc.services.profile_service import CONTROL_ROLE_GPU, ControlMember, infer_member_role
 from control_ofc.ui.fan_display import filter_displayable_fans
-from control_ofc.ui.pages.diagnostics_page import _fan_control_method
 from control_ofc.ui.widgets.fan_zone_card import FanTile
+
+
+def _fan_control_method(fan: FanReading, state: AppState | None) -> str:
+    """Local shim (Diagnostics-page retirement): the pure fn now lives in
+    ``services.overview_view.fan_control_method``; this ``(fan, state)`` wrapper
+    keeps the existing call sites unchanged."""
+    return fan_control_method(
+        fan,
+        state.hwmon_headers if state else [],
+        state.capabilities if state else None,
+    )
 
 
 def _make_nvidia_caps(
@@ -496,7 +507,7 @@ class TestControlsMemberPickerExcludesNvidia:
         captured: dict = {"available": None}
 
         class _StubDialog:
-            def __init__(self, _current, available, _assigned=None, parent=None):
+            def __init__(self, _current, available, _assigned=None, role_name="", parent=None):
                 captured["available"] = available
 
             def exec(self):

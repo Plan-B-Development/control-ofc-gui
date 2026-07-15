@@ -157,6 +157,8 @@ class CurveCard(QFrame):
     delete_requested = Signal(str)
     rename_requested = Signal(str)
     duplicate_requested = Signal(str)
+    # DEC-214 "Link Logic": detach this curve from the role(s) using it.
+    unlink_requested = Signal(str)
     # DEC-129 per-card user resize: resized fires on grip release with the
     # snapped size actually applied; size_reset fires on grip double-click
     # after the card has restored its theme-derived default.
@@ -212,6 +214,7 @@ class CurveCard(QFrame):
         actions_menu.addAction("Rename", lambda: self.rename_requested.emit(self._curve.id))
         actions_menu.addAction("Duplicate", lambda: self.duplicate_requested.emit(self._curve.id))
         actions_menu.addSeparator()
+        actions_menu.addAction("Unlink", lambda: self.unlink_requested.emit(self._curve.id))
         actions_menu.addAction("Delete", lambda: self.delete_requested.emit(self._curve.id))
         actions_btn.setMenu(actions_menu)
         header.addWidget(actions_btn)
@@ -348,6 +351,14 @@ class CurveCard(QFrame):
             self._sensor_label.setText(label if label else "No sensor")
 
     def set_used_by(self, role_names: list[str]) -> None:
+        """Reflect whether any role uses this curve (DEC-214 "Link Logic").
+
+        An assigned curve is the *active* one — a success pill + a solid accent
+        card border (the mockup's ACTIVE treatment, driven off the real used-by
+        status). The status text stays "Assigned"/"Unassigned" (the assigned/
+        used-by concept), styled as a pill rather than reworded, so it never
+        fabricates an "active" state the data doesn't support.
+        """
         if role_names:
             text = ", ".join(role_names[:3])
             if len(role_names) > 3:
@@ -355,12 +366,15 @@ class CurveCard(QFrame):
             self._used_by_label.setText(f"Used by: {text}")
             self._used_by_label.setToolTip(", ".join(role_names))
             self._status_label.setText("Assigned")
-            self._status_label.setProperty("class", "SuccessChip")
+            self._status_label.setProperty("class", "Pill_success")
+            self.setProperty("active", True)
         else:
             self._used_by_label.setText("Not assigned")
             self._status_label.setText("Unassigned")
-            self._status_label.setProperty("class", "PageSubtitle")
+            self._status_label.setProperty("class", "Pill_neutral")
+            self.setProperty("active", False)
         repolish(self._status_label)
+        repolish(self)
 
     def update_curve(self, curve: CurveConfig) -> None:
         self._curve = curve

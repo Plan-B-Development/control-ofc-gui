@@ -19,12 +19,19 @@ from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.profile_import_service import should_offer_import
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.ui.components.footer import StatusFooter
 from control_ofc.ui.pages.controls_page import ControlsPage
 from control_ofc.ui.pages.dashboard_page import DashboardPage
-from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
+from control_ofc.ui.pages.hardware_page import HardwarePage
+from control_ofc.ui.pages.logs_page import LogsPage
+from control_ofc.ui.pages.overview_page import OverviewPage
 from control_ofc.ui.pages.settings_page import SettingsPage
+from control_ofc.ui.pages.system_state_page import SystemStatePage
+from control_ofc.ui.pages.theme_page import ThemePage
+from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.sidebar import Sidebar
 from control_ofc.ui.status_banner import StatusBanner
+from control_ofc.ui.status_ribbon import StatusRibbon
 from control_ofc.ui.widgets.error_banner import ErrorBanner
 
 log = logging.getLogger(__name__)
@@ -133,21 +140,53 @@ class MainWindow(QWidget):
             settings_service=self._settings_service,
             client=self._client,
         )
-        self.diagnostics_page = DiagnosticsPage(
+        # DEC-209: Overview is its own page (merged Diagnostics Overview/Fans/
+        # Sensors). DEC-216 retired the legacy Diagnostics page entirely.
+        self.overview_page = OverviewPage(
             state=self._state,
             diagnostics_service=self._diag,
             settings_service=self._settings_service,
-            profile_service=self._profile_service,
-            client=self._client,
             series_selection=self._series_selection,
+            client=self._client,
         )
+        # DEC-210: Logs is now its own page (migrated Diagnostics Event Log +
+        # a Log Inspector). Shares the same DiagnosticsService feed.
+        self.logs_page = LogsPage(diagnostics_service=self._diag)
+        # DEC-211: System State is now its own page (migrated Diagnostics
+        # Troubleshooting). Owns its own hw-diagnostics/verify workers; reads the
+        # shared last_hw_diagnostics cache.
+        self.system_state_page = SystemStatePage(
+            state=self._state,
+            diagnostics_service=self._diag,
+            client=self._client,
+            profile_service=self._profile_service,
+        )
+        # DEC-212: Hardware is now its own page (migrated Diagnostics Readiness).
+        # Owns its own hardware-readiness worker; deep-links re-point to the
+        # migrated System State / Overview / Settings pages.
+        self.hardware_page = HardwarePage(
+            state=self._state, diagnostics_service=self._diag, client=self._client
+        )
+        # DEC-215: Theme is now its own page (split from the Settings tabs). Owns
+        # the theme_changed signal + the theme editor; Settings keeps the rest.
+        self.theme_page = ThemePage(settings_service=self._settings_service)
 
-        self.page_stack.addWidget(self.dashboard_page)
-        self.page_stack.addWidget(self.controls_page)
-        self.page_stack.addWidget(self.settings_page)
-        self.page_stack.addWidget(self.diagnostics_page)
+        self.page_stack.addWidget(self.dashboard_page)  # PAGE_DASHBOARD = 0
+        self.page_stack.addWidget(self.controls_page)  # PAGE_CONTROLS = 1
+        self.page_stack.addWidget(self.settings_page)  # PAGE_SETTINGS = 2
+        self.page_stack.addWidget(self.overview_page)  # PAGE_OVERVIEW = 3
+        self.page_stack.addWidget(self.logs_page)  # PAGE_LOGS = 4
+        self.page_stack.addWidget(self.system_state_page)  # PAGE_SYSTEM_STATE = 5
+        self.page_stack.addWidget(self.hardware_page)  # PAGE_HARDWARE = 6
+        self.page_stack.addWidget(self.theme_page)  # PAGE_THEME = 7
 
-        # --- Layout ---
+        # --- Global shell chrome (DEC-208): top ribbon + bottom footer ---
+        self.status_ribbon = StatusRibbon()
+        self.footer = StatusFooter()
+
+        # --- Layout: ribbon / body(sidebar + content) / footer ---
+        # content_layout keeps the existing banner + stack column UNCHANGED so the
+        # StatusBanner-hidden-on-dashboard contract and banner objectNames hold.
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
@@ -159,15 +198,23 @@ class MainWindow(QWidget):
         content_container = QWidget()
         content_container.setLayout(content_layout)
 
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        main_layout.addWidget(self.sidebar)
-        main_layout.addWidget(content_container, 1)
+        body = QWidget()
+        body_layout = QHBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        body_layout.addWidget(self.sidebar)
+        body_layout.addWidget(content_container, 1)
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        root_layout.addWidget(self.status_ribbon)
+        root_layout.addWidget(body, 1)
+        root_layout.addWidget(self.footer)
 
         # --- Signals ---
-        self.sidebar.page_changed.connect(self._on_page_changed)
-        self.settings_page.theme_changed.connect(self._on_theme_changed)
+        self.sidebar.nav_activated.connect(self._on_nav_activated)
+        self.theme_page.theme_changed.connect(self._on_theme_changed)  # DEC-215
 
         # State → status banner
         self._state.connection_changed.connect(self.status_banner.set_connection_state)
@@ -175,6 +222,27 @@ class MainWindow(QWidget):
         self._state.mode_changed.connect(self.status_banner.set_operation_mode)
         self._state.active_profile_changed.connect(self.status_banner.set_active_profile)
         self._state.warning_count_changed.connect(self.status_banner.set_warning_count)
+
+        # State → status ribbon + footer (DEC-208). The ribbon mirrors connection,
+        # feeds a warnings count, and shows daemon uptime + thermal from
+        # status_updated; the footer shows the health rollup from the warning count.
+        self._state.connection_changed.connect(self.status_ribbon.set_connection_state)
+        self._state.warning_count_changed.connect(self.status_ribbon.set_warning_count)
+        self._state.warning_count_changed.connect(self.footer.set_warning_count)
+        self._state.status_updated.connect(self._on_status_for_ribbon)
+        self.status_ribbon.alerts_clicked.connect(self._open_logs)
+        # DEC-216: the global footer actions moved off the retired Diagnostics
+        # page — Rescan surfaces the System State page (so its outcome line is
+        # visible) then runs there; Export reuses the Logs page's bundle handler.
+        self.footer.rescan_clicked.connect(self._on_footer_rescan)
+        self.footer.export_bundle_clicked.connect(self.logs_page._export_bundle)
+
+        # Sidebar active-profile selector (DEC-208): a third profile surface that
+        # populates + reflects + applies via the same ProfileService path.
+        self._profile_service.profiles_changed.connect(self._populate_sidebar_profiles)
+        self._profile_service.active_changed.connect(self._reflect_sidebar_active_profile)
+        self.sidebar.apply_profile_btn.clicked.connect(self._on_sidebar_apply_profile)
+        self._populate_sidebar_profiles()
 
         # DEC-194: route the daemon-authoritative active-profile id through the
         # ProfileService so an external activation (CLI --profile, another client,
@@ -194,8 +262,9 @@ class MainWindow(QWidget):
         idx = _resolve_startup_page(s, self.page_stack.count())
         self.page_stack.setCurrentIndex(idx)
         self.sidebar.select_page(idx)
-        # select_page() does not emit page_changed, so set the initial global-banner
-        # visibility explicitly (hidden on the dashboard — it owns its own strip).
+        # Selecting the already-checked default (Dashboard) does not re-emit, so
+        # set the initial global-banner visibility explicitly (hidden on the
+        # dashboard — it owns its own strip).
         self.status_banner.setVisible(idx != PAGE_DASHBOARD)
         geo = s.window_geometry
         if len(geo) == 4:
@@ -204,9 +273,12 @@ class MainWindow(QWidget):
         # Wire dashboard "Open Diagnostics" to sidebar navigation
         self.dashboard_page.open_diagnostics.connect(self._open_diagnostics)
         self.dashboard_page.open_readiness.connect(self._open_readiness)
-        # DEC-207: a Cooling Hardware Readiness action deep-links to the preferred
-        # sensor picker in Settings.
-        self.diagnostics_page.open_preferred_sensors.connect(self._open_preferred_sensors)
+        # DEC-207/DEC-216: the Cooling Hardware Readiness "set preferred sensor"
+        # deep-link is owned by the Hardware page (the Diagnostics duplicate was
+        # retired with the page).
+        self.hardware_page.open_preferred_sensors.connect(self._open_preferred_sensors)
+        self.hardware_page.open_system_state.connect(self._open_system_state)
+        self.hardware_page.open_overview.connect(self._open_diagnostics)
 
         # Populate dashboard profile selector
         self.dashboard_page.populate_profiles()
@@ -254,6 +326,71 @@ class MainWindow(QWidget):
         # banner there so connection/profile/mode/warnings aren't shown twice.
         self.status_banner.setVisible(page_id != PAGE_DASHBOARD)
 
+    def _on_nav_activated(self, page_id: int, sub_tab: int) -> None:
+        """DEC-208: a sidebar entry was activated → switch the stack page. DEC-216:
+        every nav entry now maps to its own standalone page, so ``sub_tab`` (kept
+        in the signal signature for compatibility) is always -1 and unused."""
+        self._on_page_changed(page_id)
+
+    def _on_status_for_ribbon(self, status) -> None:
+        """Feed daemon uptime + thermal state to the status ribbon (DEC-208)."""
+        self.status_ribbon.set_uptime(status.uptime_seconds)
+        self.status_ribbon.set_thermal_state(status.thermal_state)
+
+    def _populate_sidebar_profiles(self) -> None:
+        """(Re)build the sidebar profile combo from ProfileService (DEC-208)."""
+        combo = self.sidebar.profile_combo
+        with block_signals(combo):
+            active = self._profile_service.active_profile
+            active_id = active.id if active else ""
+            combo.clear()
+            for profile in self._profile_service.profiles:
+                combo.addItem(profile.name, profile.id)
+            idx = combo.findData(active_id)
+            if idx < 0 and combo.count() > 0:
+                idx = 0
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+
+    def _reflect_sidebar_active_profile(self, _profile_id: str = "") -> None:
+        """Move the sidebar combo to the authoritative active profile (DEC-208)."""
+        combo = self.sidebar.profile_combo
+        active = self._profile_service.active_profile
+        active_id = active.id if active else ""
+        idx = combo.findData(active_id)
+        if idx >= 0:
+            with block_signals(combo):
+                combo.setCurrentIndex(idx)
+
+    def _on_sidebar_apply_profile(self) -> None:
+        """Apply the sidebar-selected profile via the shared ProfileService path,
+        then re-reflect the authoritative active id (snaps back on failure).
+
+        DEC-214: the Controls page dropped its own profile combo, so the
+        unsaved-changes-on-switch guard relocates here. Prompt before activating
+        a *different* profile while the Controls page has in-progress edits; on
+        cancel, snap the sidebar combo back to the active profile and do nothing.
+        """
+        profile_id = self.sidebar.profile_combo.currentData()
+        if not profile_id:
+            return
+        if (
+            profile_id != self._profile_service.active_id
+            and self.controls_page.has_unsaved_changes()
+            and not self.controls_page._confirm_discard_unsaved()
+        ):
+            self._reflect_sidebar_active_profile()
+            return
+        res = self._profile_service.activate(profile_id, client=self._client)
+        # DEC-214: bridge activation into AppState (the Controls page's removed
+        # _on_activate used to do this) so the status banner / dashboard reflect
+        # the newly-active profile.
+        if res.activated:
+            active = self._profile_service.active_profile
+            if active is not None:
+                self._state.set_active_profile(active.name)
+        self._reflect_sidebar_active_profile()
+
     def _on_theme_changed(self, tokens) -> None:
         from PySide6.QtWidgets import QApplication
 
@@ -273,8 +410,14 @@ class MainWindow(QWidget):
         # (chart background, axis colours, freshness cell colours).
         if hasattr(self, "dashboard_page"):
             self.dashboard_page.set_theme(tokens)
-        if hasattr(self, "diagnostics_page"):
-            self.diagnostics_page.set_theme(tokens)
+        if hasattr(self, "overview_page"):
+            self.overview_page.set_theme(tokens)
+        if hasattr(self, "logs_page"):
+            self.logs_page.set_theme(tokens)
+        if hasattr(self, "system_state_page"):
+            self.system_state_page.set_theme(tokens)
+        if hasattr(self, "hardware_page"):
+            self.hardware_page.set_theme(tokens)
         # DEC-111: record the theme change in the event log so a session
         # bundle reflects what the user was actually looking at.
         name = getattr(tokens, "name", "") or "(unnamed)"
@@ -344,28 +487,45 @@ class MainWindow(QWidget):
         )
 
     def _open_diagnostics(self) -> None:
-        from control_ofc.constants import PAGE_DIAGNOSTICS
+        from control_ofc.constants import NAV_OVERVIEW
 
-        self.page_stack.setCurrentIndex(PAGE_DIAGNOSTICS)
-        self.sidebar.select_page(PAGE_DIAGNOSTICS)
+        self.sidebar.activate_nav(NAV_OVERVIEW)
 
     def _open_readiness(self) -> None:
-        """DEC-206: the Dashboard cooling-readiness chip was clicked — open
-        Diagnostics and select the Hardware-readiness tab."""
-        from control_ofc.constants import PAGE_DIAGNOSTICS
+        """DEC-206: the Dashboard cooling-readiness chip was clicked — activate the
+        Hardware entry, which opens the Hardware page (DEC-212)."""
+        from control_ofc.constants import NAV_HARDWARE
 
-        self.page_stack.setCurrentIndex(PAGE_DIAGNOSTICS)
-        self.sidebar.select_page(PAGE_DIAGNOSTICS)
-        self.diagnostics_page.show_hardware_readiness_tab()
+        self.sidebar.activate_nav(NAV_HARDWARE)
+
+    def _open_system_state(self) -> None:
+        """DEC-212: a Hardware-page readiness action deep-links to the System State
+        page (which now hosts the PWM-verify workflow)."""
+        from control_ofc.constants import NAV_SYSTEM_STATE
+
+        self.sidebar.activate_nav(NAV_SYSTEM_STATE)
+
+    def _on_footer_rescan(self) -> None:
+        """DEC-216: the global footer's Rescan Hardware action. Surface the System
+        State page first (so its rescan-result line is visible), then run the
+        rescan there — relocated from the retired Diagnostics page."""
+        self._open_system_state()
+        self.system_state_page.run_hwmon_rescan()
 
     def _open_preferred_sensors(self, role: str) -> None:
         """DEC-207: a Cooling Hardware Readiness action deep-links to Settings ▸
         Preferred sensors (``role`` is "cpu" | "mb") so the user can pick a sensor."""
-        from control_ofc.constants import PAGE_SETTINGS
+        from control_ofc.constants import NAV_SETTINGS
 
-        self.page_stack.setCurrentIndex(PAGE_SETTINGS)
-        self.sidebar.select_page(PAGE_SETTINGS)
+        self.sidebar.activate_nav(NAV_SETTINGS)
         self.settings_page.focus_preferred_sensors(role)
+
+    def _open_logs(self) -> None:
+        """The status-ribbon Alerts indicator was clicked — open the Logs entry
+        (DEC-208)."""
+        from control_ofc.constants import NAV_LOGS
+
+        self.sidebar.activate_nav(NAV_LOGS)
 
     def _start_demo_mode(self) -> None:
         self._demo_service = DemoService()
@@ -431,8 +591,16 @@ class MainWindow(QWidget):
         if hasattr(self, "_demo_controller") and self._demo_controller is not None:
             self._demo_controller.stop()
         self.dashboard_page.cleanup()
-        if hasattr(self, "diagnostics_page") and self.diagnostics_page is not None:
-            self.diagnostics_page.cleanup()
+        self.controls_page.cleanup()  # DEC-214: tear down the always-mounted curve editor
+        if hasattr(self, "overview_page") and self.overview_page is not None:
+            self.overview_page.cleanup()
+        if hasattr(self, "logs_page") and self.logs_page is not None:
+            self.logs_page.cleanup()
+        if hasattr(self, "system_state_page") and self.system_state_page is not None:
+            self.system_state_page.cleanup()
+        if hasattr(self, "hardware_page") and self.hardware_page is not None:
+            self.hardware_page.cleanup()
+        self.theme_page.cleanup()  # DEC-215
         super().closeEvent(event)
 
     def _on_capabilities_updated_for_kernel_warnings(self, caps) -> None:

@@ -9,27 +9,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSpinBox,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from control_ofc.api.errors import DaemonError
-from control_ofc.constants import PAGE_CONTROLS, PAGE_DASHBOARD, PAGE_DIAGNOSTICS, PAGE_SETTINGS
+from control_ofc.constants import PAGE_CONTROLS, PAGE_DASHBOARD, PAGE_SETTINGS
 from control_ofc.paths import (
     app_settings_path,
     atomic_write,
@@ -44,8 +43,11 @@ from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.profile_import_service import import_profiles
 from control_ofc.services.profile_service import ImportCollection, collect_local_profiles_for_import
+from control_ofc.ui.components.buttons import make_button
+from control_ofc.ui.components.cards import Card, SectionHeader
+from control_ofc.ui.components.toggle_switch import ToggleSwitch
 from control_ofc.ui.qt_util import set_chip_class
-from control_ofc.ui.theme import ThemeTokens, load_theme, save_theme
+from control_ofc.ui.theme import ThemeTokens
 
 log = logging.getLogger(__name__)
 
@@ -75,14 +77,16 @@ _PAGE_NAMES = {
     PAGE_DASHBOARD: "Dashboard",
     PAGE_CONTROLS: "Controls",
     PAGE_SETTINGS: "Settings",
-    PAGE_DIAGNOSTICS: "Diagnostics",
 }
 
 
 class SettingsPage(QWidget):
-    """Application settings, theme import/export, and backup/restore."""
+    """Application settings, path management, preferred sensors, and backup/restore.
 
-    theme_changed = Signal(ThemeTokens)
+    DEC-215: restyled from a QTabWidget into a single 2-column card surface; the
+    former Themes tab moved to its own ``ThemePage`` and Import/Export folded into
+    the "Sync & Backup" card.
+    """
 
     def __init__(
         self,
@@ -101,27 +105,52 @@ class SettingsPage(QWidget):
         self._populating_prefs = False
         self._prefs_loaded = False
 
+        self.setObjectName("Settings_Root")
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 16, 24, 16)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
 
-        title = QLabel("Settings")
+        # ─── Header: title + subtitle + Save Changes (batched save) ───
+        header = QHBoxLayout()
+        title = QLabel("Application Settings")
         title.setProperty("class", "PageTitle")
-        layout.addWidget(title)
-
+        header.addWidget(title)
         subtitle = QLabel("Application preferences, themes, and backup/restore")
         subtitle.setProperty("class", "PageSubtitle")
-        layout.addWidget(subtitle)
+        header.addWidget(subtitle)
+        header.addStretch()
+        save_btn = make_button("Save Changes", "primary", object_name="Settings_Btn_saveApp")
+        save_btn.setToolTip("Save application settings")
+        save_btn.clicked.connect(self._save_app_settings)
+        header.addWidget(save_btn)
+        layout.addLayout(header)
 
-        # Tab widget
-        self._tabs = QTabWidget()
-        self._tabs.setObjectName("Settings_Tabs_main")
-        self._tabs.addTab(self._build_app_tab(), "Application")
-        self._tabs.addTab(self._build_theme_tab(), "Themes")
-        self._tabs.addTab(self._build_export_tab(), "Import / Export")
-        layout.addWidget(self._tabs, 1)
+        # ─── 2-column card grid (scrollable — DEC-206 deep-link scrolls here) ───
+        self._app_scroll = QScrollArea()
+        self._app_scroll.setWidgetResizable(True)
+        self._app_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget()
+        cols = QHBoxLayout(body)
+        cols.setContentsMargins(0, 0, 0, 0)
+        cols.setSpacing(16)
+        col1 = QVBoxLayout()
+        col1.setSpacing(16)
+        col1.addWidget(self._build_general_startup_card())
+        col1.addWidget(self._build_operational_card())
+        col1.addStretch()
+        col2 = QVBoxLayout()
+        col2.setSpacing(16)
+        col2.addWidget(self._build_path_management_card())
+        col2.addWidget(self._build_preferred_sensors_group())
+        col2.addWidget(self._build_sync_backup_card())
+        col2.addStretch()
+        cols.addLayout(col1, 1)
+        cols.addLayout(col2, 1)
+        self._app_scroll.setWidget(body)
+        layout.addWidget(self._app_scroll, 1)
 
-        # Status bar
+        # Status line
         self._status_label = QLabel("")
         self._status_label.setProperty("class", "PageSubtitle")
         layout.addWidget(self._status_label)
@@ -131,65 +160,94 @@ class SettingsPage(QWidget):
 
     # ─── Tab builders ────────────────────────────────────────────────
 
-    def _build_app_tab(self) -> QWidget:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setSpacing(12)
-
-        # Default startup page
+    def _setting_row(self, title: str, subtitle: str, control: QWidget) -> QHBoxLayout:
+        """A mockup settings row: a title + sublabel on the left, a control right."""
         row = QHBoxLayout()
-        row.addWidget(QLabel("Default startup page:"))
+        text = QVBoxLayout()
+        text.setContentsMargins(0, 0, 0, 0)
+        text.setSpacing(0)
+        text.addWidget(QLabel(title))
+        sub = QLabel(subtitle)
+        sub.setProperty("class", "CardMeta")
+        text.addWidget(sub)
+        row.addLayout(text, 1)
+        row.addWidget(control)
+        return row
+
+    def _build_general_startup_card(self) -> QWidget:
+        card = Card()
+        v = QVBoxLayout(card)
+        v.setSpacing(10)
+        v.addWidget(SectionHeader("General & Startup"))
+
         self._startup_page_combo = QComboBox()
         self._startup_page_combo.setObjectName("Settings_Combo_startupPage")
         for page_id, name in sorted(_PAGE_NAMES.items()):
             self._startup_page_combo.addItem(name, page_id)
-        row.addWidget(self._startup_page_combo)
-        row.addStretch()
-        layout.addLayout(row)
-
-        # Checkboxes
-        self._restore_page_cb = QCheckBox("Restore last selected page on startup")
-        self._restore_page_cb.setObjectName("Settings_Check_restorePage")
-        layout.addWidget(self._restore_page_cb)
-
-        self._demo_disconnect_cb = QCheckBox("Start in demo mode when daemon is unavailable")
-        self._demo_disconnect_cb.setObjectName("Settings_Check_demoDisconnect")
-        layout.addWidget(self._demo_disconnect_cb)
-
-        # GPU zero-RPM warning
-        self._gpu_zero_rpm_warn_cb = QCheckBox(
-            "Show GPU zero-RPM warning when adding GPU fan to role"
+        v.addLayout(
+            self._setting_row(
+                "Default startup page",
+                "Page to load when the application launches",
+                self._startup_page_combo,
+            )
         )
+
+        self._restore_page_cb = ToggleSwitch()
+        self._restore_page_cb.setObjectName("Settings_Check_restorePage")
+        v.addLayout(
+            self._setting_row(
+                "Restore last selected page",
+                "Overrides the default startup page",
+                self._restore_page_cb,
+            )
+        )
+
+        self._demo_disconnect_cb = ToggleSwitch()
+        self._demo_disconnect_cb.setObjectName("Settings_Check_demoDisconnect")
+        v.addLayout(
+            self._setting_row(
+                "Start in demo mode",
+                "When the daemon is unavailable",
+                self._demo_disconnect_cb,
+            )
+        )
+
+        self._gpu_zero_rpm_warn_cb = ToggleSwitch()
         self._gpu_zero_rpm_warn_cb.setObjectName("Settings_Check_gpuZeroRpmWarn")
         self._gpu_zero_rpm_warn_cb.setToolTip(
             "Display an informational popup explaining that zero-RPM idle mode "
             "is temporarily disabled while a curve controls the GPU fan"
         )
-        layout.addWidget(self._gpu_zero_rpm_warn_cb)
+        v.addLayout(
+            self._setting_row(
+                "Show GPU zero-RPM warning",
+                "Warn when adding a GPU fan to a role",
+                self._gpu_zero_rpm_warn_cb,
+            )
+        )
 
-        # Chart default range
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Chart default time range:"))
+        # Chart default range — retained (part of the batched save; DEC-215 D2).
         self._chart_range_combo = QComboBox()
         self._chart_range_combo.setObjectName("Settings_Combo_chartRange")
         from control_ofc.ui.widgets.timeline_chart import TIME_RANGES
 
         for label, _seconds in TIME_RANGES:
             self._chart_range_combo.addItem(label)
-        row2.addWidget(self._chart_range_combo)
-        row2.addStretch()
-        layout.addLayout(row2)
+        v.addLayout(
+            self._setting_row(
+                "Chart default time range",
+                "Initial window on the dashboard graph",
+                self._chart_range_combo,
+            )
+        )
+        return card
 
-        # ─── Behaviour settings ──────────────────────────────────
-        behaviour_label = QLabel("Behaviour")
-        behaviour_label.setStyleSheet("font-weight: bold; margin-top: 12px;")
-        layout.addWidget(behaviour_label)
+    def _build_operational_card(self) -> QWidget:
+        card = Card()
+        v = QVBoxLayout(card)
+        v.setSpacing(10)
+        v.addWidget(SectionHeader("Operational Behavior"))
 
-        # Wizard spin-down timer
-        wizard_row = QHBoxLayout()
-        wizard_row.addWidget(QLabel("Fan Wizard spin-down timer:"))
         self._wizard_spindown_spin = QSpinBox()
         self._wizard_spindown_spin.setObjectName("Settings_Spin_wizardSpindown")
         self._wizard_spindown_spin.setRange(5, 12)
@@ -197,13 +255,14 @@ class SettingsPage(QWidget):
         self._wizard_spindown_spin.setToolTip(
             "How long each fan is stopped during the wizard identification test"
         )
-        wizard_row.addWidget(self._wizard_spindown_spin)
-        wizard_row.addStretch()
-        layout.addLayout(wizard_row)
+        v.addLayout(
+            self._setting_row(
+                "Fan Wizard spin-down timer",
+                "How long each fan is stopped during identification",
+                self._wizard_spindown_spin,
+            )
+        )
 
-        # Daemon startup delay
-        delay_row = QHBoxLayout()
-        delay_row.addWidget(QLabel("Daemon startup delay:"))
         self._startup_delay_spin = QSpinBox()
         self._startup_delay_spin.setObjectName("Settings_Spin_startupDelay")
         self._startup_delay_spin.setRange(0, 30)
@@ -211,70 +270,68 @@ class SettingsPage(QWidget):
         self._startup_delay_spin.setToolTip(
             "Delay before daemon begins device detection after boot (takes effect on restart)"
         )
-        delay_row.addWidget(self._startup_delay_spin)
-        delay_row.addStretch()
-        layout.addLayout(delay_row)
+        v.addLayout(
+            self._setting_row(
+                "Daemon startup delay",
+                "Delay before device detection after boot (restart to apply)",
+                self._startup_delay_spin,
+            )
+        )
 
-        # iGPU auto-hide
-        self._hide_igpu_cb = QCheckBox("Auto-hide integrated GPU sensors")
+        self._hide_igpu_cb = ToggleSwitch()
         self._hide_igpu_cb.setObjectName("Settings_Check_hideIgpu")
         self._hide_igpu_cb.setToolTip(
             "Hide iGPU temperature sensors when a discrete GPU is present"
         )
-        layout.addWidget(self._hide_igpu_cb)
+        v.addLayout(
+            self._setting_row(
+                "Auto-hide integrated GPU sensors",
+                "Clean up the sensor list",
+                self._hide_igpu_cb,
+            )
+        )
 
-        # Unused fan auto-hide
-        self._hide_unused_fans_cb = QCheckBox("Auto-hide unused fan headers (0 RPM)")
+        self._hide_unused_fans_cb = ToggleSwitch()
         self._hide_unused_fans_cb.setObjectName("Settings_Check_hideUnusedFans")
         self._hide_unused_fans_cb.setToolTip("Hide motherboard fan headers that report zero RPM")
-        layout.addWidget(self._hide_unused_fans_cb)
+        v.addLayout(
+            self._setting_row(
+                "Auto-hide unused fan headers",
+                "Hide headers reporting 0 RPM",
+                self._hide_unused_fans_cb,
+            )
+        )
+        return card
 
-        # ─── Data directories ────────────────────────────────────
-        dirs_label = QLabel("Data Directories")
-        dirs_label.setStyleSheet("font-weight: bold; margin-top: 12px;")
-        layout.addWidget(dirs_label)
-
-        dirs_note = QLabel(
+    def _build_path_management_card(self) -> QWidget:
+        card = Card()
+        v = QVBoxLayout(card)
+        v.setSpacing(8)
+        v.addWidget(SectionHeader("Path Management"))
+        note = QLabel(
             "Override where profiles, themes, and exports are stored. "
             "Leave blank to use the default XDG location."
         )
-        dirs_note.setWordWrap(True)
-        dirs_note.setProperty("class", "PageSubtitle")
-        layout.addWidget(dirs_note)
+        note.setWordWrap(True)
+        note.setProperty("class", "CardMeta")
+        v.addWidget(note)
 
         self._profiles_dir_label = QLabel()
         self._profiles_dir_label.setObjectName("Settings_Label_profilesDir")
-        layout.addLayout(
+        v.addLayout(
             self._dir_picker_row("Profiles:", self._profiles_dir_label, self._browse_profiles_dir)
         )
-
         self._themes_dir_label = QLabel()
         self._themes_dir_label.setObjectName("Settings_Label_themesDir")
-        layout.addLayout(
+        v.addLayout(
             self._dir_picker_row("Themes:", self._themes_dir_label, self._browse_themes_dir)
         )
-
         self._export_dir_label = QLabel()
         self._export_dir_label.setObjectName("Settings_Label_exportDir")
-        layout.addLayout(
+        v.addLayout(
             self._dir_picker_row("Default export:", self._export_dir_label, self._browse_export_dir)
         )
-
-        # ─── Preferred sensors (daemon) ──────────────────────────
-        layout.addWidget(self._build_preferred_sensors_group())
-
-        # Save button
-        save_btn = QPushButton("Save Application Settings")
-        save_btn.setObjectName("Settings_Btn_saveApp")
-        save_btn.clicked.connect(self._save_app_settings)
-        layout.addWidget(save_btn)
-
-        layout.addStretch()
-        scroll.setWidget(container)
-        # Kept so focus_preferred_sensors (DEC-206 deep-link) can scroll the
-        # preferred-sensors group into view within this tab.
-        self._app_scroll = scroll
-        return scroll
+        return card
 
     def _dir_picker_row(self, label_text: str, path_label: QLabel, browse_callback) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -296,160 +353,56 @@ class SettingsPage(QWidget):
         row.addWidget(reset_btn)
         return row
 
-    def _build_theme_tab(self) -> QWidget:
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-
-        # Top row: theme selector + management buttons
-        top = QHBoxLayout()
-        top.addWidget(QLabel("Theme:"))
-        self._theme_combo = QComboBox()
-        self._theme_combo.setObjectName("Settings_Combo_theme")
-        self._refresh_theme_list()
-        top.addWidget(self._theme_combo, 1)
-
-        apply_btn = QPushButton("Load")
-        apply_btn.setObjectName("Settings_Btn_applyTheme")
-        apply_btn.setToolTip("Load selected theme into editor")
-        apply_btn.clicked.connect(self._apply_selected_theme)
-        top.addWidget(apply_btn)
-
-        save_theme_btn = QPushButton("Save")
-        save_theme_btn.setObjectName("Settings_Btn_saveTheme")
-        save_theme_btn.setToolTip("Save current edits as a theme file")
-        save_theme_btn.clicked.connect(self._save_current_theme)
-        top.addWidget(save_theme_btn)
-
-        import_btn = QPushButton("Import...")
-        import_btn.setObjectName("Settings_Btn_importTheme")
-        import_btn.clicked.connect(self._import_theme)
-        top.addWidget(import_btn)
-
-        export_btn = QPushButton("Export...")
-        export_btn.setObjectName("Settings_Btn_exportTheme")
-        export_btn.clicked.connect(self._export_theme)
-        top.addWidget(export_btn)
-        layout.addLayout(top)
-
-        # Theme name label
-        self._theme_name_label = QLabel("Current theme: Default Dark")
-        self._theme_name_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(self._theme_name_label)
-
-        # Typography controls
-        typo_row = QHBoxLayout()
-        typo_row.setSpacing(8)
-        typo_row.addWidget(QLabel("Font:"))
-        self._font_combo = QComboBox()
-        self._font_combo.setObjectName("Settings_Combo_fontFamily")
-        from PySide6.QtGui import QFontDatabase
-
-        self._font_combo.addItem("(System Default)", "")
-        for family in QFontDatabase.families():
-            self._font_combo.addItem(family, family)
-        typo_row.addWidget(self._font_combo, 1)
-
-        typo_row.addWidget(QLabel("Size:"))
-        self._font_size_spin = QSpinBox()
-        self._font_size_spin.setObjectName("Settings_Spin_fontSize")
-        self._font_size_spin.setRange(7, 16)
-        self._font_size_spin.setValue(10)
-        self._font_size_spin.setSuffix(" pt")
-        typo_row.addWidget(self._font_size_spin)
-        layout.addLayout(typo_row)
-
-        # Card size (Controls page) — multiplies the auto-scaling driven by the
-        # font size above, so the user can trade card density for readability
-        # (DEC-128). Applied together with the theme via the button below.
-        card_row = QHBoxLayout()
-        card_row.setSpacing(8)
-        card_row.addWidget(QLabel("Card size:"))
-        self._card_size_combo = QComboBox()
-        self._card_size_combo.setObjectName("Settings_Combo_cardSize")
-        self._card_size_combo.setToolTip(
-            "Density of the Fan Role and Curve cards on the Controls page.\n"
-            "Cards also scale automatically with the font size."
-        )
-        for label, value in (
-            ("Compact", "compact"),
-            ("Comfortable", "comfortable"),
-            ("Large", "large"),
-        ):
-            self._card_size_combo.addItem(label, value)
-        card_row.addWidget(self._card_size_combo)
-        card_row.addStretch()
-        layout.addLayout(card_row)
-
-        # Theme editor widget
-        from control_ofc.ui.widgets.theme_editor import ThemeEditorWidget
-
-        self._theme_editor = ThemeEditorWidget()
-        self._theme_editor.setObjectName("Settings_ThemeEditor")
-        self._theme_editor.theme_modified.connect(self._on_theme_edited)
-        layout.addWidget(self._theme_editor, 1)
-
-        # Apply to app button
-        apply_app_btn = QPushButton("Apply Theme to Application")
-        apply_app_btn.setObjectName("Settings_Btn_applyThemeToApp")
-        apply_app_btn.setToolTip("Apply the current editor state to the whole application")
-        apply_app_btn.clicked.connect(self._apply_editor_theme_to_app)
-        layout.addWidget(apply_app_btn)
-
-        return container
-
-    def _build_export_tab(self) -> QWidget:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setSpacing(12)
-
+    def _build_sync_backup_card(self) -> QWidget:
+        """Sync & Backup card (DEC-215) — folds the former Import/Export tab."""
+        card = Card()
+        v = QVBoxLayout(card)
+        v.setSpacing(8)
+        v.addWidget(SectionHeader("Sync & Backup"))
         note = QLabel(
-            "Export or import all application settings — preferences, theme, "
-            "fan aliases, chart configuration, and profile bindings.\n\n"
-            "A backup of your current settings is created automatically before import."
+            "Export or import all application settings — preferences, theme, fan "
+            "aliases, chart configuration, and profile bindings."
         )
         note.setWordWrap(True)
-        note.setProperty("class", "PageSubtitle")
-        layout.addWidget(note)
+        note.setProperty("class", "CardMeta")
+        v.addWidget(note)
+
+        # Sync local profiles into the daemon's own store (DEC-161).
+        sync_btn = make_button(
+            "Sync Local Profiles to Daemon",
+            "primary",
+            object_name="Settings_Btn_importProfilesToDaemon",
+        )
+        sync_btn.setToolTip(
+            "Import your local fan profiles into the daemon's own store so it can "
+            "manage them directly. Profiles already in the daemon are skipped; "
+            "your local copies are left untouched. Requires daemon v1.19 or newer."
+        )
+        sync_btn.clicked.connect(lambda: self.run_profile_import(auto=False))
+        v.addWidget(sync_btn)
 
         btn_row = QHBoxLayout()
-        export_btn = QPushButton("Export Settings...")
-        export_btn.setObjectName("Settings_Btn_exportConfig")
-        export_btn.clicked.connect(self._export_settings)
-        btn_row.addWidget(export_btn)
-
-        import_btn = QPushButton("Import Settings...")
-        import_btn.setObjectName("Settings_Btn_importConfig")
-        import_btn.clicked.connect(self._import_settings)
-        btn_row.addWidget(import_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        # ── Daemon profile import (DEC-161) ──────────────────────────────
-        daemon_note = QLabel(
-            "Import your local fan profiles into the daemon's own store so it "
-            "can manage them directly. Profiles already in the daemon are "
-            "skipped; your local copies are left untouched. Requires daemon "
-            "v1.19 or newer."
+        export_btn = make_button(
+            "Export Config", "secondary", object_name="Settings_Btn_exportConfig"
         )
-        daemon_note.setWordWrap(True)
-        daemon_note.setProperty("class", "PageSubtitle")
-        layout.addWidget(daemon_note)
+        export_btn.clicked.connect(self._export_settings)
+        btn_row.addWidget(export_btn, 1)
+        import_btn = make_button(
+            "Import Config", "secondary", object_name="Settings_Btn_importConfig"
+        )
+        import_btn.clicked.connect(self._import_settings)
+        btn_row.addWidget(import_btn, 1)
+        v.addLayout(btn_row)
 
-        import_profiles_btn = QPushButton("Import local profiles into daemon...")
-        import_profiles_btn.setObjectName("Settings_Btn_importProfilesToDaemon")
-        import_profiles_btn.clicked.connect(lambda: self.run_profile_import(auto=False))
-        layout.addWidget(import_profiles_btn)
+        backup_note = QLabel("A backup is created automatically before import.")
+        backup_note.setWordWrap(True)
+        backup_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        backup_note.setProperty("class", "CardMeta")
+        v.addWidget(backup_note)
 
         self._export_result_label = QLabel("")
-        layout.addWidget(self._export_result_label)
-
-        layout.addStretch()
-        scroll.setWidget(container)
-        return scroll
+        v.addWidget(self._export_result_label)
+        return card
 
     # ─── Logic ───────────────────────────────────────────────────────
 
@@ -469,9 +422,8 @@ class SettingsPage(QWidget):
         self._hide_igpu_cb.setChecked(s.hide_igpu_sensors)
         self._hide_unused_fans_cb.setChecked(s.hide_unused_fan_headers)
 
-        # Card size lives on the Themes tab but is persisted in AppSettings.
-        card_idx = self._card_size_combo.findData(s.card_size)
-        self._card_size_combo.setCurrentIndex(card_idx if card_idx >= 0 else 1)
+        # DEC-215: card_size moved to the Theme page (it owns the combo + its
+        # single writer); this page no longer loads or persists it.
 
         # Directory overrides (show override or default as placeholder)
         self._profiles_dir_label.setText(s.profiles_dir_override or str(profiles_dir()))
@@ -534,14 +486,19 @@ class SettingsPage(QWidget):
     # ─── Preferred sensors (daemon, DEC-200) ───────────────────────
 
     def _build_preferred_sensors_group(self) -> QWidget:
-        group = QWidget()
+        group = Card()
         group.setObjectName("Settings_Group_preferredSensors")
         v = QVBoxLayout(group)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(6)
+        v.setSpacing(8)
 
-        header = QLabel("Preferred sensors (daemon)")
-        header.setStyleSheet("font-weight: bold; margin-top: 12px;")
+        header = SectionHeader("Preferred Sensors")
+        refresh_btn = make_button(
+            "Refresh from Daemon",
+            "secondary",
+            object_name="Settings_Btn_refreshPreferredSensors",
+        )
+        refresh_btn.clicked.connect(self._refresh_preferred_sensors)
+        header.add_trailing(refresh_btn)
         v.addWidget(header)
 
         note = QLabel(
@@ -551,35 +508,29 @@ class SettingsPage(QWidget):
             "sensor. Leave on Automatic to use the daemon's recommendation."
         )
         note.setWordWrap(True)
-        note.setProperty("class", "PageSubtitle")
+        note.setProperty("class", "CardMeta")
         v.addWidget(note)
 
-        cpu_row = QHBoxLayout()
-        cpu_row.addWidget(QLabel("Preferred CPU sensor:"))
+        cpu_label = QLabel("Preferred CPU sensor")
+        cpu_label.setProperty("class", "CardMeta")
+        v.addWidget(cpu_label)
         self._pref_cpu_combo = QComboBox()
         self._pref_cpu_combo.setObjectName("Settings_Combo_preferredCpu")
         self._pref_cpu_combo.currentIndexChanged.connect(self._on_preferred_cpu_changed)
-        cpu_row.addWidget(self._pref_cpu_combo, 1)
-        v.addLayout(cpu_row)
+        v.addWidget(self._pref_cpu_combo)
 
-        mb_row = QHBoxLayout()
-        mb_row.addWidget(QLabel("Preferred motherboard sensor:"))
+        mb_label = QLabel("Preferred motherboard sensor")
+        mb_label.setProperty("class", "CardMeta")
+        v.addWidget(mb_label)
         self._pref_mb_combo = QComboBox()
         self._pref_mb_combo.setObjectName("Settings_Combo_preferredMb")
         self._pref_mb_combo.currentIndexChanged.connect(self._on_preferred_mb_changed)
-        mb_row.addWidget(self._pref_mb_combo, 1)
-        v.addLayout(mb_row)
+        v.addWidget(self._pref_mb_combo)
 
-        btn_row = QHBoxLayout()
-        refresh_btn = QPushButton("Refresh from daemon")
-        refresh_btn.setObjectName("Settings_Btn_refreshPreferredSensors")
-        refresh_btn.clicked.connect(self._refresh_preferred_sensors)
-        btn_row.addWidget(refresh_btn)
         self._pref_result_label = QLabel("")
         self._pref_result_label.setObjectName("Settings_Label_preferredResult")
         self._pref_result_label.setWordWrap(True)
-        btn_row.addWidget(self._pref_result_label, 1)
-        v.addLayout(btn_row)
+        v.addWidget(self._pref_result_label)
 
         self._pref_group = group  # for focus_preferred_sensors (DEC-206 deep-link)
         return group
@@ -587,11 +538,10 @@ class SettingsPage(QWidget):
     def focus_preferred_sensors(self, role: str = "cpu") -> None:
         """Reveal the preferred-sensors picker and focus the CPU or motherboard
         combo — the target of the merged readiness view's "Pick a sensor"
-        deep-link (DEC-206). Selects the Application tab, refreshes the combos
-        from the daemon so the picker is populated when arrived at directly, then
-        scrolls the group into view and focuses the requested combo.
+        deep-link (DEC-206). Refreshes the combos from the daemon so the picker is
+        populated when arrived at directly, then scrolls the group into view and
+        focuses the requested combo. (DEC-215: no tab to select — single surface.)
         """
-        self._tabs.setCurrentIndex(0)  # Application tab hosts the picker
         if self._client is not None:
             self._refresh_preferred_sensors()
         combo = self._pref_mb_combo if role == "mb" else self._pref_cpu_combo
@@ -758,91 +708,6 @@ class SettingsPage(QWidget):
                 )
         elif kind == "profiles":
             self._set_status("Daemon not connected — update profile search dirs manually")
-
-    def _refresh_theme_list(self) -> None:
-        self._theme_combo.clear()
-        self._theme_combo.addItem("Default Dark", None)
-        td = themes_dir()
-        if td.exists():
-            for p in sorted(td.glob("*.json")):
-                try:
-                    t = load_theme(p)
-                    self._theme_combo.addItem(t.name, str(p))
-                except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
-                    log.warning("Skipping invalid theme %s: %s", p, e)
-
-    def _apply_selected_theme(self) -> None:
-        path_str = self._theme_combo.currentData()
-        if path_str is None:
-            from control_ofc.ui.theme import default_dark_theme
-
-            tokens = default_dark_theme()
-        else:
-            tokens = load_theme(Path(path_str))
-        self._theme_name_label.setText(f"Current theme: {tokens.name}")
-        self._theme_editor.set_tokens(tokens)
-        # Sync font controls with loaded theme
-        idx = self._font_combo.findData(tokens.font_family)
-        if idx >= 0:
-            self._font_combo.setCurrentIndex(idx)
-        else:
-            self._font_combo.setCurrentIndex(0)  # system default
-        self._font_size_spin.setValue(tokens.base_font_size_pt)
-        self._set_status(f"Theme '{tokens.name}' loaded into editor")
-
-    def _save_current_theme(self) -> None:
-        tokens = self._theme_editor.tokens
-        name = tokens.name or "Custom"
-        dest = themes_dir() / f"{name.lower().replace(' ', '_')}.json"
-        save_theme(tokens, dest)
-        self._refresh_theme_list()
-        self._set_status(f"Theme '{name}' saved")
-
-    def _apply_editor_theme_to_app(self) -> None:
-        tokens = self._theme_editor.tokens
-        # Apply typography settings from the font controls
-        tokens.font_family = self._font_combo.currentData() or ""
-        tokens.base_font_size_pt = self._font_size_spin.value()
-        self._theme_name_label.setText(f"Current theme: {tokens.name}")
-        # Persist the card-size tier before emitting so the Controls page reads
-        # the new value when set_theme re-applies card sizing (DEC-128).
-        self._settings_svc.update(
-            theme_name=tokens.name, card_size=self._card_size_combo.currentData()
-        )
-        self.theme_changed.emit(tokens)
-        self._set_status(f"Theme '{tokens.name}' applied to application")
-
-    def _on_theme_edited(self, tokens) -> None:
-        self._theme_name_label.setText(f"Current theme: {tokens.name} (modified)")
-
-    def _import_theme(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import Theme", "", "JSON files (*.json);;All files (*)"
-        )
-        if not path:
-            return
-        try:
-            tokens = load_theme(Path(path))
-            dest = themes_dir() / Path(path).name
-            save_theme(tokens, dest)
-            self._refresh_theme_list()
-            self._set_status(f"Theme '{tokens.name}' imported")
-        except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
-            self._set_status(f"Import failed: {e}")
-
-    def _export_theme(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Theme", "theme.json", "JSON files (*.json)"
-        )
-        if not path:
-            return
-        try:
-            tokens = self._theme_editor.tokens
-            current_name = tokens.name
-            save_theme(tokens, Path(path))
-            self._set_status(f"Theme '{current_name}' exported")
-        except (OSError, ValueError) as e:
-            self._set_status(f"Export failed: {e}")
 
     # ── Daemon profile import (DEC-161) ──────────────────────────────────
 

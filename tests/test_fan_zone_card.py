@@ -26,6 +26,8 @@ def _tile_vm(
     role: str | None = None,
     controlled: bool = False,
     curve_source: str | None = None,
+    curve_temp: float | None = None,
+    rpm_spark: tuple[float, ...] = (),
     age_ms: int | None = 100,
     name: str | None = None,
 ) -> FanTileVM:
@@ -41,6 +43,8 @@ def _tile_vm(
         role=role,
         controlled_by_daemon=controlled,
         curve_source=curve_source,
+        curve_temp=curve_temp,
+        rpm_spark=rpm_spark,
     )
 
 
@@ -148,6 +152,34 @@ class TestFanTileRender:
             # Text label present (not colour-only) + the right semantic class.
             assert st.value in tile._status_label.text()
             assert css in tile._status_label.property("class")
+
+    def test_curve_temp_sparkline_and_mode(self, qtbot):
+        from control_ofc.ui.widgets.rpm_sparkline import RpmSparkline
+
+        tile = FanTile(_tile_vm(curve_temp=67.0, rpm_spark=(900.0, 950.0, 1000.0)))
+        qtbot.addWidget(tile)
+        assert tile._temp_label.text() == "67°C"
+        assert tile._mode_label.text() == "AUTO"  # not overridden
+        assert tile.findChild(RpmSparkline) is not None
+        assert tile._sparkline.points() == (900.0, 950.0, 1000.0)
+
+    def test_curve_temp_dash_when_none(self, qtbot):
+        tile = FanTile(_tile_vm(curve_temp=None))
+        qtbot.addWidget(tile)
+        assert tile._temp_label.text() == "—"
+
+    def test_mode_manual_only_on_override(self, qtbot):
+        tile = FanTile(_tile_vm(state=FanState.OVERRIDE))
+        qtbot.addWidget(tile)
+        assert tile._mode_label.text() == "MANUAL"
+
+    def test_override_stays_read_only_no_toggle(self, qtbot):
+        from PySide6.QtWidgets import QCheckBox
+
+        tile = FanTile(_tile_vm(state=FanState.OVERRIDE))
+        qtbot.addWidget(tile)
+        assert tile.findChild(QCheckBox) is None  # no override write/toggle added
+        assert "Override" in tile._status_label.text()  # surfaced only as read-only chip
 
     def test_update_vm_updates_in_place(self, qtbot):
         tile = FanTile(_tile_vm(rpm=1000))

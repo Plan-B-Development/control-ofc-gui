@@ -22,8 +22,19 @@ from control_ofc.api.models import (
 from control_ofc.knowledge.sensor_knowledge import classify_sensor
 from control_ofc.services.app_state import AppState
 from control_ofc.services.demo_service import DemoService
+from control_ofc.services.overview_view import fan_control_method
 from control_ofc.ui.fan_display import filter_displayable_fans
-from control_ofc.ui.pages.diagnostics_page import _fan_control_method
+
+
+def _fan_control_method(fan: FanReading, state: AppState | None) -> str:
+    """Local shim (Diagnostics-page retirement): the pure fn now lives in
+    ``services.overview_view.fan_control_method``; this ``(fan, state)`` wrapper
+    keeps the existing call sites unchanged."""
+    return fan_control_method(
+        fan,
+        state.hwmon_headers if state else [],
+        state.capabilities if state else None,
+    )
 
 
 def _make_intel_caps(

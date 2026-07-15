@@ -43,9 +43,12 @@ class TestFontSizesComputation:
 class TestThemeTokensTypography:
     """ThemeTokens has typography fields with sensible defaults."""
 
-    def test_default_font_family_is_empty(self):
+    def test_default_font_family_is_bundled(self):
+        # DEC-208: defaults switched from system font ("") to the bundled
+        # OFL families (body DM Sans, headings Space Grotesk).
         tokens = ThemeTokens()
-        assert tokens.font_family == ""
+        assert tokens.font_family == "DM Sans"
+        assert tokens.font_family_heading == "Space Grotesk"
 
     def test_default_base_font_size(self):
         tokens = ThemeTokens()
@@ -110,5 +113,6 @@ class TestThemeSaveLoadRoundtrip:
         from control_ofc.ui.theme import load_theme
 
         loaded = load_theme(path)
-        assert loaded.font_family == ""
+        assert loaded.font_family == "DM Sans"
+        assert loaded.font_family_heading == "Space Grotesk"
         assert loaded.base_font_size_pt == 10

@@ -522,13 +522,14 @@ class TestReadinessChip:
         app_state.set_status(self._status_with_readiness(overall="critical", critical=1))
         assert window.dashboard_page._status_strip._readiness.isHidden()
 
-    def test_chip_click_opens_readiness_tab(self, qtbot, window, app_state):
-        from control_ofc.constants import PAGE_DIAGNOSTICS
+    def test_chip_click_opens_hardware_page(self, qtbot, window, app_state):
+        # DEC-212: the cooling-readiness chip now opens the Hardware page (was the
+        # Diagnostics Readiness sub-tab).
+        from control_ofc.constants import PAGE_HARDWARE
 
         window.dashboard_page.open_readiness.emit()
-        assert window.page_stack.currentIndex() == PAGE_DIAGNOSTICS
-        diag = window.diagnostics_page
-        assert diag._tabs.currentIndex() == diag._readiness_tab_index
+        assert window.page_stack.currentIndex() == PAGE_HARDWARE
+        assert window.page_stack.currentWidget() is window.hardware_page
 
     def test_clicking_the_actual_chip_fires_open_readiness(self, qtbot, window, app_state):
         """End-to-end wiring: clicking the real chip button → readiness_clicked →

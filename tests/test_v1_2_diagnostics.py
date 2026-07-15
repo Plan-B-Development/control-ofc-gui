@@ -1,20 +1,27 @@
 """Tests for v1.2.0 diagnostics: board info, vendor quirks, revert counts,
-PWM verify, and support bundle enhancements."""
+PWM verify, and support bundle enhancements.
+
+The Diagnostics-page widget tests (board-info / vendor-advisory / revert-count /
+verify-UI rendering) were retired when ``/diagnostics/hardware`` rendering moved
+to the live System State page — that rendering is now covered by
+``tests/test_system_state_view.py`` + ``tests/test_system_state_page.py``. The
+pure daemon-model / quirk-DB / dual-chip-helper / support-bundle tests stay here,
+and the three behaviours with no live equivalent — the PWM-verify worker-thread
+lifecycle, the ``pwm_value_clamped`` result, and the DEC-144 dual-chip
+remediation ordering — are re-vehicled onto the live ``SystemStatePage`` /
+pure ``dual_chip_warning_html`` below.
+"""
 
 from __future__ import annotations
 
 import threading
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtWidgets import QComboBox, QLabel, QPushButton
-
 from control_ofc.api.models import (
     BoardInfo,
     ConnectionState,
     HardwareDiagnosticsResult,
-    HwmonChipInfo,
     HwmonDiagnostics,
-    HwmonHeader,
     HwmonVerifyResult,
     HwmonVerifyState,
     KernelModuleInfo,
@@ -24,7 +31,7 @@ from control_ofc.api.models import (
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.ui.hwmon_guidance import lookup_vendor_quirks
-from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
+from control_ofc.ui.pages.system_state_page import SystemStatePage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,14 +50,11 @@ def _make_diag_result(
     board_vendor: str = "",
     board_name: str = "",
     bios_version: str = "",
-    chips: list[HwmonChipInfo] | None = None,
     revert_counts: dict[str, int] | None = None,
-    expected_chips: list[str] | None = None,
-    kernel_detected_chips: list[str] | None = None,
 ) -> HardwareDiagnosticsResult:
     return HardwareDiagnosticsResult(
         hwmon=HwmonDiagnostics(
-            chips_detected=chips or [],
+            chips_detected=[],
             total_headers=3,
             writable_headers=3,
             enable_revert_counts=revert_counts or {},
@@ -58,14 +62,14 @@ def _make_diag_result(
         thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
         kernel_modules=[KernelModuleInfo(name="it87", loaded=True, in_mainline=False)],
         board=BoardInfo(vendor=board_vendor, name=board_name, bios_version=bios_version),
-        expected_chips=expected_chips or [],
-        kernel_detected_chips=kernel_detected_chips or [],
     )
 
 
-def _make_page(qtbot, state=None, diag=None, client=None):
+def _ss_page(qtbot, state=None, client=None):
+    """Construct the live SystemStatePage (which now owns the PWM-verify worker
+    the retired Diagnostics page used to hold)."""
     s = state or _make_state()
-    page = DiagnosticsPage(state=s, diagnostics_service=diag, client=client)
+    page = SystemStatePage(state=s, diagnostics_service=DiagnosticsService(s), client=client)
     qtbot.addWidget(page)
     return page, s
 
@@ -305,242 +309,18 @@ class TestVerifyResultParsing:
 
 
 # ---------------------------------------------------------------------------
-# Diagnostics page — board info display
+# System State page — re-vehicled PWM-clamped verify result
+#
+# tests/test_system_state_page.py covers _show_verify_result for the effective
+# (SuccessChip) and pwm_enable_reverted (CriticalChip) branches; the
+# pwm_value_clamped → WarningChip branch has no live equivalent, so it is pinned
+# here against the live page that now owns the verify UI.
 # ---------------------------------------------------------------------------
 
 
-class TestDiagnosticsPageBoardInfo:
-    def test_board_info_label_exists(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_boardInfo")
-        assert label is not None
-        assert label.isHidden()
-
-    def test_board_info_shown_on_populate(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_diag_result(
-            board_vendor="Gigabyte Technology Co., Ltd.",
-            board_name="X870E AORUS MASTER",
-            bios_version="F13a",
-        )
-        page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_boardInfo")
-        assert not label.isHidden()
-        assert "Gigabyte" in label.text()
-        assert "X870E" in label.text()
-        assert "F13a" in label.text()
-
-    def test_board_info_hidden_when_empty(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_diag_result()
-        page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_boardInfo")
-        assert label.isHidden()
-
-
-# ---------------------------------------------------------------------------
-# Diagnostics page — vendor quirk alerts
-# ---------------------------------------------------------------------------
-
-
-class TestDiagnosticsPageVendorQuirks:
-    """DEC-158: vendor quirks render as per-advisory rows (a coloured severity
-    badge + summary + collapsible detail) in ``Diagnostics_Container_advisories``,
-    replacing the old single flat ``Diagnostics_Label_vendorQuirk``."""
-
-    def test_advisory_container_exists_and_hidden(self, qtbot):
-        page, _ = _make_page(qtbot)
-        assert page._advisory_container is not None
-        assert page._advisory_container.isHidden()
-        assert page._advisory_rows == []
-
-    def test_advisory_shown_for_gigabyte_it8696(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_diag_result(
-            board_vendor="Gigabyte Technology Co., Ltd.",
-            chips=[
-                HwmonChipInfo(
-                    chip_name="it8696",
-                    expected_driver="it87",
-                    header_count=5,
-                )
-            ],
-        )
-        page._populate_hw_diagnostics(diag)
-        assert not page._advisory_container.isHidden()
-        assert page._advisory_rows
-        # HIGH SmartFan quirk sorts first.
-        summary = page.findChild(QLabel, "Diagnostics_AdvisorySummary_0")
-        assert "SmartFan" in summary.text()
-
-    def test_advisory_critical_for_gigabyte_it8689(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_diag_result(
-            board_vendor="Gigabyte Technology Co., Ltd.",
-            chips=[
-                HwmonChipInfo(
-                    chip_name="it8689",
-                    expected_driver="it87",
-                    header_count=5,
-                )
-            ],
-        )
-        page._populate_hw_diagnostics(diag)
-        assert not page._advisory_container.isHidden()
-        badge = page.findChild(QLabel, "Diagnostics_AdvisoryBadge_0")
-        assert badge.property("class") == "CriticalChip"
-        assert "CRITICAL" in badge.text()
-
-    def test_advisory_hidden_for_unknown_vendor(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_diag_result(
-            board_vendor="Unknown Vendor",
-            chips=[
-                HwmonChipInfo(
-                    chip_name="it8696",
-                    expected_driver="it87",
-                    header_count=5,
-                )
-            ],
-        )
-        page._populate_hw_diagnostics(diag)
-        assert page._advisory_container.isHidden()
-        assert page._advisory_rows == []
-
-
-# ---------------------------------------------------------------------------
-# Diagnostics page — revert counts
-# ---------------------------------------------------------------------------
-
-
-class TestDiagnosticsPageRevertCounts:
-    def test_revert_label_exists(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_revertCounts")
-        assert label is not None
-        assert label.isHidden()
-
-    def test_revert_counts_shown_when_present(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_diag_result(
-            revert_counts={"it8696-isa-0a30/pwm1": 7, "it8696-isa-0a30/pwm2": 3}
-        )
-        page._populate_hw_diagnostics(diag)
-        # Per-row body label carries the per-header counts (rich text).
-        body = page.findChild(QLabel, "Diagnostics_Label_revertCounts")
-        assert not body.isHidden()
-        assert "7 revert(s)" in body.text()
-        assert "3 revert(s)" in body.text()
-        # The "watchdog" explanation moved to its own footnote label as part
-        # of the v1.7.1 severity-ramp refactor — assert it on the new home so
-        # the original intent (operator sees the watchdog explanation) holds.
-        footnote = page.findChild(QLabel, "Diagnostics_Label_revertFootnote")
-        assert footnote is not None
-        assert not footnote.isHidden()
-        assert "watchdog" in footnote.text().lower()
-
-    def test_revert_counts_hidden_when_empty(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_diag_result(revert_counts={})
-        page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_revertCounts")
-        assert label.isHidden()
-
-
-# ---------------------------------------------------------------------------
-# Diagnostics page — PWM verify UI
-# ---------------------------------------------------------------------------
-
-
-class TestDiagnosticsPageVerifyUI:
-    def test_verify_combo_exists(self, qtbot):
-        page, _ = _make_page(qtbot)
-        combo = page.findChild(QComboBox, "Diagnostics_Combo_verifyHeader")
-        assert combo is not None
-
-    def test_verify_button_exists(self, qtbot):
-        page, _ = _make_page(qtbot)
-        btn = page.findChild(QPushButton, "Diagnostics_Btn_verifyPwm")
-        assert btn is not None
-        assert "PWM" in btn.text()
-
-    def test_verify_result_label_exists(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
-        assert label is not None
-        assert label.isHidden()
-
-    def test_verify_combo_populated_from_headers(self, qtbot):
-        state = _make_state()
-        state.set_hwmon_headers(
-            [
-                HwmonHeader(id="h1", label="CPU Fan", is_writable=True),
-                HwmonHeader(id="h2", label="System Fan", is_writable=True),
-                HwmonHeader(id="h3", label="Pump", is_writable=False),
-            ]
-        )
-        page, _ = _make_page(qtbot, state=state)
-        diag = _make_diag_result()
-        page._populate_hw_diagnostics(diag)
-        combo = page.findChild(QComboBox, "Diagnostics_Combo_verifyHeader")
-        assert combo.count() == 2
-        assert "CPU Fan" in combo.itemText(0)
-        assert "System Fan" in combo.itemText(1)
-
-    def test_verify_btn_disabled_when_no_writable_headers(self, qtbot):
-        state = _make_state()
-        state.set_hwmon_headers(
-            [
-                HwmonHeader(id="h1", label="Pump", is_writable=False),
-            ]
-        )
-        page, _ = _make_page(qtbot, state=state)
-        diag = _make_diag_result()
-        page._populate_hw_diagnostics(diag)
-        btn = page.findChild(QPushButton, "Diagnostics_Btn_verifyPwm")
-        assert not btn.isEnabled()
-
-    def test_verify_shows_effective_result(self, qtbot):
-        page, _ = _make_page(qtbot)
-        result = HwmonVerifyResult(
-            header_id="h1",
-            result="effective",
-            initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
-            final_state=HwmonVerifyState(pwm_enable=1, rpm=900),
-            test_pwm_percent=70,
-            wait_seconds=6,
-            details="PWM control working",
-        )
-        page._show_verify_result(result)
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
-        assert not label.isHidden()
-        assert "working" in label.text().lower()
-        assert label.property("class") == "SuccessChip"
-
-    def test_verify_shows_reverted_result(self, qtbot):
-        """Daemon emits 'pwm_enable_reverted' — GUI must surface it as
-        CriticalChip with the 'overridden' message. Regression test for the
-        audit finding where status_map used short keys the daemon never sent."""
-        page, _ = _make_page(qtbot)
-        result = HwmonVerifyResult(
-            header_id="h1",
-            result="pwm_enable_reverted",
-            initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
-            final_state=HwmonVerifyState(pwm_enable=2, rpm=1200),
-            test_pwm_percent=70,
-            wait_seconds=6,
-            details="BIOS reclaimed",
-        )
-        page._show_verify_result(result)
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
-        assert not label.isHidden()
-        assert "overridden" in label.text().lower()
-        assert label.property("class") == "CriticalChip"
-
+class TestSystemStateVerifyClampedResult:
     def test_verify_shows_clamped_result(self, qtbot):
-        """Daemon emits 'pwm_value_clamped' — GUI must surface it as
-        WarningChip with the 'clamped' message."""
-        page, _ = _make_page(qtbot)
+        page, _ = _ss_page(qtbot)
         result = HwmonVerifyResult(
             header_id="h1",
             result="pwm_value_clamped",
@@ -551,56 +331,58 @@ class TestDiagnosticsPageVerifyUI:
             details="PWM register overridden",
         )
         page._show_verify_result(result)
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
-        assert not label.isHidden()
-        assert "clamped" in label.text().lower()
-        assert label.property("class") == "WarningChip"
+        assert not page._verify_result_label.isHidden()
+        assert "clamped" in page._verify_result_label.text().lower()
+        assert page._verify_result_label.property("class") == "WarningChip"
 
 
-class TestDiagnosticsPageVerifyWorker:
-    """Verify the 6-second hardware probe runs off the UI thread.
+# ---------------------------------------------------------------------------
+# System State page — re-vehicled PWM-verify worker-thread lifecycle
+#
+# The verify worker (_VerifyWorker) moved with the verify UI to SystemStatePage.
+# tests/test_system_state_page.py drives the verify *handlers* but never the real
+# thread lifecycle, so the thread creation / socket-path guard / F-1 in-flight
+# teardown / button re-enable are pinned here against the live page.
+# ---------------------------------------------------------------------------
 
-    Regression for the audit finding: verify_hwmon_pwm used to be called
-    synchronously on the main thread, freezing the UI for ~6s during the test
-    (raised from 3 s in DEC-101 — slow-spinning fans need more settle time).
-    """
 
+class TestSystemStateVerifyWorker:
     def test_ensure_verify_worker_requires_socket_path(self, qtbot):
-        """No worker is created when the client has no _socket_path."""
-        page, _ = _make_page(qtbot, client=None)
+        """No worker is created when there is no client (hence no socket path)."""
+        page, _ = _ss_page(qtbot, client=None)
         assert page._ensure_verify_worker() is False
         assert page._verify_thread is None
         assert page._verify_worker is None
 
     def test_ensure_verify_worker_creates_thread(self, qtbot):
-        """When a client is supplied, the worker + thread are created once."""
+        """A client with a socket path spins the worker + thread once (idempotent),
+        and cleanup() tears them down."""
         client = MagicMock()
-        client._socket_path = "/tmp/fake.sock"
-        page, _ = _make_page(qtbot, client=client)
+        client.socket_path = "/tmp/fake.sock"
+        page, _ = _ss_page(qtbot, client=client)
 
         assert page._ensure_verify_worker() is True
         assert page._verify_thread is not None
         assert page._verify_worker is not None
         assert page._verify_thread.isRunning()
 
-        # Idempotent — second call does not replace the thread.
         prev_thread = page._verify_thread
         assert page._ensure_verify_worker() is True
-        assert page._verify_thread is prev_thread
+        assert page._verify_thread is prev_thread  # second call does not replace it
 
         page.cleanup()
         assert page._verify_thread is None
         assert page._verify_worker is None
 
     def test_teardown_during_inflight_call_delivers_no_result(self, qtbot):
-        """F-1: tearing a worker down while a ``do_*`` is in flight on the worker
-        thread must not deliver a result onto the closing page.
+        """F-1: tearing the worker down while a ``do_verify`` is in flight must not
+        deliver a result onto the closing page.
 
-        ``cleanup()`` disconnects the worker's result signals *before* the
-        in-flight verify can emit, then closes the per-thread client. Here the
-        client's blocking verify is released by that very ``close()``, so the
-        disconnect→emit ordering is deterministic with no sleeps: a result
-        emitted after teardown reaches no connected slot.
+        ``_teardown_worker`` disconnects the worker's result signals *before*
+        ``worker.shutdown()`` closes the per-thread client — and here that very
+        ``close()`` releases the blocked verify, so the disconnect→emit ordering
+        is deterministic with no sleeps: a result emitted after teardown reaches
+        no connected slot.
         """
 
         class _BlockingVerifyClient:
@@ -621,7 +403,7 @@ class TestDiagnosticsPageVerifyWorker:
                 self.closed.set()
 
         client = _BlockingVerifyClient()
-        page, _ = _make_page(qtbot, client=client)
+        page, _ = _ss_page(qtbot, client=client)
         assert page._ensure_verify_worker()
         worker = page._verify_worker
         worker._client = client  # use the blocking fake, not a real DaemonClient
@@ -645,56 +427,26 @@ class TestDiagnosticsPageVerifyWorker:
         assert page._verify_thread is None
 
     def test_on_verify_ok_re_enables_button(self, qtbot):
-        """Successful verify result re-enables the button and updates label."""
-        page, _ = _make_page(qtbot)
+        """A successful verify result re-enables the button and shows the label."""
+        page, _ = _ss_page(qtbot)
         page._verify_btn.setEnabled(False)
         page._verify_btn.setText("Testing...")
 
-        result = HwmonVerifyResult(
-            header_id="h1",
-            result="effective",
-            initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
-            final_state=HwmonVerifyState(pwm_enable=1, rpm=900),
-            test_pwm_percent=70,
-            wait_seconds=6,
-            details="PWM control working",
+        page._on_verify_ok(
+            HwmonVerifyResult(
+                header_id="h1",
+                result="effective",
+                initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
+                final_state=HwmonVerifyState(pwm_enable=1, rpm=900),
+                test_pwm_percent=70,
+                wait_seconds=6,
+                details="PWM control working",
+            )
         )
-        page._on_verify_ok(result)
 
         assert page._verify_btn.isEnabled()
         assert page._verify_btn.text() == "Test PWM Control"
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
-        assert not label.isHidden()
-
-    def test_on_verify_error_unavailable(self, qtbot):
-        """Daemon-unavailable error surfaces as the unavailable message."""
-        page, _ = _make_page(qtbot)
-        page._verify_btn.setEnabled(False)
-        page._verify_btn.setText("Testing...")
-
-        page._on_verify_error("unavailable", "Daemon unavailable during verify")
-
-        assert page._verify_btn.isEnabled()
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
-        assert not label.isHidden()
-        assert "unavailable" in label.text().lower()
-
-    def test_on_verify_error_generic(self, qtbot):
-        """Generic DaemonError surfaces the message with the 'Verify error:' prefix."""
-        page, _ = _make_page(qtbot)
-        page._on_verify_error("error", "hardware unavailable")
-
-        assert page._verify_btn.isEnabled()
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
-        assert not label.isHidden()
-        assert "hardware unavailable" in label.text().lower()
-
-    def test_cleanup_is_safe_when_no_worker_created(self, qtbot):
-        """cleanup() must be a no-op when no verify has ever been run."""
-        page, _ = _make_page(qtbot)
-        assert page._verify_thread is None
-        page.cleanup()  # must not raise
-        assert page._verify_thread is None
+        assert not page._verify_result_label.isHidden()
 
 
 # ---------------------------------------------------------------------------
@@ -780,209 +532,32 @@ class TestVerifyTimingConstantsDec101:
 
 
 # ---------------------------------------------------------------------------
-# DEC-101 — dual-chip warning banner (Fans tab)
+# DEC-144 — dual-chip remediation ordering (re-vehicled)
+#
+# The retired Diagnostics dual-chip warning banner moved to the System State
+# issue cards, which build their detail from ``dual_chip_warning_html``. The
+# banner's unique assertion — the it87-dkms-git driver update must precede the
+# legacy ``mmio=on`` fallback — is pinned here on that pure builder (the
+# pretty-name / None paths are covered by TestDualChipHelpersDec101).
 # ---------------------------------------------------------------------------
 
 
-class TestDualChipWarningBannerDec101:
-    """The dual-chip warning fires when DMI says the board has two ITE chips
-    but the kernel only enumerated one (typically: secondary IT87952E on
-    Gigabyte X670/X870/Z790 silently failed to bind). The banner must:
-        - hide on boards the daemon doesn't know about (empty expected_chips)
-        - hide when every expected chip is detected
-        - appear with the missing chip name when one is missing
-        - explain `mmio=on` remediation
-    """
+class TestDualChipRemediationOrderingDec144:
+    def test_missing_secondary_chip_remediation_order(self):
+        from control_ofc.ui.hwmon_guidance import dual_chip_warning_html
 
-    def test_hidden_when_expected_chips_empty(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_diag_result(
-            board_vendor="Gigabyte Technology Co., Ltd.",
-            board_name="X870E AORUS MASTER",
-            chips=[
-                HwmonChipInfo(chip_name="it8696", header_count=5),
-            ],
-            expected_chips=[],  # Older daemon didn't ship the field.
-        )
-        page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_dualChipWarning")
-        assert label is not None
-        assert label.isHidden()
-
-    def test_hidden_when_all_expected_chips_present(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_diag_result(
-            board_vendor="Gigabyte Technology Co., Ltd.",
-            board_name="X870E AORUS MASTER",
-            chips=[
-                HwmonChipInfo(chip_name="it8696", header_count=5),
-                HwmonChipInfo(chip_name="it87952", header_count=3),
-            ],
-            expected_chips=["it8696", "it87952"],
-        )
-        page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_dualChipWarning")
-        assert label.isHidden()
-
-    def test_visible_when_secondary_chip_missing(self, qtbot):
-        # The reference scenario — the user's actual machine with the
-        # secondary IT87952E unbound.
-        page, _ = _make_page(qtbot)
-        diag = _make_diag_result(
-            board_vendor="Gigabyte Technology Co., Ltd.",
-            board_name="X870E AORUS MASTER",
-            chips=[HwmonChipInfo(chip_name="it8696", header_count=5)],
-            expected_chips=["it8696", "it87952"],
-        )
-        page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_dualChipWarning")
-        assert not label.isHidden()
-        text = label.text()
-        # Must name the missing chip, the board, and the remediation —
-        # driver update first (DEC-144), with mmio=on retained as the
-        # legacy-build fallback.
-        assert "it87952" in text.lower() or "IT87952E" in text
-        assert "X870E AORUS MASTER" in text
-        assert "it87-dkms-git" in text
-        assert "mmio=on" in text
-        assert text.find("it87-dkms-git") < text.find("mmio=on"), (
+        out = dual_chip_warning_html("X870E AORUS MASTER", ["it8696", "it87952"], ["it8696"])
+        assert out is not None
+        # Must name the missing chip, the board, and the remediation — driver
+        # update first (DEC-144), with mmio=on retained as the legacy fallback.
+        assert "IT87952E" in out or "it87952" in out.lower()
+        assert "X870E AORUS MASTER" in out
+        assert "it87-dkms-git" in out
+        assert "mmio=on" in out
+        assert out.find("it87-dkms-git") < out.find("mmio=on"), (
             "DEC-144: the driver update must precede the legacy mmio=on step"
         )
-        assert "modprobe" in text.lower() or "modprobe.d" in text.lower()
-        # Must not crash on the WarningChip class assignment.
-        assert label.property("class") == "WarningChip"
-
-
-# ---------------------------------------------------------------------------
-# DEC-101 — dual-chip verify hint (post-verify result)
-# ---------------------------------------------------------------------------
-
-
-class TestDualChipVerifyHintDec101:
-    """When a `pwm_value_clamped` or `no_rpm_effect` outcome lands on a
-    board that's missing one of its expected chips, the verify result
-    panel appends a one-line pointer to the dual-chip warning. Other
-    outcomes / boards are unchanged.
-    """
-
-    def test_clamped_on_dual_chip_board_appends_hint(self, qtbot):
-        # Set up state with a hwmon header so chip_name resolves.
-        state = _make_state()
-        state.hwmon_headers = [
-            HwmonHeader(id="hwmon:it8696:0a40:pwm1", chip_name="it8696", is_writable=True),
-        ]
-        page, _ = _make_page(qtbot, state=state)
-        diag = _make_diag_result(
-            board_vendor="Gigabyte Technology Co., Ltd.",
-            board_name="X870E AORUS MASTER",
-            chips=[HwmonChipInfo(chip_name="it8696", header_count=5)],
-            expected_chips=["it8696", "it87952"],
-        )
-        # Push the diagnostics into the service so _show_verify_result can
-        # see the board context.
-        page._diag.last_hw_diagnostics = diag
-        # Populate to make the warning visible (also exercises the
-        # populate path so a regression there blows up loudly).
-        page._populate_hw_diagnostics(diag)
-
-        result = HwmonVerifyResult(
-            header_id="hwmon:it8696:0a40:pwm1",
-            result="pwm_value_clamped",
-            initial_state=HwmonVerifyState(pwm_enable=1, pwm_raw=128, rpm=1200),
-            final_state=HwmonVerifyState(pwm_enable=1, pwm_raw=128, rpm=1200),
-            test_pwm_percent=70,
-            wait_seconds=6,
-            details="PWM register overridden",
-        )
-        page._show_verify_result(result)
-
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
-        assert not label.isHidden()
-        text = label.text().lower()
-        assert "dual-chip" in text or "fans tab" in text
-
-    def test_effective_does_not_append_hint(self, qtbot):
-        state = _make_state()
-        state.hwmon_headers = [
-            HwmonHeader(id="hwmon:it8696:0a40:pwm1", chip_name="it8696", is_writable=True),
-        ]
-        page, _ = _make_page(qtbot, state=state)
-        diag = _make_diag_result(
-            board_vendor="Gigabyte Technology Co., Ltd.",
-            board_name="X870E AORUS MASTER",
-            chips=[HwmonChipInfo(chip_name="it8696", header_count=5)],
-            expected_chips=["it8696", "it87952"],
-        )
-        page._diag.last_hw_diagnostics = diag
-
-        result = HwmonVerifyResult(
-            header_id="hwmon:it8696:0a40:pwm1",
-            result="effective",
-            initial_state=HwmonVerifyState(pwm_enable=1, rpm=1200),
-            final_state=HwmonVerifyState(pwm_enable=1, rpm=900),
-            test_pwm_percent=70,
-            wait_seconds=6,
-            details="working",
-        )
-        page._show_verify_result(result)
-
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyResult")
-        text = label.text().lower()
-        assert "dual-chip" not in text
-        assert "fans tab" not in text
-
-
-# ---------------------------------------------------------------------------
-# DEC-101 — batch verify all writable headers (2E)
-# ---------------------------------------------------------------------------
-
-
-class TestVerifyAllBatchDec101:
-    """The batch verify button must:
-    - run with no double-click duplication
-    - aggregate results in a summary
-
-    Post-2.0.0 the GUI holds no hwmon lease — the daemon verifies under its
-    own internal lease (DEC-165/DEC-170) — so there is no client-lease
-    precondition and no lease-lost abort path.
-    """
-
-    def test_button_exists_and_has_object_name(self, qtbot):
-        page, _ = _make_page(qtbot)
-        btn = page.findChild(QPushButton, "Diagnostics_Btn_verifyAll")
-        assert btn is not None
-        assert btn.text() == "Verify All Writable"
-
-    def test_run_without_writable_headers_shows_message(self, qtbot):
-        state = _make_state()
-        state.hwmon_headers = [
-            HwmonHeader(id="hwmon:it8696:0a40:pwm1", chip_name="it8696", is_writable=False),
-        ]
-        client = MagicMock()
-        client._socket_path = "/tmp/fake.sock"
-        page, _ = _make_page(qtbot, state=state, client=client)
-
-        page._run_pwm_verify_all()
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyAllProgress")
-        assert "no writable" in label.text().lower()
-
-    def test_summary_renders_results(self, qtbot):
-        # Drive _show_verify_all_summary directly to check rendering.
-        page, _ = _make_page(qtbot)
-        page._verify_all_total = 2
-        page._verify_all_results = [
-            ("hwmon:a:pwm1", "effective"),
-            ("hwmon:a:pwm2", "pwm_value_clamped"),
-        ]
-        page._show_verify_all_summary()
-        label = page.findChild(QLabel, "Diagnostics_Label_verifyAllProgress")
-        text = label.text()
-        assert "hwmon:a:pwm1" in text
-        assert "hwmon:a:pwm2" in text
-        assert "OK" in text
-        assert "clamped" in text
-        # Mixed warning result → WarningChip class.
-        assert label.property("class") == "WarningChip"
+        assert "modprobe" in out.lower()
 
 
 # ---------------------------------------------------------------------------

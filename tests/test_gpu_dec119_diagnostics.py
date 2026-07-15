@@ -6,8 +6,11 @@ Covers:
     the new top-level ``amd_pci_devices`` / ``amdgpu_module_loaded``.
   * Forward/backward compatibility: an older daemon that omits the fields
     yields safe defaults (no crash, no false positives).
-  * The diagnostics page rendering the firmware fan-speed range, per-GPU
-    advisories, and the "present but amdgpu not bound" case.
+  * The firmware fan-speed range, per-GPU advisories, and the "present but
+    amdgpu not bound" case — re-vehicled onto the Qt-free System State
+    view-model (``build_safety_gpu_vm``) after the Diagnostics page's
+    ``_gpu_diag_label`` was retired. The label *prose* is dropped with the page;
+    the *actionable* data survives in the rows the System State page renders.
 """
 
 from __future__ import annotations
@@ -22,8 +25,7 @@ from control_ofc.api.models import (
     ThermalSafetyInfo,
     parse_hardware_diagnostics,
 )
-from control_ofc.services.app_state import AppState
-from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
+from control_ofc.services.system_state_view import build_safety_gpu_vm
 
 # ---------------------------------------------------------------------------
 # Parsing
@@ -128,7 +130,7 @@ class TestParseNewGpuFields:
 
 
 # ---------------------------------------------------------------------------
-# Rendering
+# Rendering (re-vehicled onto build_safety_gpu_vm)
 # ---------------------------------------------------------------------------
 
 
@@ -144,9 +146,7 @@ def _result(*, gpu=None, amd_pci_devices=None, amdgpu_module_loaded=False):
 
 
 class TestRenderNewGpuFields:
-    def test_firmware_speed_range_rendered(self, qtbot):
-        page = DiagnosticsPage(state=AppState())
-        qtbot.addWidget(page)
+    def test_firmware_speed_range_rendered(self):
         gpu = GpuDiagnosticsInfo(
             pci_bdf="0000:03:00.0",
             model_name="9070XT",
@@ -154,14 +154,14 @@ class TestRenderNewGpuFields:
             fan_speed_min_pct=15,
             fan_speed_max_pct=100,
         )
-        page._populate_hw_diagnostics(_result(gpu=gpu))
-        text = page._gpu_diag_label.text()
-        assert "Firmware fan-speed range: 15% to 100%" in text
-        assert "clamped by the GPU firmware" in text
+        vm = build_safety_gpu_vm(_result(gpu=gpu))
+        # The "clamped by the GPU firmware" prose is dropped with the page; the
+        # OD_RANGE bounds that drive the speed bar survive.
+        assert vm.speed_min == 15
+        assert vm.speed_max == 100
+        assert vm.speed_bar_visible is True
 
-    def test_per_gpu_advisory_rendered(self, qtbot):
-        page = DiagnosticsPage(state=AppState())
-        qtbot.addWidget(page)
+    def test_per_gpu_advisory_rendered(self):
         gpu = GpuDiagnosticsInfo(
             pci_bdf="0000:03:00.0",
             fan_control_method="pmfw_curve",
@@ -169,41 +169,40 @@ class TestRenderNewGpuFields:
                 KernelWarning(id="x", severity="critical", message="hard-hang regression")
             ],
         )
-        page._populate_hw_diagnostics(_result(gpu=gpu))
-        text = page._gpu_diag_label.text()
-        assert "Advisory [critical]: hard-hang regression" in text
+        rows = {r.label: r for r in build_safety_gpu_vm(_result(gpu=gpu)).gpu_rows}
+        assert "Advisory (critical)" in rows
+        assert rows["Advisory (critical)"].value == "hard-hang regression"
 
-    def test_unbound_gpu_rendered_without_hwmon_block(self, qtbot):
-        page = DiagnosticsPage(state=AppState())
-        qtbot.addWidget(page)
+    def test_unbound_gpu_rendered_without_hwmon_block(self):
         dev = AmdPciDeviceInfo(
             pci_bdf="0000:03:00.0", pci_device_id=0x7550, driver=None, amdgpu_bound=False
         )
-        page._populate_hw_diagnostics(_result(amd_pci_devices=[dev], amdgpu_module_loaded=False))
-        text = page._gpu_diag_label.text()
-        assert "present but amdgpu is NOT bound" in text
-        assert "module is not loaded" in text
+        rows = build_safety_gpu_vm(
+            _result(amd_pci_devices=[dev], amdgpu_module_loaded=False)
+        ).gpu_rows
+        unbound = next(r for r in rows if "0000:03:00.0" in r.label)
+        assert "NOT bound" in unbound.value
+        assert "driver: none" in unbound.value
+        assert unbound.state == "warn"
 
-    def test_unbound_gpu_with_module_loaded_points_at_bind_failure(self, qtbot):
-        page = DiagnosticsPage(state=AppState())
-        qtbot.addWidget(page)
+    def test_unbound_gpu_with_module_loaded_names_the_holding_driver(self):
+        # The page's "did not bind this device" prose (module loaded vs not) is
+        # dropped; the actionable datum — which driver holds the device — is
+        # still carried on the row.
         dev = AmdPciDeviceInfo(
             pci_bdf="0000:03:00.0", pci_device_id=0x7550, driver="vfio-pci", amdgpu_bound=False
         )
-        page._populate_hw_diagnostics(_result(amd_pci_devices=[dev], amdgpu_module_loaded=True))
-        text = page._gpu_diag_label.text()
-        assert "did not bind this device" in text
-        assert "vfio-pci" in text
+        rows = build_safety_gpu_vm(
+            _result(amd_pci_devices=[dev], amdgpu_module_loaded=True)
+        ).gpu_rows
+        unbound = next(r for r in rows if "0000:03:00.0" in r.label)
+        assert "NOT bound" in unbound.value
+        assert "vfio-pci" in unbound.value
 
-    def test_bound_gpu_does_not_render_unbound_warning(self, qtbot):
-        page = DiagnosticsPage(state=AppState())
-        qtbot.addWidget(page)
+    def test_bound_gpu_does_not_render_unbound_warning(self):
         gpu = GpuDiagnosticsInfo(pci_bdf="0000:03:00.0", fan_control_method="pmfw_curve")
         dev = AmdPciDeviceInfo(
             pci_bdf="0000:03:00.0", pci_device_id=0x7550, driver="amdgpu", amdgpu_bound=True
         )
-        page._populate_hw_diagnostics(
-            _result(gpu=gpu, amd_pci_devices=[dev], amdgpu_module_loaded=True)
-        )
-        text = page._gpu_diag_label.text()
-        assert "NOT bound" not in text
+        vm = build_safety_gpu_vm(_result(gpu=gpu, amd_pci_devices=[dev], amdgpu_module_loaded=True))
+        assert all("NOT bound" not in r.value for r in vm.gpu_rows)

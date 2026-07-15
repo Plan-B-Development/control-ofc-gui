@@ -1,5 +1,254 @@
 # Changelog
 
+## [2.22.0] — 2026-07-15
+
+Stage 9 (final) of the presentation-only visual redesign (DEC-216): the nav-dead legacy **Diagnostics page** and
+assorted never-adopted scaffolding are removed, completing the redesign rollout. No daemon/API change.
+
+### Removed
+- **Legacy Diagnostics page** — the old tabbed page (superseded stage-by-stage by the Overview / Logs / System
+  State / Hardware pages) is gone, along with its now-dead `EventLogView` + `CoolingReadinessView` widgets and the
+  dead `tokens.py` / `SuperIoView` / `MergedReadinessView` / `SegmentedControl` scaffolding.
+
+### Changed
+- **Global footer actions relocated** — "Rescan Hardware" now runs on the **System State** page (with a visible
+  result line; the app surfaces that page when you trigger it), and "Export Bundle" uses the **Logs** page's
+  handler. Behaviour is unchanged.
+- **Page stack renumbered** after the Diagnostics removal; a one-time settings migration keeps a saved
+  startup/last page pointing at the same page.
+
+### Notes
+- Presentation/cleanup only: no daemon/API/schema change; `EXPECTED_API_VERSION` stays 1. The GUI remains
+  poll-only and never writes PWM.
+
+## [2.21.0] — 2026-07-15
+
+Stage 8 (final content stage) of the presentation-only visual redesign (DEC-215): the tabbed Settings page is
+split into a restyled **Settings** page and a new **Theme** page. No daemon/API change.
+
+### Added
+- **Theme page** — the theme editor is now its own page (Font / Base-Size / Card-Size, a colour-token editor
+  with **editable hex fields** beside each swatch, a live UI Blueprint Preview + WCAG contrast diagnostics, and
+  preset Load/Save/Import/Export + Apply Theme Globally). Every colour token remains editable.
+- **iOS-style toggle switches** for the boolean settings (a reusable themed `ToggleSwitch` component).
+
+### Changed
+- **Settings is now a single card page** (no tabs) — General & Startup, Operational Behavior, Path Management,
+  Preferred Sensors, and a Sync & Backup card (which absorbs the former Import/Export tab), with a header
+  "Save Changes" button. The sidebar's Settings and Theme entries now open their own pages.
+
+### Notes
+- Presentation-only: no daemon/API/schema/persistence change; `EXPECTED_API_VERSION` stays 1. No settings option
+  was dropped — the chart-range preference is kept (part of the batched save) even though the mockup omits it,
+  and the colour-token editor still exposes every token group. No fabricated values.
+
+## [2.20.0] — 2026-07-15
+
+Stage 7 of the presentation-only visual redesign (DEC-214): an **in-place restyle of the Controls page** into
+the mockup's three-pane layout, plus a restyle of the two fan-role dialogs. No daemon/API change.
+
+### Added
+- **Curve Editor is now an always-visible pane (DEC-214)** — the interactive graph lives in the third column
+  ("3. Curve Editor") instead of a hidden drawer, with a placeholder when no curve is being shaped, a **Test
+  Curve** button (shows the curve's output at the current temperature), and right-click-to-remove-point. It
+  gains deterministic teardown + visibility gating so the graph never costs anything while the page is hidden.
+- **Role cards** show a role icon, a "N Fans" pill, and each member's live RPM; selecting a card reveals its
+  curve / minimum-PWM / output / manual-override details (the others stay compact).
+- **Link Logic column** — curve cards show their source sensor, an ACTIVE/assigned pill, and an **Unlink**
+  action that detaches the curve from the roles using it.
+- **Restyled fan-role dialogs** — "Edit Fan Role" (name / mode / curve / role-members grid) and "Edit Role
+  Members" (Available ↔ Selected transfer list with live RPM and counts), matching their mockups.
+
+### Changed
+- **The Controls header** now carries the page title, Auto-Connect Wizard, Save Profile, and an overflow menu
+  for profile management. **Profile selection + activation moved to the sidebar** (it was duplicated there
+  already); the page edits the active — or a freshly-created — profile, and the "discard unsaved changes?"
+  prompt now fires from the sidebar's Apply. The page layout is three columns (Assign Roles | Link Logic |
+  Curve Editor).
+
+### Notes
+- Presentation-only: no daemon/API/schema/control-logic/safety/persistence change; the GUI stays poll-only and
+  never writes PWM (the daemon remains the sole writer); `EXPECTED_API_VERSION` stays 1. No fabricated values —
+  member RPM shows only when the daemon reports it ("no fan" otherwise), the maximum-output bound stays a fixed
+  100% (there is no per-curve maximum), and "Fan Controls"/"Curve Architect" are renamed to the canonical
+  "Controls"/"Curve Editor".
+
+## [2.19.0] — 2026-07-15
+
+Stage 6 of the presentation-only visual redesign (DEC-213): an **in-place restyle of the Dashboard** to
+match the redesign. Unlike Stages 2–5 (fresh pages), the Dashboard is already its own page, so this keeps
+every load-bearing attr/objectName and reuses the existing chart/fan-grid/sensor-panel/summary-cards. No
+daemon/API change.
+
+### Added
+- **RPM sparklines on the fan cards (DEC-213).** Each fan tile now shows a real recent-RPM sparkline — a
+  static owner-drawn widget (`RpmSparkline`) fed the last ~40 points from history. It has **no timer and no
+  live plot** (the performance rule: never degrade the host during gaming; zero paint when the page is
+  hidden), and the card also shows the fan's **curve-driving-sensor temperature** ("—" when it has no curve)
+  and a read-only **AUTO / MANUAL** mode label.
+- **Right-rail Quick Actions + Alerts (DEC-213).** The inspector rail gains a **Quick Actions** panel — one
+  button per saved profile that activates it — and an inline **Alerts** list rendering the real active
+  warnings (severity glyph + count pill + suggested next action), alongside the existing warning chip.
+- **Telemetry Stage.** The live graph is now a full-width "Telemetry Stage" with a section header and a
+  Temperature / RPM legend (its real dual axes), above a Fan Array / right-rail row.
+
+### Changed
+- **Dashboard layout inverted** to chart-on-top, Fan Array + inspector below (was chart-over-fans on the
+  left, inspector on the right). The inspector still toggles from the status strip and remembers its split.
+  The four bindable summary cards (CPU / GPU / Motherboard / Fans) and the collapsible "Raw fan data" table
+  are unchanged. The sidebar and all Dashboard object names are preserved.
+
+### Notes
+- Presentation-only: no daemon/API/schema/control-logic/safety/persistence change; the GUI stays poll-only
+  and never writes PWM (the daemon remains the sole writer); `EXPECTED_API_VERSION` stays 1. No fabricated
+  values — the mockup's host CPU/RAM/uptime bars, "Sync All" action, fictional presets, and aggregate score
+  strip are all omitted; per-fan temperature is the fan's own curve-sensor reading, the override indicator
+  is read-only.
+
+## [2.18.0] — 2026-07-15
+
+Stage 5 of the presentation-only visual redesign (DEC-212): a new **Hardware** page that migrates the
+Diagnostics ▸ Readiness ("Cooling Hardware Readiness") tab into its own page, styled with the Stage-1
+components. No daemon/API change.
+
+### Added
+- **Hardware page (DEC-212).** A readiness **checklist** (verdict pill + grouped PASS/WARN/… rows from the
+  daemon's actual checks), a **Recommended Actions** panel (severity-badged cards with routed action +
+  documentation buttons and a PASS/WARN/N-A summary bar), and a **Super-I/O Architecture** table (chip /
+  vendor / driver / module / confidence / health / notes) with a per-chip "How to enable" recommendation +
+  copy-command and the opt-in port probe. Fed by the hardware-readiness assessment; lazy-fetched on first
+  show.
+
+### Changed
+- The sidebar **Hardware** entry now opens this page (it previously routed to the Diagnostics Readiness
+  sub-tab), as does the Dashboard cooling-readiness chip. Readiness action deep-links re-point to the
+  migrated System State / Overview / Settings pages. The Diagnostics Readiness tab remains until the later
+  cleanup stage.
+
+### Notes
+- Presentation-only: no daemon/API/schema/control-logic/safety/persistence change; the GUI stays poll-only
+  and never writes PWM; `EXPECTED_API_VERSION` stays 1. No fabricated values — the mockup's "85/100" score
+  ring (there is no numeric score), its per-Super-I/O-channel telemetry columns, and its API-availability
+  card (REST/WebSocket/D-Bus — the GUI uses a Unix socket) are all omitted. N/A is sourced only from the
+  daemon's unavailable-sources list.
+
+## [2.17.0] — 2026-07-14
+
+Stage 4 of the presentation-only visual redesign (DEC-211): a new **System State** page that migrates
+the Diagnostics ▸ Troubleshooting tab into its own page, styled with the Stage-1 components. No
+daemon/API change.
+
+### Added
+- **System State page (DEC-211).** Unified, severity-sorted health **issue cards** (board/chip quirks,
+  BIOS/EC interference, module/ACPI conflicts, dual-chip warnings) with "Hardware Guide" doc-link
+  buttons; an **Interference Monitor** with a static custom-paint radial gauge of the BIOS-reclaim
+  revert count; a **Safety & GPU Limits** panel (CPU thermal state + GPU fan-control / overdrive /
+  firmware speed-range); and a **Hardware Registry** table (chips + kernel modules, driver + mainline
+  status). Fed by the shared hardware-diagnostics cache; lazy-fetched on first show.
+- The preserved **Test PWM Control**, **Verify All Writable**, **GPU verify/restore**, and **Open Full
+  Report** actions live behind an "Advanced actions" collapsible.
+- A reusable static `RadialGauge` component (custom-paint, never animated — zero ongoing CPU/GPU load).
+
+### Changed
+- The sidebar **System State** entry now opens this page (it previously routed to the Diagnostics
+  Troubleshooting sub-tab). The Diagnostics Troubleshooting tab remains in place until the later
+  cleanup stage.
+
+### Notes
+- Presentation-only: no daemon/API/schema/control-logic/safety/persistence change; the GUI stays
+  poll-only and never writes PWM; `EXPECTED_API_VERSION` stays 1. No fabricated values — the mockup's
+  Device Tree / Raw Logs segments (no defined content) are omitted. The Interference gauge paints HIGH
+  revert counts red (matching the existing severity classifier), not the mockup's amber snapshot.
+
+## [2.16.0] — 2026-07-14
+
+Stage 3 of the presentation-only visual redesign (DEC-210): a new **Logs** page that migrates the
+Diagnostics ▸ Event Log tab (event stream + Diagnostic Snapshots) into its own page, styled with the
+Stage-1 components, and adds a **Log Inspector**. No daemon/API change.
+
+### Added
+- **Logs page (DEC-210).** A fresh mockup-faithful event table (Time · Level · Source · Message) with
+  level status pills (INFO/WARN/ERR), monospace rows, and colour-by-level messages, fed live by the
+  shared event feed. A filter toolbar (search + INFO/WARN/ERR toggles + Clear Logs / Copy / Export
+  Bundle), a right-hand **Log Inspector** (Timestamp / Level & Source / Raw Message for the selected
+  event), and four **Diagnostic Snapshot** cards (Daemon Status, Controller/OpenFan, GPU State,
+  System Journal), each with its own Fetch/Refresh.
+- The **System Journal** snapshot now fetches `journalctl` on a background thread, so it no longer
+  freezes the UI for up to 5 s (still the same read-only subprocess — no API change).
+
+### Changed
+- The sidebar **Logs** entry now opens this page (it previously routed to the Diagnostics Event Log
+  sub-tab, as did the top-ribbon Alerts indicator). The Diagnostics Event Log tab remains in place
+  until the later cleanup stage.
+
+### Notes
+- Presentation-only: no daemon/API/schema/control-logic/safety/persistence change; the GUI stays
+  poll-only and never writes PWM; `EXPECTED_API_VERSION` stays 1. The mockup's "Context Data" pane is
+  intentionally omitted — the event model carries no structured context, and no values are fabricated.
+
+## [2.15.0] — 2026-07-14
+
+Stage 2 of the presentation-only visual redesign (DEC-209): a new **Overview** page that
+merges the Diagnostics ▸ Overview + Fans + Sensors tabs into one, styled with the Stage-1
+components, with full parity to the old Sensors tab. No daemon/API change.
+
+### Added
+- **Overview page (DEC-209).** Daemon-health + device-discovery cards, a full-width fan
+  table (freshness status pills), and a full-width sensor table (confidence status pills).
+  Carries every Sensors-tab action: per-row Details dialog (double-click / right-click /
+  Enter), hide/unhide, "Mirror hidden to dashboard", coolant + preferred-CPU/motherboard
+  reclassification, the sensor summary line, and the unavailable-sensors panel. Fed live by
+  the 1 Hz poll.
+
+### Changed
+- The sidebar **Overview** entry now opens this page (v2.14.0 routed it to the Diagnostics
+  Overview sub-tab as an interim step). The extra current sensor columns — daemon source and
+  session min/max — moved to the per-row hover tooltip + the Details dialog.
+- Internal: the fan/sensor display helpers were extracted to a Qt-free view-model module
+  (`services/overview_view.py`); the Diagnostics tabs are behaviourally unchanged and remain
+  reachable until a later cleanup stage removes them.
+
+### Notes
+- Presentation only: no daemon/API/profile-schema/control/safety change; poll-only.
+
+## [2.14.0] — 2026-07-14
+
+Stage 1 of a staged, **presentation-only** visual redesign (DEC-208): a new
+green-on-near-black look delivered as the built-in default theme, two bundled fonts, a
+reusable component library, and a new global shell (top ribbon + grouped 8-entry sidebar
++ footer). All existing pages keep their current content inside the new shell; per-page
+redesigns follow in later releases. No daemon/API change — pairs with any daemon this GUI
+already supported.
+
+### Added
+- **Green "Control-OFC" default theme (DEC-208).** The built-in theme — still named
+  "Default Dark", so saved preferences adopt it with no migration — is now the mockup's
+  near-black/teal palette, verified WCAG-AA clean. The previous blue palette ships as a new
+  selectable **"Classic Blue"** preset.
+- **Bundled fonts** — Space Grotesk (headings/numeric readouts) + DM Sans (body), SIL Open
+  Font License, registered at startup so the app looks the same regardless of installed
+  system fonts.
+- **Shared component library** (`ui/components/`): bracket/section cards, filled status
+  pills, primary/secondary/ghost/danger buttons, a dense-table style, a segmented control,
+  a modal-dialog base, and a pulsing status LED + glow helper.
+- **Global status ribbon** (top): the brand, a pulsing daemon-connection LED, daemon
+  uptime, a thermal-state pill, and an Alerts indicator that opens Logs.
+- **Global footer**: app version / kernel / architecture, a health rollup, and Rescan
+  Hardware / Export Support Bundle actions.
+- **Grouped 8-entry sidebar** (Dashboard / Overview / Controls · CONFIG: System State /
+  Hardware · Settings / Theme / Logs) plus a bottom active-profile selector. The interim
+  entries deep-link to the matching existing page/sub-tab; each later stage replaces one
+  destination in place.
+
+### Changed
+- The brand wordmark moved from the sidebar to the top ribbon.
+- Decorative animations (the pulsing LEDs / glows) automatically pause when the app is
+  unfocused or minimised, so the new look never competes with a running game for the GPU.
+
+### Notes
+- Presentation only: no daemon/API/profile-schema/control/safety changes; the GUI stays
+  poll-only and never writes PWM.
+
 ## [2.13.0] — 2026-07-13
 
 The Diagnostics **Readiness** tab is now the merged **Cooling Hardware Readiness**

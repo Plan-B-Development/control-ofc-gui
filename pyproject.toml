@@ -1,6 +1,6 @@
 [project]
 name = "control-ofc-gui"
-version = "2.13.0"
+version = "2.22.0"
 description = "Desktop fan control GUI for the Control-OFC daemon"
 requires-python = ">=3.12"
 license = "MIT"
@@ -84,9 +84,10 @@ fail_under = 80
 show_missing = true
 
 [tool.setuptools.package-data]
-# Ship bundled theme presets inside the wheel so first-run install can
-# copy them into the user's themes_dir.
-"control_ofc" = ["ui/presets/*.json"]
+# Ship bundled theme presets + OFL fonts inside the wheel so first-run install
+# can copy the presets into the user's themes_dir and register_bundled_fonts()
+# can load the fonts at startup (DEC-208).
+"control_ofc" = ["ui/presets/*.json", "ui/fonts/*.ttf", "ui/fonts/*.txt"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

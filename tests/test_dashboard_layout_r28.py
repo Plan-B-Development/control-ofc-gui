@@ -1,8 +1,9 @@
 """R28: Dashboard layout structure, splitter hierarchy, and fan table column tests.
 
-Verifies that the splitter restructure (horizontal-outer, vertical-inner) produces
-the correct widget hierarchy: graph and fan table share the left-column width, and
-the sensor panel spans the full height as a sibling of the left vertical splitter.
+Verifies the DEC-213 inverted splitter nesting (vertical-outer, horizontal-inner):
+the chart is the full-width Telemetry Stage on top, and the Fan Array cards + the
+right-rail inspector share the row below inside the inner horizontal splitter. Both
+splitter objectNames are preserved so the inspector toggle contract is unchanged.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 
 class TestSplitterHierarchy:
-    """Dashboard uses h_splitter(v_splitter(chart, fan-zone cards), sensor_panel);
+    """Dashboard uses v_splitter(Telemetry Stage(chart), h_splitter(Fan Array,
+    inspector)) — the DEC-213 inversion of the old h(v(chart, fans), inspector);
     the raw fan table is re-homed to a collapsed expander (DEC-179, 4A)."""
 
     def test_horizontal_splitter_exists(self, qtbot, app_state):
@@ -30,15 +32,18 @@ class TestSplitterHierarchy:
         assert h_splitter is not None
         assert h_splitter.orientation() == Qt.Orientation.Horizontal
 
-    def test_vertical_splitter_inside_horizontal(self, qtbot, app_state):
+    def test_horizontal_splitter_inside_vertical(self, qtbot, app_state):
+        """DEC-213 inversion: the h_splitter is now the *bottom* child of the outer
+        vertical splitter (was the other way round)."""
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         h_splitter = page.findChild(QSplitter, "Dashboard_Splitter_horizontal")
         v_splitter = page.findChild(QSplitter, "Dashboard_Splitter_vertical")
         assert v_splitter is not None
         assert v_splitter.orientation() == Qt.Orientation.Vertical
-        # v_splitter is the left child of h_splitter
-        assert h_splitter.widget(0) is v_splitter
+        assert h_splitter.orientation() == Qt.Orientation.Horizontal
+        # h_splitter is the bottom child of the outer v_splitter
+        assert v_splitter.widget(1) is h_splitter
 
     def test_inspector_is_right_pane(self, qtbot, app_state):
         """DEC-182: the right pane is the tabbed inspector; the sensor panel is its
@@ -50,19 +55,24 @@ class TestSplitterHierarchy:
         assert isinstance(right_child, DashboardInspector)
         assert page._sensor_panel in right_child.findChildren(SensorSeriesPanel)
 
-    def test_chart_and_zone_cards_share_left_column(self, qtbot, app_state):
-        """Chart (top) and the fan-zone section (bottom) share the left column; the
-        zone region is a collapsible 'Fan zones' section wrapping a scroll area +
-        FanZoneGrid (DEC-187)."""
+    def test_chart_top_fans_bottom_left(self, qtbot, app_state):
+        """DEC-213: the chart is the full-width Telemetry Stage (v_splitter top); the
+        fan-zone cards sit bottom-left in the inner h_splitter, still a collapsible
+        'Fan zones' section wrapping a scroll area + FanZoneGrid (DEC-187)."""
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         v_splitter = page.findChild(QSplitter, "Dashboard_Splitter_vertical")
+        h_splitter = page.findChild(QSplitter, "Dashboard_Splitter_horizontal")
         assert v_splitter.count() == 2
-        assert isinstance(v_splitter.widget(0), TimelineChart)
-        bottom = v_splitter.widget(1)
-        assert isinstance(bottom, CollapsibleSection)
-        assert bottom.objectName() == "Dashboard_Section_fanZones"
-        scroll = bottom.findChild(QScrollArea, "Dashboard_ScrollArea_fanZones")
+        # Telemetry Stage (top of v_splitter) hosts the reused chart.
+        telemetry = v_splitter.widget(0)
+        assert telemetry.objectName() == "Dashboard_Section_telemetry"
+        assert telemetry.findChild(TimelineChart) is not None
+        # Fan Array pane (left of the inner h_splitter) hosts the fan-zone section.
+        fan_pane = h_splitter.widget(0)
+        section = fan_pane.findChild(CollapsibleSection, "Dashboard_Section_fanZones")
+        assert section is not None
+        scroll = section.findChild(QScrollArea, "Dashboard_ScrollArea_fanZones")
         assert scroll is not None
         assert isinstance(scroll.widget(), FanZoneGrid)
 

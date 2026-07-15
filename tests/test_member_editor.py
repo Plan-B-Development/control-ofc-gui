@@ -69,3 +69,31 @@ class TestMemberEditorBasics:
         result = dlg.get_members()
         assert len(result) == 1
         assert result[0].member_id == "openfan:ch00"
+
+
+class TestMemberEditorRestyle:
+    """DEC-214: source prefix + live RPM (only when supplied), and live counts."""
+
+    def test_rpm_shown_when_supplied_and_no_fan_when_none(self, qtbot):
+        outputs = [
+            {"id": "hwmon:sys1", "source": "hwmon", "label": "SYS_FAN1", "rpm": 1050},
+            {"id": "hwmon:cpu_opt", "source": "hwmon", "label": "CPU_OPT", "rpm": None},
+            {"id": "openfan:ch00", "source": "openfan", "label": "Front"},  # no rpm key
+        ]
+        dlg = MemberEditorDialog([], outputs)
+        qtbot.addWidget(dlg)
+        texts = [dlg._available_list.item(i).text() for i in range(dlg._available_list.count())]
+        joined = " || ".join(texts)
+        assert "1050 RPM" in joined  # known reading
+        assert "no fan" in joined  # present but no fan
+        assert "[openfan] Front" in joined and "RPM" not in texts[2]  # unknown → nothing invented
+
+    def test_counts_update_on_transfer(self, qtbot, available):
+        dlg = MemberEditorDialog([], available)
+        qtbot.addWidget(dlg)
+        assert dlg._available_count.text() == "3 found"
+        assert dlg._selected_count.text() == "0 assigned"
+        dlg._available_list.item(0).setSelected(True)
+        dlg._on_add()
+        assert dlg._available_count.text() == "2 found"
+        assert dlg._selected_count.text() == "1 assigned"

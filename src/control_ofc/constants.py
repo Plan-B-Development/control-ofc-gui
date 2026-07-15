@@ -37,4 +37,25 @@ THERMAL_ABORT_C = 85.0
 PAGE_DASHBOARD = 0
 PAGE_CONTROLS = 1
 PAGE_SETTINGS = 2
-PAGE_DIAGNOSTICS = 3
+# DEC-216 retired the legacy Diagnostics page (was index 3); the pages below
+# renumbered down one so page_stack index still equals the PAGE_* value.
+PAGE_OVERVIEW = 3  # DEC-209: Overview split to its own page (4th stack page)
+PAGE_LOGS = 4  # DEC-210: Logs split to its own page (5th stack page)
+PAGE_SYSTEM_STATE = 5  # DEC-211: System State split to its own page (6th stack page)
+PAGE_HARDWARE = 6  # DEC-212: Hardware split to its own page (7th stack page)
+PAGE_THEME = 7  # DEC-215: Theme split from the Settings tabs to its own page (8th stack page)
+
+# Sidebar navigation ids (DEC-208). Each is a unique QButtonGroup id; the page
+# switch is driven by the NavItem's page_id (``sidebar.select_page`` matches by
+# page_id), so nav_id need not equal page_id. The primary entries keep nav_id ==
+# page_id so the QButtonGroup's checkedId equals the page index for them
+# (startup restore-page sync). DEC-216: the staged redesign is complete — every
+# entry now routes straight to its own standalone page (no sub-tabs).
+NAV_DASHBOARD = PAGE_DASHBOARD  # 0
+NAV_CONTROLS = PAGE_CONTROLS  # 1
+NAV_SETTINGS = PAGE_SETTINGS  # 2
+NAV_OVERVIEW = 3  # == PAGE_OVERVIEW again after the DEC-216 renumber
+NAV_SYSTEM_STATE = 4
+NAV_HARDWARE = 5
+NAV_THEME = 6
+NAV_LOGS = 7

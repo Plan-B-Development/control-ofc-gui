@@ -45,14 +45,21 @@ from control_ofc.services.daemon_service_check import (
 from control_ofc.services.fan_grouping import build_fan_groups
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import ChartMode, SeriesSelectionModel
+from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 from control_ofc.ui.qt_util import block_signals, repolish, set_chip_class
 from control_ofc.ui.status_banner import MODE_LABELS
+from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
-from control_ofc.ui.widgets.dashboard_inspector import DashboardInspector, WarningsView
+from control_ofc.ui.widgets.dashboard_inspector import (
+    AlertsPanel,
+    DashboardInspector,
+    WarningsView,
+)
 from control_ofc.ui.widgets.error_banner import ErrorBanner
 from control_ofc.ui.widgets.fan_zone_card import FanZoneGrid
+from control_ofc.ui.widgets.quick_actions_panel import QuickActionsPanel
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
 from control_ofc.ui.widgets.status_strip import THERMAL_STATES, DashboardStatusStrip
@@ -279,7 +286,6 @@ class DashboardPage(QWidget):
         Called once at construction time and again from ``set_theme`` so the
         background tint follows light/dark theme changes (DEC-109).
         """
-        from control_ofc.ui.theme import active_theme
 
         tokens = active_theme()
         self._enable_cmd_label.setStyleSheet(
@@ -296,6 +302,14 @@ class DashboardPage(QWidget):
         """
         self._apply_enable_cmd_style()
         self._chart.set_theme(tokens)
+        # DEC-213: recolour the Telemetry Stage legend swatches for the new palette
+        # (they are built once, so a theme switch would otherwise leave them stale).
+        self._legend_temp_chip.setStyleSheet(
+            f"background:{tokens.accent_primary}; border-radius:2px;"
+        )
+        self._legend_rpm_chip.setStyleSheet(
+            f"background:{tokens.text_secondary}; border-radius:2px;"
+        )
 
     def _copy_enable_command(self) -> None:
         clipboard = QApplication.clipboard()
@@ -469,13 +483,35 @@ class DashboardPage(QWidget):
         # Initial render (strip) now that every widget exists.
         self._sync_status_strip()
 
-        # Horizontal splitter: left content (chart+table) | right sensor panel
+        # Live layout (DEC-213): an outer VERTICAL splitter — the full-width
+        # Telemetry Stage (chart) on top, an inner HORIZONTAL splitter below
+        # (Fan Array | right rail). This inverts the pre-DEC-213 nesting
+        # (chart-over-fans on the left, inspector on the right) to match the
+        # redesign while KEEPING both splitter objectNames and the inspector as
+        # h_splitter.widget(1), so the inspector toggle/save-restore + wide-window
+        # default are unchanged.
+        self._v_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._v_splitter.setObjectName("Dashboard_Splitter_vertical")
         self._h_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._h_splitter.setObjectName("Dashboard_Splitter_horizontal")
 
-        # Left pane: vertical splitter (chart on top, fan table on bottom)
-        self._v_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._v_splitter.setObjectName("Dashboard_Splitter_vertical")
+        # ── Telemetry Stage (v_splitter top): header + legend + the reused chart ──
+        telemetry_stage = QWidget()
+        telemetry_stage.setObjectName("Dashboard_Section_telemetry")
+        telemetry_layout = QVBoxLayout(telemetry_stage)
+        telemetry_layout.setContentsMargins(0, 0, 0, 0)
+        telemetry_layout.setSpacing(6)
+        telemetry_header = SectionHeader(
+            "Telemetry Stage", object_name="Dashboard_SectionHeader_telemetry"
+        )
+        _tokens = active_theme()
+        _temp_legend, self._legend_temp_chip = self._make_legend(
+            "Temperature (°C)", _tokens.accent_primary
+        )
+        _rpm_legend, self._legend_rpm_chip = self._make_legend("RPM", _tokens.text_secondary)
+        telemetry_header.add_trailing(_temp_legend)
+        telemetry_header.add_trailing(_rpm_legend)
+        telemetry_layout.addWidget(telemetry_header)
 
         color_overrides = {}
         if self._settings_service:
@@ -494,7 +530,23 @@ class DashboardPage(QWidget):
         self._push_chart_context()
         self._chart.setMinimumHeight(150)
         self._chart.setMinimumWidth(320)  # inspector can't crush the chart (refinement §7.5)
-        self._v_splitter.addWidget(self._chart)
+        telemetry_layout.addWidget(self._chart, 1)
+        self._v_splitter.addWidget(telemetry_stage)
+
+        # ── Fan Array pane (h_splitter left): header + count + the zone-card grid ──
+        fan_array_pane = QWidget()
+        fan_array_pane.setObjectName("Dashboard_Pane_fanArray")
+        fan_array_layout = QVBoxLayout(fan_array_pane)
+        fan_array_layout.setContentsMargins(0, 0, 0, 0)
+        fan_array_layout.setSpacing(6)
+        fan_array_header = SectionHeader(
+            "Fan Array", object_name="Dashboard_SectionHeader_fanArray"
+        )
+        self._fan_array_count = QLabel("")
+        self._fan_array_count.setObjectName("Dashboard_Label_fanArrayCount")
+        self._fan_array_count.setProperty("class", "CardMeta")
+        fan_array_header.add_trailing(self._fan_array_count)
+        fan_array_layout.addWidget(fan_array_header)
 
         # Primary fan display: zone cards (refinement §7.4, DEC-179). Driven by
         # the pure fan_grouping view-model; the dense raw table is re-homed below
@@ -509,10 +561,10 @@ class DashboardPage(QWidget):
         zone_scroll.setFrameShape(QFrame.Shape.NoFrame)
         zone_scroll.setWidget(self._fan_zone_grid)
         zone_scroll.setMinimumHeight(60)
-        # Collapsible "Fan zones" section (DEC-187): a small show/hide control so the
-        # chart can reclaim the bottom pane. The collapsed state persists; toggling
-        # reflows the split so the freed space goes to the chart.
-        self._fan_zones_saved_sizes: list[int] | None = None
+        # Collapsible "Fan zones" section (DEC-187): a show/hide control whose
+        # collapsed state persists. With the inverted splitter (DEC-213) the section
+        # lives in the Fan Array pane, so folding it no longer reflows the chart split
+        # — the outer handle trades chart height directly (the DEC-187 reflow retired).
         fan_zones_collapsed = bool(
             self._settings_service and self._settings_service.settings.fan_zones_collapsed
         )
@@ -521,7 +573,8 @@ class DashboardPage(QWidget):
         )
         self._fan_zone_section.add_widget(zone_scroll)
         self._fan_zone_section.toggled.connect(self._on_fan_zones_toggled)
-        self._v_splitter.addWidget(self._fan_zone_section)
+        fan_array_layout.addWidget(self._fan_zone_section, 1)
+        self._h_splitter.addWidget(fan_array_pane)
 
         # Raw fan table — built intact (columns / sort / double-click rename
         # preserved) but detached from the splitter; folded into the collapsed
@@ -542,23 +595,22 @@ class DashboardPage(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
 
-        self._v_splitter.setStretchFactor(0, 3)
-        self._v_splitter.setStretchFactor(1, 1)
-        self._v_splitter.setSizes([500, 200])
-        if fan_zones_collapsed:
-            self._apply_fan_zones_split(expanded=False)
-        self._h_splitter.addWidget(self._v_splitter)
-
-        # Right pane: Sensors inspector (DEC-184). The sensor panel is the only
-        # inspector surface now — Events moved to Diagnostics and active-warnings
-        # detail re-homed to a dialog off the strip's warning chip. The whole pane
-        # toggles from the strip so the chart can reclaim width on narrow windows.
+        # ── Right rail (h_splitter right): Thermal Sensors + Quick Actions + Alerts ──
+        # The sensor panel is the tall series selector; below it a Quick Actions
+        # panel (real profile shortcuts) and an inline Alerts list (real active
+        # warnings). The whole pane toggles from the strip so the chart can reclaim
+        # width on narrow windows.
         self._sensor_panel = SensorSeriesPanel(self._selection, state=self._state)
         if self._settings_service:
             self._sensor_panel.hide_igpu = self._settings_service.settings.hide_igpu_sensors
         self._sensor_panel.set_chart(self._chart, self._settings_service)
 
-        self._inspector = DashboardInspector(self._sensor_panel)
+        self._quick_actions = QuickActionsPanel()
+        self._quick_actions.activate_requested.connect(self._activate_profile_by_id)
+        self._alerts = AlertsPanel(self._state)
+        self._inspector = DashboardInspector(
+            self._sensor_panel, quick_actions=self._quick_actions, alerts=self._alerts
+        )
         self._h_splitter.addWidget(self._inspector)
 
         self._h_splitter.setStretchFactor(0, 3)
@@ -566,7 +618,18 @@ class DashboardPage(QWidget):
         self._h_splitter.setSizes([800, 300])
         self._h_splitter.setCollapsible(0, False)
         self._h_splitter.setCollapsible(1, False)
-        content_layout.addWidget(self._h_splitter, 1)
+
+        # Assemble the outer vertical splitter (Telemetry Stage over the Fan Array /
+        # right-rail row) and mount it as the live surface.
+        self._v_splitter.addWidget(self._h_splitter)
+        self._v_splitter.setStretchFactor(0, 3)
+        self._v_splitter.setStretchFactor(1, 2)
+        self._v_splitter.setSizes([420, 380])
+        content_layout.addWidget(self._v_splitter, 1)
+
+        # Populate the profile combo + Quick Actions shortcuts from the current
+        # profiles (kept current thereafter via populate_profiles on profiles_changed).
+        self.populate_profiles()
 
         # Coherent initial state (shown) until the first showEvent picks the
         # width-based default; keeps the strip toggle glyph in sync from build.
@@ -581,6 +644,26 @@ class DashboardPage(QWidget):
         content_layout.addWidget(self._raw_fan_section)
 
         return content
+
+    def _make_legend(self, text: str, color: str) -> tuple[QWidget, QFrame]:
+        """Build a small legend key (colour chip + label) for the Telemetry Stage
+        header. Returns the widget and its chip so ``set_theme`` can recolour it.
+
+        The two keys (Temperature / RPM) map to the chart's real dual axes — an
+        honest legend, not invented data.
+        """
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        chip = QFrame()
+        chip.setFixedSize(10, 10)
+        chip.setStyleSheet(f"background:{color}; border-radius:2px;")
+        label = QLabel(text)
+        label.setProperty("class", "CardMeta")
+        layout.addWidget(chip)
+        layout.addWidget(label)
+        return widget, chip
 
     # ─── Signal handlers ─────────────────────────────────────────────
 
@@ -1020,6 +1103,14 @@ class DashboardPage(QWidget):
         status = self._state.daemon_status
         overrides = status.overrides if status else []
         expected = self._absent_member_ids(profile, {f.id for f in fans})
+        # DEC-213: resolve the fan-card curve-sensor temps + recent-RPM sparklines
+        # here (keeps fan_grouping Qt-free). The sparkline is the last ~40 RPM
+        # points from the history ring buffer — a cheap static paint, not a plot.
+        sensor_values = {s.id: s.value_c for s in (self._state.sensors or [])}
+        rpm_series = {
+            f.id: tuple(r.value for r in self._history.get_series(f"fan:{f.id}:rpm")[-40:])
+            for f in display_fans
+        }
         groups = build_fan_groups(
             display_fans,
             fan_zones=self._state.fan_zones,
@@ -1027,8 +1118,13 @@ class DashboardPage(QWidget):
             active_profile=profile,
             overrides=overrides,
             expected_fan_ids=expected or None,
+            sensor_values=sensor_values,
+            rpm_series=rpm_series,
         )
         self._fan_zone_grid.set_groups(groups)
+        # DEC-213: the Fan Array header shows the total tile count ("N units").
+        total = sum(len(g.tiles) for g in groups)
+        self._fan_array_count.setText(f"{total} unit{'s' if total != 1 else ''}")
 
     def _on_fan_zones_changed(self, fan_id: str, zone: str) -> None:
         del fan_id, zone  # the whole grouping is recomputed from state
@@ -1046,26 +1142,14 @@ class DashboardPage(QWidget):
             self._settings_service.update(fan_zone_order=order)
 
     def _on_fan_zones_toggled(self, expanded: bool) -> None:
-        """Show/hide of the fan-zone section (DEC-187): persist the collapsed state
-        and reflow the vertical split so the chart reclaims the freed space."""
+        """Persist the fan-zone section's collapsed state (DEC-187).
+
+        Under the DEC-213 inverted splitter the section lives inside the Fan Array
+        pane, so folding it no longer reflows a chart/zone split — the pane's own
+        layout reclaims the space and the outer handle still trades chart height
+        directly. Only the persisted collapsed flag remains."""
         if self._settings_service:
             self._settings_service.update(fan_zones_collapsed=not expanded)
-        self._apply_fan_zones_split(expanded)
-
-    def _apply_fan_zones_split(self, expanded: bool) -> None:
-        """Resize the chart/zone split when the section folds: collapse hands its
-        space to the chart (saving the prior split); expand restores it."""
-        sizes = self._v_splitter.sizes()
-        if len(sizes) != 2:
-            return
-        if not expanded:
-            if sizes[1] > 0:
-                self._fan_zones_saved_sizes = list(sizes)
-            header_h = self._fan_zone_section.header_button().sizeHint().height() + 4
-            self._v_splitter.setSizes([max(1, sum(sizes) - header_h), header_h])
-        elif self._fan_zones_saved_sizes is not None:
-            self._v_splitter.setSizes(self._fan_zones_saved_sizes)
-            self._fan_zones_saved_sizes = None
 
     def _fan_tooltip(self, fan: FanReading) -> str:
         """Build a tooltip for a fan row, including hwmon chip/driver context."""
@@ -1316,20 +1400,25 @@ class DashboardPage(QWidget):
                 item.setText(new_name.strip())
 
     def _on_apply_profile(self) -> None:
-        """Apply the selected profile (by id) with transient button feedback.
+        """Apply the combo-selected profile (status-strip Apply button)."""
+        profile_id = self._profile_combo.currentData()
+        if profile_id:
+            self._activate_profile_by_id(profile_id)
+
+    def _activate_profile_by_id(self, profile_id: str) -> None:
+        """Activate ``profile_id`` via ProfileService (Apply button + Quick Actions).
 
         Delegates the save → daemon-confirm → set-active flow to the shared
         ProfileService.activate(). On failure it reverts the combo to the
         previously-active profile (bug fix — the combo used to stay on the failed
-        pick) and surfaces the real reason to the log (previously lost)."""
+        pick) and surfaces the real reason to the log (previously lost). Shared by
+        the status-strip Apply button and the right-rail Quick Actions shortcuts
+        (DEC-213) so both routes give identical transient feedback."""
         import logging
 
         log = logging.getLogger(__name__)
 
-        if not self._profile_service:
-            return
-        profile_id = self._profile_combo.currentData()
-        if not profile_id:
+        if not self._profile_service or not profile_id:
             return
 
         # Capture the active id up-front so a rejected switch reverts cleanly.
@@ -1401,6 +1490,8 @@ class DashboardPage(QWidget):
                 select_idx = 0
             if select_idx >= 0:
                 self._profile_combo.setCurrentIndex(select_idx)
+        # DEC-213: the right-rail Quick Actions shortcuts mirror the same profiles.
+        self._quick_actions.set_profiles([(p.id, p.name) for p in self._profile_service.profiles])
 
     def _show_content(self) -> None:
         if not self._has_data:

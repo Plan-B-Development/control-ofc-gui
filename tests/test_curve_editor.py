@@ -567,3 +567,39 @@ class TestCurveEditorSetTheme:
         editor.set_theme(ThemeTokens(accent_primary="#11ff22"))
         # The plot line exists (re-created/updated with the new accent colour).
         assert editor._line_plot is not None
+
+
+class TestCurveEditorTeardown:
+    """DEC-214: the editor is now always mounted on the Controls page, so it gains
+    a deterministic cleanup() (DEC-180 lineage) and a right-click-to-remove path."""
+
+    def test_cleanup_is_idempotent_and_clears_items(self, editor, curve_5pt):
+        editor.set_curve(curve_5pt)
+        assert editor._line_plot is not None
+        editor.cleanup()
+        assert editor._cleaned_up is True
+        assert editor._line_plot is None
+        assert editor._scatter is None
+        # A second call must be a no-op (no re-disconnect, no raise).
+        editor.cleanup()
+        assert editor._cleaned_up is True
+
+    def test_right_click_removes_nearest_point(self, editor, curve_5pt, monkeypatch):
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+
+        editor.set_curve(curve_5pt)
+        assert len(editor.get_curve().points) == 5
+        # Resolve the hit-test to a known index, then synthesize a right-button
+        # press on the plot viewport → the eventFilter removes that point.
+        monkeypatch.setattr(editor, "_find_nearest_point", lambda mx, my: 2)
+        ev = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(10.0, 10.0),
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        handled = editor.eventFilter(editor._plot_widget.viewport(), ev)
+        assert handled is True
+        assert len(editor.get_curve().points) == 4

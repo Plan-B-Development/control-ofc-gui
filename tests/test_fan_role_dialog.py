@@ -107,6 +107,19 @@ class TestGetResult:
         result = dialog.get_result()
         assert result["name"] == control.name
 
+    def test_delete_flag_defaults_false(self, dialog):
+        assert dialog.get_result()["delete"] is False
+
+    def test_delete_role_sets_flag(self, qtbot, dialog):
+        """DEC-214: 'Delete Role' records intent so the page routes it to the
+        existing card-delete path (no new delete capability)."""
+        from PySide6.QtWidgets import QPushButton
+
+        btn = dialog.findChild(QPushButton, "FanRoleDialog_Btn_delete")
+        assert btn is not None
+        btn.click()
+        assert dialog.get_result()["delete"] is True
+
 
 class TestGpuFanZeroRpmSection:
     """Per-GPU-member zero-RPM toggle in the dialog (DEC-095)."""

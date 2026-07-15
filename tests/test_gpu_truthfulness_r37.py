@@ -17,7 +17,6 @@ from control_ofc.api.models import (
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.ui.pages.dashboard_page import DashboardPage
-from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -206,7 +205,10 @@ class TestDiagnosticsOverdriveGuidance:
         # Should NOT suggest ppfeaturemask since it's already enabled
         assert "Add 'amdgpu.ppfeaturemask" not in text
 
-    def test_overdrive_status_shown(self, qtbot):
+    def test_overdrive_status_shown(self):
+        # Re-vehicled off the retired Diagnostics page: the "Overdrive enabled"
+        # line is produced by the DiagnosticsService formatter (the live owner);
+        # the page merely appended that text to its snapshot log.
         state = _make_state()
         state.set_capabilities(
             Capabilities(
@@ -218,16 +220,7 @@ class TestDiagnosticsOverdriveGuidance:
                 ),
             )
         )
-        diag = DiagnosticsService(state)
-        page = DiagnosticsPage(state=state, diagnostics_service=diag)
-        qtbot.addWidget(page)
-
-        page._fetch_gpu_status()
-
-        from PySide6.QtWidgets import QPlainTextEdit
-
-        log_view = page.findChild(QPlainTextEdit, "Diagnostics_Text_snapshotView")
-        text = log_view.toPlainText()
+        text = DiagnosticsService(state).format_gpu_status()
         assert "Overdrive enabled: No" in text
 
 

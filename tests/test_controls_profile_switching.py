@@ -1,8 +1,11 @@
 """Tests for profile selection, switching, and per-profile content isolation in ControlsPage.
 
-Verifies that the profile combo box correctly tracks the *viewed* profile
-(not just the *active* profile), that switching profiles shows the correct
-content, and that profile CRUD operations leave the combo in a sane state.
+DEC-214: the Controls page dropped its own profile combo + Activate button.
+Profile *viewing/editing* on the page is now driven by ``select_profile(id)``
+(tracked in ``_viewed_profile_id``); *activation* and the unsaved-changes-on-
+switch guard moved to the sidebar Apply flow in ``main_window``. These tests
+verify the viewed-profile tracking, per-profile content isolation, and — via a
+real ``MainWindow`` — the relocated unsaved-guard.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from control_ofc.services.profile_service import (
     LogicalControl,
     ProfileService,
 )
+from control_ofc.ui.main_window import MainWindow
 from control_ofc.ui.pages.controls_page import ControlsPage
 
 # ---------------------------------------------------------------------------
@@ -54,33 +58,39 @@ def controls_page(qtbot, app_state, profile_service):
     return page
 
 
+@pytest.fixture()
+def main_window(qtbot, app_state, profile_service, settings_service):
+    """A real MainWindow (client=None, non-demo). DEC-214: the unsaved-changes
+    guard on a profile switch now lives in its sidebar Apply flow."""
+    win = MainWindow(
+        state=app_state,
+        profile_service=profile_service,
+        settings_service=settings_service,
+        demo_mode=False,
+    )
+    qtbot.addWidget(win)
+    return win
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _combo_profile_id(page: ControlsPage) -> str:
-    """Return the profile ID stored as user-data on the currently selected combo item."""
-    return page._profile_combo.currentData() or ""
-
-
-def _combo_profile_text(page: ControlsPage) -> str:
-    """Return the display text of the currently selected combo item."""
-    return page._profile_combo.currentText()
+def _viewed_id(page: ControlsPage) -> str:
+    """Return the ID of the profile the page currently views (DEC-214)."""
+    prof = page._get_current_profile()
+    return prof.id if prof else ""
 
 
 def _select_profile_by_id(page: ControlsPage, profile_id: str) -> None:
-    """Programmatically select a profile in the combo by its ID."""
-    for i in range(page._profile_combo.count()):
-        if page._profile_combo.itemData(i) == profile_id:
-            page._profile_combo.setCurrentIndex(i)
-            return
-    raise ValueError(f"Profile {profile_id!r} not found in combo")
+    """View a profile on the page by its ID (DEC-214: replaces combo selection)."""
+    page.select_profile(profile_id)
 
 
-def _combo_ids(page: ControlsPage) -> list[str]:
-    """Return all profile IDs in the combo, in order."""
-    return [page._profile_combo.itemData(i) for i in range(page._profile_combo.count())]
+def _profile_ids(page: ControlsPage) -> list[str]:
+    """Return all known profile IDs from the service, in order."""
+    return [p.id for p in page._profile_service.profiles]
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +111,7 @@ class TestProfileSelectionChangesViewedProfile:
         # Pick a profile that is NOT the active one.
         other = next(p for p in profiles if p.id != active.id)
 
-        # Select it in the combo.
+        # View it on the page.
         _select_profile_by_id(controls_page, other.id)
 
         # _get_current_profile must now return the OTHER profile, not the active one.
@@ -119,15 +129,15 @@ class TestProfileSelectionPreservesAcrossRefresh:
         active = profile_service.active_profile
         other = next(p for p in profiles if p.id != active.id)
 
-        # Select the non-active profile.
+        # View the non-active profile.
         _select_profile_by_id(controls_page, other.id)
-        assert _combo_profile_id(controls_page) == other.id
+        assert _viewed_id(controls_page) == other.id
 
-        # Trigger a full combo rebuild (the kind that happens on save/rename).
-        controls_page._refresh_profile_combo()
+        # Trigger the refresh path that fires on external CRUD (save/rename/delete).
+        controls_page._on_profiles_changed()
 
-        # The same non-active profile must still be selected.
-        assert _combo_profile_id(controls_page) == other.id
+        # The same non-active profile must still be viewed.
+        assert _viewed_id(controls_page) == other.id
 
 
 class TestNewProfileShowsBlankSlate:
@@ -177,11 +187,8 @@ class TestPerProfileContentIsolation:
         assert profile_b.controls == []
         assert profile_b.curves == []
 
-        # Rebuild combo so both new profiles appear.
-        controls_page._refresh_profile_combo(selected_id=profile_b.id)
-        controls_page._refresh_all()
-
         # --- Switch to B: must show zero controls and zero curves ---
+        # select_profile refreshes the page for the viewed profile (DEC-214).
         _select_profile_by_id(controls_page, profile_b.id)
         viewed_b = controls_page._get_current_profile()
         assert viewed_b is not None
@@ -206,53 +213,24 @@ class TestPerProfileContentIsolation:
         assert len(controls_page._curve_cards) == 1
 
 
-class TestProfileActivationUpdatesComboLabel:
-    """Activating a profile puts a '* ' prefix on its combo entry."""
-
-    def test_profile_activation_updates_combo_label(
-        self, controls_page, profile_service, app_state
-    ):
-        profiles = profile_service.profiles
-        # Pick the second profile (not initially active).
-        target = profiles[1]
-
-        _select_profile_by_id(controls_page, target.id)
-        controls_page._on_activate()
-
-        # The combo label for the target should now start with "* ".
-        text = _combo_profile_text(controls_page)
-        assert text.startswith("* "), f"Expected '* ' prefix, got {text!r}"
-        assert text == f"* {target.name}"
-
-        # The profile service must agree.
-        assert profile_service.active_id == target.id
-
-        # AppState must reflect the new name.
-        assert app_state.active_profile_name == target.name
-
-        # The previously-active profile should NOT have the prefix.
-        former_active = profiles[0]
-        for i in range(controls_page._profile_combo.count()):
-            if controls_page._profile_combo.itemData(i) == former_active.id:
-                label = controls_page._profile_combo.itemText(i)
-                assert not label.startswith("* "), (
-                    f"Former active profile still has '* ' prefix: {label!r}"
-                )
-                break
+# DEC-214: TestProfileActivationUpdatesComboLabel was deleted with the page profile
+# combo — the "* " active-prefix label lived on that combo. Activation itself (setting
+# ProfileService.active_id and bridging AppState.active_profile_name) is covered by
+# test_profile_activation_r24.py and by TestUnsavedGuardOnProfileSwitch below (which
+# drives the sidebar Apply flow that now owns activation).
 
 
 class TestDeleteProfileSwitchesToActive:
-    """Deleting the viewed (non-active) profile switches the combo to the active profile."""
+    """Deleting the viewed (non-active) profile falls the page back to the active one."""
 
     def test_delete_profile_switches_to_active(self, controls_page, profile_service, monkeypatch):
         active = profile_service.active_profile
         assert active is not None
 
-        # Create a sacrificial profile, select it, then delete it.
+        # Create a sacrificial profile, view it, then delete it.
         victim = profile_service.create_profile("Doomed")
-        controls_page._refresh_profile_combo(selected_id=victim.id)
         _select_profile_by_id(controls_page, victim.id)
-        assert _combo_profile_id(controls_page) == victim.id
+        assert _viewed_id(controls_page) == victim.id
 
         # The autouse modal guard declines confirmations by default; opt into
         # "Yes" here to exercise the actual deletion path.
@@ -263,11 +241,11 @@ class TestDeleteProfileSwitchesToActive:
         # Delete it.
         controls_page._on_delete_profile()
 
-        # The victim must no longer appear in the combo.
-        assert victim.id not in _combo_ids(controls_page)
+        # The victim must no longer exist in the profile store.
+        assert victim.id not in _profile_ids(controls_page)
 
-        # The combo must now point to the active profile.
-        assert _combo_profile_id(controls_page) == active.id
+        # The page must fall back to viewing the active profile.
+        assert _viewed_id(controls_page) == active.id
 
         # _get_current_profile must also return the active profile.
         viewed = controls_page._get_current_profile()
@@ -276,63 +254,65 @@ class TestDeleteProfileSwitchesToActive:
 
 
 class TestUnsavedGuardOnProfileSwitch:
-    """Switching profiles with unsaved edits prompts before discarding them."""
+    """DEC-214: the unsaved-changes-on-switch guard relocated from the removed page
+    combo to ``main_window._on_sidebar_apply_profile`` (the sidebar Apply flow)."""
 
-    def test_keep_editing_blocks_switch(self, controls_page, profile_service, monkeypatch):
-        """Declining the discard prompt reverts the combo and keeps edits."""
-        profiles = profile_service.profiles
+    @staticmethod
+    def _select_sidebar(main_window, profile_id: str) -> None:
+        combo = main_window.sidebar.profile_combo
+        combo.setCurrentIndex(combo.findData(profile_id))
+
+    def test_keep_editing_blocks_switch(self, main_window, profile_service, monkeypatch):
+        """Declining the discard prompt vetoes the switch, keeps edits, and snaps
+        the sidebar combo back to the still-active profile."""
         active = profile_service.active_profile
         assert active is not None
-        assert len(profiles) >= 2
-        other = next(p for p in profiles if p.id != active.id)
+        assert len(profile_service.profiles) >= 2
+        other = next(p for p in profile_service.profiles if p.id != active.id)
 
-        # View the active profile, then simulate in-progress curve edits.
-        _select_profile_by_id(controls_page, active.id)
-        start_id = _combo_profile_id(controls_page)
-        controls_page._set_unsaved(True)
+        # Simulate in-progress edits on the Controls page, pick a different profile
+        # in the sidebar, then decline the discard.
+        main_window.controls_page._set_unsaved(True)
+        self._select_sidebar(main_window, other.id)
+        monkeypatch.setattr(main_window.controls_page, "_confirm_discard_unsaved", lambda: False)
 
-        # User chooses "Keep editing" (do not discard).
-        monkeypatch.setattr(controls_page, "_confirm_discard_unsaved", lambda: False)
+        main_window._on_sidebar_apply_profile()
 
-        # Attempt to switch away — the guard must veto it.
-        _select_profile_by_id(controls_page, other.id)
+        assert profile_service.active_id == active.id
+        assert main_window.controls_page._has_unsaved is True
+        assert main_window.sidebar.profile_combo.currentData() == active.id
 
-        assert _combo_profile_id(controls_page) == start_id
-        assert controls_page._has_unsaved is True
-        assert controls_page._get_current_profile().id == start_id
-
-    def test_discard_allows_switch(self, controls_page, profile_service, monkeypatch):
-        """Confirming the discard prompt performs the switch and clears edits."""
-        profiles = profile_service.profiles
+    def test_discard_allows_switch(self, main_window, profile_service, app_state, monkeypatch):
+        """Confirming the discard performs the switch, clears edits, and bridges the
+        new active profile into AppState."""
         active = profile_service.active_profile
         assert active is not None
-        assert len(profiles) >= 2
-        other = next(p for p in profiles if p.id != active.id)
+        assert len(profile_service.profiles) >= 2
+        other = next(p for p in profile_service.profiles if p.id != active.id)
 
-        _select_profile_by_id(controls_page, active.id)
-        controls_page._set_unsaved(True)
+        main_window.controls_page._set_unsaved(True)
+        self._select_sidebar(main_window, other.id)
+        monkeypatch.setattr(main_window.controls_page, "_confirm_discard_unsaved", lambda: True)
 
-        # User chooses "Discard".
-        monkeypatch.setattr(controls_page, "_confirm_discard_unsaved", lambda: True)
+        main_window._on_sidebar_apply_profile()
 
-        _select_profile_by_id(controls_page, other.id)
-
-        assert _combo_profile_id(controls_page) == other.id
-        assert controls_page._has_unsaved is False
-        assert controls_page._get_current_profile().id == other.id
+        assert profile_service.active_id == other.id
+        # Following active_changed the page dropped its unsaved flag.
+        assert main_window.controls_page._has_unsaved is False
+        # DEC-214: activation bridges into AppState so the banner/dashboard update.
+        assert app_state.active_profile_name == other.name
 
     def test_switch_without_unsaved_does_not_prompt(
-        self, controls_page, profile_service, monkeypatch
+        self, main_window, profile_service, monkeypatch
     ):
         """With no unsaved edits the guard never calls the confirm dialog."""
-        profiles = profile_service.profiles
         active = profile_service.active_profile
         assert active is not None
-        assert len(profiles) >= 2
-        other = next(p for p in profiles if p.id != active.id)
+        assert len(profile_service.profiles) >= 2
+        other = next(p for p in profile_service.profiles if p.id != active.id)
 
-        _select_profile_by_id(controls_page, active.id)
-        controls_page._set_unsaved(False)
+        main_window.controls_page._set_unsaved(False)
+        self._select_sidebar(main_window, other.id)
 
         called = {"n": 0}
 
@@ -340,8 +320,8 @@ class TestUnsavedGuardOnProfileSwitch:
             called["n"] += 1
             return True
 
-        monkeypatch.setattr(controls_page, "_confirm_discard_unsaved", _boom)
-        _select_profile_by_id(controls_page, other.id)
+        monkeypatch.setattr(main_window.controls_page, "_confirm_discard_unsaved", _boom)
+        main_window._on_sidebar_apply_profile()
 
         assert called["n"] == 0
-        assert _combo_profile_id(controls_page) == other.id
+        assert profile_service.active_id == other.id

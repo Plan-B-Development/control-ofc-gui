@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QVBoxLayout,
+    QWidget,
 )
 
 from control_ofc.services.profile_service import (
@@ -25,7 +26,7 @@ from control_ofc.services.profile_service import (
     infer_control_role,
     infer_member_role,
 )
-from control_ofc.ui.qt_util import set_chip_class
+from control_ofc.ui.qt_util import repolish, set_chip_class
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.card_metrics import (
     DEFAULT_CARD_SIZE,
@@ -89,28 +90,61 @@ class ControlCard(QFrame):
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(2)
 
-        # Row 1: Name + status chip
+        # Row 1: role icon + name + "N Fans" pill + status chip
         row1 = QHBoxLayout()
         row1.setSpacing(4)
+        self._role_icon = QLabel("●")  # a role-coloured dot (mockup icon stand-in)
+        self._role_icon.setObjectName(f"ControlCard_Icon_role_{control.id}")
+        self._role_icon.setStyleSheet(
+            f"color: {self._role_color(control)}; background: transparent;"
+        )
+        row1.addWidget(self._role_icon)
         self._name_label = QLabel(control.name or "Unnamed")
         self._name_label.setStyleSheet("font-weight: bold; background: transparent;")
         self._name_label.setObjectName(f"ControlCard_Label_{control.id}")
         row1.addWidget(self._name_label)
         row1.addStretch()
+        self._fan_count_label = QLabel("")
+        self._fan_count_label.setObjectName(f"ControlCard_Label_fanCount_{control.id}")
+        self._fan_count_label.setProperty("class", "Pill_neutral")
+        row1.addWidget(self._fan_count_label)
         self._status_chip = QLabel("")
         self._status_chip.setObjectName(f"ControlCard_Label_status_{control.id}")
         self._status_chip.setStyleSheet("background: transparent;")
         row1.addWidget(self._status_chip)
         layout.addLayout(row1)
 
-        # Row 2: Members (compact, truncated)
+        # Compact members summary (kept for callers/tests) hidden behind the
+        # per-member RPM rows (the mockup treatment); set_member_rpms fills the
+        # live RPM column, never fabricating an unknown reading.
         self._members_label = QLabel(self._members_text(control))
         self._members_label.setProperty("class", "CardMeta")
         self._members_label.setStyleSheet("background: transparent;")
         self._members_label.setObjectName(f"ControlCard_Label_members_{control.id}")
+        self._members_label.setVisible(False)
         layout.addWidget(self._members_label)
 
-        # Row 3: Curve assignment + minimum-PWM badge
+        self._member_rows = QWidget()
+        self._member_rows.setObjectName(f"ControlCard_Rows_members_{control.id}")
+        self._member_rows_layout = QVBoxLayout(self._member_rows)
+        self._member_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._member_rows_layout.setSpacing(1)
+        self._member_row_rpm: dict[str, QLabel] = {}
+        layout.addWidget(self._member_rows)
+        self._rebuild_member_rows(control)
+
+        # Details (revealed on select, DEC-214): assigned curve + min-PWM badge,
+        # and the auto output / inline manual-slider row. Default-expanded so a
+        # standalone card shows every widget (the card tests need no selection);
+        # the page collapses non-selected cards to the compact mockup form.
+        self._expanded = True
+        self._details = QWidget()
+        self._details.setObjectName(f"ControlCard_Details_{control.id}")
+        details_layout = QVBoxLayout(self._details)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(2)
+
+        # Curve assignment + minimum-PWM badge
         curve_row = QHBoxLayout()
         curve_row.setSpacing(4)
         curve_name = self._curve_name(curves, control.curve_id)
@@ -129,11 +163,11 @@ class ControlCard(QFrame):
         self._min_pwm_label.setStyleSheet("background: transparent;")
         self._min_pwm_label.setObjectName(f"ControlCard_Label_minPwm_{control.id}")
         curve_row.addWidget(self._min_pwm_label)
-        layout.addLayout(curve_row)
+        details_layout.addLayout(curve_row)
 
-        # Row 4: Output + sensor context (auto) — morphs into an inline manual
-        # slider when the Manual toggle is on. The two share the row; exactly
-        # one is visible, so the row height stays constant.
+        # Output + sensor context (auto) — morphs into an inline manual slider
+        # when the Manual toggle is on. The two share the row; exactly one is
+        # visible, so the row height stays constant.
         row4 = QHBoxLayout()
         row4.setSpacing(4)
         self._output_label = QLabel("—")
@@ -154,7 +188,8 @@ class ControlCard(QFrame):
         self._manual_pct_label.setProperty("class", "CardMeta")
         self._manual_pct_label.setVisible(False)
         row4.addWidget(self._manual_pct_label)
-        layout.addLayout(row4)
+        details_layout.addLayout(row4)
+        layout.addWidget(self._details)
 
         # Surplus vertical space (card taller than its rows — e.g. the DEC-128
         # floor or a DEC-129 user resize) pools here instead of being
@@ -199,8 +234,19 @@ class ControlCard(QFrame):
 
         layout.addLayout(actions)
 
+        # Link-indicator nub (DEC-214): a small accent stub on the right edge,
+        # shown for the selected card — the visual wire toward the curve column.
+        self._link_nub = QFrame(self)
+        self._link_nub.setObjectName(f"ControlCard_Nub_link_{control.id}")
+        self._link_nub.setFixedSize(3, 18)
+        self._link_nub.setStyleSheet(
+            f"background: {active_theme().accent_primary}; border-radius: 1px;"
+        )
+        self._link_nub.setVisible(False)
+
         self._update_no_members_state(control)
         self._update_min_pwm_badge(control)
+        self._update_fan_count(control)
         self.apply_card_size(active_theme().base_font_size_pt, card_size, user_size)
 
     # ─── Public API ──────────────────────────────────────────────────
@@ -288,6 +334,12 @@ class ControlCard(QFrame):
         # card content (it floats outside the layout).
         self._grip.move(self.width() - self._grip.width(), self.height() - self._grip.height())
         self._grip.raise_()
+        # Pin the link nub to the right-edge centre (DEC-214).
+        self._link_nub.move(
+            self.width() - self._link_nub.width(),
+            (self.height() - self._link_nub.height()) // 2,
+        )
+        self._link_nub.raise_()
 
     def mousePressEvent(self, event) -> None:
         self.selected.emit(self._control.id)
@@ -327,6 +379,73 @@ class ControlCard(QFrame):
 
     def set_rpm(self, rpm_text: str) -> None:
         self._rpm_label.setText(rpm_text)
+
+    def set_member_rpms(self, rpms: dict[str, int | None]) -> None:
+        """Update each member row's live RPM column (DEC-214).
+
+        ``rpms`` maps member/fan id → measured RPM (``None`` when unknown). No
+        value is fabricated — an unknown reading leaves the column blank.
+        """
+        for member_id, label in self._member_row_rpm.items():
+            rpm = rpms.get(member_id)
+            label.setText(f"{rpm} RPM" if rpm is not None else "")
+
+    def set_selected(self, selected: bool) -> None:
+        """Expand (select) or collapse this card (DEC-214).
+
+        The selected card reveals its detail rows (assigned curve, min-PWM, the
+        auto output / manual slider) and takes an accent border + link nub; the
+        others collapse to the compact mockup form (icon, name, N-Fans, members).
+        Default-expanded so a standalone card shows everything (the card tests
+        need no selection).
+        """
+        self._expanded = selected
+        self._details.setVisible(selected)
+        self._link_nub.setVisible(selected)
+        self.setProperty("selected", selected)
+        repolish(self)
+
+    def _role_color(self, control: LogicalControl) -> str:
+        """A role-derived accent colour for the card's icon dot (mockup uses a
+        distinct icon per role; we colour-code instead of depending on an icon
+        font). CPU/pump = brand accent, GPU-bearing = info, else muted."""
+        t = active_theme()
+        if infer_control_role(control.members) == "cpu_or_pump":
+            return t.accent_primary
+        if any(infer_member_role(m) == CONTROL_ROLE_GPU for m in control.members):
+            return t.status_info
+        return t.text_secondary
+
+    def _update_fan_count(self, control: LogicalControl) -> None:
+        n = len(control.members)
+        self._fan_count_label.setText(f"{n} Fan{'s' if n != 1 else ''}")
+        self._fan_count_label.setVisible(n > 0)
+
+    def _rebuild_member_rows(self, control: LogicalControl) -> None:
+        """(Re)build one ``name · RPM`` row per member (DEC-214)."""
+        while self._member_rows_layout.count():
+            item = self._member_rows_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)  # detach now so a rebuild can't reuse a stale row
+                widget.deleteLater()
+        self._member_row_rpm = {}
+        for member in control.members:
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(4)
+            name = QLabel(member.member_label or member.member_id)
+            name.setProperty("class", "CardMeta")
+            name.setStyleSheet("background: transparent;")
+            row_layout.addWidget(name, 1)
+            rpm = QLabel("")
+            rpm.setProperty("class", "CardMeta")
+            rpm.setStyleSheet("background: transparent;")
+            row_layout.addWidget(rpm)
+            self._member_rows_layout.addWidget(row)
+            self._member_row_rpm[member.member_id] = rpm
+        self._member_rows.setVisible(bool(control.members))
 
     def _apply_chip(self, text: str, cls: str) -> None:
         """Set the status chip text + style class and repolish."""
@@ -404,6 +523,11 @@ class ControlCard(QFrame):
         self._control = control
         self._name_label.setText(control.name or "Unnamed")
         self._members_label.setText(self._members_text(control))
+        self._role_icon.setStyleSheet(
+            f"color: {self._role_color(control)}; background: transparent;"
+        )
+        self._rebuild_member_rows(control)
+        self._update_fan_count(control)
         curve_name = self._curve_name(curves, control.curve_id)
         mode_text = "Manual" if control.mode == ControlMode.MANUAL else curve_name
         self._curve_label.setText(f"Curve: {mode_text}")

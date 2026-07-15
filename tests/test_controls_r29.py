@@ -23,7 +23,8 @@ class TestCurvesEditorSplitter:
         qtbot.addWidget(page)
         splitter = page.findChild(QSplitter, "Controls_Splitter_curvesEditor")
         assert splitter is not None
-        assert splitter.orientation() == Qt.Orientation.Vertical
+        # DEC-214: the 3-pane restyle makes both splitters horizontal.
+        assert splitter.orientation() == Qt.Orientation.Horizontal
 
     def test_splitter_has_two_children(self, qtbot, app_state, profile_service):
         page = ControlsPage(state=app_state, profile_service=profile_service)

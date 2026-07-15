@@ -1,9 +1,10 @@
 """Integration tests for fan presence rendering across surfaces (A2).
 
-Targets the three surfaces called out in PWM_VERIFY_REMEDIATION.md §A2:
-Diagnostics → Fans, Controls fan-role member picker, and Fan Wizard. Each
-test drives synthetic fan + header pairs through the production code path
-and asserts the presence badge renders distinctly.
+Targets the three surfaces called out in PWM_VERIFY_REMEDIATION.md §A2: the
+fan table (now the Overview page, driven by ``overview_view.build_fan_rows``
+after the Diagnostics page was retired), the Controls fan-role member picker,
+and the Fan Wizard. Each test drives synthetic fan + header pairs through the
+production code path and asserts the presence badge renders distinctly.
 """
 
 from __future__ import annotations
@@ -20,12 +21,12 @@ from control_ofc.api.models import (
     OperationMode,
 )
 from control_ofc.services.app_state import AppState
+from control_ofc.services.overview_view import build_fan_rows
 from control_ofc.ui.fan_presence import (
     PRESENCE_BADGE,
     FanPresence,
     classify_fan_presence,
 )
-from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
 from control_ofc.ui.widgets.member_editor import MemberEditorDialog
 
 
@@ -59,72 +60,61 @@ def _hdr(fan_id: str, *, is_writable: bool = True, rpm_available: bool = True) -
     )
 
 
-# ─── Diagnostics → Fans ──────────────────────────────────────────────
+# ─── Fan table (Overview) — build_fan_rows RPM cell ─────────────────────
 
 
-class TestDiagnosticsFansBadging:
-    """Fan rows on Diagnostics → Fans must surface the presence state in the
-    RPM cell so the user can distinguish "controllable but empty" from
-    "uncontrollable" without hovering."""
+class TestFanRowRpmCellBadging:
+    """The fan table's RPM cell must surface the presence state so the user can
+    distinguish "controllable but empty" from "uncontrollable" without hovering.
+    Re-vehicled onto ``build_fan_rows`` (the Qt-free row builder the Overview
+    page renders) after the Diagnostics fan table was retired — the badge
+    composition lives in ``overview_view._format_rpm_cell``."""
 
-    def test_present_fan_shows_only_rpm(self, qtbot):
-        s = _state(
-            headers=[_hdr("hwmon:it8696:it87.2624:pwm1:pwm1")],
-            fans=[
-                FanReading(
-                    id="hwmon:it8696:it87.2624:pwm1:pwm1",
-                    source="hwmon",
-                    rpm=994,
-                    last_commanded_pwm=75,
-                    age_ms=500,
-                )
-            ],
-        )
-        page = DiagnosticsPage(state=s)
-        qtbot.addWidget(page)
-        page._on_fans(s.fans)
+    def test_present_fan_shows_only_rpm(self):
+        fans = [
+            FanReading(
+                id="hwmon:it8696:it87.2624:pwm1:pwm1",
+                source="hwmon",
+                rpm=994,
+                last_commanded_pwm=75,
+                age_ms=500,
+            )
+        ]
+        headers = [_hdr("hwmon:it8696:it87.2624:pwm1:pwm1")]
+        rows = build_fan_rows(fans, headers, None, lambda x: x)
         # PRESENT badge is empty — RPM cell is just the number.
-        assert page._fan_table.item(0, 3).text() == "994"
+        assert rows[0].rpm_text == "994"
 
-    def test_empty_header_appended_to_rpm_cell(self, qtbot):
+    def test_empty_header_appended_to_rpm_cell(self):
         """The X870E AORUS MASTER case — writable header, fan_input present,
         but RPM=0 because nothing is plugged in."""
-        s = _state(
-            headers=[_hdr("hwmon:it8696:it87.2624:pwm2:pwm2")],
-            fans=[
-                FanReading(
-                    id="hwmon:it8696:it87.2624:pwm2:pwm2",
-                    source="hwmon",
-                    rpm=0,
-                    last_commanded_pwm=50,
-                    age_ms=500,
-                )
-            ],
-        )
-        page = DiagnosticsPage(state=s)
-        qtbot.addWidget(page)
-        page._on_fans(s.fans)
-        text = page._fan_table.item(0, 3).text()
+        fans = [
+            FanReading(
+                id="hwmon:it8696:it87.2624:pwm2:pwm2",
+                source="hwmon",
+                rpm=0,
+                last_commanded_pwm=50,
+                age_ms=500,
+            )
+        ]
+        headers = [_hdr("hwmon:it8696:it87.2624:pwm2:pwm2")]
+        rows = build_fan_rows(fans, headers, None, lambda x: x)
+        text = rows[0].rpm_text
         assert PRESENCE_BADGE[FanPresence.EMPTY_HEADER] in text
         assert text.startswith("0")
 
-    def test_read_only_header_badged_in_rpm_cell(self, qtbot):
-        s = _state(
-            headers=[_hdr("hwmon:locked:it87.2624:pwm1:pwm1", is_writable=False)],
-            fans=[
-                FanReading(
-                    id="hwmon:locked:it87.2624:pwm1:pwm1",
-                    source="hwmon",
-                    rpm=1500,
-                    age_ms=500,
-                )
-            ],
-        )
-        page = DiagnosticsPage(state=s)
-        qtbot.addWidget(page)
-        page._on_fans(s.fans)
-        text = page._fan_table.item(0, 3).text()
-        assert PRESENCE_BADGE[FanPresence.READ_ONLY] in text
+    def test_read_only_header_badged_in_rpm_cell(self):
+        fans = [
+            FanReading(
+                id="hwmon:locked:it87.2624:pwm1:pwm1",
+                source="hwmon",
+                rpm=1500,
+                age_ms=500,
+            )
+        ]
+        headers = [_hdr("hwmon:locked:it87.2624:pwm1:pwm1", is_writable=False)]
+        rows = build_fan_rows(fans, headers, None, lambda x: x)
+        assert PRESENCE_BADGE[FanPresence.READ_ONLY] in rows[0].rpm_text
 
 
 # ─── Controls → Edit Members picker ─────────────────────────────────────

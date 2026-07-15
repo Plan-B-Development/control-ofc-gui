@@ -1,7 +1,7 @@
 """Tests for the preferred-sensor selectors (Phase 4 / DEC-200).
 
 Covers the Settings ▸ Application combos (populate/preselect/POST/clear, and the
-programmatic-population guard) and the Diagnostics ▸ Sensors context-menu POST
+programmatic-population guard) and the Overview ▸ Sensors context-menu POST
 handler (including the 404 → hide-feature path).
 """
 
@@ -100,38 +100,43 @@ def test_selecting_automatic_clears(settings_page):
     assert client.cpu_calls == [None]
 
 
-def test_focus_preferred_sensors_selects_app_tab_and_populates(settings_page):
-    """DEC-206: the merged readiness view's 'Pick a sensor' deep-link lands on the
-    Application tab with the picker populated, for both roles."""
+def test_focus_preferred_sensors_populates(settings_page):
+    """DEC-206/DEC-215: the merged readiness view's 'Pick a sensor' deep-link lands
+    on the (now single-surface) Settings page with the picker populated, both roles."""
     page, _client = settings_page
     page.focus_preferred_sensors("cpu")
-    assert page._tabs.currentIndex() == 0  # Application tab hosts the picker
     assert page._pref_cpu_combo.count() > 0  # refreshed from the daemon on arrival
-    page.focus_preferred_sensors("mb")  # MB role accepted too, still the App tab
-    assert page._tabs.currentIndex() == 0
+    page.focus_preferred_sensors("mb")  # MB role accepted too
+    assert page._pref_mb_combo.count() > 0
 
 
-# ── Diagnostics ▸ Sensors context-menu ───────────────────────────────
+# ── Overview ▸ Sensors context-menu ───────────────────────────────────
+# Re-vehicled off the retired Diagnostics page: OverviewPage owns the equivalent
+# sensor context-menu — `_set_preferred_sensor` plus the
+# `_preferred_sensor_unsupported` version gate. OverviewPage's handler is silent
+# (no status label), so the DiagnosticsPage status-string assertions are dropped:
+# the capability (post + 404 gate) survives, the status-string feedback did not
+# move to Overview.
 
 
-def _diag_page(qtbot, client):
-    from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
+def _overview_page(qtbot, client):
+    from control_ofc.services.diagnostics_service import DiagnosticsService
+    from control_ofc.ui.pages.overview_page import OverviewPage
 
     state = AppState()
     state.set_connection(ConnectionState.CONNECTED)
-    page = DiagnosticsPage(state=state, client=client)
+    page = OverviewPage(state=state, diagnostics_service=DiagnosticsService(state), client=client)
     qtbot.addWidget(page)
     return page
 
 
 def test_context_menu_posts_preferred(qtbot):
     client = _StubClient()
-    page = _diag_page(qtbot, client)
-    page._set_preferred_sensor_from_menu("hwmon:x:Tctl", "cpu")
-    page._set_preferred_sensor_from_menu("hwmon:x:SYSTIN", "mb")
+    page = _overview_page(qtbot, client)
+    page._set_preferred_sensor("hwmon:x:Tctl", "cpu")
+    page._set_preferred_sensor("hwmon:x:SYSTIN", "mb")
     assert client.cpu_calls == ["hwmon:x:Tctl"]
     assert client.mb_calls == ["hwmon:x:SYSTIN"]
-    assert "Preferred" in page._status_label.text()
 
 
 def test_context_menu_404_hides_feature(qtbot):
@@ -140,8 +145,8 @@ def test_context_menu_404_hides_feature(qtbot):
             raise DaemonError(code="not_found", message="no route", status=404)
 
     client = _OldClient()
-    page = _diag_page(qtbot, client)
-    page._set_preferred_sensor_from_menu("x", "cpu")
+    page = _overview_page(qtbot, client)
+    page._set_preferred_sensor("x", "cpu")
     assert page._preferred_sensor_unsupported is True
 
 
@@ -152,20 +157,20 @@ def test_context_menu_mb_404_hides_feature(qtbot):
             raise DaemonError(code="not_found", message="no route", status=404)
 
     client = _OldClient()
-    page = _diag_page(qtbot, client)
-    page._set_preferred_sensor_from_menu("x", "mb")
+    page = _overview_page(qtbot, client)
+    page._set_preferred_sensor("x", "mb")
     assert page._preferred_sensor_unsupported is True
 
 
 def test_context_menu_non_404_error_keeps_feature(qtbot):
     # A non-404 error is a transient failure, NOT a version gap: the feature must
-    # stay enabled and the error surface in the status label.
+    # stay enabled (OverviewPage's silent handler intentionally does not surface
+    # the daemon-supplied error string).
     class _FlakyClient(_StubClient):
         def set_preferred_cpu_sensor(self, sensor_id):
             raise DaemonError(code="internal_error", message="disk full", status=500)
 
     client = _FlakyClient()
-    page = _diag_page(qtbot, client)
-    page._set_preferred_sensor_from_menu("x", "cpu")
+    page = _overview_page(qtbot, client)
+    page._set_preferred_sensor("x", "cpu")
     assert page._preferred_sensor_unsupported is False
-    assert "Could not set preferred sensor" in page._status_label.text()

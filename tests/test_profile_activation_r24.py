@@ -94,41 +94,34 @@ class TestActiveProfileInfo:
 
 
 class TestControlsPageActivation:
-    """Controls page activation calls daemon API."""
+    """DEC-214: the Controls page dropped its own combo/Activate — activation now
+    runs through the shared ``ProfileService.activate`` path (the sidebar apply
+    flow uses it, and the page follows via ``active_changed``). These verify that
+    shared path; the AppState bridge is covered by the main_window sidebar flow."""
 
     def test_activate_calls_daemon_api(self, qtbot, app_state, profile_service, mock_client):
         page = ControlsPage(state=app_state, profile_service=profile_service, client=mock_client)
         qtbot.addWidget(page)
 
-        # Create and select a profile
-        profile_service.create_profile("Test")
-        page._refresh_profile_combo()
-        page._profile_combo.setCurrentIndex(0)
-        profile_id = page._profile_combo.currentData()
+        new = profile_service.create_profile("Test")
+        res = profile_service.activate(new.id, client=mock_client)
 
-        # Activate
-        page._on_activate()
-
-        # Verify daemon API was called with the profile path
+        assert res.activated
         mock_client.activate_profile.assert_called_once()
-        call_arg = mock_client.activate_profile.call_args[0][0]
-        assert profile_id in call_arg  # path contains the profile ID
+        assert new.id in mock_client.activate_profile.call_args[0][0]
 
-    def test_activate_updates_state_on_success(
+    def test_activate_updates_service_active_on_success(
         self, qtbot, app_state, profile_service, mock_client
     ):
         page = ControlsPage(state=app_state, profile_service=profile_service, client=mock_client)
         qtbot.addWidget(page)
 
-        # Activate whichever profile is selected (default from load())
-        selected_name = page._profile_combo.currentText().lstrip("* ")
+        new = profile_service.create_profile("Test")
+        profile_service.activate(new.id, client=mock_client)
 
-        page._on_activate()
+        assert profile_service.active_id == new.id
 
-        # AppState should reflect the selected profile's name
-        assert app_state.active_profile_name == selected_name
-
-    def test_activate_failure_does_not_update_state(
+    def test_activate_failure_does_not_change_active(
         self, qtbot, app_state, profile_service, mock_client_failure
     ):
         page = ControlsPage(
@@ -136,23 +129,23 @@ class TestControlsPageActivation:
         )
         qtbot.addWidget(page)
 
-        old_name = app_state.active_profile_name
+        prev_active = profile_service.active_id
+        new = profile_service.create_profile("Test")
+        res = profile_service.activate(new.id, client=mock_client_failure)
 
-        page._on_activate()
-
-        # AppState should NOT be updated on failure
-        assert app_state.active_profile_name == old_name
+        assert not res.activated
+        assert profile_service.active_id == prev_active
 
     def test_activate_without_client_still_works_locally(self, qtbot, app_state, profile_service):
         """When no client is provided (demo mode), activation works locally."""
         page = ControlsPage(state=app_state, profile_service=profile_service, client=None)
         qtbot.addWidget(page)
 
-        selected_name = page._profile_combo.currentText().lstrip("* ")
+        new = profile_service.create_profile("Local")
+        res = profile_service.activate(new.id, client=None)
 
-        page._on_activate()
-
-        assert app_state.active_profile_name == selected_name
+        assert res.activated
+        assert profile_service.active_id == new.id
 
 
 class TestDaemonProfileQuery:
@@ -250,9 +243,8 @@ class TestDeleteActiveProfileCallsDeactivate:
         # Activate it locally so set_active mirrors what the GUI would have done.
         profile_service.set_active(active_id)
 
-        # Select the active profile in the combo and delete.
-        idx = page._profile_combo.findData(active_id)
-        page._profile_combo.setCurrentIndex(idx)
+        # View the active profile on the page and delete it (DEC-214).
+        page.select_profile(active_id)
         page._on_delete_profile()
 
         mock_client.deactivate_profile.assert_called_once()
@@ -277,7 +269,7 @@ class TestDeleteActiveProfileCallsDeactivate:
         if profile_service.active_id == new_p.id:
             other = next(p for p in profile_service.profiles if p.id != new_p.id)
             profile_service.set_active(other.id)
-        page._refresh_profile_combo(selected_id=new_p.id)
+        page.select_profile(new_p.id)
         page._on_delete_profile()
 
         mock_client.deactivate_profile.assert_not_called()

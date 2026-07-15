@@ -157,7 +157,12 @@ class TestOrderStabilityAcrossRefresh:
 
 
 class TestProfileActivateStability:
-    """Profile activation must not corrupt card layout."""
+    """Profile activation must not corrupt card layout.
+
+    DEC-214: the page dropped its own combo/Activate — activation now runs through
+    the shared ``ProfileService.activate`` path, and the page follows via the
+    ``active_changed`` signal (``_on_active_profile_changed`` → ``_refresh_all``).
+    """
 
     def test_activate_preserves_curve_count(self, qtbot, app_state, profile_service):
         mock_client = MagicMock()
@@ -167,8 +172,10 @@ class TestProfileActivateStability:
         page = ControlsPage(state=app_state, profile_service=profile_service, client=mock_client)
         qtbot.addWidget(page)
 
+        profile = page._get_current_profile()
         count_before = len(_curve_ids(page))
-        page._on_activate()
+        profile_service.activate(profile.id, client=mock_client)
+        page._on_active_profile_changed()  # simulate the active_changed follow
         count_after = len(_curve_ids(page))
         assert count_before == count_after
 
@@ -180,8 +187,10 @@ class TestProfileActivateStability:
         page = ControlsPage(state=app_state, profile_service=profile_service, client=mock_client)
         qtbot.addWidget(page)
 
+        profile = page._get_current_profile()
         ids_before = _curve_ids(page)
-        page._on_activate()
+        profile_service.activate(profile.id, client=mock_client)
+        page._on_active_profile_changed()  # simulate the active_changed follow
         ids_after = _curve_ids(page)
         assert ids_before == ids_after
 

@@ -396,6 +396,36 @@ def test_no_profile_means_no_role_no_control():
     assert tile.curve_source is None
 
 
+def test_curve_temp_resolved_from_sensor_values():
+    # DEC-213: the tile's curve_temp is the value of its curve_source sensor.
+    prof = _member_profile("openfan:ch00", source="openfan", sensor="hwmon:cpu:Tctl", cid="c1")
+    tile = _call(
+        [_fan("openfan:ch00", source="openfan")],
+        active_profile=prof,
+        sensor_values={"hwmon:cpu:Tctl": 67.0},
+    )[0].tiles[0]
+    assert tile.curve_temp == 67.0
+
+
+def test_curve_temp_none_without_snapshot_or_curve():
+    prof = _member_profile("openfan:ch00", source="openfan", sensor="hwmon:cpu:Tctl", cid="c1")
+    # curve exists but no sensor_values snapshot -> None (rendered "—")
+    assert _call([_fan("openfan:ch00")], active_profile=prof)[0].tiles[0].curve_temp is None
+    # no profile/curve at all -> None even with a snapshot present
+    assert (
+        _call([_fan("openfan:ch00")], sensor_values={"hwmon:cpu:Tctl": 67.0})[0].tiles[0].curve_temp
+        is None
+    )
+
+
+def test_rpm_spark_passthrough():
+    tile = _call([_fan("openfan:ch00")], rpm_series={"openfan:ch00": (900.0, 950.0, 1000.0)})[
+        0
+    ].tiles[0]
+    assert tile.rpm_spark == (900.0, 950.0, 1000.0)
+    assert _call([_fan("openfan:ch01")])[0].tiles[0].rpm_spark == ()  # no history -> empty
+
+
 # ---------------------------------------------------------------------------
 # Tile field pass-through (present + OFFLINE) — pins fields a mutant could null
 # ---------------------------------------------------------------------------

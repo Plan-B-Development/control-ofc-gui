@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from PySide6.QtWidgets import QPushButton
 
 from control_ofc.services.profile_service import CurveConfig, CurvePoint, CurveType
 from control_ofc.ui.widgets.curve_card import CurveCard
@@ -171,3 +172,24 @@ class TestCurveCardContent:
         qtbot.addWidget(card)
         card.set_used_by(["A", "B", "C", "D", "E"])
         assert "+2" in card._used_by_label.text()
+
+    def test_used_by_sets_active_property(self, qtbot, graph_curve):
+        """DEC-214: an assigned curve is the ACTIVE card (accent border via the
+        ``active`` QSS property); an unassigned one is not."""
+        card = CurveCard(graph_curve)
+        qtbot.addWidget(card)
+        card.set_used_by(["Intake"])
+        assert card.property("active") is True
+        card.set_used_by([])
+        assert card.property("active") is False
+
+    def test_unlink_action_emits_unlink_requested(self, qtbot, graph_curve):
+        """DEC-214: the Actions ▸ Unlink entry emits ``unlink_requested(curve_id)``."""
+        card = CurveCard(graph_curve)
+        qtbot.addWidget(card)
+        btn = card.findChild(QPushButton, f"CurveCard_Btn_actions_{graph_curve.id}")
+        assert btn is not None
+        unlink = next(a for a in btn.menu().actions() if a.text() == "Unlink")
+        with qtbot.waitSignal(card.unlink_requested) as blocker:
+            unlink.trigger()
+        assert blocker.args == [graph_curve.id]

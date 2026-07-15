@@ -20,6 +20,7 @@ from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.polling import PollingService
 from control_ofc.services.profile_service import ProfileService
+from control_ofc.ui.fonts import register_bundled_fonts
 from control_ofc.ui.main_window import MainWindow
 from control_ofc.ui.theme import (
     ThemeTokens,
@@ -166,6 +167,11 @@ def main() -> None:
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName(APP_NAME)
     qt_app.setApplicationVersion(APP_VERSION)
+
+    # Register the bundled OFL fonts (Space Grotesk / DM Sans) before any theme
+    # stylesheet or app font is applied, so the theme's font tokens resolve
+    # (DEC-208). Best-effort — missing files fall back to the system font.
+    register_bundled_fonts()
 
     # Load settings early so directory overrides apply before profiles/themes load
     settings_service = AppSettingsService()

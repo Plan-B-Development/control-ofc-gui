@@ -57,8 +57,9 @@ class TestSidebarNavigation:
 
 class TestControlsPage:
     def test_new_profile_adds_item(self, qtbot, window):
-        """Creating a new profile via handler increases combo count."""
-        combo = window.controls_page._profile_combo
+        """DEC-214: creating a new profile adds it to the sidebar profile selector
+        (the Controls page dropped its own profile combo)."""
+        combo = window.sidebar.profile_combo
         initial_count = combo.count()
 
         # New Profile is now in the Manage Profiles menu, call handler directly
@@ -112,50 +113,6 @@ class TestControlsPage:
 
 
 # ---------------------------------------------------------------------------
-# Diagnostics page
-# ---------------------------------------------------------------------------
-
-
-class TestDiagnosticsPage:
-    def test_clear_logs(self, qtbot, window):
-        """Clear Log empties the event-log table without touching snapshots.
-
-        Replaces the pre-DEC-111 QPlainTextEdit check: the event log is now
-        a QTableView fed by ``DiagnosticsService.events``, and the snapshot
-        view is a separate widget that survives Clear Log.
-        """
-        diag = window.diagnostics_page._diag
-        diag.log_event("info", "polling", "Daemon connected")
-        diag.log_event("warning", "control_loop", "Fan ch00 write failed")
-        assert len(diag.events) == 2
-
-        clear_btn = window.findChild(QPushButton, "Diagnostics_Btn_clearLogs")
-        assert clear_btn is not None
-        qtbot.mouseClick(clear_btn, Qt.MouseButton.LeftButton)
-
-        assert diag.events == []
-
-    def test_refresh_overview_button_click_updates_status_label(self, qtbot, window):
-        """T2 (test-tests audit): clicking Refresh must run `_refresh_all`,
-        whose terminal side-effect is to set the status label text to
-        'Refreshed'. Replaces the prior _exists test, which asserted nothing
-        about behaviour. Locks the click-handler wiring AND the visible
-        consequence in one assertion."""
-        btn = window.findChild(QPushButton, "Diagnostics_Btn_refreshOverview")
-        assert btn is not None and btn.isEnabled()
-
-        diag = window.diagnostics_page
-        # Pre-empt the status label so 'Refreshed' is a real state change.
-        diag._status_label.setText("")
-        assert diag._status_label.text() == ""
-
-        qtbot.mouseClick(btn, Qt.MouseButton.LeftButton)
-        assert diag._status_label.text() == "Refreshed", (
-            "clicking Refresh must drive the status label to 'Refreshed' "
-            "(verifies the click reaches _refresh_all and runs to completion)"
-        )
-
-
 # ---------------------------------------------------------------------------
 # Error banner
 # ---------------------------------------------------------------------------

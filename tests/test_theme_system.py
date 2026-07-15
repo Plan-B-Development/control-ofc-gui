@@ -276,6 +276,7 @@ class TestNoHardcodedColors:
         check_dirs = [
             src_dir / "ui" / "pages",
             src_dir / "ui" / "widgets",
+            src_dir / "ui" / "components",  # DEC-208 redesign component library
             src_dir / "ui",  # sidebar, status_banner, splash, about_dialog, branding
         ]
         # theme_editor.py is allowed to have hex in swatch styling

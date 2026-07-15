@@ -1,4 +1,11 @@
-"""Tests for hardware readiness UI — models, parsing, diagnostics page, and dashboard banner."""
+"""Tests for hardware readiness UI — models, parsing, dashboard banner, and settings.
+
+The Diagnostics-page readiness-widget tests were retired when
+``/diagnostics/hardware`` rendering moved to the live System State page; that
+rendering is covered by ``tests/test_system_state_view.py`` +
+``tests/test_system_state_page.py``. What stays here is the daemon-model /
+parser layer plus the dashboard hwmon banner and the settings flag.
+"""
 
 import pytest
 
@@ -10,14 +17,12 @@ from control_ofc.api.models import (
     HardwareDiagnosticsResult,
     HwmonCapability,
     HwmonChipInfo,
-    HwmonDiagnostics,
     HwmonHeader,
     KernelModuleInfo,
     ThermalSafetyInfo,
     parse_hardware_diagnostics,
 )
 from control_ofc.services.app_state import AppState
-from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
 
 
 @pytest.fixture()
@@ -209,118 +214,6 @@ class TestParseHardwareDiagnostics:
         }
         result = parse_hardware_diagnostics(data)
         assert result.hwmon.chips_detected[0].chip_name == "test"
-
-
-class TestDiagnosticsPageHardwareReadiness:
-    def test_troubleshooting_tab_has_hw_readiness_frame(self, app):
-        # DEC-124: the readiness card moved from Fans to the Troubleshooting tab.
-        page = DiagnosticsPage()
-        frame = page.findChild(type(page._hw_ready_frame), "Diagnostics_Frame_hwReadiness")
-        assert frame is not None
-
-    def test_chip_table_exists(self, app):
-        page = DiagnosticsPage()
-        assert page._chip_table is not None
-        assert page._chip_table.columnCount() == 5
-
-    def test_modules_table_exists(self, app):
-        page = DiagnosticsPage()
-        assert page._modules_table is not None
-        assert page._modules_table.columnCount() == 3
-
-    def test_populate_hw_diagnostics_fills_tables(self, app):
-        page = DiagnosticsPage()
-        diag = HardwareDiagnosticsResult(
-            hwmon=HwmonDiagnostics(
-                chips_detected=[
-                    HwmonChipInfo(
-                        chip_name="nct6798",
-                        device_id="nct6798.656",
-                        expected_driver="nct6775",
-                        in_mainline_kernel=True,
-                        header_count=5,
-                    )
-                ],
-                total_headers=5,
-                writable_headers=3,
-            ),
-            kernel_modules=[
-                KernelModuleInfo(name="nct6775", loaded=True, in_mainline=True),
-                KernelModuleInfo(name="it87", loaded=False, in_mainline=True),
-            ],
-            thermal_safety=ThermalSafetyInfo(
-                state="normal",
-                cpu_sensor_found=True,
-            ),
-        )
-        page._populate_hw_diagnostics(diag)
-
-        assert page._chip_table.rowCount() == 1
-        assert page._chip_table.item(0, 0).text() == "nct6798"
-        assert page._modules_table.rowCount() == 2
-        assert "5" in page._hw_ready_summary.text()
-
-    def test_populate_with_acpi_conflicts_shows_label(self, app):
-        page = DiagnosticsPage()
-        diag = HardwareDiagnosticsResult(
-            acpi_conflicts=[
-                AcpiConflictInfo(
-                    io_range="0290-0299",
-                    claimed_by="ACPI OpRegion",
-                    conflicts_with_driver="nct6775",
-                )
-            ],
-            thermal_safety=ThermalSafetyInfo(state="normal"),
-        )
-        page._populate_hw_diagnostics(diag)
-        assert not page._acpi_label.isHidden()
-        assert "ACPI" in page._acpi_label.text()
-
-    def test_populate_no_conflicts_hides_label(self, app):
-        page = DiagnosticsPage()
-        diag = HardwareDiagnosticsResult(
-            thermal_safety=ThermalSafetyInfo(state="normal"),
-        )
-        page._populate_hw_diagnostics(diag)
-        assert page._acpi_label.isHidden()
-
-    def test_populate_with_gpu(self, app):
-        page = DiagnosticsPage()
-        diag = HardwareDiagnosticsResult(
-            gpu=GpuDiagnosticsInfo(
-                pci_bdf="0000:03:00.0",
-                pci_device_id=0x7550,
-                model_name="9070XT",
-                fan_control_method="pmfw",
-                overdrive_enabled=True,
-                ppfeaturemask="0xffffffff",
-                ppfeaturemask_bit14_set=True,
-            ),
-            thermal_safety=ThermalSafetyInfo(state="normal"),
-        )
-        page._populate_hw_diagnostics(diag)
-        assert not page._gpu_diag_label.isHidden()
-        assert "9070XT" in page._gpu_diag_label.text()
-
-    def test_populate_without_gpu_hides_label(self, app):
-        page = DiagnosticsPage()
-        diag = HardwareDiagnosticsResult(
-            thermal_safety=ThermalSafetyInfo(state="normal"),
-        )
-        page._populate_hw_diagnostics(diag)
-        assert page._gpu_diag_label.isHidden()
-
-    def test_all_readonly_shows_warning(self, app):
-        page = DiagnosticsPage()
-        diag = HardwareDiagnosticsResult(
-            hwmon=HwmonDiagnostics(
-                total_headers=3,
-                writable_headers=0,
-            ),
-            thermal_safety=ThermalSafetyInfo(state="normal"),
-        )
-        page._populate_hw_diagnostics(diag)
-        assert "read-only" in page._hw_ready_summary.text()
 
 
 class TestDashboardHwmonBanner:

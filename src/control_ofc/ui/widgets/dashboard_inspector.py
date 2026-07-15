@@ -24,10 +24,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from control_ofc.ui.components.badges import StatusPill
+from control_ofc.ui.components.cards import Card, SectionHeader
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 
 if TYPE_CHECKING:
@@ -209,10 +212,107 @@ class WarningsView(QWidget):
             self._state.clear_warnings()
 
 
-class DashboardInspector(QWidget):
-    """Right-pane inspector: a titled Sensors panel (DEC-184)."""
+class AlertsPanel(Card):
+    """Inline compact list of active warnings for the dashboard right rail (DEC-213).
 
-    def __init__(self, sensors_widget: QWidget, parent: QWidget | None = None) -> None:
+    Renders ``AppState.active_warnings`` (the same dedup-keyed set ``WarningsView``
+    shows in the dialog) as compact rows, alongside the status-strip warning chip.
+    Rebuilt on ``warning_count_changed`` / ``warnings_cleared`` — low-frequency, no
+    polling. Warning strings are daemon-derived → rendered PlainText."""
+
+    def __init__(self, state: AppState | None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("Dashboard_Panel_alerts")
+        # Hold the panel's natural height so a short right rail squeezes the tall
+        # (scrollable) sensor list above it instead of collapsing these rows into
+        # an overlapping smear (DEC-213).
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self._state = state
+        self._entry_count = 0
+        layout = QVBoxLayout(self)
+        header = SectionHeader("Alerts", object_name="Dashboard_SectionHeader_alerts")
+        self._count_pill = StatusPill("0", "neutral")
+        self._count_pill.setObjectName("Dashboard_Pill_alertCount")
+        header.add_trailing(self._count_pill)
+        layout.addWidget(header)
+        self._rows = QWidget()
+        self._vbox = QVBoxLayout(self._rows)
+        self._vbox.setContentsMargins(0, 0, 0, 0)
+        self._vbox.setSpacing(6)
+        layout.addWidget(self._rows)
+        if state is not None:
+            state.warning_count_changed.connect(self._on_count_changed)
+            state.warnings_cleared.connect(self.refresh)
+        self.refresh()
+
+    def entry_count(self) -> int:
+        return self._entry_count
+
+    def _on_count_changed(self, _count: int) -> None:
+        self.refresh()
+
+    def refresh(self) -> None:
+        while self._vbox.count():
+            item = self._vbox.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)  # detach now so a re-render can't find stale rows
+                widget.deleteLater()
+        warnings = list(self._state.active_warnings) if self._state is not None else []
+        self._entry_count = len(warnings)
+        self._count_pill.set_text(str(len(warnings)))
+        has_error = any(w.get("level") == "error" for w in warnings)
+        self._count_pill.set_state("crit" if has_error else ("warn" if warnings else "ok"))
+        if not warnings:
+            empty = QLabel("No active alerts.")
+            empty.setObjectName("Dashboard_Label_alertsEmpty")
+            empty.setProperty("class", "CardMeta")
+            self._vbox.addWidget(empty)
+            return
+        for i, warning in enumerate(warnings):
+            self._vbox.addWidget(self._build_row(i, warning))
+
+    def _build_row(self, idx: int, w: dict) -> QWidget:
+        level = w.get("level", "warning")
+        frame = QFrame()
+        frame.setObjectName(f"Dashboard_Alert_{idx}")
+        frame.setProperty("class", "Card")
+        v = QVBoxLayout(frame)
+        v.setContentsMargins(8, 5, 8, 5)
+        v.setSpacing(2)
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        glyph = QLabel(_LEVEL_GLYPH.get(level, "⚠"))
+        glyph.setProperty("class", _LEVEL_CHIP.get(level, "WarningChip"))
+        top.addWidget(glyph)
+        msg = QLabel(w.get("message", ""))
+        msg.setObjectName(f"Dashboard_Alert_{idx}_message")
+        msg.setTextFormat(Qt.TextFormat.PlainText)
+        msg.setWordWrap(True)
+        msg.setStyleSheet("font-weight: 600;")
+        top.addWidget(msg, 1)
+        v.addLayout(top)
+        action = next_action_for_warning(w)
+        sub = QLabel(action or f"Component: {w.get('source', '') or '—'}")
+        sub.setTextFormat(Qt.TextFormat.PlainText)
+        sub.setProperty("class", "CardMeta")
+        sub.setWordWrap(True)
+        v.addWidget(sub)
+        return frame
+
+
+class DashboardInspector(QWidget):
+    """Right-pane inspector: the Thermal Sensors series selector, plus (DEC-213)
+    optional Quick Actions + Alerts panels below it."""
+
+    def __init__(
+        self,
+        sensors_widget: QWidget,
+        *,
+        quick_actions: QWidget | None = None,
+        alerts: QWidget | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("Inspector_Root")
         self.setMinimumWidth(240)
@@ -221,7 +321,7 @@ class DashboardInspector(QWidget):
         layout.setContentsMargins(6, 6, 6, 2)
         layout.setSpacing(4)
 
-        self._heading = QLabel("Sensors")
+        self._heading = QLabel("Thermal Sensors")
         self._heading.setObjectName("Inspector_Heading")
         self._heading.setProperty("class", "SectionTitle")
         layout.addWidget(self._heading)
@@ -230,7 +330,14 @@ class DashboardInspector(QWidget):
         # regardless of what the page named the composed widget.
         sensors_widget.setObjectName("Inspector_Panel_sensors")
         self._sensors_widget = sensors_widget
-        layout.addWidget(sensors_widget, 1)
+        layout.addWidget(sensors_widget, 1)  # the tall part (series selector)
+
+        # DEC-213: the right rail also carries the Quick Actions + Alerts panels
+        # (optional so the single-arg form + its tests stay valid).
+        if quick_actions is not None:
+            layout.addWidget(quick_actions)
+        if alerts is not None:
+            layout.addWidget(alerts)
 
     def sensors_widget(self) -> QWidget:
         """The hosted sensor panel (exposed for tests/wiring)."""

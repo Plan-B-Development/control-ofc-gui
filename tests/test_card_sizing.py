@@ -196,14 +196,15 @@ class TestControlsPageTierPropagation:
 
 
 class TestSectionsSplitter5050:
-    """The Fan Roles / Curves splitter defaults to a proportional 50/50 split."""
+    """DEC-214: the outer splitter defaults to a 1:3 split — Assign Roles (left)
+    narrower than the Link Logic + Curve Editor column (right)."""
 
     def test_sections_balanced_on_resize(self, qtbot, app_state, profile_service):
         page = ControlsPage(state=app_state, profile_service=profile_service)
         qtbot.addWidget(page)
         # A control must exist for the curves section to be visible.
         page._on_new_control(single=True, name="R")
-        page.resize(900, 700)
+        page.resize(1200, 700)
         page.show()
         qtbot.waitExposed(page)
         splitter = page.findChild(QSplitter, "Controls_Splitter_sections")
@@ -211,5 +212,6 @@ class TestSectionsSplitter5050:
         sizes = splitter.sizes()
         assert len(sizes) == 2
         assert min(sizes) > 0
-        # Equal stretch + equal seed → ~50/50 (divider still user-draggable).
-        assert abs(sizes[0] - sizes[1]) <= 16
+        # Assign Roles (1) : curves = Link Logic + Editor (3) — curves wider,
+        # divider still user-draggable.
+        assert sizes[1] > sizes[0]

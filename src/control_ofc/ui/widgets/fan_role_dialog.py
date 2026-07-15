@@ -1,4 +1,11 @@
-"""Edit Fan Role dialog — members, curve assignment, mode, manual speed, and overrides."""
+"""Edit Fan Role dialog — members, curve assignment, mode, manual speed, and overrides.
+
+DEC-214 restyle: built over the shared ``ModalDialog`` frame (header/body/footer +
+scrim) with the mockup's Name / Mode / Curve fields, a Role-Members grid, and a
+Delete / Discard / Save Changes footer. Every attr, objectName, and ``get_result``
+key from the pre-redesign dialog is preserved so the ~15 tests + the page's
+``_on_edit_role`` consumer keep working.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +13,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,10 +31,13 @@ from control_ofc.services.profile_service import (
     CurveConfig,
     LogicalControl,
 )
+from control_ofc.ui.components.badges import StatusPill
+from control_ofc.ui.components.buttons import make_button
+from control_ofc.ui.components.dialog import ModalDialog
 from control_ofc.ui.qt_util import block_signals
 
 
-class FanRoleDialog(QDialog):
+class FanRoleDialog(ModalDialog):
     """Dialog for editing a fan role's name, curve, mode, manual speed, and members."""
 
     def __init__(
@@ -36,13 +46,21 @@ class FanRoleDialog(QDialog):
         curves: list[CurveConfig],
         parent=None,
     ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(f"Edit Fan Role: {control.name}")
-        self.setMinimumWidth(420)
+        super().__init__(f"Edit Fan Role: {control.name}", parent)
+        self.setMinimumWidth(460)
         self._control = control
+        self._delete_requested = False
 
-        layout = QVBoxLayout(self)
+        layout = self.body_layout()
         layout.setSpacing(10)
+
+        # Mode pill (the mockup's AUTO badge) — reflects Curve vs Manual mode.
+        pill_row = QHBoxLayout()
+        pill_row.addStretch(1)
+        self._mode_pill = StatusPill("", "neutral")
+        self._mode_pill.setObjectName("FanRoleDialog_Pill_mode")
+        pill_row.addWidget(self._mode_pill)
+        layout.addLayout(pill_row)
 
         # Name
         name_row = QHBoxLayout()
@@ -57,7 +75,7 @@ class FanRoleDialog(QDialog):
         mode_row.addWidget(QLabel("Mode:"))
         self._mode_combo = QComboBox()
         self._mode_combo.setObjectName("FanRoleDialog_Combo_mode")
-        self._mode_combo.addItem("Curve", ControlMode.CURVE.value)
+        self._mode_combo.addItem("Curve-based", ControlMode.CURVE.value)
         self._mode_combo.addItem("Manual", ControlMode.MANUAL.value)
         idx = 0 if control.mode == ControlMode.CURVE else 1
         self._mode_combo.setCurrentIndex(idx)
@@ -110,20 +128,22 @@ class FanRoleDialog(QDialog):
         manual_layout.addLayout(speed_row)
         layout.addWidget(self._manual_widget)
 
-        # Members summary
-        members_text = (
-            ", ".join(m.member_label or m.member_id for m in control.members) or "None assigned"
-        )
-        members_label = QLabel(f"Members: {members_text}")
-        members_label.setWordWrap(True)
-        members_label.setProperty("class", "PageSubtitle")
-        layout.addWidget(members_label)
-
-        edit_members_btn = QPushButton("Edit Members\u2026")
+        # Role Members header + "Edit Members…"
+        members_header = QHBoxLayout()
+        members_title = QLabel(f"Role Members ({len(control.members)})")
+        members_title.setProperty("class", "PageSubtitle")
+        members_header.addWidget(members_title, 1)
+        edit_members_btn = QPushButton("Edit Members…")
         edit_members_btn.setObjectName("FanRoleDialog_Btn_editMembers")
         edit_members_btn.setToolTip("Open member assignment dialog")
         edit_members_btn.clicked.connect(self._on_edit_members)
-        layout.addWidget(edit_members_btn)
+        members_header.addWidget(edit_members_btn)
+        layout.addLayout(members_header)
+
+        # Member grid (2 columns of name chips). RPM is not passed to this dialog,
+        # so — per "do not invent" — only member names are shown here; the member
+        # editor (which is given live readings) is where RPM appears.
+        layout.addWidget(self._build_member_grid(control.members))
 
         # Per-GPU-member zero-RPM toggle (v4). Only renders when the role has
         # at least one ``amd_gpu`` member; the daemon ignores the flag for
@@ -135,20 +155,20 @@ class FanRoleDialog(QDialog):
 
         layout.addStretch()
 
-        # OK / Cancel
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        ok_btn = QPushButton("Save")
-        ok_btn.setObjectName("FanRoleDialog_Btn_save")
-        ok_btn.clicked.connect(self.accept)
-        btn_row.addWidget(ok_btn)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
-        btn_row.addWidget(cancel_btn)
-        layout.addLayout(btn_row)
+        # Footer: Delete Role (left) | Discard | Save Changes
+        delete_btn = make_button("Delete Role", "danger", object_name="FanRoleDialog_Btn_delete")
+        delete_btn.setToolTip("Delete this fan role")
+        delete_btn.clicked.connect(self._on_delete)
+        self._footer_layout.insertWidget(0, delete_btn)
+        discard_btn = self.add_footer_button("Discard", "ghost")
+        discard_btn.clicked.connect(self.reject)
+        save_btn = self.add_footer_button(
+            "Save Changes", "primary", object_name="FanRoleDialog_Btn_save"
+        )
+        save_btn.clicked.connect(self.accept)
 
         self._edit_members_callback = None
-        # Apply initial mode visibility
+        # Apply initial mode visibility + pill
         self._apply_mode_visibility()
 
     def set_edit_members_callback(self, callback):
@@ -158,6 +178,12 @@ class FanRoleDialog(QDialog):
         if self._edit_members_callback:
             self._edit_members_callback(self._control.id)
 
+    def _on_delete(self) -> None:
+        """Delete Role: record the intent and accept so the page's ``_on_edit_role``
+        routes it to the existing card-delete path (no new delete capability)."""
+        self._delete_requested = True
+        self.accept()
+
     def _on_mode_changed(self, _index: int) -> None:
         self._apply_mode_visibility()
 
@@ -165,6 +191,12 @@ class FanRoleDialog(QDialog):
         is_manual = self._mode_combo.currentData() == ControlMode.MANUAL.value
         self._curve_widget.setVisible(not is_manual)
         self._manual_widget.setVisible(is_manual)
+        if is_manual:
+            self._mode_pill.set_text("MANUAL")
+            self._mode_pill.set_state("warn")
+        else:
+            self._mode_pill.set_text("AUTO")
+            self._mode_pill.set_state("ok")
 
     def _on_slider_changed(self, value: int) -> None:
         with block_signals(self._manual_spin):
@@ -181,7 +213,29 @@ class FanRoleDialog(QDialog):
             "curve_id": self._curve_combo.currentData() or "",
             "manual_output_pct": float(self._manual_spin.value()),
             "gpu_fan_zero_rpm": self._collect_gpu_zero_rpm(),
+            "delete": self._delete_requested,
         }
+
+    # ─── Member grid ─────────────────────────────────────────────────
+
+    def _build_member_grid(self, members: list[ControlMember]) -> QWidget:
+        """A compact 2-column grid of member name chips (mockup Role-Members)."""
+        holder = QWidget()
+        holder.setObjectName("FanRoleDialog_Grid_members")
+        grid = QGridLayout(holder)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(4)
+        if not members:
+            empty = QLabel("None assigned")
+            empty.setProperty("class", "PageSubtitle")
+            grid.addWidget(empty, 0, 0)
+            return holder
+        for i, member in enumerate(members):
+            chip = QLabel(member.member_label or member.member_id)
+            chip.setProperty("class", "CardMeta")
+            chip.setToolTip(member.member_id)
+            grid.addWidget(chip, i // 2, i % 2)
+        return holder
 
     # ─── GPU zero-RPM section ────────────────────────────────────────
 

@@ -453,12 +453,12 @@ class TestManualOverrideLiveWiring:
         assert expired_page._unsaved_label.text() != stale_page._unsaved_label.text()
 
     def test_activation_success_clears_live_overrides(self, qtbot, app_state, profile_service):
-        """T1c: a successful profile activation clears all held overrides and stops
-        the renew timer (via _on_activate → _refresh_all → _refresh_controls_grid →
-        _release_all_overrides). There is no _on_profile_activated method."""
+        """T1c (DEC-214): a successful profile activation clears all held overrides
+        and stops the renew timer. Activation now runs through the shared
+        ``ProfileService.activate`` path; the page follows it via the
+        ``active_changed`` signal → ``_on_active_profile_changed`` → ``_refresh_all``
+        → ``_refresh_controls_grid`` → ``_release_all_overrides``."""
         from unittest.mock import MagicMock
-
-        from control_ofc.services.profile_service import ProfileActivateOutcome
 
         client = MagicMock()
         client.override_take.return_value = self._grant(token=7)
@@ -469,15 +469,12 @@ class TestManualOverrideLiveWiring:
         assert page._overrides == {"lc1": 7}
         assert page._override_renew_timer.isActive()
 
-        # A real profile so the combo + _get_current_profile resolve naturally;
-        # mock only activate() so the daemon round-trip "succeeds".
+        # Activating a DIFFERENT profile fires active_changed (set_active is
+        # edge-triggered), which the page follows to rebuild the grid + release
+        # every held override. The mock client's activate_profile returns a
+        # truthy result so the daemon round-trip "succeeds".
         prof = page._profile_service.create_profile("Activate-Me")
-        page._refresh_profile_combo(selected_id=prof.id)
-        page._profile_service.activate = MagicMock(
-            return_value=ProfileActivateOutcome(activated=True)
-        )
-
-        page._on_activate()
+        page._profile_service.activate(prof.id, client=client)
 
         assert page._overrides == {}
         assert page._override_renew_timer.isActive() is False
@@ -657,43 +654,10 @@ class TestOfflineDraftUX:
     """Offline Save/Activate UX (slice 6) built on the 6b daemon-backed
     persistence accessors (offline / unpublished_ids / is_published)."""
 
-    @staticmethod
-    def _daemon_ps(*, published=(), local=()):
-        from unittest.mock import MagicMock
-
-        from control_ofc.services.profile_service import ProfileService
-
-        ps = ProfileService(client=MagicMock())
-        for pid in published:
-            ps._profiles[pid] = Profile(id=pid, name=pid.title())
-            ps._daemon_ids.add(pid)
-        for pid in local:
-            ps._profiles[pid] = Profile(id=pid, name=pid.title())
-        return ps
-
-    def test_draft_badge_for_unpublished_profile(self, qtbot, app_state):
-        from unittest.mock import MagicMock
-
-        ps = self._daemon_ps(published=["pub"], local=["drf"])
-        page = ControlsPage(state=app_state, profile_service=ps, client=MagicMock())
-        qtbot.addWidget(page)
-
-        labels = [page._profile_combo.itemText(i) for i in range(page._profile_combo.count())]
-        pub_label = next(label for label in labels if "Pub" in label)
-        drf_label = next(label for label in labels if "Drf" in label)
-        assert "(draft)" not in pub_label
-        assert "(draft)" in drf_label
-
-    def test_no_draft_badge_in_local_mode(self, qtbot, app_state):
-        from control_ofc.services.profile_service import ProfileService
-
-        ps = ProfileService()  # no client -> pure local, no daemon concept
-        ps._profiles["p1"] = Profile(id="p1", name="Local")
-        page = ControlsPage(state=app_state, profile_service=ps, client=None)
-        qtbot.addWidget(page)
-
-        labels = [page._profile_combo.itemText(i) for i in range(page._profile_combo.count())]
-        assert all("(draft)" not in label for label in labels)
+    # DEC-214: the combo "(draft)" badge tests (test_draft_badge_for_unpublished_profile,
+    # test_no_draft_badge_in_local_mode) were deleted with the page profile combo —
+    # the draft state still lives in ProfileService but is no longer shown on this page.
+    # Their `_daemon_ps` helper went with them (no remaining caller).
 
     def test_save_offline_marks_draft(self, qtbot, app_state):
         from unittest.mock import MagicMock
@@ -755,7 +719,7 @@ class TestOfflineDraftUX:
         ps.set_active("p2")  # p2 is active; we save the non-active p1
         page = ControlsPage(state=app_state, profile_service=ps, client=client)
         qtbot.addWidget(page)
-        page._profile_combo.setCurrentIndex(page._profile_combo.findData("p1"))
+        page.select_profile("p1")  # DEC-214: view p1 (replaces the removed combo)
 
         page._on_save_profile()
 
@@ -818,25 +782,7 @@ class TestOfflineDraftUX:
         assert "reapply failed" in page._unsaved_label.text().lower()
         assert page._unsaved_label.property("class") == "WarningChip"
 
-    def test_activate_disabled_when_offline_live(self, qtbot, app_state):
-        from unittest.mock import MagicMock
-
-        from control_ofc.api.models import ConnectionState
-
-        page = ControlsPage(state=app_state, client=MagicMock())
-        qtbot.addWidget(page)
-
-        page._on_connection_changed(ConnectionState.DISCONNECTED)
-        assert not page._activate_btn.isEnabled()
-
-        page._on_connection_changed(ConnectionState.CONNECTED)
-        assert page._activate_btn.isEnabled()
-
-    def test_activate_stays_enabled_in_demo(self, qtbot, app_state):
-        from control_ofc.api.models import ConnectionState
-
-        page = ControlsPage(state=app_state, client=None)  # demo / local
-        qtbot.addWidget(page)
-
-        page._on_connection_changed(ConnectionState.DISCONNECTED)
-        assert page._activate_btn.isEnabled()  # local activation is never gated
+    # DEC-214: the Activate-button enable/disable tests (test_activate_disabled_when_offline_live,
+    # test_activate_stays_enabled_in_demo) were deleted with the page Activate button —
+    # activation moved to the sidebar Apply flow, and `_on_connection_changed` no longer
+    # gates any button (it only clears stale foreign-override chips on disconnect, DEC-169).

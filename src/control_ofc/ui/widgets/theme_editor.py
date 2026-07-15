@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QTableWidget,
@@ -18,13 +19,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.colors import is_valid_color
+from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.qt_util import repolish
 from control_ofc.ui.theme import ThemeTokens, check_contrast_warnings, default_dark_theme
 
 # Token display groups and their human-readable descriptions
 _TOKEN_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     (
-        "Core",
+        "Core UI",
         [
             ("app_bg", "Application background"),
             ("surface_1", "Primary panels / sidebar"),
@@ -54,7 +57,7 @@ _TOKEN_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ],
     ),
     (
-        "Status",
+        "Status Indicators",
         [
             ("status_ok", "Success / OK"),
             ("status_warn", "Warning"),
@@ -63,7 +66,7 @@ _TOKEN_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ],
     ),
     (
-        "Charts",
+        "Chart Elements",
         [
             ("chart_bg", "Chart background"),
             ("chart_grid", "Chart gridlines"),
@@ -185,7 +188,7 @@ class ThemePreview(QFrame):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
-        title = QLabel("Preview")
+        title = QLabel("UI Blueprint Preview")
         title.setProperty("class", "PageSubtitle")
         layout.addWidget(title)
 
@@ -251,7 +254,15 @@ class ThemePreview(QFrame):
 
 
 class ThemeEditorWidget(QWidget):
-    """Full theme editor with grouped token editing, preview, and contrast warnings."""
+    """Full theme editor with grouped token editing, preview, and contrast warnings.
+
+    DEC-215 restyle: mockup card/row style + an editable hex ``QLineEdit`` beside
+    each swatch (typing a valid hex applies it, like the swatch picker). Every
+    ``_TOKEN_GROUPS`` group + all chart-series slots stay editable (the mockup's
+    Core UI / Status Indicators / Chart Elements are the prominent cards; the rest
+    follow so no token loses its editor). The ``ColorSwatch`` picker + the public
+    API (``tokens`` / ``set_tokens`` / ``theme_modified``) are unchanged.
+    """
 
     theme_modified = Signal(ThemeTokens)
 
@@ -259,142 +270,139 @@ class ThemeEditorWidget(QWidget):
         super().__init__(parent)
         self._tokens = tokens or default_dark_theme()
         self._swatches: dict[str, ColorSwatch] = {}
-        self._hex_labels: dict[str, QLabel] = {}
-        # Per-series chart-palette swatches. Keyed by slot index so the
-        # callback knows which entry in tokens.chart_series to mutate.
+        self._hex_inputs: dict[str, QLineEdit] = {}
+        # Per-series chart-palette swatches, keyed by slot index.
         self._series_swatches: dict[int, ColorSwatch] = {}
-        self._series_hex_labels: dict[int, QLabel] = {}
+        self._series_hex_inputs: dict[int, QLineEdit] = {}
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        # Left: token editor (scrollable) — minimum width prevents the
-        # colour swatches from being squeezed too thin
+        # Left: token editor (scrollable) — one card per token group.
         editor_scroll = QScrollArea()
         editor_scroll.setWidgetResizable(True)
         editor_scroll.setMinimumWidth(360)
+        editor_scroll.setFrameShape(QFrame.Shape.NoFrame)
         editor_widget = QWidget()
         editor_layout = QVBoxLayout(editor_widget)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
         editor_layout.setSpacing(12)
 
         for group_name, token_list in _TOKEN_GROUPS:
-            group_frame = QFrame()
-            group_frame.setProperty("class", "Card")
-            group_layout = QVBoxLayout(group_frame)
-
-            group_title = QLabel(group_name)
-            group_title.setProperty("class", "PageSubtitle")
-            group_layout.addWidget(group_title)
-
+            card = QFrame()
+            card.setProperty("class", "Card")
+            card_layout = QVBoxLayout(card)
+            card_layout.addWidget(SectionHeader(group_name))
             grid = QGridLayout()
-            grid.setSpacing(4)
+            grid.setSpacing(6)
             for row_idx, (token_name, description) in enumerate(token_list):
                 value = getattr(self._tokens, token_name, "#000000")
+                self._add_color_row(grid, row_idx, token_name, description, value)
+            card_layout.addLayout(grid)
+            editor_layout.addWidget(card)
 
-                swatch = ColorSwatch(token_name, value)
-                swatch.color_changed.connect(self._on_color_changed)
-                self._swatches[token_name] = swatch
-                grid.addWidget(swatch, row_idx, 0)
-
-                hex_label = QLabel(value)
-                hex_label.setProperty("class", "SmallLabel")
-                hex_label.setStyleSheet("font-family: monospace;")
-                hex_label.setMinimumWidth(70)
-                self._hex_labels[token_name] = hex_label
-                grid.addWidget(hex_label, row_idx, 1)
-
-                desc_label = QLabel(description)
-                desc_label.setProperty("class", "PageSubtitle")
-                grid.addWidget(desc_label, row_idx, 2)
-
-                reset_btn = QPushButton("R")
-                reset_btn.setToolTip(f"Reset {token_name} to default")
-                reset_btn.setFixedSize(24, 24)
-                reset_btn.clicked.connect(lambda checked, tn=token_name: self._reset_token(tn))
-                grid.addWidget(reset_btn, row_idx, 3)
-
-            group_layout.addLayout(grid)
-            editor_layout.addWidget(group_frame)
-
-        # ─── Chart series palette ────────────────────────────────────
-        # The chart_series tokens are a list-of-hex (not a single token),
-        # so they don't fit the dataclass-driven grid above. Render each
-        # slot as its own swatch row inside a dedicated card.
-        series_frame = QFrame()
-        series_frame.setProperty("class", "Card")
-        series_layout = QVBoxLayout(series_frame)
-        series_title = QLabel("Chart Series")
-        series_title.setProperty("class", "PageSubtitle")
-        series_layout.addWidget(series_title)
+        # Chart series palette (a list-of-hex, so it's built by slot index).
+        series_card = QFrame()
+        series_card.setProperty("class", "Card")
+        series_layout = QVBoxLayout(series_card)
+        series_layout.addWidget(SectionHeader("Chart Series"))
         series_grid = QGridLayout()
-        series_grid.setSpacing(4)
+        series_grid.setSpacing(6)
         for slot in range(_CHART_SERIES_SLOTS):
             value = (
                 self._tokens.chart_series[slot]
                 if slot < len(self._tokens.chart_series)
                 else "#888888"
             )
-            swatch = ColorSwatch(f"chart_series[{slot}]", value)
-            swatch.color_changed.connect(
-                lambda _name, hx, s=slot: self._on_series_color_changed(s, hx)
-            )
-            self._series_swatches[slot] = swatch
-            series_grid.addWidget(swatch, slot, 0)
-
-            hex_label = QLabel(value)
-            hex_label.setProperty("class", "SmallLabel")
-            hex_label.setStyleSheet("font-family: monospace;")
-            hex_label.setMinimumWidth(70)
-            self._series_hex_labels[slot] = hex_label
-            series_grid.addWidget(hex_label, slot, 1)
-
-            desc_label = QLabel(f"Series #{slot + 1}")
-            desc_label.setProperty("class", "PageSubtitle")
-            series_grid.addWidget(desc_label, slot, 2)
+            self._add_series_row(series_grid, slot, value)
         series_layout.addLayout(series_grid)
-        editor_layout.addWidget(series_frame)
+        editor_layout.addWidget(series_card)
 
         editor_layout.addStretch()
         editor_scroll.setWidget(editor_widget)
         layout.addWidget(editor_scroll, 2)
 
-        # Right: preview + warnings
+        # Right: UI blueprint preview + contrast diagnostics.
         right = QVBoxLayout()
         right.setSpacing(12)
-
         self._preview = ThemePreview()
         right.addWidget(self._preview, 1)
 
-        # Contrast warnings
         warn_frame = QFrame()
         warn_frame.setProperty("class", "Card")
         warn_layout = QVBoxLayout(warn_frame)
-        warn_title = QLabel("Contrast Warnings")
-        warn_title.setProperty("class", "PageSubtitle")
-        warn_layout.addWidget(warn_title)
-        self._warnings_label = QLabel("No warnings")
+        warn_layout.addWidget(SectionHeader("Contrast Diagnostics"))
+        self._warnings_label = QLabel("No contrast issues detected (WCAG AA pass).")
         self._warnings_label.setProperty("class", "PageSubtitle")
         self._warnings_label.setWordWrap(True)
         warn_layout.addWidget(self._warnings_label)
         right.addWidget(warn_frame)
 
         layout.addLayout(right, 1)
-
-        # Initial state
         self._update_warnings()
+
+    # ─── Row builders ────────────────────────────────────────────────
+
+    def _hex_input(self, value: str) -> QLineEdit:
+        edit = QLineEdit(value)
+        edit.setStyleSheet("font-family: monospace;")
+        edit.setMaxLength(9)  # #RRGGBBAA
+        edit.setMinimumWidth(84)
+        edit.setMaximumWidth(100)
+        return edit
+
+    def _add_color_row(self, grid, row_idx, token_name, description, value) -> None:
+        swatch = ColorSwatch(token_name, value)
+        swatch.color_changed.connect(self._on_color_changed)
+        self._swatches[token_name] = swatch
+        grid.addWidget(swatch, row_idx, 0)
+
+        hex_input = self._hex_input(value)
+        hex_input.editingFinished.connect(lambda tn=token_name: self._on_hex_edited(tn))
+        self._hex_inputs[token_name] = hex_input
+        grid.addWidget(hex_input, row_idx, 1)
+
+        desc = QLabel(description)
+        desc.setProperty("class", "CardMeta")
+        grid.addWidget(desc, row_idx, 2)
+        grid.setColumnStretch(2, 1)
+
+        reset = QPushButton("↺")  # ↺
+        reset.setToolTip(f"Reset {token_name} to default")
+        reset.setFixedSize(24, 24)
+        reset.clicked.connect(lambda _checked, tn=token_name: self._reset_token(tn))
+        grid.addWidget(reset, row_idx, 3)
+
+    def _add_series_row(self, grid, slot, value) -> None:
+        swatch = ColorSwatch(f"chart_series[{slot}]", value)
+        swatch.color_changed.connect(lambda _n, hx, s=slot: self._on_series_color_changed(s, hx))
+        self._series_swatches[slot] = swatch
+        grid.addWidget(swatch, slot, 0)
+
+        hex_input = self._hex_input(value)
+        hex_input.editingFinished.connect(lambda s=slot: self._on_series_hex_edited(s))
+        self._series_hex_inputs[slot] = hex_input
+        grid.addWidget(hex_input, slot, 1)
+
+        desc = QLabel(f"Series #{slot + 1}")
+        desc.setProperty("class", "CardMeta")
+        grid.addWidget(desc, slot, 2)
+        grid.setColumnStretch(2, 1)
+
+    # ─── API ─────────────────────────────────────────────────────────
 
     @property
     def tokens(self) -> ThemeTokens:
         return self._tokens
 
     def set_tokens(self, tokens: ThemeTokens) -> None:
-        """Load a new set of tokens into the editor."""
+        """Load a new set of tokens into the editor (silent — never re-emits)."""
         self._tokens = tokens
         for token_name, swatch in self._swatches.items():
             value = getattr(self._tokens, token_name, "#000000")
             swatch.set_color(value)
-            self._hex_labels[token_name].setText(value)
+            self._hex_inputs[token_name].setText(value)
         for slot, swatch in self._series_swatches.items():
             value = (
                 self._tokens.chart_series[slot]
@@ -402,36 +410,61 @@ class ThemeEditorWidget(QWidget):
                 else "#888888"
             )
             swatch.set_color(value)
-            self._series_hex_labels[slot].setText(value)
+            self._series_hex_inputs[slot].setText(value)
         self._update_warnings()
         self._update_preview()
 
-    def _on_color_changed(self, token_name: str, hex_color: str) -> None:
+    # ─── Mutation ────────────────────────────────────────────────────
+
+    def _apply_hex(self, token_name: str, hex_color: str) -> None:
         setattr(self._tokens, token_name, hex_color)
-        self._hex_labels[token_name].setText(hex_color)
+        self._swatches[token_name].set_color(hex_color)
+        if self._hex_inputs[token_name].text() != hex_color:
+            self._hex_inputs[token_name].setText(hex_color)
         self._update_warnings()
+        self._update_preview()
+        self.theme_modified.emit(self._tokens)
+
+    def _on_color_changed(self, token_name: str, hex_color: str) -> None:
+        self._apply_hex(token_name, hex_color)
+
+    def _on_hex_edited(self, token_name: str) -> None:
+        text = self._hex_inputs[token_name].text().strip().upper()
+        if is_valid_color(text):
+            self._apply_hex(token_name, text)
+        else:
+            # Reject an invalid hex — revert the field to the live token value.
+            self._hex_inputs[token_name].setText(getattr(self._tokens, token_name, "#000000"))
+
+    def _apply_series_hex(self, slot: int, hex_color: str) -> None:
+        # Pad the list if the loaded theme had fewer entries than slots.
+        while len(self._tokens.chart_series) <= slot:
+            self._tokens.chart_series.append("#888888")
+        self._tokens.chart_series[slot] = hex_color
+        self._series_swatches[slot].set_color(hex_color)
+        if self._series_hex_inputs[slot].text() != hex_color:
+            self._series_hex_inputs[slot].setText(hex_color)
         self._update_preview()
         self.theme_modified.emit(self._tokens)
 
     def _on_series_color_changed(self, slot: int, hex_color: str) -> None:
-        # Pad the list if the loaded theme had fewer entries than slots so
-        # the assignment doesn't IndexError on a sparse legacy theme.
-        while len(self._tokens.chart_series) <= slot:
-            self._tokens.chart_series.append("#888888")
-        self._tokens.chart_series[slot] = hex_color
-        self._series_hex_labels[slot].setText(hex_color)
-        self._update_preview()
-        self.theme_modified.emit(self._tokens)
+        self._apply_series_hex(slot, hex_color)
+
+    def _on_series_hex_edited(self, slot: int) -> None:
+        text = self._series_hex_inputs[slot].text().strip().upper()
+        if is_valid_color(text):
+            self._apply_series_hex(slot, text)
+        else:
+            cur = (
+                self._tokens.chart_series[slot]
+                if slot < len(self._tokens.chart_series)
+                else "#888888"
+            )
+            self._series_hex_inputs[slot].setText(cur)
 
     def _reset_token(self, token_name: str) -> None:
-        default = default_dark_theme()
-        default_value = getattr(default, token_name, "#000000")
-        setattr(self._tokens, token_name, default_value)
-        self._swatches[token_name].set_color(default_value)
-        self._hex_labels[token_name].setText(default_value)
-        self._update_warnings()
-        self._update_preview()
-        self.theme_modified.emit(self._tokens)
+        default_value = getattr(default_dark_theme(), token_name, "#000000")
+        self._apply_hex(token_name, default_value)
 
     def _update_warnings(self) -> None:
         warnings = check_contrast_warnings(self._tokens)
@@ -439,7 +472,7 @@ class ThemeEditorWidget(QWidget):
             self._warnings_label.setText("\n".join(warnings))
             self._warnings_label.setProperty("class", "WarningChip")
         else:
-            self._warnings_label.setText("No contrast issues detected")
+            self._warnings_label.setText("No contrast issues detected (WCAG AA pass).")
             self._warnings_label.setProperty("class", "SuccessChip")
         repolish(self._warnings_label)
 

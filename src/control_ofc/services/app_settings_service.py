@@ -137,7 +137,7 @@ def _as_card_sizes(value: object, default: dict[str, list[int]]) -> dict[str, li
 class AppSettings:
     """GUI preferences. Persisted at ~/.config/control-ofc/app_settings.json."""
 
-    version: int = 1
+    version: int = 2  # DEC-216: bumped for the page-index renumber migration
     default_startup_page: int = 0  # PAGE_DASHBOARD
     restore_last_page: bool = True
     demo_on_disconnect: bool = False
@@ -236,9 +236,23 @@ class AppSettings:
         """
         if not isinstance(data, dict):
             return AppSettings()
+        # DEC-216 migration: the legacy Diagnostics page (stack index 3) was
+        # removed and the pages after it renumbered down one, so decrement any
+        # persisted page index at or past the first shifted page — restore then
+        # lands on the same page. Version-gated + idempotent (reads the original
+        # on-disk value; a versionless legacy file is treated as v1 and migrates).
+        raw_version = _as_int(data.get("version"), 1, lo=1)
+        startup_page = _as_int(data.get("default_startup_page"), 0, lo=0, hi=99)
+        last_page = _as_int(data.get("last_page_index"), 0, lo=0, hi=99)
+        if raw_version < 2:
+            if startup_page >= 4:
+                startup_page -= 1
+            if last_page >= 4:
+                last_page -= 1
+            raw_version = 2
         return AppSettings(
-            version=_as_int(data.get("version"), 1, lo=1),
-            default_startup_page=_as_int(data.get("default_startup_page"), 0, lo=0, hi=99),
+            version=raw_version,
+            default_startup_page=startup_page,
             restore_last_page=_as_bool(data.get("restore_last_page"), True),
             demo_on_disconnect=_as_bool(data.get("demo_on_disconnect"), False),
             chart_default_range_index=_as_int(
@@ -256,7 +270,7 @@ class AppSettings:
             show_aio_pump_info=_as_bool(data.get("show_aio_pump_info"), True),
             daemon_import_prompted=_as_bool(data.get("daemon_import_prompted"), False),
             series_colors=_as_color_dict(data.get("series_colors"), {}),
-            last_page_index=_as_int(data.get("last_page_index"), 0, lo=0, hi=99),
+            last_page_index=last_page,
             window_geometry=_as_geometry(data.get("window_geometry"), [100, 100, 1200, 800]),
             profiles_dir_override=_as_str(data.get("profiles_dir_override"), ""),
             themes_dir_override=_as_str(data.get("themes_dir_override"), ""),

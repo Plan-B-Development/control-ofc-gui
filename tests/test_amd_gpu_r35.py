@@ -7,29 +7,16 @@ resolution.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel
-
 from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
-    ConnectionState,
-    OperationMode,
 )
-from control_ofc.services.app_state import AppState
 from control_ofc.ui.pages.dashboard_page import DashboardPage
-from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
 from control_ofc.ui.widgets.summary_card import SummaryCard
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_state() -> AppState:
-    state = AppState()
-    state.set_connection(ConnectionState.CONNECTED)
-    state.set_mode(OperationMode.AUTOMATIC)
-    return state
 
 
 def _make_gpu_caps(
@@ -204,63 +191,6 @@ class TestSummaryCardSetTitle:
         qtbot.addWidget(card)
         card.set_title("New Title")
         assert card._title_label.text() == "New Title"
-
-
-# ---------------------------------------------------------------------------
-# Diagnostics GPU display tests
-# ---------------------------------------------------------------------------
-
-
-class TestDiagnosticsGpuDisplay:
-    """Diagnostics Overview shows GPU capabilities."""
-
-    def test_gpu_label_exists(self, qtbot):
-        state = _make_state()
-        page = DiagnosticsPage(state=state)
-        qtbot.addWidget(page)
-        label = page.findChild(QLabel, "Diagnostics_Label_amdGpu")
-        assert label is not None
-
-    def test_gpu_label_transparent(self, qtbot):
-        state = _make_state()
-        page = DiagnosticsPage(state=state)
-        qtbot.addWidget(page)
-        label = page.findChild(QLabel, "Diagnostics_Label_amdGpu")
-        assert "transparent" in label.styleSheet().lower()
-
-    def test_gpu_detected_shows_info(self, qtbot):
-        state = _make_state()
-        page = DiagnosticsPage(state=state)
-        qtbot.addWidget(page)
-        caps = _make_gpu_caps()
-        state.set_capabilities(caps)
-        label = page.findChild(QLabel, "Diagnostics_Label_amdGpu")
-        text = label.text()
-        assert "9070XT" in text
-        assert "PCI" in text
-        assert "pmfw_curve" in text
-
-    def test_gpu_not_detected_shows_message(self, qtbot):
-        state = _make_state()
-        page = DiagnosticsPage(state=state)
-        qtbot.addWidget(page)
-        caps = _make_gpu_caps(present=False)
-        state.set_capabilities(caps)
-        label = page.findChild(QLabel, "Diagnostics_Label_amdGpu")
-        assert "Not detected" in label.text()
-
-    def test_gpu_hwmon_pwm_method_shown(self, qtbot):
-        state = _make_state()
-        page = DiagnosticsPage(state=state)
-        qtbot.addWidget(page)
-        caps = _make_gpu_caps(
-            display_label="AMD D-GPU",
-            fan_control_method="hwmon_pwm",
-            pmfw_supported=False,
-        )
-        state.set_capabilities(caps)
-        label = page.findChild(QLabel, "Diagnostics_Label_amdGpu")
-        assert "hwmon_pwm" in label.text()
 
 
 # ---------------------------------------------------------------------------

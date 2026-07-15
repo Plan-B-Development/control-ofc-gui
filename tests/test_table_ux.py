@@ -1,301 +1,58 @@
-"""Tests for table UX improvements: resizable columns, splitter, tooltips, doc links."""
+"""Fan-row tooltip content (migrated from the retired Diagnostics Fans-tab table).
+
+The old ``test_table_ux.py`` asserted table-widget UX (Interactive column resize,
+the hardware-tables splitter, header tooltips, guidance doc-links) on the
+now-retired Diagnostics page. Those tables moved to the live pages over Qt-free
+view-models, so the behaviour is owned elsewhere:
+
+  * fan freshness / control-method / PWM-only synthesis →
+    ``tests/test_overview_view.py`` (``build_fan_rows``) +
+    ``tests/test_overview_page.py``;
+  * chip/module registry table →
+    ``tests/test_system_state_view.py::test_build_registry_rows_unifies_chips_and_modules``
+    + ``tests/test_system_state_page.py::test_registry_table_has_status_pills``;
+  * guidance doc-links → chip tooltips
+    (``tests/test_system_state_view.py::test_registry_chip_tooltip_from_guidance``)
+    and issue-card doc buttons
+    (``tests/test_system_state_page.py::test_doc_link_button_opens_url``).
+
+The one behaviour those live tests do not pin is the *content* of the per-fan row
+tooltip (ID / chip+driver / PWM-only wording), so it is re-vehicled here directly
+onto the ``overview_view.build_fan_rows`` builder that now produces it.
+"""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHeaderView, QLabel, QSplitter, QTableWidget
-
-from control_ofc.api.models import (
-    BoardInfo,
-    ConnectionState,
-    FanReading,
-    HardwareDiagnosticsResult,
-    HwmonChipInfo,
-    HwmonDiagnostics,
-    HwmonHeader,
-    KernelModuleInfo,
-    OperationMode,
-    ThermalSafetyInfo,
-)
-from control_ofc.services.app_state import AppState
-from control_ofc.ui.pages.diagnostics_page import DiagnosticsPage
+from control_ofc.api.models import FanReading, HwmonHeader
+from control_ofc.services.overview_view import build_fan_rows
 
 
-def _make_state() -> AppState:
-    state = AppState()
-    state.set_connection(ConnectionState.CONNECTED)
-    state.set_mode(OperationMode.AUTOMATIC)
-    return state
-
-
-def _make_page(qtbot, state=None):
-    s = state or _make_state()
-    page = DiagnosticsPage(state=s)
-    qtbot.addWidget(page)
-    return page, s
-
-
-def _make_hw_diagnostics(**overrides) -> HardwareDiagnosticsResult:
-    defaults = dict(
-        hwmon=HwmonDiagnostics(
-            chips_detected=[
-                HwmonChipInfo(
-                    chip_name="nct6798",
-                    device_id="nct6798.656",
-                    expected_driver="nct6775",
-                    in_mainline_kernel=True,
-                    header_count=5,
-                ),
-            ],
-            total_headers=5,
-            writable_headers=3,
-        ),
-        thermal_safety=ThermalSafetyInfo(
-            state="normal",
-            cpu_sensor_found=True,
-            emergency_threshold_c=105.0,
-            release_threshold_c=80.0,
-        ),
-        kernel_modules=[
-            KernelModuleInfo(name="nct6775", loaded=True, in_mainline=True),
-        ],
-        board=BoardInfo(vendor="ASUSTeK", name="ROG STRIX X670E"),
+def test_fan_row_tooltip_contains_id():
+    rows = build_fan_rows(
+        [FanReading(id="fan1", source="openfan", rpm=1200, age_ms=100)], [], None, lambda x: x
     )
-    defaults.update(overrides)
-    return HardwareDiagnosticsResult(**defaults)
+    assert "fan1" in rows[0].row_tooltip
 
 
-# ---------------------------------------------------------------------------
-# 1. Resizable columns (Interactive mode)
-# ---------------------------------------------------------------------------
+def test_hwmon_fan_row_tooltip_shows_chip_and_driver():
+    headers = [HwmonHeader(id="hwmon0_fan1", chip_name="nct6798", is_writable=True)]
+    rows = build_fan_rows(
+        [FanReading(id="hwmon0_fan1", source="hwmon", rpm=800, age_ms=50)],
+        headers,
+        None,
+        lambda x: x,
+    )
+    assert "nct6798" in rows[0].row_tooltip  # chip name
+    assert "nct6775" in rows[0].row_tooltip  # resolved driver name via lookup_chip_guidance
 
 
-class TestDiagnosticsResizableColumns:
-    """All diagnostics tables use Interactive resize mode with stretch-last."""
-
-    def test_sensor_table_interactive(self, qtbot):
-        page, _ = _make_page(qtbot)
-        table = page.findChild(QTableWidget, "Diagnostics_Table_sensors")
-        header = table.horizontalHeader()
-        for col in range(table.columnCount()):
-            assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.Interactive
-        assert header.stretchLastSection() is True
-
-    def test_chip_table_interactive(self, qtbot):
-        page, _ = _make_page(qtbot)
-        table = page.findChild(QTableWidget, "Diagnostics_Table_chips")
-        header = table.horizontalHeader()
-        for col in range(table.columnCount()):
-            assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.Interactive
-        assert header.stretchLastSection() is True
-
-    def test_modules_table_interactive(self, qtbot):
-        page, _ = _make_page(qtbot)
-        table = page.findChild(QTableWidget, "Diagnostics_Table_kernelModules")
-        header = table.horizontalHeader()
-        for col in range(table.columnCount()):
-            assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.Interactive
-        assert header.stretchLastSection() is True
-
-    def test_fan_table_interactive(self, qtbot):
-        page, _ = _make_page(qtbot)
-        table = page.findChild(QTableWidget, "Diagnostics_Table_fans")
-        header = table.horizontalHeader()
-        for col in range(table.columnCount()):
-            assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.Interactive
-        assert header.stretchLastSection() is True
-
-
-# ---------------------------------------------------------------------------
-# 2. Draggable splitter in the Troubleshooting tab (hardware tables)
-# ---------------------------------------------------------------------------
-
-
-class TestHwTablesSplitter:
-    """DEC-124 removed the old Fans-tab readiness splitter. The remaining
-    draggable diagnostics splitter nests the chip + kernel-module tables
-    (Diagnostics_Splitter_hwTables) inside the Detected-hardware section on the
-    Troubleshooting tab."""
-
-    def test_splitter_exists(self, qtbot):
-        page, _ = _make_page(qtbot)
-        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_hwTables")
-        assert splitter is not None
-
-    def test_splitter_vertical(self, qtbot):
-        page, _ = _make_page(qtbot)
-        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_hwTables")
-        assert splitter.orientation() == Qt.Orientation.Vertical
-
-    def test_splitter_not_collapsible(self, qtbot):
-        page, _ = _make_page(qtbot)
-        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_hwTables")
-        assert splitter.childrenCollapsible() is False
-
-    def test_splitter_has_two_children(self, qtbot):
-        page, _ = _make_page(qtbot)
-        splitter = page.findChild(QSplitter, "Diagnostics_Splitter_hwTables")
-        assert splitter.count() == 2
-
-
-# ---------------------------------------------------------------------------
-# 3. Tooltips on Fans tab headers and cells
-# ---------------------------------------------------------------------------
-
-
-class TestFanTableHeaderTooltips:
-    """Fan table column headers have descriptive tooltips."""
-
-    def test_all_headers_have_tooltips(self, qtbot):
-        page, _ = _make_page(qtbot)
-        table = page.findChild(QTableWidget, "Diagnostics_Table_fans")
-        for col in range(table.columnCount()):
-            item = table.horizontalHeaderItem(col)
-            assert item is not None
-            assert len(item.toolTip()) > 0, f"Column {col} missing tooltip"
-
-    def test_id_header_tooltip(self, qtbot):
-        page, _ = _make_page(qtbot)
-        table = page.findChild(QTableWidget, "Diagnostics_Table_fans")
-        assert "identifier" in table.horizontalHeaderItem(0).toolTip().lower()
-
-    def test_freshness_header_tooltip(self, qtbot):
-        page, _ = _make_page(qtbot)
-        table = page.findChild(QTableWidget, "Diagnostics_Table_fans")
-        # Freshness moved from column 4 to column 5 after the Control method
-        # column was added at index 2 (DIAGNOSTICS_REMEDIATION.md P1.2).
-        tip = table.horizontalHeaderItem(5).toolTip()
-        assert "freshness" in tip.lower()
-        assert "stale" in tip.lower()
-        # Thresholds must match FanReading.freshness() (2 s / 10 s), not the old
-        # 2-5 s / >5 s text the tooltip used to claim.
-        assert "2-10 s" in tip
-        assert ">10 s" in tip
-
-
-class TestFanTableCellTooltips:
-    """Fan table cells get per-row tooltips on data update."""
-
-    def test_fan_cell_tooltip_contains_id(self, qtbot):
-        state = _make_state()
-        page, _ = _make_page(qtbot, state=state)
-        fans = [FanReading(id="fan1", source="openfan", rpm=1200, age_ms=100)]
-        page._on_fans(fans)
-        item = page._fan_table.item(0, 0)
-        assert "fan1" in item.toolTip()
-
-    def test_hwmon_fan_tooltip_shows_chip(self, qtbot):
-        state = _make_state()
-        state.hwmon_headers = [
-            HwmonHeader(id="hwmon0_fan1", chip_name="nct6798", is_writable=True),
-        ]
-        page, _ = _make_page(qtbot, state=state)
-        fans = [FanReading(id="hwmon0_fan1", source="hwmon", rpm=800, age_ms=50)]
-        page._on_fans(fans)
-        tip = page._fan_table.item(0, 0).toolTip()
-        assert "nct6798" in tip
-        assert "nct6775" in tip  # driver name
-
-    def test_pwm_only_tooltip_says_no_rpm(self, qtbot):
-        state = _make_state()
-        state.hwmon_headers = [
-            HwmonHeader(id="hwmon0_pwm3", chip_name="nct6798", is_writable=False),
-        ]
-        page, _ = _make_page(qtbot, state=state)
-        page._on_fans([])  # no real fans, just pwm_only
-        tip = page._fan_table.item(0, 0).toolTip()
-        assert "PWM output only" in tip
-        assert "read-only" in tip
-
-    def test_non_method_cells_in_row_share_row_tooltip(self, qtbot):
-        """Every cell except the Control method column (index 2) carries the
-        same row-level tooltip. The Control method cell intentionally carries
-        a method-specific tooltip — tested separately in
-        tests/test_diagnostics_enumeration.py (P1.2).
-        """
-        state = _make_state()
-        page, _ = _make_page(qtbot, state=state)
-        fans = [FanReading(id="fan1", source="openfan", rpm=1200, age_ms=100)]
-        page._on_fans(fans)
-        tip0 = page._fan_table.item(0, 0).toolTip()
-        # Columns 1, 3, 4, 5 all get the row tooltip. Column 2 is skipped —
-        # it carries the Control method tooltip instead.
-        for col in (1, 3, 4, 5):
-            assert page._fan_table.item(0, col).toolTip() == tip0
-
-
-class TestChipTableHeaderTooltips:
-    """Chip and modules tables also have header tooltips."""
-
-    def test_chip_table_headers_have_tooltips(self, qtbot):
-        page, _ = _make_page(qtbot)
-        table = page.findChild(QTableWidget, "Diagnostics_Table_chips")
-        for col in range(table.columnCount()):
-            item = table.horizontalHeaderItem(col)
-            assert item is not None
-            assert len(item.toolTip()) > 0, f"Chip table column {col} missing tooltip"
-
-    def test_modules_table_headers_have_tooltips(self, qtbot):
-        page, _ = _make_page(qtbot)
-        table = page.findChild(QTableWidget, "Diagnostics_Table_kernelModules")
-        for col in range(table.columnCount()):
-            item = table.horizontalHeaderItem(col)
-            assert item is not None
-            assert len(item.toolTip()) > 0, f"Modules table column {col} missing tooltip"
-
-
-# ---------------------------------------------------------------------------
-# 4. Clickable documentation links
-# ---------------------------------------------------------------------------
-
-
-class TestGuidanceLinks:
-    """Guidance section uses rich text with clickable driver doc links."""
-
-    def test_guidance_label_is_rich_text(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_guidance")
-        assert label.textFormat() == Qt.TextFormat.RichText
-
-    def test_guidance_label_opens_external_links(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_guidance")
-        assert label.openExternalLinks() is True
-
-    def test_guidance_contains_clickable_driver_link(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_hw_diagnostics()
-        page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_guidance")
-        text = label.text()
-        assert '<a href="' in text
-        assert "kernel.org" in text or "github.com" in text
-
-    def test_docs_link_label_exists(self, qtbot):
-        page, _ = _make_page(qtbot)
-        label = page.findChild(QLabel, "Diagnostics_Label_docsLink")
-        assert label is not None
-        assert label.textFormat() == Qt.TextFormat.RichText
-        assert label.openExternalLinks() is True
-
-    def test_docs_link_shown_when_chips_detected(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_hw_diagnostics()
-        page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_docsLink")
-        assert not label.isHidden()
-        assert "Hardware Compatibility Guide" in label.text()
-        assert '<a href="' in label.text()
-
-    def test_docs_link_hidden_when_no_chips(self, qtbot):
-        page, _ = _make_page(qtbot)
-        diag = _make_hw_diagnostics(
-            hwmon=HwmonDiagnostics(
-                chips_detected=[],
-                total_headers=0,
-                writable_headers=0,
-            )
-        )
-        page._populate_hw_diagnostics(diag)
-        label = page.findChild(QLabel, "Diagnostics_Label_docsLink")
-        assert label.isHidden()
+def test_pwm_only_row_tooltip_says_no_rpm_and_read_only():
+    rows = build_fan_rows(
+        [],
+        [HwmonHeader(id="hwmon0_pwm3", chip_name="nct6798", is_writable=False)],
+        None,
+        lambda x: x,
+    )
+    assert rows[0].is_pwm_only
+    assert "PWM output only" in rows[0].row_tooltip
+    assert "read-only" in rows[0].row_tooltip

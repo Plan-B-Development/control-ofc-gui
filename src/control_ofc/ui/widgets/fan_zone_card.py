@@ -51,6 +51,7 @@ from control_ofc.services.profile_service import (
 from control_ofc.ui.qt_util import repolish
 from control_ofc.ui.widgets.flow_layout import FlowLayout
 from control_ofc.ui.widgets.reorderable_flow import ReorderableFlow
+from control_ofc.ui.widgets.rpm_sparkline import RpmSparkline
 
 # Per-state presentation: (glyph, qss status class). Glyph + the state's text
 # label means the chip is never distinguished by colour alone (WCAG 1.4.1). The
@@ -84,6 +85,10 @@ _ROLE_LABELS: dict[str, str] = {
 _EM_DASH = "—"
 _UNASSIGNED_LABEL = "(Unassigned)"
 _MANY_TILES = 8  # group tile count above which the tiles start collapsed
+
+# States that tint the RPM sparkline with the warning colour (a fault, or a fan
+# not reporting) — OVERRIDE / NORMAL paint the accent colour (DEC-213).
+_WARN_STATES = {FanState.LOW_RPM, FanState.STALE, FanState.STALL, FanState.OFFLINE}
 
 
 def _sanitize(token: str) -> str:
@@ -128,15 +133,33 @@ class FanTile(QFrame):
         lay.setContentsMargins(8, 6, 8, 6)
         lay.setSpacing(2)
 
+        sid = _sanitize(vm.fan_id)
         self._name_label = QLabel()
-        self._name_label.setObjectName(f"FanZone_Tile_name_{_sanitize(vm.fan_id)}")
+        self._name_label.setObjectName(f"FanZone_Tile_name_{sid}")
         self._name_label.setProperty("class", "FanTileName")
         self._metrics_label = QLabel()
-        self._metrics_label.setObjectName(f"FanZone_Tile_metrics_{_sanitize(vm.fan_id)}")
+        self._metrics_label.setObjectName(f"FanZone_Tile_metrics_{sid}")
+        # DEC-213: curve-driving sensor temp (read-only) + a static RPM sparkline.
+        self._temp_label = QLabel()
+        self._temp_label.setObjectName(f"FanZone_Tile_temp_{sid}")
+        self._temp_label.setProperty("class", "CardMeta")
+        self._sparkline = RpmSparkline(object_name=f"FanZone_Tile_spark_{sid}")
         self._status_label = QLabel()
-        self._status_label.setObjectName(f"FanZone_Tile_status_{_sanitize(vm.fan_id)}")
-        for w in (self._name_label, self._metrics_label, self._status_label):
-            lay.addWidget(w)
+        self._status_label.setObjectName(f"FanZone_Tile_status_{sid}")
+        self._mode_label = QLabel()  # read-only AUTO / MANUAL (never a toggle/write)
+        self._mode_label.setObjectName(f"FanZone_Tile_mode_{sid}")
+        self._mode_label.setProperty("class", "SmallLabel")
+
+        lay.addWidget(self._name_label)
+        lay.addWidget(self._metrics_label)
+        lay.addWidget(self._temp_label)
+        lay.addWidget(self._sparkline)
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.addWidget(self._status_label)
+        status_row.addStretch(1)
+        status_row.addWidget(self._mode_label)
+        lay.addLayout(status_row)
 
         self._render()
 
@@ -169,6 +192,13 @@ class FanTile(QFrame):
         # Accessible name carries the state in text so it is not colour-only.
         self.setAccessibleName(f"{vm.display_name}: {vm.state.value}")
         repolish(self._status_label)
+        # DEC-213: curve-sensor temp ("—" when the fan has no curve/sensor), the
+        # static RPM sparkline (warn-tinted on a fault), and the read-only mode.
+        self._temp_label.setText(
+            f"{vm.curve_temp:.0f}°C" if vm.curve_temp is not None else _EM_DASH
+        )
+        self._sparkline.set_points(vm.rpm_spark, warn=vm.state in _WARN_STATES)
+        self._mode_label.setText("MANUAL" if vm.state == FanState.OVERRIDE else "AUTO")
 
     # ── detail text (pure, unit-testable) ────────────────────────────
     def detail_text(self) -> str:
@@ -201,7 +231,8 @@ class FanTile(QFrame):
             f"Controlled by daemon: {'yes' if vm.controlled_by_daemon else 'no'} (approx)",
         ]
         if vm.curve_source:
-            lines.append(f"Curve sensor: {vm.curve_source}")
+            temp = f" ({vm.curve_temp:.0f}°C)" if vm.curve_temp is not None else ""
+            lines.append(f"Curve sensor: {vm.curve_source}{temp}")
         if vm.age_ms is not None:
             lines.append(f"Last update: {vm.age_ms / 1000:.1f}s ago")
         return "\n".join(lines)

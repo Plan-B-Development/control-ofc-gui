@@ -1,38 +1,48 @@
-"""Member editor dialog — assign physical fan outputs to a logical control."""
+"""Member editor dialog — assign physical fan outputs to a logical control.
+
+DEC-214 restyle: built over the shared ``ModalDialog`` frame with the mockup's
+Available Outputs ↔ Selected Members transfer list (source-prefixed rows with live
+RPM + "Assigned" dimming + →/← buttons), live counts, and a Cancel / Apply Changes
+footer. The constructor signature, objectNames, and ``get_members()`` are preserved.
+Per-fan RPM is shown only when the caller supplies it (an ``rpm`` key per output) —
+never fabricated.
+"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QVBoxLayout,
 )
 
 from control_ofc.services.profile_service import ControlMember
+from control_ofc.ui.components.buttons import make_button
+from control_ofc.ui.components.dialog import ModalDialog
 
 
-class MemberEditorDialog(QDialog):
+class MemberEditorDialog(ModalDialog):
     """Dialog for editing which physical outputs belong to a logical control."""
 
     def __init__(
         self,
         current_members: list[ControlMember],
-        available_outputs: list[dict],  # [{id, source, label}, ...]
+        available_outputs: list[dict],  # [{id, source, label, rpm?}, ...]
         assigned_elsewhere: dict[str, str] | None = None,  # fan_id -> role_name
+        role_name: str = "",
         parent=None,
     ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Edit Members")
-        self.setMinimumSize(500, 350)
+        super().__init__(f"Edit Role: {role_name}" if role_name else "Edit Members", parent)
+        self.setMinimumSize(560, 400)
 
         self._result_members: list[ControlMember] = []
+        # Live RPM per output id (None = present-but-no-fan); absent id = unknown.
+        self._rpm_by_id = {out["id"]: out.get("rpm") for out in available_outputs if "rpm" in out}
 
-        layout = QVBoxLayout(self)
+        layout = self.body_layout()
 
         # Instructions
         label = QLabel("Assign physical fan outputs to this control group.")
@@ -42,26 +52,29 @@ class MemberEditorDialog(QDialog):
         # Two lists side by side
         lists = QHBoxLayout()
 
-        # Left: available
+        # Left: available (header with a live "N found" count)
         left = QVBoxLayout()
-        left.addWidget(QLabel("Available Outputs"))
+        avail_header = QHBoxLayout()
+        avail_header.addWidget(QLabel("Available Outputs"), 1)
+        self._available_count = QLabel("")
+        self._available_count.setProperty("class", "CardMeta")
+        avail_header.addWidget(self._available_count)
+        left.addLayout(avail_header)
         self._available_list = QListWidget()
         self._available_list.setObjectName("MemberEditor_List_available")
         self._available_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         left.addWidget(self._available_list)
         lists.addLayout(left)
 
-        # Center: add/remove buttons
+        # Center: add/remove buttons (mockup arrows)
         center = QVBoxLayout()
         center.addStretch()
-        self._add_btn = QPushButton(">")
-        self._add_btn.setObjectName("MemberEditor_Btn_add")
+        self._add_btn = make_button("→", "secondary", object_name="MemberEditor_Btn_add")
         self._add_btn.setToolTip("Add selected outputs to this control")
         self._add_btn.setFixedWidth(40)
         self._add_btn.clicked.connect(self._on_add)
         center.addWidget(self._add_btn)
-        self._remove_btn = QPushButton("<")
-        self._remove_btn.setObjectName("MemberEditor_Btn_remove")
+        self._remove_btn = make_button("←", "secondary", object_name="MemberEditor_Btn_remove")
         self._remove_btn.setToolTip("Remove selected outputs from this control")
         self._remove_btn.setFixedWidth(40)
         self._remove_btn.clicked.connect(self._on_remove)
@@ -69,9 +82,14 @@ class MemberEditorDialog(QDialog):
         center.addStretch()
         lists.addLayout(center)
 
-        # Right: selected
+        # Right: selected (header with a live "N assigned" count)
         right = QVBoxLayout()
-        right.addWidget(QLabel("Selected Members"))
+        sel_header = QHBoxLayout()
+        sel_header.addWidget(QLabel("Selected Members"), 1)
+        self._selected_count = QLabel("")
+        self._selected_count.setProperty("class", "CardMeta")
+        sel_header.addWidget(self._selected_count)
+        right.addLayout(sel_header)
         self._selected_list = QListWidget()
         self._selected_list.setObjectName("MemberEditor_List_selected")
         self._selected_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
@@ -80,17 +98,17 @@ class MemberEditorDialog(QDialog):
 
         layout.addLayout(lists)
 
-        # OK / Cancel
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        ok_btn = QPushButton("Apply")
-        ok_btn.setObjectName("MemberEditor_Btn_apply")
-        ok_btn.clicked.connect(self.accept)
-        btn_row.addWidget(ok_btn)
-        cancel_btn = QPushButton("Cancel")
+        # Footer: multi-select hint (left) | Cancel | Apply Changes
+        hint = QLabel("Multi-select with Shift/Ctrl")
+        hint.setObjectName("MemberEditor_Label_hint")
+        hint.setProperty("class", "CardMeta")
+        self._footer_layout.insertWidget(0, hint)
+        cancel_btn = self.add_footer_button("Cancel", "ghost")
         cancel_btn.clicked.connect(self.reject)
-        btn_row.addWidget(cancel_btn)
-        layout.addLayout(btn_row)
+        apply_btn = self.add_footer_button(
+            "Apply Changes", "primary", object_name="MemberEditor_Btn_apply"
+        )
+        apply_btn.clicked.connect(self.accept)
 
         # Populate
         current_ids = {m.member_id for m in current_members}
@@ -100,22 +118,24 @@ class MemberEditorDialog(QDialog):
         for out in available_outputs:
             if out["id"] not in current_ids:
                 label_text = f"[{out['source']}] {out['label'] or out['id']}"
-                role_name = assigned.get(out["id"])
-                if role_name:
-                    label_text += f"  (Assigned to: {role_name})"
+                label_text += self._rpm_suffix(out["id"])
+                role_name_for = assigned.get(out["id"])
+                if role_name_for:
+                    label_text += f"  (Assigned to: {role_name_for})"
                 item = QListWidgetItem(label_text)
                 item.setData(Qt.ItemDataRole.UserRole, out)
-                if role_name:
+                if role_name_for:
                     item.setFlags(
                         item.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled
                     )
-                    item.setToolTip(f"Already assigned to fan role: {role_name}")
+                    item.setToolTip(f"Already assigned to fan role: {role_name_for}")
                 elif out.get("tooltip"):
                     item.setToolTip(out["tooltip"])
                 self._available_list.addItem(item)
 
         for m in current_members:
-            item = QListWidgetItem(f"[{m.source}] {m.member_label or m.member_id}")
+            text = f"[{m.source}] {m.member_label or m.member_id}" + self._rpm_suffix(m.member_id)
+            item = QListWidgetItem(text)
             item.setData(
                 Qt.ItemDataRole.UserRole,
                 {
@@ -126,17 +146,32 @@ class MemberEditorDialog(QDialog):
             )
             self._selected_list.addItem(item)
 
+        self._update_counts()
+
+    def _rpm_suffix(self, item_id: str) -> str:
+        """Live-RPM suffix for a row, or empty when the caller gave no reading."""
+        if item_id not in self._rpm_by_id:
+            return ""
+        rpm = self._rpm_by_id[item_id]
+        return f" · {rpm} RPM" if rpm is not None else " · no fan"
+
+    def _update_counts(self) -> None:
+        self._available_count.setText(f"{self._available_list.count()} found")
+        self._selected_count.setText(f"{self._selected_list.count()} assigned")
+
     def _on_add(self) -> None:
         for item in self._available_list.selectedItems():
             row = self._available_list.row(item)
             taken = self._available_list.takeItem(row)
             self._selected_list.addItem(taken)
+        self._update_counts()
 
     def _on_remove(self) -> None:
         for item in self._selected_list.selectedItems():
             row = self._selected_list.row(item)
             taken = self._selected_list.takeItem(row)
             self._available_list.addItem(taken)
+        self._update_counts()
 
     def get_members(self) -> list[ControlMember]:
         """Return the edited member list (call after accept)."""

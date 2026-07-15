@@ -30,7 +30,7 @@ class TestDashboardInspectorWidget:
         assert insp.findChildren(QTabWidget) == []
         heading = insp.findChild(QLabel, "Inspector_Heading")
         assert heading is not None
-        assert heading.text() == "Sensors"
+        assert heading.text() == "Thermal Sensors"  # DEC-213 rename
 
     def test_hosts_the_sensors_widget(self, qtbot):
         insp, sensors = self._make(qtbot)

@@ -89,6 +89,7 @@ class TestEditMembersPickerFiltersUnwritableHeaders:
                 _current_members,
                 available,
                 _assigned_elsewhere=None,
+                role_name="",
                 parent=None,
             ):
                 captured["available"] = available

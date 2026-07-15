@@ -39,26 +39,26 @@ def window(qtbot, app_state, profile_service, settings_service):
 
 class TestControlsContracts:
     def test_activate_sets_active_profile(self, qtbot, window, profile_service):
-        """Click activate → profile_activated signal + active label updates."""
-        controls = window.controls_page
-        combo = controls._profile_combo
+        """DEC-214: activation moved to the sidebar Apply button, which drives the
+        shared ProfileService.activate path (the Controls page dropped its own
+        combo + Activate button)."""
+        combo = window.sidebar.profile_combo
 
         if combo.count() < 2:
             pytest.skip("Need at least 2 profiles")
         combo.setCurrentIndex(1)
         target_id = combo.currentData()
 
-        activate_btn = window.findChild(QPushButton, "Controls_Btn_activate")
-        with qtbot.waitSignal(controls.profile_activated, timeout=1000):
-            qtbot.mouseClick(activate_btn, Qt.MouseButton.LeftButton)
+        apply_btn = window.findChild(QPushButton, "Sidebar_Btn_applyProfile")
+        qtbot.mouseClick(apply_btn, Qt.MouseButton.LeftButton)
 
         assert profile_service.active_id == target_id
 
     def test_delete_removes_profile(self, qtbot, window, profile_service, monkeypatch):
-        """Delete profile via handler → combo count decreases."""
+        """Delete profile via handler → the profile store shrinks by one (DEC-214:
+        the page combo is gone; assert against the service)."""
         controls = window.controls_page
-        combo = controls._profile_combo
-        initial_count = combo.count()
+        initial_count = len(profile_service.profiles)
         assert initial_count > 0
 
         # The autouse modal guard declines confirmations by default; opt into
@@ -70,12 +70,12 @@ class TestControlsContracts:
         # Call delete directly since it's now in a menu
         controls._on_delete_profile()
 
-        assert combo.count() == initial_count - 1
+        assert len(profile_service.profiles) == initial_count - 1
 
     def test_save_persists_profile(self, qtbot, window, profile_service):
         """Mark unsaved, click save → unsaved cleared, profile persists."""
         controls = window.controls_page
-        profile_id = controls._profile_combo.currentData()
+        profile_id = controls._get_current_profile().id
 
         controls._set_unsaved(True)
         assert controls._has_unsaved
@@ -105,14 +105,9 @@ class TestControlsContracts:
         profile_service.set_active("sel_test")
 
         controls = window.controls_page
-        controls._refresh_profile_combo()
-        # Select the profile we just created
-        combo = controls._profile_combo
-        for i in range(combo.count()):
-            if combo.itemData(i) == "sel_test":
-                combo.setCurrentIndex(i)
-                break
-        controls._refresh_all()  # ensure cards are built for the selected profile
+        # DEC-214: view the profile on the page (replaces the removed combo select);
+        # this refreshes and builds the cards for it.
+        controls.select_profile("sel_test")
 
         card = controls._control_cards.get("sel_ctrl")
         assert card is not None
@@ -155,13 +150,8 @@ class TestControlsContracts:
         profile_service.set_active("del_test")
 
         controls = window.controls_page
-        controls._refresh_profile_combo()
-        combo = controls._profile_combo
-        for i in range(combo.count()):
-            if combo.itemData(i) == "del_test":
-                combo.setCurrentIndex(i)
-                break
-        controls._refresh_all()
+        # DEC-214: view the profile on the page (replaces the removed combo select).
+        controls.select_profile("del_test")
 
         # Delete the curve
         controls._on_delete_curve("del_c1")
@@ -199,36 +189,29 @@ class TestSettingsContracts:
 # ---------------------------------------------------------------------------
 
 
-class TestDiagnosticsContracts:
-    def test_refresh_repopulates_from_state(self, qtbot, window, app_state):
-        """Populate state, click refresh → tables have rows."""
-        from control_ofc.api.models import Capabilities, DaemonStatus, SensorReading
+class TestFooterActionContracts:
+    """DEC-216: the global footer's Rescan/Export actions relocated off the
+    retired Diagnostics page — Rescan to System State, Export to Logs."""
 
-        app_state.set_capabilities(Capabilities(daemon_version="0.2.0"))
-        app_state.set_status(DaemonStatus(overall_status="ok"))
-        app_state.set_sensors(
-            [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=42.0, age_ms=100),
-            ]
-        )
-
-        diag = window.diagnostics_page
-
-        refresh_btn = window.findChild(QPushButton, "Diagnostics_Btn_refreshOverview")
-        qtbot.mouseClick(refresh_btn, Qt.MouseButton.LeftButton)
-
-        assert diag._sensor_table.rowCount() == 1
-
-    def test_export_bundle_creates_file(self, qtbot, window, tmp_path):
-        """Mock QFileDialog → click export → assert file written."""
+    def test_export_bundle_via_footer_writes_file(self, qtbot, window, tmp_path):
+        """Fire the footer Export signal → the Logs page's bundle handler runs."""
         dest = tmp_path / "bundle.json"
 
         with patch(
-            "control_ofc.ui.pages.diagnostics_page.QFileDialog.getSaveFileName",
+            "control_ofc.ui.pages.logs_page.QFileDialog.getSaveFileName",
             return_value=(str(dest), "JSON files (*.json)"),
         ):
-            export_btn = window.findChild(QPushButton, "Diagnostics_Btn_export")
-            qtbot.mouseClick(export_btn, Qt.MouseButton.LeftButton)
+            window.footer.export_bundle_clicked.emit()
 
         assert dest.exists()
         assert dest.stat().st_size > 0
+
+    def test_rescan_via_footer_surfaces_system_state(self, qtbot, window):
+        """Fire the footer Rescan signal → the System State page is surfaced and
+        its rescan-result line is populated (no-client demo → an error line)."""
+        from control_ofc.constants import PAGE_SYSTEM_STATE
+
+        window.footer.rescan_clicked.emit()
+
+        assert window.page_stack.currentIndex() == PAGE_SYSTEM_STATE
+        assert window.system_state_page._rescan_result_label.text() != ""

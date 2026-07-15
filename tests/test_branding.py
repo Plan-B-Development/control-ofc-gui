@@ -109,23 +109,24 @@ class TestAboutDialog:
 # ---------------------------------------------------------------------------
 
 
-class TestSidebarBrand:
-    def test_sidebar_renders_text_brand(self, qtbot):
-        """Sidebar must render the text brand label, not an image."""
+class TestBrandMark:
+    """The brand wordmark moved from the sidebar to the top status ribbon
+    (DEC-208); it is still text, never a banner image."""
+
+    def test_ribbon_renders_text_brand(self, qtbot):
         from PySide6.QtWidgets import QLabel
 
-        from control_ofc.ui.sidebar import Sidebar
+        from control_ofc.ui.status_ribbon import StatusRibbon
 
-        sidebar = Sidebar()
-        qtbot.addWidget(sidebar)
+        ribbon = StatusRibbon()
+        qtbot.addWidget(ribbon)
 
-        text_label = sidebar.findChild(QLabel, "Sidebar_Brand_text")
+        text_label = ribbon.findChild(QLabel, "StatusRibbon_Brand_text")
         assert text_label is not None
         assert text_label.text() == "Control-OFC"
 
-    def test_sidebar_has_no_brand_image(self, qtbot):
-        """Sidebar must not render a banner image even if one happens to
-        appear under assets/branding/."""
+    def test_sidebar_no_longer_renders_brand_text(self, qtbot):
+        """The brand moved to the ribbon — the sidebar must not duplicate it."""
         from PySide6.QtWidgets import QLabel
 
         from control_ofc.ui.sidebar import Sidebar
@@ -133,5 +134,20 @@ class TestSidebarBrand:
         sidebar = Sidebar()
         qtbot.addWidget(sidebar)
 
-        image_label = sidebar.findChild(QLabel, "Sidebar_Brand_image")
-        assert image_label is None
+        assert sidebar.findChild(QLabel, "Sidebar_Brand_text") is None
+
+    def test_no_brand_image_objectname_anywhere(self, qtbot):
+        """No banner image is rendered — brand is always text (a small icon in
+        the ribbon is fine, but never a ``*_Brand_image`` label)."""
+        from PySide6.QtWidgets import QLabel
+
+        from control_ofc.ui.sidebar import Sidebar
+        from control_ofc.ui.status_ribbon import StatusRibbon
+
+        sidebar = Sidebar()
+        qtbot.addWidget(sidebar)
+        ribbon = StatusRibbon()
+        qtbot.addWidget(ribbon)
+
+        assert sidebar.findChild(QLabel, "Sidebar_Brand_image") is None
+        assert ribbon.findChild(QLabel, "StatusRibbon_Brand_image") is None

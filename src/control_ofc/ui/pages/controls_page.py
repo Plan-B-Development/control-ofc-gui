@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QComboBox,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -31,6 +31,7 @@ from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import ConnectionState, DaemonStatus
 from control_ofc.knowledge.sensor_knowledge import classify_sensor_with_overrides
 from control_ofc.services.app_state import AppState
+from control_ofc.services.controls_view import member_rpm_map, unassigned_fan_ids
 from control_ofc.services.profile_service import (
     CONTROL_ROLE_GPU,
     ControlMode,
@@ -45,6 +46,8 @@ from control_ofc.services.profile_service import (
     mix_candidate_curves,
     sync_candidate_controls,
 )
+from control_ofc.ui.components.buttons import make_button
+from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.fan_presence import (
     PRESENCE_BADGE,
     PRESENCE_TOOLTIP,
@@ -52,7 +55,7 @@ from control_ofc.ui.fan_presence import (
     classify_fan_presence,
 )
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
-from control_ofc.ui.qt_util import block_signals, repolish, set_chip_class
+from control_ofc.ui.qt_util import repolish, set_chip_class
 from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
@@ -107,9 +110,9 @@ class ControlsPage(QWidget):
         self._curve_cards: dict[str, CurveCard] = {}
         self._selected_control_id: str | None = None
         self._has_unsaved: bool = False
-        # Profile id whose content the page currently displays. Tracked so the
-        # unsaved-edit guard in _on_profile_selected can revert the combo to the
-        # prior selection when the user declines to discard in-progress edits.
+        # Profile id whose content the page currently displays (set by
+        # _refresh_all). Retained for reference; the unsaved-edit guard now lives
+        # in main_window's sidebar apply flow (DEC-214).
         self._loaded_profile_id: str | None = None
         # Last-known card-writability. Cards are disabled when the daemon reports
         # no writable backend OR is not autonomous (pre-2.0, where override is
@@ -148,144 +151,162 @@ class ControlsPage(QWidget):
         self._override_value_timer.setInterval(self._OVERRIDE_VALUE_DEBOUNCE_MS)
         self._override_value_timer.timeout.connect(self._flush_override_values)
 
+        # DEC-214: the page now edits the active/sidebar-selected profile. A
+        # non-None _viewed_profile_id lets a freshly-created draft (New/Duplicate)
+        # be edited without activating it; otherwise _get_current_profile falls
+        # back to the active profile.
+        self._viewed_profile_id: str | None = None
+        # DEC-214: the curve editor is always mounted now, so gate its ~1 Hz
+        # current-temp marker on page visibility — no pyqtgraph item churn while
+        # the Controls page is hidden (the gaming-perf rule).
+        self._page_visible = True
+
+        self.setObjectName("Controls_Root")
+
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(12, 8, 12, 8)
-        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(16, 12, 16, 12)
+        main_layout.setSpacing(10)
 
-        # ─── Profile bar (top) ───────────────────────────────────────
-        main_layout.addLayout(self._build_profile_bar())
+        # ─── Header: title + Auto-Connect Wizard + Save Profile + overflow ───
+        main_layout.addLayout(self._build_header())
 
-        # ─── Splitter: Fan Roles (top) / Curves (bottom) ─────────────
-        self._splitter = QSplitter(Qt.Orientation.Vertical)
+        # ─── 3-pane layout (DEC-214): Assign Roles | Link Logic | Curve Editor ─
+        # Outer horizontal splitter [pane1, curves_section]; the inner horizontal
+        # splitter (curves_section) holds [Link Logic, Curve Editor]; net width
+        # ratio 1 : 1 : 2. Both splitter objectNames carry over from the old
+        # vertical layout so the existence/count/collapsible tests stay green.
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.setObjectName("Controls_Splitter_sections")
 
-        # ─── Top pane: Fan Roles ──────────────────────────────────────
-        top_pane = QWidget()
-        top_layout = QVBoxLayout(top_pane)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(8)
-
-        controls_header = QHBoxLayout()
-        controls_title = QLabel("Fan Roles")
-        controls_title.setProperty("class", "PageTitle")
-        controls_header.addWidget(controls_title)
-        controls_header.addStretch()
-        self._wizard_btn = QPushButton("Fan Wizard")
-        self._wizard_btn.setObjectName("Controls_Btn_fanWizard")
-        self._wizard_btn.setToolTip("Identify and label your fans")
-        self._wizard_btn.clicked.connect(self._on_fan_wizard)
-        controls_header.addWidget(self._wizard_btn)
-
-        # DEC-157: one-click liquid-cooler setup. Hidden until an AIO is
-        # detected (see _on_capabilities_updated).
-        self._configure_aio_btn = QPushButton("Configure AIO")
-        self._configure_aio_btn.setObjectName("Controls_Btn_configureAio")
-        self._configure_aio_btn.setToolTip(
-            "One-click setup for a liquid cooler — a constant-speed pump and a radiator-fan group"
-        )
-        self._configure_aio_btn.clicked.connect(self._on_configure_aio)
-        self._configure_aio_btn.setVisible(False)
-        controls_header.addWidget(self._configure_aio_btn)
-
-        self._add_control_btn = QPushButton("+ Fan Role")
-        self._add_control_btn.setObjectName("Controls_Btn_newControl")
+        # ── Pane 1: Assign Roles ──
+        pane1 = QWidget()
+        pane1.setMinimumWidth(300)  # ≥ the comfortable card width so cards never clip
+        p1_layout = QVBoxLayout(pane1)
+        p1_layout.setContentsMargins(0, 0, 0, 0)
+        p1_layout.setSpacing(6)
+        roles_header = SectionHeader("1. Assign Roles", object_name="Controls_Section_assignRoles")
+        self._add_control_btn = make_button("+", "secondary", object_name="Controls_Btn_newControl")
         self._add_control_btn.setToolTip("Create a new fan role")
+        self._add_control_btn.setFixedWidth(32)
         self._add_control_btn.clicked.connect(self._on_new_control_menu)
-        controls_header.addWidget(self._add_control_btn)
-        top_layout.addLayout(controls_header)
+        roles_header.add_trailing(self._add_control_btn)
+        p1_layout.addWidget(roles_header)
 
-        self._controls_empty = QLabel("No fan roles configured. Click + Fan Role to create one.")
+        self._controls_empty = QLabel("No fan roles configured. Click + to create one.")
         self._controls_empty.setProperty("class", "PageSubtitle")
         self._controls_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._controls_empty.setWordWrap(True)
-        top_layout.addWidget(self._controls_empty)
+        p1_layout.addWidget(self._controls_empty)
 
         self._controls_scroll = QScrollArea()
         self._controls_scroll.setWidgetResizable(True)
+        self._controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._controls_flow = DraggableFlowContainer()
         self._controls_flow.order_changed.connect(self._on_controls_reordered)
         self._controls_scroll.setWidget(self._controls_flow)
-        top_layout.addWidget(self._controls_scroll, 1)
+        p1_layout.addWidget(self._controls_scroll, 1)
 
-        top_pane.setMinimumHeight(120)
-        self._splitter.addWidget(top_pane)
+        # Unassigned Fans dropzone (mockup) — a passive count pinned at the bottom
+        # (fed by _on_fan_rpm_updated via services/controls_view.unassigned_fans).
+        self._unassigned_label = QLabel("Unassigned Fans (0)")
+        self._unassigned_label.setObjectName("Controls_Label_unassigned")
+        self._unassigned_label.setProperty("class", "CardMeta")
+        self._unassigned_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        p1_layout.addWidget(self._unassigned_label)
+
+        self._splitter.addWidget(pane1)
 
         # ─── Bottom pane: Curves (with drag-to-reorder) ──────────────
         self._curves_section = QWidget()
         curves_section_layout = QVBoxLayout(self._curves_section)
         curves_section_layout.setContentsMargins(0, 0, 0, 0)
-        curves_section_layout.setSpacing(8)
+        curves_section_layout.setSpacing(0)
 
-        curves_header = QHBoxLayout()
-        curves_title = QLabel("Curves")
-        curves_title.setProperty("class", "PageTitle")
-        curves_header.addWidget(curves_title)
-        curves_header.addStretch()
+        # Inner horizontal splitter: Link Logic | Curve Editor.
+        self._curves_editor_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._curves_editor_splitter.setObjectName("Controls_Splitter_curvesEditor")
 
-        self._add_curve_btn = QPushButton("+ Curve")
-        self._add_curve_btn.setObjectName("Controls_Btn_addCurve")
+        # Pane 2: Link Logic (curve cards)
+        pane2 = QWidget()
+        pane2.setMinimumWidth(300)
+        p2_layout = QVBoxLayout(pane2)
+        p2_layout.setContentsMargins(0, 0, 0, 0)
+        p2_layout.setSpacing(6)
+        link_header = SectionHeader("2. Link Logic", object_name="Controls_Section_linkLogic")
+        self._add_curve_btn = make_button("+", "secondary", object_name="Controls_Btn_addCurve")
         self._add_curve_btn.setToolTip("Add a new curve to the library")
+        self._add_curve_btn.setFixedWidth(32)
         self._add_curve_btn.clicked.connect(self._on_add_curve_menu)
-        curves_header.addWidget(self._add_curve_btn)
-        curves_section_layout.addLayout(curves_header)
+        link_header.add_trailing(self._add_curve_btn)
+        p2_layout.addWidget(link_header)
 
-        # Curves empty state
-        self._curves_empty = QLabel("No curves. Click + Curve to create one.")
+        self._curves_empty = QLabel("No curves. Click + to create one.")
         self._curves_empty.setProperty("class", "PageSubtitle")
         self._curves_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        curves_section_layout.addWidget(self._curves_empty)
+        p2_layout.addWidget(self._curves_empty)
 
-        # Curves flow container (draggable fixed-size cards)
         self._curves_scroll = QScrollArea()
         self._curves_scroll.setWidgetResizable(True)
+        self._curves_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._curves_flow = DraggableFlowContainer()
         self._curves_flow.order_changed.connect(self._on_curves_reordered)
         self._curves_scroll.setWidget(self._curves_flow)
+        p2_layout.addWidget(self._curves_scroll, 1)
+        self._curves_editor_splitter.addWidget(pane2)
 
-        # Curve editor (hidden by default, shown when editing a curve)
+        # Pane 3: Curve Editor (always mounted, DEC-214)
+        pane3 = QWidget()
+        pane3.setMinimumWidth(400)
+        p3_layout = QVBoxLayout(pane3)
+        p3_layout.setContentsMargins(0, 0, 0, 0)
+        p3_layout.setSpacing(6)
+        editor_header = SectionHeader("3. Curve Editor", object_name="Controls_Section_curveEditor")
+        self._editor_title = QLabel("Editing: \u2014")
+        self._editor_title.setObjectName("Controls_Label_editorTitle")
+        self._editor_title.setProperty("class", "CardMeta")
+        editor_header.add_trailing(self._editor_title)
+        self._test_curve_btn = make_button(
+            "Test Curve", "secondary", object_name="Controls_Btn_testCurve"
+        )
+        self._test_curve_btn.setToolTip("Show the curve's output at the current sensor temperature")
+        self._test_curve_btn.clicked.connect(self._on_test_curve)
+        editor_header.add_trailing(self._test_curve_btn)
+        p3_layout.addWidget(editor_header)
+
+        # Editor frame: the reused CurveEditor + a placeholder swapped in when no
+        # graph curve is being edited (the editor is always mounted now).
         self._editor_frame = QWidget()
         editor_layout = QVBoxLayout(self._editor_frame)
-        editor_layout.setContentsMargins(0, 4, 0, 0)
-
-        editor_header = QHBoxLayout()
-        self._editor_title = QLabel("Editing: \u2014")
-        self._editor_title.setStyleSheet("font-weight: bold;")
-        editor_header.addWidget(self._editor_title)
-        editor_header.addStretch()
-        close_editor_btn = QPushButton("Close Editor")
-        close_editor_btn.setObjectName("Controls_Btn_closeEditor")
-        close_editor_btn.clicked.connect(self._close_editor)
-        editor_header.addWidget(close_editor_btn)
-        editor_layout.addLayout(editor_header)
-
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        self._editor_placeholder = QLabel("Select a curve's Edit action to shape it here.")
+        self._editor_placeholder.setObjectName("Controls_Label_editorPlaceholder")
+        self._editor_placeholder.setProperty("class", "PageSubtitle")
+        self._editor_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._editor_placeholder.setWordWrap(True)
+        editor_layout.addWidget(self._editor_placeholder, 1)
         self._curve_editor = CurveEditor()
         self._curve_editor.setObjectName("Controls_CurveEditor_main")
         self._curve_editor.curve_changed.connect(self._on_curve_changed)
+        self._curve_editor.hide()
         editor_layout.addWidget(self._curve_editor, 1)
+        p3_layout.addWidget(self._editor_frame, 1)
+        self._curves_editor_splitter.addWidget(pane3)
 
-        self._editor_frame.hide()
-
-        # Splitter between curves grid and editor — user can drag to adjust height
-        self._curves_editor_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._curves_editor_splitter.setObjectName("Controls_Splitter_curvesEditor")
-        self._curves_editor_splitter.addWidget(self._curves_scroll)
-        self._curves_editor_splitter.addWidget(self._editor_frame)
         self._curves_editor_splitter.setStretchFactor(0, 1)
-        self._curves_editor_splitter.setStretchFactor(1, 1)
-        self._curves_editor_splitter.setSizes([300, 300])
+        self._curves_editor_splitter.setStretchFactor(1, 2)
+        self._curves_editor_splitter.setSizes([300, 600])
         self._curves_editor_splitter.setCollapsible(0, False)
         self._curves_editor_splitter.setCollapsible(1, False)
         curves_section_layout.addWidget(self._curves_editor_splitter, 1)
 
-        self._curves_section.setMinimumHeight(120)
         self._splitter.addWidget(self._curves_section)
 
-        # Splitter sizing — equal stretch + equal seeded sizes so the Fan
-        # Roles / Curves split stays ~50/50 as the window resizes, while the
-        # divider remains user-draggable (DEC-128, D3=A).
+        # Outer split (DEC-214): Assign Roles (1) : curves = Link Logic + Editor (3).
         self._splitter.setStretchFactor(0, 1)
-        self._splitter.setStretchFactor(1, 1)
-        self._splitter.setSizes([350, 350])
+        self._splitter.setStretchFactor(1, 3)
+        self._splitter.setSizes([300, 900])
+        self._splitter.setCollapsible(0, False)
+        self._splitter.setCollapsible(1, False)
         main_layout.addWidget(self._splitter, 1)
 
         # No-controls guidance (shown when curves section is hidden)
@@ -303,10 +324,15 @@ class ControlsPage(QWidget):
         save_shortcut.activated.connect(self._on_save_profile)
 
         # ─── Populate ────────────────────────────────────────────────
-        self._refresh_profile_combo()
         self._refresh_all()
 
         self._prev_sensor_ids: set[str] | None = None
+
+        # DEC-214: the sidebar owns profile selection/activation now, so the page
+        # follows the service — refresh when the active profile changes or when
+        # profiles are created/renamed/deleted elsewhere.
+        self._profile_service.active_changed.connect(self._on_active_profile_changed)
+        self._profile_service.profiles_changed.connect(self._on_profiles_changed)
 
         if self._state:
             self._state.sensors_updated.connect(self._on_sensor_values_updated)
@@ -327,27 +353,62 @@ class ControlsPage(QWidget):
         """
         self._demo_controller = demo_controller
 
-    # ─── Profile bar ─────────────────────────────────────────────────
+    # ─── Lifecycle (DEC-214) ─────────────────────────────────────────
 
-    def _build_profile_bar(self) -> QHBoxLayout:
+    def showEvent(self, event) -> None:
+        self._page_visible = True
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:
+        self._page_visible = False
+        super().hideEvent(event)
+
+    def cleanup(self) -> None:
+        """Deterministically tear down the always-mounted curve editor's
+        pyqtgraph scene (DEC-180 lineage). Idempotent — the editor latches."""
+        self._curve_editor.cleanup()
+
+    # ─── Header ──────────────────────────────────────────────────────
+
+    def _build_header(self) -> QHBoxLayout:
+        """Header (DEC-214): page title + Auto-Connect Wizard + Save Profile +
+        an overflow "⋮" for profile management.
+
+        Profile *selection/activation* now lives in the sidebar (DEC-208); this
+        page keeps only Save + Manage + the shared ``_unsaved_label`` status chip.
+        """
         bar = QHBoxLayout()
         bar.setSpacing(8)
 
-        bar.addWidget(QLabel("Profile:"))
-        self._profile_combo = QComboBox()
-        self._profile_combo.setObjectName("Controls_Combo_profile")
-        self._profile_combo.setMinimumWidth(150)
-        self._profile_combo.currentIndexChanged.connect(self._on_profile_selected)
-        bar.addWidget(self._profile_combo)
+        title = QLabel("Controls")
+        title.setProperty("class", "PageTitle")
+        bar.addWidget(title)
 
-        self._activate_btn = QPushButton("Activate")
-        self._activate_btn.setObjectName("Controls_Btn_activate")
-        self._activate_btn.setToolTip("Set selected profile as active")
-        self._activate_btn.clicked.connect(self._on_activate)
-        bar.addWidget(self._activate_btn)
+        divider = QFrame()
+        divider.setObjectName("Controls_Divider_header")
+        divider.setFrameShape(QFrame.Shape.VLine)
+        bar.addWidget(divider)
 
-        self._save_btn = QPushButton("Save")
-        self._save_btn.setObjectName("Controls_Btn_save")
+        self._wizard_btn = make_button(
+            "Auto-Connect Wizard", "secondary", object_name="Controls_Btn_fanWizard"
+        )
+        self._wizard_btn.setToolTip("Identify and label your fans")
+        self._wizard_btn.clicked.connect(self._on_fan_wizard)
+        bar.addWidget(self._wizard_btn)
+
+        # DEC-157: one-click liquid-cooler setup. Hidden until an AIO is
+        # detected (see _on_capabilities_updated).
+        self._configure_aio_btn = make_button(
+            "Configure AIO", "secondary", object_name="Controls_Btn_configureAio"
+        )
+        self._configure_aio_btn.setToolTip(
+            "One-click setup for a liquid cooler — a constant-speed pump and a radiator-fan group"
+        )
+        self._configure_aio_btn.clicked.connect(self._on_configure_aio)
+        self._configure_aio_btn.setVisible(False)
+        bar.addWidget(self._configure_aio_btn)
+
+        self._save_btn = make_button("Save Profile", "primary", object_name="Controls_Btn_save")
         self._save_btn.setToolTip("Save profile changes (Ctrl+S)")
         self._save_btn.clicked.connect(self._on_save_profile)
         bar.addWidget(self._save_btn)
@@ -358,9 +419,9 @@ class ControlsPage(QWidget):
 
         bar.addStretch()
 
-        manage_btn = QPushButton("Manage Profiles...")
-        manage_btn.setObjectName("Controls_Btn_manageProfiles")
+        manage_btn = make_button("⋮", "ghost", object_name="Controls_Btn_manageProfiles")
         manage_btn.setToolTip("Create, rename, duplicate, or delete profiles")
+        manage_btn.setFixedWidth(32)
         manage_btn.clicked.connect(self._on_manage_profiles)
         bar.addWidget(manage_btn)
 
@@ -368,57 +429,36 @@ class ControlsPage(QWidget):
 
     # ─── Profile management ──────────────────────────────────────────
 
-    def _refresh_profile_combo(self, selected_id: str = "") -> None:
-        """Rebuild the profile combo box.
+    def select_profile(self, profile_id: str) -> None:
+        """View + edit ``profile_id`` on the page (used by New/Duplicate + tests).
 
-        Args:
-            selected_id: Profile ID to select after rebuild. If empty, keeps the
-                         current selection (or falls back to the active profile).
+        The sidebar owns *activation* now (DEC-214); this only changes which
+        profile the page renders. Clears the unsaved flag since a fresh profile
+        is being loaded.
         """
-        with block_signals(self._profile_combo):
-            # Remember current selection before clearing
-            if not selected_id:
-                selected_id = self._profile_combo.currentData() or ""
-            self._profile_combo.clear()
-            active_id = self._profile_service.active_id
-            select_idx = 0
-            ps = self._profile_service
-            for i, p in enumerate(ps.profiles):
-                label = f"* {p.name}" if p.id == active_id else p.name
-                # Daemon-backed mode: flag profiles that exist only locally
-                # (created/edited while offline, or rejected on upload).
-                if ps.daemon_backed and not ps.is_published(p.id):
-                    label = f"{label}  (draft)"
-                self._profile_combo.addItem(label, p.id)
-                if p.id == selected_id:
-                    select_idx = i
-            # Fall back to active profile if the requested selection no longer exists
-            if not selected_id or self._profile_combo.itemData(select_idx) != selected_id:
-                for i in range(self._profile_combo.count()):
-                    if self._profile_combo.itemData(i) == active_id:
-                        select_idx = i
-                        break
-            self._profile_combo.setCurrentIndex(select_idx)
-
-    def _on_profile_selected(self, index: int) -> None:
-        if index < 0:
-            return
-        new_id = self._profile_combo.currentData()
-        # Guard in-progress curve edits: switching profiles rebuilds the page
-        # and would silently drop them. Prompt before leaving the current
-        # profile; on "Keep editing" revert the combo and stay put.
-        if (
-            self._has_unsaved
-            and new_id != self._loaded_profile_id
-            and not self._confirm_discard_unsaved()
-        ):
-            self._restore_combo_selection(self._loaded_profile_id)
-            return
-        # Do NOT call _refresh_profile_combo() here — it would destroy the
-        # user's selection. The combo already has the correct index; just
-        # refresh the page content for the newly selected profile.
+        self._viewed_profile_id = profile_id
         self._refresh_all()
         self._set_unsaved(False)
+
+    def has_unsaved_changes(self) -> bool:
+        """Whether the viewed profile has in-progress, unsaved edits (DEC-214).
+
+        Read by ``main_window`` to guard a sidebar profile switch — the unsaved-
+        changes prompt relocated there from the removed page profile combo."""
+        return self._has_unsaved
+
+    def _on_active_profile_changed(self, _profile_id: str = "") -> None:
+        """Follow a sidebar/service activation: view the now-active profile and
+        rebuild (the rebuild releases live overrides — DEC-189). Clears unsaved
+        because the switch is authoritative (the sidebar apply flow prompts
+        first via ``has_unsaved_changes``)."""
+        self._viewed_profile_id = None  # fall back to the active profile
+        self._refresh_all()
+        self._set_unsaved(False)
+
+    def _on_profiles_changed(self) -> None:
+        """Profiles created/renamed/deleted elsewhere — re-render the page."""
+        self._refresh_all()
 
     def _confirm_discard_unsaved(self) -> bool:
         """Ask whether to discard in-progress edits before switching profiles.
@@ -437,49 +477,6 @@ class ControlsPage(QWidget):
             QMessageBox.StandardButton.Cancel,
         )
         return result == QMessageBox.StandardButton.Discard
-
-    def _restore_combo_selection(self, target_id: str | None) -> None:
-        """Re-select *target_id* in the profile combo without re-entering
-        _on_profile_selected (used to revert a declined profile switch)."""
-        with block_signals(self._profile_combo):
-            for i in range(self._profile_combo.count()):
-                if self._profile_combo.itemData(i) == target_id:
-                    self._profile_combo.setCurrentIndex(i)
-                    break
-
-    def _on_activate(self) -> None:
-        profile_id = self._profile_combo.currentData()
-        if not profile_id:
-            return
-        profile = self._profile_service.get_profile(profile_id)
-        if not profile:
-            return
-
-        # Remember the current active id so we can revert the combo on failure.
-        prev_active_id = self._profile_service.active_id
-
-        # Delegate the save → daemon-confirm → set-active flow to the shared
-        # service path (ProfileService.activate); this page owns only its own
-        # visual feedback. Behaviour is identical to the former inline flow.
-        res = self._profile_service.activate(profile_id, client=self._client)
-        if not res.activated:
-            self._log.warning("Profile activation failed for %s: %s", profile_id, res.error)
-            self._unsaved_label.setText(res.error or "Activation failed")
-            set_chip_class(self._unsaved_label, "CriticalChip")
-            self._refresh_profile_combo(selected_id=prev_active_id)
-            return
-
-        self._log.info("Profile activated: %s", profile_id)
-        self._refresh_profile_combo(selected_id=profile_id)
-        self._refresh_all()
-        if self._state:
-            self._state.set_active_profile(profile.name)
-        # The daemon re-evaluates the activated profile itself (it is the
-        # authoritative engine, DEC-165) — the GUI no longer forces a local
-        # control-loop re-evaluation. (Demo mode reflects it on its next tick.)
-        self.profile_activated.emit(profile_id)
-        self._unsaved_label.setText("Profile activated")
-        set_chip_class(self._unsaved_label, "SuccessChip")
 
     def _on_manage_profiles(self) -> None:
         menu = QMenu(self)
@@ -501,9 +498,8 @@ class ControlsPage(QWidget):
                 return
             name = name.strip()
         new_profile = self._profile_service.create_profile(name)
-        self._refresh_profile_combo(selected_id=new_profile.id)
-        self._refresh_all()
-        self._set_unsaved(False)
+        # View the new draft so it can be edited without activating it (DEC-214).
+        self.select_profile(new_profile.id)
 
     def _on_rename_profile(self) -> None:
         profile = self._get_current_profile()
@@ -513,7 +509,7 @@ class ControlsPage(QWidget):
         if ok and name.strip() and name.strip() != profile.name:
             profile.name = name.strip()
             self._profile_service.save_profile(profile)
-            self._refresh_profile_combo(selected_id=profile.id)
+            self._refresh_all()
 
     def _on_duplicate_profile(self) -> None:
         profile = self._get_current_profile()
@@ -521,11 +517,11 @@ class ControlsPage(QWidget):
             return
         new_profile = self._profile_service.duplicate_profile(profile.id, f"{profile.name} (copy)")
         if new_profile:
-            self._refresh_profile_combo(selected_id=new_profile.id)
-            self._refresh_all()
+            self.select_profile(new_profile.id)
 
     def _on_delete_profile(self) -> None:
-        profile_id = self._profile_combo.currentData()
+        current = self._get_current_profile()
+        profile_id = current.id if current else ""
         if profile_id:
             reply = QMessageBox.question(
                 self,
@@ -553,8 +549,8 @@ class ControlsPage(QWidget):
             self._profile_service.delete_profile(profile_id)
             if was_active_locally and self._state is not None:
                 self._state.set_active_profile("")
-            # After deletion, switch to the active profile (or whatever is now first)
-            self._refresh_profile_combo(selected_id=self._profile_service.active_id)
+            # After deletion, fall back to viewing the active profile.
+            self._viewed_profile_id = None
             self._refresh_all()
 
     def _on_save_profile(self) -> None:
@@ -593,8 +589,6 @@ class ControlsPage(QWidget):
             self._unsaved_label.setText("Settings saved")
             self._unsaved_label.setProperty("class", "SuccessChip")
         repolish(self._unsaved_label)
-        # Reflect the new published/draft state in the combo badge.
-        self._refresh_profile_combo()
 
     def _reapply_active_profile(self, profile) -> bool:
         """Re-activate the already-active profile so the daemon re-reads it and
@@ -621,22 +615,15 @@ class ControlsPage(QWidget):
         return True
 
     def _on_connection_changed(self, conn: ConnectionState) -> None:
-        """Gate Activate on the daemon being reachable (live mode only).
+        """React to daemon connectivity (live mode only).
 
-        Activation is a daemon verb, so it cannot work while the daemon is
-        offline. Demo/local mode (no client) activates locally and stays
-        enabled.
+        Activation moved to the sidebar (DEC-214), so this no longer gates an
+        Activate button; it only clears stale foreign-override chips on
+        disconnect (DEC-169), since polling stops while offline.
         """
         if self._client is None:
             return
-        connected = conn == ConnectionState.CONNECTED
-        self._activate_btn.setEnabled(connected)
-        self._activate_btn.setToolTip(
-            "Set selected profile as active"
-            if connected
-            else "Daemon offline — cannot activate a profile"
-        )
-        if not connected:
+        if conn != ConnectionState.CONNECTED:
             # DEC-169: polling stops while offline, so nothing would clear a
             # stale "External" chip — revert them now. GUI-owned overrides
             # self-correct via the renew timer's rejected renew.
@@ -666,6 +653,12 @@ class ControlsPage(QWidget):
         self._controls_flow.clear_cards()
         self._control_cards.clear()
 
+        # DEC-214: default the selection to the first role so exactly one card is
+        # expanded (the mockup treatment); the rest collapse to the compact form.
+        control_ids = [c.id for c in profile.controls]
+        if self._selected_control_id not in control_ids:
+            self._selected_control_id = control_ids[0] if control_ids else None
+
         tier = self._card_size_tier()
         for control in profile.controls:
             card = ControlCard(
@@ -685,6 +678,7 @@ class ControlsPage(QWidget):
             # capability so a profile switch can't silently re-enable a card
             # the daemon reported as non-writable.
             card.setEnabled(self._cards_writable)
+            card.set_selected(control.id == self._selected_control_id)
             self._control_cards[control.id] = card
             self._controls_flow.add_card(card, control.id)
 
@@ -855,6 +849,10 @@ class ControlsPage(QWidget):
         dlg.set_edit_members_callback(self._on_edit_members)
         if dlg.exec():
             result = dlg.get_result()
+            # DEC-214: "Delete Role" routes to the existing card-delete path.
+            if result.get("delete"):
+                self._on_delete_control(control_id)
+                return
             control.name = result["name"]
             control.mode = result["mode"]
             control.curve_id = result["curve_id"]
@@ -879,6 +877,9 @@ class ControlsPage(QWidget):
 
     def _on_control_selected(self, control_id: str) -> None:
         self._selected_control_id = control_id
+        # DEC-214: expand the selected card's detail rows, collapse the rest.
+        for cid, card in self._control_cards.items():
+            card.set_selected(cid == control_id)
 
     def _on_edit_members(self, control_id: str) -> None:
         profile = self._get_current_profile()
@@ -932,6 +933,7 @@ class ControlsPage(QWidget):
                     "id": fan.id,
                     "source": fan.source,
                     "label": label,
+                    "rpm": fan.rpm,  # DEC-214: live RPM (None → "no fan", never invented)
                 }
                 if tip:
                     entry["tooltip"] = tip
@@ -967,6 +969,7 @@ class ControlsPage(QWidget):
                             "id": header.id,
                             "source": "hwmon",
                             "label": label,
+                            "rpm": None,  # header with no live fan reading → "no fan"
                             "tooltip": "\n".join(p for p in tip_parts if p),
                         }
                     )
@@ -980,7 +983,9 @@ class ControlsPage(QWidget):
 
         from control_ofc.ui.widgets.member_editor import MemberEditorDialog
 
-        dlg = MemberEditorDialog(control.members, available, assigned_elsewhere, parent=self)
+        dlg = MemberEditorDialog(
+            control.members, available, assigned_elsewhere, role_name=control.name, parent=self
+        )
         if dlg.exec():
             new_members = dlg.get_members()
             # Check if any NEW GPU fans were added — show zero-RPM info popup
@@ -1023,6 +1028,7 @@ class ControlsPage(QWidget):
             card.delete_requested.connect(self._on_delete_curve)
             card.rename_requested.connect(self._on_rename_curve)
             card.duplicate_requested.connect(self._on_duplicate_curve)
+            card.unlink_requested.connect(self._on_unlink_curve)
             card.resized.connect(self._on_card_user_resized)
             card.size_reset.connect(self._on_card_size_reset)
             self._curve_cards[curve.id] = card
@@ -1185,10 +1191,46 @@ class ControlsPage(QWidget):
             min_floor = self._curve_min_output_floor(profile, curve.id)
             self._curve_editor.set_min_output(min_floor)
             self._curve_editor.set_curve(curve)
-            self._editor_frame.show()
+            # Always-mounted editor (DEC-214): swap the placeholder for the editor.
+            self._editor_placeholder.hide()
+            self._curve_editor.show()
 
     def _close_editor(self) -> None:
-        self._editor_frame.hide()
+        """Return the always-mounted editor to its placeholder state (DEC-214)."""
+        self._curve_editor.hide()
+        self._editor_placeholder.show()
+        self._editor_title.setText("Editing: —")
+
+    def _on_test_curve(self) -> None:
+        """Test Curve (DEC-214): surface the curve's output at the *current* sensor
+        temperature using the editor's existing live readout — no new capability.
+
+        Re-pushes the latest sensor value so the dashed current-temp marker + the
+        output readout refresh for the curve open in the editor. A no-op when no
+        graph curve is loaded (composite curves edit in a dialog)."""
+        if self._curve_editor.get_curve() is None:
+            return
+        value = getattr(self._curve_editor, "_current_sensor_value", None)
+        if value is not None:
+            self._curve_editor.set_current_sensor_value(value)
+
+    def _on_unlink_curve(self, curve_id: str) -> None:
+        """Unlink (DEC-214): detach this curve from every role using it — a real
+        but minimal desired-state edit (``curve_id`` cleared + mode → MANUAL on the
+        referencing controls). No daemon/schema/PWM write; saved via Save Profile."""
+        profile = self._get_current_profile()
+        if not profile:
+            return
+        changed = False
+        for control in profile.controls:
+            if control.curve_id == curve_id:
+                control.curve_id = ""
+                control.mode = ControlMode.MANUAL
+                changed = True
+        if changed:
+            self._refresh_controls_grid(profile)
+            self._refresh_curves_grid(profile)
+            self._set_unsaved(True)
 
     def _curve_min_output_floor(self, profile, curve_id: str) -> float:
         """Return the highest ``minimum_pct`` of any control referencing this curve.
@@ -1236,9 +1278,12 @@ class ControlsPage(QWidget):
                         break
 
     def _get_current_profile(self):
-        profile_id = self._profile_combo.currentData()
-        if profile_id:
-            return self._profile_service.get_profile(profile_id)
+        # DEC-214: the page edits the viewed profile (a New/Duplicate draft) if
+        # one is set, else the active/sidebar-selected profile.
+        if self._viewed_profile_id:
+            profile = self._profile_service.get_profile(self._viewed_profile_id)
+            if profile is not None:
+                return profile
         return self._profile_service.active_profile
 
     def _show_gpu_zero_rpm_info(self) -> None:
@@ -1702,17 +1747,21 @@ class ControlsPage(QWidget):
                     seen.add(s.id)
             self._curve_editor.set_available_sensors(items)
 
-        # Always update live temperature display (cheap — single lookup)
-        curve = self._curve_editor.get_curve()
-        if curve and curve.sensor_id:
-            for s in sensors:
-                if s.id == curve.sensor_id:
-                    self._curve_editor.set_current_sensor_value(s.value_c)
-                    break
-            else:
-                self._curve_editor.set_current_sensor_value(None)
-        elif sensors:
-            self._curve_editor.set_current_sensor_value(sensors[0].value_c)
+        # Update the live current-temp marker — but only while the page is
+        # visible (DEC-214): the marker recreates pyqtgraph items each tick, so
+        # skipping it while hidden keeps the always-mounted editor free during
+        # gaming. The cheap dropdown/label updates above still run.
+        if self._page_visible:
+            curve = self._curve_editor.get_curve()
+            if curve and curve.sensor_id:
+                for s in sensors:
+                    if s.id == curve.sensor_id:
+                        self._curve_editor.set_current_sensor_value(s.value_c)
+                        break
+                else:
+                    self._curve_editor.set_current_sensor_value(None)
+            elif sensors:
+                self._curve_editor.set_current_sensor_value(sensors[0].value_c)
 
         # Update curve card sensor value labels (cheap — dict lookup per card)
         sensor_map = {s.id: (s.label, s.value_c) for s in sensors}
@@ -1740,3 +1789,11 @@ class ControlsPage(QWidget):
                 card.set_rpm(f"{avg} RPM")
             else:
                 card.set_rpm("")
+            # DEC-214: per-member live RPM for the compact card member rows.
+            card.set_member_rpms(member_rpm_map(ctrl, fan_map))
+
+        # DEC-214: refresh the "Unassigned Fans (N)" dropzone count.
+        profile = self._get_current_profile()
+        controls = profile.controls if profile else []
+        count = len(unassigned_fan_ids(fans, controls))
+        self._unassigned_label.setText(f"Unassigned Fans ({count})")

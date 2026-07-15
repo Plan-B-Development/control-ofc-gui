@@ -6,6 +6,8 @@ live sensor reading marker, and a synced numeric table.
 
 from __future__ import annotations
 
+import contextlib
+
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QEvent, Qt, Signal
@@ -320,12 +322,76 @@ class CurveEditor(QWidget):
                             self._update_selection_highlight()
                             self._refresh_table()
                             return True  # consumed
+                elif event.button() == Qt.MouseButton.RightButton and self._curve:
+                    # Right-click removes the nearest point (mockup hint text).
+                    scene_pos = self._plot_widget.mapToScene(event.position().toPoint())
+                    plot = self._plot_widget.getPlotItem()
+                    if plot:
+                        view_pos = plot.vb.mapSceneToView(scene_pos)
+                        idx = self._find_nearest_point(view_pos.x(), view_pos.y())
+                        if idx is not None:
+                            self._selected_idx = idx
+                            self._on_remove_point()
+                            return True  # consumed
             elif event.type() == QEvent.Type.MouseButtonRelease and self._drag_active:
                 self._dragging_idx = None
                 self._drag_active = False
                 self.curve_changed.emit()
                 return True
         return super().eventFilter(obj, event)
+
+    def cleanup(self) -> None:
+        """Deterministically tear down the pyqtgraph scene (DEC-180 lineage).
+
+        The editor is always mounted on the Controls page now (DEC-214), so it is
+        constructed and destroyed with the page rather than lazily shown/hidden.
+        Left to deferred C++ deletion, its scene items (line, scatter, sensor
+        line/marker, highlight) and the viewport event filter can fire against a
+        half-freed ``QGraphicsScene`` and segfault under offscreen Qt on Python
+        3.14 — the same failure mode ``TimelineChart.cleanup`` guards. Idempotent
+        via the ``_cleaned_up`` latch so a second call (``closeEvent`` plus an
+        explicit page teardown) never re-``disconnect()``s an already-severed
+        signal.
+        """
+        if getattr(self, "_cleaned_up", False):
+            return
+        self._cleaned_up = True
+        scene = self._plot_widget.scene()
+        if scene is not None:
+            with contextlib.suppress(RuntimeError, TypeError):
+                scene.sigMouseMoved.disconnect(self._on_mouse_moved)
+            with contextlib.suppress(RuntimeError, TypeError):
+                scene.sigMouseClicked.disconnect(self._on_mouse_clicked)
+        viewport = self._plot_widget.viewport()
+        if viewport is not None:
+            with contextlib.suppress(RuntimeError):
+                viewport.removeEventFilter(self)
+        # Drop every plot item from its scene while the C++ objects are still
+        # alive, then clear the view synchronously — deferred teardown can segfault
+        # offscreen on 3.14 (mirrors TimelineChart.cleanup).
+        for attr in (
+            "_line_plot",
+            "_scatter",
+            "_sensor_vline",
+            "_sensor_marker",
+            "_highlight_scatter",
+        ):
+            item = getattr(self, attr, None)
+            if item is not None:
+                item_scene = item.scene()
+                if item_scene is not None:
+                    with contextlib.suppress(RuntimeError):
+                        item_scene.removeItem(item)
+                setattr(self, attr, None)
+        with contextlib.suppress(RuntimeError):
+            self._plot_widget.close()
+
+    def closeEvent(self, event) -> None:
+        """Tear the scene down deterministically when the editor is closed on its
+        own (e.g. qtbot teardown), not only via the page's ``cleanup()``.
+        ``cleanup()`` is idempotent so double-teardown is safe (DEC-180 lineage)."""
+        self.cleanup()
+        super().closeEvent(event)
 
     def _setup_plot(self) -> None:
         t = self._theme

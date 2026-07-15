@@ -117,6 +117,13 @@ class FanTileVM:
     role: str | None  # infer_member_role result, or None when no profile/member
     controlled_by_daemon: bool  # approx: profile active AND fan is a member
     curve_source: str | None  # sensor id of the fan's curve, or None
+    # DEC-213 (dashboard restyle): the fan's curve-driving sensor temperature
+    # (resolved from curve_source via the page-passed sensor_values; None when the
+    # fan has no curve/single-sensor), and a recent RPM series (page-injected from
+    # HistoryStore) for the static sparkline. Both default-empty so pure callers +
+    # existing constructions are unaffected — never invented.
+    curve_temp: float | None = None
+    rpm_spark: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -199,6 +206,8 @@ def build_fan_groups(
     active_profile: Profile | None,
     overrides: list[OverrideStatusEntry],
     expected_fan_ids: set[str] | None = None,
+    sensor_values: dict[str, float] | None = None,
+    rpm_series: dict[str, tuple[float, ...]] | None = None,
 ) -> list[FanGroupVM]:
     """Group live fans into ordered zones/buckets with truthful state.
 
@@ -216,6 +225,12 @@ def build_fan_groups(
             here but absent from ``fans`` becomes an OFFLINE tile. Defaults to
             the present ids (no roster means no OFFLINE). The caller composes it,
             e.g. the present ids plus the active-profile member ids.
+        sensor_values: ``sensor_id -> value_c`` snapshot (page-resolved), used to
+            fill each tile's ``curve_temp`` from its ``curve_source``. Empty/None →
+            ``curve_temp`` stays None (rendered "—"). Keeps this module Qt-free.
+        rpm_series: ``fan_id -> recent rpm points`` (page-resolved from the history
+            ring buffer), used for the tile's static ``rpm_spark`` sparkline. Empty
+            for a fan with no history.
 
     Returns:
         Groups ordered user-zones-first (alphabetical) then fallback buckets in a
@@ -229,6 +244,8 @@ def build_fan_groups(
             for member in control.members:
                 member_index.setdefault(member.member_id, (control, member))
     override_control_ids = {o.control_id for o in overrides}
+    sv = sensor_values or {}  # sensor_id -> value_c (page-resolved; empty = "—")
+    rs = rpm_series or {}  # fan_id -> recent rpm points (page-resolved from history)
 
     present_ids = {f.id for f in fans}
     roster = (set(expected_fan_ids) | present_ids) if expected_fan_ids is not None else present_ids
@@ -265,6 +282,8 @@ def build_fan_groups(
             role=role,
             controlled_by_daemon=controlled,
             curve_source=curve_source,
+            curve_temp=sv.get(curve_source) if curve_source else None,
+            rpm_spark=rs.get(fan.id, ()),
         )
         is_online = fan.freshness == Freshness.FRESH
         entries.append((_bucket_for(fan.id, fan.source, role, fan_zones), tile, is_online))
@@ -284,6 +303,8 @@ def build_fan_groups(
             role=role,
             controlled_by_daemon=controlled,
             curve_source=curve_source,
+            curve_temp=sv.get(curve_source) if curve_source else None,
+            rpm_spark=rs.get(fan_id, ()),
         )
         entries.append((_bucket_for(fan_id, source, role, fan_zones), tile, False))
 
