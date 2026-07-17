@@ -42,12 +42,20 @@ from control_ofc.services.daemon_service_check import (
     ENABLE_COMMAND,
     check_daemon_service_state,
 )
+from control_ofc.services.dashboard_view import (
+    absent_member_ids,
+    build_capabilities_vm,
+    build_fans_card_vm,
+    build_summary_card_vm,
+    curated_chart_keys,
+    fan_tooltip,
+    safety_detail_text,
+)
 from control_ofc.services.fan_grouping import build_fan_groups
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import ChartMode, SeriesSelectionModel
 from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.fan_display import filter_displayable_fans
-from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 from control_ofc.ui.qt_util import block_signals, repolish, set_chip_class
 from control_ofc.ui.status_banner import MODE_LABELS
 from control_ofc.ui.theme import active_theme
@@ -70,45 +78,9 @@ if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
     from control_ofc.services.profile_service import ProfileService
 
-# Trend deadband: a |rate| below this reads as "flat" so a near-steady
-# temperature doesn't flicker the glyph between rising/falling.
-_TREND_DEADBAND_C_PER_S = 0.05
-
 # Inspector opens by default only when the page is at least this wide at first
 # show; narrower windows start collapsed so the chart keeps room (DEC-182, 3A).
 _INSPECTOR_WIDE_THRESHOLD_PX = 1100
-
-# Plain-language reason per daemon thermal_state, for the Safety card detail.
-# Kept qualitative (no hardcoded thresholds) so it can't drift from the daemon.
-_THERMAL_REASONS: dict[str, str] = {
-    "normal": "Cooling is operating normally; the daemon is following the active profile.",
-    "recovery": (
-        "Temperature exceeded the safety threshold. The daemon forced fans up and is holding "
-        "a recovery speed until the system cools further."
-    ),
-    "emergency": (
-        "A critical temperature was reached. The daemon has forced all controllable fans to "
-        "100% to protect the hardware until temperatures fall."
-    ),
-    "no_sensor_fallback": (
-        "No CPU temperature sensor is reachable. The daemon has forced a safe fallback fan "
-        "speed because it cannot confirm the system is cool."
-    ),
-}
-
-
-def _trend_from_rate(rate: float | None) -> str:
-    """Map a °C/s rate to a trend direction ("up"/"down"/"flat"/"").
-
-    ``None`` (no rate yet) yields "" (no glyph). Pure/testable; mirrors the
-    deadband so the Summary card's arrow is stable."""
-    if rate is None:
-        return ""
-    if rate > _TREND_DEADBAND_C_PER_S:
-        return "up"
-    if rate < -_TREND_DEADBAND_C_PER_S:
-        return "down"
-    return "flat"
 
 
 class DashboardPage(QWidget):
@@ -739,50 +711,12 @@ class DashboardPage(QWidget):
         keys += self._displayable_fan_keys
         self._selection.update_known_keys(keys)
 
-    def _resolve_card_sensor(
-        self,
-        category: str,
-        kinds: tuple[str, ...],
-        sensors: list[SensorReading],
-        sensor_by_id: dict[str, SensorReading],
-    ) -> SensorReading | None:
-        """The sensor that represents a card category: the card's binding if set
-        and present, else the first sensor whose ``kind`` matches. Shared by the
-        summary-card renderer (:meth:`_update_card`) and the curated-chart subset
-        (:meth:`_curated_sensor_id`) so the chart's default line matches the card."""
-        binding = self._card_bindings.get(category, "")
-        if binding and binding in sensor_by_id:
-            return sensor_by_id[binding]
-        for s in sensors:
-            if s.kind in kinds:
-                return s
-        return None
-
-    def _curated_sensor_id(
-        self, category: str, kinds: tuple[str, ...], sensors: list[SensorReading]
-    ) -> str | None:
-        """The one sensor id that represents a card category in the curated chart
-        subset (see :meth:`_resolve_card_sensor`)."""
-        sensor = self._resolve_card_sensor(category, kinds, sensors, {s.id: s for s in sensors})
-        return sensor.id if sensor else None
-
     def _curated_chart_keys(self) -> set[str]:
-        """The curated default series (refinement §7.3 / B-fork DEC-181): CPU temp,
-        GPU temp, and one mobo/case temp. Kind-aware, so it lives here (the pure
-        model can't tell a CPU temp from a GPU temp by key). Non-existent slots are
-        simply dropped; ``set_only_visible`` intersects with known keys so a
-        filtered/absent sensor is harmless."""
+        """The curated default chart series for the current sensors + card
+        bindings (:func:`dashboard_view.curated_chart_keys`, refinement §7.3 /
+        B-fork DEC-181)."""
         sensors = self._state.sensors if self._state else []
-        keys: set[str] = set()
-        for category, kinds in (
-            ("cpu_temp", ("CpuTemp", "cpu_temp")),
-            ("gpu_temp", ("GpuTemp", "gpu_temp")),
-            ("mobo_temp", ("MbTemp", "mb_temp")),
-        ):
-            sid = self._curated_sensor_id(category, kinds, sensors)
-            if sid:
-                keys.add(f"sensor:{sid}")
-        return keys
+        return curated_chart_keys(sensors, self._card_bindings)
 
     def _maybe_seed_chart_defaults(self) -> None:
         """First-run only (A-fork DEC-181): once BOTH sensors and fans have been
@@ -820,77 +754,41 @@ class DashboardPage(QWidget):
         self._chart.add_annotation(time.monotonic(), label)
 
     def _on_capabilities_updated(self, caps: Capabilities) -> None:
-        of = caps.openfan
-        if of.present:
-            self._sub_openfan_label.setText(f"OpenFan: detected ({of.channels} ch)")
-            self._sub_openfan_label.setProperty("class", "SuccessChip")
-        else:
-            self._sub_openfan_label.setText("OpenFan: not detected")
-            self._sub_openfan_label.setProperty("class", "PageSubtitle")
-
-        hw = caps.hwmon
-        if hw.present:
-            self._sub_hwmon_label.setText(f"hwmon: detected ({hw.pwm_header_count} headers)")
-            self._sub_hwmon_label.setProperty("class", "SuccessChip")
-        else:
-            self._sub_hwmon_label.setText("hwmon: not detected")
-            self._sub_hwmon_label.setProperty("class", "PageSubtitle")
-
-        # Update GPU card title from detected GPU model. AMD takes priority when
-        # multiple vendors are present; otherwise fall back to Intel (DEC-121)
-        # then NVIDIA (DEC-204).
-        gpu = caps.amd_gpu
-        if gpu.present:
-            self._gpu_card.set_title(f"{gpu.display_label} Temp")
-        elif caps.intel_gpu.present:
-            self._gpu_card.set_title(f"{caps.intel_gpu.display_label} Temp")
-        elif caps.nvidia_gpu.present:
-            self._gpu_card.set_title(f"{caps.nvidia_gpu.display_label} Temp")
-
+        vm = build_capabilities_vm(caps)
+        self._sub_openfan_label.setText(vm.openfan.text)
+        self._sub_openfan_label.setProperty("class", vm.openfan.css_class)
+        self._sub_hwmon_label.setText(vm.hwmon.text)
+        self._sub_hwmon_label.setProperty("class", vm.hwmon.css_class)
+        # A no-match leaves the GPU card title unchanged (vm.gpu_title is None).
+        if vm.gpu_title is not None:
+            self._gpu_card.set_title(vm.gpu_title)
         for lbl in (self._sub_openfan_label, self._sub_hwmon_label):
             repolish(lbl)
 
-        # Hwmon info banner on live page
-        if not hw.present:
-            self._hwmon_banner.show_info(
-                "No motherboard fan headers detected. "
-                "Check the Hardware page for driver and BIOS guidance.",
-                auto_dismiss_ms=0,
-            )
-        elif hw.present and not hw.write_support:
-            self._hwmon_banner.show_warning(
-                "Motherboard fan headers detected but all are read-only. "
-                "Check BIOS fan settings or driver status on the Hardware page.",
-                auto_dismiss_ms=0,
-            )
-        else:
+        # Hwmon info/warning banner on the live page (None \u2192 hide).
+        if vm.hwmon_banner is None:
             self._hwmon_banner.hide_banner()
+        elif vm.hwmon_banner.kind == "info":
+            self._hwmon_banner.show_info(vm.hwmon_banner.message, auto_dismiss_ms=0)
+        else:
+            self._hwmon_banner.show_warning(vm.hwmon_banner.message, auto_dismiss_ms=0)
 
-        # API-version-skew guard: the GUI and daemon are independently packaged
-        # (AUR), so a user can upgrade one without the other. The depends>= floor
-        # only guards the minimum daemon version, not a future-incompatible one,
-        # and gives no signal when the GUI is older than the daemon. Re-evaluated
-        # on every reconnect (capabilities re-fetch after a daemon restart).
-        if caps.api_version != EXPECTED_API_VERSION:
+        # API-version-skew guard (the warning-store + log side effects stay here).
+        if vm.api_skew_message is None:
+            self._api_version_banner.hide_banner()
+            self._state.remove_warning("api_version_skew")
+        else:
             import logging
 
-            msg = (
-                f"Daemon API v{caps.api_version} differs from this GUI's expected "
-                f"v{EXPECTED_API_VERSION}. Align your control-ofc-daemon and "
-                "control-ofc-gui package versions \u2014 some features may misbehave."
-            )
-            self._api_version_banner.show_warning(msg, auto_dismiss_ms=0)
+            self._api_version_banner.show_warning(vm.api_skew_message, auto_dismiss_ms=0)
             self._state.add_warning(
-                level="warning", source="api", message=msg, key="api_version_skew"
+                level="warning", source="api", message=vm.api_skew_message, key="api_version_skew"
             )
             logging.getLogger(__name__).warning(
                 "API version skew: daemon reports api_version=%d, GUI expects %d",
                 caps.api_version,
                 EXPECTED_API_VERSION,
             )
-        else:
-            self._api_version_banner.hide_banner()
-            self._state.remove_warning("api_version_skew")
 
     def _on_status_updated(self, status: DaemonStatus) -> None:
         # Thermal-protection transition (poll-diff): the daemon's 105 °C
@@ -1076,19 +974,6 @@ class DashboardPage(QWidget):
             return []
         return sorted({z for z in self._state.fan_zones.values() if z})
 
-    @staticmethod
-    def _absent_member_ids(profile, present_ids: set[str]) -> set[str]:
-        """Active-profile member fan ids that are *expected* but currently absent
-        from the readings — these become OFFLINE tiles.
-
-        Pure/testable. A present-but-idle member fan (one filtered out of the calm
-        card view) stays in ``present_ids`` and is therefore simply omitted, never
-        mislabelled OFFLINE — truthfulness over completeness (refinement §4.2)."""
-        if profile is None:
-            return set()
-        member_ids = {m.member_id for c in profile.controls for m in c.members}
-        return member_ids - present_ids
-
     def _refresh_fan_zones(self) -> None:
         """Rebuild the zone cards from the latest readings + active profile +
         overrides. The same trigger fires on poll, zone re-assignment, and rename
@@ -1105,7 +990,7 @@ class DashboardPage(QWidget):
         profile = self._profile_service.active_profile if self._profile_service else None
         status = self._state.daemon_status
         overrides = status.overrides if status else []
-        expected = self._absent_member_ids(profile, {f.id for f in fans})
+        expected = absent_member_ids(profile, {f.id for f in fans})
         # DEC-213: resolve the fan-card curve-sensor temps + recent-RPM sparklines
         # here (keeps fan_grouping Qt-free). The sparkline is the last ~40 RPM
         # points from the history ring buffer — a cheap static paint, not a plot.
@@ -1155,24 +1040,10 @@ class DashboardPage(QWidget):
             self._settings_service.update(fan_zones_collapsed=not expanded)
 
     def _fan_tooltip(self, fan: FanReading) -> str:
-        """Build a tooltip for a fan row, including hwmon chip/driver context."""
-        parts = [f"ID: {fan.id}"]
-        if self._state and fan.source == "hwmon":
-            header = next((h for h in self._state.hwmon_headers if h.id == fan.id), None)
-            if header and header.chip_name:
-                parts.append(f"Chip: {header.chip_name}")
-                g = lookup_chip_guidance(header.chip_name)
-                if g:
-                    status = "mainline" if g.in_mainline else g.driver_package
-                    parts.append(f"Driver: {g.driver_name} ({status})")
-                mode = {0: "DC", 1: "PWM"}.get(
-                    header.pwm_mode if header.pwm_mode is not None else -1
-                )
-                if mode:
-                    parts.append(f"Mode: {mode}")
-                if not header.is_writable:
-                    parts.append("Status: read-only")
-        return "\n".join(parts)
+        """Build a tooltip for a fan row, including hwmon chip/driver context
+        (:func:`dashboard_view.fan_tooltip`)."""
+        headers = self._state.hwmon_headers if self._state else []
+        return fan_tooltip(fan, headers)
 
     def _update_card(
         self,
@@ -1184,61 +1055,29 @@ class DashboardPage(QWidget):
         warn: float = 0,
         crit: float = 0,
     ) -> None:
-        """Update a summary card from binding or auto-match by kind."""
-        binding = self._card_bindings.get(category, "")
-        sensor = self._resolve_card_sensor(category, kinds, sensors, sensor_by_id)
-        if sensor:
-            freshness = sensor.freshness
-            # Trend glyph only while the reading is live — a stale rate is not
-            # trustworthy. Rendered in its own label, beside the value.
-            card.set_trend(
-                _trend_from_rate(sensor.rate_c_per_s) if freshness == Freshness.FRESH else ""
-            )
-            if freshness == Freshness.INVALID:
-                card.set_value(f"{sensor.value_c:.1f}\u00b0C \u26a0")
-                card.setToolTip(f"Stale reading ({sensor.age_ms / 1000:.0f}s old)")
-                card.set_status_class("CriticalChip")
-            elif freshness == Freshness.STALE:
-                card.set_value(f"{sensor.value_c:.1f}\u00b0C \u23f1")
-                card.setToolTip(f"Aging reading ({sensor.age_ms / 1000:.1f}s old)")
-                card.set_status_class("WarningChip")
-            else:
-                card.set_value(f"{sensor.value_c:.1f}\u00b0C")
-                card.setToolTip("")
-                if crit and sensor.value_c > crit:
-                    card.set_status_class("CriticalChip")
-                elif warn and sensor.value_c > warn:
-                    card.set_status_class("WarningChip")
-                else:
-                    card.set_status_class("")
-            # Session min/max from GUI-side tracker
-            stats = self._state.session_stats.get(sensor.id) if self._state else None
-            card.set_range(
-                stats.min_c if stats else None,
-                stats.max_c if stats else None,
-            )
-        elif binding:
-            card.set_value("\u2014")
-            card.set_trend("")
-            card.setToolTip("Bound sensor not available")
-            card.set_range(None, None)
+        """Update a summary card from binding or auto-match by kind
+        (:func:`dashboard_view.build_summary_card_vm`)."""
+        stats = self._state.session_stats if self._state else {}
+        vm = build_summary_card_vm(
+            category, kinds, sensors, sensor_by_id, self._card_bindings, stats, warn, crit
+        )
+        if vm is None:
+            return
+        card.set_trend(vm.trend)
+        card.set_value(vm.value_text)
+        card.setToolTip(vm.tooltip)
+        # A None status class means "leave it as-is" (binding-missing branch).
+        if vm.status_class is not None:
+            card.set_status_class(vm.status_class)
+        card.set_range(vm.range_min, vm.range_max)
 
     def _update_fans_card(self, display_fans: list[FanReading]) -> None:
-        """Fans card face: online/expected + average PWM/RPM. "Online" = a FRESH
-        reading; a shortfall flags a warning. Definitions mirror the fan_grouping
-        view-model (Phase 4 wires per-zone cards from the same data)."""
-        total = len(display_fans)
-        online = sum(1 for f in display_fans if f.freshness == Freshness.FRESH)
-        self._fans_card.set_value(f"{online}/{total}")
-        self._fans_card.set_status_class("WarningChip" if total and online < total else "")
-        rpms = [f.rpm for f in display_fans if f.rpm is not None]
-        pwms = [f.last_commanded_pwm for f in display_fans if f.last_commanded_pwm is not None]
-        parts = []
-        if pwms:
-            parts.append(f"avg {round(sum(pwms) / len(pwms))}% PWM")
-        if rpms:
-            parts.append(f"{round(sum(rpms) / len(rpms))} rpm")
-        self._fans_card.set_detail_text(" \u00b7 ".join(parts))
+        """Fans card face: online/expected + average PWM/RPM
+        (:func:`dashboard_view.build_fans_card_vm`)."""
+        vm = build_fans_card_vm(display_fans)
+        self._fans_card.set_value(vm.value_text)
+        self._fans_card.set_status_class(vm.status_class)
+        self._fans_card.set_detail_text(vm.detail_text)
 
     def _on_warnings_changed(self, count: int) -> None:
         # Warnings now surface only in the strip's warning chip (DEC-178); the
@@ -1355,26 +1194,17 @@ class DashboardPage(QWidget):
     def _safety_detail_text(self) -> str:
         """Read-only thermal-safety summary for the thermal chip's click detail.
 
-        Pure (no I/O) so it is unit-testable. Surfaces only data we actually have
-        — state, a plain reason, the current hottest CPU sensor, and any active
-        manual overrides. It does NOT invent a "last safe value" or a persisted
-        transition timestamp (neither is daemon-provided)."""
+        The text is assembled Qt-free by :func:`dashboard_view.safety_detail_text`;
+        the THERMAL_STATES label is a presentation constant resolved here. Surfaces
+        only data we actually have — state, a plain reason, the current hottest CPU
+        sensor, and any active manual overrides."""
         ds = self._state.daemon_status if self._state else None
         thermal = (ds.thermal_state if ds else "normal") or "normal"
         label, _css = THERMAL_STATES.get(thermal, (f"Thermal: {thermal}", ""))
-        lines = [
-            f"State: {label}",
-            "",
-            _THERMAL_REASONS.get(thermal, "Current daemon thermal state."),
-        ]
         sensors = self._state.sensors if self._state else []
         cpu_vals = [s.value_c for s in sensors if s.kind in ("CpuTemp", "cpu_temp")]
-        if cpu_vals:
-            lines += ["", f"Hottest CPU sensor: {max(cpu_vals):.1f}°C"]
         n = len(ds.overrides) if ds and ds.overrides else 0
-        if n:
-            lines += ["", f"{n} manual override{'s' if n != 1 else ''} active."]
-        return "\n".join(lines)
+        return safety_detail_text(thermal, label, cpu_vals, n)
 
     def _open_safety_detail(self) -> None:
         """Show the read-only thermal-safety detail (thermal chip click)."""

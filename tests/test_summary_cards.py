@@ -19,9 +19,9 @@ from control_ofc.api.models import (
     OverrideStatusEntry,
     SensorReading,
 )
+from control_ofc.services.dashboard_view import trend_from_rate
 from control_ofc.ui.main_window import MainWindow
 from control_ofc.ui.pages import dashboard_page as dashboard_page_mod
-from control_ofc.ui.pages.dashboard_page import _trend_from_rate
 from control_ofc.ui.widgets.summary_card import SummaryCard
 
 
@@ -119,7 +119,7 @@ class TestTrendFromRate:
         ],
     )
     def test_rate_maps_to_direction(self, rate, expected):
-        assert _trend_from_rate(rate) == expected
+        assert trend_from_rate(rate) == expected
 
 
 # ─── Thermal-safety detail (Safety card removed, DEC-185) ────────────────
