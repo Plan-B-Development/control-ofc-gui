@@ -85,3 +85,18 @@ def test_pkgbuild_pkgver_matches_pyproject_version():
         f"(.github/workflows/release.yml) verifies pkgver against the git tag — "
         f"they must be in sync at commit time so the tag-driven publish succeeds."
     )
+
+
+def test_bundled_fonts_shipped_in_wheel():
+    """DEC-208 ships DM Sans + Space Grotesk INSIDE the wheel via package-data;
+    register_bundled_fonts() loads them from a __file__-relative dir at startup.
+    If the glob or the .ttf files go missing, a packaged install silently renders
+    with fallback fonts (audit 2026-07-15 Phase 5)."""
+    data = tomllib.loads(PYPROJECT.read_text())
+    package_data = data["tool"]["setuptools"]["package-data"]["control_ofc"]
+    assert "ui/fonts/*.ttf" in package_data, (
+        f"pyproject package-data must ship the bundled fonts (DEC-208); got {package_data}"
+    )
+    fonts_dir = REPO_ROOT / "src" / "control_ofc" / "ui" / "fonts"
+    ttfs = list(fonts_dir.glob("*.ttf"))
+    assert ttfs, f"no .ttf fonts found under {fonts_dir} — the package-data glob would ship nothing"

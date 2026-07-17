@@ -64,6 +64,19 @@ PAGE_TEST = 2
 PAGE_REVIEW = 3
 
 
+def _hot_cpu_sensor(sensors):
+    """The first CPU sensor over the thermal-abort threshold, or ``None``.
+
+    The single copy of the wizard's thermal-safety rule — used by both the
+    pre-flight gate (IntroPage) and the live per-tick guard (IdentifyFanPage), so
+    the threshold lives in exactly one place.
+    """
+    for s in sensors:
+        if s.kind.lower().startswith("cpu") and s.value_c > THERMAL_ABORT_C:
+            return s
+    return None
+
+
 class FanConfigWizard(QWizard):
     """Guided wizard for identifying and labelling controllable fans."""
 
@@ -219,11 +232,8 @@ class FanConfigWizard(QWizard):
             log.warning("Failed to restore fan %s: %s", fan_id, e)
 
     def check_thermal_safe(self) -> bool:
-        """Check if any CPU sensor exceeds the thermal abort threshold."""
-        for s in self._state.sensors:
-            if s.kind.lower().startswith("cpu") and s.value_c > THERMAL_ABORT_C:
-                return False
-        return True
+        """Whether no CPU sensor exceeds the thermal-abort threshold."""
+        return _hot_cpu_sensor(self._state.sensors) is None
 
     def accept(self) -> None:
         """Save labels and clean up on Finish."""
@@ -282,12 +292,9 @@ class IntroPage(QWizardPage):
             errors.append("Daemon is not connected.")
         if not self._state.fans:
             errors.append("No controllable fan outputs detected.")
-        for s in self._state.sensors:
-            if s.kind.lower().startswith("cpu") and s.value_c > THERMAL_ABORT_C:
-                errors.append(
-                    f"CPU temperature too high ({s.value_c:.1f}°C > {THERMAL_ABORT_C}°C)."
-                )
-                break
+        hot = _hot_cpu_sensor(self._state.sensors)
+        if hot is not None:
+            errors.append(f"CPU temperature too high ({hot.value_c:.1f}°C > {THERMAL_ABORT_C}°C).")
 
         if errors:
             self._status_label.setText("Cannot proceed:\n• " + "\n• ".join(errors))

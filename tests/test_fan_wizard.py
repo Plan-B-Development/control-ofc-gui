@@ -353,3 +353,114 @@ class TestRestoreViaIdentify:
         client.fan_identify.reset_mock()
         wizard._exit_override()
         client.fan_identify.assert_not_called()
+
+
+class TestIdentifyFanPageLifecycle:
+    """Real-construction coverage for the per-fan test lifecycle (audit 2026-07-15
+    Phase 5): start / tick / end / abort / cleanup, including the thermal abort
+    mid-test — the safety-critical path."""
+
+    @staticmethod
+    def _wizard_and_page(qtbot, state, client):
+        wizard = FanConfigWizard(state=state, client=client)
+        qtbot.addWidget(wizard)
+        wizard._selected_indices = [0]
+        wizard._current_test_idx = 0
+        page = wizard._test_page
+        page.initializePage()
+        return wizard, page
+
+    @staticmethod
+    def _hot_cpu():
+        return [SensorReading(id="cpu", label="Tctl", kind="CpuTemp", value_c=120.0, age_ms=50)]
+
+    def test_start_test_stops_fan_and_runs_timer(self, qtbot, wizard_state):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        _wizard, page = self._wizard_and_page(qtbot, wizard_state, client)
+        page._start_test()
+        assert page._testing is True
+        assert page._timer.isActive()
+        client.fan_identify.assert_called_once_with("openfan:ch00", "stop")
+        page._abort_test()  # stop the running timer for a clean teardown
+
+    def test_start_test_refuses_when_cpu_hot(self, qtbot):
+        from unittest.mock import MagicMock
+
+        state = _make_wizard_state()
+        state.set_sensors(self._hot_cpu())
+        client = MagicMock()
+        _wizard, page = self._wizard_and_page(qtbot, state, client)
+        page._start_test()
+        assert page._testing is False
+        client.fan_identify.assert_not_called()
+        assert "abort" in page._status_msg.text().lower()
+
+    def test_tick_thermal_spike_aborts_and_restores(self, qtbot, wizard_state):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        _wizard, page = self._wizard_and_page(qtbot, wizard_state, client)
+        page._start_test()  # cool → fan stopped, timer running
+        assert page._testing
+        client.fan_identify.reset_mock()
+
+        wizard_state.set_sensors(self._hot_cpu())  # CPU spikes mid-test
+        page._tick()
+
+        assert page._testing is False
+        assert not page._timer.isActive()
+        client.fan_identify.assert_called_once_with("openfan:ch00", "restore")
+        assert "abort" in page._status_msg.text().lower()
+
+    def test_tick_countdown_completes_and_restores(self, qtbot, wizard_state):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        _wizard, page = self._wizard_and_page(qtbot, wizard_state, client)
+        page._start_test()
+        client.fan_identify.reset_mock()
+        page._seconds_remaining = 1  # the next tick ends the countdown
+        page._tick()
+        assert page._testing is False
+        client.fan_identify.assert_called_once_with("openfan:ch00", "restore")
+
+    def test_abort_test_restores_fan(self, qtbot, wizard_state):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        _wizard, page = self._wizard_and_page(qtbot, wizard_state, client)
+        page._start_test()
+        client.fan_identify.reset_mock()
+        page._abort_test()
+        assert page._testing is False
+        assert not page._timer.isActive()
+        client.fan_identify.assert_called_once_with("openfan:ch00", "restore")
+
+    def test_cleanup_page_aborts_active_test(self, qtbot, wizard_state):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        _wizard, page = self._wizard_and_page(qtbot, wizard_state, client)
+        page._start_test()
+        client.fan_identify.reset_mock()
+        page.cleanupPage()  # user pressed Back mid-test
+        assert page._testing is False
+        client.fan_identify.assert_called_once_with("openfan:ch00", "restore")
+
+    def test_cleanup_page_noop_when_not_testing(self, qtbot, wizard_state):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        _wizard, page = self._wizard_and_page(qtbot, wizard_state, client)
+        page.cleanupPage()  # not testing → nothing to restore
+        client.fan_identify.assert_not_called()
+
+    def test_validate_page_saves_current_label(self, qtbot, wizard_state):
+        from unittest.mock import MagicMock
+
+        wizard, page = self._wizard_and_page(qtbot, wizard_state, MagicMock())
+        page._label_combo.setCurrentText("CPU Cooler")
+        assert page.validatePage() is True
+        assert wizard._labels["openfan:ch00"] == "CPU Cooler"

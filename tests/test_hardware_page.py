@@ -100,6 +100,34 @@ def test_verdict_and_summary_bar(qtbot):
     assert any("PASS" in t for t in texts) and any("WARN" in t for t in texts)
 
 
+def test_readiness_detail_rendered_as_plaintext(qtbot):
+    """Daemon-supplied readiness detail is rendered PlainText, so an HTML-ish
+    daemon string cannot inject markup into the checklist (audit 2026-07-15
+    Phase 5)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLabel
+
+    page, _ = _page(qtbot)
+    daemon_detail = "<b>Load</b> the it87 driver & reboot"
+    page._on_readiness_ok(
+        _hw(
+            items=[
+                ReadinessItem(
+                    code="no_pwm_controls",
+                    severity="warning",
+                    summary="No writable PWM headers",
+                    detail=daemon_detail,
+                ),
+            ]
+        )
+    )
+    section = page.findChild(QWidget, "Hardware_CheckDetail_no_pwm_controls")
+    assert section is not None
+    detail_labels = [lbl for lbl in section.findChildren(QLabel) if lbl.text() == daemon_detail]
+    assert detail_labels, "daemon detail label not found in the collapsible section"
+    assert all(lbl.textFormat() == Qt.TextFormat.PlainText for lbl in detail_labels)
+
+
 # ── Action routing (re-pointed to the migrated pages) ──────────────────────
 
 

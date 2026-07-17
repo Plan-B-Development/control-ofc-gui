@@ -32,6 +32,14 @@ def _page(qtbot, diag=None):
     return page, diag
 
 
+def test_snapshot_previews_cap_block_count(qtbot):
+    """The diagnostic-snapshot previews cap at 2000 blocks so a large daemon
+    snapshot can't grow the widget unbounded (audit 2026-07-15 Phase 5)."""
+    page, _ = _page(qtbot)
+    assert page._daemon_preview.maximumBlockCount() == 2000
+    assert page._controller_preview.maximumBlockCount() == 2000
+
+
 # ── Table population + live feed ──────────────────────────────────────────
 
 

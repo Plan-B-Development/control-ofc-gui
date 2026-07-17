@@ -28,7 +28,7 @@ from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.components.badges import StatusPill
-from control_ofc.ui.pages.overview_page import _S_CONF, _SENSOR_COLS, OverviewPage
+from control_ofc.ui.pages.overview_page import _FAN_COLS, _S_CONF, _SENSOR_COLS, OverviewPage
 
 
 def _state() -> AppState:
@@ -99,6 +99,41 @@ def test_confidence_and_freshness_render_as_pills(qtbot):
     page._on_fans([FanReading(id="openfan:ch00", source="openfan", rpm=1200, age_ms=500)])
     fresh = page._fan_table.cellWidget(0, 5).findChild(StatusPill)
     assert fresh is not None
+
+
+def test_fan_and_sensor_table_column_structure(qtbot):
+    """Re-pin the table column structure so a silent header reorder or removal is
+    caught (audit 2026-07-15 Phase 5)."""
+    page, _ = _page(qtbot)
+    assert page._fan_table.columnCount() == len(_FAN_COLS)
+    assert [
+        page._fan_table.horizontalHeaderItem(i).text() for i in range(len(_FAN_COLS))
+    ] == _FAN_COLS
+    assert page._sensor_table.columnCount() == len(_SENSOR_COLS)
+    assert [
+        page._sensor_table.horizontalHeaderItem(i).text() for i in range(len(_SENSOR_COLS))
+    ] == _SENSOR_COLS
+
+
+def test_confidence_pill_state_reflects_classification(qtbot):
+    """The confidence pill's state (not just its presence) follows the sensor
+    classification — a trusted CPU sensor is 'ok', an ambiguous motherboard
+    sensor is not (audit 2026-07-15 Phase 5)."""
+    page, _ = _page(qtbot)
+    page._on_sensors(
+        [_sensor(sid="hwmon:k10temp:Tdie", chip_name="k10temp", label="Tdie", kind="cpu_temp")]
+    )
+    trusted = page._sensor_table.cellWidget(0, _S_CONF).findChild(StatusPill)
+    trusted_state = trusted.state()
+    assert trusted_state == "ok"
+    assert trusted.text()  # non-empty confidence label
+
+    page._on_sensors(
+        [_sensor(sid="hwmon:nct6798:CPUTIN", chip_name="nct6798", label="CPUTIN", kind="temp")]
+    )
+    ambiguous = page._sensor_table.cellWidget(0, _S_CONF).findChild(StatusPill)
+    assert ambiguous.state() == "neutral"
+    assert ambiguous.state() != trusted_state
 
 
 def test_hide_persists_and_makes_toggle_row(qtbot):
