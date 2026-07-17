@@ -12,7 +12,7 @@ from __future__ import annotations
 import types
 
 from PySide6.QtGui import QDesktopServices, QShowEvent
-from PySide6.QtWidgets import QFrame, QPushButton, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QTableWidget, QWidget
 
 from control_ofc.api.models import (
     AcpiConflictInfo,
@@ -30,6 +30,7 @@ from control_ofc.api.models import (
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.ui.components.badges import StatusPill
+from control_ofc.ui.components.gauges import RadialGauge
 from control_ofc.ui.pages.system_state_page import SystemStatePage
 
 
@@ -118,10 +119,13 @@ def test_doc_link_button_opens_url(qtbot, monkeypatch):
 def test_gauge_shows_high_contention(qtbot):
     page, _ = _page(qtbot)
     page._render(_diag_revert("hwmon:it8696:pwm1", 996))
-    assert page._gauge.fraction() == 1.0
-    assert page._gauge.state() == "crit"
-    assert page._contention_title.text() == "High Contention Detected"
-    assert page._header_id_label.text() == "hwmon:it8696:pwm1"
+    assert page.findChild(RadialGauge, "SystemState_Gauge_reverts").fraction() == 1.0
+    assert page.findChild(RadialGauge, "SystemState_Gauge_reverts").state() == "crit"
+    assert (
+        page.findChild(QLabel, "SystemState_Label_contentionTitle").text()
+        == "High Contention Detected"
+    )
+    assert page.findChild(QLabel, "SystemState_Label_headerId").text() == "hwmon:it8696:pwm1"
 
 
 def test_registry_table_has_status_pills(qtbot):
@@ -139,8 +143,10 @@ def test_registry_table_has_status_pills(qtbot):
             kernel_modules=[],
         )
     )
-    assert page._registry_table.rowCount() == 1  # one chip, no modules
-    holder = page._registry_table.cellWidget(0, 0)
+    assert (
+        page.findChild(QTableWidget, "SystemState_Table_registry").rowCount() == 1
+    )  # one chip, no modules
+    holder = page.findChild(QTableWidget, "SystemState_Table_registry").cellWidget(0, 0)
     assert holder.findChild(StatusPill) is not None
 
 
@@ -158,7 +164,7 @@ def test_no_issues_shows_ready(qtbot):
         kernel_modules=[],
     )
     page._render(healthy)
-    assert page._issue_pill.text() == "SYSTEM READY"
+    assert page.findChild(StatusPill, "SystemState_Pill_issueCount").text() == "SYSTEM READY"
     assert page.findChild(QWidget, "SystemState_Label_noIssues") is not None
 
 
@@ -261,7 +267,7 @@ def test_showevent_renders_from_cache_without_worker(qtbot):
     qtbot.addWidget(page)
     page.showEvent(QShowEvent())
     assert page._hw_diag_worker is None  # rendered from cache, never fetched
-    assert page._issue_pill.text() != "—"
+    assert page.findChild(StatusPill, "SystemState_Pill_issueCount").text() != "—"
 
 
 def test_showevent_latches_and_never_double_fetches(qtbot):
@@ -281,7 +287,7 @@ def test_set_theme_rerenders(qtbot):
     page = SystemStatePage(state=state, diagnostics_service=diag)
     qtbot.addWidget(page)
     page.set_theme(None)  # renders from cache without raising
-    assert page._issue_pill.text() != "—"
+    assert page.findChild(StatusPill, "SystemState_Pill_issueCount").text() != "—"
 
 
 def test_no_diagnostics_objectnames_leak(qtbot):
@@ -317,8 +323,10 @@ def test_render_safety_with_gpu_shows_speed_bar(qtbot):
             )
         )
     )
-    assert page._gpu_model_label.text() == "RX 9070 XT"
-    assert not page._speed_bar_holder.isHidden()  # firmware speed-range bar shown
+    assert page.findChild(QLabel, "SystemState_Label_gpuModel").text() == "RX 9070 XT"
+    assert not page.findChild(
+        QWidget, "SystemState_Bar_speedRange"
+    ).isHidden()  # firmware speed-range bar shown
 
 
 def test_run_pwm_verify_guards(qtbot):
@@ -375,7 +383,7 @@ def test_open_readiness_report_creates_dialog(qtbot):
 def test_fetch_without_client_sets_message(qtbot):
     page, _ = _page(qtbot)  # client None
     page._fetch_hardware_diagnostics()
-    assert "no daemon connection" in page._summary_label.text()
+    assert "no daemon connection" in page.findChild(QLabel, "SystemState_Label_summary").text()
 
 
 # ── hwmon rescan (footer action relocated from Diagnostics — DEC-216) ──
