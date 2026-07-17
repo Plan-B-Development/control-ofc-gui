@@ -75,7 +75,7 @@ narrow ones so the chart keeps room — hosting the grouped **Sensors** tree (de
 grouping, per-series checkboxes, colour swatches, search, freshness in tooltips).
 
 DEC-184 reduced this from the former Sensors/Events/Warnings tabbed inspector: the
-Events breadcrumb now lives only in Diagnostics, and active warnings open in a
+Events breadcrumb now lives only on the Logs page, and active warnings open in a
 standalone dialog from the strip's warning chip.
 
 (Resolves the previously-deferred per-sensor freshness side panel; see
@@ -148,7 +148,7 @@ Show:
 Show:
 - a clean empty state
 - possible reasons
-- link/action to Diagnostics
+- link/action to System State
 
 ## Suggested widgets
 - summary status cards

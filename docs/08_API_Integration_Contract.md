@@ -501,7 +501,7 @@ as unavailable. The daemon never writes hardware to build this report.
 
 A structured, read-only diagnose-and-guide list: the daemon's assessment of the
 CPU/hwmon/PWM inventory as actionable items, for the GUI's first-run guide and
-the Diagnostics **Readiness** tab. Never mutates the system. 404-only gated. Full
+the **Hardware** page. Never mutates the system. 404-only gated. Full
 shape in `responses.rs::ReadinessResponse`.
 
 - `api_version: int` — always `1`.

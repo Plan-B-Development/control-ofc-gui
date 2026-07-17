@@ -34,7 +34,7 @@ Users should not have to remember hidden locations. Important tasks should have 
 - overview → Dashboard
 - control and profile tasks → Controls
 - app/runtime configuration → Settings
-- debugging and support → Diagnostics
+- debugging and support → the system-health pages (Overview / System State / Hardware / Logs)
 
 ### 4. State must be obvious
 The user should never need to guess whether the app is:

@@ -65,19 +65,19 @@
 - [ ] GUI settings import/export works
 - [ ] Settings clearly separate GUI-owned vs daemon-runtime settings
 
-### Diagnostics
-- [ ] Diagnostics shows daemon/API status
-- [ ] Diagnostics shows sensor health
-- [ ] Diagnostics shows controller/device discovery
-- [ ] Diagnostics shows connection health, subsystem freshness, and daemon thermal state with user-facing explanation
-- [ ] Diagnostics offers hardware-diagnostics refresh, PWM/GPU write tests, export support bundle, and copy last errors
+### System health (Overview · System State · Hardware · Logs)
+- [ ] The system-health pages show daemon/API status
+- [ ] The system-health pages show sensor health
+- [ ] The system-health pages show controller/device discovery
+- [ ] The system-health pages show connection health, subsystem freshness, and daemon thermal state with user-facing explanation
+- [ ] The system-health pages offer hardware-diagnostics refresh, PWM/GPU write tests, export support bundle, and copy last errors
 - [ ] Export support bundle produces a structured output
 - [ ] Subsystem age_ms values include reason text and explanatory note (R34)
 - [ ] Daemon uptime displayed when available (R34)
 - [ ] Event log provides daemon status, controller status, and system journal retrieval (R34)
 - [ ] Each detail block is labeled with its source (R34)
 - [ ] Journal retrieval is bounded and handles permission errors truthfully (R34)
-- [ ] Diagnostics labels use transparent backgrounds and theme CSS classes (R34)
+- [ ] System-health page labels use transparent backgrounds and theme CSS classes (R34)
 - [ ] No hardcoded font-size pixel values on the distributed diagnostics pages — System State, Hardware, Logs, Overview (R34)
 
 ### Demo mode

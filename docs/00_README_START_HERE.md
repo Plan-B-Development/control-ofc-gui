@@ -44,7 +44,7 @@ This pack is the **working source of truth** for building the Linux-first deskto
 - Simple hysteresis (deadband) is included in V1 control loop
 - There must be a **demo mode** for testing without hardware
 - Polling history is kept for the **last 2 hours**
-- Diagnostics is a first-class page, not an afterthought
+- System health is **first-class** — its own Overview / System State / Hardware / Logs pages, not an afterthought
 - V1 uses a **fixed dashboard**
 - Theme import/export existed from the start; a full theme editor (per-token palette editing with contrast checking) shipped in a later release
 
