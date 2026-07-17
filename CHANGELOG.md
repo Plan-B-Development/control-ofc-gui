@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.23.0] — 2026-07-17
+
+Robustness, security, and maintainability hardening from the 2026-07-15 cross-stack
+audit remediation. Behaviour is unchanged for normal use; no daemon, API, schema, or
+fan-control change (`EXPECTED_API_VERSION` stays 1; the GUI remains poll-only and never
+writes PWM). Pairs with `control-ofc-daemon` ≥ v2.11.0 — the coordinated daemon release
+is v2.12.0. DEC-217, DEC-219, DEC-220.
+
+### Security
+- **Theme name + font families validated at the load boundary (DEC-217).** A theme's
+  `name` and font-family fields are sanitised where a theme is loaded, and the one
+  sanctioned path accessor byte-caps the derived filename — closing a path-traversal
+  class (a theme named `../app_settings` could overwrite settings) and a QSS-injection
+  vector via the heading font family.
+
+### Fixed
+- **Manual override no longer blocks the UI, and a slider re-pin can't spuriously revert
+  its own override (DEC-220).** Take/renew/release run off the Qt main thread, so a slow
+  daemon never freezes the Controls page; a renew that races a slider re-pin is recognised
+  as a self-supersession and ignored instead of flipping the card back to Auto while the
+  fan stays pinned.
+- **Malformed daemon payloads no longer freeze the live tables.** A non-list
+  `fans`/`subsystems` field, or a non-dict element inside them, is handled instead of
+  raising on the 1 Hz poll.
+- **The support bundle keeps diagnostic settings.** The troubleshooting bundle retains the
+  machine-specific settings that reveal a misconfiguration (sensor-class overrides, dir
+  overrides, hidden sensors) while still dropping pure window/layout state.
+- **No-hardware Dashboard guidance** now points to the **Hardware** page (was the retired
+  Diagnostics page).
+
+### Changed
+- **Internal: the three largest pages split behind Qt-free view-models (DEC-219).** System
+  State, Dashboard, and Controls were decomposed (render cards / `dashboard_view` / a grown
+  `controls_view`) with **zero behaviour change** — verified by an objectName golden-master
+  characterization test. No user-visible effect.
+- Fan-wizard CPU-thermal predicate de-duplicated; assorted dead-code and stale-comment
+  cleanup; documentation refreshed (module map, readiness spec, API contract).
+
+### Notes
+- No daemon/API/schema change; `EXPECTED_API_VERSION` stays 1. The GUI remains poll-only
+  and never writes PWM. No settings migration beyond what v2.22.0 already applied.
+
 ## [2.22.0] — 2026-07-15
 
 **This release ships the complete presentation-only GUI redesign** (Stages 1–9, DEC-208…216) — the first release
