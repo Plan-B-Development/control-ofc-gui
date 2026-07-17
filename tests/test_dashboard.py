@@ -198,11 +198,16 @@ class TestDashboardContent:
         assert not chip.isHidden()
         assert any(c.isdigit() for c in chip.text())
 
-    def test_open_diagnostics_button_exists(self, qtbot, window):
-        """The no-hardware state has an 'Open Diagnostics' button."""
-        btn = window.dashboard_page.findChild(QPushButton, "Dashboard_Btn_openDiagnostics")
+    def test_open_readiness_button_exists_and_routes(self, qtbot, window):
+        """The no-hardware state's button opens the Hardware page (readiness),
+        matching its message that promises the driver/readiness report."""
+        from control_ofc.constants import PAGE_HARDWARE
+
+        btn = window.dashboard_page.findChild(QPushButton, "Dashboard_Btn_openReadiness")
         assert btn is not None
         assert btn.isEnabled()
+        btn.click()
+        assert window.page_stack.currentIndex() == PAGE_HARDWARE
 
 
 class TestModeBadge:

@@ -114,9 +114,9 @@ def _trend_from_rate(rate: float | None) -> str:
 class DashboardPage(QWidget):
     """Landing page showing fan speeds, temperatures, and profile status."""
 
-    open_diagnostics = Signal()
-    # DEC-206: the Dashboard cooling-readiness chip was clicked — main_window
-    # switches to Diagnostics and selects the merged Hardware-readiness tab.
+    # DEC-206: the Dashboard cooling-readiness chip (and the no-hardware "what to
+    # do next" button) were clicked — main_window switches to the Hardware page
+    # (the merged readiness view, DEC-212).
     open_readiness = Signal()
 
     # Stack indices
@@ -385,10 +385,10 @@ class DashboardPage(QWidget):
 
         next_msg = QLabel(
             "1. Check that the daemon is running: systemctl status control-ofc-daemon\n"
-            "2. Missing motherboard sensor driver? Open Diagnostics → Troubleshooting "
-            "and run Refresh Hardware Diagnostics — the readiness report names the "
-            "exact kernel module or AUR package your board needs (the manual's Setup "
-            "Checklist page has the full ordered walkthrough)\n"
+            "2. Missing motherboard sensor driver? Open the Hardware page — its "
+            "readiness report names the exact kernel module or AUR package your "
+            "board needs (the manual's Setup Checklist page has the full ordered "
+            "walkthrough)\n"
             "3. Using an OpenFan controller? The daemon service accesses serial ports "
             "itself — it ships with the 'uucp' group on Arch / CachyOS; Debian / "
             "Ubuntu installs may need a 'dialout' drop-in (see the daemon docs)"
@@ -397,10 +397,10 @@ class DashboardPage(QWidget):
         next_msg.setProperty("class", "PageSubtitle")
         next_layout.addWidget(next_msg)
 
-        diag_btn = QPushButton("Open Diagnostics")
-        diag_btn.setObjectName("Dashboard_Btn_openDiagnostics")
-        diag_btn.clicked.connect(self.open_diagnostics.emit)
-        next_layout.addWidget(diag_btn)
+        readiness_btn = QPushButton("Open Hardware readiness")
+        readiness_btn.setObjectName("Dashboard_Btn_openReadiness")
+        readiness_btn.clicked.connect(self.open_readiness.emit)
+        next_layout.addWidget(readiness_btn)
 
         layout.addWidget(next_frame, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -851,13 +851,13 @@ class DashboardPage(QWidget):
         if not hw.present:
             self._hwmon_banner.show_info(
                 "No motherboard fan headers detected. "
-                "Check Diagnostics \u2192 Troubleshooting for driver and BIOS guidance.",
+                "Check the Hardware page for driver and BIOS guidance.",
                 auto_dismiss_ms=0,
             )
         elif hw.present and not hw.write_support:
             self._hwmon_banner.show_warning(
                 "Motherboard fan headers detected but all are read-only. "
-                "Check BIOS fan settings or driver status in Diagnostics \u2192 Troubleshooting.",
+                "Check BIOS fan settings or driver status on the Hardware page.",
                 auto_dismiss_ms=0,
             )
         else:

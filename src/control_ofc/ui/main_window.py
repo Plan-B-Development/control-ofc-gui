@@ -270,8 +270,8 @@ class MainWindow(QWidget):
         if len(geo) == 4:
             self.setGeometry(geo[0], geo[1], geo[2], geo[3])
 
-        # Wire dashboard "Open Diagnostics" to sidebar navigation
-        self.dashboard_page.open_diagnostics.connect(self._open_diagnostics)
+        # Wire the dashboard readiness affordances (cooling-readiness chip +
+        # no-hardware "what to do next" button) to sidebar navigation.
         self.dashboard_page.open_readiness.connect(self._open_readiness)
         # DEC-207/DEC-216: the Cooling Hardware Readiness "set preferred sensor"
         # deep-link is owned by the Hardware page (the Diagnostics duplicate was

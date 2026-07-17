@@ -140,14 +140,15 @@ class TestDashboardCopyText:
 
     def test_no_hardware_state_routes_to_readiness_report(self, qtbot, app_state):
         # DEC-145: the most common cause of "no hardware" is a missing
-        # Super-I/O kernel module, so the empty state must route users to
-        # the Troubleshooting readiness report rather than serial-group
-        # surgery.
+        # Super-I/O kernel module, so the empty state must route users to the
+        # Hardware page's readiness report rather than serial-group surgery.
+        # (The retired "Diagnostics -> Troubleshooting / Refresh Hardware
+        # Diagnostics" wording went with the redesign — Phase 2, v2.23.0.)
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         text = _all_label_text(page)
-        assert "Troubleshooting" in text
-        assert "Refresh Hardware Diagnostics" in text
+        assert "Hardware page" in text
+        assert "readiness report" in text
 
     def test_no_hardware_state_drops_user_directed_serial_advice(self, qtbot, app_state):
         # DEC-145 regression: the old copy told the *user* to verify their
