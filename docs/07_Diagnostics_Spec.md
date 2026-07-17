@@ -363,11 +363,21 @@ own page.)
    documentation links from the chip-family knowledge base
    (`hwmon_guidance.py`). Shown per unique chip prefix.
 
-### Layout: flattened health report (DEC-124, supersedes the DEC-115/DEC-116 card layout)
-On its own **System State** page nothing competes with a fan table for
-vertical space, so the readiness content is a flat, always-readable health
-report rather than the deep accordion-in-accordion card of DEC-115/DEC-116.
-Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
+### Layout: cooling-readiness on the Hardware page (DEC-212 redesign)
+The redesign moved cooling-readiness off a Diagnostics tab onto its own
+**Hardware** page (DEC-212). It is now a **checklist of readiness checks** plus a
+list of **actionable steps** — live structure: a checklist `Card`
+(`Hardware_Card_checklist`) with a `Hardware_Pill_verdict` rollup and one
+`Hardware_Check_{code}` row per check, and an actions `Card`
+(`Hardware_Card_actions`) with one `Hardware_Action_{code}` card per step. The
+per-advisory rows and the liability disclaimer described below were folded into
+those action cards / retired.
+
+The pre-redesign **DEC-124** design (kept for provenance; superseded the
+DEC-115/DEC-116 cards): on its own System State page nothing competed with a fan
+table for vertical space, so the readiness content was a flat, always-readable
+health report inside one `Card` frame (then `Diagnostics_Frame_hwReadiness`),
+top-to-bottom:
 
 - **Header action row** — the "Hardware Readiness" title, *Open Full Report ↗*
   (pop-out), *Rescan Hardware* (DEC-147: `POST /hwmon/rescan` — daemon-side
@@ -393,7 +403,8 @@ Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
   `severity_display` mapping (DEC-158), so it carries an icon **and** the word
   **and** a colour (`CriticalChip` red / `WarningChip` orange) — colour is never
   the only cue (WCAG 1.4.1).
-- **Advisories** (`Diagnostics_Container_advisories`, DEC-158) — board/chip
+- **Advisories** (historical objectName `Diagnostics_Container_advisories`; now
+  folded into the `Hardware_Action_{code}` cards, DEC-158/DEC-212) — board/chip
   vendor quirks, one collapsible row each, most-severe-first. Replaces the old
   single flat `[SEVERITY] …` PlainText label: every advisory now shows a
   per-severity badge (icon + word + colour + weight) and an always-visible
@@ -429,7 +440,9 @@ Inside one `Card` frame (`Diagnostics_Frame_hwReadiness`), top-to-bottom:
   chip — every outcome lands in the event log. There is **no** session flag and
   **no** close-time auto-reset: the GUI never writes GPU PWM (DEC-165), so there
   is nothing to undo on close.
-- **Liability disclaimer** (`Diagnostics_Label_readinessDisclaimer`, DEC-158) —
+- **Liability disclaimer** (historical objectName
+  `Diagnostics_Label_readinessDisclaimer`; retired in the DEC-212 Hardware
+  redesign, DEC-158) —
   one calm, persistent note at the bottom of the card (`REMEDIATION_DISCLAIMER`,
   `CardMeta` weight): the checklist fixes, advisory details, and chip guidance
   all describe kernel/driver/firmware changes applied at the user's own risk.

@@ -117,6 +117,18 @@ control_ofc/
     profile_import_service.py  # one-time local->daemon profile import — DEC-161
     profile_service.py         # daemon-backed profile CRUD + local draft cache — DEC-160/161
     series_selection.py
+    session_stats.py           # per-sensor session min/max tracker
+    daemon_service_check.py    # systemd unit-state probe behind the no-daemon hint
+    fan_grouping.py            # Dashboard fan-zone grouping VM — DEC-184..187
+    # Qt-free view-models: headless-testable presentation logic the redesign
+    # extracted out of ui/pages so the pages stay thin (DEC-208..216, DEC-219).
+    # Some import profile_service (loads QtCore, builds no widgets).
+    overview_view.py           # Overview page VM — DEC-209
+    system_state_view.py       # System State page VM — DEC-211
+    hardware_view.py           # Hardware / cooling-readiness page VM — DEC-212
+    logs_view.py               # Logs page VM — DEC-210
+    dashboard_view.py          # Dashboard page VM — DEC-219 (Phase 7.2)
+    controls_view.py           # Controls page VM — DEC-214, grown DEC-219 (Phase 7.3)
   knowledge/                   # pure (stdlib-only) hardware-knowledge modules — no Qt/services deps (moved out of ui/ in v2.8.0)
     sensor_knowledge.py        # sensor classification + board-override database
     hwmon_label_resolver.py    # libsensors / hwmon fan-header label resolution

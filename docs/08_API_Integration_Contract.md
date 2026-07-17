@@ -609,6 +609,11 @@ combined endpoint does not replace them). Absent route ⇒ daemon predates the f
 the GUI feature-detects on `404` and shows an "unavailable" state, falling back to the
 existing endpoints only where a caller needs them.
 
+**Status:** `200` with the snapshot, or a retryable `503 hardware_unavailable`
+("hardware assessment is temporarily unavailable — retry") when the shared passive
+scan has not completed yet (`inventory.rs`). The GUI retries rather than surfacing
+it as a hard error.
+
 ### POST /inventory/superio/probe (DEC-203, opt-in, daemon ≥ 2.7.0)
 
 The **opt-in ACTIVE** Super-I/O probe — a *deliberate, one-shot* action (never
