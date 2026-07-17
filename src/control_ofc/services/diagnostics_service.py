@@ -26,6 +26,26 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Pure-UI/rendering settings with no diagnostic value, stripped from the support
+# bundle. This is a SUBSET of AppSettings.MACHINE_SPECIFIC_KEYS (which portable
+# export uses): the bundle deliberately KEEPS the diagnostically load-bearing
+# machine-specific keys (sensor_class_overrides, card_sensor_bindings,
+# diagnostics_hidden_sensor_ids, acknowledged_kernel_warnings, and the
+# profiles/themes dir overrides) — those are exactly what reveals a
+# misconfiguration in a troubleshooting bundle. Only genuine window/layout state
+# is dropped.
+_BUNDLE_EXCLUDED_SETTING_KEYS = frozenset(
+    {
+        "window_geometry",
+        "last_page_index",
+        "controls_card_sizes",
+        "fan_zone_order",
+        "series_colors",
+        "export_default_dir",
+        "daemon_import_prompted",
+    }
+)
+
 # DEC-111: in-process session breadcrumbs are intentionally bounded — the
 # system journal is the authoritative cross-restart store. 200 rows covers
 # ~20 minutes of typical activity (transitions only, not per-poll noise) and
@@ -605,14 +625,20 @@ class DiagnosticsService(QObject):
         else:
             missing.append("state: AppState not available")
 
-        # App settings — portable subset for diagnosis. The support bundle is
-        # exported and shared, so machine-specific keys (local path overrides,
-        # window/UI state) are stripped via portable_dict(); every setting with
-        # diagnostic value (visibility toggles, theme, card sizing, fan aliases)
-        # is kept.
+        # App settings — full settings minus pure window/layout state. The bundle
+        # is exported and shared, but a troubleshooting bundle MUST keep the
+        # diagnostically load-bearing settings (sensor-class overrides, card
+        # sensor bindings, hidden-sensor ids, acknowledged kernel warnings, and
+        # the profiles/themes dir overrides that are often the actual root cause)
+        # — so it drops only _BUNDLE_EXCLUDED_SETTING_KEYS, NOT the whole
+        # MACHINE_SPECIFIC_KEYS set that portable_dict() strips for export.
         if self._settings_service and hasattr(self._settings_service, "settings"):
             settings = self._settings_service.settings
-            bundle["app_settings"] = settings.portable_dict()
+            bundle["app_settings"] = {
+                k: v
+                for k, v in settings.to_dict().items()
+                if k not in _BUNDLE_EXCLUDED_SETTING_KEYS
+            }
 
         # Profile inventory (names + IDs, not full curve data)
         if self._profile_service and hasattr(self._profile_service, "profiles"):

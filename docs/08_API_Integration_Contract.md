@@ -611,8 +611,9 @@ existing endpoints only where a caller needs them.
 
 **Status:** `200` with the snapshot, or a retryable `503 hardware_unavailable`
 ("hardware assessment is temporarily unavailable — retry") when the shared passive
-scan has not completed yet (`inventory.rs`). The GUI retries rather than surfacing
-it as a hard error.
+scan has not completed yet (`inventory.rs`). The GUI surfaces the daemon's message
+on the Hardware page's status line (it does not auto-retry); the user re-runs the
+scan via the page's Refresh action.
 
 ### POST /inventory/superio/probe (DEC-203, opt-in, daemon ≥ 2.7.0)
 

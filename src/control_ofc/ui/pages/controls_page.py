@@ -97,8 +97,8 @@ class _OverrideWorker(QObject):
 
     # control_id, pct, grant | None, error (DaemonError) | None
     take_result = Signal(str, int, object, object)
-    # control_id, new override_token | None, error (DaemonError) | None
-    renew_result = Signal(str, object, object)
+    # control_id, sent_token, new override_token | None, error (DaemonError) | None
+    renew_result = Signal(str, object, object, object)
 
     def __init__(self, socket_path: str) -> None:
         super().__init__()
@@ -131,9 +131,9 @@ class _OverrideWorker(QObject):
             result = self._get_client().override_renew(
                 control_id, token, timeout=_OVERRIDE_HTTP_TIMEOUT_S
             )
-            self.renew_result.emit(control_id, result.override_token, None)
+            self.renew_result.emit(control_id, token, result.override_token, None)
         except DaemonError as exc:
-            self.renew_result.emit(control_id, None, exc)
+            self.renew_result.emit(control_id, token, None, exc)
 
     @Slot(str, int)
     def release(self, control_id: str, token: int) -> None:
@@ -487,12 +487,17 @@ class ControlsPage(QWidget):
         self._override_renew_timer.stop()
         self._override_value_timer.stop()
         if self._override_thread is not None:
-            if self._override_worker is not None:
-                self._override_worker.shutdown()
+            # Stop the worker's event loop and JOIN before closing its client:
+            # closing the httpx client from the main thread while an override call
+            # is still in flight on the worker raises a non-DaemonError the worker
+            # slot does not catch (a teardown traceback). After wait() the worker
+            # is idle, so the close cannot race a live request (DEC-220).
             self._override_thread.quit()
             if not self._override_thread.wait(2000):
                 self._override_thread.terminate()
                 self._override_thread.wait(1000)
+            if self._override_worker is not None:
+                self._override_worker.shutdown()
             self._override_thread = None
             self._override_worker = None
         self._curve_editor.cleanup()
@@ -1703,9 +1708,25 @@ class ControlsPage(QWidget):
         for control_id, token in list(self._overrides.items()):
             self._request_renew.emit(control_id, token)
 
-    def _on_renew_result(self, control_id: str, new_token: object, error: object) -> None:
-        """Main-thread handler for a completed override_renew (DEC-220)."""
+    def _on_renew_result(
+        self, control_id: str, sent_token: object, new_token: object, error: object
+    ) -> None:
+        """Main-thread handler for a completed override_renew (DEC-220).
+
+        ``sent_token`` is the token this renew was issued for. If the currently
+        held token no longer matches it, the control was re-pinned (a slider drag
+        supersedes the prior token, DEC-163) while the renew was in flight — the
+        daemon rejects the stale renew with ``stale_fencing_token``, but the newer
+        take is valid, so the rejection is a self-inflicted race and must be
+        ignored, never treated as a lapse (else the card reverts while the daemon
+        keeps the fan pinned until the deadman)."""
         if error is not None:
+            if self._overrides.get(control_id) != sent_token:
+                # Superseded by our own re-pin — the newer token renews next cycle.
+                self._log.debug(
+                    "Ignoring stale renew rejection on %s (self-superseded)", control_id
+                )
+                return
             self._log.info("Override on %s lapsed (%s) — reverting card", control_id, error.code)
             self._overrides.pop(control_id, None)
             self._override_renew_secs.pop(control_id, None)
@@ -1716,8 +1737,9 @@ class ControlsPage(QWidget):
             if not self._overrides:
                 self._override_renew_timer.stop()
             return
-        # Only update if still held (a release/re-pin may have superseded it).
-        if control_id in self._overrides:
+        # Only advance the token if the held one is still the one we renewed — a
+        # concurrent re-pin may have installed a newer token we must not clobber.
+        if self._overrides.get(control_id) == sent_token:
             self._overrides[control_id] = new_token
 
     def _flush_override_values(self) -> None:

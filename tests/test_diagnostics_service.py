@@ -420,6 +420,32 @@ class TestExportSupportBundle:
         assert len(data["events"]) == 1
         assert len(data["fan_state"]) == 1
 
+    def test_bundle_keeps_diagnostic_settings_drops_ui_state(self, tmp_path):
+        """Release-review finding C: the troubleshooting bundle must retain the
+        diagnostically load-bearing machine-specific settings (sensor-class
+        overrides, dir overrides that are often the root cause) that portable_dict()
+        wrongly stripped, while still dropping pure window/layout state."""
+        from control_ofc.services.app_settings_service import AppSettingsService
+
+        settings_service = AppSettingsService()
+        settings_service.settings.sensor_class_overrides = {"hwmon:x:t1": "coolant"}
+        settings_service.settings.profiles_dir_override = "/home/tester/profiles"
+        settings_service.settings.window_geometry = [7, 7, 640, 480]
+
+        svc = DiagnosticsService(state=AppState(), settings_service=settings_service)
+        bundle_path = tmp_path / "support.json"
+        with patch(
+            "control_ofc.services.diagnostics_service.subprocess.run", side_effect=FileNotFoundError
+        ):
+            svc.export_support_bundle(bundle_path)
+
+        app_settings = json.loads(bundle_path.read_text())["app_settings"]
+        # Diagnostic keys survive (these reveal the misconfiguration).
+        assert app_settings["sensor_class_overrides"] == {"hwmon:x:t1": "coolant"}
+        assert app_settings["profiles_dir_override"] == "/home/tester/profiles"
+        # Pure window/layout state is dropped.
+        assert "window_geometry" not in app_settings
+
     def test_export_without_state(self, tmp_path):
         svc = DiagnosticsService(state=None)
         bundle_path = tmp_path / "support.json"

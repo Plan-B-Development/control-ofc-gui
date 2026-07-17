@@ -367,6 +367,54 @@ class TestManualOverrideLiveWiring:
         assert "lc1" not in page._overrides
         assert not page._control_cards["lc1"]._manual_btn.isChecked()
 
+    def test_stale_renew_after_own_repin_does_not_revert(self, qtbot, app_state, profile_service):
+        """DEC-220 release-review regression (P2): a slider re-pin mints a new
+        fencing token; a renew dispatched for the PRIOR token then comes back
+        `stale_fencing_token`. Because the held token no longer matches the token
+        the renew was issued for, the rejection is a self-inflicted race — the card
+        must NOT revert and the valid re-pinned override must survive."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+        assert page._overrides["lc1"] == 7
+
+        # A re-pin completed and installed a newer token (9) while a renew for the
+        # old token (7) was still in flight.
+        page._overrides["lc1"] = 9
+        page._on_renew_result(
+            "lc1", 7, None, DaemonError(code="stale_fencing_token", message="x", status=409)
+        )
+
+        assert page._overrides["lc1"] == 9  # valid re-pinned token survives
+        assert page._control_cards["lc1"]._manual_btn.isChecked()  # card stays Manual
+        assert page._unsaved_label.text() == ""  # no spurious "superseded" message
+
+    def test_stale_renew_for_current_token_still_reverts(self, qtbot, app_state, profile_service):
+        """Contrast to the self-race: when the rejected renew's token IS still the
+        held one (a genuine external supersession, no re-pin), the card reverts and
+        surfaces the message exactly as before — the guard must not swallow that."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        page._on_renew_result(
+            "lc1", 7, None, DaemonError(code="stale_fencing_token", message="x", status=409)
+        )
+
+        assert "lc1" not in page._overrides
+        assert not page._control_cards["lc1"]._manual_btn.isChecked()
+        assert "superseded" in page._unsaved_label.text()
+
     def test_thermal_abort_surfaces_message_take_path(self, qtbot, app_state, profile_service):
         """T1b (take path): a thermal_abort on override_take must revert the card
         AND surface the safety message on the page status chip (not a silent

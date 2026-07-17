@@ -2,9 +2,8 @@
 
 Maps the daemon's ``GET /inventory/readiness`` severity vocabulary
 (``ok``/``info``/``warning``/``critical``) to the GUI's
-``(word, glyph, css_class, rank)`` tuple, plus the auto-expand rank threshold and
-the severity-badge minimum width. Consumed by the Hardware page's readiness
-rendering (``services/hardware_view``).
+``(word, glyph, css_class, rank)`` tuple, plus the auto-expand rank threshold.
+Consumed by the Hardware page's readiness rendering (``services/hardware_view``).
 
 The standalone ``InventoryReadinessView`` widget was retired in DEC-216 (with the
 legacy Diagnostics page); the Hardware page renders readiness itself. The module

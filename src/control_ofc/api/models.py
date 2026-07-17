@@ -1250,7 +1250,11 @@ def parse_fans(data: dict) -> list[FanReading]:
         # payload, not "no fans". The polling worker wraps this in DaemonError
         # handling so a clear error surfaces rather than an empty fan table.
         raise TypeError(f"expected 'fans' to be a list, got {type(fans).__name__}")
-    return [FanReading(**_filter_fields(FanReading, s)) for s in fans]
+    # Per-element guard mirrors parse_sensors' _parse_sensor_reading: a non-dict
+    # element (malformed daemon payload) is skipped, not crashed on — without this
+    # `_filter_fields(FanReading, non_dict)` raises AttributeError, which the poll
+    # worker's except clause does not catch, freezing the fan table on every poll.
+    return [FanReading(**_filter_fields(FanReading, s)) for s in fans if isinstance(s, dict)]
 
 
 def parse_hwmon_headers(data: dict) -> list[HwmonHeader]:

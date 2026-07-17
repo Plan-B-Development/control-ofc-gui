@@ -613,6 +613,15 @@ class TestParserFailureModes:
         with pytest.raises(TypeError):
             parse_fans({"fans": {"ch00": {"rpm": 850}}})
 
+    def test_parse_fans_skips_non_dict_elements(self):
+        """A non-dict element inside a well-formed `fans` list (malformed daemon
+        payload) is skipped, not crashed on. Without the per-element dict guard,
+        `_filter_fields(FanReading, None)` raises AttributeError — which the poll
+        worker's except clause does NOT catch — freezing the fan table every 1 Hz
+        poll (release-review finding B). Mirrors parse_sensors' per-element guard."""
+        result = parse_fans({"fans": [{"id": "f1", "source": "openfan"}, None, "junk", 42]})
+        assert [f.id for f in result] == ["f1"]
+
     def test_parse_calibration_result_with_no_points_uses_empty_list(self):
         """No-points calibration is valid (calibration failed/aborted).
         Parser must yield an empty list, not crash."""
