@@ -208,6 +208,17 @@ def _neutralize_modals(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _sync_override_dispatch(monkeypatch):
+    """DEC-220: manual-override HTTP (Controls page) defaults to a worker thread.
+    Run it inline in every test so the suite stays synchronous and never leaks an
+    unjoined QThread (which crashes at interpreter teardown). The one test that
+    needs the real threaded path — test_controls_dec220 — opts back in."""
+    from control_ofc.ui.pages.controls_page import ControlsPage
+
+    monkeypatch.setattr(ControlsPage, "_OVERRIDE_USE_THREAD", False)
+
+
 @pytest.fixture()
 def fake_client():
     return FakeDaemonClient()

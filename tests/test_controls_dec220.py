@@ -1,0 +1,127 @@
+"""DEC-220: manual-override take/renew/release run on a worker thread, so a slow
+or half-dead daemon can never freeze the Qt main loop. These tests exercise the
+REAL threaded path (``_OVERRIDE_USE_THREAD=True``, overriding the suite-wide
+synchronous default from conftest) with a mock client injected into the worker."""
+
+from __future__ import annotations
+
+import threading
+import time
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+from control_ofc.api.models import OverrideGrant
+from control_ofc.services.profile_service import (
+    ControlMember,
+    ControlMode,
+    CurveConfig,
+    CurveType,
+    LogicalControl,
+    Profile,
+)
+from control_ofc.ui.pages.controls_page import ControlsPage
+
+
+def _grant(token: int = 7, renew_secs: int = 5) -> OverrideGrant:
+    return OverrideGrant(
+        control_id="lc1",
+        override_token=token,
+        pwm_percent=50,
+        ttl_secs=15,
+        renew_secs=renew_secs,
+        expires_in_secs=15,
+    )
+
+
+def _live_page(qtbot, app_state, profile_service, client):
+    page = ControlsPage(state=app_state, profile_service=profile_service, client=client)
+    qtbot.addWidget(page)
+    curve = CurveConfig(id="c1", name="C", type=CurveType.FLAT, flat_output_pct=40.0)
+    ctrl = LogicalControl(
+        id="lc1",
+        name="LC",
+        mode=ControlMode.CURVE,
+        curve_id="c1",
+        members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+    )
+    page._refresh_controls_grid(Profile(id="p", name="P", controls=[ctrl], curves=[curve]))
+    return page
+
+
+def test_override_renew_dispatched_off_the_main_thread(
+    qtbot, app_state, profile_service, monkeypatch
+):
+    """`_renew_overrides` must return immediately even when the daemon renew is
+    slow — the blocking HTTP runs on the worker thread, not the main loop."""
+    monkeypatch.setattr(ControlsPage, "_OVERRIDE_USE_THREAD", True)
+
+    renew_entered = threading.Event()
+    unblock = threading.Event()
+    mock_client = MagicMock()
+    mock_client.override_take.return_value = _grant(token=7)
+
+    def slow_renew(*_a, **_k):
+        renew_entered.set()
+        unblock.wait(2.0)  # hold the worker thread inside the renew
+        return SimpleNamespace(override_token=8)
+
+    mock_client.override_renew.side_effect = slow_renew
+    monkeypatch.setattr(
+        "control_ofc.ui.pages.controls_page.DaemonClient", lambda socket_path: mock_client
+    )
+
+    page = _live_page(qtbot, app_state, profile_service, mock_client)
+    try:
+        page._take_override("lc1", 50)
+        qtbot.waitUntil(lambda: page._overrides.get("lc1") == 7, timeout=2000)
+
+        t0 = time.monotonic()
+        page._renew_overrides()  # dispatches the (slow) renew to the worker
+        dispatch_elapsed = time.monotonic() - t0
+
+        assert renew_entered.wait(1.0), "worker never started the renew"
+        assert dispatch_elapsed < 0.5, (
+            f"_renew_overrides blocked the main thread for {dispatch_elapsed:.2f}s — it "
+            "must dispatch to the worker and return immediately (DEC-220)"
+        )
+    finally:
+        unblock.set()
+        page.cleanup()
+
+
+def test_release_during_inflight_take_releases_the_orphan(
+    qtbot, app_state, profile_service, monkeypatch
+):
+    """A take that completes AFTER the user released must release the orphan
+    grant — `_manual_intent` is the source of truth, so no override outlives the
+    user's intent (DEC-220)."""
+    monkeypatch.setattr(ControlsPage, "_OVERRIDE_USE_THREAD", True)
+
+    take_entered = threading.Event()
+    unblock = threading.Event()
+    mock_client = MagicMock()
+
+    def slow_take(*_a, **_k):
+        take_entered.set()
+        unblock.wait(2.0)  # keep the take in flight until the test releases
+        return _grant(token=7)
+
+    mock_client.override_take.side_effect = slow_take
+    monkeypatch.setattr(
+        "control_ofc.ui.pages.controls_page.DaemonClient", lambda socket_path: mock_client
+    )
+
+    page = _live_page(qtbot, app_state, profile_service, mock_client)
+    try:
+        page._take_override("lc1", 50)  # take in flight (blocked in the worker)
+        assert take_entered.wait(1.0), "worker never started the take"
+        page._release_override("lc1")  # user releases before the take returns
+        assert "lc1" not in page._manual_intent
+
+        unblock.set()  # the take now completes; intent is already gone
+        qtbot.waitUntil(lambda: mock_client.override_release.called, timeout=2000)
+        assert mock_client.override_release.call_args[0][:2] == ("lc1", 7)
+        assert "lc1" not in page._overrides
+    finally:
+        unblock.set()
+        page.cleanup()

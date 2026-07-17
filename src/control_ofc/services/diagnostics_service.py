@@ -605,10 +605,14 @@ class DiagnosticsService(QObject):
         else:
             missing.append("state: AppState not available")
 
-        # App settings (full config for diagnosis)
+        # App settings — portable subset for diagnosis. The support bundle is
+        # exported and shared, so machine-specific keys (local path overrides,
+        # window/UI state) are stripped via portable_dict(); every setting with
+        # diagnostic value (visibility toggles, theme, card sizing, fan aliases)
+        # is kept.
         if self._settings_service and hasattr(self._settings_service, "settings"):
             settings = self._settings_service.settings
-            bundle["app_settings"] = settings.to_dict()
+            bundle["app_settings"] = settings.portable_dict()
 
         # Profile inventory (names + IDs, not full curve data)
         if self._profile_service and hasattr(self._profile_service, "profiles"):

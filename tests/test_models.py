@@ -287,6 +287,23 @@ def test_parse_status_readiness_malformed_or_unknown_fields_tolerated():
     assert rollup.to_fix_count == 0  # counts absent → 0
 
 
+def test_parse_status_skips_nondict_subsystem_entries():
+    """A non-dict entry in `subsystems` is dropped, not crashed on — matching the
+    overrides/fan_identify/unavailable_sensors comprehensions (audit 2026-07-15
+    Phase 4)."""
+    status = parse_status(
+        {
+            "subsystems": [
+                {"name": "openfan", "status": "ok"},
+                "garbage",
+                None,
+                {"name": "hwmon", "status": "warn"},
+            ]
+        }
+    )
+    assert [s.name for s in status.subsystems] == ["openfan", "hwmon"]
+
+
 def test_parse_sensors():
     data = {
         "sensors": [
@@ -586,6 +603,15 @@ class TestParserFailureModes:
 
         with pytest.raises((TypeError, AttributeError)):
             parse_sensors({"sensors": {"cpu": {"value_c": 50.0}}})
+
+    def test_parse_fans_with_nonlist_fans_field_raises(self):
+        """`fans` as a dict (bad daemon shape) raises, matching parse_sensors —
+        a malformed payload is not silently treated as an empty fan table. The
+        only callsite (the polling worker) wraps this in DaemonError handling."""
+        import pytest
+
+        with pytest.raises(TypeError):
+            parse_fans({"fans": {"ch00": {"rpm": 850}}})
 
     def test_parse_calibration_result_with_no_points_uses_empty_list(self):
         """No-points calibration is valid (calibration failed/aborted).

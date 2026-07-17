@@ -7,10 +7,11 @@ Profile bar at top for profile management.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame,
@@ -67,18 +68,91 @@ if TYPE_CHECKING:
     from control_ofc.services.demo_controller import DemoController
 
 
-# F-3: manual-override take/renew/release run synchronously on the Qt main
-# thread (moving them off-thread is out of scope). Bound their HTTP timeout well
-# under the 5 s client default so a slow or half-dead daemon can only freeze the
-# UI for ~2 s per call — and ``_renew_overrides`` iterates every held override —
-# instead of the full default.
+# DEC-220: manual-override take/renew/release run OFF the Qt main thread on a
+# dedicated worker (``_OverrideWorker`` below). Run synchronously they could
+# freeze the UI for up to this timeout per call against a slow or half-dead
+# daemon — and ``_renew_overrides`` iterates every held override, so the freeze
+# was N times over, which also stalled the 1 Hz poll and the thermal banner. The bound is
+# kept as a backstop so even off-thread a wedged call cannot pin the worker
+# forever.
 _OVERRIDE_HTTP_TIMEOUT_S = 2.0
+
+
+class _OverrideWorker(QObject):
+    """Runs manual-override HTTP calls (DEC-163) off the Qt main thread (DEC-220).
+
+    Lives on its own ``QThread`` with its own ``DaemonClient`` — never shared with
+    the main thread's profile calls, since an httpx client is not safe for
+    concurrent use. The page dispatches take/renew/release via queued request
+    signals and applies every result back on the main thread, so the shared
+    override dicts stay single-threaded.
+    """
+
+    # control_id, pct, grant | None, error (DaemonError) | None
+    take_result = Signal(str, int, object, object)
+    # control_id, new override_token | None, error (DaemonError) | None
+    renew_result = Signal(str, object, object)
+
+    def __init__(self, socket_path: str) -> None:
+        super().__init__()
+        self._socket_path = socket_path
+        self._client: DaemonClient | None = None
+
+    def _get_client(self) -> DaemonClient:
+        if self._client is None:
+            self._client = DaemonClient(socket_path=self._socket_path)
+        return self._client
+
+    def attach_client(self, client: DaemonClient) -> None:
+        """Reuse an existing client instead of lazily creating one — used only by
+        the synchronous test-dispatch path (ControlsPage._OVERRIDE_USE_THREAD)."""
+        self._client = client
+
+    @Slot(str, int)
+    def take(self, control_id: str, pct: int) -> None:
+        try:
+            grant = self._get_client().override_take(
+                control_id, pct, timeout=_OVERRIDE_HTTP_TIMEOUT_S
+            )
+            self.take_result.emit(control_id, pct, grant, None)
+        except DaemonError as exc:
+            self.take_result.emit(control_id, pct, None, exc)
+
+    @Slot(str, int)
+    def renew(self, control_id: str, token: int) -> None:
+        try:
+            result = self._get_client().override_renew(
+                control_id, token, timeout=_OVERRIDE_HTTP_TIMEOUT_S
+            )
+            self.renew_result.emit(control_id, result.override_token, None)
+        except DaemonError as exc:
+            self.renew_result.emit(control_id, None, exc)
+
+    @Slot(str, int)
+    def release(self, control_id: str, token: int) -> None:
+        # Fire-and-forget: on failure the daemon deadman reverts the override.
+        with contextlib.suppress(DaemonError):
+            self._get_client().override_release(control_id, token, timeout=_OVERRIDE_HTTP_TIMEOUT_S)
+
+    @Slot()
+    def shutdown(self) -> None:
+        if self._client is not None:
+            with contextlib.suppress(Exception):
+                self._client.close()
+            self._client = None
 
 
 class ControlsPage(QWidget):
     """FanControl-style controls: profile bar, control cards grid, curve cards grid."""
 
     profile_activated = Signal(str)
+
+    # DEC-220: dispatch manual-override HTTP calls to the off-thread worker.
+    # Queued to the worker thread; results return via the worker's *_result
+    # signals, handled on the main thread.
+    _request_take = Signal(str, int)  # control_id, pct
+    _request_renew = Signal(str, int)  # control_id, token
+    _request_release = Signal(str, int)  # control_id, token
 
     _log = logging.getLogger(__name__)
     # Manual-override (DEC-163) GUI timing. The renew cadence follows each
@@ -87,6 +161,11 @@ class ControlsPage(QWidget):
     # override_take supersedes the prior token) instead of one call per pixel.
     _OVERRIDE_RENEW_FALLBACK_MS = 5000
     _OVERRIDE_VALUE_DEBOUNCE_MS = 200
+    # DEC-220: dispatch override HTTP on a worker thread (production). Tests flip
+    # this to False to run take/renew/release inline — deterministic and no
+    # thread to join — while the real threaded path is covered by
+    # test_controls_dec220.py.
+    _OVERRIDE_USE_THREAD = True
 
     def __init__(
         self,
@@ -150,6 +229,35 @@ class ControlsPage(QWidget):
         self._override_value_timer.setSingleShot(True)
         self._override_value_timer.setInterval(self._OVERRIDE_VALUE_DEBOUNCE_MS)
         self._override_value_timer.timeout.connect(self._flush_override_values)
+        # DEC-220: manual-override HTTP calls run on a dedicated worker thread so
+        # they never block the Qt main loop. `_manual_intent` is the set of
+        # controls the user currently wants pinned — the source of truth for the
+        # take↔release race: a take that returns *after* the user released is
+        # released again by the result handler, so no override outlives intent.
+        # The worker exists only in live mode (demo mode drives the demo loop).
+        self._manual_intent: set[str] = set()
+        self._override_thread: QThread | None = None
+        self._override_worker: _OverrideWorker | None = None
+        if self._client is not None:
+            self._override_worker = _OverrideWorker(self._client.socket_path)
+            self._override_worker.take_result.connect(self._on_take_result)
+            self._override_worker.renew_result.connect(self._on_renew_result)
+            if self._OVERRIDE_USE_THREAD:
+                self._override_thread = QThread()
+                self._override_worker.moveToThread(self._override_thread)
+                qc = Qt.ConnectionType.QueuedConnection
+                self._request_take.connect(self._override_worker.take, qc)
+                self._request_renew.connect(self._override_worker.renew, qc)
+                self._request_release.connect(self._override_worker.release, qc)
+                self._override_thread.start()
+            else:
+                # Deterministic synchronous dispatch (tests): no worker thread,
+                # direct connections, and the worker reuses the page's client so
+                # take/renew/release complete inline.
+                self._override_worker.attach_client(self._client)
+                self._request_take.connect(self._override_worker.take)
+                self._request_renew.connect(self._override_worker.renew)
+                self._request_release.connect(self._override_worker.release)
 
         # DEC-214: the page now edits the active/sidebar-selected profile. A
         # non-None _viewed_profile_id lets a freshly-created draft (New/Duplicate)
@@ -365,7 +473,21 @@ class ControlsPage(QWidget):
 
     def cleanup(self) -> None:
         """Deterministically tear down the always-mounted curve editor's
-        pyqtgraph scene (DEC-180 lineage). Idempotent — the editor latches."""
+        pyqtgraph scene (DEC-180 lineage) and the DEC-220 override worker thread.
+        Idempotent — the editor latches and the thread teardown nulls itself."""
+        # Defence-in-depth: stop the override timers so no queued renew/flush
+        # fires mid-teardown (the daemon deadman already covers correctness).
+        self._override_renew_timer.stop()
+        self._override_value_timer.stop()
+        if self._override_thread is not None:
+            if self._override_worker is not None:
+                self._override_worker.shutdown()
+            self._override_thread.quit()
+            if not self._override_thread.wait(2000):
+                self._override_thread.terminate()
+                self._override_thread.wait(1000)
+            self._override_thread = None
+            self._override_worker = None
         self._curve_editor.cleanup()
 
     # ─── Header ──────────────────────────────────────────────────────
@@ -1508,7 +1630,9 @@ class ControlsPage(QWidget):
     def _on_card_manual_value(self, control_id: str, pct: int) -> None:
         """Live slider drag while a card is in transient manual mode."""
         if self._client is not None:
-            if control_id in self._overrides:
+            # Gate on intent (not confirmed `_overrides`) so a drag during a take
+            # still in flight is coalesced too (DEC-220).
+            if control_id in self._manual_intent:
                 # Debounce: coalesce a drag into one re-pin (a new override_take
                 # supersedes the prior token) instead of one call per pixel.
                 self._override_pending[control_id] = pct
@@ -1566,17 +1690,32 @@ class ControlsPage(QWidget):
         set_chip_class(self._unsaved_label, css_class)
 
     def _take_override(self, control_id: str, pct: int) -> None:
-        """Pin a control to a fixed PWM on the daemon and start renewing."""
-        if self._client is None:
+        """Pin a control to a fixed PWM on the daemon (dispatched off-thread —
+        DEC-220). Records intent synchronously; ``_on_take_result`` applies the
+        grant when the worker returns."""
+        if self._override_worker is None:
             return
-        try:
-            grant = self._client.override_take(control_id, pct, timeout=_OVERRIDE_HTTP_TIMEOUT_S)
-        except DaemonError as exc:
+        self._manual_intent.add(control_id)
+        self._request_take.emit(control_id, pct)
+
+    def _on_take_result(self, control_id: str, _pct: int, grant: object, error: object) -> None:
+        """Main-thread handler for a completed override_take (DEC-220)."""
+        if error is not None:
+            self._manual_intent.discard(control_id)
             self._log.warning(
-                "Override of control %s failed (%s): %s", control_id, exc.code, exc.message
+                "Override of control %s failed (%s): %s",
+                control_id,
+                error.code,
+                error.message,
             )
             self._revert_card_manual(control_id)
-            self._surface_override_rejection(control_id, exc)
+            self._surface_override_rejection(control_id, error)
+            return
+        if control_id not in self._manual_intent:
+            # The user released this control while the take was in flight — the
+            # daemon granted it anyway, so release the orphan (the deadman would
+            # too, but this reverts to the curve immediately).
+            self._request_release.emit(control_id, grant.override_token)
             return
         self._overrides[control_id] = grant.override_token
         self._override_renew_secs[control_id] = grant.renew_secs
@@ -1588,75 +1727,65 @@ class ControlsPage(QWidget):
 
     def _release_override(self, control_id: str) -> None:
         """Release a held override; the daemon reverts the control to its curve."""
+        self._manual_intent.discard(control_id)
         self._override_pending.pop(control_id, None)
         token = self._overrides.pop(control_id, None)
         self._override_renew_secs.pop(control_id, None)
         if not self._overrides:
             self._override_renew_timer.stop()
-        if token is None or self._client is None:
+        if token is None or self._override_worker is None:
+            # No confirmed token yet (take still in flight) — clearing the intent
+            # above makes _on_take_result release the grant when it arrives.
             return
-        try:
-            self._client.override_release(control_id, token, timeout=_OVERRIDE_HTTP_TIMEOUT_S)
-        except DaemonError as exc:
-            # Offline / already lapsed — the daemon deadman reverts it anyway.
-            self._log.info("Override release for %s not confirmed (%s)", control_id, exc.code)
+        self._request_release.emit(control_id, token)
 
     def _release_all_overrides(self) -> None:
         """Release every held override (e.g. before the card grid rebuilds) so
         card state never diverges from the daemon."""
         for control_id in list(self._overrides):
             self._release_override(control_id)
+        # Also drop intent for controls whose take is still in flight, so their
+        # grant is orphan-released by _on_take_result instead of being kept.
+        self._manual_intent.clear()
 
     def _renew_overrides(self) -> None:
-        """Renew every held override inside its TTL; a rejected renew means the
-        override lapsed (GUI froze / daemon restarted) → revert that card."""
-        if self._client is None or not self._overrides:
+        """Dispatch a renew for every held override off-thread (DEC-220). A
+        rejected renew (see ``_on_renew_result``) means the override lapsed."""
+        if self._override_worker is None or not self._overrides:
             self._override_renew_timer.stop()
             return
         for control_id, token in list(self._overrides.items()):
-            try:
-                result = self._client.override_renew(
-                    control_id, token, timeout=_OVERRIDE_HTTP_TIMEOUT_S
-                )
-            except DaemonError as exc:
-                self._log.info("Override on %s lapsed (%s) — reverting card", control_id, exc.code)
-                self._overrides.pop(control_id, None)
-                self._override_renew_secs.pop(control_id, None)
-                self._override_pending.pop(control_id, None)
-                self._revert_card_manual(control_id)
-                self._surface_override_rejection(control_id, exc)
-                continue
-            self._overrides[control_id] = result.override_token
-        if not self._overrides:
-            self._override_renew_timer.stop()
+            self._request_renew.emit(control_id, token)
+
+    def _on_renew_result(self, control_id: str, new_token: object, error: object) -> None:
+        """Main-thread handler for a completed override_renew (DEC-220)."""
+        if error is not None:
+            self._log.info("Override on %s lapsed (%s) — reverting card", control_id, error.code)
+            self._overrides.pop(control_id, None)
+            self._override_renew_secs.pop(control_id, None)
+            self._override_pending.pop(control_id, None)
+            self._manual_intent.discard(control_id)
+            self._revert_card_manual(control_id)
+            self._surface_override_rejection(control_id, error)
+            if not self._overrides:
+                self._override_renew_timer.stop()
+            return
+        # Only update if still held (a release/re-pin may have superseded it).
+        if control_id in self._overrides:
+            self._overrides[control_id] = new_token
 
     def _flush_override_values(self) -> None:
         """Apply the latest debounced slider value as a re-pin (which supersedes
-        the prior token). Skips controls released mid-drag; reverts on failure."""
-        if self._client is None:
-            self._override_pending.clear()
-            return
+        the prior token) off-thread. Skips controls released mid-drag;
+        ``_on_take_result`` applies the new grant (DEC-220)."""
         pending = dict(self._override_pending)
         self._override_pending.clear()
+        if self._override_worker is None:
+            return
         for control_id, pct in pending.items():
-            if control_id not in self._overrides:
+            if control_id not in self._manual_intent:
                 continue
-            try:
-                grant = self._client.override_take(
-                    control_id, pct, timeout=_OVERRIDE_HTTP_TIMEOUT_S
-                )
-            except DaemonError as exc:
-                self._log.info(
-                    "Override re-pin on %s failed (%s) — reverting", control_id, exc.code
-                )
-                self._overrides.pop(control_id, None)
-                self._override_renew_secs.pop(control_id, None)
-                self._revert_card_manual(control_id)
-                continue
-            self._overrides[control_id] = grant.override_token
-            # F-2: a re-pin supersedes the grant; keep the renew cadence current.
-            self._override_renew_secs[control_id] = grant.renew_secs
-            self._recompute_renew_interval()
+            self._request_take.emit(control_id, pct)
 
     def _revert_card_manual(self, control_id: str) -> None:
         """Visually exit Manual on a card whose override lapsed/failed, without

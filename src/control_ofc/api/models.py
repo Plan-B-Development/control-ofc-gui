@@ -1171,6 +1171,7 @@ def parse_status(data: dict) -> DaemonStatus:
         subsystems=[
             SubsystemStatus(**_filter_fields(SubsystemStatus, s))
             for s in data.get("subsystems", [])
+            if isinstance(s, dict)
         ],
         uptime_seconds=data.get("uptime_seconds"),
         # DEC-132: absent on pre-1.13 daemons — treat as "normal".
@@ -1247,7 +1248,13 @@ def _parse_sensor_reading(raw: dict) -> SensorReading:
 
 
 def parse_fans(data: dict) -> list[FanReading]:
-    return [FanReading(**_filter_fields(FanReading, s)) for s in data.get("fans", [])]
+    fans = data.get("fans", [])
+    if not isinstance(fans, list):
+        # Mirror parse_sensors: a non-list ``fans`` field is a malformed daemon
+        # payload, not "no fans". The polling worker wraps this in DaemonError
+        # handling so a clear error surfaces rather than an empty fan table.
+        raise TypeError(f"expected 'fans' to be a list, got {type(fans).__name__}")
+    return [FanReading(**_filter_fields(FanReading, s)) for s in fans]
 
 
 def parse_hwmon_headers(data: dict) -> list[HwmonHeader]:
