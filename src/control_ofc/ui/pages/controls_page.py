@@ -32,9 +32,18 @@ from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import ConnectionState, DaemonStatus
 from control_ofc.knowledge.sensor_knowledge import classify_sensor_with_overrides
 from control_ofc.services.app_state import AppState
-from control_ofc.services.controls_view import member_rpm_map, unassigned_fan_ids
+from control_ofc.services.controls_view import (
+    curve_min_output_floor,
+    divergent_gpu_output,
+    member_rpm_map,
+    override_rejection_feedback,
+    parse_stored_card_size,
+    prune_card_sizes,
+    renew_interval_ms,
+    sensor_combo_label,
+    unassigned_fan_ids,
+)
 from control_ofc.services.profile_service import (
-    CONTROL_ROLE_GPU,
     ControlMode,
     CurveConfig,
     CurvePoint,
@@ -42,8 +51,6 @@ from control_ofc.services.profile_service import (
     LogicalControl,
     ProfileService,
     apply_role_floor,
-    control_minimum_pct,
-    infer_member_role,
     mix_candidate_curves,
     sync_candidate_controls,
 )
@@ -1355,21 +1362,9 @@ class ControlsPage(QWidget):
             self._set_unsaved(True)
 
     def _curve_min_output_floor(self, profile, curve_id: str) -> float:
-        """Return the highest ``minimum_pct`` of any control referencing this curve.
-
-        The editor uses this to clamp curve points so a shared curve cannot
-        be authored below the strictest role's safe minimum. Returns 0 when
-        no control references the curve (orphan / brand-new curve).
-        """
-        floor = 0.0
-        for ctrl in profile.controls:
-            if ctrl.curve_id == curve_id:
-                # Use the explicit value if the user raised it, else derive
-                # from members so a freshly-created control still gets the
-                # role-aware floor before it has been migrated.
-                effective = max(ctrl.minimum_pct, control_minimum_pct(ctrl.members))
-                floor = max(floor, effective)
-        return floor
+        """The strictest role floor for a curve — see
+        :func:`controls_view.curve_min_output_floor`."""
+        return curve_min_output_floor(profile, curve_id)
 
     def _on_curve_changed(self) -> None:
         self._set_unsaved(True)
@@ -1484,33 +1479,10 @@ class ControlsPage(QWidget):
                                 sensor_name = s.label
                                 sensor_value = s.value_c
                                 break
-            gpu_output = self._divergent_gpu_output(
+            gpu_output = divergent_gpu_output(
                 card.control, output, member_outputs.get(control_id, {})
             )
             card.set_output(output, sensor_name, sensor_value, gpu_output_pct=gpu_output)
-
-    @staticmethod
-    def _divergent_gpu_output(
-        control, control_output: float, members: dict[str, float]
-    ) -> float | None:
-        """GPU member's applied output when it diverges from the control-wide
-        value (DEC-119), else None.
-
-        Only mixed controls (a GPU grouped with chassis/CPU fans) can diverge:
-        the GPU member is re-tuned with a 0% floor and may idle below the
-        control-wide floor. A GPU-only control's headline already *is* the GPU
-        value, so it is never annotated.
-        """
-        if not members:
-            return None
-        if not any(infer_member_role(m) != CONTROL_ROLE_GPU for m in control.members):
-            return None
-        for m in control.members:
-            if infer_member_role(m) == CONTROL_ROLE_GPU:
-                gpu_out = members.get(m.target_id)
-                if gpu_out is not None and abs(gpu_out - control_output) > 1.0:
-                    return gpu_out
-        return None
 
     def _card_size_tier(self) -> str:
         """Current card-size density tier from settings (default comfortable)."""
@@ -1525,12 +1497,7 @@ class ControlsPage(QWidget):
         if self._settings_service is None:
             return None
         raw = self._settings_service.settings.controls_card_sizes.get(card_id)
-        if isinstance(raw, (list, tuple)) and len(raw) == 2:
-            try:
-                return (int(raw[0]), int(raw[1]))
-            except (TypeError, ValueError):
-                return None
-        return None
+        return parse_stored_card_size(raw)
 
     def _on_card_user_resized(self, card_id: str, width: int, height: int) -> None:
         """Grip drag finished: persist the snapped size for this card."""
@@ -1560,8 +1527,7 @@ class ControlsPage(QWidget):
         for profile in self._profile_service.profiles:
             known.update(c.id for c in profile.controls)
             known.update(c.id for c in profile.curves)
-        for stale in [card_id for card_id in sizes if card_id not in known]:
-            del sizes[stale]
+        prune_card_sizes(sizes, known)
 
     def set_theme(self, tokens) -> None:
         """Forward theme updates to child widgets and re-apply card sizing.
@@ -1652,39 +1618,19 @@ class ControlsPage(QWidget):
         and let it lapse. Grants missing ``renew_secs`` fall back to
         ``_OVERRIDE_RENEW_FALLBACK_MS``; the floor stays 1000 ms.
         """
-        if not self._override_renew_secs:
-            return
-        interval_ms = min(
-            (secs * 1000) if secs else self._OVERRIDE_RENEW_FALLBACK_MS
-            for secs in self._override_renew_secs.values()
-        )
-        self._override_renew_timer.setInterval(max(1000, interval_ms))
+        interval = renew_interval_ms(self._override_renew_secs, self._OVERRIDE_RENEW_FALLBACK_MS)
+        if interval is not None:
+            self._override_renew_timer.setInterval(interval)
 
     def _surface_override_rejection(self, control_id: str, exc: DaemonError) -> None:
-        """Surface a *user-actionable* override rejection on the page status chip.
-
-        Most rejections are benign races the card revert already communicates
-        (``override_expired`` / ``not_found`` — the daemon deadman reverts the
-        control anyway), so they stay a quiet revert (today's behaviour). Only
-        two codes tell the user something the card flipping back to auto cannot:
-
-        * ``thermal_abort`` — safety is holding the fans; the override was refused.
-        * ``stale_fencing_token`` — another client superseded this override.
-
-        Keeping every other code silent is exactly what makes a *superseded*
-        override (message) distinct from a lapsed one (quiet revert) (DEC-163).
-        The status chip is the page's shared daemon-feedback surface — the same
-        label activation/save outcomes use; the card revert stays owned by the
-        caller (this method never touches card state).
-        """
-        if exc.code == "thermal_abort":
-            message = "Override blocked — thermal emergency (fans held by safety)"
-            css_class = "CriticalChip"
-        elif exc.code == "stale_fencing_token":
-            message = "Override superseded by another client"
-            css_class = "WarningChip"
-        else:
+        """Surface a *user-actionable* override rejection on the page status chip;
+        benign races stay a quiet card revert (the decision is
+        :func:`controls_view.override_rejection_feedback`, DEC-163). The card
+        revert stays owned by the caller — this method never touches card state."""
+        feedback = override_rejection_feedback(exc.code)
+        if feedback is None:
             return
+        message, css_class = feedback
         self._log.debug("Override on %s surfaced to user (%s)", control_id, exc.code)
         self._unsaved_label.setText(message)
         set_chip_class(self._unsaved_label, css_class)
@@ -1840,22 +1786,10 @@ class ControlsPage(QWidget):
             self._clear_external_override(control_id)
 
     def _sensor_combo_label(self, s) -> str:
-        """Curve-editor sensor-combo label, marking coolant + CPU sensors as
-        preferred (\u2605) \u2014 the recommended bindings for AIO/radiator curves
-        (DEC-157). Selection is still free; this only highlights."""
-
-        val_text = f" \u2014 {s.value_c:.1f}\u00b0C" if s.value_c is not None else ""
+        """Curve-editor sensor-combo label — see
+        :func:`controls_view.sensor_combo_label` (DEC-157)."""
         overrides = self._state.sensor_class_overrides if self._state else {}
-        cls = classify_sensor_with_overrides(
-            s.id, chip_name=s.chip_name, label=s.label, overrides=overrides
-        )
-        preferred = cls.source_class in (
-            "coolant",
-            "coolant_in",
-            "coolant_out",
-        ) or s.kind in ("cpu_temp", "CpuTemp")
-        star = "\u2605 " if preferred else ""
-        return f"{star}{s.label} ({s.kind}){val_text}"
+        return sensor_combo_label(s, overrides)
 
     def _on_sensor_values_updated(self, sensors) -> None:
         """Called ~1Hz. Rebuild sensor dropdown only when the sensor list changes."""
