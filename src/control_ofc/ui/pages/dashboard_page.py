@@ -327,7 +327,10 @@ class DashboardPage(QWidget):
                 self._client.socket_path if self._client is not None else DEFAULT_SOCKET_PATH
             )
             state = check_daemon_service_state(socket_path)
-        except Exception:
+        except Exception as e:
+            import logging
+
+            logging.getLogger(__name__).debug("daemon service-state probe failed: %s", e)
             self._service_hint_frame.setVisible(False)
             return
         self._service_hint_frame.setVisible(state.installed_but_not_enabled)

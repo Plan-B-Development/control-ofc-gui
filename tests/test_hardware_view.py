@@ -117,18 +117,6 @@ def test_verdict_ready_for_ok_and_info():
     assert build_readiness_summary(_hw(overall="warning")).verdict_word == "NEEDS ATTENTION"
 
 
-def test_na_only_from_sources_unavailable():
-    s0 = build_readiness_summary(_hw(overall="ok", sources_unavailable=[]))
-    assert s0.na_count == 0
-    assert "N/A" not in [seg.label for seg in s0.segments]
-    s1 = build_readiness_summary(
-        _hw(overall="warning", sources_unavailable=["/dev/kmsg"], scan_degraded=True)
-    )
-    assert s1.na_count == 1
-    assert "N/A" in [seg.label for seg in s1.segments]
-    assert "/dev/kmsg" in s1.partial_note
-
-
 def test_summary_last_scanned_line_formats_age():
     # DEC-216: the "last scanned" phrasing (relocated from CoolingReadinessView).
     assert (

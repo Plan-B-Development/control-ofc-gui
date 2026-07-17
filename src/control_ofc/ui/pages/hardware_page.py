@@ -295,10 +295,7 @@ class HardwarePage(QWidget):
         self._verdict_pill.set_state(summary.verdict_state)
         self._top_label.setText(summary.top_summary_line)
         self._top_label.setVisible(bool(summary.top_summary_line))
-        scanned = summary.scanned_age_line
-        if summary.partial_note:
-            scanned = f"{summary.partial_note}  {scanned}"
-        self._scanned_label.setText(scanned)
+        self._scanned_label.setText(summary.scanned_age_line)
         self._render_checklist(build_checklist(items))
         self._render_actions(build_recommended_actions(items), summary)
         self._render_superio(build_superio_panel(hw.superio))

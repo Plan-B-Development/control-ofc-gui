@@ -274,7 +274,7 @@ class TestUnsavedGuardOnProfileSwitch:
         # in the sidebar, then decline the discard.
         main_window.controls_page._set_unsaved(True)
         self._select_sidebar(main_window, other.id)
-        monkeypatch.setattr(main_window.controls_page, "_confirm_discard_unsaved", lambda: False)
+        monkeypatch.setattr(main_window.controls_page, "confirm_discard_unsaved", lambda: False)
 
         main_window._on_sidebar_apply_profile()
 
@@ -292,7 +292,7 @@ class TestUnsavedGuardOnProfileSwitch:
 
         main_window.controls_page._set_unsaved(True)
         self._select_sidebar(main_window, other.id)
-        monkeypatch.setattr(main_window.controls_page, "_confirm_discard_unsaved", lambda: True)
+        monkeypatch.setattr(main_window.controls_page, "confirm_discard_unsaved", lambda: True)
 
         main_window._on_sidebar_apply_profile()
 
@@ -320,7 +320,7 @@ class TestUnsavedGuardOnProfileSwitch:
             called["n"] += 1
             return True
 
-        monkeypatch.setattr(main_window.controls_page, "_confirm_discard_unsaved", _boom)
+        monkeypatch.setattr(main_window.controls_page, "confirm_discard_unsaved", _boom)
         main_window._on_sidebar_apply_profile()
 
         assert called["n"] == 0
@@ -345,7 +345,7 @@ class TestNavigationDoesNotGuardUnsaved:
             calls["n"] += 1
             return True
 
-        monkeypatch.setattr(main_window.controls_page, "_confirm_discard_unsaved", _guard)
+        monkeypatch.setattr(main_window.controls_page, "confirm_discard_unsaved", _guard)
 
         # Route the sidebar to another page (Logs) exactly as a nav click would.
         main_window._on_nav_activated(PAGE_LOGS, -1)

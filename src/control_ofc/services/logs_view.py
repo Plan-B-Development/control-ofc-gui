@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from control_ofc.services.diagnostics_service import DiagEvent
 
 # Level → mockup-faithful abbreviated label (INFO/WARN/ERR) used for the table
-# cell + pill text. Distinct from the EventLogView widget's INFO/WARNING/ERROR.
+# cell + pill text.
 _LEVEL_LABEL: dict[str, str] = {
     "info": "INFO",
     "warning": "WARN",

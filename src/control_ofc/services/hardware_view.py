@@ -9,9 +9,8 @@ scanned-age) as data. Like ``system_state_view``, the imports pull PySide6
 transitively but nothing here needs a ``QApplication`` — headless-testable.
 
 Honesty (master.txt "do not invent"): there is NO numeric readiness score — the
-summary is the daemon verdict + real tier counts; N/A is sourced only from
-``sources_unavailable``; the Super-I/O rows carry only real per-chip fields (no
-fabricated per-channel/address/poll-age columns).
+summary is the daemon verdict + real tier counts; the Super-I/O rows carry only
+real per-chip fields (no fabricated per-channel/address/poll-age columns).
 """
 
 from __future__ import annotations
@@ -77,11 +76,9 @@ class ReadinessSummaryVM:
     warn_count: int
     crit_count: int
     info_count: int
-    na_count: int
     to_fix: int
     top_summary_line: str
     scanned_age_line: str
-    partial_note: str
     segments: tuple[SummarySegmentVM, ...]
 
 
@@ -170,7 +167,6 @@ def build_readiness_summary(hw: HardwareReadiness) -> ReadinessSummaryVM:
     warn_count = sum(1 for m in items if _norm(m.severity) == "warning")
     crit_count = sum(1 for m in items if _norm(m.severity) == "critical")
     info_count = sum(1 for m in items if _norm(m.severity) == "info")
-    na_count = len(hw.sources_unavailable)
     overall = _norm(hw.overall)
     verdict_word, verdict_state = _VERDICT.get(overall, ("NEEDS ATTENTION", "warn"))
 
@@ -180,13 +176,8 @@ def build_readiness_summary(hw: HardwareReadiness) -> ReadinessSummaryVM:
         f"Last scanned {_format_age(hw.scanned_age_ms)}. "
         "This assessment is read-only and does not change the system."
     )
-    partial_note = ""
-    if hw.scan_degraded or hw.sources_unavailable:
-        srcs = ", ".join(hw.sources_unavailable) if hw.sources_unavailable else "some sources"
-        partial_note = f"Partial result — could not read {srcs}."
-
-    # Segments: PASS + WARN always; CRIT / INFO / N-A only when > 0 (criticals are
-    # never hidden inside WARN, and N/A never appears fabricated).
+    # Segments: PASS + WARN always; CRIT / INFO only when > 0 (criticals are
+    # never hidden inside WARN).
     segments = [
         SummarySegmentVM("PASS", pass_count, "ok"),
         SummarySegmentVM("WARN", warn_count, "warn"),
@@ -195,8 +186,6 @@ def build_readiness_summary(hw: HardwareReadiness) -> ReadinessSummaryVM:
         segments.append(SummarySegmentVM("CRIT", crit_count, "crit"))
     if info_count:
         segments.append(SummarySegmentVM("INFO", info_count, "info"))
-    if na_count:
-        segments.append(SummarySegmentVM("N/A", na_count, "neutral"))
 
     return ReadinessSummaryVM(
         verdict_word=verdict_word,
@@ -205,11 +194,9 @@ def build_readiness_summary(hw: HardwareReadiness) -> ReadinessSummaryVM:
         warn_count=warn_count,
         crit_count=crit_count,
         info_count=info_count,
-        na_count=na_count,
         to_fix=warn_count + crit_count,
         top_summary_line=top_summary_line,
         scanned_age_line=scanned_age_line,
-        partial_note=partial_note,
         segments=tuple(segments),
     )
 

@@ -1397,7 +1397,7 @@ CONFLICTING_MODULE_SETS: list[tuple[str, str, str]] = [
     ),
     # DEC-105: GUI-side fallback for daemons that predate the daemon's
     # `module_collisions` field. When the daemon DOES emit module_collisions,
-    # diagnostics_page.py suppresses this banner so the user does not see
+    # system_state_view.py suppresses this banner so the user does not see
     # two warnings for the same problem.
     (
         "nct6687",

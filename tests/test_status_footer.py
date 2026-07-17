@@ -52,6 +52,6 @@ def test_pages_expose_nav_and_action_shims():
     from control_ofc.ui.pages.system_state_page import SystemStatePage
 
     assert hasattr(SystemStatePage, "run_hwmon_rescan")
-    assert hasattr(LogsPage, "_export_bundle")
+    assert hasattr(LogsPage, "export_bundle")
     # DEC-215: SettingsPage lost select_tab (single-surface, no sub-tabs).
     assert not hasattr(SettingsPage, "select_tab")

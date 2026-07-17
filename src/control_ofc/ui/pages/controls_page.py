@@ -582,7 +582,7 @@ class ControlsPage(QWidget):
         """Profiles created/renamed/deleted elsewhere — re-render the page."""
         self._refresh_all()
 
-    def _confirm_discard_unsaved(self) -> bool:
+    def confirm_discard_unsaved(self) -> bool:
         """Ask whether to discard in-progress edits before switching profiles.
 
         Returns True to discard and proceed with the switch, False to keep

@@ -185,12 +185,6 @@ def test_parse_hardware_readiness_defaults_and_malformed_tolerated():
     assert hw2.scanned_age_ms == 0 and hw2.generation == 0
 
 
-def test_parse_hardware_readiness_partial_failure_fields():
-    hw = parse_hardware_readiness({"scan_degraded": True, "sources_unavailable": ["/dev/kmsg", 5]})
-    assert hw.scan_degraded is True
-    assert hw.sources_unavailable == ["/dev/kmsg"]  # non-str dropped
-
-
 # ── Client ───────────────────────────────────────────────────────────
 
 

@@ -235,7 +235,7 @@ class MainWindow(QWidget):
         # page — Rescan surfaces the System State page (so its outcome line is
         # visible) then runs there; Export reuses the Logs page's bundle handler.
         self.footer.rescan_clicked.connect(self._on_footer_rescan)
-        self.footer.export_bundle_clicked.connect(self.logs_page._export_bundle)
+        self.footer.export_bundle_clicked.connect(self.logs_page.export_bundle)
 
         # Sidebar active-profile selector (DEC-208): a third profile surface that
         # populates + reflects + applies via the same ProfileService path.
@@ -278,7 +278,7 @@ class MainWindow(QWidget):
         # retired with the page).
         self.hardware_page.open_preferred_sensors.connect(self._open_preferred_sensors)
         self.hardware_page.open_system_state.connect(self._open_system_state)
-        self.hardware_page.open_overview.connect(self._open_diagnostics)
+        self.hardware_page.open_overview.connect(self._open_overview)
 
         # Populate dashboard profile selector
         self.dashboard_page.populate_profiles()
@@ -377,7 +377,7 @@ class MainWindow(QWidget):
         if (
             profile_id != self._profile_service.active_id
             and self.controls_page.has_unsaved_changes()
-            and not self.controls_page._confirm_discard_unsaved()
+            and not self.controls_page.confirm_discard_unsaved()
         ):
             self._reflect_sidebar_active_profile()
             return
@@ -486,7 +486,7 @@ class MainWindow(QWidget):
             min_gui,
         )
 
-    def _open_diagnostics(self) -> None:
+    def _open_overview(self) -> None:
         from control_ofc.constants import NAV_OVERVIEW
 
         self.sidebar.activate_nav(NAV_OVERVIEW)
@@ -592,14 +592,12 @@ class MainWindow(QWidget):
             self._demo_controller.stop()
         self.dashboard_page.cleanup()
         self.controls_page.cleanup()  # DEC-214: tear down the always-mounted curve editor
-        if hasattr(self, "overview_page") and self.overview_page is not None:
-            self.overview_page.cleanup()
-        if hasattr(self, "logs_page") and self.logs_page is not None:
-            self.logs_page.cleanup()
-        if hasattr(self, "system_state_page") and self.system_state_page is not None:
-            self.system_state_page.cleanup()
-        if hasattr(self, "hardware_page") and self.hardware_page is not None:
-            self.hardware_page.cleanup()
+        # The pages below are all constructed unconditionally in __init__, so no
+        # hasattr/None guard is needed here.
+        self.overview_page.cleanup()
+        self.logs_page.cleanup()
+        self.system_state_page.cleanup()
+        self.hardware_page.cleanup()
         self.theme_page.cleanup()  # DEC-215
         super().closeEvent(event)
 

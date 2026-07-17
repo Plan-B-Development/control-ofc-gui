@@ -319,7 +319,7 @@ class LogsPage(QWidget):
 
         self._clear_btn.clicked.connect(self._diag.clear_events)
         self._copy_btn.clicked.connect(self._copy_visible)
-        self._export_btn.clicked.connect(self._export_bundle)
+        self._export_btn.clicked.connect(self.export_bundle)
 
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
@@ -439,7 +439,7 @@ class LogsPage(QWidget):
         if clip is not None:
             clip.setText(text)
 
-    def _export_bundle(self) -> None:
+    def export_bundle(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Support Bundle",

@@ -16,8 +16,6 @@ from __future__ import annotations
 
 from control_ofc.ui.hwmon_guidance import severity_display
 
-_SEVERITY_BADGE_MIN_WIDTH = 104  # so "⛔ CRITICAL" never clips
-
 
 def _severity_chip(severity: str) -> tuple[str, str, str, int]:
     """Map a daemon severity (``ok``/``info``/``warning``/``critical``) to the

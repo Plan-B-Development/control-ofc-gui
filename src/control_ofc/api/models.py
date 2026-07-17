@@ -1055,9 +1055,7 @@ class HardwareReadiness:
 
     Every field defaults so a pre-field daemon (or a malformed response) degrades
     safely. Daemon-authored strings (readiness items + Super-I/O) render as
-    PlainText; only GUI-authored guidance is trusted rich text. ``scan_degraded`` /
-    ``sources_unavailable`` are optional partial-failure signals — absent on daemons
-    that do not emit them.
+    PlainText; only GUI-authored guidance is trusted rich text.
     """
 
     api_version: int = 1
@@ -1067,8 +1065,6 @@ class HardwareReadiness:
     superio: SuperIoReport = field(default_factory=SuperIoReport)
     scanned_age_ms: int = 0
     generation: int = 0
-    scan_degraded: bool = False
-    sources_unavailable: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1559,10 +1555,6 @@ def parse_hardware_readiness(data: dict) -> HardwareReadiness:
         superio=superio,
         scanned_age_ms=_int(data.get("scanned_age_ms")),
         generation=_int(data.get("generation")),
-        scan_degraded=bool(data.get("scan_degraded", False)),
-        sources_unavailable=[
-            str(s) for s in data.get("sources_unavailable", []) if isinstance(s, str)
-        ],
     )
 
 
