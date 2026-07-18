@@ -218,6 +218,27 @@ def test_build_safety_gpu_vm_with_gpu():
     assert vm.thermal_state == "ok"
 
 
+def test_build_safety_gpu_vm_read_only_fan_control_is_warn():
+    # B5: a read-only GPU fan-control method must surface as a warn-state row
+    # (_fan_method_state — only "pmfw_curve"/"hwmon_pwm" are "ok"). The existing
+    # GPU test asserts the row value but never its state, leaving this arm dead.
+    diag = _diag(
+        gpu=GpuDiagnosticsInfo(
+            model_name="RX 9070 XT",
+            fan_control_method="read_only",
+            overdrive_enabled=True,
+            ppfeaturemask="0xffff3fff",
+            ppfeaturemask_bit14_set=True,
+            zero_rpm_available=True,
+            fan_speed_min_pct=15,
+            fan_speed_max_pct=100,
+        )
+    )
+    labels = {r.label: r for r in build_safety_gpu_vm(diag).gpu_rows}
+    assert labels["Fan Control"].value == "read_only"
+    assert labels["Fan Control"].state == "warn"
+
+
 def test_build_safety_gpu_vm_no_gpu():
     vm = build_safety_gpu_vm(_diag())
     assert vm.has_gpu is False
@@ -350,3 +371,11 @@ def test_build_system_state_vm_counts_and_labels():
     assert healthy.issue_count_label == "SYSTEM READY"
     assert healthy.issue_count_state == "ok"
     assert healthy.verdict_state == "ok"
+
+
+def test_build_system_state_vm_critical_issue_count_state():
+    # B5: a critical-severity problem (bios pwm_enable reclaim ≥ _RECLAIM_HIGH=10)
+    # must drive issue_count_state to "crit". The existing test only exercises the
+    # "warn" and "ok" arms, leaving the crit branch dead.
+    vm = build_system_state_vm(_diag_with_revert("pwm1", 10))
+    assert vm.issue_count_state == "crit"

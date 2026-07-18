@@ -10,6 +10,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import OverrideGrant
 from control_ofc.services.profile_service import (
     ControlMember,
@@ -124,4 +125,68 @@ def test_release_during_inflight_take_releases_the_orphan(
         assert "lc1" not in page._overrides
     finally:
         unblock.set()
+        page.cleanup()
+
+
+def test_override_renew_success_advances_token_over_the_worker_thread(
+    qtbot, app_state, profile_service, monkeypatch
+):
+    """B1: a successful renew, delivered over the real ``renew_result``
+    QueuedConnection, must advance the held token (7 -> 8). Guards the threaded
+    signal handoff that the suite-wide synchronous default (conftest) bypasses —
+    every other override test observes only the inline path."""
+    monkeypatch.setattr(ControlsPage, "_OVERRIDE_USE_THREAD", True)
+
+    mock_client = MagicMock()
+    mock_client.override_take.return_value = _grant(token=7)
+    mock_client.override_renew.return_value = SimpleNamespace(override_token=8)
+    monkeypatch.setattr(
+        "control_ofc.ui.pages.controls_page.DaemonClient", lambda socket_path: mock_client
+    )
+
+    page = _live_page(qtbot, app_state, profile_service, mock_client)
+    try:
+        page._take_override("lc1", 50)
+        qtbot.waitUntil(lambda: page._overrides.get("lc1") == 7, timeout=2000)
+
+        page._renew_overrides()  # dispatched to the worker; result arrives via signal
+        qtbot.waitUntil(lambda: page._overrides.get("lc1") == 8, timeout=2000)
+        assert page._overrides["lc1"] == 8
+    finally:
+        page.cleanup()
+
+
+def test_override_renew_rejection_reverts_card_over_the_worker_thread(
+    qtbot, app_state, profile_service, monkeypatch
+):
+    """B1: a REJECTED renew, delivered over the real ``renew_result``
+    QueuedConnection, must clear the override AND visually revert the card. Drive
+    the card into Manual first so ``clear_manual``'s not-checked early-return
+    cannot mask the revert. (Button ``isChecked`` is asserted rather than child
+    ``isVisible`` — the latter depends on the page being shown, which offscreen
+    tests do not do.)"""
+    monkeypatch.setattr(ControlsPage, "_OVERRIDE_USE_THREAD", True)
+
+    mock_client = MagicMock()
+    mock_client.override_take.return_value = _grant(token=7)
+    mock_client.override_renew.side_effect = DaemonError(
+        code="stale_fencing_token", message="override lapsed"
+    )
+    monkeypatch.setattr(
+        "control_ofc.ui.pages.controls_page.DaemonClient", lambda socket_path: mock_client
+    )
+
+    page = _live_page(qtbot, app_state, profile_service, mock_client)
+    try:
+        card = page._control_cards["lc1"]
+        card._manual_btn.setChecked(True)  # user takes Manual -> _take_override
+        qtbot.waitUntil(lambda: page._overrides.get("lc1") == 7, timeout=2000)
+        assert card._manual_btn.isChecked()  # card is in Manual
+
+        page._renew_overrides()  # rejected renew dispatched to the worker
+        qtbot.waitUntil(lambda: "lc1" not in page._overrides, timeout=2000)
+
+        # The rejection reverted the card via the real signal handoff.
+        assert not card._manual_btn.isChecked()
+    finally:
         page.cleanup()

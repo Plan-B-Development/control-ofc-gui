@@ -133,6 +133,31 @@ def test_build_sensor_rows_prefix_matches_flags():
         assert not r.label.startswith(("⚠ ", "? "))
 
 
+def test_build_sensor_rows_low_confidence_gets_question_prefix():
+    # B5: an unknown chip classifies as low-confidence → "? " prefix and
+    # confidence_state "warn". The existing prefix test uses a high-confidence
+    # k10temp sensor, so this arm (and the low→warn map entry) was dead.
+    r = ov.build_sensor_rows(
+        [_sensor(sid="x:temp1", chip_name="mystery", label="temp1")],
+        overrides={},
+        board_vendor="",
+    )[0]
+    assert r.is_low_confidence and not r.is_quirky
+    assert r.label.startswith("? ")
+    assert r.confidence_state == "warn"
+
+
+def test_build_sensor_rows_quirky_gets_warning_prefix():
+    # B5: the ASUS + nct6776 + CPUTIN quirk classifies as bogus → "⚠ " prefix.
+    r = ov.build_sensor_rows(
+        [_sensor(sid="x:cputin", chip_name="nct6776", label="CPUTIN")],
+        overrides={},
+        board_vendor="ASUS",
+    )[0]
+    assert r.is_quirky
+    assert r.label.startswith("⚠ ")
+
+
 # ─── build_sensor_summary ──
 
 
@@ -161,6 +186,30 @@ def test_build_daemon_health():
     vm = ov.build_daemon_health_vm(None, DaemonStatus(overall_status="ok", uptime_seconds=3661))
     assert vm.status_text == "Status: ok" and vm.status_state == "ok"
     assert vm.uptime_text.startswith("Uptime: 1h")
+
+
+def test_build_daemon_health_severity_arms():
+    # B5: _STATUS_STATE maps daemon overall_status → chip state. The existing
+    # test only exercises the "ok" arm; pin the non-ok arms so a crit↔warn swap
+    # in the map cannot slip through.
+    assert (
+        ov.build_daemon_health_vm(
+            None, DaemonStatus(overall_status="error", uptime_seconds=0)
+        ).status_state
+        == "crit"
+    )
+    assert (
+        ov.build_daemon_health_vm(
+            None, DaemonStatus(overall_status="critical", uptime_seconds=0)
+        ).status_state
+        == "crit"
+    )
+    assert (
+        ov.build_daemon_health_vm(
+            None, DaemonStatus(overall_status="degraded", uptime_seconds=0)
+        ).status_state
+        == "warn"
+    )
 
 
 def test_build_device_discovery_hwmon_all_readonly_warn():
