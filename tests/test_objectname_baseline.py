@@ -146,6 +146,7 @@ CONTROLS_OBJECTNAMES = frozenset(
     {
         "Controls_Btn_addCurve",
         "Controls_Btn_configureAio",
+        "Controls_Btn_dedicateGpu",  # DEC-221: "Dedicate GPU Fan" action
         "Controls_Btn_fanWizard",
         "Controls_Btn_manageProfiles",
         "Controls_Btn_newControl",

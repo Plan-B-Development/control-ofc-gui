@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.24.0] — 2026-07-18
+
+First-class GPU zero-RPM idle — a one-click **Dedicate GPU Fan** setup that lets a
+writable AMD GPU fan sit at true 0 RPM when the GPU is cool. GUI-only; no daemon,
+API, schema, or fan-control change (`EXPECTED_API_VERSION` stays 1; the GUI remains
+poll-only and never writes PWM). Wires up capability the daemon has shipped since
+v2.0.0 (per-member `fan_zero_rpm`, the GPU 0% floor, PMFW zero-RPM reset on
+shutdown). Pairs with `control-ofc-daemon` ≥ v2.11.0. DEC-221.
+
+### Added
+- **Dedicate GPU Fan (DEC-221).** A new Controls action — shown only for a present,
+  writable, zero-RPM-capable AMD GPU — gives the GPU fan its own **GPU-only** control
+  and a dedicated temperature curve, with the firmware **zero-RPM idle-stop enabled**
+  so the fan stops completely below the GPU's idle temperature and spins up as the
+  curve ramps. Because the control is GPU-only, its curve is authorable all the way
+  down to 0% (no chassis/CPU minimum applies), and the fan is pulled out of any
+  control that previously drove it so it is never double-written. The default curve
+  idles to 0% up to 45 °C, then ramps 20 % → 40 % → 60 % → 100 % across 47/58/75/95 °C.
+
+### Fixed
+- **Honest GPU zero-RPM popup.** The one-time GPU zero-RPM notice no longer claims the
+  daemon *always* disables zero-RPM idle — that stopped being universally true once a
+  fan can opt in via `fan_zero_rpm`. It now explains the safe default (fan keeps
+  spinning) and how to enable the idle-stop (Dedicate GPU Fan, or the fan role's
+  "Allow zero-RPM idle").
+
+### Versions
+GUI 2.23.0 → **2.24.0**. GUI-only, additive non-breaking feature; no daemon contract,
+wire, schema (`fan_zero_rpm` is already a v7 field), or `EXPECTED_API_VERSION` change.
+Next free ADR = DEC-222.
+
 ## [2.23.0] — 2026-07-17
 
 Robustness, security, and maintainability hardening from the 2026-07-15 cross-stack

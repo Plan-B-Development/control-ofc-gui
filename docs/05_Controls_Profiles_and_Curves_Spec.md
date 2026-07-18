@@ -260,7 +260,28 @@ in a mixed control are not floored. The curve editor's lower bound is
 unchanged (it still clamps to the strictest non-GPU floor for shared
 curves), so the per-member GPU freedom is most visible in manual mode and
 via `stop_pct`; for full low-end GPU control, keep the GPU fan in its own
-control.
+control — the fastest way to do that is **Dedicate GPU Fan** (below).
+
+#### Dedicate GPU Fan — one-click 0-RPM idle (DEC-221)
+A shared curve can't be authored below its chassis member's floor, and a bare
+0% curve value alone still spins at the PMFW OD_RANGE minimum (~15%). To make a
+writable AMD GPU fan idle at **true 0 RPM** when the GPU is cool, the Controls
+page offers a one-click **Dedicate GPU Fan** action (shown only when the daemon
+reports `amd_gpu.present`, `fan_write_supported`, and `gpu_zero_rpm_available`).
+It:
+- pulls the GPU fan out of any control that currently drives it (no double-writer);
+- creates a **GPU-only** `LogicalControl` (role floor 0%, so its curve is
+  authorable all the way down to 0%) bound to a GPU temperature sensor;
+- seeds a default curve that idles to 0% up to 45 °C then ramps
+  (20 %/40 %/60 %/100 % at 47/58/75/95 °C); and
+- sets the member's `fan_zero_rpm = True` — the actual lever for a firmware
+  idle-stop (a 0% curve value alone is clamped up to the OD_RANGE minimum).
+
+The pure builder is `profile_service.build_gpu_control`; the dialog
+(`GpuDedicateDialog`) is a thin UI over it. Zero-RPM is a firmware feature that
+only stops the fan when the GPU is genuinely cool, and the daemon restores
+automatic zero-RPM control on shutdown (DEC-053) — GPU thermal protection stays
+owned by PMFW (DEC-130).
 
 ### Daemon thermal-emergency override (daemon-owned)
 The daemon owns one absolute backstop independent of the GUI: at

@@ -962,6 +962,91 @@ def build_aio_controls(
     return created
 
 
+# ---------------------------------------------------------------------------
+# GPU dedicate guided setup (DEC-221) — pure control/curve creation. Kept free
+# of Qt so it is unit-testable; the dialog is a thin UI over this.
+# ---------------------------------------------------------------------------
+
+# Default curve for a dedicated GPU fan. The first point sits at 0% up to 45 C
+# (graph interpolation clamps to the first point below its temperature), so the
+# fan *target* is 0% at idle; the PMFW firmware raises a bare 0% target to its
+# OD_RANGE minimum (~15%), so true 0 RPM comes from the member ``fan_zero_rpm``
+# stop feature, not the 0% point alone. The ramp then climbs to full by 95 C.
+# See DEC-221 (shape chosen by the user).
+_GPU_DEDICATE_CURVE_POINTS: tuple[tuple[float, float], ...] = (
+    (45.0, 0.0),
+    (47.0, 20.0),
+    (58.0, 40.0),
+    (75.0, 60.0),
+    (95.0, 100.0),
+)
+
+
+def build_gpu_control(
+    profile: Profile,
+    *,
+    gpu_member: ControlMember,
+    sensor_id: str,
+    zero_rpm: bool = True,
+) -> LogicalControl | None:
+    """Create a dedicated GPU-only control + curve for one writable GPU fan,
+    append them to ``profile``, and return the created control (DEC-221).
+
+    "Dedicating" a GPU fan gives it its own GPU-only control (role floor 0%, so
+    the curve is authorable all the way down to 0% — no chassis/CPU minimum is
+    ever applied) bound to a GPU temperature sensor, with the firmware zero-RPM
+    idle-stop enabled (``fan_zero_rpm=zero_rpm``). Enabling zero-RPM is the real
+    lever for true 0 RPM at idle: without it the daemon disables the firmware
+    stop on every write and the fan always spins.
+
+    The member is first removed from every other control so the fan is never
+    driven by two controls at once (a fan must have exactly one writer). A
+    control that this removal *empties* — e.g. a previous "Dedicate GPU Fan"
+    control that held only this GPU — is dropped, so a repeat dedicate cannot
+    accumulate dead empty controls; controls that still hold other members are
+    kept, and pre-existing empty controls (that never held this GPU) are left
+    untouched. A dropped control's curve stays in the library, unassigned, so a
+    hand-tuned curve is never silently lost.
+
+    Returns ``None`` (a no-op) if ``gpu_member`` carries no id — defensive; the
+    caller only offers this for a present, writable GPU fan.
+    """
+    if gpu_member is None or not gpu_member.member_id:
+        return None
+
+    kept_controls: list[LogicalControl] = []
+    for control in profile.controls:
+        had_member = any(m.member_id == gpu_member.member_id for m in control.members)
+        control.members = [m for m in control.members if m.member_id != gpu_member.member_id]
+        if had_member and not control.members:
+            continue  # drop a control this call just vacated (repeat-dedicate)
+        kept_controls.append(control)
+    profile.controls = kept_controls
+
+    member = ControlMember(
+        source=gpu_member.source,
+        member_id=gpu_member.member_id,
+        member_label=gpu_member.member_label,
+        fan_zero_rpm=bool(zero_rpm),
+    )
+    curve = CurveConfig(
+        name="GPU Fan",
+        type=CurveType.GRAPH,
+        sensor_id=sensor_id,
+        points=[CurvePoint(t, o) for t, o in _GPU_DEDICATE_CURVE_POINTS],
+    )
+    profile.curves.append(curve)
+    control = LogicalControl(
+        name="GPU Fan",
+        mode=ControlMode.CURVE,
+        curve_id=curve.id,
+        members=[member],
+    )
+    apply_role_floor(control)  # GPU-only role → minimum_pct stays 0 (DEC-095/DEC-119)
+    profile.controls.append(control)
+    return control
+
+
 def _migrate_v1_profile(data: dict) -> Profile:
     """Migrate a v1 profile (TargetAssignment + CurveDefinition) to v2."""
     curves: list[CurveConfig] = []

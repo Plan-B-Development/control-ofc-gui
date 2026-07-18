@@ -542,6 +542,19 @@ class ControlsPage(QWidget):
         self._configure_aio_btn.setVisible(False)
         bar.addWidget(self._configure_aio_btn)
 
+        # DEC-221: one-click "dedicate" a writable GPU fan to its own 0-RPM-capable
+        # curve. Hidden until a writable, zero-RPM-capable AMD GPU is detected
+        # (see _on_capabilities_updated).
+        self._dedicate_gpu_btn = make_button(
+            "Dedicate GPU Fan", "secondary", object_name="Controls_Btn_dedicateGpu"
+        )
+        self._dedicate_gpu_btn.setToolTip(
+            "Give the GPU fan its own curve so it can idle at 0 RPM when the GPU is cool"
+        )
+        self._dedicate_gpu_btn.clicked.connect(self._on_dedicate_gpu)
+        self._dedicate_gpu_btn.setVisible(False)
+        bar.addWidget(self._dedicate_gpu_btn)
+
         self._save_btn = make_button("Save Profile", "primary", object_name="Controls_Btn_save")
         self._save_btn.setToolTip("Save profile changes (Ctrl+S)")
         self._save_btn.clicked.connect(self._on_save_profile)
@@ -943,6 +956,65 @@ class ControlsPage(QWidget):
             and self._settings_service.settings.show_aio_pump_info
         ):
             self._show_aio_pump_info()
+
+    def _on_dedicate_gpu(self) -> None:
+        """DEC-221: give a writable AMD GPU fan its own GPU-only control + 0-floor
+        curve with the firmware zero-RPM idle-stop enabled, so it can sit at true
+        0 RPM when the GPU is cool. Thin UI over ``build_gpu_control``."""
+        profile = self._get_current_profile()
+        if not profile or not self._state:
+            return
+        from control_ofc.services.profile_service import ControlMember, build_gpu_control
+        from control_ofc.ui.widgets.gpu_dedicate_dialog import GpuDedicateDialog
+
+        # The single writable AMD GPU fan (the kernel exposes one aggregate fan
+        # entity per GPU). Defensive: the button only shows when one is present.
+        gpu_fan = next((f for f in self._state.fans if f.source == "amd_gpu"), None)
+        if gpu_fan is None:
+            return
+        gpu_label = self._state.fan_display_name(gpu_fan.id)
+
+        # Sensor choices: every control-eligible sensor (DEC-193 drops WiFi-PHY
+        # temps), with GPU temperatures flagged and preferred as the default so
+        # the fan tracks the GPU's own heat. Prefer the GPU "edge" die temp.
+        sensor_choices: list[dict] = []
+        default_sensor_id: str | None = None
+        for s in self._state.sensors:
+            if not s.control_eligible:
+                continue
+            is_gpu_temp = s.kind in ("GpuTemp", "gpu_temp") or s.source == "amd_gpu"
+            sensor_choices.append({"id": s.id, "label": s.label, "preferred": is_gpu_temp})
+            if is_gpu_temp and default_sensor_id is None:
+                default_sensor_id = s.id
+            if is_gpu_temp and "edge" in (s.label or "").lower():
+                default_sensor_id = s.id
+
+        dlg = GpuDedicateDialog(
+            gpu_label=gpu_label,
+            sensor_choices=sensor_choices,
+            default_sensor_id=default_sensor_id,
+            default_zero_rpm=True,
+            parent=self,
+        )
+        if not dlg.exec():
+            return
+        res = dlg.get_result()
+        if not res["sensor_id"]:
+            return  # never build a sensorless GPU curve (dialog also blocks this)
+        gpu_member = ControlMember(
+            source=gpu_fan.source, member_id=gpu_fan.id, member_label=gpu_label
+        )
+        created = build_gpu_control(
+            profile,
+            gpu_member=gpu_member,
+            sensor_id=res["sensor_id"],
+            zero_rpm=res["zero_rpm"],
+        )
+        if created is None:
+            return
+        self._refresh_controls_grid(profile)
+        self._refresh_curves_grid(profile)
+        self._set_unsaved(True)
 
     def _on_new_control_menu(self) -> None:
         menu = QMenu(self)
@@ -1417,11 +1489,14 @@ class ControlsPage(QWidget):
         msg.setWindowTitle("GPU Fan Control")
         msg.setText("GPU Zero-RPM Mode")
         msg.setInformativeText(
-            "When a GPU fan is controlled by a curve, the daemon automatically "
-            "disables the GPU\u2019s zero-RPM idle mode so the fan responds at "
-            "all temperatures.\n\n"
-            "When the curve is removed or the daemon shuts down, zero-RPM mode "
-            "is automatically restored so the GPU can stop its fans at idle.\n\n"
+            "By default a GPU fan controlled by a curve keeps spinning at all "
+            "temperatures \u2014 the GPU\u2019s zero-RPM idle stop is left off so "
+            "the fan always responds. This is the safe default.\n\n"
+            "To let the GPU fan stop completely at idle (true 0 RPM when the GPU "
+            "is cool), enable zero-RPM for it: use \u201cDedicate GPU Fan\u201d "
+            "(recommended) or tick \u201cAllow zero-RPM idle\u201d in the fan "
+            "role. The daemon restores automatic zero-RPM control when it shuts "
+            "down.\n\n"
             "This is normal behaviour for AMD RDNA3+ GPUs and matches how other "
             "Linux GPU control tools (e.g. LACT) operate."
         )
@@ -1557,6 +1632,15 @@ class ControlsPage(QWidget):
         # detected (idempotent — capabilities re-fire on every refresh).
         aio = getattr(caps, "aio_hwmon", None)
         self._configure_aio_btn.setVisible(bool(getattr(aio, "present", False)))
+        # DEC-221: surface "Dedicate GPU Fan" only for a present, writable,
+        # zero-RPM-capable AMD GPU (idempotent — capabilities re-fire on refresh).
+        gpu = getattr(caps, "amd_gpu", None)
+        self._dedicate_gpu_btn.setVisible(
+            bool(gpu)
+            and bool(getattr(gpu, "present", False))
+            and bool(getattr(gpu, "fan_write_supported", False))
+            and bool(getattr(gpu, "gpu_zero_rpm_available", False))
+        )
         if not hasattr(caps, "features") or caps.features is None:
             return
         # Idempotent both ways: capabilities re-fire on every refresh and every
