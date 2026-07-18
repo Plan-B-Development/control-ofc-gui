@@ -22,6 +22,7 @@ The page **header** carries the actions that apply to the whole profile:
 |--------|-------------|
 | **Auto-Connect Wizard** | Opens the Fan Wizard to identify and label your physical fans — see [Fan Wizard](fan-wizard.md) |
 | **Configure AIO** | One-click liquid-cooler setup — shown only when a liquid cooler is detected (see [Configuring an AIO](#configuring-an-aio--liquid-cooler)) |
+| **Dedicate GPU Fan** | One-click setup so a writable AMD GPU fan can idle at true 0 RPM — shown only when a zero-RPM-capable AMD GPU is detected (see [Dedicating a GPU fan](#dedicating-a-gpu-fan)) |
 | **Save Profile** | Writes the profile's changes to disk (`Ctrl+S`); saving the active profile also re-applies it to the daemon |
 | **⋮** | Profile-management menu (create / rename / duplicate / delete) |
 
@@ -69,6 +70,18 @@ When a liquid cooler (e.g. an NZXT Kraken or an Aquacomputer pump) is detected, 
 
 A read-only / monitor-only cooler (one whose pump the kernel cannot drive, such as an older NZXT Kraken2) skips the pump step and offers radiator + coolant monitoring only — it never offers control that would fail. The controls it creates are ordinary fan roles you can edit afterward.
 
+### Dedicating a GPU fan
+
+When a writable, zero-RPM-capable AMD GPU is detected, a **Dedicate GPU Fan** button appears in the page header. Use it to let the GPU fan idle at **true 0 RPM** when the card is cool. In one step it:
+
+- pulls the GPU fan out of any role that currently drives it, and creates a **GPU-only** role — because that role holds only the GPU, its curve can be drawn all the way down to 0% (no chassis/CPU stall-protection minimum applies);
+- binds a dedicated curve to a **GPU temperature** sensor (edge/junction preferred) — the default idles at 0% up to 45 °C, then ramps (20% / 40% / 60% / 100% at 47 / 58 / 75 / 95 °C);
+- turns on the GPU firmware's **zero-RPM idle stop** for that fan.
+
+That last step is the important one: a 0% point on the curve alone is *not* enough — the GPU firmware raises a bare 0% command up to its own minimum (~15%), so the fan keeps spinning. True 0 RPM comes from the zero-RPM stop, which the firmware releases as soon as the GPU warms and the curve ramps up. The daemon restores automatic zero-RPM control when it shuts down. In the dialog you pick the sensor and can un-tick zero-RPM to keep the fan always spinning at the firmware minimum instead.
+
+This is the one-click equivalent of building a GPU-only role by hand and ticking **Allow zero-RPM idle** in the [role dialog](#editing-a-fan-role).
+
 ### Inline Manual Override
 
 The **Manual** button on each card is a toggle: switch it on and a slider replaces the output line, pinning that role's fans to a fixed speed. This asks the **daemon** to override that role — the daemon, not the GUI, enforces the fixed speed and reverts to the curve when you are done. It is a *temporary* override:
@@ -97,7 +110,7 @@ Click **Edit…** to open the role dialog:
 
 ![Fan Role Dialog — Manual Mode](../screenshots/auto/11_fan_role_dialog_manual.png)
 
-When the role contains an AMD GPU fan, a **GPU fan idle behaviour** section appears with a per-GPU **Allow zero-RPM idle** checkbox: leave it checked to let the GPU's firmware stop the fan at idle (it spins up with the curve), or uncheck it so the fan tracks the curve continuously.
+When the role contains an AMD GPU fan, a **GPU fan idle behaviour** section appears with a per-GPU **Allow zero-RPM idle** checkbox: leave it checked to let the GPU's firmware stop the fan at idle (it spins up with the curve), or uncheck it so the fan tracks the curve continuously. For a fresh setup, the header's [**Dedicate GPU Fan**](#dedicating-a-gpu-fan) button does this for you in one step (GPU-only role + 0%-capable curve + zero-RPM enabled).
 
 ### Managing Members
 

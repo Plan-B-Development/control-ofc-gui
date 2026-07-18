@@ -397,6 +397,40 @@ def test_dedicate_gpu_twice_leaves_single_gpu_control(
     assert [c for c in profile.controls if c.name == "GPU Fan" and not c.members] == []
 
 
+def test_dedicate_gpu_handler_pulls_gpu_from_existing_shared_control(
+    qtbot, app_state, profile_service, monkeypatch
+):
+    # Handler-level end-to-end for the mixed -> dedicate path: the GPU starts in
+    # a shared control alongside a chassis fan. Dedicating must move it out
+    # (keeping the chassis member) AND stand up a GPU-only control — pinning that
+    # the handler refreshes the profile AFTER build_gpu_control mutates it, not
+    # a stale copy. (The pure removal is unit-tested; this is the UI wiring.)
+    from control_ofc.api.models import FanReading, SensorReading
+    from control_ofc.ui.pages.controls_page import ControlsPage
+
+    page = ControlsPage(state=app_state, profile_service=profile_service)
+    qtbot.addWidget(page)
+    profile = page._get_current_profile()
+    gpu_m = ControlMember(source="amd_gpu", member_id=GPU_ID, member_label="GPU Fan")
+    chassis_m = ControlMember(source="openfan", member_id="openfan:ch00", member_label="Case")
+    # Distinct name so it can't collide with a default profile's "All Fans".
+    profile.controls.append(LogicalControl(name="Shared Group", members=[gpu_m, chassis_m]))
+
+    app_state.fans = [FanReading(id=GPU_ID, source="amd_gpu")]
+    app_state.sensors = [
+        SensorReading(id="gpu_edge", kind="GpuTemp", label="edge", source="amd_gpu")
+    ]
+    _install_fake_dialog(monkeypatch, result={"sensor_id": "gpu_edge", "zero_rpm": True})
+
+    page._on_dedicate_gpu()
+
+    shared = next(c for c in profile.controls if c.name == "Shared Group")
+    assert [m.member_id for m in shared.members] == ["openfan:ch00"]  # chassis kept, GPU pulled
+    drivers = [c for c in profile.controls if any(m.member_id == GPU_ID for m in c.members)]
+    assert len(drivers) == 1 and drivers[0].name == "GPU Fan"  # exactly one GPU-only writer
+    assert page._has_unsaved is True
+
+
 def test_dedicate_gpu_handler_filters_ineligible_and_prefers_gpu_edge(
     qtbot, app_state, profile_service, monkeypatch
 ):

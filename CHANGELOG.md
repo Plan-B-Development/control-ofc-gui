@@ -26,6 +26,12 @@ shutdown). Pairs with `control-ofc-daemon` ≥ v2.11.0. DEC-221.
   spinning) and how to enable the idle-stop (Dedicate GPU Fan, or the fan role's
   "Allow zero-RPM idle").
 
+### Changed
+- **Regression-test hardening (bundled).** This release also carries the 2026-07-18
+  `/test-tests` pass — added tests around the threaded manual-override worker
+  (`test_controls_dec220.py`) and the Overview / System-State view-models
+  (`test_overview_view.py`, `test_system_state_view.py`). No behaviour change.
+
 ### Versions
 GUI 2.23.0 → **2.24.0**. GUI-only, additive non-breaking feature; no daemon contract,
 wire, schema (`fan_zero_rpm` is already a v7 field), or `EXPECTED_API_VERSION` change.
