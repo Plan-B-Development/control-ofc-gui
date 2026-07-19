@@ -231,6 +231,14 @@ class MainWindow(QWidget):
         # feeds a warnings count, and shows daemon uptime + thermal from
         # status_updated; the footer shows the health rollup from the warning count.
         self._state.connection_changed.connect(self.status_ribbon.set_connection_state)
+        # DEC-222: the footer's thermal + readiness chips are poll-driven, so they
+        # must go dark when the daemon does rather than freeze on a stale state.
+        # A bound method, NOT a lambda: PySide holds bound-method receivers weakly,
+        # but a self-capturing lambda is kept alive by the sender's connection list.
+        # AppState outlives the window, so a lambda here would strand this window's
+        # Python wrapper past C++ deletion and leave its PulsingLed registered with
+        # the global animation controller.
+        self._state.connection_changed.connect(self._on_connection_for_footer)
         self._state.warning_count_changed.connect(self.status_ribbon.set_warning_count)
         self._state.warning_count_changed.connect(self.footer.set_warning_count)
         self._state.status_updated.connect(self._on_status_for_ribbon)
@@ -363,6 +371,10 @@ class MainWindow(QWidget):
         self.status_ribbon.set_thermal_state(status.thermal_state)
         self.footer.set_thermal_state(status.thermal_state or "normal")
         self.footer.set_readiness_rollup(self._readiness_for_footer(status))
+
+    def _on_connection_for_footer(self, state: ConnectionState) -> None:
+        """Dim the footer's poll-driven chips while the daemon is unreachable."""
+        self.footer.set_live(state != ConnectionState.DISCONNECTED)
 
     def _readiness_for_footer(self, status) -> ReadinessRollup | None:
         """The readiness rollup to show on the footer chip, or ``None`` to hide it.
@@ -672,6 +684,7 @@ class MainWindow(QWidget):
             self._demo_timer.stop()
         if hasattr(self, "_demo_controller") and self._demo_controller is not None:
             self._demo_controller.stop()
+        self.footer.cleanup()  # unregister the health LED's animation
         self.dashboard_page.cleanup()
         self.controls_page.cleanup()  # DEC-214: tear down the always-mounted curve editor
         # The pages below are all constructed unconditionally in __init__, so no

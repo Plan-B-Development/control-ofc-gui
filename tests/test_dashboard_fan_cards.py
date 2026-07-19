@@ -22,6 +22,14 @@ def _fan(fan_id, rpm=1200, pwm=45, source="openfan"):
     return FanReading(id=fan_id, source=source, rpm=rpm, last_commanded_pwm=pwm, age_ms=100)
 
 
+def _layout_order(page) -> list[str]:
+    """Card keys in the order the flow layout will actually paint them."""
+    layout = page._fan_cards_layout
+    widgets = [layout.itemAt(i).widget() for i in range(layout.count())]
+    by_widget = {card: key for key, card in page._fan_cards.items()}
+    return [by_widget[w] for w in widgets if w in by_widget]
+
+
 def _page(qtbot, state, **kw):
     page = DashboardPage(state=state, **kw)
     qtbot.addWidget(page)
@@ -176,6 +184,54 @@ class TestReconciliation:
         assert next(iter(page._fan_cards.values()))._name.text() == "My GPU"
 
 
+class TestCardOrdering:
+    """Layout order must track VM order (controls in profile order, then
+    Unassigned, then read-only), not the order cards happened to be created in."""
+
+    def test_unassigned_card_moves_below_controls_when_a_profile_activates(
+        self, qtbot, app_state, profile_service
+    ):
+        """The common path: the GUI starts with no profile, so the Unassigned card
+        is built first at index 0. Activating a profile appends control cards — so
+        without a positional reconcile the pseudo-card that belongs last is pinned
+        first, permanently."""
+        app_state.set_connection(ConnectionState.CONNECTED)
+        page = _page(qtbot, app_state, profile_service=profile_service)
+        fans = [_fan("openfan:ch00"), _fan("openfan:ch01")]
+
+        profile_service.active_profile.controls = []
+        app_state.set_fans(fans)
+        assert _layout_order(page) == [""]  # Unassigned only
+
+        profile_service.active_profile.controls = [
+            LogicalControl(
+                id="aaa",
+                name="A",
+                members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+            )
+        ]
+        app_state.set_fans(fans)
+        assert _layout_order(page) == ["aaa", ""]  # Unassigned last, not first
+
+    def test_a_control_inserted_first_renders_first(self, qtbot, app_state, profile_service):
+        app_state.set_connection(ConnectionState.CONNECTED)
+        page = _page(qtbot, app_state, profile_service=profile_service)
+        fans = [_fan("openfan:ch00"), _fan("openfan:ch01")]
+
+        def control(cid, member):
+            return LogicalControl(
+                id=cid,
+                name=cid,
+                members=[ControlMember(source="openfan", member_id=member)],
+            )
+
+        profile_service.active_profile.controls = [control("aaa", "openfan:ch00")]
+        app_state.set_fans(fans)
+        profile_service.active_profile.controls.insert(0, control("zzz", "openfan:ch01"))
+        app_state.set_fans(fans)
+        assert _layout_order(page)[:2] == ["zzz", "aaa"]
+
+
 class TestEditRouting:
     def test_edit_reemits_on_the_page_signal(self, qtbot, app_state, profile_service):
         control = LogicalControl(
@@ -226,6 +282,33 @@ class TestEditRouting:
         # An unknown or blank id is a harmless no-op, not a crash.
         assert page.focus_control("nope") is False
         assert page.focus_control("") is False
+
+    def test_focus_control_scrolls_the_card_into_view(self, qtbot, app_state, profile_service):
+        """setFocus alone does not scroll a QScrollArea, and ControlCard is a
+        NoFocus QFrame that draws no focus ring — so without ensureWidgetVisible a
+        Dashboard Edit on a control below the fold lands on a blank pane."""
+        from control_ofc.ui.pages.controls_page import ControlsPage
+
+        controls = [
+            LogicalControl(
+                id=f"c{i}",
+                name=f"Role {i}",
+                members=[ControlMember(source="openfan", member_id=f"openfan:ch{i:02d}")],
+            )
+            for i in range(12)
+        ]
+        profile_service.active_profile.controls = controls
+        page = ControlsPage(state=app_state, profile_service=profile_service)
+        qtbot.addWidget(page)
+        page.resize(900, 400)
+        page.show()
+
+        scroll = page._controls_scroll
+        scroll.verticalScrollBar().setValue(0)
+        assert page.focus_control("c11") is True
+        # Either it scrolled, or every card already fits — both mean "visible".
+        bar = scroll.verticalScrollBar()
+        assert bar.value() > 0 or bar.maximum() == 0
 
     def test_theme_change_reaches_the_card_previews(self, qtbot, app_state):
         """The cards paint their curve preview themselves, so a theme switch must

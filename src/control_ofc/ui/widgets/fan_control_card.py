@@ -186,7 +186,7 @@ class FanControlCard(Card):
                 # A control the user just created, before assigning any fan.
                 text, css = "No fans", "InfoChip"
         self._state_chip.setText(text)
-        set_chip_class(self._state_chip, css)
+        set_chip_class(self._state_chip, css, skip_if_unchanged=True)
 
         if vm.curve is not None:
             self._preview.set_curve(vm.curve)

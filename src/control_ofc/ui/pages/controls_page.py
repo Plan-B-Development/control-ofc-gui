@@ -1093,6 +1093,11 @@ class ControlsPage(QWidget):
         if card is None:
             return False
         self._on_control_selected(control_id)
+        # setFocus alone does NOT scroll a QScrollArea, and ControlCard is a
+        # QFrame with the default NoFocus policy so it draws no focus ring — a
+        # card below the fold would be silently left off-screen, which is the
+        # opposite of what a Dashboard "Edit" deep-link should do.
+        self._controls_scroll.ensureWidgetVisible(card)
         card.setFocus()
         return True
 

@@ -824,6 +824,18 @@ class DashboardPage(QWidget):
         for key in [k for k in self._fan_cards if k not in seen]:
             self._drop_fan_card(key)
 
+        # Keep the layout order in step with the VM order (controls in profile
+        # order, then Unassigned, then read-only fans). New cards are appended, so
+        # without this a card created first stays first forever — starting with no
+        # profile and then activating one would pin the Unassigned card above every
+        # control, permanently inverting the documented order.
+        for index, vm in enumerate(vms):
+            card = self._fan_cards[vm.card_key]
+            item = self._fan_cards_layout.itemAt(index)
+            if item is None or item.widget() is not card:
+                self._fan_cards_layout.removeWidget(card)
+                self._fan_cards_layout.insertWidget(index, card)
+
         # Count only genuine controls: the Unassigned pseudo-card and the per-fan
         # read-only cards are not controls, and calling them that would overstate
         # how much of the system is actually under curve control.

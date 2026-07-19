@@ -127,6 +127,29 @@ class StatusFooter(QWidget):
         self.set_thermal_state("normal")
         self.set_readiness_rollup(None)  # hidden until the daemon sends a rollup
 
+    def cleanup(self) -> None:
+        """Deterministically tear down the health LED's animation.
+
+        ``PulsingLed`` registers itself with the global ``AnimationController``,
+        which holds targets weakly — but a widget whose C++ object is deleted while
+        its Python wrapper survives stays in that set, so the next pause/resume
+        broadcast calls into a dead QTimer. Idempotent; mirrors the pages' cleanup.
+        """
+        self._health_led.cleanup()
+
+    def set_live(self, live: bool) -> None:
+        """Show or hide the poll-driven chips.
+
+        With no daemon connection there is no current thermal or readiness state,
+        so continuing to display the last one would present stale data as fact —
+        and since the footer is on every page, a stray "Thermal: Emergency" would
+        follow the user everywhere. Hidden is the honest render; the ribbon's
+        connection state and the poll-age label say why.
+        """
+        self._thermal_btn.setVisible(live)
+        if not live:
+            self._readiness_btn.hide()
+
     def set_warning_count(self, count: int) -> None:
         """Reflect the app's warning count in the health rollup (dumb view)."""
         if count > 0:
@@ -139,7 +162,11 @@ class StatusFooter(QWidget):
     def set_operation_mode(self, mode: OperationMode) -> None:
         """Show the current operation mode (DEC-222)."""
         self._mode_label.setText(MODE_LABELS.get(mode, ""))
-        set_chip_class(self._mode_label, "DemoBadge" if mode == OperationMode.DEMO else "CardMeta")
+        set_chip_class(
+            self._mode_label,
+            "DemoBadge" if mode == OperationMode.DEMO else "CardMeta",
+            skip_if_unchanged=True,
+        )
 
     def update_poll_age(self, now: float, last_poll: float | None) -> None:
         """Refresh the "Updated Xs ago" label (DEC-222)."""
@@ -150,7 +177,7 @@ class StatusFooter(QWidget):
         """Drive the thermal chip from ``DaemonStatus.thermal_state`` (DEC-185)."""
         label, css = THERMAL_STATES.get(thermal or "normal", (f"Thermal: {thermal}", "InfoChip"))
         self._thermal_btn.setText(label)
-        set_chip_class(self._thermal_btn, css)
+        set_chip_class(self._thermal_btn, css, skip_if_unchanged=True)
 
     def set_readiness_rollup(self, rollup: ReadinessRollup | None) -> None:
         """Drive the cooling-readiness chip (DEC-206).
@@ -176,7 +203,7 @@ class StatusFooter(QWidget):
         else:  # info / unknown — advisory notes only
             label, css = "Cooling: notes", "InfoChip"
         self._readiness_btn.setText(label)
-        set_chip_class(self._readiness_btn, css)
+        set_chip_class(self._readiness_btn, css, skip_if_unchanged=True)
         self._readiness_btn.setToolTip(
             escape(rollup.top_summary or "Open the Hardware page's readiness report")
         )
