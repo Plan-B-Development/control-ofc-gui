@@ -18,7 +18,9 @@ recur here either.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from html import escape
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -66,7 +68,7 @@ class FanControlCard(Card):
     def __init__(self, vm: FanCardVM, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._control_id = vm.control_id
-        slug = _card_slug(vm.control_id)
+        slug = _card_slug(vm.card_key)
         self.setObjectName(f"FanCard_Root_{slug}")
 
         layout = QVBoxLayout(self)
@@ -78,6 +80,10 @@ class FanControlCard(Card):
         head.setSpacing(6)
         self._name = QLabel(vm.label)
         self._name.setObjectName(f"FanCard_Label_name_{slug}")
+        # Control names come from the profile and fan labels from user aliases —
+        # untrusted text. Render verbatim so stray markup can never be
+        # reinterpreted as rich text (matches warnings_view + footer).
+        self._name.setTextFormat(Qt.TextFormat.PlainText)
         self._name.setStyleSheet("font-weight: bold; background: transparent;")
         head.addWidget(self._name)
         head.addStretch(1)
@@ -151,7 +157,11 @@ class FanControlCard(Card):
         """Re-render from a fresh VM. Cheap and idempotent (called each poll)."""
         self._control_id = vm.control_id
         self._name.setText(vm.label)
-        self._count.setText(f"{vm.fan_count} fan{'' if vm.fan_count == 1 else 's'}")
+        self._count.setText(
+            "No fans assigned"
+            if vm.fan_count == 0
+            else f"{vm.fan_count} fan{'' if vm.fan_count == 1 else 's'}"
+        )
 
         self._rpm_value.setText("—" if vm.rpm is None else str(vm.rpm))
         # Commanded PWM wins over measured duty when both exist; duty is labelled
@@ -172,6 +182,9 @@ class FanControlCard(Card):
                 text, css = "Read-only", "InfoChip"
             elif vm.is_unassigned:
                 text, css = "Not controlled", "InfoChip"
+            elif vm.fan_count == 0:
+                # A control the user just created, before assigning any fan.
+                text, css = "No fans", "InfoChip"
         self._state_chip.setText(text)
         set_chip_class(self._state_chip, css)
 
@@ -197,7 +210,7 @@ class FanControlCard(Card):
         self._edit_btn.setToolTip(
             "Open the Controls page to assign these fans to a control"
             if vm.is_unassigned
-            else f"Edit “{vm.label}” on the Controls page"
+            else f"Edit “{escape(vm.label)}” on the Controls page"
         )
 
     def set_theme(self, tokens) -> None:

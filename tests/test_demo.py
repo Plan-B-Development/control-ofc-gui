@@ -123,6 +123,16 @@ def test_demo_hardware_diagnostics_shape():
     assert diag.gpu.ppfeaturemask_bit14_set is True
 
 
+def test_demo_capabilities_gpu_uses_the_daemon_fan_control_vocabulary():
+    """The capabilities object carries the same field as diagnostics and must use
+    the same value. A "pmfw" here maps to "unknown" in overview_view, which would
+    make the demo GPU classify as read-only and lose its Dashboard card."""
+    from control_ofc.services.demo_service import DemoService
+
+    caps = DemoService().capabilities()
+    assert caps.amd_gpu.fan_control_method == "pmfw_curve"
+
+
 def test_demo_hardware_diagnostics_revert_counts_match_writable_headers():
     """Per-header revert counts should reference the writable header IDs so
     the Diagnostics revert-count panel renders rows for the same fans the

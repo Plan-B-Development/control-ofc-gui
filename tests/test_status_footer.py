@@ -77,6 +77,24 @@ class TestRehomedIndicators:
         assert footer._mode_label.text() == "Automatic"
         assert footer._mode_label.property("class") == "CardMeta"
 
+    def test_format_poll_age_buckets(self):
+        """Pure-function bucket boundaries. Tested directly rather than through the
+        widget so a boundary failure names the input, not a label. Ported from the
+        retired status-strip suite, which covered all of these."""
+        from control_ofc.ui.status_banner import format_poll_age
+
+        assert format_poll_age(None) == "Not updated yet"
+        assert format_poll_age(0.0) == "Updated just now"
+        assert format_poll_age(1.9) == "Updated just now"  # just under the 2s edge
+        assert format_poll_age(2.0) == "Updated 2s ago"  # the edge itself
+        assert format_poll_age(59.0) == "Updated 59s ago"
+        assert format_poll_age(60.0) == "Updated 1m ago"
+        assert format_poll_age(90.0) == "Updated 1m ago"
+        assert format_poll_age(3599.0) == "Updated 59m ago"
+        assert format_poll_age(3700.0) == "Updated 1h ago"
+        # A clock that went backwards must not render a negative age.
+        assert format_poll_age(-5.0) == "Updated just now"
+
     def test_poll_age_formats_elapsed_time(self, qtbot):
         footer = StatusFooter()
         qtbot.addWidget(footer)

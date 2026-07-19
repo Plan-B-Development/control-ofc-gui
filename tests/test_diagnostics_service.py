@@ -279,7 +279,7 @@ class TestFormatGpuStatus:
                     present=True,
                     model_name="RX 7900 XTX",
                     display_label="RX 7900 XTX",
-                    fan_control_method="pmfw",
+                    fan_control_method="pmfw_curve",
                     pmfw_supported=True,
                 )
             )
@@ -287,7 +287,7 @@ class TestFormatGpuStatus:
         svc = DiagnosticsService(state=state)
         text = svc.format_gpu_status()
         assert "RX 7900 XTX" in text
-        assert "pmfw" in text
+        assert "pmfw_curve" in text
         assert "PMFW supported: Yes" in text
 
     def test_gpu_not_present(self):
@@ -469,7 +469,7 @@ class TestExportSupportBundle:
                 amd_gpu=AmdGpuCapability(
                     present=True,
                     model_name="RX 7900 XTX",
-                    fan_control_method="pmfw",
+                    fan_control_method="pmfw_curve",
                     pmfw_supported=True,
                     overdrive_enabled=True,
                 ),

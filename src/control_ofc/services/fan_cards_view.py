@@ -51,20 +51,31 @@ from control_ofc.api.models import (
 from control_ofc.services.overview_view import fan_control_method
 from control_ofc.services.profile_service import (
     CurveConfig,
+    CurveType,
     Profile,
     member_minimum_pct,
 )
 
-# The pseudo-control id for fans belonging to no real control. Empty rather than
-# a sentinel word so it can never collide with a daemon control id.
+# The pseudo-control id for fans belonging to no real control.
 UNASSIGNED_ID = ""
 UNASSIGNED_LABEL = "Unassigned"
 
-# Card-id prefix for a read-only fan's own card. Namespaced so it can never
-# collide with a real daemon control id.
+# Card-key prefix for a read-only fan's own card.
 READ_ONLY_PREFIX = "readonly:"
 
+# GUI-generated control ids are uuid4 hex, so they never collide with the two
+# pseudo-card namespaces above — but a hand-edited or shared profile can carry
+# any string, including "" or a "readonly:"-prefixed one, and nothing upstream
+# rejects it (neither LogicalControl.from_dict nor the daemon's profile
+# validation checks id shape or uniqueness). Cards are therefore keyed by a
+# de-duplicated ``card_key`` while ``control_id`` stays the truthful value the
+# Edit deep-link needs.
+
 _GPU_SOURCES = ("amd_gpu", "intel_gpu", "nvidia_gpu")
+
+# Curve types that combine or mirror other curves/controls rather than reading one
+# sensor. They keep whatever sensor_id they last had, so it must not be trusted.
+_COMPOSITE_CURVE_TYPES = (CurveType.MIX, CurveType.SYNC)
 
 # Control methods that mean "this fan has no write path". Mirrors the strings
 # returned by :func:`overview_view.fan_control_method` (DEC-102 / DEC-204).
@@ -109,6 +120,10 @@ class FanCardVM:
     preview painter as-is — the card never resolves another curve's or control's
     fields (the enduring curve-ownership rule).
 
+    ``card_key`` is what the page keys its reconcile dict and objectNames on. It
+    equals ``control_id`` in every normal case; it differs only when a malformed
+    profile would otherwise make two cards collide and silently drop one.
+
     ``duty_pct`` is the firmware-reported *measured* duty (NVIDIA via NVML,
     DEC-204) and is distinct from the daemon-commanded ``pwm_pct``. Where both
     exist the commanded value wins on display; duty is the fallback that gives
@@ -116,6 +131,7 @@ class FanCardVM:
     """
 
     control_id: str
+    card_key: str  # unique per card; == control_id unless a profile forced a clash
     label: str
     is_unassigned: bool
     is_read_only: bool
@@ -168,7 +184,26 @@ def _avg(values: list[int]) -> int | None:
 
 
 def _worst(states: list[FanState]) -> FanState:
-    return max(states, key=lambda s: _STATE_RANK[s]) if states else FanState.OFFLINE
+    """Worst-of the member states.
+
+    An empty list means the control has no members at all — which is how a
+    freshly-created fan role looks before any fan is assigned. That is not a
+    fault, so it must NOT report OFFLINE: doing so paints a red critical chip on
+    a control the user is still configuring, and makes a genuine OFFLINE (an
+    expected fan reporting nothing) indistinguishable from an unfinished one.
+    """
+    return max(states, key=lambda s: _STATE_RANK[s]) if states else FanState.NORMAL
+
+
+def _unique_key(preferred: str, taken: set[str]) -> str:
+    """A card key not already in ``taken``, suffixing only on a real clash."""
+    key = preferred
+    n = 2
+    while key in taken:
+        key = f"{preferred}#{n}"
+        n += 1
+    taken.add(key)
+    return key
 
 
 def build_fan_card_vms(
@@ -211,6 +246,7 @@ def build_fan_card_vms(
 
     cards: list[FanCardVM] = []
     claimed: set[str] = set()
+    keys: set[str] = set()
 
     for control in active_profile.controls if active_profile else []:
         overridden = control.id in override_control_ids
@@ -240,11 +276,18 @@ def build_fan_card_vms(
 
         # A composite Mix/Sync curve has no single sensor, so it has no single
         # temperature to show — "—" is the honest render, not a borrowed value.
-        temp = sv.get(curve.sensor_id) if (curve and curve.sensor_id) else None
+        # The type check is load-bearing: the curve editor writes sensor_id
+        # unconditionally, so a Mix/Sync curve routinely carries a stale one left
+        # over from whatever it was before. Trusting sensor_id alone would show
+        # that stale sensor's reading as if it drove the control.
+        temp = None
+        if curve is not None and curve.sensor_id and curve.type not in _COMPOSITE_CURVE_TYPES:
+            temp = sv.get(curve.sensor_id)
 
         cards.append(
             FanCardVM(
                 control_id=control.id,
+                card_key=_unique_key(control.id, keys),
                 label=control.name or control.id,
                 is_unassigned=False,
                 is_read_only=False,
@@ -272,6 +315,7 @@ def build_fan_card_vms(
         cards.append(
             FanCardVM(
                 control_id=UNASSIGNED_ID,
+                card_key=_unique_key(UNASSIGNED_ID, keys),
                 label=UNASSIGNED_LABEL,
                 is_unassigned=True,
                 is_read_only=False,
@@ -299,6 +343,7 @@ def build_fan_card_vms(
         cards.append(
             FanCardVM(
                 control_id=f"{READ_ONLY_PREFIX}{fan.id}",
+                card_key=_unique_key(f"{READ_ONLY_PREFIX}{fan.id}", keys),
                 label=display_name(fan.id) if display_name else fan.id,
                 is_unassigned=False,
                 is_read_only=True,

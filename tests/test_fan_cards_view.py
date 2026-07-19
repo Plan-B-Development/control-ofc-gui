@@ -6,6 +6,8 @@ hand so each case pins one rule of the control-keyed grouping.
 
 from __future__ import annotations
 
+import pytest
+
 from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
@@ -96,6 +98,23 @@ class TestControlGrouping:
         assert card.curve is curve
         assert card.temp_c == 61.4
 
+    def test_composite_curve_does_not_borrow_a_stale_sensor(self):
+        """A Mix/Sync curve keeps whatever sensor_id it last had — the curve editor
+        writes the field unconditionally — so trusting sensor_id alone would show an
+        unrelated sensor's reading as if it drove this control."""
+        from control_ofc.services.profile_service import CurveType
+
+        for curve_type in (CurveType.MIX, CurveType.SYNC):
+            curve = CurveConfig(id="cv", name="Composite", type=curve_type, sensor_id="cpu0")
+            control = _control(member_ids=("f1",), curve_id="cv")
+            card = build_fan_card_vms(
+                [_fan("f1")],
+                active_profile=_profile(control, curves=[curve]),
+                overrides=[],
+                sensor_values={"cpu0": 61.4},
+            )[0]
+            assert card.temp_c is None, curve_type
+
     def test_composite_curve_without_a_sensor_has_no_temp(self):
         """A Mix/Sync curve has no single sensor, so borrowing one would be a lie."""
         curve = CurveConfig(id="cv", name="Mix", sensor_id="")
@@ -148,6 +167,147 @@ class TestOverrideAndState:
         assert fan.freshness is not Freshness.FRESH
         card = build_fan_card_vms([fan], active_profile=_profile(control), overrides=[])[0]
         assert card.state is FanState.STALE
+
+
+class TestLowRpmDerivation:
+    """LOW_RPM and its two guards. This logic moved verbatim out of the retired
+    fan_grouping module; these port the cover that moved with it."""
+
+    def test_zero_rpm_above_the_floor_is_low_rpm(self):
+        """A fan commanded above its floor but reading 0 RPM is the whole point
+        of the heuristic — it is spinning down or unplugged."""
+        control = _control(member_ids=("f1",))
+        card = build_fan_card_vms(
+            [_fan("f1", rpm=0, pwm=50)], active_profile=_profile(control), overrides=[]
+        )[0]
+        assert card.state is FanState.LOW_RPM
+
+    def test_zero_rpm_at_or_below_the_floor_is_not_low_rpm(self):
+        """Below the member floor the daemon is not really asking for movement,
+        so 0 RPM is expected rather than suspicious."""
+        control = _control(member_ids=("f1",))
+        control.minimum_pct = 60.0  # floor above the commanded value
+        card = build_fan_card_vms(
+            [_fan("f1", rpm=0, pwm=50)], active_profile=_profile(control), overrides=[]
+        )[0]
+        assert card.state is not FanState.LOW_RPM
+
+    def test_no_commanded_pwm_is_not_low_rpm(self):
+        """Without a commanded value there is nothing to contradict."""
+        control = _control(member_ids=("f1",))
+        card = build_fan_card_vms(
+            [_fan("f1", rpm=0, pwm=None)], active_profile=_profile(control), overrides=[]
+        )[0]
+        assert card.state is not FanState.LOW_RPM
+
+    @pytest.mark.parametrize("source", ["amd_gpu", "intel_gpu", "nvidia_gpu"])
+    def test_gpu_zero_rpm_idle_is_normal_not_low_rpm(self, source):
+        """Zero-RPM idle is normal for a GPU (DEC-047) — flagging it would cry
+        wolf on every cool GPU in the machine."""
+        control = _control(member_ids=("g1",))
+        card = build_fan_card_vms(
+            [_fan("g1", source=source, rpm=0, pwm=50)],
+            active_profile=_profile(control),
+            overrides=[],
+        )[0]
+        assert card.state is FanState.NORMAL
+
+    def test_low_rpm_outranks_override_but_yields_to_stale(self):
+        """Middle of the precedence chain: LOW_RPM > OVERRIDE, STALE > LOW_RPM."""
+        control = _control(member_ids=("f1",))
+        overridden = build_fan_card_vms(
+            [_fan("f1", rpm=0, pwm=50)],
+            active_profile=_profile(control),
+            overrides=[OverrideStatusEntry(control_id="c1", pwm_percent=50)],
+        )[0]
+        assert overridden.state is FanState.LOW_RPM
+
+        stale = build_fan_card_vms(
+            [_fan("f1", rpm=0, pwm=50, age_ms=60_000)],
+            active_profile=_profile(control),
+            overrides=[],
+        )[0]
+        assert stale.state is FanState.STALE
+
+
+class TestStatePrecedence:
+    """The full worst-of chain: OFFLINE > STALL > STALE > LOW_RPM > OVERRIDE > NORMAL.
+    A transposition in _STATE_RANK must fail a test."""
+
+    def test_offline_outranks_stall(self):
+        control = _control(member_ids=("f1", "missing"))
+        stalling = _fan("f1", rpm=0)
+        stalling.stall_detected = True
+        card = build_fan_card_vms([stalling], active_profile=_profile(control), overrides=[])[0]
+        assert card.state is FanState.OFFLINE
+
+    def test_stall_outranks_stale(self):
+        control = _control(member_ids=("f1", "f2"))
+        stalling = _fan("f1", rpm=0)
+        stalling.stall_detected = True
+        card = build_fan_card_vms(
+            [stalling, _fan("f2", age_ms=60_000)],
+            active_profile=_profile(control),
+            overrides=[],
+        )[0]
+        assert card.state is FanState.STALL
+
+    def test_healthy_control_is_normal(self):
+        control = _control(member_ids=("f1", "f2"))
+        card = build_fan_card_vms(
+            [_fan("f1"), _fan("f2")], active_profile=_profile(control), overrides=[]
+        )[0]
+        assert card.state is FanState.NORMAL
+
+
+class TestMemberlessControl:
+    """A control with no members yet — what "New Fan Role" produces before the
+    user assigns a fan. It is unconfigured, not faulted."""
+
+    def test_empty_control_is_not_reported_as_offline(self):
+        card = build_fan_card_vms(
+            [], active_profile=_profile(_control(member_ids=())), overrides=[]
+        )[0]
+        assert card.state is FanState.NORMAL
+        assert card.fan_count == 0
+
+    def test_empty_control_still_renders_a_card(self):
+        cards = build_fan_card_vms(
+            [], active_profile=_profile(_control(member_ids=())), overrides=[]
+        )
+        assert [c.control_id for c in cards] == ["c1"]
+
+
+class TestCardKeyUniqueness:
+    """objectNames and the page's reconcile dict key on card_key. A malformed or
+    shared profile can repeat a control id, and keying on that would make one
+    card silently overwrite another."""
+
+    def test_duplicate_control_ids_get_distinct_card_keys(self):
+        a = _control(control_id="dup", name="A", member_ids=("f1",))
+        b = _control(control_id="dup", name="B", member_ids=("f2",))
+        cards = build_fan_card_vms(
+            [_fan("f1"), _fan("f2")], active_profile=_profile(a, b), overrides=[]
+        )
+        assert len(cards) == 2
+        assert cards[0].card_key != cards[1].card_key
+        # control_id stays truthful so the Edit deep-link still names the control.
+        assert [c.control_id for c in cards] == ["dup", "dup"]
+
+    def test_control_id_colliding_with_the_unassigned_key_is_separated(self):
+        empty_id = _control(control_id="", name="Oddly Named", member_ids=("f1",))
+        cards = build_fan_card_vms(
+            [_fan("f1"), _fan("openfan:ch09")],
+            active_profile=_profile(empty_id),
+            overrides=[],
+        )
+        assert len(cards) == 2
+        assert len({c.card_key for c in cards}) == 2
+
+    def test_card_key_equals_control_id_in_the_normal_case(self):
+        control = _control(member_ids=("f1",))
+        card = build_fan_card_vms([_fan("f1")], active_profile=_profile(control), overrides=[])[0]
+        assert card.card_key == card.control_id == "c1"
 
 
 class TestUnassignedBucket:

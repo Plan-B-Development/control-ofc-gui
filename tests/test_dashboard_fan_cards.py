@@ -73,6 +73,32 @@ class TestCardsFromState:
         assert "c1" in page._fan_cards
         assert page._fan_cards["c1"]._name.text() == "Chassis"
 
+    def test_sensor_values_reach_the_card_temp_column(self, qtbot, app_state, profile_service):
+        """The page must pass sensor_values into the VM builder. If that argument
+        were dropped, TEMP would silently read "—" on every card forever and only
+        a pure-layer test would still pass."""
+        from control_ofc.api.models import SensorReading
+
+        curve = CurveConfig(id="cv", name="C", sensor_id="s0", points=[CurvePoint(30, 20)])
+        control = LogicalControl(
+            id="c1",
+            name="Chassis",
+            curve_id="cv",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        active = profile_service.active_profile
+        active.controls = [control]
+        active.curves = [curve]
+
+        app_state.set_connection(ConnectionState.CONNECTED)
+        page = _page(qtbot, app_state, profile_service=profile_service)
+        app_state.set_sensors(
+            [SensorReading(id="s0", kind="cpu_temp", label="CPU", value_c=57.0, age_ms=100)]
+        )
+        app_state.set_fans([_fan("openfan:ch00")])
+
+        assert page._fan_cards["c1"]._temp_value.text() == "57°C"
+
 
 class TestReconciliation:
     def test_repeated_polls_update_in_place(self, qtbot, app_state):
@@ -103,6 +129,30 @@ class TestReconciliation:
         active.controls = []
         page._refresh_fan_cards()
         assert "c1" not in page._fan_cards
+
+    def test_removed_cards_detach_from_the_flow_layout(self, qtbot, app_state):
+        """A dropped card must leave FlowLayout's item list, not just the dict.
+
+        The cards are reconciled at 1 Hz; if removal only forgot the dict entry,
+        stale QLayoutItems would accumulate in the layout on every poll and the
+        pane would slowly fill with ghosts. FlowLayout implements takeAt(), which
+        is what QLayout.removeWidget() drives, so this pins that contract.
+        """
+        app_state.set_connection(ConnectionState.CONNECTED)
+        page = _page(qtbot, app_state)
+        layout = page._fan_cards_layout
+
+        app_state.set_fans([_fan("openfan:ch00")])
+        assert layout.count() == len(page._fan_cards) == 1
+
+        page._clear_fan_cards()
+        assert layout.count() == 0
+        assert page._fan_cards == {}
+
+        # Re-add, then poll repeatedly: the count must not creep.
+        for _ in range(5):
+            app_state.set_fans([_fan("openfan:ch00")])
+        assert layout.count() == len(page._fan_cards) == 1
 
     def test_disconnect_clears_every_card(self, qtbot, app_state):
         """A stale card must never survive a disconnect and read as current."""

@@ -2,7 +2,9 @@
 
 The 8-entry sidebar routes each interim entry to the right (page, sub-tab), the
 ribbon + footer are wired in, and the ribbon Alerts indicator opens Logs. The
-preserved-contract checks live in test_ui_clicks / test_status_strip.
+preserved-contract checks live in test_ui_clicks (test_status_strip went with the
+status strip itself in DEC-222; the footer's re-homed indicators are covered by
+test_status_footer).
 """
 
 from __future__ import annotations

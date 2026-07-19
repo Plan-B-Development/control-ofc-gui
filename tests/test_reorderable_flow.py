@@ -1,9 +1,9 @@
 """DEC-187: ReorderableFlow base — the shared drag-reorder plumbing.
 
-The full drag/drop/indicator behaviour is exercised through the two concrete
-containers (test_draggable_flow_coverage.py and test_fan_zone_card.py); this file
-pins the base's own contract: the flow_layout() hook, card_id tagging, and that
-drops are accepted.
+The full drag/drop/indicator behaviour is exercised through the surviving concrete
+container (test_draggable_flow_coverage.py — the Controls page's DraggableFlowContainer;
+the Dashboard's FanZoneGrid was retired by DEC-222). This file pins the base's own
+contract: the flow_layout() hook, card_id tagging, and that drops are accepted.
 """
 
 from __future__ import annotations

@@ -5,11 +5,14 @@ Shared drag-reorder behaviour for widgets that arrange fixed-size cards in a
 drop indicator shows where it will land, and ``order_changed`` fires with the new
 card-id order after a successful drop.
 
-Two containers build on it — they differ only in how cards are added/removed:
+One container builds on it:
 
 - :class:`~control_ofc.ui.widgets.draggable_flow.DraggableFlowContainer`
-  (Controls page) uses a clear-and-rebuild lifecycle;
-  reconciles cards in place each 1 Hz poll.
+  (Controls page), which uses a clear-and-rebuild lifecycle.
+
+(The Dashboard's ``FanZoneGrid`` was the second until DEC-222 retired the fan-zone
+grid. The fan cards that replaced it reconcile in place against a plain
+``FlowLayout`` and are not drag-reorderable, so they do not use this base.)
 
 The base owns only the drag plumbing. A subclass creates the ``FlowLayout`` and
 returns it from :meth:`flow_layout`, and tags each draggable card with

@@ -17,6 +17,7 @@ from control_ofc.ui.widgets.fan_control_card import FanControlCard
 def _vm(**kw):
     base = dict(
         control_id="c1",
+        card_key="c1",
         label="CPU Fans",
         is_unassigned=False,
         is_read_only=False,
@@ -31,6 +32,10 @@ def _vm(**kw):
         curve=None,
     )
     base.update(kw)
+    # Unless a test is specifically exercising a key clash, the card key tracks
+    # the control id (which is what build_fan_card_vms produces normally).
+    if "control_id" in kw and "card_key" not in kw:
+        base["card_key"] = kw["control_id"]
     return FanCardVM(**base)
 
 
@@ -171,13 +176,30 @@ class TestEditAffordance:
 
     def test_card_exposes_no_write_affordance(self, qtbot):
         """The card must stay read-only: the override session lives on the Controls
-        page, and a second one here would race it (DEC-163)."""
-        from PySide6.QtWidgets import QSlider
+        page, and a second one here would race it (DEC-163). Checks every input
+        widget class, not just sliders — a spin box would be just as much of a
+        second writer."""
+        from PySide6.QtWidgets import (
+            QAbstractSlider,
+            QAbstractSpinBox,
+            QCheckBox,
+            QComboBox,
+            QLineEdit,
+        )
 
         card = FanControlCard(_vm())
         qtbot.addWidget(card)
-        assert card.findChildren(QSlider) == []
+        for widget_cls in (
+            QAbstractSlider,
+            QAbstractSpinBox,
+            QCheckBox,
+            QComboBox,
+            QLineEdit,
+        ):
+            assert card.findChildren(widget_cls) == [], widget_cls.__name__
+        # The only signal it may expose is the navigation one.
         assert not hasattr(card, "manual_toggled")
+        assert not hasattr(card, "manual_value_changed")
 
 
 class TestUpdateInPlace:
@@ -208,3 +230,40 @@ class TestUpdateInPlace:
         card.update_vm(_vm(control_id="c2"))
         card._edit_btn.click()
         assert seen == ["c2"]
+
+
+class TestMemberlessControl:
+    def test_no_fans_reads_as_unconfigured_not_faulted(self, qtbot):
+        """A control the user just created has no members yet. Painting a red
+        critical "Offline" chip there would both alarm the user mid-setup and make
+        a genuine OFFLINE (an expected fan reporting nothing) indistinguishable."""
+        card = FanControlCard(_vm(fan_count=0, state=FanState.NORMAL))
+        qtbot.addWidget(card)
+        assert card._state_chip.text() == "No fans"
+        assert card._state_chip.property("class") == "InfoChip"
+        assert card._count.text() == "No fans assigned"
+
+    def test_a_real_fault_still_wins_over_the_unconfigured_label(self, qtbot):
+        card = FanControlCard(_vm(fan_count=0, state=FanState.STALL))
+        qtbot.addWidget(card)
+        assert card._state_chip.text() == "Stall"
+
+
+class TestUntrustedText:
+    """Control names come from the profile and fan labels from user aliases. The
+    footer and warnings view already treat such strings as untrusted markup; the
+    card must not be the one widget that does not."""
+
+    def test_label_is_rendered_as_plain_text(self, qtbot):
+        from PySide6.QtCore import Qt
+
+        card = FanControlCard(_vm(label="<b>PWNED</b>"))
+        qtbot.addWidget(card)
+        assert card._name.textFormat() == Qt.TextFormat.PlainText
+        assert card._name.text() == "<b>PWNED</b>"
+
+    def test_edit_tooltip_escapes_the_label(self, qtbot):
+        card = FanControlCard(_vm(label="<b>PWNED</b>"))
+        qtbot.addWidget(card)
+        assert "&lt;b&gt;PWNED&lt;/b&gt;" in card._edit_btn.toolTip()
+        assert "<b>" not in card._edit_btn.toolTip()

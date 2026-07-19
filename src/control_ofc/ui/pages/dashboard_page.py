@@ -806,20 +806,23 @@ class DashboardPage(QWidget):
             display_name=self._state.fan_display_name,
         )
 
+        # Keyed by vm.card_key, not vm.control_id: a malformed profile can repeat
+        # a control id, and keying on it would make the second card overwrite the
+        # first instead of getting its own.
         seen: set[str] = set()
         for vm in vms:
-            seen.add(vm.control_id)
-            card = self._fan_cards.get(vm.control_id)
+            seen.add(vm.card_key)
+            card = self._fan_cards.get(vm.card_key)
             if card is None:
                 card = FanControlCard(vm)
                 card.edit_requested.connect(self.open_control)
-                self._fan_cards[vm.control_id] = card
+                self._fan_cards[vm.card_key] = card
                 self._fan_cards_layout.addWidget(card)
             else:
                 card.update_vm(vm)
 
-        for control_id in [cid for cid in self._fan_cards if cid not in seen]:
-            self._drop_fan_card(control_id)
+        for key in [k for k in self._fan_cards if k not in seen]:
+            self._drop_fan_card(key)
 
         # Count only genuine controls: the Unassigned pseudo-card and the per-fan
         # read-only cards are not controls, and calling them that would overstate
@@ -832,9 +835,9 @@ class DashboardPage(QWidget):
         )
         self._fan_cards_empty.setVisible(not vms)
 
-    def _drop_fan_card(self, control_id: str) -> None:
+    def _drop_fan_card(self, card_key: str) -> None:
         """Remove one card, detaching it from the flow layout before deletion."""
-        card = self._fan_cards.pop(control_id, None)
+        card = self._fan_cards.pop(card_key, None)
         if card is None:
             return
         self._fan_cards_layout.removeWidget(card)
@@ -843,8 +846,8 @@ class DashboardPage(QWidget):
 
     def _clear_fan_cards(self) -> None:
         """Drop every card — a stale card must not survive a disconnect."""
-        for control_id in list(self._fan_cards):
-            self._drop_fan_card(control_id)
+        for key in list(self._fan_cards):
+            self._drop_fan_card(key)
         self._fan_count_label.setText("")
         self._fan_cards_empty.setVisible(True)
 

@@ -180,7 +180,8 @@ _DEMO_HWMON_HEADERS: list[dict] = [
 # old overlapping _DEMO_GROUPS rollup (its "Case" group double-counted the Intake
 # and Exhaust fans; a physical zone is exclusive). GPU fans are intentionally left
 # unassigned so demo mode exercises BOTH the user-zone path and the role/source
-# fallback in services/fan_cards_view.py.
+# fallback the retired fan-zone grid used (DEC-222 removed that UI; the zone
+# map is retained dormant, so nothing consumes these assignments today).
 _DEMO_ZONES: dict[str, str] = {
     "openfan:ch00": "Front Intake",
     "openfan:ch01": "Front Intake",
