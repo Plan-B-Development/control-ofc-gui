@@ -67,7 +67,7 @@ class TestGpuFanDisplayability:
         app_state.set_fans(fans)
 
         # The fan should appear in the table even at RPM=0
-        assert page._fan_table.rowCount() == 1
+        assert len(page._displayable_fan_keys) == 1
 
     def test_gpu_fan_spinning_is_displayable(self, qtbot, app_state, profile_service):
         page = DashboardPage(state=app_state, profile_service=profile_service)
@@ -76,7 +76,7 @@ class TestGpuFanDisplayability:
         fans = [_gpu_fan_spinning()]
         app_state.set_fans(fans)
 
-        assert page._fan_table.rowCount() == 1
+        assert len(page._displayable_fan_keys) == 1
 
     def test_hwmon_fan_zero_rpm_still_hidden(self, qtbot, app_state, profile_service):
         """hwmon fans with RPM=0 are still hidden (disconnected header)."""
@@ -94,7 +94,7 @@ class TestGpuFanDisplayability:
         ]
         app_state.set_fans(fans)
 
-        assert page._fan_table.rowCount() == 0
+        assert len(page._displayable_fan_keys) == 0
 
     def test_mixed_fans_gpu_visible_hwmon_hidden(self, qtbot, app_state, profile_service):
         page = DashboardPage(state=app_state, profile_service=profile_service)
@@ -107,7 +107,7 @@ class TestGpuFanDisplayability:
         app_state.set_fans(fans)
 
         # Only GPU fan should be visible
-        assert page._fan_table.rowCount() == 1
+        assert len(page._displayable_fan_keys) == 1
 
 
 # ---------------------------------------------------------------------------

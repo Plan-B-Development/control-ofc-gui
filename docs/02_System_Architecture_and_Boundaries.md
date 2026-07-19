@@ -147,7 +147,8 @@ control_ofc/
       buttons.py            # button-variant factory (primary / secondary / ghost / danger)
       cards.py              # Card frame + SectionHeader
       dialog.py             # modal-dialog base (header/body/footer + translucent scrim)
-      footer.py             # global footer / status strip (version + kernel/arch + Rescan / Export)
+      footer.py             # global footer (version/kernel/arch + mode, poll age,
+                            #   thermal + cooling-readiness chips, Rescan / Export)
       gauges.py             # static radial (donut) gauge — custom-paint, never animated (DEC-211)
       glow.py               # glow + pulsing-LED primitives + decorative-animation controller
       tables.py             # dense data-table styling helper
@@ -167,7 +168,6 @@ control_ofc/
       control_card.py          # fan role card (theme-derived size, user-resizable — DEC-128/129)
       curve_card.py            # curve card (theme-derived size, user-resizable — DEC-128/129)
       summary_card.py          # dashboard summary tiles
-      status_strip.py          # dashboard always-visible status strip (DEC-177)
       fan_zone_card.py         # dashboard zone-grouped fan cards (DEC-176/179)
       quick_actions_panel.py   # dashboard one-click saved-profile activation (DEC-213)
       rpm_sparkline.py         # static owner-drawn recent-RPM mini-plot for fan cards (DEC-213)

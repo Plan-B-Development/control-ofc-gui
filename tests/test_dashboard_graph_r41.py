@@ -156,18 +156,6 @@ class TestCrosshairHover:
         assert "ch09" not in text  # the 0-RPM series is suppressed from the readout
 
 
-class TestFanTableColumns:
-    """Fan table has 4 columns (Colour removed in R42)."""
-
-    def test_fan_table_column_count(self, qtbot, app_state):
-        from control_ofc.ui.pages.dashboard_page import DashboardPage
-
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-
-        assert page._fan_table.columnCount() == 4
-
-
 class TestSensorPanelColumns:
     """Sensor panel tree has 3 columns (name, value, colour swatch)."""
 

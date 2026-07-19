@@ -1,4 +1,12 @@
-"""Always-visible header status strip."""
+"""Always-visible header status strip, and the shared status vocabulary.
+
+Besides the banner widget, this module owns the label/chip maps and the poll-age
+formatter that every status surface renders from — the banner, the ribbon and
+the footer. Keeping one source of truth is what stops those surfaces drifting
+into disagreeing about the same daemon state. ``THERMAL_STATES`` and
+``format_poll_age`` moved here from the retired ``DashboardStatusStrip``
+(DEC-222) for exactly that reason.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +16,8 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 from control_ofc.api.models import ConnectionState, OperationMode
 from control_ofc.ui.qt_util import set_chip_class
 
-# Shared label/chip maps so the dashboard's DashboardStatusStrip (DEC-176/177)
-# renders connection + mode identically to this global banner. A single source
-# of truth keeps the two status surfaces from drifting.
+# Shared label/chip maps so every status surface renders connection + mode
+# identically. A single source of truth keeps them from drifting.
 CONNECTION_LABELS: dict[ConnectionState, str] = {
     ConnectionState.CONNECTED: "Connected",
     ConnectionState.DEGRADED: "Degraded",
@@ -27,9 +34,39 @@ MODE_LABELS: dict[OperationMode, str] = {
     OperationMode.DEMO: "Demo mode",
 }
 
+# DaemonStatus.thermal_state -> (label, chip class). The daemon reports
+# "normal" | "recovery" | "emergency" | "no_sensor_fallback" (DEC-132/165);
+# anything else falls back to a neutral info chip rather than being hidden.
+THERMAL_STATES: dict[str, tuple[str, str]] = {
+    "normal": ("Thermal OK", "SuccessChip"),
+    "recovery": ("Thermal: Recovery", "WarningChip"),
+    "emergency": ("Thermal: Emergency", "CriticalChip"),
+    "no_sensor_fallback": ("Thermal: No CPU sensor", "WarningChip"),
+}
+
+
+def format_poll_age(seconds_ago: float | None) -> str:
+    """Human label for time since the last successful poll. Pure/testable."""
+    if seconds_ago is None:
+        return "Not updated yet"
+    seconds_ago = max(0.0, seconds_ago)
+    if seconds_ago < 2:
+        return "Updated just now"
+    if seconds_ago < 60:
+        return f"Updated {int(seconds_ago)}s ago"
+    if seconds_ago < 3600:
+        return f"Updated {int(seconds_ago // 60)}m ago"
+    return f"Updated {int(seconds_ago // 3600)}h ago"
+
 
 class StatusBanner(QWidget):
-    """Horizontal strip showing connection state, active profile, mode, and warnings."""
+    """Horizontal strip showing connection state, active profile, and warnings.
+
+    The mode *word* moved to the always-visible footer (DEC-222), which now owns
+    the operation-mode indicator app-wide; showing it in both places would be the
+    duplication that change set out to remove. The loud DEMO badge stays here —
+    it is a different affordance, not a second copy of the same label.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -46,9 +83,6 @@ class StatusBanner(QWidget):
 
         self._profile_label = QLabel("No profile")
         layout.addWidget(self._profile_label)
-
-        self._mode_label = QLabel("")
-        layout.addWidget(self._mode_label)
 
         layout.addStretch()
 
@@ -70,7 +104,6 @@ class StatusBanner(QWidget):
         self._profile_label.setText(name if name else "No profile")
 
     def set_operation_mode(self, mode: OperationMode) -> None:
-        self._mode_label.setText(MODE_LABELS.get(mode, ""))
         self._demo_badge.setVisible(mode == OperationMode.DEMO)
 
     def set_warning_count(self, count: int) -> None:

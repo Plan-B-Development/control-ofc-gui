@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from control_ofc.services.series_selection import ChartMode, SeriesGroup, SeriesSelectionModel
+from control_ofc.api.models import SensorReading
+from control_ofc.services.series_selection import (
+    ChartMode,
+    SeriesGroup,
+    SeriesSelectionModel,
+    default_series_keys,
+)
+
+
+def _sensor(id: str, kind: str) -> SensorReading:
+    return SensorReading(id=id, kind=kind, value_c=50.0, age_ms=100)
 
 
 def test_new_keys_default_visible():
@@ -170,4 +180,62 @@ def test_apply_mode_combined_uses_curated_keys():
     model.apply_mode(ChartMode.COMBINED, curated_keys={"sensor:cpu"})
     assert model.is_visible("sensor:cpu")
     assert not model.is_visible("sensor:gpu")
+    assert not model.is_visible("fan:openfan:ch00:rpm")
+
+
+# ─── default_series_keys (relocated from dashboard_view, DEC-222) ─────────
+
+
+def test_default_series_picks_one_per_category():
+    """CPU, GPU and one mobo temp — the curated Combined subset."""
+    sensors = [
+        _sensor("c0", "cpu_temp"),
+        _sensor("g0", "gpu_temp"),
+        _sensor("m0", "mb_temp"),
+    ]
+    assert default_series_keys(sensors) == {"sensor:c0", "sensor:g0", "sensor:m0"}
+
+
+def test_default_series_accepts_both_kind_casings():
+    """The daemon sends snake_case kinds; demo mode sends PascalCase. Both must
+    resolve, or the demo chart would silently come up empty."""
+    sensors = [
+        _sensor("c0", "CpuTemp"),
+        _sensor("g0", "GpuTemp"),
+        _sensor("m0", "MbTemp"),
+    ]
+    assert default_series_keys(sensors) == {"sensor:c0", "sensor:g0", "sensor:m0"}
+
+
+def test_default_series_takes_the_first_match_per_category():
+    """Several CPU sensors yield exactly one key — the subset stays curated."""
+    sensors = [_sensor("c0", "cpu_temp"), _sensor("c1", "cpu_temp")]
+    assert default_series_keys(sensors) == {"sensor:c0"}
+
+
+def test_default_series_drops_absent_categories():
+    """A machine with no discrete GPU simply gets no GPU slot, not a bad key."""
+    assert default_series_keys([_sensor("c0", "cpu_temp")]) == {"sensor:c0"}
+
+
+def test_default_series_ignores_unrelated_kinds():
+    assert default_series_keys([_sensor("x0", "water_temp")]) == set()
+
+
+def test_default_series_empty_input():
+    assert default_series_keys([]) == set()
+
+
+def test_default_series_feeds_combined_mode_end_to_end():
+    """The relocation's real contract: default_series_keys → apply_mode(COMBINED)
+    leaves exactly the curated sensors visible. Before DEC-222 this pairing lived
+    across two modules; a None curated set makes apply_mode a silent no-op, so
+    this pins that the wiring actually selects something."""
+    sensors = [_sensor("c0", "cpu_temp"), _sensor("g0", "gpu_temp")]
+    model = SeriesSelectionModel()
+    model.update_known_keys(["sensor:c0", "sensor:g0", "sensor:other", "fan:openfan:ch00:rpm"])
+    model.apply_mode(ChartMode.COMBINED, default_series_keys(sensors))
+    assert model.is_visible("sensor:c0")
+    assert model.is_visible("sensor:g0")
+    assert not model.is_visible("sensor:other")
     assert not model.is_visible("fan:openfan:ch00:rpm")

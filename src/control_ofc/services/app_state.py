@@ -68,7 +68,7 @@ class AppState(QObject):
 
         # DEC-176: fan_id -> user-assigned physical zone name (GUI-owned).
         # Opt-in overlay on the dashboard's role/source grouping; unassigned
-        # fans fall back to that grouping (services/fan_grouping.py).
+        # fans fall back to that grouping (services/fan_cards_view.py).
         self.fan_zones: dict[str, str] = {}
 
         # DEC-156: user sensor-classification overrides (sensor_id ->

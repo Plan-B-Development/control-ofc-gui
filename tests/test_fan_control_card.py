@@ -1,0 +1,210 @@
+"""Tests for the Dashboard fan card widget (DEC-222).
+
+The card is deliberately read-only: it reflects daemon state and deep-links to
+the Controls page, which owns every write. These pin what it renders for each
+state, and that it never grows a control affordance.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from control_ofc.services.fan_cards_view import FanCardVM, FanState
+from control_ofc.services.profile_service import CurveConfig, CurvePoint
+from control_ofc.ui.widgets.fan_control_card import FanControlCard
+
+
+def _vm(**kw):
+    base = dict(
+        control_id="c1",
+        label="CPU Fans",
+        is_unassigned=False,
+        is_read_only=False,
+        fan_count=2,
+        member_fan_ids=("f1", "f2"),
+        rpm=1200,
+        pwm_pct=45,
+        duty_pct=None,
+        temp_c=61.4,
+        state=FanState.NORMAL,
+        overridden=False,
+        curve=None,
+    )
+    base.update(kw)
+    return FanCardVM(**base)
+
+
+class TestRendering:
+    def test_renders_the_metric_triple(self, qtbot):
+        card = FanControlCard(_vm())
+        qtbot.addWidget(card)
+        assert card._rpm_value.text() == "1200"
+        assert card._speed_value.text() == "45%"
+        assert card._temp_value.text() == "61°C"
+
+    def test_missing_values_render_as_em_dash_not_zero(self, qtbot):
+        """An unknown reading must never be presented as a real 0."""
+        card = FanControlCard(_vm(rpm=None, pwm_pct=None, temp_c=None))
+        qtbot.addWidget(card)
+        assert card._rpm_value.text() == "—"
+        assert card._speed_value.text() == "—"
+        assert card._temp_value.text() == "—"
+
+    def test_zero_is_rendered_not_dropped(self, qtbot):
+        """The 0-vs-None falsy trap: a genuinely stopped fan reads 0."""
+        card = FanControlCard(_vm(rpm=0, pwm_pct=0, temp_c=0.0))
+        qtbot.addWidget(card)
+        assert card._rpm_value.text() == "0"
+        assert card._speed_value.text() == "0%"
+        assert card._temp_value.text() == "0°C"
+
+    def test_fan_count_names_the_blast_radius(self, qtbot):
+        """The card acts on a whole control, so it must say how many fans that is."""
+        card = FanControlCard(_vm(fan_count=3))
+        qtbot.addWidget(card)
+        assert card._count.text() == "3 fans"
+
+    def test_fan_count_singular(self, qtbot):
+        card = FanControlCard(_vm(fan_count=1))
+        qtbot.addWidget(card)
+        assert card._count.text() == "1 fan"
+
+    def test_object_names_are_unique_per_control(self, qtbot):
+        a = FanControlCard(_vm(control_id="c1"))
+        b = FanControlCard(_vm(control_id="c2"))
+        qtbot.addWidget(a)
+        qtbot.addWidget(b)
+        assert a.objectName() == "FanCard_Root_c1"
+        assert b.objectName() == "FanCard_Root_c2"
+        assert a._rpm_value.objectName() != b._rpm_value.objectName()
+
+    def test_read_only_card_id_is_sanitised_into_the_object_name(self, qtbot):
+        """Fan ids carry ':' separators; a raw one would make a malformed name."""
+        card = FanControlCard(_vm(control_id="readonly:nvidia_gpu:0000:01:00.0"))
+        qtbot.addWidget(card)
+        assert card.objectName() == "FanCard_Root_readonly_nvidia_gpu_0000_01_00_0"
+
+
+class TestStateChip:
+    @pytest.mark.parametrize(
+        ("state", "text", "css"),
+        [
+            (FanState.NORMAL, "Auto", "SuccessChip"),
+            (FanState.OVERRIDE, "Override active", "WarningChip"),
+            (FanState.LOW_RPM, "Low RPM", "WarningChip"),
+            (FanState.STALE, "Stale", "WarningChip"),
+            (FanState.STALL, "Stall", "CriticalChip"),
+            (FanState.OFFLINE, "Offline", "CriticalChip"),
+        ],
+    )
+    def test_chip_pairs_a_word_with_the_colour(self, qtbot, state, text, css):
+        """Text alongside colour — the state is never colour-only (WCAG 1.4.1)."""
+        card = FanControlCard(_vm(state=state))
+        qtbot.addWidget(card)
+        assert card._state_chip.text() == text
+        assert card._state_chip.property("class") == css
+
+    def test_unassigned_card_does_not_claim_auto(self, qtbot):
+        """Nothing is driving it, so "Auto" would be a lie."""
+        card = FanControlCard(_vm(is_unassigned=True, state=FanState.NORMAL))
+        qtbot.addWidget(card)
+        assert card._state_chip.text() == "Not controlled"
+        assert card._state_chip.property("class") == "InfoChip"
+
+    def test_unassigned_card_still_shows_a_real_fault(self, qtbot):
+        """The informational relabel must not mask a stall."""
+        card = FanControlCard(_vm(is_unassigned=True, state=FanState.STALL))
+        qtbot.addWidget(card)
+        assert card._state_chip.text() == "Stall"
+
+
+class TestCurvePreview:
+    def test_curve_is_handed_to_the_preview(self, qtbot):
+        curve = CurveConfig(id="cv", name="C", sensor_id="s", points=[CurvePoint(30, 20)])
+        card = FanControlCard(_vm(curve=curve))
+        qtbot.addWidget(card)
+        card.show()
+        assert card._preview.curve is curve
+        assert card._preview.isVisible()
+        assert not card._no_curve.isVisible()
+
+    def test_no_curve_shows_a_placeholder_instead(self, qtbot):
+        card = FanControlCard(_vm(curve=None))
+        qtbot.addWidget(card)
+        card.show()
+        assert not card._preview.isVisible()
+        assert card._no_curve.isVisible()
+        assert card._no_curve.text() == "No curve assigned"
+
+    def test_placeholder_text_is_specific_to_why(self, qtbot):
+        unassigned = FanControlCard(_vm(is_unassigned=True, curve=None))
+        read_only = FanControlCard(_vm(is_read_only=True, curve=None))
+        qtbot.addWidget(unassigned)
+        qtbot.addWidget(read_only)
+        assert unassigned._no_curve.text() == "Not assigned to a control"
+        assert read_only._no_curve.text() == "No fan control available for this device"
+
+
+class TestEditAffordance:
+    def test_edit_emits_the_control_id(self, qtbot):
+        card = FanControlCard(_vm(control_id="c7"))
+        qtbot.addWidget(card)
+        seen: list[str] = []
+        card.edit_requested.connect(seen.append)
+        card._edit_btn.click()
+        assert seen == ["c7"]
+
+    def test_unassigned_card_offers_assign(self, qtbot):
+        card = FanControlCard(_vm(is_unassigned=True, control_id=""))
+        qtbot.addWidget(card)
+        card.show()
+        assert card._edit_btn.text() == "Assign…"
+        assert card._edit_btn.isVisible()
+
+    def test_read_only_card_hides_edit(self, qtbot):
+        """A read-only fan cannot be assigned to a control (DEC-102), so an Edit
+        button would be a dead control."""
+        card = FanControlCard(_vm(is_read_only=True))
+        qtbot.addWidget(card)
+        card.show()
+        assert not card._edit_btn.isVisible()
+
+    def test_card_exposes_no_write_affordance(self, qtbot):
+        """The card must stay read-only: the override session lives on the Controls
+        page, and a second one here would race it (DEC-163)."""
+        from PySide6.QtWidgets import QSlider
+
+        card = FanControlCard(_vm())
+        qtbot.addWidget(card)
+        assert card.findChildren(QSlider) == []
+        assert not hasattr(card, "manual_toggled")
+
+
+class TestUpdateInPlace:
+    def test_update_vm_rerenders_without_rebuilding(self, qtbot):
+        """Cards are reconciled at 1 Hz, so updating must not recreate widgets."""
+        card = FanControlCard(_vm())
+        qtbot.addWidget(card)
+        rpm_label = card._rpm_value
+        card.update_vm(_vm(rpm=900, pwm_pct=30, state=FanState.OVERRIDE))
+        assert card._rpm_value is rpm_label  # same widget, new text
+        assert rpm_label.text() == "900"
+        assert card._speed_value.text() == "30%"
+        assert card._state_chip.text() == "Override active"
+
+    def test_update_vm_is_idempotent(self, qtbot):
+        card = FanControlCard(_vm())
+        qtbot.addWidget(card)
+        card.update_vm(_vm())
+        card.update_vm(_vm())
+        assert card._rpm_value.text() == "1200"
+        assert card._state_chip.property("class") == "SuccessChip"
+
+    def test_edit_signal_follows_a_changed_control_id(self, qtbot):
+        card = FanControlCard(_vm(control_id="c1"))
+        qtbot.addWidget(card)
+        seen: list[str] = []
+        card.edit_requested.connect(seen.append)
+        card.update_vm(_vm(control_id="c2"))
+        card._edit_btn.click()
+        assert seen == ["c2"]

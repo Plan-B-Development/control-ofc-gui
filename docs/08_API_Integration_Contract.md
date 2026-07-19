@@ -177,7 +177,7 @@ Use for:
 - the active profile id + name (DEC-194)
 
 This endpoint feeds:
-- header status strip
+- the header ribbon + footer status chips (DEC-222)
 - diagnostics overview
 - warning banners
 - the poll-driven thermal-protection banner (DEC-165, superseding the DEC-132 GUI stand-down)

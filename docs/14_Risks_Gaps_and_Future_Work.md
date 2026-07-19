@@ -76,7 +76,11 @@ Data model supports multiple GPUs. API reports primary only. No UI to select bet
 - One-click diagnostics redaction (deferred — partial PII scrubbing gives false confidence)
 - ~~**SSE consumption (`GET /events`) — daemon exposes it, GUI does not consume it (formally deferred, DEC-164).**~~ RESOLVED (DEC-198, daemon v2.5.0): the unused `GET /events` endpoint was **removed** rather than consumed — no client ever used it (`httpx-sse` was dropped in v1.0.0). The GUI stays poll-only (1 Hz `GET /poll`, transitions by poll-diff), which is sufficient; sub-second UI updates, if ever wanted, would reintroduce a push channel from scratch.
 - ~~**Dashboard fan table — group-membership badges and per-fan state chips** (stale/fault/manual).~~ RESOLVED (DEC-176/179, GUI v2.2.0): the dashboard's primary fan view is now zone-grouped **fan cards** with a per-fan state chip (Normal / Low RPM / Stall / Stale / Offline / Override) and per-zone roll-ups (online/expected, avg RPM/PWM); the raw label/source/RPM/PWM table is preserved in a collapsed "Raw fan data" expander.
+  **Superseded by DEC-222 (GUI v2.25.0):** the zone grid and the raw table were both retired;
+  the fan view is now one card per logical control, each with a state chip and a member count.
 - ~~**Dashboard sensor panel — per-sensor freshness age and stale/invalid warning marker.**~~ RESOLVED (DEC-178 cards + DEC-182 inspector, GUI v2.2.0): summary cards show per-card freshness glyphs (`⏱` stale, `⚠` invalid) with age tooltips, and the collapsible right pane is the grouped **Sensors** browser (device grouping, freshness in tooltips, search). (DEC-184, GUI v2.3.0, later reduced it to Sensors-only — Events moved to Diagnostics, warnings to a dialog.)
+  **Superseded in part by DEC-222 (GUI v2.25.0):** the summary cards were removed, the Sensors rail
+  is always mounted, and warnings moved from the dialog to the Logs page.
 
 ### 8. polkit helper for offline config editing (deferred)
 
@@ -295,6 +299,7 @@ offered as writable curve members, mirroring the Intel Arc read-only pattern
 | Dashboard fan group badges + per-fan state chips (spec Row 3) | Zone-grouped fan cards with per-fan state chip + per-zone roll-ups; raw table → collapsed expander (DEC-176/179) | GUI v2.2.0 |
 | Dashboard sensor-freshness side panel (spec) | Collapsible **Sensors** panel (DEC-184; was a Sensors/Events/Warnings inspector, DEC-182) + status strip + summary-card freshness glyphs (DEC-177/178) | GUI v2.2.0–2.3.0 |
 | Dense dashboard dominated by raw data | Progressive-disclosure IA: status strip, refined cards, styled/reorderable/collapsible fan-zone cards, readable-by-default chart with modes + annotations, collapsible Sensors panel (DEC-176–187) | GUI v2.2.0–2.3.0 |
+| Dashboard accreted five overlapping fan/status presentations | Rebuilt telemetry-first: graph primary, one card per logical control, Sensors rail; summary cards / Fan Array / Fan Zone grid / raw table / Quick Actions / Alerts / status strip all retired, four indicators re-homed to the global footer (DEC-222) | GUI v2.25.0 |
 | Daemon panic leaves hardware in manual mode | Panic hook restores GPU curves + hwmon pwm_enable=2 | V5 audit (daemon) |
 | GPU reset_to_auto skips zero-RPM on partial failure | Always re-enable zero-RPM regardless of curve reset outcome | V5 audit (daemon) |
 | blockSignals pairs exception-unsafe (GUI) | block_signals() context manager with try/finally | V5 audit |

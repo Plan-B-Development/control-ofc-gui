@@ -116,7 +116,10 @@ def test_demo_hardware_diagnostics_shape():
     assert diag.thermal_safety.cpu_sensor_found is True
     # GPU diagnostics populated — RDNA3 PMFW path.
     assert diag.gpu is not None
-    assert diag.gpu.fan_control_method == "pmfw"
+    # "pmfw_curve" is the daemon's real value (responses.rs / gpu_detect.rs); the
+    # demo previously sent a "pmfw" that no daemon emits, which made the GPU
+    # classify as control-method "unknown" downstream.
+    assert diag.gpu.fan_control_method == "pmfw_curve"
     assert diag.gpu.ppfeaturemask_bit14_set is True
 
 

@@ -1,21 +1,30 @@
-"""Logs page — migrated Diagnostics ▸ Event Log + a Log Inspector (DEC-210).
+"""Logs page — the event feed, a Log Inspector, and the active-warnings surface.
 
 A thin renderer over the Qt-free ``services.logs_view`` view-models, styled with
-the Stage-1 component library. Migrates the Diagnostics ▸ Event Log tab (event
-stream + Diagnostic Snapshots) into its own page and adds a right-hand Log
-Inspector for the selected event. Fed by the shared ``DiagnosticsService`` event
-feed (``event_appended`` / ``events_cleared``) — the same deque every emitter
-writes to, so events logged anywhere appear here.
+the Stage-1 component library. Migrates the former Event Log tab (event stream +
+Diagnostic Snapshots) into its own page and adds a right-hand Log Inspector for
+the selected event. Fed by the shared ``DiagnosticsService`` event feed
+(``event_appended`` / ``events_cleared``) — the same deque every emitter writes
+to, so events logged anywhere appear here.
 
-Presentation-only (DEC-210): no daemon/API/schema change. The only behavioural
-improvement is running the existing ``journalctl`` fetch on a background thread
-(``_JournalWorker``) so the 5 s subprocess no longer freezes the UI thread.
+DEC-222 made this the single **active-warnings** surface too. The two are
+different things and are shown as such: the event feed on the left is *history*,
+while the Active Warnings panel on the right is ``AppState.active_warnings`` —
+the dedup-keyed, dismissable set of what is wrong *right now*. It previously
+opened as a dialog from the Dashboard status strip, which the Dashboard rebuild
+removed.
+
+Presentation-only (DEC-210/DEC-222): no daemon/API/schema change. The only
+behavioural improvement is running the existing ``journalctl`` fetch on a
+background thread (``_JournalWorker``) so the 5 s subprocess no longer freezes
+the UI thread.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QColor
@@ -43,6 +52,10 @@ from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card, SectionHeader
 from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.theme import active_theme
+from control_ofc.ui.widgets.warnings_view import WarningsView
+
+if TYPE_CHECKING:
+    from control_ofc.services.app_state import AppState
 
 log = logging.getLogger(__name__)
 
@@ -83,10 +96,13 @@ class LogsPage(QWidget):
         self,
         diagnostics_service: DiagnosticsService,
         parent: QWidget | None = None,
+        *,
+        state: AppState | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("Logs_Root")
         self._diag = diagnostics_service
+        self._state = state
 
         # Poll/feed-driven state.
         self._all_rows: list[LogRowVM] = []
@@ -117,11 +133,41 @@ class LogsPage(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setObjectName("Logs_Splitter")
         splitter.addWidget(self._build_left_pane())
-        splitter.addWidget(self._build_inspector())
+        splitter.addWidget(self._build_right_column())
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([820, 320])
         outer.addWidget(splitter, 1)
+
+    def _build_right_column(self) -> QWidget:
+        """Active warnings over the log inspector (DEC-222).
+
+        A vertical splitter rather than a fixed stack: the warnings list and the
+        selected-event detail both want height, and which one matters depends on
+        whether anything is currently wrong. The two are deliberately separate —
+        warnings are current state, the inspector is one historical event.
+        """
+        column = QSplitter(Qt.Orientation.Vertical)
+        column.setObjectName("Logs_Splitter_rightColumn")
+
+        warnings_panel = QWidget()
+        warnings_panel.setObjectName("Logs_Panel_warnings")
+        warnings_layout = QVBoxLayout(warnings_panel)
+        warnings_layout.setContentsMargins(12, 4, 4, 4)
+        warnings_layout.setSpacing(8)
+        warnings_layout.addWidget(
+            SectionHeader("Active Warnings", object_name="Logs_SectionHeader_warnings")
+        )
+        self._warnings_view = WarningsView(self._state)
+        self._warnings_view.setObjectName("Logs_View_warnings")
+        warnings_layout.addWidget(self._warnings_view, 1)
+
+        column.addWidget(warnings_panel)
+        column.addWidget(self._build_inspector())
+        column.setStretchFactor(0, 1)
+        column.setStretchFactor(1, 1)
+        column.setSizes([300, 380])
+        return column
 
     def _build_toolbar(self) -> QHBoxLayout:
         row = QHBoxLayout()

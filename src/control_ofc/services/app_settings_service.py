@@ -148,7 +148,7 @@ class AppSettings:
     # e.g. "Front Intake" / "Exhaust". Mirrors fan_aliases exactly — both are
     # fan_id-keyed display labels — so it is portable (NOT in MACHINE_SPECIFIC_KEYS)
     # and travels with export. Unassigned fans fall back to role/source grouping in
-    # the dashboard view-model (services/fan_grouping.py).
+    # the dashboard view-model (services/fan_cards_view.py).
     fan_zones: dict[str, str] = field(default_factory=dict)
     # DEC-187: user-defined order of the dashboard fan-group cards (list of group
     # keys). Machine-specific — keys derive from local hardware/zones — so excluded

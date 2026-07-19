@@ -1081,6 +1081,21 @@ class ControlsPage(QWidget):
         self._refresh_controls_grid(profile)
         self._set_unsaved(True)
 
+    def focus_control(self, control_id: str) -> bool:
+        """Select and reveal ``control_id``'s card (DEC-222 Dashboard deep-link).
+
+        Returns True when the control exists on this page. A blank or unknown id
+        (the Unassigned card, or a control deleted since the poll) is a no-op that
+        returns False — the caller has still navigated here, which is the useful
+        half of the action.
+        """
+        card = self._control_cards.get(control_id) if control_id else None
+        if card is None:
+            return False
+        self._on_control_selected(control_id)
+        card.setFocus()
+        return True
+
     def _on_control_selected(self, control_id: str) -> None:
         self._selected_control_id = control_id
         # DEC-214: expand the selected card's detail rows, collapse the rest.

@@ -124,7 +124,7 @@ class TestDashboardFanFiltering:
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
         page._on_fans_updated(fans)
-        assert len(page._fan_ids) == 0  # RPM=0 → not displayable
+        assert len(page._displayable_fan_keys) == 0  # RPM=0 → not displayable
 
     def test_fan_with_rpm_positive_is_shown(self, qtbot):
         """Fan with real RPM > 0 should be shown."""
@@ -138,7 +138,7 @@ class TestDashboardFanFiltering:
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
         page._on_fans_updated(fans)
-        assert len(page._fan_ids) == 1
+        assert len(page._displayable_fan_keys) == 1
 
     def test_fan_with_rpm_none_is_hidden(self, qtbot):
         """RPM=None (no tach) hwmon fan should be hidden from dashboard."""
@@ -152,7 +152,7 @@ class TestDashboardFanFiltering:
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
         page._on_fans_updated(fans)
-        assert len(page._fan_ids) == 0
+        assert len(page._displayable_fan_keys) == 0
 
     def test_labeled_fan_with_rpm_zero_is_shown(self, qtbot):
         """User-labeled fan should show even with RPM=0 (deliberate stop)."""
@@ -167,7 +167,7 @@ class TestDashboardFanFiltering:
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
         page._on_fans_updated(fans)
-        assert len(page._fan_ids) == 1  # labeled → displayable
+        assert len(page._displayable_fan_keys) == 1  # labeled → displayable
 
     def test_actively_controlled_fan_is_shown(self, qtbot):
         """Fan with PWM > 0 should show even if RPM=0 (fan starting up)."""
@@ -183,7 +183,7 @@ class TestDashboardFanFiltering:
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
         page._on_fans_updated(fans)
-        assert len(page._fan_ids) == 1  # PWM>0 → displayable
+        assert len(page._displayable_fan_keys) == 1  # PWM>0 → displayable
 
     def test_mixed_fans_filtering(self, qtbot):
         """Mix of populated and empty fans — only populated shown."""
@@ -203,4 +203,4 @@ class TestDashboardFanFiltering:
         page = DashboardPage(state=state)
         qtbot.addWidget(page)
         page._on_fans_updated(fans)
-        assert len(page._fan_ids) == 2  # only ch00 and hwmon:fan1
+        assert len(page._displayable_fan_keys) == 2  # only ch00 and hwmon:fan1

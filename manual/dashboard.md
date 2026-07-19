@@ -9,94 +9,62 @@ The Dashboard is the landing page. It answers the most important questions at a 
 
 ![Dashboard](../screenshots/auto/01_dashboard.png)
 
-The page is laid out for progressive disclosure: a status strip and summary cards
-give the at-a-glance picture, fan **zone cards** and a telemetry chart show what's
-happening now, and every piece of advanced detail (the raw fan table, the full sensor
-tree, the event log) is one click away.
+The page leads with the **telemetry chart** — the one view nothing else duplicates —
+with a compact **card per fan control** beneath it and the **Thermal Sensors** panel
+alongside. Drag the splitter handles to trade space between them.
 
-## Status Strip
+Status that used to sit on a Dashboard-only strip now lives on the app-wide chrome, so
+it follows you to every page: connection, uptime and alerts on the **top ribbon**;
+operation mode, poll freshness, thermal safety and cooling readiness on the **footer**.
 
-A single header row across the top is the dashboard's command + status surface:
+## Page header
 
-- **Connection** state
-- **Active profile**
-- **Control mode** — Automatic / Manual Override / Demo / Read-only
-- **Thermal state** — the daemon's safety state (Thermal OK / Recovery / Emergency /
-  No CPU sensor); click the chip for a read-only thermal-safety detail
-- **Cooling readiness** — a health chip summarising whether your cooling hardware is
-  set up and controllable: green **"Cooling ready"**, or amber/red **"Cooling: N to
-  fix"** naming how many readiness items need attention (hover for the most important
-  next step). Click it to jump to the **Hardware** page. Shown only when
-  the connected daemon reports readiness (`control-ofc-daemon` ≥ v2.10.0); hidden in
-  demo mode
-- **"Updated Xs ago"** — time since the last successful poll, so you can tell live
-  data from a stalled connection at a glance
-- A **warning chip** showing the active-warning count — click it to open the
-  active-warnings dialog
-- A compact **profile selector + Apply** (see [Profile Selector](#profile-selector))
-- A **Sensors** toggle that shows or hides the right-hand Sensors panel
+The title row carries a **profile selector + Apply** (see
+[Profile Selector](#profile-selector)) so you can switch profiles without leaving the
+page. The sidebar has one too — either works.
 
-> The status strip also surfaces an API-version mismatch — if the connected daemon's
-> API version differs from the version this GUI was built against (a sign the
-> `control-ofc-daemon` and `control-ofc-gui` packages were upgraded out of lockstep),
-> a warning is raised. Align the two package versions; some features may otherwise
-> misbehave.
+Below it, three banners appear only when they apply:
 
-## Summary Cards
+- **Motherboard fan headers** are missing or all read-only
+- **API version mismatch** — the connected daemon's API version differs from the one
+  this GUI was built against, a sign the `control-ofc-daemon` and `control-ofc-gui`
+  packages were upgraded out of lockstep. Align the two; some features may otherwise
+  misbehave
+- **Thermal protection active** — the daemon has overridden fan control to protect the
+  hardware, and will hand control back to your profile once temperatures recover
 
-The row of summary cards shows the key readings:
+## Fan Cards
 
-| Card | Shows |
-|------|-------|
-| **CPU Temp** | Hottest CPU sensor value |
-| **GPU Temp** | Primary GPU temperature. The card title shows the detected GPU's model when known — e.g. "RX 7900 XTX Temp" (AMD) or "Arc B580 Temp" (Intel) |
-| **Motherboard** | Motherboard chipset temperature |
-| **Fans** | Online / expected fan count, plus average PWM and RPM |
+Fans are shown as one card per **fan control** — the group a profile assigns a curve
+to — rather than one card per individual fan. That mirrors how control actually works:
+the daemon pins speeds per control, so a card always tells you **how many fans it
+covers**.
 
-The three **temperature cards** (CPU / GPU / Motherboard) each carry a **trend glyph**
-(rising / falling / flat) and a **session min/max range**, so you can see at a glance
-whether something is heating up. You can **click any temperature card** to change which
-sensor it displays — a picker dialog lets you choose from all available sensors of that
-type. The daemon's thermal state shows on the status strip's **thermal chip** — click it
-for a read-only summary of the current thermal state and any active overrides.
+Each card shows:
 
-## Fan Zone Cards
-
-Fans are shown as **zone-grouped cards** — the primary fan view. Each fan is a tile
-inside a zone card. A tile shows its speed alongside a small **RPM sparkline** of the
-fan's recent readings, plus a **state chip**:
-
-| State | Meaning |
+| Field | Meaning |
 |-------|---------|
-| **Normal** | Spinning as expected |
-| **Low RPM** | Spinning, but slower than expected |
-| **Stall** | A PWM is commanded but the fan reads 0 RPM (stalled or unplugged) |
-| **Stale** | Telemetry for this fan has gone stale |
-| **Offline** | An expected fan (a profile member) is not currently present |
-| **Override** | The fan is under a manual override |
+| **State chip** | Auto (the curve is driving it), Override active, Low RPM, Stale, Stall, or Offline |
+| **RPM** | Hardware-measured speed, averaged across the control's fans |
+| **SPEED** | Last commanded speed. For a read-only GPU that reports no commanded value, this shows the firmware's *measured* duty instead, labelled "duty" so the two are never confused |
+| **TEMP** | The temperature driving this control's curve |
+| **Curve preview** | A small sketch of the control's own curve |
+| **Edit** | Opens the **Controls** page focused on this control |
 
-Each **zone card** rolls up its fans: online/expected count and average RPM/PWM. Zones
-come from your own **fan-zone assignments** (e.g. *Front Intake*, *Exhaust*); any fan
-you haven't assigned falls back to grouping by role/source, so the view is useful out
-of the box. Click a fan tile to open a **detail dialog** where you can **rename** the
-fan or **reassign** it to a different zone.
+A dash (`—`) means the value is genuinely unknown — it is never shown as a real `0`.
 
-**Drag a card by its header** to reorder the zones into the arrangement you prefer — the
-order is remembered. A small **"Fan zones"** header above the cards lets you **collapse
-the whole section** (and show it again), handing the freed space to the chart; the
-collapsed state is remembered too.
+Two special cards fill in the gaps:
 
-### Raw fan data
+- **Unassigned** — controllable fans that no control owns yet. If no profile is
+  active, every controllable fan appears here, so a fresh install still shows your
+  hardware. Its **Assign…** button opens the Controls page.
+- **Read-only fans** — devices with no fan-control write path (typically an NVIDIA or
+  read-only GPU fan) get a card each, so you can still read their speed. They have no
+  Edit button, because they cannot be assigned to a control.
 
-The dense fan table is preserved under a collapsed **"Raw fan data"** expander at the
-bottom of the page — advanced detail, one click away. It lists every detected fan with:
-
-| Column | Meaning |
-|--------|---------|
-| **Label** | User-assigned alias or hardware label/ID — double-click a row to rename |
-| **Source** | Where the fan is connected: OpenFan, hwmon, AMD GPU, Intel GPU, or NVIDIA GPU |
-| **RPM** | Hardware-measured rotational speed |
-| **PWM%** | Last commanded speed percentage |
+> **The cards are read-only.** Changing a speed happens on the **Controls** page,
+> which owns manual override; the Dashboard shows you what is happening and takes you
+> there.
 
 ## Telemetry Chart
 
@@ -131,27 +99,24 @@ tooltip-plate and crosshair colours are themeable on the **Theme** page.
 
 ## Sensors panel
 
-The right-hand **Sensors panel** is a toggle-button side panel (toggle it from the
-status strip). It opens by default on wide windows and collapses on narrow ones so the
-chart keeps room. It is a grouped, searchable tree of every **sensor and fan**, grouped
+The right-hand **Sensors panel** is always present — drag the splitter handle between
+it and the fan cards to give the chart more width when you need it. It is a grouped,
+searchable tree of every **sensor and fan**, grouped
 into CPU, GPU, **AIO / Liquid** (liquid-cooler coolant temperatures), Motherboard, Disk,
 and Fans (by source: D-GPU, hwmon, OpenFan). Liquid-cooler pump and radiator fans are
 tagged **(AIO)**. Type in the "Search sensors…" box to filter; click a row's checkbox to
 show/hide its line on the chart; toggle a whole group to declutter. Hidden series persist
 across sessions.
 
-The same toggleable rail holds two more panels below the sensor tree: a **Quick Actions**
-panel with one-click buttons that activate any of your saved profiles, and an inline
-**Alerts** panel listing the currently active warnings (the same set the status strip's
-warning chip counts).
-
-> The active **event log** lives on the [Logs page](diagnostics.md), and the
-> active **warnings** open in a dialog from the status strip's warning chip.
+> Both the **event log** and the **active warnings** list live on the
+> [Logs page](diagnostics.md), side by side — the event feed is history, the warnings
+> list is what is wrong right now. Use the profile selector in the page header to
+> switch profiles.
 
 ## Profile Selector
 
-The profile selector in the status strip lists all available profiles. Pick one and
-click **Apply** to activate it. Activating hands the profile to the daemon, whose
+The profile selector in the page header lists all available profiles (the sidebar
+carries the same selector). Pick one and click **Apply** to activate it. Activating hands the profile to the daemon, whose
 profile engine then evaluates its curves every second and drives the fans — so your
 fans stay controlled whether the GUI is open or closed. See
 [The Daemon Drives the Fans](profiles-and-curves.md#the-daemon-drives-the-fans).
@@ -160,9 +125,9 @@ fans stay controlled whether the GUI is open or closed. See
 
 If the daemon engages its thermal failsafe (a CPU sensor at ≥ 105°C, or no CPU sensor
 found), the daemon forces OpenFan and writable hwmon fans itself and holds them until
-it reports normal again. The dashboard reflects this in the status strip's **thermal
-state** chip (click it for the detail), and raises a warning (visible in the warning
-chip and its dialog). See
+it reports normal again. This shows in the footer's **thermal state** chip (click it
+for the detail) and as a banner across the top of the Dashboard, and raises a warning
+(visible in the footer health rollup and the Logs page's Active Warnings list). See
 ["Fans run at full speed regardless of profile"](hardware-troubleshooting.md#fans-run-at-full-speed-regardless-of-profile)
 for the full behaviour.
 
@@ -170,7 +135,8 @@ for the full behaviour.
 
 If the daemon is not reachable, the Dashboard shows a disconnected overlay with a
 reconnection message. If the daemon is connected but no controllable hardware is
-detected, it shows a "No hardware" message with a link to the **Overview** page.
+detected, it shows a "No hardware" message with a button that opens the **Hardware**
+page's readiness report, which names the driver or package your board needs.
 
 ---
 

@@ -206,7 +206,7 @@ class TestDashboardGpuRpmZero:
         qtbot.addWidget(page)
 
         app_state.set_fans([_gpu_fan(rpm=0)])
-        assert page._fan_table.rowCount() == 1
+        assert len(page._displayable_fan_keys) == 1
 
     def test_gpu_fan_rpm_none_visible(self, qtbot, profile_service, app_state):
         from control_ofc.ui.pages.dashboard_page import DashboardPage
@@ -216,7 +216,7 @@ class TestDashboardGpuRpmZero:
 
         fan = FanReading(id="amd_gpu:0000:03:00.0", source="amd_gpu", rpm=None, age_ms=200)
         app_state.set_fans([fan])
-        assert page._fan_table.rowCount() == 1
+        assert len(page._displayable_fan_keys) == 1
 
     def test_gpu_fan_uses_display_name_in_table(self, qtbot, profile_service, app_state):
         from control_ofc.ui.pages.dashboard_page import DashboardPage
@@ -231,7 +231,8 @@ class TestDashboardGpuRpmZero:
         qtbot.addWidget(page)
 
         app_state.set_fans([_gpu_fan(rpm=1200)])
-        # First column should show the display name, not raw ID
-        label_item = page._fan_table.item(0, 0)
-        assert label_item is not None
-        assert "9070XT" in label_item.text()
+        # DEC-222: the raw fan table is gone; the GPU is now named on its own
+        # card. The label must be the model name, not the raw fan id.
+        page._refresh_fan_cards()
+        labels = [c._name.text() for c in page._fan_cards.values()]
+        assert any("9070XT" in label for label in labels), labels

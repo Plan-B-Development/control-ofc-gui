@@ -10,10 +10,11 @@ expandable raw detail.
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QDialog, QLabel, QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton
 
-from control_ofc.ui.pages.dashboard_page import DashboardPage
-from control_ofc.ui.widgets.dashboard_inspector import WarningsView, next_action_for_warning
+from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.ui.pages.logs_page import LogsPage
+from control_ofc.ui.widgets.warnings_view import WarningsView, next_action_for_warning
 
 
 class TestNextActionForWarning:
@@ -157,35 +158,33 @@ class TestWarningsView:
 
 
 class TestWarningChipOpensWarningsDialog:
-    def test_chip_emit_opens_warnings_dialog(self, qtbot, app_state):
-        """DEC-184: the warning chip opens a standalone dialog (was a tab)."""
-        page = DashboardPage(state=app_state)
+    def test_logs_page_hosts_the_warnings_view(self, qtbot, app_state):
+        """DEC-222: Logs is the single warnings surface (was a Dashboard dialog
+        opened from the status-strip chip, both since removed)."""
+        page = LogsPage(diagnostics_service=DiagnosticsService(), state=app_state)
         qtbot.addWidget(page)
-        app_state.add_warning(
-            level="warning", source="sensor", message="stale", key="sensor_stale:x"
-        )
-        page._status_strip.warning_clicked.emit()
-        assert page.findChild(QDialog, "Dashboard_Dialog_warnings") is not None
-
-    def test_warning_chip_button_click_opens_dialog(self, qtbot, app_state):
-        """End-to-end via the real chip button: _warning.clicked → warning_clicked
-        → _open_warnings. A severed connection fails here, unlike the .emit() test."""
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-        app_state.add_warning(
-            level="warning", source="sensor", message="stale", key="sensor_stale:x"
-        )
-        chip = page._status_strip.findChild(QPushButton, "StatusStrip_Chip_warnings")
-        assert chip is not None
-        chip.click()
-        assert page.findChild(QDialog, "Dashboard_Dialog_warnings") is not None
-
-    def test_dialog_warningsview_reflects_active_warnings(self, qtbot, app_state):
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-        app_state.add_warning(level="error", source="fan", message="stall", key="fan_stall:f1")
-        dlg = page._build_warnings_dialog()
-        qtbot.addWidget(dlg)
-        view = dlg.findChild(WarningsView)
+        view = page.findChild(WarningsView, "Logs_View_warnings")
         assert view is not None
-        assert view.entry_count() == 1
+
+    def test_logs_warnings_view_reflects_active_warnings(self, qtbot, app_state):
+        """The hosted view renders AppState.active_warnings, not the event log."""
+        page = LogsPage(diagnostics_service=DiagnosticsService(), state=app_state)
+        qtbot.addWidget(page)
+        assert page._warnings_view.entry_count() == 0
+
+        app_state.add_warning(level="error", source="fan", message="stall", key="fan_stall:f1")
+        assert page._warnings_view.entry_count() == 1
+
+    def test_logs_warnings_view_is_live(self, qtbot, app_state):
+        """A warning raised after construction must appear without a manual refresh
+        — the view subscribes to AppState, and Logs is now the only place it shows."""
+        app_state.add_warning(level="warning", source="sensor", message="stale", key="s:1")
+        page = LogsPage(diagnostics_service=DiagnosticsService(), state=app_state)
+        qtbot.addWidget(page)
+        assert page._warnings_view.entry_count() == 1
+
+        app_state.add_warning(level="error", source="fan", message="stall", key="f:1")
+        assert page._warnings_view.entry_count() == 2
+
+        app_state.clear_warnings()
+        assert page._warnings_view.entry_count() == 0

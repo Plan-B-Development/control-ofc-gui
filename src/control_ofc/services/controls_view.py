@@ -3,7 +3,7 @@
 Pure derivations kept out of the Qt page so they stay headless-testable — no
 widget construction, no ``QApplication``. Some pull in ``profile_service`` role
 helpers, which transitively loads ``PySide6.QtCore`` (ProfileService is a
-QObject), exactly like :mod:`control_ofc.services.fan_grouping`; the module
+QObject), exactly like :mod:`control_ofc.services.fan_cards_view`; the module
 still builds no widgets and every function is unit-testable without a display.
 No value is fabricated.
 """

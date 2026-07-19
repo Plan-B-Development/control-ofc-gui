@@ -13,37 +13,32 @@ The Dashboard is the default landing page and provides a quick operational overv
 - Are there any warnings or stale sensors?
 - What has fan speed done over time?
 
-## V1 structure
+## Structure (DEC-222 rebuild)
 
-### Top status strip (DEC-177)
-A single always-visible command + status header. While the dashboard is active it is
-the **only** status surface — the global status banner is hidden to avoid duplication:
-- Connection state
-- Active profile
-- Control mode: Automatic / Manual Override / Demo / Read-only
-- Daemon **thermal state** (Thermal OK / Recovery / Emergency / No CPU sensor)
-- "Updated Xs ago" — time since the last successful poll
-- A clickable **warning chip** (count); clicking opens a standalone warnings dialog
-- A compact profile selector + Apply
-- A **Sensors** toggle that shows/hides the right-hand Sensors panel (DEC-182/184)
+The live surface is a vertical splitter: the **telemetry graph** across the top, and
+below it a horizontal splitter carrying the **fan cards** on the left and the
+**Thermal Sensors** rail on the right. The graph is the primary component — it is the
+one view nothing else duplicates.
 
-### Main dashboard body
-Recommended layout:
+### Page header
+The page title row carries a **profile selector + Apply**. The sidebar has one too;
+this one is kept deliberately so the landing page can switch profiles without
+navigating away.
 
-#### Row 1: summary cards (DEC-178; DEC-185 removed the Safety card)
-Four compact cards — **CPU**, **GPU**, **Motherboard**, **Fans**. Each
-**temperature** card (CPU / GPU / Motherboard) carries a trend glyph (rising /
-falling / flat, derived from `rate_c_per_s`) and a session min/max range. The
-**Fans** card shows online/expected counts plus average PWM/RPM. The daemon
-`thermal_state` shows on the strip's **thermal chip**, which is clickable and opens
-a read-only thermal-safety detail (DEC-185 — re-homed from the former Safety card).
-Clicking a temperature card opens its sensor-binding picker.
+Three banners sit below it, shown only when they apply: hwmon absent/read-only,
+daemon API-version skew, and thermal protection active.
 
-#### Row 2: primary chart area (DEC-181)
+Connection state, uptime and the alerts indicator live on the global **ribbon**;
+operation mode, poll freshness, the clickable thermal-safety detail and the
+cooling-readiness chip live on the global **footer** (DEC-222 re-homed the last four
+from the retired Dashboard status strip, so every page now has them).
+
+### Telemetry graph (DEC-181, top)
 A wide temperature / fan-speed-over-time chart with:
 - selectable time range
-- a curated default series subset on first run (CPU · GPU · one motherboard temp ·
-  aggregate fan) instead of every series at once
+- a curated default series subset on first run (CPU · GPU · one motherboard temp)
+  instead of every series at once, resolved by
+  `series_selection.default_series_keys`
 - **chart modes** (Combined [default] / Thermals / Fans / Diagnostics) + Reset — the
   selectors are the Show-mode combo and the Sensors tree (DEC-186 removed the
   per-series checkbox legend and the synthetic aggregate fan-RPM line)
@@ -51,35 +46,50 @@ A wide temperature / fan-speed-over-time chart with:
   override start/end, sensor-stale / fan-stall onset)
 - current-value emphasis via the crosshair readout
 
-#### Row 3: fan zone cards (DEC-176/179)
-Fans render as **zone-grouped cards** (the primary fan view), driven by a pure
-fan-grouping view-model:
-- user-assigned **fan zones** (GUI-owned `fan_zones`, e.g. Front Intake / Exhaust),
-  falling back to role/source grouping for unassigned fans
-- a per-fan **state chip** — Normal / Low RPM / Stall / Stale / Offline / Override
-- per-zone roll-ups: online/expected count, average RPM/PWM
-- a per-tile detail dialog to rename a fan or reassign its zone
-- **drag a card by its header to reorder** the groups (order persists per machine,
-  `fan_zone_order`), and a small **"Fan zones"** collapsible header **shows/hides**
-  the whole section so the chart can reclaim the space (`fan_zones_collapsed`) — both
-  DEC-187
+### Fan cards (DEC-222, bottom-left)
+A responsive flow of compact cards, **one per logical control** — not per fan. That
+granularity is forced by the API: live intent is `POST /control/{id}/override`
+(DEC-163) and `fan_identify` is stop/restore only, so there is no per-fan speed
+surface a per-fan card could reflect or act on.
 
-The dense **raw fan table** (label / source / RPM / PWM) is preserved but re-homed
-into a collapsed **"Raw fan data"** expander on the dashboard — advanced detail, one
-click away. (Resolves the previously-deferred group-membership badges + per-fan state
-chip; see `docs/14_Risks_Gaps_and_Future_Work.md`.)
+Each card shows:
+- the control name and a **read-only state chip** — Auto / Override active / Low RPM /
+  Stale / Stall / Offline (text always paired with colour, WCAG 1.4.1)
+- how many fans it covers, so the blast radius of anything done to it is explicit
+- **RPM / SPEED / TEMP** — means across reporting members; `—` where unknown, never a
+  fabricated 0. SPEED prefers the daemon-commanded PWM and falls back to a labelled
+  firmware-measured `duty` (DEC-204)
+- a lightweight **curve preview** of the control's own curve (or a placeholder saying
+  why there is none)
+- **Edit**, which opens the Controls page focused on that control
 
-#### Right-hand Sensors panel (DEC-182/184)
-A toggle-button **side panel** — opens by default on wide windows, collapses on
-narrow ones so the chart keeps room — hosting the grouped **Sensors** tree (device
-grouping, per-series checkboxes, colour swatches, search, freshness in tooltips).
+Two pseudo-cards cover what a control-keyed view would otherwise miss:
+- **Unassigned** — controllable fans no control claims, pooled into one card. With no
+  profile active that is every controllable fan, so a fresh install still sees its
+  hardware rather than an empty page.
+- **Read-only fans** — one card each, never pooled. They cannot be assigned to a
+  control (DEC-102), and pooling would average away a GPU's measured duty, which for
+  such a fan is the only speed signal there is. Their Edit button is hidden, not dead.
 
-DEC-184 reduced this from the former Sensors/Events/Warnings tabbed inspector: the
-Events breadcrumb now lives only on the Logs page, and active warnings open in a
-standalone dialog from the strip's warning chip.
+Cards are **read-only by design**. The override take/renew/release session — deadman,
+monotonic fencing, threaded dispatch (DEC-163/DEC-220) — is owned by the Controls
+page; a second session here would race it for the same control.
 
-(Resolves the previously-deferred per-sensor freshness side panel; see
-`docs/14_Risks_Gaps_and_Future_Work.md`.)
+### Thermal Sensors rail (DEC-182/184, bottom-right)
+The grouped **Sensors** tree (device grouping, per-series checkboxes, colour swatches,
+search, freshness in tooltips). Always mounted since DEC-222 — the splitter handle is
+how the chart reclaims width on a narrow window, replacing the removed show/hide
+toggle.
+
+Active warnings are **not** here: the Logs page hosts them beside the event feed
+(DEC-222).
+
+### Retired presentations (DEC-222)
+The summary cards, Fan Array header, Fan Zone card grid, raw fan table, Quick Actions
+panel, Alerts panel and status strip were all removed. Three of them answered "what
+are the fans doing?" in three different shapes; the fan cards answer it once. The fan
+**zone model** and its settings keys are retained dormant (no schema migration, no
+lost zone assignments) — only the UI is gone.
 
 ## Time ranges
 The dashboard must support:
@@ -121,14 +131,16 @@ The series panel groups coolant temperatures (`coolant_temp`) under an **"AIO / 
 and liquid-cooler pump/radiator fans are tagged "(AIO)" so an AIO reads as a cluster (DEC-157).
 
 ## Fan naming
-The daemon's fan response includes `id` and `source` but not a display label. The dashboard should use the best available display name in this order:
+The daemon's fan response includes `id` and `source` but not a display label. The dashboard uses the best available display name in this order (renaming itself is done from the fan wizard / Controls page — the raw fan table that once hosted a double-click rename was removed in DEC-222):
 1. user alias (GUI-owned, persisted locally)
 2. hwmon header label (from `GET /hwmon/headers`, for hwmon fans only)
 3. stable fan id (e.g. `openfan:ch00`)
 
 ## Warning behaviours
 If a fan or sensor is stale:
-- show a warning chip
+- reflect it in the footer health rollup and the Logs page's Active Warnings list
+  (DEC-222 — the Dashboard's own warning chip went with the status strip)
+- mark the affected fan card's state chip Stale
 - visually soften or mark stale values
 - do not silently continue to present the value as fully healthy
 
@@ -150,19 +162,20 @@ Show:
 - possible reasons
 - link/action to System State
 
-## Suggested widgets
-- summary status cards
-- timeline chart
-- fan status cards or compact table
-- warning banner
-- sensor freshness strip
+## Widgets in use
+- timeline chart (primary)
+- per-control fan cards
+- Thermal Sensors rail
+- warning/info banners (hwmon, API skew, thermal)
+- global ribbon + footer for connection, mode, freshness, thermal and readiness
 
 ## Data update expectations
 The dashboard should feel live, but not noisy.
 Good defaults:
-- update visible summary values on the normal polling cadence
+- update visible values on the normal polling cadence
 - chart points append smoothly
-- avoid layout thrash or card jumping
+- avoid layout thrash or card jumping — fan cards are reconciled in place by control
+  id, so a 1 Hz refresh updates text rather than destroying and rebuilding widgets
 
 ## Nice-to-have later
 - user-customisable cards

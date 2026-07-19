@@ -17,8 +17,7 @@ from control_ofc.ui.branding import load_app_icon
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.glow import PulsingLed
 from control_ofc.ui.qt_util import set_chip_class
-from control_ofc.ui.status_banner import CONNECTION_CHIP, CONNECTION_LABELS
-from control_ofc.ui.widgets.status_strip import THERMAL_STATES
+from control_ofc.ui.status_banner import CONNECTION_CHIP, CONNECTION_LABELS, THERMAL_STATES
 
 # ConnectionState -> pulsing-LED colour role.
 _CONNECTION_LED: dict[ConnectionState, str] = {

@@ -155,25 +155,24 @@ class TestSubsystemHealth:
 
 
 class TestDashboardContent:
-    def test_cpu_temp_card_updates(self, qtbot, window, app_state):
+    def test_sensor_updates_reach_the_sensors_rail(self, qtbot, window, app_state):
+        """DEC-222: the summary cards were removed; a sensor's arrival on the
+        Dashboard is now evidenced by the Thermal Sensors rail listing it."""
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_sensors(
             [
                 SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=72.5, age_ms=100),
-            ]
-        )
-        assert "72.5" in window.dashboard_page._cpu_card._value_label.text()
-
-    def test_gpu_temp_card_updates(self, qtbot, window, app_state):
-        app_state.set_connection(ConnectionState.CONNECTED)
-        app_state.set_sensors(
-            [
                 SensorReading(id="s2", label="GPU", kind="GpuTemp", value_c=65.0, age_ms=100),
             ]
         )
-        assert "65.0" in window.dashboard_page._gpu_card._value_label.text()
+        shown = window.dashboard_page._sensor_panel.displayed_sensor_ids()
+        assert "s1" in shown
+        assert "s2" in shown
 
-    def test_fan_count_card_updates(self, qtbot, window, app_state):
+    def test_fan_count_reaches_the_fan_card_header(self, qtbot, window, app_state):
+        """DEC-222: the Fans summary card was removed; the fan-cards header now
+        reports the control/fan tally. With no profile active both fans land in
+        the single Unassigned card."""
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_fans(
             [
@@ -181,12 +180,13 @@ class TestDashboardContent:
                 FanReading(id="f2", source="openfan", rpm=1100, age_ms=100),
             ]
         )
-        # Fans card now shows online/expected (DEC-178); both fresh ⇒ "2/2".
-        assert window.dashboard_page._fans_card._value_label.text() == "2/2"
+        # The tally is asserted on the fan half only: how the two fans distribute
+        # across controls depends on the fixture profile, but both must be counted.
+        assert "2 fans" in window.dashboard_page._fan_count_label.text()
 
-    def test_warning_count_shows_in_strip(self, qtbot, window, app_state):
-        # The Warnings summary card was replaced by the Safety card (DEC-178);
-        # warnings now surface in the strip's warning chip.
+    def test_warning_count_shows_in_footer(self, qtbot, window, app_state):
+        """DEC-222: warnings surface in the always-visible footer health rollup
+        (the Dashboard status strip that carried the chip was removed)."""
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_sensors(
             [
@@ -194,9 +194,9 @@ class TestDashboardContent:
             ]
         )
         assert app_state.warning_count >= 1
-        chip = window.dashboard_page._status_strip._warning
-        assert not chip.isHidden()
-        assert any(c.isdigit() for c in chip.text())
+        text = window.footer._health_label.text()
+        assert any(c.isdigit() for c in text)
+        assert "warning" in text
 
     def test_open_readiness_button_exists_and_routes(self, qtbot, window):
         """The no-hardware state's button opens the Hardware page (readiness),
@@ -211,15 +211,16 @@ class TestDashboardContent:
 
 
 class TestModeBadge:
-    """Mode now renders in the dashboard status strip (DEC-176/177)."""
+    """Mode renders in the always-visible footer (DEC-222), so every page shows
+    it — not just the Dashboard, as with the removed status strip."""
 
     def test_demo_mode_shows_label(self, qtbot, window, app_state):
         app_state.set_mode(OperationMode.DEMO)
-        assert "Demo" in window.dashboard_page._status_strip._mode.text()
+        assert "Demo" in window.footer._mode_label.text()
 
     def test_automatic_mode_shows_label(self, qtbot, window, app_state):
         app_state.set_mode(OperationMode.AUTOMATIC)
-        assert window.dashboard_page._status_strip._mode.text() == "Automatic"
+        assert window.footer._mode_label.text() == "Automatic"
 
 
 class TestSensorPickerDialog:
@@ -282,14 +283,17 @@ class TestSensorPickerDialog:
 
 
 class TestProfilePosition:
-    """Profile selector now lives in the status strip (DEC-176/177)."""
+    """DEC-222: the status strip was removed, but the Dashboard keeps its own
+    profile selector so the landing page can still switch profiles directly."""
 
-    def test_profile_selector_in_status_strip(self, qtbot, window, app_state):
-        """The profile combo + Apply are the strip's, reused verbatim by the page."""
+    def test_profile_selector_is_on_the_page(self, qtbot, window, app_state):
         page = window.dashboard_page
-        assert page._status_strip is not None
-        assert page._profile_combo is page._status_strip.profile_combo
-        assert page._apply_btn is page._status_strip.apply_btn
+        assert page._profile_combo.objectName() == "Dashboard_Combo_profile"
+        assert page._apply_btn.objectName() == "Dashboard_Btn_apply"
+        # Both live on the page's live-content widget, not in a removed strip.
+        live = page._stack.widget(page._IDX_LIVE)
+        assert page._profile_combo in live.findChildren(type(page._profile_combo))
+        assert page._apply_btn in live.findChildren(type(page._apply_btn))
 
 
 class TestSensorSeriesPanel:
@@ -388,17 +392,25 @@ class TestR12SensorPanelNoRebuild:
 
 
 class TestR12StatusClassGuard:
-    """R12-001: unpolish/polish only when class changes."""
+    """R12-001: unpolish/polish only when the class actually changes.
 
-    def test_summary_card_skips_redundant_repolish(self, qtbot):
-        from control_ofc.ui.widgets.summary_card import SummaryCard
+    Re-vehicled off the deleted SummaryCard onto ``set_chip_class`` itself, which
+    is where the guard lives and which every chip surface uses."""
 
-        card = SummaryCard("Test")
-        qtbot.addWidget(card)
-        card.set_status_class("WarningChip")
-        # Second call with same class should be a no-op (no assertion crash = pass)
-        card.set_status_class("WarningChip")
-        assert card._value_label.property("class") == "WarningChip"
+    def test_skip_if_unchanged_is_a_noop(self, qtbot):
+        from PySide6.QtWidgets import QLabel
+
+        from control_ofc.ui.qt_util import set_chip_class
+
+        label = QLabel("x")
+        qtbot.addWidget(label)
+        set_chip_class(label, "WarningChip")
+        # Second call with the same class must be a no-op, not a re-polish.
+        set_chip_class(label, "WarningChip", skip_if_unchanged=True)
+        assert label.property("class") == "WarningChip"
+
+        set_chip_class(label, "CriticalChip", skip_if_unchanged=True)
+        assert label.property("class") == "CriticalChip"
 
 
 class TestR12ProfileSelector:
@@ -499,8 +511,9 @@ class TestThermalBanner:
 
 
 class TestReadinessChip:
-    """DEC-206: the Dashboard cooling-readiness chip + its deep-link to the merged
-    Diagnostics Hardware-readiness tab, driven by the poll rollup."""
+    """DEC-206: the cooling-readiness chip + its deep-link to the Hardware page,
+    driven by the poll rollup. DEC-222 moved the chip from the Dashboard status
+    strip to the always-visible footer, so it is no longer Dashboard-only."""
 
     def _status_with_readiness(self, **rollup):
         payload = {"overall_status": "ok", "subsystems": []}
@@ -513,19 +526,19 @@ class TestReadinessChip:
         app_state.set_status(
             self._status_with_readiness(overall="warning", warning=1, top_summary="Load it87")
         )
-        chip = window.dashboard_page._status_strip._readiness
+        chip = window.footer._readiness_btn
         assert not chip.isHidden()
         assert "1 to fix" in chip.text()
 
     def test_absent_rollup_hides_chip(self, qtbot, window, app_state):
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_status(self._status_with_readiness())  # no readiness key
-        assert window.dashboard_page._status_strip._readiness.isHidden()
+        assert window.footer._readiness_btn.isHidden()
 
     def test_demo_mode_hides_chip_even_with_rollup(self, qtbot, window, app_state):
         app_state.set_mode(OperationMode.DEMO)
         app_state.set_status(self._status_with_readiness(overall="critical", critical=1))
-        assert window.dashboard_page._status_strip._readiness.isHidden()
+        assert window.footer._readiness_btn.isHidden()
 
     def test_chip_click_opens_hardware_page(self, qtbot, window, app_state):
         # DEC-212: the cooling-readiness chip now opens the Hardware page (was the
@@ -541,6 +554,6 @@ class TestReadinessChip:
         open_readiness (the strip→dashboard connection, not just the signal)."""
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_status(self._status_with_readiness(overall="warning", warning=1))
-        chip = window.dashboard_page._status_strip._readiness
-        with qtbot.waitSignal(window.dashboard_page.open_readiness, timeout=500):
+        chip = window.footer._readiness_btn
+        with qtbot.waitSignal(window.footer.readiness_clicked, timeout=500):
             chip.click()

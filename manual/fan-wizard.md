@@ -68,7 +68,7 @@ A summary table (ID, Source, New Label) where every label is still editable — 
 
 Once saved, fan labels propagate across the entire application:
 
-- Dashboard fan zone cards, the raw fan table, and the Sensors panel
+- Dashboard fan cards and the Thermal Sensors panel
 - Controls page — fan role member lists
 - Overview page — fan status table
 - Profile files — member labels are snapshotted into the profile JSON

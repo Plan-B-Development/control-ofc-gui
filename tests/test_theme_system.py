@@ -39,19 +39,29 @@ class TestThemeBasics:
 
 
 class TestFanCardStyling:
-    """DEC-187: the dashboard fan group cards/tiles get dedicated QSS classes."""
+    """DEC-222: the fan zone/tile QSS was removed with those widgets. The new fan
+    cards style themselves from the shared card + chip classes, so those are what
+    must exist — a missing one would render the cards unstyled."""
 
     def test_fan_card_classes_present_in_stylesheet(self):
         qss = build_stylesheet(default_dark_theme())
         for cls in (
-            ".FanGroupCard",
-            ".FanGroupTitle",
-            ".FanGroupChip",
-            ".FanTile",
-            ".FanTileName",
-            ".FanTileStatus",
+            ".Card",
+            ".CardValue",
+            ".CardMeta",
+            ".SuccessChip",
+            ".WarningChip",
+            ".CriticalChip",
+            ".InfoChip",
         ):
             assert cls in qss, cls
+
+    def test_retired_fan_zone_classes_are_gone(self):
+        """The zone/tile rules had no other consumer; leaving them would be dead
+        QSS shipped to every user."""
+        qss = build_stylesheet(default_dark_theme())
+        for cls in (".FanGroupCard", ".FanGroupTitle", ".FanGroupChip", ".FanTile"):
+            assert cls not in qss, cls
 
 
 class TestTokenCoverage:

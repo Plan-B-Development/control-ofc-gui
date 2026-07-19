@@ -13,7 +13,7 @@
 
 ### Navigation
 - [ ] App has a left sidebar with Dashboard, Overview, Controls, System State, Hardware, Settings, Theme, Logs
-- [ ] Header/status strip clearly shows connection/control state
+- [ ] Header ribbon + footer clearly show connection/control state
 - [ ] Disconnected and demo states are obvious
 
 ### Dashboard

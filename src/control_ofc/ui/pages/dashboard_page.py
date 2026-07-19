@@ -8,16 +8,14 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QPushButton,
     QScrollArea,
     QSplitter,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -29,7 +27,6 @@ from control_ofc.api.models import (
     FanReading,
     Freshness,
     OperationMode,
-    ReadinessRollup,
     SensorReading,
 )
 from control_ofc.constants import (
@@ -42,36 +39,24 @@ from control_ofc.services.daemon_service_check import (
     ENABLE_COMMAND,
     check_daemon_service_state,
 )
-from control_ofc.services.dashboard_view import (
-    absent_member_ids,
-    build_capabilities_vm,
-    build_fans_card_vm,
-    build_summary_card_vm,
-    curated_chart_keys,
-    fan_tooltip,
-    safety_detail_text,
-)
-from control_ofc.services.fan_grouping import build_fan_groups
+from control_ofc.services.dashboard_view import build_capabilities_vm
+from control_ofc.services.fan_cards_view import build_fan_card_vms
 from control_ofc.services.history_store import HistoryStore
-from control_ofc.services.series_selection import ChartMode, SeriesSelectionModel
+from control_ofc.services.series_selection import (
+    ChartMode,
+    SeriesSelectionModel,
+    default_series_keys,
+)
 from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.qt_util import block_signals, repolish, set_chip_class
 from control_ofc.ui.status_banner import MODE_LABELS
 from control_ofc.ui.theme import active_theme
-from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
-from control_ofc.ui.widgets.dashboard_inspector import (
-    AlertsPanel,
-    DashboardInspector,
-    WarningsView,
-)
+from control_ofc.ui.widgets.dashboard_inspector import DashboardInspector
 from control_ofc.ui.widgets.error_banner import ErrorBanner
-from control_ofc.ui.widgets.fan_zone_card import FanZoneGrid
-from control_ofc.ui.widgets.quick_actions_panel import QuickActionsPanel
+from control_ofc.ui.widgets.fan_control_card import FanControlCard
+from control_ofc.ui.widgets.flow_layout import FlowLayout
 from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
-from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
-from control_ofc.ui.widgets.status_strip import THERMAL_STATES, DashboardStatusStrip
-from control_ofc.ui.widgets.summary_card import SummaryCard
 from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 if TYPE_CHECKING:
@@ -86,10 +71,15 @@ _INSPECTOR_WIDE_THRESHOLD_PX = 1100
 class DashboardPage(QWidget):
     """Landing page showing fan speeds, temperatures, and profile status."""
 
-    # DEC-206: the Dashboard cooling-readiness chip (and the no-hardware "what to
-    # do next" button) were clicked — main_window switches to the Hardware page
-    # (the merged readiness view, DEC-212).
+    # DEC-206: the no-hardware "what to do next" button was clicked — main_window
+    # switches to the Hardware page (the merged readiness view, DEC-212). The
+    # cooling-readiness *chip* moved to the always-visible footer (DEC-222).
     open_readiness = Signal()
+
+    # DEC-222: a fan card's Edit was clicked — main_window opens the Controls page
+    # and focuses that control. Carries "" for the Unassigned card, which has no
+    # control to focus.
+    open_control = Signal(str)
 
     # Stack indices
     _IDX_DISCONNECTED = 0
@@ -113,7 +103,6 @@ class DashboardPage(QWidget):
         self._profile_service = profile_service
         self._settings_service = settings_service
         self._client = client
-        self._fan_ids: list[str] = []  # Track fan IDs for table row mapping
         self._displayable_fan_keys: list[str] = []  # Fan series keys for selection
         self._has_data = False
         # Chart first-run seeding + poll-diff annotation state (DEC-181).
@@ -123,16 +112,10 @@ class DashboardPage(QWidget):
         self._last_override_ids: set[str] = set()
         self._last_stale_sensor_ids: set[str] = set()
         self._last_stalled_fan_ids: set[str] = set()
-        # Inspector pane (DEC-182): logical shown-state + the saved splitter split
-        # for restore-on-reopen; the open/closed default is decided once on first
-        # show (Qt reports a placeholder width at construction).
-        self._inspector_shown = True
-        self._inspector_saved_sizes: list[int] | None = None
-        self._inspector_default_applied = False
-        # Card-to-sensor bindings: category -> sensor_id (empty = auto)
-        self._card_bindings: dict[str, str] = {}
-        if settings_service:
-            self._card_bindings = dict(settings_service.settings.card_sensor_bindings)
+        # Live fan cards keyed by control id (DEC-222). Reconciled in place each
+        # poll rather than rebuilt, so a 1 Hz refresh never destroys and recreates
+        # widgets the user may be interacting with.
+        self._fan_cards: dict[str, FanControlCard] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -156,7 +139,6 @@ class DashboardPage(QWidget):
             self._state.mode_changed.connect(self._on_mode_changed)
             self._state.capabilities_updated.connect(self._on_capabilities_updated)
             self._state.status_updated.connect(self._on_status_updated)
-            self._state.fan_zones_changed.connect(self._on_fan_zones_changed)
             self._state.fan_alias_changed.connect(self._on_fan_alias_changed)
 
         # Keep the dashboard profile combo in sync with changes made elsewhere
@@ -176,15 +158,6 @@ class DashboardPage(QWidget):
         self._chart_timer.start()
         self._chart_active_interval = 1000  # 1Hz when active
         self._chart_background_interval = 5000  # 0.2Hz when app unfocused
-
-        # Poll-age refresh (~1 Hz) for the status strip's "Updated Xs ago" — kept
-        # separate from the chart timer so it stays correct while the app is
-        # unfocused (the chart throttles to 0.2 Hz then).
-        self._poll_age_timer = QTimer(self)
-        self._poll_age_timer.setInterval(1000)
-        self._poll_age_timer.timeout.connect(self._tick_poll_age)
-        self._poll_age_timer.start()
-        self._tick_poll_age()
 
         # Throttle chart when app loses focus (reduces compositor work while gaming)
         app = QApplication.instance()
@@ -282,6 +255,10 @@ class DashboardPage(QWidget):
         self._legend_rpm_chip.setStyleSheet(
             f"background:{tokens.text_secondary}; border-radius:2px;"
         )
+        # DEC-222: the fan cards paint their curve preview themselves, so they
+        # need the new palette too (they are built once and updated in place).
+        for card in self._fan_cards.values():
+            card.set_theme(tokens)
 
     def _copy_enable_command(self) -> None:
         clipboard = QApplication.clipboard()
@@ -382,17 +359,36 @@ class DashboardPage(QWidget):
         return container
 
     def _build_live_content(self) -> QWidget:
+        """The live surface (DEC-222): telemetry graph on top, fan cards and the
+        sensors rail below.
+
+        The graph is the primary component — it gets the top of the vertical
+        splitter at full width. Beneath it, a horizontal splitter carries the
+        per-control fan cards on the left and the Thermal Sensors rail on the
+        right. The former summary cards, Fan Array, Fan Zone grid, raw fan table,
+        Quick Actions and Alerts panels were all removed with this rebuild.
+        """
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 16, 24, 16)
         content_layout.setSpacing(12)
 
-        # Title row (mode now lives in the status strip below).
+        # Title row + the profile selector. The sidebar also carries a profile
+        # combo; this one is kept deliberately so the landing page can answer
+        # "what profile is active, and how do I change it?" without navigating.
         title_row = QHBoxLayout()
         title = QLabel("Dashboard")
         title.setProperty("class", "PageTitle")
         title_row.addWidget(title)
         title_row.addStretch()
+        self._profile_combo = QComboBox()
+        self._profile_combo.setObjectName("Dashboard_Combo_profile")
+        self._profile_combo.setMinimumWidth(160)
+        title_row.addWidget(self._profile_combo)
+        self._apply_btn = QPushButton("Apply")
+        self._apply_btn.setObjectName("Dashboard_Btn_apply")
+        self._apply_btn.clicked.connect(self._on_apply_profile)
+        title_row.addWidget(self._apply_btn)
         content_layout.addLayout(title_row)
 
         # Hwmon info banner — shown when hwmon is absent or all read-only
@@ -415,62 +411,12 @@ class DashboardPage(QWidget):
         content_layout.addWidget(self._thermal_banner)
         self._last_thermal_state = "normal"
 
-        # Command + status strip (DEC-176/177): connection/profile/mode/thermal/
-        # poll-age/warnings + the compact profile selector. Replaces the detached
-        # profile widget; the global StatusBanner is hidden while the dashboard is
-        # active (main_window), so this is the single status surface here.
-        self._status_strip = DashboardStatusStrip()
-        # The page owns the apply flow — reuse the strip's combo/apply verbatim.
-        self._profile_combo = self._status_strip.profile_combo
-        self._apply_btn = self._status_strip.apply_btn
-        self._apply_btn.clicked.connect(self._on_apply_profile)
-        self._status_strip.warning_clicked.connect(self._open_warnings)
-        self._status_strip.thermal_clicked.connect(self._open_safety_detail)
-        self._status_strip.readiness_clicked.connect(self.open_readiness)
-        self._status_strip.inspector_toggle_clicked.connect(self._toggle_inspector)
-        content_layout.addWidget(self._status_strip)
-
-        # Row 1: Summary cards
-        cards_layout = QHBoxLayout()
-        cards_layout.setSpacing(12)
-
-        self._cpu_card = SummaryCard("CPU Temp", category="cpu_temp")
-        self._cpu_card.setObjectName("Dashboard_Card_cpu")
-        self._gpu_card = SummaryCard("GPU Temp", category="gpu_temp")
-        self._gpu_card.setObjectName("Dashboard_Card_gpu")
-        self._mb_card = SummaryCard("Motherboard", category="mobo_temp")
-        self._mb_card.setObjectName("Dashboard_Card_mobo")
-        self._fans_card = SummaryCard("Fans", category="fans")
-        self._fans_card.setObjectName("Dashboard_Card_fans")
-
-        for card in (
-            self._cpu_card,
-            self._gpu_card,
-            self._mb_card,
-            self._fans_card,
-        ):
-            card.clicked.connect(self._on_card_clicked)
-            cards_layout.addWidget(card)
-
-        cards_layout.addStretch()
-        content_layout.addLayout(cards_layout)
-
-        # Initial render (strip) now that every widget exists.
-        self._sync_status_strip()
-
-        # Live layout (DEC-213): an outer VERTICAL splitter — the full-width
-        # Telemetry Stage (chart) on top, an inner HORIZONTAL splitter below
-        # (Fan Array | right rail). This inverts the pre-DEC-213 nesting
-        # (chart-over-fans on the left, inspector on the right) to match the
-        # redesign while KEEPING both splitter objectNames and the inspector as
-        # h_splitter.widget(1), so the inspector toggle/save-restore + wide-window
-        # default are unchanged.
         self._v_splitter = QSplitter(Qt.Orientation.Vertical)
         self._v_splitter.setObjectName("Dashboard_Splitter_vertical")
         self._h_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._h_splitter.setObjectName("Dashboard_Splitter_horizontal")
 
-        # ── Telemetry Stage (v_splitter top): header + legend + the reused chart ──
+        # ── Telemetry Stage (v_splitter top): header + legend + the chart ──
         telemetry_stage = QWidget()
         telemetry_stage.setObjectName("Dashboard_Section_telemetry")
         telemetry_layout = QVBoxLayout(telemetry_stage)
@@ -503,89 +449,53 @@ class DashboardPage(QWidget):
         self._chart.mode_selected.connect(self._on_chart_mode_selected)
         self._chart.reset_requested.connect(self._on_chart_reset)
         self._push_chart_context()
-        self._chart.setMinimumHeight(150)
-        self._chart.setMinimumWidth(320)  # inspector can't crush the chart (refinement §7.5)
+        self._chart.setMinimumHeight(180)
+        self._chart.setMinimumWidth(320)  # the rail can't crush the chart
         telemetry_layout.addWidget(self._chart, 1)
         self._v_splitter.addWidget(telemetry_stage)
 
-        # ── Fan Array pane (h_splitter left): header + count + the zone-card grid ──
-        fan_array_pane = QWidget()
-        fan_array_pane.setObjectName("Dashboard_Pane_fanArray")
-        fan_array_layout = QVBoxLayout(fan_array_pane)
-        fan_array_layout.setContentsMargins(0, 0, 0, 0)
-        fan_array_layout.setSpacing(6)
-        fan_array_header = SectionHeader(
-            "Fan Array", object_name="Dashboard_SectionHeader_fanArray"
+        # ── Fan cards pane (h_splitter left) ──
+        # One card per logical control (DEC-222), in a flow layout so the
+        # collection reflows responsively as the pane is resized.
+        fan_pane = QWidget()
+        fan_pane.setObjectName("Dashboard_Pane_fanCards")
+        fan_layout = QVBoxLayout(fan_pane)
+        fan_layout.setContentsMargins(0, 0, 0, 0)
+        fan_layout.setSpacing(6)
+        fan_header = SectionHeader("Fans", object_name="Dashboard_SectionHeader_fans")
+        self._fan_count_label = QLabel("")
+        self._fan_count_label.setObjectName("Dashboard_Label_fanCount")
+        self._fan_count_label.setProperty("class", "CardMeta")
+        fan_header.add_trailing(self._fan_count_label)
+        fan_layout.addWidget(fan_header)
+
+        self._fan_cards_host = QWidget()
+        self._fan_cards_host.setObjectName("Dashboard_Host_fanCards")
+        self._fan_cards_layout = FlowLayout(
+            self._fan_cards_host, margin=0, h_spacing=8, v_spacing=8
         )
-        self._fan_array_count = QLabel("")
-        self._fan_array_count.setObjectName("Dashboard_Label_fanArrayCount")
-        self._fan_array_count.setProperty("class", "CardMeta")
-        fan_array_header.add_trailing(self._fan_array_count)
-        fan_array_layout.addWidget(fan_array_header)
+        self._fan_cards_empty = QLabel("No controllable fans detected.")
+        self._fan_cards_empty.setObjectName("Dashboard_Label_fanCardsEmpty")
+        self._fan_cards_empty.setProperty("class", "CardMeta")
 
-        # Primary fan display: zone cards (refinement §7.4, DEC-179). Driven by
-        # the pure fan_grouping view-model; the dense raw table is re-homed below
-        # into a collapsed "Raw fan data" expander (4A) rather than deleted.
-        self._fan_zone_grid = FanZoneGrid(state=self._state, zone_provider=self._zone_names)
-        if self._settings_service:
-            self._fan_zone_grid.set_order(self._settings_service.settings.fan_zone_order)
-        self._fan_zone_grid.order_changed.connect(self._persist_fan_zone_order)
-        zone_scroll = QScrollArea()
-        zone_scroll.setObjectName("Dashboard_ScrollArea_fanZones")
-        zone_scroll.setWidgetResizable(True)
-        zone_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        zone_scroll.setWidget(self._fan_zone_grid)
-        zone_scroll.setMinimumHeight(60)
-        # Collapsible "Fan zones" section (DEC-187): a show/hide control whose
-        # collapsed state persists. With the inverted splitter (DEC-213) the section
-        # lives in the Fan Array pane, so folding it no longer reflows the chart split
-        # — the outer handle trades chart height directly (the DEC-187 reflow retired).
-        fan_zones_collapsed = bool(
-            self._settings_service and self._settings_service.settings.fan_zones_collapsed
-        )
-        self._fan_zone_section = CollapsibleSection(
-            "Fan zones", "Dashboard_Section_fanZones", expanded=not fan_zones_collapsed
-        )
-        self._fan_zone_section.add_widget(zone_scroll)
-        self._fan_zone_section.toggled.connect(self._on_fan_zones_toggled)
-        fan_array_layout.addWidget(self._fan_zone_section, 1)
-        self._h_splitter.addWidget(fan_array_pane)
+        fan_scroll = QScrollArea()
+        fan_scroll.setObjectName("Dashboard_ScrollArea_fanCards")
+        fan_scroll.setWidgetResizable(True)
+        fan_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        fan_scroll.setWidget(self._fan_cards_host)
+        fan_scroll.setMinimumHeight(80)
+        fan_layout.addWidget(self._fan_cards_empty)
+        fan_layout.addWidget(fan_scroll, 1)
+        self._h_splitter.addWidget(fan_pane)
 
-        # Raw fan table — built intact (columns / sort / double-click rename
-        # preserved) but detached from the splitter; folded into the collapsed
-        # expander once the splitter is assembled.
-        self._fan_table = QTableWidget(0, 4)
-        self._fan_table.setHorizontalHeaderLabels(["Label", "Source", "RPM", "PWM%"])
-        self._fan_table.verticalHeader().setVisible(False)
-        self._fan_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self._fan_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._fan_table.setAlternatingRowColors(True)
-        self._fan_table.verticalHeader().setDefaultSectionSize(24)
-        self._fan_table.setMinimumHeight(60)
-        self._fan_table.doubleClicked.connect(self._on_fan_table_double_click)
-        from PySide6.QtWidgets import QHeaderView
-
-        header = self._fan_table.horizontalHeader()
-        header.setMinimumSectionSize(50)
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setStretchLastSection(True)
-
-        # ── Right rail (h_splitter right): Thermal Sensors + Quick Actions + Alerts ──
-        # The sensor panel is the tall series selector; below it a Quick Actions
-        # panel (real profile shortcuts) and an inline Alerts list (real active
-        # warnings). The whole pane toggles from the strip so the chart can reclaim
-        # width on narrow windows.
+        # ── Thermal Sensors rail (h_splitter right) ──
+        # Always present now; the splitter handle is how the chart reclaims width
+        # on a narrow window, so the old show/hide toggle is gone with the strip.
         self._sensor_panel = SensorSeriesPanel(self._selection, state=self._state)
         if self._settings_service:
             self._sensor_panel.hide_igpu = self._settings_service.settings.hide_igpu_sensors
         self._sensor_panel.set_chart(self._chart, self._settings_service)
-
-        self._quick_actions = QuickActionsPanel()
-        self._quick_actions.activate_requested.connect(self._activate_profile_by_id)
-        self._alerts = AlertsPanel(self._state)
-        self._inspector = DashboardInspector(
-            self._sensor_panel, quick_actions=self._quick_actions, alerts=self._alerts
-        )
+        self._inspector = DashboardInspector(self._sensor_panel)
         self._h_splitter.addWidget(self._inspector)
 
         self._h_splitter.setStretchFactor(0, 3)
@@ -594,29 +504,16 @@ class DashboardPage(QWidget):
         self._h_splitter.setCollapsible(0, False)
         self._h_splitter.setCollapsible(1, False)
 
-        # Assemble the outer vertical splitter (Telemetry Stage over the Fan Array /
-        # right-rail row) and mount it as the live surface.
+        # Graph first (primary), fan cards + rail below.
         self._v_splitter.addWidget(self._h_splitter)
         self._v_splitter.setStretchFactor(0, 3)
         self._v_splitter.setStretchFactor(1, 2)
-        self._v_splitter.setSizes([420, 380])
+        self._v_splitter.setSizes([460, 340])
         content_layout.addWidget(self._v_splitter, 1)
 
-        # Populate the profile combo + Quick Actions shortcuts from the current
-        # profiles (kept current thereafter via populate_profiles on profiles_changed).
+        # Populate the profile combo (kept current thereafter by profiles_changed).
         self.populate_profiles()
-
-        # Coherent initial state (shown) until the first showEvent picks the
-        # width-based default; keeps the strip toggle glyph in sync from build.
-        self._set_inspector_shown(self._inspector_shown)
-
-        # Raw fan data (4A): the dense table, one collapsed click away. Cards are
-        # primary now, so the table is advanced detail kept in context, not deleted.
-        self._raw_fan_section = CollapsibleSection(
-            "Raw fan data", "Dashboard_Section_rawFanData", expanded=False
-        )
-        self._raw_fan_section.add_widget(self._fan_table)
-        content_layout.addWidget(self._raw_fan_section)
+        self._refresh_fan_cards()
 
         return content
 
@@ -643,7 +540,6 @@ class DashboardPage(QWidget):
     # ─── Signal handlers ─────────────────────────────────────────────
 
     def _on_connection_changed(self, state: ConnectionState) -> None:
-        self._status_strip.set_connection_state(state)
         # (Re)connect transition → annotation (poll-diff, DEC-181).
         if (
             state == ConnectionState.CONNECTED
@@ -653,54 +549,15 @@ class DashboardPage(QWidget):
         self._prev_connection = state
         if state == ConnectionState.DISCONNECTED:
             self._has_data = False
-            self._reset_cards()
+            self._clear_fan_cards()
             self._stack.setCurrentIndex(self._IDX_DISCONNECTED)
             self._refresh_service_hint()
         elif state == ConnectionState.CONNECTED and not self._has_data:
             self._stack.setCurrentIndex(self._IDX_NO_HARDWARE)
 
     def _on_mode_changed(self, mode: OperationMode) -> None:
-        self._status_strip.set_operation_mode(mode)
+        del mode  # the footer renders the mode word (DEC-222)
         self._push_chart_context()
-
-    def _sync_status_strip(self) -> None:
-        """Push current AppState into the strip (initial render)."""
-        if not self._state:
-            return
-        self._status_strip.set_connection_state(self._state.connection)
-        self._status_strip.set_operation_mode(self._state.mode)
-        self._status_strip.set_active_profile(self._state.active_profile_name)
-        self._status_strip.set_warning_count(self._state.warning_count)
-        ds = self._state.daemon_status
-        if ds:
-            self._status_strip.set_thermal_state(ds.thermal_state)
-            self._status_strip.set_readiness_rollup(self._readiness_for_strip(ds))
-
-    def _readiness_for_strip(self, status: DaemonStatus) -> ReadinessRollup | None:
-        """The readiness rollup to show on the chip, or ``None`` to hide it.
-
-        Hidden in demo mode — synthetic hardware has no real readiness (DEC-206,
-        O-2) — and whenever the daemon sends no rollup (older daemon / pre-seed).
-        """
-        if self._state and self._state.mode == OperationMode.DEMO:
-            return None
-        return status.readiness
-
-    def _reset_cards(self) -> None:
-        """Clear card faces to a neutral "—" on disconnect so a stale
-        pre-disconnect value is never presented as current (refinement §4.2)."""
-        for card in (self._cpu_card, self._gpu_card, self._mb_card, self._fans_card):
-            card.set_value("—")
-            card.set_trend("")
-            card.set_detail_text("")
-            card.set_status_class("")
-            card.setToolTip("")
-        # Drop zone tiles too — a stale tile must not survive a disconnect.
-        self._fan_zone_grid.set_groups([])
-
-    def _tick_poll_age(self) -> None:
-        if self._state:
-            self._status_strip.update_poll_age(time.monotonic(), self._state.last_poll_monotonic)
 
     # ─── Chart series: known keys, curated subset, modes (DEC-181) ────
 
@@ -712,11 +569,14 @@ class DashboardPage(QWidget):
         self._selection.update_known_keys(keys)
 
     def _curated_chart_keys(self) -> set[str]:
-        """The curated default chart series for the current sensors + card
-        bindings (:func:`dashboard_view.curated_chart_keys`, refinement §7.3 /
-        B-fork DEC-181)."""
-        sensors = self._state.sensors if self._state else []
-        return curated_chart_keys(sensors, self._card_bindings)
+        """The curated default chart series for the current sensors.
+
+        Thin wrapper over :func:`series_selection.default_series_keys`, which owns
+        the kind-aware selection. DEC-222 removed the summary cards that used to
+        let the user pin a specific sensor per category, so the curated subset is
+        now always the auto-match-by-kind result.
+        """
+        return default_series_keys(self._state.sensors if self._state else [])
 
     def _maybe_seed_chart_defaults(self) -> None:
         """First-run only (A-fork DEC-181): once BOTH sensors and fans have been
@@ -759,9 +619,6 @@ class DashboardPage(QWidget):
         self._sub_openfan_label.setProperty("class", vm.openfan.css_class)
         self._sub_hwmon_label.setText(vm.hwmon.text)
         self._sub_hwmon_label.setProperty("class", vm.hwmon.css_class)
-        # A no-match leaves the GPU card title unchanged (vm.gpu_title is None).
-        if vm.gpu_title is not None:
-            self._gpu_card.set_title(vm.gpu_title)
         for lbl in (self._sub_openfan_label, self._sub_hwmon_label):
             repolish(lbl)
 
@@ -795,10 +652,8 @@ class DashboardPage(QWidget):
         # emergency / recovery overrides fan control. Surface it the moment
         # thermal_state leaves "normal", and clear it on the return.
         thermal = status.thermal_state or "normal"
-        self._status_strip.set_thermal_state(thermal)
-        # DEC-206: drive the cooling-readiness chip from the poll rollup (hidden
-        # in demo, and when the daemon sends no rollup).
-        self._status_strip.set_readiness_rollup(self._readiness_for_strip(status))
+        # The thermal chip + cooling-readiness chip live on the footer now
+        # (DEC-222); this page keeps only the transition banner + annotation.
         if thermal != self._last_thermal_state:
             self._last_thermal_state = thermal
             self._annotate(f"Thermal: {thermal}")
@@ -854,30 +709,6 @@ class DashboardPage(QWidget):
         # Fan keys + the aggregate are folded in by _register_known_keys.
         self._register_known_keys()
 
-        sensor_by_id = {s.id: s for s in sensors}
-
-        # Update each card using binding if set, else auto by kind
-        # Daemon sends snake_case kinds (cpu_temp), demo sends PascalCase (CpuTemp)
-        self._update_card(
-            self._cpu_card,
-            "cpu_temp",
-            ("CpuTemp", "cpu_temp"),
-            sensors,
-            sensor_by_id,
-            warn=75,
-            crit=85,
-        )
-        self._update_card(
-            self._gpu_card,
-            "gpu_temp",
-            ("GpuTemp", "gpu_temp"),
-            sensors,
-            sensor_by_id,
-            warn=80,
-            crit=90,
-        )
-        self._update_card(self._mb_card, "mobo_temp", ("MbTemp", "mb_temp"), sensors, sensor_by_id)
-
         self._maybe_seed_chart_defaults()
 
     # ─── Visibility gating (R48 performance) ───────────────────────
@@ -887,8 +718,6 @@ class DashboardPage(QWidget):
         if not self._chart_timer.isActive():
             self._chart_timer.start()
         super().showEvent(event)
-        # Inspector open/closed default is decided once, on the first real width.
-        self._apply_inspector_default(self.width())
 
     def hideEvent(self, event) -> None:
         """Stop chart timer when dashboard is hidden (e.g. switched to another page)."""
@@ -898,7 +727,6 @@ class DashboardPage(QWidget):
     def cleanup(self) -> None:
         """Release chart resources before app shutdown. Idempotent."""
         self._chart_timer.stop()
-        self._poll_age_timer.stop()
         self._chart.cleanup()
 
     def closeEvent(self, event) -> None:
@@ -938,302 +766,108 @@ class DashboardPage(QWidget):
         aliases = self._state.fan_aliases if self._state else {}
         display_fans = filter_displayable_fans(fans, aliases, hide_unused)
 
-        self._update_fans_card(display_fans)
-        self._refresh_fan_zones()
+        self._refresh_fan_cards()
 
         # Store displayable fan keys and re-register (folds in sensors + aggregate)
         self._displayable_fan_keys = [f"fan:{f.id}:rpm" for f in display_fans]
         self._register_known_keys()
 
-        # Update fan table rows (add rows for new fans, update existing)
-        self._fan_ids = [f.id for f in display_fans]
-        if self._fan_table.rowCount() != len(display_fans):
-            self._fan_table.setRowCount(len(display_fans))
-
-        for row, fan in enumerate(display_fans):
-            display_name = self._state.fan_display_name(fan.id) if self._state else fan.id
-            rpm_text = f"{fan.rpm}" if fan.rpm is not None else "\u2014"
-            pwm_text = f"{fan.last_commanded_pwm}%" if fan.last_commanded_pwm is not None else ""
-
-            for col, text in enumerate([display_name, fan.source, rpm_text, pwm_text]):
-                item = self._fan_table.item(row, col)
-                if item is None:
-                    item = QTableWidgetItem(text)
-                    if col == 0:
-                        item.setToolTip(self._fan_tooltip(fan))
-                    self._fan_table.setItem(row, col, item)
-                else:
-                    if item.text() != text:
-                        item.setText(text)
-
         self._maybe_seed_chart_defaults()
 
-    def _zone_names(self) -> list[str]:
-        """Distinct existing user-zone names, for the assign-to-zone picker."""
-        if not self._state:
-            return []
-        return sorted({z for z in self._state.fan_zones.values() if z})
+    # ─── Fan cards (DEC-222) ─────────────────────────────────────────
 
-    def _refresh_fan_zones(self) -> None:
-        """Rebuild the zone cards from the latest readings + active profile +
-        overrides. The same trigger fires on poll, zone re-assignment, and rename
-        so the cards always reflect current intent. Cheap and idempotent."""
+    def _refresh_fan_cards(self) -> None:
+        """Reconcile the fan cards against the latest readings + active profile.
+
+        Cards are keyed by control id and updated in place; only genuinely new or
+        departed controls cause a widget to be created or destroyed. The same
+        trigger fires on poll, profile change and fan rename, so the cards always
+        reflect current intent. Cheap and idempotent.
+        """
         if not self._state:
             return
-        fans = self._state.fans or []
         hide_unused = (
             self._settings_service.settings.hide_unused_fan_headers
             if self._settings_service
             else True
         )
-        display_fans = filter_displayable_fans(fans, self._state.fan_aliases, hide_unused)
+        display_fans = filter_displayable_fans(
+            self._state.fans or [], self._state.fan_aliases, hide_unused
+        )
         profile = self._profile_service.active_profile if self._profile_service else None
         status = self._state.daemon_status
-        overrides = status.overrides if status else []
-        expected = absent_member_ids(profile, {f.id for f in fans})
-        # DEC-213: resolve the fan-card curve-sensor temps + recent-RPM sparklines
-        # here (keeps fan_grouping Qt-free). The sparkline is the last ~40 RPM
-        # points from the history ring buffer — a cheap static paint, not a plot.
-        sensor_values = {s.id: s.value_c for s in (self._state.sensors or [])}
-        rpm_series = {
-            f.id: tuple(r.value for r in self._history.get_series(f"fan:{f.id}:rpm")[-40:])
-            for f in display_fans
-        }
-        groups = build_fan_groups(
+        vms = build_fan_card_vms(
             display_fans,
-            fan_zones=self._state.fan_zones,
-            display_name=self._state.fan_display_name,
             active_profile=profile,
-            overrides=overrides,
-            expected_fan_ids=expected or None,
-            sensor_values=sensor_values,
-            rpm_series=rpm_series,
+            overrides=status.overrides if status else [],
+            headers=self._state.hwmon_headers,
+            caps=self._state.capabilities,
+            sensor_values={s.id: s.value_c for s in (self._state.sensors or [])},
+            display_name=self._state.fan_display_name,
         )
-        self._fan_zone_grid.set_groups(groups)
-        # DEC-213: the Fan Array header shows the total tile count ("N units").
-        total = sum(len(g.tiles) for g in groups)
-        self._fan_array_count.setText(f"{total} unit{'s' if total != 1 else ''}")
 
-    def _on_fan_zones_changed(self, fan_id: str, zone: str) -> None:
-        del fan_id, zone  # the whole grouping is recomputed from state
-        self._refresh_fan_zones()
+        seen: set[str] = set()
+        for vm in vms:
+            seen.add(vm.control_id)
+            card = self._fan_cards.get(vm.control_id)
+            if card is None:
+                card = FanControlCard(vm)
+                card.edit_requested.connect(self.open_control)
+                self._fan_cards[vm.control_id] = card
+                self._fan_cards_layout.addWidget(card)
+            else:
+                card.update_vm(vm)
+
+        for control_id in [cid for cid in self._fan_cards if cid not in seen]:
+            self._drop_fan_card(control_id)
+
+        # Count only genuine controls: the Unassigned pseudo-card and the per-fan
+        # read-only cards are not controls, and calling them that would overstate
+        # how much of the system is actually under curve control.
+        total_fans = sum(vm.fan_count for vm in vms)
+        controls = sum(1 for vm in vms if not vm.is_unassigned and not vm.is_read_only)
+        self._fan_count_label.setText(
+            f"{controls} control{'' if controls == 1 else 's'} · "
+            f"{total_fans} fan{'' if total_fans == 1 else 's'}"
+        )
+        self._fan_cards_empty.setVisible(not vms)
+
+    def _drop_fan_card(self, control_id: str) -> None:
+        """Remove one card, detaching it from the flow layout before deletion."""
+        card = self._fan_cards.pop(control_id, None)
+        if card is None:
+            return
+        self._fan_cards_layout.removeWidget(card)
+        card.setParent(None)
+        card.deleteLater()
+
+    def _clear_fan_cards(self) -> None:
+        """Drop every card — a stale card must not survive a disconnect."""
+        for control_id in list(self._fan_cards):
+            self._drop_fan_card(control_id)
+        self._fan_count_label.setText("")
+        self._fan_cards_empty.setVisible(True)
 
     def _on_fan_alias_changed(self, fan_id: str, display_name: str) -> None:
-        del fan_id, display_name  # tiles re-resolve their display name on rebuild
-        self._refresh_fan_zones()
-
-    def _persist_fan_zone_order(self, order: list[str]) -> None:
-        """Drag-reorder of the fan-group cards (DEC-187): keep the grid's order in
-        sync so the next poll doesn't snap back, then persist it."""
-        self._fan_zone_grid.set_order(order)
-        if self._settings_service:
-            self._settings_service.update(fan_zone_order=order)
-
-    def _on_fan_zones_toggled(self, expanded: bool) -> None:
-        """Persist the fan-zone section's collapsed state (DEC-187).
-
-        Under the DEC-213 inverted splitter the section lives inside the Fan Array
-        pane, so folding it no longer reflows a chart/zone split — the pane's own
-        layout reclaims the space and the outer handle still trades chart height
-        directly. Only the persisted collapsed flag remains."""
-        if self._settings_service:
-            self._settings_service.update(fan_zones_collapsed=not expanded)
-
-    def _fan_tooltip(self, fan: FanReading) -> str:
-        """Build a tooltip for a fan row, including hwmon chip/driver context
-        (:func:`dashboard_view.fan_tooltip`)."""
-        headers = self._state.hwmon_headers if self._state else []
-        return fan_tooltip(fan, headers)
-
-    def _update_card(
-        self,
-        card: SummaryCard,
-        category: str,
-        kinds: tuple[str, ...],
-        sensors: list[SensorReading],
-        sensor_by_id: dict[str, SensorReading],
-        warn: float = 0,
-        crit: float = 0,
-    ) -> None:
-        """Update a summary card from binding or auto-match by kind
-        (:func:`dashboard_view.build_summary_card_vm`)."""
-        stats = self._state.session_stats if self._state else {}
-        vm = build_summary_card_vm(
-            category, kinds, sensors, sensor_by_id, self._card_bindings, stats, warn, crit
-        )
-        if vm is None:
-            return
-        card.set_trend(vm.trend)
-        card.set_value(vm.value_text)
-        card.setToolTip(vm.tooltip)
-        # A None status class means "leave it as-is" (binding-missing branch).
-        if vm.status_class is not None:
-            card.set_status_class(vm.status_class)
-        card.set_range(vm.range_min, vm.range_max)
-
-    def _update_fans_card(self, display_fans: list[FanReading]) -> None:
-        """Fans card face: online/expected + average PWM/RPM
-        (:func:`dashboard_view.build_fans_card_vm`)."""
-        vm = build_fans_card_vm(display_fans)
-        self._fans_card.set_value(vm.value_text)
-        self._fans_card.set_status_class(vm.status_class)
-        self._fans_card.set_detail_text(vm.detail_text)
+        del fan_id, display_name  # cards re-resolve their labels on rebuild
+        self._refresh_fan_cards()
 
     def _on_warnings_changed(self, count: int) -> None:
-        # Warnings now surface only in the strip's warning chip (DEC-178); the
-        # former Warnings summary card was replaced by the Safety card.
-        self._status_strip.set_warning_count(count)
+        del count  # the footer health rollup + the Logs page own warnings (DEC-222)
 
     def _on_profile_changed(self, name: str) -> None:
-        self._status_strip.set_active_profile(name)
         self._annotate(f"Profile: {name}" if name else "Profile cleared")
         self._push_chart_context()
+        # A different profile means different controls — rebuild the cards.
+        self._refresh_fan_cards()
         # Sync combo selection to active profile
         idx = self._profile_combo.findText(name)
         if idx >= 0:
             with block_signals(self._profile_combo):
                 self._profile_combo.setCurrentIndex(idx)
 
-    def _on_card_clicked(self, category: str) -> None:
-        """Open the sensor picker for the clicked temp/fan card."""
-        # Sensor picker for temp/fan cards
-        sensors = self._state.sensors if self._state else []
-        fans = self._state.fans if self._state else []
-        current = self._card_bindings.get(category, "")
-        dialog = SensorPickerDialog(
-            category=category,
-            sensors=sensors,
-            fans=fans,
-            current_binding=current,
-            parent=self,
-        )
-        # Connect live updates for the dialog's duration, then disconnect (P1-G5).
-        _live_update = None
-        if self._state:
-
-            def _live_update(s):
-                dialog.update_values(s, self._state.fans if self._state else [])
-
-            self._state.sensors_updated.connect(_live_update)
-        try:
-            accepted = dialog.exec() == SensorPickerDialog.DialogCode.Accepted
-        finally:
-            if self._state and _live_update is not None:
-                import contextlib
-
-                with contextlib.suppress(RuntimeError):
-                    self._state.sensors_updated.disconnect(_live_update)
-        if accepted:
-            selected = dialog.selected_sensor_id
-            if selected:
-                self._card_bindings[category] = selected
-            else:
-                self._card_bindings.pop(category, None)
-            if self._settings_service:
-                self._settings_service.update(card_sensor_bindings=dict(self._card_bindings))
-            if self._state:
-                self._on_sensors_updated(self._state.sensors)
-
-    def _build_warnings_dialog(self):
-        """Build the active-warnings dialog (seam: returns it un-exec'd so the
-        wiring is unit-testable). Hosts a fresh :class:`WarningsView` over
-        ``AppState.active_warnings`` — the same set the strip chip counts."""
-        from PySide6.QtWidgets import QDialog, QDialogButtonBox
-
-        dlg = QDialog(self)
-        dlg.setObjectName("Dashboard_Dialog_warnings")
-        dlg.setWindowTitle("Active warnings")
-        dlg.resize(460, 420)
-        layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(WarningsView(self._state, parent=dlg))
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=dlg)
-        buttons.rejected.connect(dlg.reject)
-        buttons.accepted.connect(dlg.accept)
-        layout.addWidget(buttons)
-        return dlg
-
-    def _open_warnings(self) -> None:
-        """Status-strip warning chip → open the active-warnings dialog (DEC-184).
-
-        Re-homed here when the inspector's Warnings tab was removed."""
-        self._build_warnings_dialog().exec()
-
-    def _toggle_inspector(self) -> None:
-        """Status-strip toggle → show/hide the inspector pane."""
-        self._set_inspector_shown(not self._inspector_shown)
-
-    def _apply_inspector_default(self, width: int) -> None:
-        """One-shot: open the inspector on wide windows, collapse it on narrow.
-
-        Decided on the first real page width (Qt reports a placeholder width at
-        construction), then user-controlled for the session (DEC-182, 3A).
-        """
-        if self._inspector_default_applied:
-            return
-        self._inspector_default_applied = True
-        self._set_inspector_shown(width >= _INSPECTOR_WIDE_THRESHOLD_PX)
-
-    def _set_inspector_shown(self, shown: bool) -> None:
-        """Show or hide the inspector pane, restoring the prior split on reopen.
-
-        Hiding a QSplitter child hands its width to the chart pane (a programmatic
-        hide bypasses ``setCollapsible(False)``, which only blocks interactive
-        drag); the saved sizes restore the proportions when reopened.
-        """
-        if not shown and self._inspector_shown:
-            sizes = self._h_splitter.sizes()
-            if len(sizes) == 2 and sizes[1] > 0:
-                self._inspector_saved_sizes = list(sizes)
-        self._inspector_shown = shown
-        self._inspector.setVisible(shown)
-        if shown and self._inspector_saved_sizes is not None:
-            self._h_splitter.setSizes(self._inspector_saved_sizes)
-        self._status_strip.set_inspector_expanded(shown)
-
-    def _safety_detail_text(self) -> str:
-        """Read-only thermal-safety summary for the thermal chip's click detail.
-
-        The text is assembled Qt-free by :func:`dashboard_view.safety_detail_text`;
-        the THERMAL_STATES label is a presentation constant resolved here. Surfaces
-        only data we actually have — state, a plain reason, the current hottest CPU
-        sensor, and any active manual overrides."""
-        ds = self._state.daemon_status if self._state else None
-        thermal = (ds.thermal_state if ds else "normal") or "normal"
-        label, _css = THERMAL_STATES.get(thermal, (f"Thermal: {thermal}", ""))
-        sensors = self._state.sensors if self._state else []
-        cpu_vals = [s.value_c for s in sensors if s.kind in ("CpuTemp", "cpu_temp")]
-        n = len(ds.overrides) if ds and ds.overrides else 0
-        return safety_detail_text(thermal, label, cpu_vals, n)
-
-    def _open_safety_detail(self) -> None:
-        """Show the read-only thermal-safety detail (thermal chip click)."""
-        from PySide6.QtWidgets import QMessageBox
-
-        box = QMessageBox(self)
-        box.setObjectName("Dashboard_Dialog_safetyDetail")
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle("Thermal safety")
-        box.setText(self._safety_detail_text())
-        box.exec()
-
-    def _on_fan_table_double_click(self, index) -> None:
-        """Open rename dialog on double-click of fan table row."""
-        row = index.row()
-        if row < 0 or row >= len(self._fan_ids):
-            return
-        fan_id = self._fan_ids[row]
-        current_name = self._fan_table.item(row, 0).text() if self._fan_table.item(row, 0) else ""
-        new_name, ok = QInputDialog.getText(self, "Rename Fan", "Label:", text=current_name)
-        if ok and new_name.strip() and new_name.strip() != current_name:
-            if self._state:
-                self._state.set_fan_alias(fan_id, new_name.strip())
-            item = self._fan_table.item(row, 0)
-            if item:
-                item.setText(new_name.strip())
-
     def _on_apply_profile(self) -> None:
-        """Apply the combo-selected profile (status-strip Apply button)."""
+        """Apply the combo-selected profile (the page's Apply button)."""
         profile_id = self._profile_combo.currentData()
         if profile_id:
             self._activate_profile_by_id(profile_id)
@@ -1244,9 +878,7 @@ class DashboardPage(QWidget):
         Delegates the save → daemon-confirm → set-active flow to the shared
         ProfileService.activate(). On failure it reverts the combo to the
         previously-active profile (bug fix — the combo used to stay on the failed
-        pick) and surfaces the real reason to the log (previously lost). Shared by
-        the status-strip Apply button and the right-rail Quick Actions shortcuts
-        (DEC-213) so both routes give identical transient feedback."""
+        pick) and surfaces the real reason to the log (previously lost)."""
         import logging
 
         log = logging.getLogger(__name__)
@@ -1323,8 +955,6 @@ class DashboardPage(QWidget):
                 select_idx = 0
             if select_idx >= 0:
                 self._profile_combo.setCurrentIndex(select_idx)
-        # DEC-213: the right-rail Quick Actions shortcuts mirror the same profiles.
-        self._quick_actions.set_profiles([(p.id, p.name) for p in self._profile_service.profiles])
 
     def _show_content(self) -> None:
         if not self._has_data:

@@ -1,5 +1,59 @@
 # Changelog
 
+## [2.25.0] — 2026-07-19
+
+Dashboard rebuild: the telemetry graph is now the primary component, with a compact
+card per fan control beneath it and the Thermal Sensors table alongside. Five
+overlapping legacy presentations are retired. GUI-only; no daemon, API, schema, or
+settings-schema change (`EXPECTED_API_VERSION` stays 1; the GUI remains poll-only and
+never writes PWM). Pairs with `control-ofc-daemon` ≥ v2.11.0. DEC-222.
+
+### Added
+- **Per-control fan cards.** One card per logical control, showing its name, a
+  read-only state chip, RPM / SPEED / TEMP, a lightweight curve preview, and an Edit
+  button that opens the Controls page focused on that control. Cards map to controls
+  rather than individual fans because the daemon's live-intent API is control-keyed —
+  a card states how many fans it covers, so the blast radius is never a surprise.
+- **Unassigned card.** Controllable fans belonging to no control are pooled into one
+  card. With no profile active that is every controllable fan, so a fresh install
+  still sees its hardware instead of an empty page.
+- **Read-only fan cards.** Fans with no write path (a read-only GPU) get a card each,
+  showing the firmware-reported measured duty where that is the only speed signal
+  available (DEC-204). Their Edit button is hidden rather than dead.
+- **Footer indicators.** Poll freshness, operation mode, the clickable thermal-safety
+  detail and the cooling-readiness chip moved from the Dashboard-only status strip to
+  the always-visible footer, so every page now shows them.
+- **Active Warnings on the Logs page.** The warnings list (with its per-warning next
+  actions) now sits beside the event feed — history on the left, what is wrong right
+  now on the right. It previously opened as a Dashboard dialog.
+
+### Removed
+- The four **summary cards**, the **Fan Array** header, the **Fan Zone** card grid, the
+  **raw fan table**, and the **Quick Actions** + **Alerts** rail panels. Between them
+  they answered "what are the fans doing?" three different ways; the fan cards answer
+  it once.
+- The **Dashboard status strip**. Its connection / active-profile chips duplicated the
+  ribbon and sidebar; its four unique indicators moved to the footer. The Dashboard
+  keeps its own profile selector + Apply.
+- The **sensors-panel show/hide toggle**. The rail is always mounted and the splitter
+  handle is how the chart reclaims width on a narrow window.
+
+### Changed
+- **Curve previews on the cards** reuse the Controls page's owner-drawn painter, whose
+  constant size hint makes the old render→grow→re-render ratchet structurally
+  impossible.
+- **Chart default-series curation** moved from the Dashboard view-model into
+  `series_selection.default_series_keys` — it was chart logic carrying names from the
+  summary cards that used to seed it. Combined mode, the Reset button and first-run
+  decluttering behave exactly as before.
+- The mode word moved out of the global status banner (the footer owns it app-wide
+  now); the banner's DEMO badge is unchanged.
+
+### Notes
+- **Fan zones are dormant, not deleted.** The zone model, its two settings keys and
+  `card_sensor_bindings` are retained unused so no settings-schema migration is needed
+  and no saved zone assignments are lost. `AppSettings` stays at version 2.
+
 ## [2.24.0] — 2026-07-18
 
 First-class GPU zero-RPM idle — a one-click **Dedicate GPU Fan** setup that lets a

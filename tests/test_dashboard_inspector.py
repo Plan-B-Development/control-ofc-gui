@@ -8,11 +8,10 @@ dialog that replaced the former Warnings tab.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel, QPushButton, QSplitter, QTabWidget, QWidget
+from PySide6.QtWidgets import QLabel, QSplitter, QTabWidget, QWidget
 
 from control_ofc.ui.pages.dashboard_page import DashboardPage
 from control_ofc.ui.widgets.dashboard_inspector import DashboardInspector
-from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 
 
 class TestDashboardInspectorWidget:
@@ -38,100 +37,26 @@ class TestDashboardInspectorWidget:
         assert insp.sensors_widget() is sensors
 
 
-class TestInspectorDefaultByWidth:
-    """3A: open/closed default decided once, on the first real width."""
+class TestInspectorAlwaysPresent:
+    """DEC-222: the show/hide toggle lived on the removed status strip. The rail is
+    now always mounted and the splitter handle is how the chart reclaims width, so
+    there is no hidden state to restore and no one-shot width default."""
 
-    def test_default_expanded_on_wide(self, qtbot, app_state):
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-        page._apply_inspector_default(1400)
-        assert page._inspector_shown is True
-        assert page._inspector.isHidden() is False
-        assert page._status_strip.inspector_toggle.text().startswith("▾")
-
-    def test_default_collapsed_on_narrow(self, qtbot, app_state):
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-        page._apply_inspector_default(800)
-        assert page._inspector_shown is False
-        assert page._inspector.isHidden() is True
-        assert page._status_strip.inspector_toggle.text().startswith("▸")
-
-    def test_default_is_one_shot(self, qtbot, app_state):
-        """Once applied, a later width never re-decides — the user owns it."""
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-        page._apply_inspector_default(800)  # collapse
-        page._apply_inspector_default(1400)  # must be ignored
-        assert page._inspector_shown is False
-
-
-class TestInspectorToggle:
-    def test_toggle_flips_visibility_and_button(self, qtbot, app_state):
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-        assert page._inspector_shown is True  # coherent from build
-
-        page._toggle_inspector()
-        assert page._inspector_shown is False
-        assert page._inspector.isHidden() is True
-        assert page._status_strip.inspector_toggle.text().startswith("▸")
-
-        page._toggle_inspector()
-        assert page._inspector_shown is True
-        assert page._inspector.isHidden() is False
-        assert page._status_strip.inspector_toggle.text().startswith("▾")
-
-    def test_collapse_saves_split_and_reopen_restores(self, qtbot, app_state):
+    def test_rail_is_mounted_and_visible_in_the_splitter(self, qtbot, app_state):
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         h_splitter = page.findChild(QSplitter, "Dashboard_Splitter_horizontal")
+        assert h_splitter.widget(1) is page._inspector
+        assert not page._inspector.isHidden()
 
-        page._set_inspector_shown(False)
-        assert page._inspector_saved_sizes is not None
-        assert len(page._inspector_saved_sizes) == 2
-
-        saved = list(page._inspector_saved_sizes)
-        page._set_inspector_shown(True)
-        assert page._inspector.isHidden() is False
-        # The saved split must be re-applied verbatim, not zeroed or clamped.
-        assert h_splitter.sizes() == saved
-
-    def test_toggle_button_click_flips_pane(self, qtbot, app_state):
-        """End-to-end: clicking the strip button drives the whole
-        clicked → inspector_toggle_clicked → _toggle_inspector chain (the
-        non-hover accessibility path). A severed connection fails here."""
+    def test_no_toggle_state_survives(self, qtbot, app_state):
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
-        btn = page.findChild(QPushButton, "Inspector_Btn_toggle")
-        assert btn is not None
-        assert btn.toolTip() != ""  # affordance present
-
-        assert page._inspector_shown is True
-        btn.click()
-        assert page._inspector_shown is False
-        btn.click()
-        assert page._inspector_shown is True
-
-
-class TestInspectorSharesSelectionModel:
-    def test_sensors_panel_shares_the_chart_selection_model(self, qtbot, app_state):
-        """Toggling a series in the Sensors panel reflects on the chart because they
-        are the *same* SeriesSelectionModel instance (DEC-181 contract preserved)."""
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-        # Sensor panel lives inside the inspector and is still page._sensor_panel.
-        panel = page._inspector.findChild(SensorSeriesPanel, "Inspector_Panel_sensors")
-        assert panel is page._sensor_panel
-        assert panel._selection is page._selection
-        assert page._chart._selection is page._selection
-
-
-class TestInspectorContent:
-    def test_sensor_panel_hosted_no_event_or_warning_surfaces(self, qtbot, app_state):
-        page = DashboardPage(state=app_state)
-        qtbot.addWidget(page)
-        assert page._inspector.findChild(QWidget, "Inspector_Panel_sensors") is not None
-        # The former Events/Warnings tab pages are gone (DEC-184).
-        assert page._inspector.findChild(QWidget, "Inspector_Tab_events") is None
-        assert page._inspector.findChild(QWidget, "Inspector_Tab_warnings") is None
+        for attr in (
+            "_inspector_shown",
+            "_inspector_saved_sizes",
+            "_inspector_default_applied",
+            "_toggle_inspector",
+            "_set_inspector_shown",
+        ):
+            assert not hasattr(page, attr), attr

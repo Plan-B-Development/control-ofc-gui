@@ -294,13 +294,3 @@ class TestFanWizardExcludesIntel:
 # ---------------------------------------------------------------------------
 # Dashboard GPU card
 # ---------------------------------------------------------------------------
-
-
-class TestDashboardGpuCard:
-    def test_card_title_uses_intel_when_no_amd(self, qtbot, app_state, profile_service):
-        from control_ofc.ui.pages.dashboard_page import DashboardPage
-
-        page = DashboardPage(state=app_state, profile_service=profile_service)
-        qtbot.addWidget(page)
-        app_state.set_capabilities(_make_intel_caps())
-        assert page._gpu_card._title_label.text() == "Arc B580 Temp"

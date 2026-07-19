@@ -59,7 +59,7 @@ class TestFanDeduplication:
         state.set_fans(fans)
 
         # Only the amd_gpu entry should appear
-        assert page._fan_table.rowCount() == 1
+        assert len(page._displayable_fan_keys) == 1
 
     def test_non_gpu_hwmon_fan_preserved(self, qtbot):
         state = _make_state()
@@ -73,7 +73,7 @@ class TestFanDeduplication:
         state.set_fans(fans)
 
         # Both should appear — motherboard fan is NOT a duplicate
-        assert page._fan_table.rowCount() == 2
+        assert len(page._displayable_fan_keys) == 2
 
     def test_hwmon_gpu_fan_shown_when_no_amd_gpu(self, qtbot):
         state = AppState()
@@ -94,7 +94,7 @@ class TestFanDeduplication:
         state.set_fans(fans)
 
         # No amd_gpu fan to shadow it — should show
-        assert page._fan_table.rowCount() == 1
+        assert len(page._displayable_fan_keys) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -174,16 +174,3 @@ class TestSensorDeduplication:
 # ---------------------------------------------------------------------------
 # Fan table: 4 columns, no Colour
 # ---------------------------------------------------------------------------
-
-
-class TestFanTableNoColour:
-    """Fan table has 4 columns after Colour removal."""
-
-    def test_four_columns(self, qtbot):
-        state = _make_state()
-        page = DashboardPage(state=state)
-        qtbot.addWidget(page)
-
-        assert page._fan_table.columnCount() == 4
-        headers = [page._fan_table.horizontalHeaderItem(i).text() for i in range(4)]
-        assert headers == ["Label", "Source", "RPM", "PWM%"]

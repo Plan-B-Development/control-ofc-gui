@@ -180,7 +180,7 @@ _DEMO_HWMON_HEADERS: list[dict] = [
 # old overlapping _DEMO_GROUPS rollup (its "Case" group double-counted the Intake
 # and Exhaust fans; a physical zone is exclusive). GPU fans are intentionally left
 # unassigned so demo mode exercises BOTH the user-zone path and the role/source
-# fallback in services/fan_grouping.py.
+# fallback in services/fan_cards_view.py.
 _DEMO_ZONES: dict[str, str] = {
     "openfan:ch00": "Front Intake",
     "openfan:ch01": "Front Intake",
@@ -240,7 +240,7 @@ class DemoService:
                 model_name="Radeon RX 7900 XTX",
                 display_label="RX 7900 XTX",
                 pci_id="0000:2d:00.0",
-                fan_control_method="pmfw",
+                fan_control_method="pmfw_curve",
                 pmfw_supported=True,
                 fan_rpm_available=True,
                 fan_write_supported=True,
@@ -385,7 +385,7 @@ class DemoService:
                 pci_device_id=0x744C,
                 pci_revision=0xC8,
                 model_name="Radeon RX 7900 XTX",
-                fan_control_method="pmfw",
+                fan_control_method="pmfw_curve",
                 overdrive_enabled=True,
                 ppfeaturemask="0xffffffff",
                 ppfeaturemask_bit14_set=True,

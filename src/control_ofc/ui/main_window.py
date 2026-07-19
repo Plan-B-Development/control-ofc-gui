@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from control_ofc.api.client import DaemonClient
-from control_ofc.api.models import ConnectionState, OperationMode
-from control_ofc.constants import PAGE_DASHBOARD, POLL_INTERVAL_MS
+from control_ofc.api.models import ConnectionState, OperationMode, ReadinessRollup
+from control_ofc.constants import PAGE_CONTROLS, PAGE_DASHBOARD, POLL_INTERVAL_MS
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 from control_ofc.services.app_state import AppState
+from control_ofc.services.dashboard_view import safety_detail_text
 from control_ofc.services.demo_controller import DemoController
 from control_ofc.services.demo_service import DemoService
 from control_ofc.services.diagnostics_service import DiagnosticsService
@@ -30,7 +32,7 @@ from control_ofc.ui.pages.system_state_page import SystemStatePage
 from control_ofc.ui.pages.theme_page import ThemePage
 from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.sidebar import Sidebar
-from control_ofc.ui.status_banner import StatusBanner
+from control_ofc.ui.status_banner import THERMAL_STATES, StatusBanner
 from control_ofc.ui.status_ribbon import StatusRibbon
 from control_ofc.ui.widgets.error_banner import ErrorBanner
 
@@ -151,7 +153,9 @@ class MainWindow(QWidget):
         )
         # DEC-210: Logs is now its own page (migrated Diagnostics Event Log +
         # a Log Inspector). Shares the same DiagnosticsService feed.
-        self.logs_page = LogsPage(diagnostics_service=self._diag)
+        # DEC-222: Logs is now the single active-warnings surface, so it needs
+        # AppState (the warnings live there, not in the diagnostics event feed).
+        self.logs_page = LogsPage(diagnostics_service=self._diag, state=self._state)
         # DEC-211: System State is now its own page (migrated Diagnostics
         # Troubleshooting). Owns its own hw-diagnostics/verify workers; reads the
         # shared last_hw_diagnostics cache.
@@ -231,6 +235,14 @@ class MainWindow(QWidget):
         self._state.warning_count_changed.connect(self.footer.set_warning_count)
         self._state.status_updated.connect(self._on_status_for_ribbon)
         self.status_ribbon.alerts_clicked.connect(self._open_logs)
+        # DEC-222: four indicators re-homed from the retired DashboardStatusStrip.
+        # They were Dashboard-only; the footer is always visible, so every page
+        # now answers "what mode am I in / is the data fresh / is it thermally
+        # safe / is my cooling set up".
+        self._state.mode_changed.connect(self.footer.set_operation_mode)
+        self.footer.set_operation_mode(self._state.mode)
+        self.footer.thermal_clicked.connect(self._open_safety_detail)
+        self.footer.readiness_clicked.connect(self._open_readiness)
         # DEC-216: the global footer actions moved off the retired Diagnostics
         # page — Rescan surfaces the System State page (so its outcome line is
         # visible) then runs there; Export reuses the Logs page's bundle handler.
@@ -273,6 +285,8 @@ class MainWindow(QWidget):
         # Wire the dashboard readiness affordances (cooling-readiness chip +
         # no-hardware "what to do next" button) to sidebar navigation.
         self.dashboard_page.open_readiness.connect(self._open_readiness)
+        # DEC-222: a fan card's Edit opens Controls and focuses that control.
+        self.dashboard_page.open_control.connect(self._open_control)
         # DEC-207/DEC-216: the Cooling Hardware Readiness "set preferred sensor"
         # deep-link is owned by the Hardware page (the Diagnostics duplicate was
         # retired with the page).
@@ -282,6 +296,16 @@ class MainWindow(QWidget):
 
         # Populate dashboard profile selector
         self.dashboard_page.populate_profiles()
+
+        # Poll-age ticks ~1 Hz. It lives here rather than on a page because the
+        # footer is always visible — a page-owned timer would stop updating the
+        # moment the user navigated away from it.
+        self._poll_age_timer = QTimer(self)
+        self._poll_age_timer.setObjectName("MainWindow_Timer_pollAge")
+        self._poll_age_timer.setInterval(1000)
+        self._poll_age_timer.timeout.connect(self._tick_poll_age)
+        self._poll_age_timer.start()
+        self._tick_poll_age()
 
         if demo_mode:
             self._start_demo_mode()
@@ -333,9 +357,51 @@ class MainWindow(QWidget):
         self._on_page_changed(page_id)
 
     def _on_status_for_ribbon(self, status) -> None:
-        """Feed daemon uptime + thermal state to the status ribbon (DEC-208)."""
+        """Feed daemon uptime + thermal to the ribbon, and thermal + cooling
+        readiness to the footer (DEC-208 / DEC-222)."""
         self.status_ribbon.set_uptime(status.uptime_seconds)
         self.status_ribbon.set_thermal_state(status.thermal_state)
+        self.footer.set_thermal_state(status.thermal_state or "normal")
+        self.footer.set_readiness_rollup(self._readiness_for_footer(status))
+
+    def _readiness_for_footer(self, status) -> ReadinessRollup | None:
+        """The readiness rollup to show on the footer chip, or ``None`` to hide it.
+
+        Hidden in demo mode — synthetic hardware has no real readiness (DEC-206,
+        O-2) — and whenever the daemon sends no rollup (older daemon / pre-seed).
+        """
+        if self._state.mode == OperationMode.DEMO:
+            return None
+        return status.readiness
+
+    def _tick_poll_age(self) -> None:
+        """Refresh the footer's poll-freshness label (DEC-222)."""
+        self.footer.update_poll_age(time.monotonic(), self._state.last_poll_monotonic)
+
+    def _safety_detail_text(self) -> str:
+        """Read-only thermal-safety summary for the footer thermal chip.
+
+        Assembled Qt-free by :func:`dashboard_view.safety_detail_text`; the
+        THERMAL_STATES label is a presentation constant resolved here. Surfaces
+        only data we actually have — state, a plain reason, the current hottest
+        CPU sensor, and any active manual overrides."""
+        ds = self._state.daemon_status
+        thermal = (ds.thermal_state if ds else "normal") or "normal"
+        label, _css = THERMAL_STATES.get(thermal, (f"Thermal: {thermal}", ""))
+        cpu_vals = [s.value_c for s in self._state.sensors if s.kind in ("CpuTemp", "cpu_temp")]
+        n = len(ds.overrides) if ds and ds.overrides else 0
+        return safety_detail_text(thermal, label, cpu_vals, n)
+
+    def _open_safety_detail(self) -> None:
+        """Show the read-only thermal-safety detail (footer thermal chip, DEC-185)."""
+        from PySide6.QtWidgets import QMessageBox
+
+        box = QMessageBox(self)
+        box.setObjectName("MainWindow_Dialog_safetyDetail")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Thermal safety")
+        box.setText(self._safety_detail_text())
+        box.exec()
 
     def _populate_sidebar_profiles(self) -> None:
         """(Re)build the sidebar profile combo from ProfileService (DEC-208)."""
@@ -519,6 +585,18 @@ class MainWindow(QWidget):
 
         self.sidebar.activate_nav(NAV_SETTINGS)
         self.settings_page.focus_preferred_sensors(role)
+
+    def _open_control(self, control_id: str) -> None:
+        """A Dashboard fan card's Edit was clicked (DEC-222).
+
+        The cards are read-only by design — every write lives on the Controls
+        page — so Edit navigates there and focuses the control. An Unassigned card
+        sends "" and simply lands the user on Controls, where the fans can be
+        assigned.
+        """
+        self.page_stack.setCurrentIndex(PAGE_CONTROLS)
+        self.sidebar.select_page(PAGE_CONTROLS)
+        self.controls_page.focus_control(control_id)
 
     def _open_logs(self) -> None:
         """The status-ribbon Alerts indicator was clicked — open the Logs entry

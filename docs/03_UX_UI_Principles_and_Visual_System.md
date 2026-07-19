@@ -74,8 +74,9 @@ Use a classic desktop shell:
 - Theme
 - Logs
 
-### Header/status strip
-A lightweight, always-visible status region should expose:
+### Header ribbon and footer
+A lightweight, always-visible status region should expose
+(split across the top ribbon and the bottom footer since DEC-222):
 - connection state
 - active profile
 - control mode

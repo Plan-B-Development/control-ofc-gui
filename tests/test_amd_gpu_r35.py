@@ -11,8 +11,6 @@ from control_ofc.api.models import (
     AmdGpuCapability,
     Capabilities,
 )
-from control_ofc.ui.pages.dashboard_page import DashboardPage
-from control_ofc.ui.widgets.summary_card import SummaryCard
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -156,45 +154,6 @@ class TestCapabilitiesParsing:
 
 # ---------------------------------------------------------------------------
 # Dashboard GPU card tests
-# ---------------------------------------------------------------------------
-
-
-class TestDashboardGpuCard:
-    """Dashboard GPU card updates title from capabilities."""
-
-    def test_gpu_card_default_title(self, qtbot, app_state, profile_service):
-        page = DashboardPage(state=app_state, profile_service=profile_service)
-        qtbot.addWidget(page)
-        assert page._gpu_card._title_label.text() == "GPU Temp"
-
-    def test_gpu_card_updates_to_model_name(self, qtbot, app_state, profile_service):
-        page = DashboardPage(state=app_state, profile_service=profile_service)
-        qtbot.addWidget(page)
-        caps = _make_gpu_caps(present=True, display_label="9070XT")
-        app_state.set_capabilities(caps)
-        assert page._gpu_card._title_label.text() == "9070XT Temp"
-
-    def test_gpu_card_no_gpu_keeps_default(self, qtbot, app_state, profile_service):
-        page = DashboardPage(state=app_state, profile_service=profile_service)
-        qtbot.addWidget(page)
-        caps = _make_gpu_caps(present=False)
-        app_state.set_capabilities(caps)
-        # Title should NOT change when GPU is not present
-        assert page._gpu_card._title_label.text() == "GPU Temp"
-
-
-class TestSummaryCardSetTitle:
-    """SummaryCard.set_title() updates the title label."""
-
-    def test_set_title(self, qtbot):
-        card = SummaryCard("Original", category="test")
-        qtbot.addWidget(card)
-        card.set_title("New Title")
-        assert card._title_label.text() == "New Title"
-
-
-# ---------------------------------------------------------------------------
-# Source label tests
 # ---------------------------------------------------------------------------
 
 

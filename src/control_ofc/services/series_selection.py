@@ -11,6 +11,37 @@ from enum import Enum
 
 from PySide6.QtCore import QObject, Signal
 
+from control_ofc.api.models import SensorReading
+
+# The curated default chart series (refinement §7.3 / B-fork DEC-181): one CPU
+# temp, one GPU temp, one mobo/case temp. Kind-aware, so it cannot be derived
+# from the series keys alone — the model can't tell a CPU temp from a GPU temp
+# by key. Daemon sends snake_case kinds; demo sends PascalCase.
+_DEFAULT_SERIES_KINDS: tuple[tuple[str, ...], ...] = (
+    ("CpuTemp", "cpu_temp"),
+    ("GpuTemp", "gpu_temp"),
+    ("MbTemp", "mb_temp"),
+)
+
+
+def default_series_keys(sensors: list[SensorReading]) -> set[str]:
+    """The curated default series: one CPU temp, one GPU temp, one mobo/case temp.
+
+    This is what ``ChartMode.COMBINED`` resolves to. It lives here rather than in
+    a page view-model because it is chart logic, not page logic — it was
+    previously three functions in ``dashboard_view`` named after the summary
+    cards that seeded it, which DEC-222 removed.
+
+    Slots with no matching sensor are simply dropped: ``set_only_visible`` later
+    intersects with the known keys, so an absent or filtered sensor is harmless.
+    """
+    keys: set[str] = set()
+    for kinds in _DEFAULT_SERIES_KINDS:
+        sensor = next((s for s in sensors if s.kind in kinds), None)
+        if sensor is not None:
+            keys.add(f"sensor:{sensor.id}")
+    return keys
+
 
 class SeriesGroup(Enum):
     TEMPS = "temps"
@@ -23,14 +54,14 @@ class ChartMode(Enum):
 
     THERMALS = "thermals"
     FANS = "fans"
-    COMBINED = "combined"  # the curated default subset (kind-aware, dashboard-supplied)
+    COMBINED = "combined"  # the curated default subset (see default_series_keys)
     DIAGNOSTICS = "diagnostics"  # everything (power-user "show all")
 
 
 # Group-based modes resolve to a fixed set of groups. COMBINED is intentionally
-# absent — it is curated by sensor *kind* (CPU/GPU/one mobo + aggregate), which
-# only the dashboard knows, so it is applied with explicit keys, not groups.
-# DIAGNOSTICS is absent too — it means "all known keys" (select_all).
+# absent — it is curated by sensor *kind* (CPU/GPU/one mobo), so it is applied
+# with explicit keys from default_series_keys, not groups. DIAGNOSTICS is absent
+# too — it means "all known keys" (select_all).
 _MODE_GROUPS: dict[ChartMode, set[SeriesGroup]] = {
     ChartMode.THERMALS: {SeriesGroup.TEMPS},
     ChartMode.FANS: {SeriesGroup.MOBO_FANS, SeriesGroup.OPENFAN_FANS},
@@ -110,9 +141,9 @@ class SeriesSelectionModel(QObject):
 
         - DIAGNOSTICS → everything visible (``select_all``).
         - COMBINED → the curated, kind-aware subset; ``curated_keys`` MUST be
-          supplied by the dashboard (the model can't tell a CPU temp from a GPU
-          temp by key). If ``None`` (e.g. before any sensors arrive) visibility is
-          left unchanged but the mode is still recorded.
+          supplied by the caller (see :func:`default_series_keys` — the model
+          holds keys, not sensor kinds). If ``None`` (e.g. before any sensors
+          arrive) visibility is left unchanged but the mode is still recorded.
         - THERMALS / FANS → the group-based preset (``_MODE_GROUPS``).
         """
         self._active_mode = mode

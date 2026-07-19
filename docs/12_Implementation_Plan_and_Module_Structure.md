@@ -33,7 +33,7 @@ The app can connect to the daemon, poll read endpoints, and display live summary
 
 ### Phase 3 — Dashboard
 Build:
-- summary cards
+- per-control fan cards
 - fan status list/cards
 - time-range chart
 - fan visibility toggles

@@ -27,11 +27,11 @@ from control_ofc.api.models import (
 from control_ofc.knowledge.sensor_knowledge import classify_sensor
 from control_ofc.services.app_state import AppState
 from control_ofc.services.demo_service import DemoService
-from control_ofc.services.fan_grouping import build_fan_groups
+from control_ofc.services.fan_cards_view import build_fan_card_vms
 from control_ofc.services.overview_view import fan_control_method
 from control_ofc.services.profile_service import CONTROL_ROLE_GPU, ControlMember, infer_member_role
 from control_ofc.ui.fan_display import filter_displayable_fans
-from control_ofc.ui.widgets.fan_zone_card import FanTile
+from control_ofc.ui.widgets.fan_control_card import FanControlCard
 
 
 def _fan_control_method(fan: FanReading, state: AppState | None) -> str:
@@ -282,95 +282,71 @@ class TestDutyPct:
         fans = parse_fans({"fans": [{"id": "openfan:ch00", "source": "openfan", "rpm": 1200}]})
         assert fans[0].duty_pct is None
 
-    def test_build_fan_groups_flows_duty_pct_to_tile(self):
+    def test_duty_pct_flows_into_the_card_vm(self):
+        """A read-only NVIDIA fan gets its own card carrying the measured duty —
+        it has no commanded PWM, so duty is the only speed signal it has."""
         fan = FanReading(id="nvidia_gpu:0000:01:00.0", source="nvidia_gpu", rpm=1400, duty_pct=55)
-        groups = build_fan_groups(
-            [fan],
-            fan_zones={},
-            display_name=lambda i: i,
-            active_profile=None,
-            overrides=[],
-        )
-        tiles = [t for g in groups for t in g.tiles]
-        nvidia = next(t for t in tiles if t.fan_id == "nvidia_gpu:0000:01:00.0")
-        assert nvidia.duty_pct == 55
-        assert nvidia.pwm_pct is None
+        cards = build_fan_card_vms([fan], active_profile=None, overrides=[])
+        card = next(c for c in cards if c.member_fan_ids == ("nvidia_gpu:0000:01:00.0",))
+        assert card.is_read_only is True
+        assert card.duty_pct == 55
+        assert card.pwm_pct is None
 
-    def test_tile_shows_duty_not_pwm(self, qtbot):
-        from control_ofc.services.fan_grouping import FanState, FanTileVM
-
-        vm = FanTileVM(
-            fan_id="nvidia_gpu:0000:01:00.0",
-            display_name="RTX 4080 Fan",
-            source="nvidia_gpu",
-            rpm=1400,
-            pwm_pct=None,
-            duty_pct=55,
-            state=FanState.NORMAL,
-            age_ms=100,
-            role=None,
-            controlled_by_daemon=False,
-            curve_source=None,
-        )
-        tile = FanTile(vm)
-        qtbot.addWidget(tile)
-        metrics = tile._metrics_label.text()
+    def test_card_shows_duty_not_pwm(self, qtbot):
+        fan = FanReading(id="nvidia_gpu:0000:01:00.0", source="nvidia_gpu", rpm=1400, duty_pct=55)
+        vm = build_fan_card_vms([fan], active_profile=None, overrides=[])[0]
+        card = FanControlCard(vm)
+        qtbot.addWidget(card)
         # Measured duty is labelled "duty" so it is never read as commanded PWM.
-        assert "55% duty" in metrics
-        assert "NVIDIA GPU" in metrics
-        # The same fallback drives the detail text — exercise both paths.
-        assert "55% duty" in tile.detail_text()
+        assert card._speed_value.text() == "55% duty"
+        assert card._rpm_value.text() == "1400"
 
-    def test_tile_shows_zero_duty(self, qtbot):
+    def test_card_shows_zero_duty(self, qtbot):
         # Guard the 0-vs-None falsy trap: duty_pct=0 must render "0% duty", not be
-        # dropped as if absent (FanTile gates on `is not None`, not truthiness). A
-        # genuinely-stopped NVIDIA fan reads 0 and must still show a duty tile.
-        from control_ofc.services.fan_grouping import FanState, FanTileVM
-
-        vm = FanTileVM(
-            fan_id="nvidia_gpu:0000:01:00.0",
-            display_name="RTX 4080 Fan",
-            source="nvidia_gpu",
-            rpm=0,
-            pwm_pct=None,
-            duty_pct=0,
-            state=FanState.NORMAL,
-            age_ms=100,
-            role=None,
-            controlled_by_daemon=False,
-            curve_source=None,
-        )
-        tile = FanTile(vm)
-        qtbot.addWidget(tile)
-        metrics = tile._metrics_label.text()
-        assert "0% duty" in metrics
-        assert "NVIDIA GPU" in metrics
-        assert "0% duty" in tile.detail_text()
+        # dropped as if absent (the card gates on `is not None`, not truthiness). A
+        # genuinely-stopped NVIDIA fan reads 0 and must still show a duty value.
+        fan = FanReading(id="nvidia_gpu:0000:01:00.0", source="nvidia_gpu", rpm=0, duty_pct=0)
+        vm = build_fan_card_vms([fan], active_profile=None, overrides=[])[0]
+        card = FanControlCard(vm)
+        qtbot.addWidget(card)
+        assert card._speed_value.text() == "0% duty"
 
     def test_commanded_pwm_wins_over_duty(self, qtbot):
         # Precedence contract: when both are present, the daemon-commanded PWM
         # is shown (not the measured duty) — a hypothetical future source with
         # both must never render duty in place of the commanded value.
-        from control_ofc.services.fan_grouping import FanState, FanTileVM
+        from control_ofc.services.fan_cards_view import FanCardVM, FanState
 
-        vm = FanTileVM(
-            fan_id="hwmon:x:pwm1",
-            display_name="Fan",
-            source="hwmon",
+        vm = FanCardVM(
+            control_id="c1",
+            label="Fan",
+            is_unassigned=False,
+            is_read_only=False,
+            fan_count=1,
+            member_fan_ids=("hwmon:x:pwm1",),
             rpm=1000,
             pwm_pct=40,
             duty_pct=55,
+            temp_c=None,
             state=FanState.NORMAL,
-            age_ms=100,
-            role=None,
-            controlled_by_daemon=False,
-            curve_source=None,
+            overridden=False,
+            curve=None,
         )
-        tile = FanTile(vm)
-        qtbot.addWidget(tile)
-        metrics = tile._metrics_label.text()
-        assert "40%" in metrics
-        assert "duty" not in metrics
+        card = FanControlCard(vm)
+        qtbot.addWidget(card)
+        assert card._speed_value.text() == "40%"
+        assert "duty" not in card._speed_value.text()
+
+    def test_read_only_card_offers_no_edit(self, qtbot):
+        """A read-only fan cannot be assigned to a control (DEC-102), so an Edit
+        button would be dead. It is hidden, and the chip says why."""
+        fan = FanReading(id="nvidia_gpu:0000:01:00.0", source="nvidia_gpu", rpm=1400, duty_pct=55)
+        vm = build_fan_card_vms([fan], active_profile=None, overrides=[])[0]
+        card = FanControlCard(vm)
+        qtbot.addWidget(card)
+        card.show()
+        assert card._state_chip.text() == "Read-only"
+        assert not card._edit_btn.isVisible()
 
 
 # ---------------------------------------------------------------------------
@@ -448,13 +424,25 @@ class TestFanWizardExcludesNvidia:
 
 
 class TestDashboardGpuCard:
-    def test_card_title_uses_nvidia_when_no_amd_or_intel(self, qtbot, app_state, profile_service):
-        from control_ofc.ui.pages.dashboard_page import DashboardPage
-
-        page = DashboardPage(state=app_state, profile_service=profile_service)
-        qtbot.addWidget(page)
+    def test_read_only_gpu_card_is_labelled_with_the_model(self, qtbot, app_state):
+        """DEC-222: the summary cards (and their GPU-titled face) were removed, so
+        the GPU is now identified on its own read-only fan card. The label comes
+        from AppState.fan_display_name, which resolves the model from capabilities
+        — a bare fan id here would mean the user cannot tell which GPU it is."""
         app_state.set_capabilities(_make_nvidia_caps())
-        assert page._gpu_card._title_label.text() == "NVIDIA GeForce RTX 4080 Temp"
+        fan = FanReading(id="nvidia_gpu:0000:01:00.0", source="nvidia_gpu", rpm=1500, duty_pct=42)
+        vm = build_fan_card_vms(
+            [fan],
+            active_profile=None,
+            overrides=[],
+            caps=app_state.capabilities,
+            display_name=app_state.fan_display_name,
+        )[0]
+        card = FanControlCard(vm)
+        qtbot.addWidget(card)
+        assert vm.is_read_only is True
+        assert card._name.text() == "NVIDIA GeForce RTX 4080 Fan"
+        assert card._speed_value.text() == "42% duty"
 
 
 # ---------------------------------------------------------------------------

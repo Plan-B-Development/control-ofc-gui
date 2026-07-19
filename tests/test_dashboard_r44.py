@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtWidgets import QSizePolicy
 
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import SeriesSelectionModel
-from control_ofc.ui.widgets.summary_card import SummaryCard
 from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 
@@ -83,41 +81,6 @@ class TestSensorPanelColourSwatch:
         monkeypatch.setattr(QColorDialog, "exec", lambda self: opened.append(1) or 1)
         panel._on_item_clicked(item, 0)  # not the colour column
         assert opened == []
-
-
-class TestSummaryCardSizing:
-    """Summary cards use Maximum vertical policy, no hardcoded maxHeight."""
-
-    def test_no_hardcoded_max_height(self, qtbot):
-        card = SummaryCard("Test", "42")
-        qtbot.addWidget(card)
-        # Maximum height should NOT be 100 (the old hardcoded value)
-        # With Maximum policy it should be QWIDGETSIZE_MAX (16777215)
-        assert card.maximumHeight() > 100
-
-    def test_size_policy_vertical_maximum(self, qtbot):
-        card = SummaryCard("Test", "42")
-        qtbot.addWidget(card)
-        policy = card.sizePolicy()
-        assert policy.verticalPolicy() == QSizePolicy.Policy.Maximum
-
-    def test_tight_margins(self, qtbot):
-        card = SummaryCard("Test", "42")
-        qtbot.addWidget(card)
-        margins = card.layout().contentsMargins()
-        assert margins.top() <= 6
-        assert margins.bottom() <= 6
-
-    def test_tight_spacing(self, qtbot):
-        card = SummaryCard("Test", "42")
-        qtbot.addWidget(card)
-        assert card.layout().spacing() <= 2
-
-    def test_uses_theme_classes(self, qtbot):
-        card = SummaryCard("Test", "42")
-        qtbot.addWidget(card)
-        assert card._title_label.property("class") == "PageSubtitle"
-        assert card._value_label.property("class") == "CardValue"
 
 
 class TestHoverLifecycle:

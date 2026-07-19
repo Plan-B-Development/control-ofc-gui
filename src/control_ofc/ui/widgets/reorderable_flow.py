@@ -9,7 +9,6 @@ Two containers build on it — they differ only in how cards are added/removed:
 
 - :class:`~control_ofc.ui.widgets.draggable_flow.DraggableFlowContainer`
   (Controls page) uses a clear-and-rebuild lifecycle;
-- :class:`~control_ofc.ui.widgets.fan_zone_card.FanZoneGrid` (dashboard fan zones)
   reconciles cards in place each 1 Hz poll.
 
 The base owns only the drag plumbing. A subclass creates the ``FlowLayout`` and

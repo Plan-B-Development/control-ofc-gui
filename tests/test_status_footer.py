@@ -55,3 +55,114 @@ def test_pages_expose_nav_and_action_shims():
     assert hasattr(LogsPage, "export_bundle")
     # DEC-215: SettingsPage lost select_tab (single-surface, no sub-tabs).
     assert not hasattr(SettingsPage, "select_tab")
+
+
+# ---------------------------------------------------------------------------
+# DEC-222: four indicators re-homed here from the retired DashboardStatusStrip.
+# They were Dashboard-only; the footer is always visible, so every page gets them.
+# ---------------------------------------------------------------------------
+
+
+class TestRehomedIndicators:
+    def test_operation_mode_is_shown(self, qtbot):
+        from control_ofc.api.models import OperationMode
+
+        footer = StatusFooter()
+        qtbot.addWidget(footer)
+        footer.set_operation_mode(OperationMode.DEMO)
+        assert footer._mode_label.text() == "Demo mode"
+        assert footer._mode_label.property("class") == "DemoBadge"
+
+        footer.set_operation_mode(OperationMode.AUTOMATIC)
+        assert footer._mode_label.text() == "Automatic"
+        assert footer._mode_label.property("class") == "CardMeta"
+
+    def test_poll_age_formats_elapsed_time(self, qtbot):
+        footer = StatusFooter()
+        qtbot.addWidget(footer)
+        assert footer._poll_age.text() == "Not updated yet"
+        footer.update_poll_age(100.0, None)
+        assert footer._poll_age.text() == "Not updated yet"
+        footer.update_poll_age(100.0, 99.0)
+        assert footer._poll_age.text() == "Updated just now"
+        footer.update_poll_age(100.0, 90.0)
+        assert footer._poll_age.text() == "Updated 10s ago"
+
+    def test_thermal_chip_pairs_word_with_colour(self, qtbot):
+        footer = StatusFooter()
+        qtbot.addWidget(footer)
+        footer.set_thermal_state("normal")
+        assert footer._thermal_btn.text() == "Thermal OK"
+        assert footer._thermal_btn.property("class") == "SuccessChip"
+
+        footer.set_thermal_state("emergency")
+        assert footer._thermal_btn.text() == "Thermal: Emergency"
+        assert footer._thermal_btn.property("class") == "CriticalChip"
+
+    def test_unknown_thermal_state_is_surfaced_not_hidden(self, qtbot):
+        """A daemon state the GUI doesn't know must still be shown."""
+        footer = StatusFooter()
+        qtbot.addWidget(footer)
+        footer.set_thermal_state("some_new_state")
+        assert "some_new_state" in footer._thermal_btn.text()
+        assert footer._thermal_btn.property("class") == "InfoChip"
+
+    def test_thermal_chip_is_clickable_and_focusable(self, qtbot):
+        """The detail must be reachable by click or keyboard, not hover (WCAG 1.4.13)."""
+        footer = StatusFooter()
+        qtbot.addWidget(footer)
+        seen: list[bool] = []
+        footer.thermal_clicked.connect(lambda: seen.append(True))
+        footer._thermal_btn.click()
+        assert seen == [True]
+
+    def test_readiness_chip_hidden_without_a_rollup(self, qtbot):
+        """Older daemons / pre-seed / demo send no rollup — hide, never guess."""
+        footer = StatusFooter()
+        qtbot.addWidget(footer)
+        footer.show()
+        footer.set_readiness_rollup(None)
+        assert footer._readiness_btn.isHidden()
+
+    def test_readiness_chip_counts_items_to_fix(self, qtbot):
+        from control_ofc.api.models import ReadinessRollup
+
+        footer = StatusFooter()
+        qtbot.addWidget(footer)
+        footer.show()
+        footer.set_readiness_rollup(ReadinessRollup(overall="warning", warning=2))
+        assert not footer._readiness_btn.isHidden()
+        assert "2 to fix" in footer._readiness_btn.text()
+        assert footer._readiness_btn.property("class") == "WarningChip"
+
+    def test_readiness_ok_state(self, qtbot):
+        from control_ofc.api.models import ReadinessRollup
+
+        footer = StatusFooter()
+        qtbot.addWidget(footer)
+        footer.set_readiness_rollup(ReadinessRollup(overall="ok"))
+        assert footer._readiness_btn.text() == "✓ Cooling ready"
+        assert footer._readiness_btn.property("class") == "SuccessChip"
+
+    def test_readiness_tooltip_is_html_escaped(self, qtbot):
+        """The summary is a daemon string — Qt must render it verbatim, never as
+        markup (defence-in-depth, mirroring the item views' PlainText rule)."""
+        from control_ofc.api.models import ReadinessRollup
+
+        footer = StatusFooter()
+        qtbot.addWidget(footer)
+        footer.set_readiness_rollup(
+            ReadinessRollup(overall="warning", warning=1, top_summary="<b>load it87</b>")
+        )
+        assert footer._readiness_btn.toolTip() == "&lt;b&gt;load it87&lt;/b&gt;"
+
+    def test_readiness_chip_emits_on_click(self, qtbot):
+        from control_ofc.api.models import ReadinessRollup
+
+        footer = StatusFooter()
+        qtbot.addWidget(footer)
+        footer.set_readiness_rollup(ReadinessRollup(overall="warning", warning=1))
+        seen: list[bool] = []
+        footer.readiness_clicked.connect(lambda: seen.append(True))
+        footer._readiness_btn.click()
+        assert seen == [True]
