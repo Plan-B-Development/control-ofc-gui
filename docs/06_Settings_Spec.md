@@ -34,9 +34,11 @@ Implemented settings:
 persistence (`daemon_state.json`), so a GUI-side toggle controlled nothing (DEC-138).
 
 *Persisted but not surfaced as page controls:* a few `AppSettings` keys are
-written by behaviour elsewhere rather than by a Settings widget — `fan_zones`,
+written by behaviour elsewhere rather than by a Settings widget. `fan_zones`,
 `fan_zone_order`, `fan_zones_collapsed` (Dashboard fan-zone layout, DEC-176/187)
-and `show_aio_pump_info` (the one-time "constant-speed pump" info popup, DEC-157,
+and `card_sensor_bindings` are **dormant since DEC-222** — the Dashboard surfaces
+that wrote them were removed, and the keys are retained unread so no settings-schema
+migration is needed and no saved zone assignments are lost. `show_aio_pump_info` (the one-time "constant-speed pump" info popup, DEC-157,
 flips to `false` once dismissed). They still round-trip through
 `AppSettings.from_dict`/`to_dict` and the import/export trust boundary.
 

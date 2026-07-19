@@ -154,7 +154,7 @@ Three concepts that look similar but answer different questions:
 | Surface | Question it answers | Persistence |
 |---------|---------------------|-------------|
 | **Event Log** (this page) | *What has the GUI been doing in this session?* | In-process only, capped at 200 |
-| **Active Warnings** (status-banner badge → dialog) | *What is wrong right now?* | Cleared when the condition resolves or is acknowledged |
+| **Active Warnings** (this page, right-hand panel) | *What is wrong right now?* | Cleared when the condition resolves, or via "Clear all warnings" |
 | **System Journal** (snapshot button below) | *What happened across restarts on the daemon side?* | Persisted by systemd |
 
 ### Filters

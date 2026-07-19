@@ -119,7 +119,8 @@ control_ofc/
     series_selection.py
     session_stats.py           # per-sensor session min/max tracker
     daemon_service_check.py    # systemd unit-state probe behind the no-daemon hint
-    fan_grouping.py            # Dashboard fan-zone grouping VM — DEC-184..187
+    fan_cards_view.py          # Dashboard per-control fan-card VM (DEC-222; replaced
+                               #   the fan-zone grouping VM retired with the zone grid)
     # Qt-free view-models: headless-testable presentation logic the redesign
     # extracted out of ui/pages so the pages stay thin (DEC-208..216, DEC-219).
     # Some import profile_service (loads QtCore, builds no widgets).
@@ -167,11 +168,11 @@ control_ofc/
     widgets/
       control_card.py          # fan role card (theme-derived size, user-resizable — DEC-128/129)
       curve_card.py            # curve card (theme-derived size, user-resizable — DEC-128/129)
-      summary_card.py          # dashboard summary tiles
-      fan_zone_card.py         # dashboard zone-grouped fan cards (DEC-176/179)
-      quick_actions_panel.py   # dashboard one-click saved-profile activation (DEC-213)
-      rpm_sparkline.py         # static owner-drawn recent-RPM mini-plot for fan cards (DEC-213)
-      dashboard_inspector.py   # collapsible dashboard side pane (Sensors browser)
+      fan_control_card.py      # dashboard per-control fan card — read-only status + Edit
+                               #   deep-link (DEC-222; replaced summary_card, fan_zone_card,
+                               #   quick_actions_panel and rpm_sparkline)
+      warnings_view.py         # active-warnings list, hosted by the Logs page (DEC-222)
+      dashboard_inspector.py   # dashboard Sensors rail (always mounted since DEC-222)
       curve_editor.py
       curve_edit_dialog.py
       member_editor.py         # fan-role membership editor
