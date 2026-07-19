@@ -135,3 +135,17 @@ def test_warning_count_propagates_to_ribbon_and_footer(window, app_state):
     app_state.clear_warnings()
     assert window.status_ribbon._alert_badge.isHidden() is True
     assert window.footer._health_label.text() == "All systems nominal"
+
+
+def test_close_stops_the_poll_age_ticker(qtbot):
+    """DEC-222: the poll-age ticker writes into the footer every second. If it
+    outlived closeEvent, a tick could land on an already-deleted widget during
+    teardown — which is why every other timer here is stopped explicitly."""
+    from control_ofc.ui.main_window import MainWindow
+
+    window = MainWindow(demo_mode=True)
+    qtbot.addWidget(window)
+    assert window._poll_age_timer.isActive()
+
+    window.close()
+    assert not window._poll_age_timer.isActive()

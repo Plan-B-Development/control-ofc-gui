@@ -664,6 +664,10 @@ class MainWindow(QWidget):
             last_page_index=self.page_stack.currentIndex(),
             window_geometry=[geo.x(), geo.y(), geo.width(), geo.height()],
         )
+        # Stop the poll-age ticker before the pages tear down: it writes into the
+        # footer every second, and a tick landing mid-teardown would touch an
+        # already-deleted widget (DEC-222).
+        self._poll_age_timer.stop()
         if hasattr(self, "_demo_timer") and self._demo_timer is not None:
             self._demo_timer.stop()
         if hasattr(self, "_demo_controller") and self._demo_controller is not None:
