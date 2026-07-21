@@ -11,6 +11,28 @@
   additive defaults — both lists default to `[]` on older payloads. Parsing
   completeness only; no UI consumes the new fields yet.
 
+### Removed
+- **Dead-code sweep (DEC-224; 2026-07-21 audit).** ~550 source lines of
+  verified-dead code removed across 20 modules, plus their orphaned tests.
+  Highlights: the unreachable `series_chooser_dialog` module; the DEC-206
+  GUI-side `merge_readiness()` engine (superseded by the daemon's DEC-207
+  shared assessment — `readiness_merge` keeps only the shared model types);
+  the DEC-207-superseded `inventory_readiness`/`superio_detect` client
+  methods; DEC-222 orphans (`fan_tooltip`, `AppState.set_fan_zone`); four
+  written-never-read persisted settings keys (`fan_zone_order`,
+  `fan_zones_collapsed`, `card_sensor_bindings`, `show_hardware_guidance`)
+  dropped via an idempotent settings-schema v2→v3 migration; the unused
+  element-glow API; the retired Troubleshooting reclaim renderer; and a tail
+  of unused accessors/constants (`filter_events`, `known_sources`,
+  collapsible-section accessors, `select_nav`, `entry_count`, `min_output`,
+  `active_mode`, `CARD_SIZE_TIERS`, `OperationMode.MANUAL_OVERRIDE`, …).
+  Alongside the sweep: the built-but-bypassed `parse_field_violations`
+  helper is now adopted by the profile-import reason builder; the
+  Settings-page export gained atomic-write crash safety (the property the
+  removed service method's tests had pinned); and default-profile seeding
+  now degrades gracefully (surfaced errors, in-memory defaults) on a
+  read-only config dir instead of crashing `load()`.
+
 ### Security
 - **Profile ids are validated and path-contained (DEC-223; 2026-07-21 audit
   SEC-1).** `Profile.from_dict` now rejects an id containing `/`, `\`, `..`,

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
 
-from control_ofc.ui.qt_util import repolish
-
 
 def _slug(text: str) -> str:
     return "".join(c for c in text.title() if c.isalnum()) or "Section"
@@ -20,19 +18,12 @@ class Card(QFrame):
 
 
 class BracketCard(QFrame):
-    """A card with a left accent bar that intensifies on hover (``.BracketCard``).
-
-    ``set_warning(True)`` swaps the bar to the warning colour.
-    """
+    """A card with a left accent bar that intensifies on hover (``.BracketCard``)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setProperty("class", "BracketCard")
         self.setProperty("warning", "false")
-
-    def set_warning(self, on: bool) -> None:
-        self.setProperty("warning", "true" if on else "false")
-        repolish(self)
 
 
 class SectionHeader(QWidget):
@@ -57,9 +48,6 @@ class SectionHeader(QWidget):
 
     def title(self) -> str:
         return self._label.text()
-
-    def set_title(self, title: str) -> None:
-        self._label.setText(title.upper())
 
     def add_trailing(self, widget: QWidget) -> None:
         """Add a widget to the right of the title (before the stretch)."""

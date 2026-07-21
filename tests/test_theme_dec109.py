@@ -327,35 +327,6 @@ class TestDashboardPageSetTheme:
 # ---------------------------------------------------------------------------
 
 
-class TestReclaimSeverityColorFollowsActiveTheme:
-    def test_reclaim_color_changes_when_active_theme_changes(self):
-        from control_ofc.ui.pages.diagnostics_readiness import (
-            RECLAIM_SEVERITY_HIGH,
-            RECLAIM_SEVERITY_OK,
-            RECLAIM_SEVERITY_WARN,
-            reclaim_severity_color,
-        )
-
-        custom = ThemeTokens(
-            name="Reclaim Test",
-            status_ok="#111111",
-            status_warn="#222222",
-            status_crit="#333333",
-        )
-        set_active_theme(custom)
-        try:
-            assert reclaim_severity_color(RECLAIM_SEVERITY_OK) == "#111111"
-            assert reclaim_severity_color(RECLAIM_SEVERITY_WARN) == "#222222"
-            assert reclaim_severity_color(RECLAIM_SEVERITY_HIGH) == "#333333"
-        finally:
-            set_active_theme(default_dark_theme())
-
-
-# ---------------------------------------------------------------------------
-# Hardcoded-style cleanup (DEC-109)
-# ---------------------------------------------------------------------------
-
-
 class TestNoStaleDefaultDarkSnapshots:
     """The four offenders identified in the audit must no longer pin their
     theme to ``default_dark_theme()`` at import or construction time."""

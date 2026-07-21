@@ -3,9 +3,10 @@
 Covers the GUI side of the motherboard PWM investigation (Batch C):
 
 * ``classify_reclaim_severity`` returns the right bucket for K∈{0, 1, 5, 50}.
-* ``render_reclaim_rows`` produces colour-coded rich-text rows and tolerates
-  ``None``/empty payloads from older daemons (pre-1.3.x without
-  ``enable_revert_counts`` in ``/diagnostics/hardware``).
+* forward-compat: parsing tolerates older daemons (pre-1.3.x) without
+  ``enable_revert_counts`` in ``/diagnostics/hardware``.
+  (``render_reclaim_rows`` + its colour helper were removed unused in the
+  2026-07-21 audit sweep with the retired Troubleshooting rendering.)
 
 The reclaim helpers now live in ``diagnostics_readiness`` (Cluster C split). The
 widget-layer assertions that drove ``DiagnosticsPage._populate_hw_diagnostics``
@@ -25,8 +26,6 @@ from control_ofc.ui.pages.diagnostics_readiness import (
     RECLAIM_SEVERITY_OK,
     RECLAIM_SEVERITY_WARN,
     classify_reclaim_severity,
-    reclaim_severity_color,
-    render_reclaim_rows,
 )
 
 # ---------------------------------------------------------------------------
@@ -58,85 +57,6 @@ class TestClassifyReclaimSeverity:
         # Defensive: a malformed daemon payload should not produce a UI crash
         # or a misleading "high severity" badge for a meaningless number.
         assert classify_reclaim_severity(-1) == RECLAIM_SEVERITY_OK
-
-    def test_color_per_bucket_is_distinct(self) -> None:
-        # Operators rely on the colour to spot the hot header across many —
-        # the three buckets must therefore actually map to three different
-        # colours (not silently fall back to a single theme token).
-        ok = reclaim_severity_color(RECLAIM_SEVERITY_OK)
-        warn = reclaim_severity_color(RECLAIM_SEVERITY_WARN)
-        high = reclaim_severity_color(RECLAIM_SEVERITY_HIGH)
-        assert {ok, warn, high} == {ok, warn, high}
-        assert len({ok, warn, high}) == 3
-
-
-class TestRenderReclaimRows:
-    """``render_reclaim_rows`` is the seam between the daemon payload shape
-    and the Qt rich-text rendering — keeping it pure means the contract can
-    be locked down without standing up a QWidget."""
-
-    def test_none_payload_returns_none(self) -> None:
-        assert render_reclaim_rows(None) is None
-
-    def test_empty_payload_returns_none(self) -> None:
-        assert render_reclaim_rows({}) is None
-
-    def test_all_zero_payload_returns_none(self) -> None:
-        # If every header is at zero we hide the card entirely — there is
-        # nothing to surface and the operator should not see a "BIOS
-        # interference detected" headline that contradicts the data.
-        assert render_reclaim_rows({"h1": 0, "h2": 0}) is None
-
-    def test_single_warn_row_uses_warn_color(self) -> None:
-        warn_color = reclaim_severity_color(RECLAIM_SEVERITY_WARN)
-        html = render_reclaim_rows({"h1": 5})
-        assert html is not None
-        assert warn_color in html
-        assert "h1" in html
-        assert "5 revert(s)" in html
-        assert RECLAIM_SEVERITY_WARN.upper() in html
-
-    def test_single_high_row_uses_high_color(self) -> None:
-        high_color = reclaim_severity_color(RECLAIM_SEVERITY_HIGH)
-        html = render_reclaim_rows({"h1": 50})
-        assert html is not None
-        assert high_color in html
-        assert RECLAIM_SEVERITY_HIGH.upper() in html
-
-    def test_mixed_headers_use_per_row_colors(self) -> None:
-        warn_color = reclaim_severity_color(RECLAIM_SEVERITY_WARN)
-        high_color = reclaim_severity_color(RECLAIM_SEVERITY_HIGH)
-        html = render_reclaim_rows({"warn_hdr": 1, "hot_hdr": 50})
-        assert html is not None
-        assert warn_color in html
-        assert high_color in html
-        # Both headers appear in the body — neither row was dropped.
-        assert "warn_hdr" in html
-        assert "hot_hdr" in html
-
-    def test_explicit_zero_among_active_renders_as_ok(self) -> None:
-        # When at least one header has reverts, the card is shown — and any
-        # zero-count peer should still render with the OK colour rather
-        # than being silently omitted.
-        ok_color = reclaim_severity_color(RECLAIM_SEVERITY_OK)
-        html = render_reclaim_rows({"healthy": 0, "noisy": 5})
-        assert html is not None
-        assert ok_color in html
-        assert "healthy" in html
-        assert "noisy" in html
-
-    def test_html_escapes_header_id(self) -> None:
-        # IDs come from the daemon JSON. A maliciously-shaped (or just
-        # quirky) name with HTML metacharacters must not break the markup.
-        html = render_reclaim_rows({"<bad>": 5})
-        assert html is not None
-        assert "<bad>" not in html
-        assert "&lt;bad&gt;" in html
-
-
-# ---------------------------------------------------------------------------
-# Forward-compat with daemons that omit ``enable_revert_counts``
-# ---------------------------------------------------------------------------
 
 
 class TestEnableRevertCountsForwardCompat:

@@ -141,13 +141,6 @@ def test_select_page_finds_first_entry_by_page(qtbot):
     assert sidebar._group.checkedId() == NAV_HARDWARE
 
 
-def test_select_nav_highlights_secondary_entry(qtbot):
-    sidebar = Sidebar()
-    qtbot.addWidget(sidebar)
-    sidebar.select_nav(NAV_HARDWARE)
-    assert sidebar._group.checkedId() == NAV_HARDWARE
-
-
 def test_profile_selector_widgets_present(qtbot):
     sidebar = Sidebar()
     qtbot.addWidget(sidebar)

@@ -481,17 +481,17 @@ class TestRoleAwareMinOutput:
     """Editor floor behaviour from set_min_output (DEC-095)."""
 
     def test_default_min_output_is_zero(self, editor):
-        assert editor.min_output == 0.0
+        assert editor._min_output == 0.0
 
     def test_set_min_output_stores_role_floor(self, editor):
         editor.set_min_output(30.0)
-        assert editor.min_output == 30.0
+        assert editor._min_output == 30.0
 
     def test_set_min_output_clamps_to_valid_range(self, editor):
         editor.set_min_output(-5.0)
-        assert editor.min_output == 0.0
+        assert editor._min_output == 0.0
         editor.set_min_output(150.0)
-        assert editor.min_output == 100.0
+        assert editor._min_output == 100.0
 
     def test_table_edit_clamps_output_to_role_floor(self, editor, curve_5pt):
         from PySide6.QtWidgets import QTableWidgetItem

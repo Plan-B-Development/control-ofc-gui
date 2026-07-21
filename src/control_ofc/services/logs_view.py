@@ -85,9 +85,9 @@ def filter_log_rows(
     - ``source`` empty ⇒ no source restriction; otherwise an **exact** match.
     - ``search`` is a case-insensitive substring over ``f"{message} {source}"``.
 
-    Deliberately NOT ``DiagnosticsService.filter_events``, whose empty ``levels``
-    means *no* filter (show all) — the opposite of the set-membership semantics
-    the retiring tab uses.
+    Note the deliberate semantics: an empty ``levels`` set rejects every row
+    (all toggles off → zero rows), the opposite of an "empty means show all"
+    filter convention.
     """
     needle = search.strip().lower()
     result: list[LogRowVM] = []

@@ -1,9 +1,10 @@
-"""Glow + pulsing-LED primitives and the decorative-animation controller (DEC-208).
+"""Pulsing-LED primitive and the decorative-animation controller (DEC-208).
 
-Qt style sheets cannot do ``box-shadow``, so element glow uses
-``QGraphicsDropShadowEffect`` (offset 0 + a coloured blur) and the pulsing status
-dot is custom-painted (animating an effect's ``blurRadius`` is jittery —
-QTBUG-86856 — so :class:`PulsingLed` animates a paint-time intensity instead).
+The pulsing status dot is custom-painted (animating a graphics effect's
+``blurRadius`` is jittery — QTBUG-86856 — so :class:`PulsingLed` animates a
+paint-time intensity instead). The element-glow API (``apply_glow`` /
+``QGraphicsDropShadowEffect``) that also lived here was removed unused in the
+2026-07-21 audit dead-code sweep.
 
 Every decorative animation registers with the shared :class:`AnimationController`,
 which pauses *all* of them whenever the application is not the active foreground
@@ -21,7 +22,7 @@ import weakref
 
 from PySide6.QtCore import QObject, QPointF, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QPainter, QRadialGradient
-from PySide6.QtWidgets import QGraphicsDropShadowEffect, QWidget
+from PySide6.QtWidgets import QWidget
 
 from control_ofc.ui.theme import active_theme
 
@@ -53,22 +54,12 @@ class AnimationController(QObject):
             app.applicationStateChanged.connect(self._on_state_changed)
             self._app_active = app.applicationState() == Qt.ApplicationState.ApplicationActive
 
-    @property
-    def app_active(self) -> bool:
-        return self._app_active
-
     def register(self, target: object) -> None:
         self._targets.add(target)
         target.set_app_active(self._app_active)
 
     def unregister(self, target: object) -> None:
         self._targets.discard(target)
-
-    def pause_all(self) -> None:
-        self._broadcast(False)
-
-    def resume_all(self) -> None:
-        self._broadcast(True)
 
     def _broadcast(self, active: bool) -> None:
         self._app_active = active
@@ -125,13 +116,6 @@ class PulsingLed(QWidget):
         if role in _ROLE_TOKENS:
             self._role = role
             self.update()
-
-    def set_pulsing(self, on: bool) -> None:
-        self._pulsing = on
-        if not on:
-            self._intensity = 1.0
-            self.update()
-        self._sync_running()
 
     def set_app_active(self, active: bool) -> None:
         self._app_active = active
@@ -208,71 +192,3 @@ class PulsingLed(QWidget):
                 "neutral": t.text_muted,
             }.get(self._role, t.status_ok)
         )
-
-
-# ─── Element glow ──────────────────────────────────────────────────────────
-
-
-def apply_glow(
-    widget: QWidget, color: str, *, radius: int = 12, animated: bool = False
-) -> QGraphicsDropShadowEffect:
-    """Attach a coloured 0-offset drop-shadow (a glow) to *widget*.
-
-    ``color`` is a hex string (a theme-token value). With ``animated=True`` the
-    glow softly pulses via the colour *alpha* (never ``blurRadius``) and pauses
-    with app focus. Replaces any glow already on the widget. Do not attach to
-    widgets that repaint every tick (fan cards / value labels / the chart).
-    """
-    remove_glow(widget)
-    effect = QGraphicsDropShadowEffect(widget)
-    effect.setOffset(0, 0)
-    effect.setBlurRadius(radius)
-    effect.setColor(QColor(color))
-    widget.setGraphicsEffect(effect)
-    if animated:
-        widget._glow_pulse = _GlowPulse(widget, effect, QColor(color))
-    return effect
-
-
-def remove_glow(widget: QWidget) -> None:
-    """Remove a glow previously applied by :func:`apply_glow` (idempotent)."""
-    pulse = getattr(widget, "_glow_pulse", None)
-    if pulse is not None:
-        pulse.cleanup()
-        widget._glow_pulse = None
-    widget.setGraphicsEffect(None)
-
-
-class _GlowPulse(QObject):
-    """Drives the alpha pulse of an ``apply_glow(animated=True)`` effect."""
-
-    def __init__(self, widget: QWidget, effect: QGraphicsDropShadowEffect, base: QColor) -> None:
-        super().__init__(widget)
-        self._effect = effect
-        self._base = QColor(base)
-        self._phase = 0.0
-        self._cleaned = False
-        self._timer = QTimer(self)
-        self._timer.setInterval(_PULSE_INTERVAL_MS)
-        self._timer.timeout.connect(self._tick)
-        animation_controller().register(self)
-
-    def set_app_active(self, active: bool) -> None:
-        if active and not self._cleaned and not self._timer.isActive():
-            self._timer.start()
-        elif not active and self._timer.isActive():
-            self._timer.stop()
-
-    def cleanup(self) -> None:
-        if self._cleaned:
-            return
-        self._cleaned = True
-        self._timer.stop()
-        animation_controller().unregister(self)
-
-    def _tick(self) -> None:
-        self._phase += _PULSE_STEP
-        f = 0.5 + 0.5 * math.sin(self._phase)
-        c = QColor(self._base)
-        c.setAlphaF(0.35 + 0.65 * f)
-        self._effect.setColor(c)

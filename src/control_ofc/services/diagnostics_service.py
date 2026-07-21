@@ -29,17 +29,15 @@ log = logging.getLogger(__name__)
 # Pure-UI/rendering settings with no diagnostic value, stripped from the support
 # bundle. This is a SUBSET of AppSettings.MACHINE_SPECIFIC_KEYS (which portable
 # export uses): the bundle deliberately KEEPS the diagnostically load-bearing
-# machine-specific keys (sensor_class_overrides, card_sensor_bindings,
-# diagnostics_hidden_sensor_ids, acknowledged_kernel_warnings, and the
-# profiles/themes dir overrides) — those are exactly what reveals a
-# misconfiguration in a troubleshooting bundle. Only genuine window/layout state
-# is dropped.
+# machine-specific keys (sensor_class_overrides, diagnostics_hidden_sensor_ids,
+# acknowledged_kernel_warnings, and the profiles/themes dir overrides) — those
+# are exactly what reveals a misconfiguration in a troubleshooting bundle. Only
+# genuine window/layout state is dropped.
 _BUNDLE_EXCLUDED_SETTING_KEYS = frozenset(
     {
         "window_geometry",
         "last_page_index",
         "controls_card_sizes",
-        "fan_zone_order",
         "series_colors",
         "export_default_dir",
         "daemon_import_prompted",
@@ -83,7 +81,7 @@ class DiagEvent:
 
     timestamp: float
     level: str  # "info", "warning", "error"
-    source: str  # emitter tag, e.g. "polling", "api" (see known_sources())
+    source: str  # emitter tag, e.g. "polling", "api"
     message: str
 
     @property
@@ -146,44 +144,6 @@ class DiagnosticsService(QObject):
     def clear_events(self) -> None:
         self._events.clear()
         self.events_cleared.emit()
-
-    def filter_events(
-        self,
-        *,
-        levels: set[str] | None = None,
-        sources: set[str] | None = None,
-        search: str = "",
-    ) -> list[DiagEvent]:
-        """Return events matching every supplied filter.
-
-        ``levels`` and ``sources`` are interpreted as multi-select sets — an
-        empty/``None`` set means *no level/source filter*. ``search`` is a
-        case-insensitive substring match against both the message text and
-        the source attribution. The result preserves insertion order so the
-        view can render newest-at-bottom without re-sorting.
-        """
-        needle = search.strip().lower()
-        result: list[DiagEvent] = []
-        for ev in self._events:
-            if levels and ev.level not in levels:
-                continue
-            if sources and ev.source not in sources:
-                continue
-            if needle:
-                hay = f"{ev.message} {ev.source}".lower()
-                if needle not in hay:
-                    continue
-            result.append(ev)
-        return result
-
-    def known_sources(self) -> list[str]:
-        """Return the distinct event sources observed so far, sorted.
-
-        Used by the event-log view to populate its source filter dropdown
-        without prescribing a fixed source vocabulary. New emitters (added
-        later) automatically appear in the dropdown the first time they fire.
-        """
-        return sorted({ev.source for ev in self._events})
 
     # ─── Detail retrieval ────────────────────────────────────────────
 

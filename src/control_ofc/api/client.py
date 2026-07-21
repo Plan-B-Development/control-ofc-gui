@@ -20,7 +20,6 @@ from control_ofc.api.models import (
     HwmonInventory,
     HwmonVerifyResult,
     IdentifyResult,
-    InventoryReadiness,
     OverrideGrant,
     OverrideReleaseResult,
     OverrideRenewResult,
@@ -43,7 +42,6 @@ from control_ofc.api.models import (
     parse_hwmon_inventory,
     parse_hwmon_verify_result,
     parse_identify_result,
-    parse_inventory_readiness,
     parse_override_grant,
     parse_override_release,
     parse_override_renew,
@@ -306,11 +304,6 @@ class DaemonClient:
         """
         return parse_hwmon_inventory(self._get("/inventory/hwmon"))
 
-    def inventory_readiness(self) -> InventoryReadiness:
-        """GET /inventory/readiness — the daemon's structured hardware-readiness
-        items with an ``overall`` rollup (DEC-200). 404 on pre-2.6 daemons."""
-        return parse_inventory_readiness(self._get("/inventory/readiness"))
-
     def hardware_readiness(self, force: bool = False) -> HardwareReadiness:
         """GET /inventory/hardware-readiness — the combined readiness + Super-I/O
         snapshot for the merged "Cooling Hardware Readiness" page (DEC-207), all
@@ -322,16 +315,6 @@ class DaemonClient:
         """
         params = {"refresh": "true"} if force else None
         return parse_hardware_readiness(self._get("/inventory/hardware-readiness", params=params))
-
-    def superio_detect(self) -> SuperIoReport:
-        """GET /inventory/superio — passive Super-I/O chip detection with
-        allowlisted "load this driver" recommendations (DEC-202).
-
-        Read-only; the daemon never probes I/O ports, loads modules, or writes
-        hardware. Raises ``DaemonError`` with ``.status == 404`` on a daemon that
-        predates the endpoint — callers hide the Super-I/O panel in that case.
-        """
-        return parse_superio_report(self._get("/inventory/superio"))
 
     def superio_probe(self) -> SuperIoReport:
         """POST /inventory/superio/probe — the opt-in ACTIVE Super-I/O probe

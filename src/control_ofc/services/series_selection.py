@@ -123,10 +123,6 @@ class SeriesSelectionModel(QObject):
 
     # -- chart modes (DEC-181) --
 
-    @property
-    def active_mode(self) -> ChartMode:
-        return self._active_mode
-
     def set_only_visible(self, keys: set[str]) -> None:
         """Show exactly ``keys`` (those that are known); hide every other known
         key. One ``selection_changed`` emit. The primitive behind COMBINED/seed."""

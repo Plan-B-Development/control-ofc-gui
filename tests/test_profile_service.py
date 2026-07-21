@@ -1167,3 +1167,26 @@ def test_load_resaves_when_migrating_from_older_schema(tmp_path, monkeypatch, ve
     # File on disk should now report the current schema version.
     rewritten = json.loads(legacy.read_text())
     assert rewritten["version"] == PROFILE_SCHEMA_VERSION
+
+
+def test_default_seeding_on_readonly_config_degrades_not_crashes(tmp_path, monkeypatch):
+    """Phase-4 follow-up (2026-07-21 sweep): with EVERY local write failing
+    (read-only config dir), load() must surface per-profile errors and keep the
+    in-memory defaults — never raise out of load()."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    (tmp_path / "control-ofc" / "profiles").mkdir(parents=True)
+
+    import control_ofc.services.profile_service as ps_mod
+
+    def failing_write(path, content):
+        raise PermissionError("read-only filesystem")
+
+    monkeypatch.setattr(ps_mod, "atomic_write", failing_write)
+
+    svc = ProfileService()
+    errors = svc.load()  # must not raise
+
+    assert errors, "seed-write failures must be surfaced"
+    assert all("read-only filesystem" in msg for _, msg in errors)
+    # Defaults still usable in memory despite the failed persistence.
+    assert svc.get_profile(svc.active_id) is not None

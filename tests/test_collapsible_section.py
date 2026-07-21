@@ -16,30 +16,30 @@ def _make(qtbot, **kwargs) -> CollapsibleSection:
 class TestInitialState:
     def test_default_is_collapsed(self, qtbot):
         section = _make(qtbot, object_name="Sec_a")
-        assert section.is_expanded() is False
-        assert section.content_widget().isVisibleTo(section) is False
+        assert section._expanded is False
+        assert section._content.isVisibleTo(section) is False
 
     def test_expanded_when_requested(self, qtbot):
         section = _make(qtbot, object_name="Sec_b", expanded=True)
-        assert section.is_expanded() is True
+        assert section._expanded is True
         # Content is shown when the section starts expanded (own visibility
         # flag is clear — actual on-screen visibility depends on the parent).
-        assert section.content_widget().isHidden() is False
+        assert section._content.isHidden() is False
 
     def test_object_names_derived(self, qtbot):
         section = _make(qtbot, object_name="Sec_c")
         assert section.objectName() == "Sec_c"
-        assert section.header_button().objectName() == "Sec_c_Header"
-        assert section.content_widget().objectName() == "Sec_c_Content"
+        assert section._header.objectName() == "Sec_c_Header"
+        assert section._content.objectName() == "Sec_c_Content"
 
     def test_no_object_name_is_allowed(self, qtbot):
         # Should not raise and should not stamp empty derived names.
         section = _make(qtbot, object_name=None)
-        assert section.header_button().objectName() == ""
+        assert section._header.objectName() == ""
 
     def test_header_text_contains_title_and_chevron(self, qtbot):
         section = _make(qtbot, title="Detected hardware", object_name="Sec_d")
-        text = section.header_button().text()
+        text = section._header.text()
         assert "Detected hardware" in text
         assert CollapsibleSection._CHEVRON_COLLAPSED in text
         assert CollapsibleSection._CHEVRON_EXPANDED not in text
@@ -48,7 +48,7 @@ class TestInitialState:
         # A lone "&" is a QPushButton mnemonic marker and would vanish from
         # the label (e.g. "Thermal safety & GPU"); the widget must escape it.
         section = _make(qtbot, title="Thermal safety & GPU", object_name="Sec_amp")
-        assert "&&" in section.header_button().text()
+        assert "&&" in section._header.text()
 
 
 class TestToggle:
@@ -57,46 +57,38 @@ class TestToggle:
         emitted: list[bool] = []
         section.toggled.connect(emitted.append)
 
-        section.header_button().click()
-        assert section.is_expanded() is True
-        assert section.content_widget().isHidden() is False
+        section._header.click()
+        assert section._expanded is True
+        assert section._content.isHidden() is False
         assert emitted == [True]
 
-        section.header_button().click()
-        assert section.is_expanded() is False
-        assert section.content_widget().isVisibleTo(section) is False
+        section._header.click()
+        assert section._expanded is False
+        assert section._content.isVisibleTo(section) is False
         assert emitted == [True, False]
 
     def test_chevron_flips_on_toggle(self, qtbot):
         section = _make(qtbot, title="Thermal", object_name="Sec_f")
-        section.set_expanded(True)
-        assert CollapsibleSection._CHEVRON_EXPANDED in section.header_button().text()
-        section.set_expanded(False)
-        assert CollapsibleSection._CHEVRON_COLLAPSED in section.header_button().text()
+        section._header.setChecked(True)
+        assert CollapsibleSection._CHEVRON_EXPANDED in section._header.text()
+        section._header.setChecked(False)
+        assert CollapsibleSection._CHEVRON_COLLAPSED in section._header.text()
 
-    def test_set_expanded_emits_only_on_change(self, qtbot):
+    def test_header_checked_emits_only_on_change(self, qtbot):
         section = _make(qtbot, object_name="Sec_g")
         emitted: list[bool] = []
         section.toggled.connect(emitted.append)
 
-        # Already collapsed → no emission.
-        section.set_expanded(False)
+        # Already collapsed → setChecked(False) is a Qt no-op, no emission.
+        section._header.setChecked(False)
         assert emitted == []
 
-        section.set_expanded(True)
+        section._header.setChecked(True)
         assert emitted == [True]
 
         # Idempotent re-expand → no extra emission.
-        section.set_expanded(True)
+        section._header.setChecked(True)
         assert emitted == [True]
-
-    def test_set_title_preserves_chevron(self, qtbot):
-        section = _make(qtbot, title="Old", object_name="Sec_h", expanded=True)
-        section.set_title("New title")
-        text = section.header_button().text()
-        assert "New title" in text
-        assert "Old" not in text
-        assert CollapsibleSection._CHEVRON_EXPANDED in text
 
 
 class TestContent:
@@ -128,8 +120,8 @@ class TestPersistentArea:
         # A section with no persistent content keeps the container hidden, so
         # the existing collapsible sections render exactly as before.
         section = _make(qtbot, object_name="Sec_p1")
-        assert section.persistent_widget().isHidden() is True
+        assert section._persistent.isHidden() is True
 
     def test_persistent_object_name_derived(self, qtbot):
         section = _make(qtbot, object_name="Sec_p2")
-        assert section.persistent_widget().objectName() == "Sec_p2_Persistent"
+        assert section._persistent.objectName() == "Sec_p2_Persistent"

@@ -178,15 +178,6 @@ class AppState(QObject):
         self._set_or_clear(self.fan_aliases, fan_id, alias)
         self.fan_alias_changed.emit(fan_id, self.fan_display_name(fan_id))
 
-    def set_fan_zone(self, fan_id: str, zone: str) -> None:
-        """Assign or clear a fan's physical zone (DEC-176).
-
-        Empty/whitespace-only ``zone`` unassigns the fan (it then falls back to
-        role/source grouping in the dashboard). Mirrors :meth:`set_fan_alias`.
-        """
-        cleaned = self._set_or_clear(self.fan_zones, fan_id, zone)
-        self.fan_zones_changed.emit(fan_id, cleaned)
-
     def set_sensor_class_override(self, sensor_id: str, source_class: str) -> None:
         """Force (or clear) a sensor's display classification (DEC-156).
 

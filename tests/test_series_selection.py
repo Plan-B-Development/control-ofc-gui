@@ -150,7 +150,7 @@ def test_apply_mode_thermals_shows_only_temps():
     model = SeriesSelectionModel()
     model.update_known_keys(["sensor:cpu", "fan:openfan:ch00:rpm", "fan:hwmon:nct:fan1:rpm"])
     model.apply_mode(ChartMode.THERMALS)
-    assert model.active_mode == ChartMode.THERMALS
+    assert model._active_mode == ChartMode.THERMALS
     assert model.is_visible("sensor:cpu")
     assert not model.is_visible("fan:openfan:ch00:rpm")
     assert not model.is_visible("fan:hwmon:nct:fan1:rpm")

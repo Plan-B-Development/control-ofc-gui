@@ -844,7 +844,11 @@ class SettingsPage(QWidget):
         try:
             # Build comprehensive export including profiles
             export_data = self._build_full_export()
-            Path(path).write_text(json.dumps(export_data, indent=2) + "\n")
+            # Atomic write (2026-07-21 sweep): the export previously went
+            # through AppSettingsService.export_settings, whose atomicity the
+            # audit-v3 regression tests pinned; that dead method is gone, so
+            # the crash-safety property moves to the live path.
+            atomic_write(Path(path), json.dumps(export_data, indent=2) + "\n")
             self._set_export_result("Settings exported successfully", "SuccessChip")
         except (OSError, ValueError, TypeError) as e:
             self._set_export_result(f"Export failed: {e}", "CriticalChip")

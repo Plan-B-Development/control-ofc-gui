@@ -825,7 +825,7 @@ class TestCurveEditorSensorLabel:
 
 class TestOfflineDraftUX:
     """Offline Save/Activate UX (slice 6) built on the 6b daemon-backed
-    persistence accessors (offline / unpublished_ids / is_published)."""
+    persistence state (internal offline/unpublished tracking + is_published)."""
 
     # DEC-214: the combo "(draft)" badge tests (test_draft_badge_for_unpublished_profile,
     # test_no_draft_badge_in_local_mode) were deleted with the page profile combo —

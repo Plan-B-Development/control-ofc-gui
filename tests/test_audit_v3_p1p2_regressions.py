@@ -125,38 +125,44 @@ class TestV1MigrationDedup:
 
 
 class TestAtomicExportSettings:
-    """export_settings produces a valid JSON file."""
+    """The Settings-page export produces a valid JSON file via atomic_write.
 
-    def test_export_creates_valid_json(self, tmp_path, monkeypatch):
+    Re-vehicled in the 2026-07-21 sweep: the original vehicle was the dead
+    ``AppSettingsService.export_settings`` (never called by the UI); the
+    atomicity + valid-JSON properties now pin the LIVE page export path.
+    """
+
+    def _export_via_page(self, tmp_path, qtbot, monkeypatch):
         from control_ofc.services.app_settings_service import AppSettingsService
+        from control_ofc.ui.pages.settings_page import SettingsPage
 
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         svc = AppSettingsService()
-
+        svc.load()
+        svc.update(theme_name="Exported Theme")
+        page = SettingsPage(settings_service=svc)
+        qtbot.addWidget(page)
         export_path = tmp_path / "exported.json"
-        svc.export_settings(export_path)
+        monkeypatch.setattr(
+            "control_ofc.ui.pages.settings_page.QFileDialog.getSaveFileName",
+            staticmethod(lambda *a, **k: (str(export_path), "")),
+        )
+        page._export_settings()
+        return export_path
 
+    def test_export_creates_valid_json(self, tmp_path, qtbot, monkeypatch):
+        export_path = self._export_via_page(tmp_path, qtbot, monkeypatch)
         assert export_path.exists()
         data = json.loads(export_path.read_text())
         assert isinstance(data, dict)
 
-    def test_export_roundtrip(self, tmp_path, monkeypatch):
-        from control_ofc.services.app_settings_service import AppSettingsService
+    def test_export_roundtrip(self, tmp_path, qtbot, monkeypatch):
+        from control_ofc.services.app_settings_service import AppSettings
 
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        svc = AppSettingsService()
-        svc.update(theme_name="custom_dark")
-
-        export_path = tmp_path / "exported.json"
-        svc.export_settings(export_path)
-
-        imported = svc.import_settings(export_path)
-        assert imported.theme_name == "custom_dark"
-
-
-# ---------------------------------------------------------------------------
-# WP-V3-10: Fan alias whitespace validation
-# ---------------------------------------------------------------------------
+        export_path = self._export_via_page(tmp_path, qtbot, monkeypatch)
+        data = json.loads(export_path.read_text())
+        restored = AppSettings.from_dict(data.get("settings", data))
+        assert restored.theme_name == "Exported Theme"
 
 
 class TestFanAliasWhitespace:

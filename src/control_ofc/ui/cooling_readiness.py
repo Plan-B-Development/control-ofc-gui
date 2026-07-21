@@ -16,7 +16,9 @@ to one of the four **hardware-checks groups** the compact checklist renders.
 
 No Qt here, so this is trivially unit-testable. This is the Readiness ⊕ Super-I/O
 composition; the separate Readiness ⊕ Troubleshooting ``merge_readiness()`` engine
-(built for a different, deferred merge) is left untouched.
+(built for a different, deferred merge) was retired in the 2026-07-21 audit
+dead-code sweep (DEC-224) — ``readiness_merge`` now carries only the shared
+model types this module builds.
 """
 
 from __future__ import annotations

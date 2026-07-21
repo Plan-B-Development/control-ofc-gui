@@ -153,12 +153,6 @@ class Sidebar(QWidget):
 
         AboutDialog(self).exec()
 
-    def select_nav(self, nav_id: int) -> None:
-        """Check a specific nav entry (used by deep-links to a secondary entry)."""
-        btn = self._buttons.get(nav_id)
-        if btn is not None:
-            btn.setChecked(True)
-
     def activate_nav(self, nav_id: int) -> None:
         """Select a nav entry AND guarantee ``nav_activated`` fires, even if the
         entry was already checked — used by deep-links so the target page + sub-tab

@@ -113,10 +113,6 @@ class WarningsView(QWidget):
 
         self.refresh()
 
-    def entry_count(self) -> int:
-        """Number of warning rows currently rendered (0 = empty state)."""
-        return self._entry_count
-
     def _on_count_changed(self, _count: int) -> None:
         self.refresh()
 

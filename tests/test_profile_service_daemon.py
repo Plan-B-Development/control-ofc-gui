@@ -165,7 +165,7 @@ def test_load_pulls_from_daemon_and_mirrors(cfg):
     assert errors == []
     assert "list" in _names(fake)
     assert p.id in _ids(svc)
-    assert svc.offline is False
+    assert svc._offline is False
     assert svc.is_published(p.id)
     # Mirrored into the local cache so it is editable offline.
     assert (profiles_dir() / f"{p.id}.json").exists()
@@ -184,7 +184,7 @@ def test_load_falls_back_to_local_when_daemon_unreachable(cfg):
     errors = svc.load()
 
     assert errors == []
-    assert svc.offline is True
+    assert svc._offline is True
     assert cached.id in _ids(svc)
 
 
@@ -199,7 +199,7 @@ def test_load_empty_daemon_seeds_and_publishes_defaults(cfg):
     # Seeded starters are published to the daemon, not left local-only.
     assert len(fake.store) == len(default_profiles())
     assert _names(fake).count("create") == len(default_profiles())
-    assert svc.unpublished_ids == set()
+    assert svc._unpublished == set()
 
 
 def test_load_reports_malformed_daemon_document(cfg):
@@ -213,7 +213,7 @@ def test_load_reports_malformed_daemon_document(cfg):
 
     assert any(ident == "broken" for ident, _ in errors)
     assert good.id in _ids(svc)  # the good one still loads
-    assert svc.offline is False
+    assert svc._offline is False
 
 
 def test_load_hydrates_full_profile_documents(cfg):
@@ -267,7 +267,7 @@ def test_load_skips_unfetchable_profile_and_preserves_its_mirror(cfg):
 
     errors = svc.load()
 
-    assert svc.offline is False  # daemon was reachable — this is not an outage
+    assert svc._offline is False  # daemon was reachable — this is not an outage
     assert good.id in _ids(svc)  # the healthy profile still loaded
     assert stale.id not in _ids(svc)  # the 404'd one was skipped
     assert any(ident == stale.id for ident, _ in errors)
@@ -293,7 +293,7 @@ def test_load_disconnect_mid_hydration_falls_back_to_local(cfg):
     errors = svc.load()
 
     assert errors == []
-    assert svc.offline is True
+    assert svc._offline is True
     # Present from the local cache, controls intact.
     loaded = svc.get_profile(cached.id)
     assert loaded is not None
@@ -315,7 +315,7 @@ def test_save_new_profile_creates_on_daemon(cfg):
     assert ("create", p.id) in fake.calls
     assert p.id in fake.store
     assert svc.is_published(p.id)
-    assert p.id not in svc.unpublished_ids
+    assert p.id not in svc._unpublished
     assert (profiles_dir() / f"{p.id}.json").exists()
 
 
@@ -361,9 +361,9 @@ def test_save_offline_keeps_local_draft(cfg):
 
     svc.save_profile(p)
 
-    assert p.id in svc.unpublished_ids
+    assert p.id in svc._unpublished
     assert svc.is_published(p.id) is False
-    assert svc.offline is True
+    assert svc._offline is True
     # The edit is never lost — the local draft is written regardless.
     assert (profiles_dir() / f"{p.id}.json").exists()
 
@@ -378,9 +378,9 @@ def test_save_rejected_by_daemon_keeps_draft_not_offline(cfg):
 
     svc.save_profile(p)
 
-    assert p.id in svc.unpublished_ids
+    assert p.id in svc._unpublished
     assert svc.is_published(p.id) is False
-    assert svc.offline is False  # daemon was reachable, it just rejected the doc
+    assert svc._offline is False  # daemon was reachable, it just rejected the doc
     assert (profiles_dir() / f"{p.id}.json").exists()
 
 
@@ -455,7 +455,7 @@ def test_delete_offline_removes_locally(cfg):
 
     assert svc.delete_profile(p.id) is True
     assert p.id not in _ids(svc)
-    assert svc.offline is True
+    assert svc._offline is True
 
 
 # ---------------------------------------------------------------------------
@@ -474,9 +474,9 @@ def test_no_client_is_pure_local(cfg):
     svc.save_profile(p)
 
     # No daemon concept: nothing is "published", nothing is a pending draft.
-    assert svc.unpublished_ids == set()
+    assert svc._unpublished == set()
     assert svc.is_published(p.id) is False
-    assert svc.offline is False
+    assert svc._offline is False
     assert (profiles_dir() / f"{p.id}.json").exists()
 
 
@@ -511,3 +511,23 @@ def test_daemon_document_with_traversal_id_is_rejected_not_mirrored(cfg):
     assert not (cfg / "control-ofc" / "evil.json").exists()
     assert (profiles_dir() / "good.json").exists()
     assert sorted(p.name for p in profiles_dir().glob("*.json")) == ["good.json"]
+
+
+def test_default_seeding_on_readonly_config_degrades_not_crashes_daemon_backed(cfg, monkeypatch):
+    """Loop-1 twin of the local seed guard (test_profile_service.py): with an
+    EMPTY daemon store and every local write failing, load() must surface the
+    seed errors and keep the in-memory defaults — never raise."""
+    import control_ofc.services.profile_service as ps_mod
+
+    def failing_write(path, content):
+        raise PermissionError("read-only filesystem")
+
+    monkeypatch.setattr(ps_mod, "atomic_write", failing_write)
+
+    fake = FakeDaemonClient()  # empty store → seeding path
+    svc = ProfileService(client=fake)
+    errors = svc.load()  # must not raise
+
+    assert errors, "daemon-path seed-write failures must be surfaced"
+    assert all("read-only filesystem" in msg for _, msg in errors)
+    assert len(svc.profiles) == len(default_profiles())

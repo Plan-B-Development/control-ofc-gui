@@ -18,11 +18,8 @@ from dataclasses import dataclass
 
 from control_ofc.api.models import (
     Capabilities,
-    FanReading,
-    HwmonHeader,
 )
 from control_ofc.constants import EXPECTED_API_VERSION
-from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 
 # Plain-language reason per daemon thermal_state, for the Safety detail. Kept
 # qualitative (no hardcoded thresholds) so it can't drift from the daemon.
@@ -41,25 +38,6 @@ _THERMAL_REASONS: dict[str, str] = {
         "speed because it cannot confirm the system is cool."
     ),
 }
-
-
-def fan_tooltip(fan: FanReading, headers: list[HwmonHeader]) -> str:
-    """Build a tooltip for a fan row, including hwmon chip/driver context."""
-    parts = [f"ID: {fan.id}"]
-    if fan.source == "hwmon":
-        header = next((h for h in headers if h.id == fan.id), None)
-        if header and header.chip_name:
-            parts.append(f"Chip: {header.chip_name}")
-            g = lookup_chip_guidance(header.chip_name)
-            if g:
-                status = "mainline" if g.in_mainline else g.driver_package
-                parts.append(f"Driver: {g.driver_name} ({status})")
-            mode = {0: "DC", 1: "PWM"}.get(header.pwm_mode if header.pwm_mode is not None else -1)
-            if mode:
-                parts.append(f"Mode: {mode}")
-            if not header.is_writable:
-                parts.append("Status: read-only")
-    return "\n".join(parts)
 
 
 @dataclass(frozen=True)

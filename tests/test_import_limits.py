@@ -85,15 +85,3 @@ class TestOversizedImportIntegration:
 
         assert any(c.name == "Good" for c in coll.ready)
         assert any("huge.json" in path for path, _reason in coll.failed)
-
-    def test_oversized_settings_import_raises_clean_valueerror(self, tmp_path):
-        """``import_settings`` surfaces a clean ValueError (its callers render a
-        friendly 'Import failed' message) rather than reading the file wholesale."""
-        from control_ofc.services.app_settings_service import AppSettingsService
-
-        big = tmp_path / "settings.json"
-        big.write_bytes(b'{"x": "' + b"A" * (MAX_IMPORT_BYTES + 100) + b'"}')
-
-        svc = AppSettingsService()
-        with pytest.raises(ValueError, match="exceeds"):
-            svc.import_settings(big)

@@ -1,19 +1,16 @@
-"""DEC-208: glow/LED primitives + the decorative-animation controller.
+"""DEC-208: pulsing-LED primitive + the decorative-animation controller.
 
 The performance contract: every decorative animation must pause when the app is
 not the active window (or the widget is hidden), and tear down deterministically.
+(The unused element-glow API — ``apply_glow``/``remove_glow`` — was removed in
+the 2026-07-21 audit dead-code sweep along with its tests.)
 """
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QGraphicsDropShadowEffect, QWidget
+from PySide6.QtCore import Qt
 
-from control_ofc.ui.components.glow import (
-    PulsingLed,
-    animation_controller,
-    apply_glow,
-    remove_glow,
-)
+from control_ofc.ui.components.glow import PulsingLed, animation_controller
 
 
 def test_pulsing_led_runs_when_active_and_visible(qtbot):
@@ -60,16 +57,11 @@ def test_pulsing_led_cleanup_is_idempotent(qtbot):
     assert led._cleaned
 
 
-def test_set_pulsing_off_stops_animation(qtbot):
-    led = PulsingLed()
-    qtbot.addWidget(led)
-    led.set_app_active(True)
-    led.show()
-    led.set_pulsing(False)
-    assert not led._timer.isActive()
-
-
 def test_animation_controller_broadcasts_and_unregisters(qtbot):
+    """The controller's real driver is Qt's applicationStateChanged — exercise
+    the broadcast through that path (the pause_all/resume_all convenience
+    wrappers were removed unused in the 2026-07-21 sweep)."""
+
     class FakeTarget:
         def __init__(self):
             self.states = []
@@ -80,34 +72,13 @@ def test_animation_controller_broadcasts_and_unregisters(qtbot):
     ctrl = animation_controller()
     target = FakeTarget()
     ctrl.register(target)  # syncs the current state once
-    ctrl.pause_all()
+    ctrl._on_state_changed(Qt.ApplicationState.ApplicationInactive)
     assert target.states[-1] is False
-    ctrl.resume_all()
+    ctrl._on_state_changed(Qt.ApplicationState.ApplicationActive)
     assert target.states[-1] is True
     ctrl.unregister(target)
     snapshot = list(target.states)
-    ctrl.pause_all()
+    ctrl._on_state_changed(Qt.ApplicationState.ApplicationInactive)
     assert target.states == snapshot  # no longer notified after unregister
-
-
-def test_apply_and_remove_static_glow(qtbot):
-    w = QWidget()
-    qtbot.addWidget(w)
-    effect = apply_glow(w, "#1FB88A", radius=14)
-    assert isinstance(w.graphicsEffect(), QGraphicsDropShadowEffect)
-    assert effect.blurRadius() == 14
-    assert effect.offset().x() == 0 and effect.offset().y() == 0
-    remove_glow(w)
-    assert w.graphicsEffect() is None
-    remove_glow(w)  # idempotent
-
-
-def test_animated_glow_registers_and_cleans_up(qtbot):
-    w = QWidget()
-    qtbot.addWidget(w)
-    apply_glow(w, "#1FB88A", animated=True)
-    assert w._glow_pulse is not None
-    pulse = w._glow_pulse
-    remove_glow(w)
-    assert w._glow_pulse is None
-    assert pulse._cleaned
+    # Leave the shared controller in the active state for other tests.
+    ctrl._on_state_changed(Qt.ApplicationState.ApplicationActive)

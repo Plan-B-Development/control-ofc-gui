@@ -243,26 +243,3 @@ class TestDashboardHwmonBanner:
         caps = Capabilities(hwmon=HwmonCapability(present=True, write_support=True))
         page._on_capabilities_updated(caps)
         assert page._hwmon_banner.isHidden()
-
-
-class TestSettingsShowHardwareGuidance:
-    def test_default_is_true(self):
-        from control_ofc.services.app_settings_service import AppSettings
-
-        settings = AppSettings()
-        assert settings.show_hardware_guidance is True
-
-    def test_from_dict_preserves(self):
-        from control_ofc.services.app_settings_service import AppSettings
-
-        data = {"show_hardware_guidance": False}
-        settings = AppSettings.from_dict(data)
-        assert settings.show_hardware_guidance is False
-
-    def test_roundtrip(self):
-        from control_ofc.services.app_settings_service import AppSettings
-
-        settings = AppSettings(show_hardware_guidance=False)
-        data = settings.to_dict()
-        restored = AppSettings.from_dict(data)
-        assert restored.show_hardware_guidance is False

@@ -1382,21 +1382,11 @@ class ProfileService(QObject):
         return self._active_id
 
     @property
-    def offline(self) -> bool:
-        """True when the last daemon load/save fell back to the local cache."""
-        return self._offline
-
-    @property
     def daemon_backed(self) -> bool:
         """True when persistence is daemon-backed (a client was supplied), so the
         published/draft distinction is meaningful. False in pure-local mode,
         where every profile is just a local file."""
         return self._client is not None
-
-    @property
-    def unpublished_ids(self) -> set[str]:
-        """Profile ids written locally but not yet published to the daemon."""
-        return set(self._unpublished)
 
     def is_published(self, profile_id: str) -> bool:
         """True when ``profile_id`` is in the daemon store with no pending
@@ -1500,7 +1490,13 @@ class ProfileService(QObject):
         if not self._profiles:
             for p in default_profiles():
                 self._profiles[p.id] = p
-                self.save_profile(p)
+                try:
+                    self.save_profile(p)
+                except Exception as e:
+                    # Phase-4 follow-up: a read-only config dir must degrade to
+                    # in-memory defaults + a surfaced error, never crash load().
+                    log.warning("Failed to persist default profile %s: %s", p.id, e)
+                    errors.append((p.id, str(e)))
 
         if not self._active_id and self._profiles:
             self._active_id = next(iter(self._profiles))
@@ -1559,7 +1555,13 @@ class ProfileService(QObject):
         if not loaded:
             for p in default_profiles():
                 self._profiles[p.id] = p
-                self._write_local(p)
+                try:
+                    self._write_local(p)
+                except Exception as e:
+                    # Phase-4 follow-up: a read-only config dir must degrade to
+                    # in-memory defaults + a surfaced error, never crash load().
+                    log.warning("Failed to write default profile %s: %s", p.id, e)
+                    errors.append((p.id, str(e)))
 
         if not self._active_id and self._profiles:
             self._active_id = next(iter(self._profiles))
@@ -1577,9 +1579,9 @@ class ProfileService(QObject):
         With a daemon client, the local write is the offline mirror/draft and
         the profile is uploaded (replace if it already exists in the store,
         else create). If the daemon is unreachable the edit is kept as a local
-        draft (tracked in :attr:`unpublished_ids`) and re-published only when
-        the user saves again — there is no background auto-sync (migration
-        Decision 3). With no client this is a pure local write.
+        draft (tracked internally; see :meth:`is_published`) and re-published
+        only when the user saves again — there is no background auto-sync
+        (migration Decision 3). With no client this is a pure local write.
         """
         self._write_local(profile)
         if self._client is not None:

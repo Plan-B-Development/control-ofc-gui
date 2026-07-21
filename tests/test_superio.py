@@ -81,21 +81,6 @@ def test_parse_superio_report_skips_non_dict_chips():
 # ── Client method ────────────────────────────────────────────────────
 
 
-def test_client_superio_detect_calls_get_and_parses():
-    from control_ofc.api.client import DaemonClient
-
-    client = DaemonClient.__new__(DaemonClient)
-    client._get = MagicMock(
-        return_value={
-            "arch_supported": True,
-            "chips": [{"chip_name": "it8688", "expected_module": "it87"}],
-        }
-    )
-    report = client.superio_detect()
-    client._get.assert_called_once_with("/inventory/superio")
-    assert report.chips[0].chip_name == "it8688"
-
-
 def test_client_superio_probe_posts_and_parses():
     from control_ofc.api.client import DaemonClient
 

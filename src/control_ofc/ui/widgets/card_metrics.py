@@ -21,11 +21,6 @@ from __future__ import annotations
 CARD_SIZE_COMPACT = "compact"
 CARD_SIZE_COMFORTABLE = "comfortable"
 CARD_SIZE_LARGE = "large"
-CARD_SIZE_TIERS: tuple[str, ...] = (
-    CARD_SIZE_COMPACT,
-    CARD_SIZE_COMFORTABLE,
-    CARD_SIZE_LARGE,
-)
 DEFAULT_CARD_SIZE = CARD_SIZE_COMFORTABLE
 
 _TIER_SCALE: dict[str, float] = {
@@ -70,8 +65,8 @@ def card_dimensions(base_pt: int, tier: str = DEFAULT_CARD_SIZE) -> tuple[int, i
 
     Args:
         base_pt: The theme's base font size in points (clamped to 7-16).
-        tier: One of :data:`CARD_SIZE_TIERS`; unknown values fall back to
-            "comfortable" (1.0x).
+        tier: One of the ``CARD_SIZE_*`` tier names; unknown values fall back
+            to "comfortable" (1.0x).
 
     The width is meant to be applied via ``setFixedWidth`` and the height via
     ``setMinimumHeight`` so the card grows past the floor when its content
@@ -86,9 +81,3 @@ def card_dimensions(base_pt: int, tier: str = DEFAULT_CARD_SIZE) -> tuple[int, i
     width = round((_BASE_WIDTH + (base_pt - _REF_PT) * _WIDTH_PER_PT) * scale)
     height = round((_BASE_HEIGHT + (base_pt - _REF_PT) * _HEIGHT_PER_PT) * scale)
     return width, height
-
-
-# Backwards-compatible reference constants: the "comfortable" tier at the
-# default 10pt base font. Retained for callers/tests that want a single
-# nominal size; live cards compute their own dimensions via card_dimensions().
-CARD_WIDTH, CARD_HEIGHT = card_dimensions(_REF_PT, DEFAULT_CARD_SIZE)

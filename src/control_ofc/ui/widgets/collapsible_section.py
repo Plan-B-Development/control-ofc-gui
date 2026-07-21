@@ -33,10 +33,9 @@ from PySide6.QtWidgets import QPushButton, QSizePolicy, QVBoxLayout, QWidget
 class CollapsibleSection(QWidget):
     """A titled, collapsible container for progressive disclosure.
 
-    Add collapsible content with :meth:`add_widget` / :meth:`add_layout`.
-    Query or change the open state with :meth:`is_expanded` /
-    :meth:`set_expanded`. The :attr:`toggled` signal emits ``True`` on expand
-    and ``False`` on collapse.
+    Add collapsible content with :meth:`add_widget` / :meth:`add_layout`; the
+    header button toggles the content area. The :attr:`toggled` signal emits
+    ``True`` on expand and ``False`` on collapse.
     """
 
     toggled = Signal(bool)  # True when expanded, False when collapsed
@@ -110,41 +109,6 @@ class CollapsibleSection(QWidget):
     def add_layout(self, layout) -> None:
         """Append a nested layout to the section's content area."""
         self._content_layout.addLayout(layout)
-
-    def is_expanded(self) -> bool:
-        """Return whether the content area is currently shown."""
-        return self._expanded
-
-    def set_expanded(self, expanded: bool) -> None:
-        """Expand or collapse the section.
-
-        Idempotent — calling with the current state is a no-op. Used by the
-        Troubleshooting tab to auto-expand a section when it holds a real problem
-        the user must not miss.
-        """
-        if self._header.isChecked() != expanded:
-            # setChecked emits toggled(), which runs _on_header_toggled.
-            self._header.setChecked(expanded)
-        elif self._expanded != expanded:
-            # State desync guard (e.g. content visibility changed directly).
-            self._apply_expanded(expanded)
-
-    def set_title(self, title: str) -> None:
-        """Replace the header title text (chevron is re-applied)."""
-        self._title = title
-        self._render_header_text()
-
-    def header_button(self) -> QPushButton:
-        """The clickable header button (exposed for theming/tests)."""
-        return self._header
-
-    def content_widget(self) -> QWidget:
-        """The container holding the section's content widgets."""
-        return self._content
-
-    def persistent_widget(self) -> QWidget:
-        """The container holding always-visible (non-collapsing) widgets."""
-        return self._persistent
 
     # ── Internals ────────────────────────────────────────────────────
 

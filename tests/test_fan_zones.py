@@ -12,7 +12,6 @@ from control_ofc.services.app_settings_service import (
     AppSettings,
     AppSettingsService,
 )
-from control_ofc.services.app_state import AppState
 from control_ofc.services.demo_service import DemoService
 
 # ---------------------------------------------------------------------------
@@ -57,42 +56,6 @@ def test_service_persist_fan_zones(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# AppState.set_fan_zone + signal
-# ---------------------------------------------------------------------------
-
-
-def test_set_fan_zone_assigns_and_emits():
-    state = AppState()
-    seen: list[tuple[str, str]] = []
-    state.fan_zones_changed.connect(lambda fid, zone: seen.append((fid, zone)))
-    state.set_fan_zone("openfan:ch00", "Intake")
-    assert state.fan_zones == {"openfan:ch00": "Intake"}
-    assert seen == [("openfan:ch00", "Intake")]
-
-
-def test_set_fan_zone_strips_whitespace():
-    state = AppState()
-    state.set_fan_zone("openfan:ch00", "  Intake  ")
-    assert state.fan_zones == {"openfan:ch00": "Intake"}
-
-
-def test_set_fan_zone_empty_unassigns_and_emits_blank():
-    state = AppState()
-    state.fan_zones = {"openfan:ch00": "Intake"}
-    seen: list[tuple[str, str]] = []
-    state.fan_zones_changed.connect(lambda fid, zone: seen.append((fid, zone)))
-    state.set_fan_zone("openfan:ch00", "   ")  # whitespace-only clears
-    assert state.fan_zones == {}
-    assert seen == [("openfan:ch00", "")]
-
-
-def test_set_fan_zone_unassign_missing_is_safe():
-    state = AppState()
-    state.set_fan_zone("nope", "")  # pop of an absent key must not raise
-    assert state.fan_zones == {}
-
-
-# ---------------------------------------------------------------------------
 # Demo seed
 # ---------------------------------------------------------------------------
 
@@ -118,26 +81,6 @@ def test_demo_fan_zones_ids_are_real_demo_fans():
 # ---------------------------------------------------------------------------
 # MainWindow wiring (persist on change)
 # ---------------------------------------------------------------------------
-
-
-def test_main_window_persists_fan_zone_on_change(
-    qtbot, app_state, profile_service, settings_service
-):
-    from control_ofc.ui.main_window import MainWindow
-
-    win = MainWindow(
-        state=app_state,
-        profile_service=profile_service,
-        settings_service=settings_service,
-        demo_mode=False,
-    )
-    qtbot.addWidget(win)
-
-    app_state.set_fan_zone("openfan:ch00", "Intake")
-    assert settings_service.settings.fan_zones == {"openfan:ch00": "Intake"}
-
-    app_state.set_fan_zone("openfan:ch00", "")  # unassign also persists
-    assert settings_service.settings.fan_zones == {}
 
 
 # ---------------------------------------------------------------------------

@@ -47,7 +47,7 @@ class TestWarningsView:
     def test_empty_state(self, qtbot, app_state):
         view = WarningsView(app_state)
         qtbot.addWidget(view)
-        assert view.entry_count() == 0
+        assert view._entry_count == 0
         assert view.findChild(QLabel, "WarningsView_Label_empty") is not None
         assert view.findChild(QPushButton, "WarningsView_Btn_clearAll").isEnabled() is False
 
@@ -60,7 +60,7 @@ class TestWarningsView:
         )
         view = WarningsView(app_state)
         qtbot.addWidget(view)
-        assert view.entry_count() == 1
+        assert view._entry_count == 1
         sev = view.findChild(QLabel, "WarningsView_Entry_0_severity")
         summ = view.findChild(QLabel, "WarningsView_Entry_0_summary")
         comp = view.findChild(QLabel, "WarningsView_Entry_0_component")
@@ -99,18 +99,18 @@ class TestWarningsView:
         qtbot.addWidget(view)
         detail = view.findChild(CollapsibleSection, "WarningsView_Entry_0_detail")
         assert detail is not None
-        assert detail.is_expanded() is False
-        detail.set_expanded(True)
-        assert detail.is_expanded() is True
+        assert detail._expanded is False
+        detail._header.setChecked(True)
+        assert detail._expanded is True
 
     def test_refreshes_on_count_change(self, qtbot, app_state):
         view = WarningsView(app_state)
         qtbot.addWidget(view)
-        assert view.entry_count() == 0
+        assert view._entry_count == 0
         app_state.add_warning(
             level="warning", source="api", message="version skew", key="api_version_skew"
         )
-        assert view.entry_count() == 1  # signal-driven refresh, no manual call
+        assert view._entry_count == 1  # signal-driven refresh, no manual call
 
     def test_clear_all_empties(self, qtbot, app_state):
         app_state.add_warning(
@@ -118,9 +118,9 @@ class TestWarningsView:
         )
         view = WarningsView(app_state)
         qtbot.addWidget(view)
-        assert view.entry_count() == 1
+        assert view._entry_count == 1
         view.findChild(QPushButton, "WarningsView_Btn_clearAll").click()
-        assert view.entry_count() == 0
+        assert view._entry_count == 0
         assert app_state.warning_count == 0
         # Empty state re-renders through the warnings_cleared → refresh path.
         assert view.findChild(QLabel, "WarningsView_Label_empty") is not None
@@ -132,7 +132,7 @@ class TestWarningsView:
         app_state.add_warning(level="warning", source="mystery", message="odd", key="weird:1")
         view = WarningsView(app_state)
         qtbot.addWidget(view)
-        assert view.entry_count() == 1
+        assert view._entry_count == 1
         assert view.findChild(QLabel, "WarningsView_Entry_0_action") is None
 
     def test_daemon_strings_render_as_plain_text(self, qtbot, app_state):
@@ -154,7 +154,7 @@ class TestWarningsView:
     def test_none_state_is_safe(self, qtbot):
         view = WarningsView(None)
         qtbot.addWidget(view)
-        assert view.entry_count() == 0
+        assert view._entry_count == 0
 
 
 class TestWarningChipOpensWarningsDialog:
@@ -170,10 +170,10 @@ class TestWarningChipOpensWarningsDialog:
         """The hosted view renders AppState.active_warnings, not the event log."""
         page = LogsPage(diagnostics_service=DiagnosticsService(), state=app_state)
         qtbot.addWidget(page)
-        assert page._warnings_view.entry_count() == 0
+        assert page._warnings_view._entry_count == 0
 
         app_state.add_warning(level="error", source="fan", message="stall", key="fan_stall:f1")
-        assert page._warnings_view.entry_count() == 1
+        assert page._warnings_view._entry_count == 1
 
     def test_logs_warnings_view_is_live(self, qtbot, app_state):
         """A warning raised after construction must appear without a manual refresh
@@ -181,10 +181,10 @@ class TestWarningChipOpensWarningsDialog:
         app_state.add_warning(level="warning", source="sensor", message="stale", key="s:1")
         page = LogsPage(diagnostics_service=DiagnosticsService(), state=app_state)
         qtbot.addWidget(page)
-        assert page._warnings_view.entry_count() == 1
+        assert page._warnings_view._entry_count == 1
 
         app_state.add_warning(level="error", source="fan", message="stall", key="f:1")
-        assert page._warnings_view.entry_count() == 2
+        assert page._warnings_view._entry_count == 2
 
         app_state.clear_warnings()
-        assert page._warnings_view.entry_count() == 0
+        assert page._warnings_view._entry_count == 0

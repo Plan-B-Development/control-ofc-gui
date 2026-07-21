@@ -22,7 +22,6 @@ class ConnectionState(Enum):
 
 class OperationMode(Enum):
     AUTOMATIC = "automatic"
-    MANUAL_OVERRIDE = "manual_override"
     READ_ONLY = "read_only"
     DEMO = "demo"
 
@@ -1533,6 +1532,11 @@ def parse_hwmon_inventory(data: dict) -> HwmonInventory:
     )
 
 
+# NOTE: contract-coverage scaffolding. GET /inventory/readiness remains valid
+# daemon API (DEC-200); the GUI's only runtime consumer migrated to the merged
+# /inventory/hardware-readiness snapshot (DEC-207) and its client method was
+# removed in the 2026-07-21 sweep. The parser + InventoryReadiness model stay
+# (with tests) per the wire-mirroring policy, ready for any future consumer.
 def parse_inventory_readiness(data: dict) -> InventoryReadiness:
     return InventoryReadiness(
         api_version=data.get("api_version", 1),

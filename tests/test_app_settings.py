@@ -7,7 +7,7 @@ from control_ofc.services.app_settings_service import AppSettings, AppSettingsSe
 
 def test_default_settings():
     s = AppSettings()
-    assert s.version == 2
+    assert s.version == 3
     assert s.default_startup_page == 0
     assert s.restore_last_page is True
     assert s.theme_name == "Default Dark"
@@ -47,7 +47,7 @@ def test_legacy_display_keys_ignored():
 
 def test_from_dict_handles_missing_keys():
     restored = AppSettings.from_dict({})
-    assert restored.version == 2
+    assert restored.version == 3
     assert restored.default_startup_page == 0
 
 
@@ -56,7 +56,7 @@ def test_dec216_page_index_migration_decrements_shifted_indices():
     to 3-7. A version-1 file's persisted page indices >= 4 decrement by one so
     restore lands on the same page; the version bumps to 2."""
     m = AppSettings.from_dict({"version": 1, "last_page_index": 6, "default_startup_page": 7})
-    assert (m.last_page_index, m.default_startup_page, m.version) == (5, 6, 2)
+    assert (m.last_page_index, m.default_startup_page, m.version) == (5, 6, 3)
 
 
 def test_dec216_migration_boundaries_and_idempotence():
@@ -68,19 +68,21 @@ def test_dec216_migration_boundaries_and_idempotence():
     # off-by-one (`> 4`) would strand a restore on the wrong page (audit Rank 4).
     b = AppSettings.from_dict({"version": 1, "last_page_index": 4, "default_startup_page": 4})
     assert (b.last_page_index, b.default_startup_page) == (3, 3)
-    # A versionless legacy file is treated as v1 and migrates.
+    # A versionless legacy file is treated as v1 and migrates (through v2's
+    # page shift, landing at the current v3).
     vless = AppSettings.from_dict({"last_page_index": 5})
-    assert (vless.last_page_index, vless.version) == (4, 2)
-    # An already-migrated (v2) file is untouched — idempotent.
+    assert (vless.last_page_index, vless.version) == (4, 3)
+    # An already-page-migrated (v2) file keeps its indices untouched —
+    # idempotent for DEC-216 — and advances to v3 (DEC-224 key drop).
     v2 = AppSettings.from_dict({"version": 2, "last_page_index": 6, "default_startup_page": 7})
-    assert (v2.last_page_index, v2.default_startup_page, v2.version) == (6, 7, 2)
+    assert (v2.last_page_index, v2.default_startup_page, v2.version) == (6, 7, 3)
 
 
 def test_service_load_creates_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     svc = AppSettingsService()
     svc.load()
-    assert svc.settings.version == 2
+    assert svc.settings.version == 3
     assert svc.settings.theme_name == "Default Dark"
 
 
@@ -105,22 +107,6 @@ def test_service_update_partial(tmp_path, monkeypatch):
     assert svc.settings.restore_last_page is True  # unchanged
 
 
-def test_export_import(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    svc = AppSettingsService()
-    svc.load()
-    svc.update(theme_name="Exported Theme")
-
-    export_path = tmp_path / "export.json"
-    svc.export_settings(export_path)
-
-    imported = svc.import_settings(export_path)
-    assert imported.theme_name == "Exported Theme"
-
-    svc.apply_imported(AppSettings(theme_name="Applied"))
-    assert svc.settings.theme_name == "Applied"
-
-
 def test_fan_aliases_roundtrip():
     original = AppSettings(fan_aliases={"openfan:ch00": "CPU Cooler", "hwmon:fan1": "Rear"})
     data = original.to_dict()
@@ -128,39 +114,11 @@ def test_fan_aliases_roundtrip():
     assert restored.fan_aliases == {"openfan:ch00": "CPU Cooler", "hwmon:fan1": "Rear"}
 
 
-def test_card_sensor_bindings_roundtrip():
-    original = AppSettings(card_sensor_bindings={"cpu_temp": "sensor:cpu1"})
-    data = original.to_dict()
-    restored = AppSettings.from_dict(data)
-    assert restored.card_sensor_bindings == {"cpu_temp": "sensor:cpu1"}
-
-
 def test_hidden_chart_series_roundtrip():
     original = AppSettings(hidden_chart_series=["sensor:gpu", "fan:ch01:rpm"])
     data = original.to_dict()
     restored = AppSettings.from_dict(data)
     assert restored.hidden_chart_series == ["sensor:gpu", "fan:ch01:rpm"]
-
-
-def test_fan_zone_order_roundtrip():
-    original = AppSettings(fan_zone_order=["zone_a", "bucket_openfan"])
-    restored = AppSettings.from_dict(original.to_dict())
-    assert restored.fan_zone_order == ["zone_a", "bucket_openfan"]
-
-
-def test_fan_zones_collapsed_roundtrip():
-    assert AppSettings.from_dict(
-        AppSettings(fan_zones_collapsed=True).to_dict()
-    ).fan_zones_collapsed
-    # Garbage coerces to the default (False), not a crash (DEC-137 trust boundary).
-    assert AppSettings.from_dict({"fan_zones_collapsed": "nope"}).fan_zones_collapsed is False
-
-
-def test_fan_zone_order_machine_specific_collapsed_portable():
-    s = AppSettings(fan_zone_order=["zone_a"], fan_zones_collapsed=True)
-    portable = s.portable_dict()
-    assert "fan_zone_order" not in portable  # local hardware keys don't travel
-    assert portable.get("fan_zones_collapsed") is True  # behaviour pref does
 
 
 def test_from_dict_unknown_keys_ignored():
@@ -288,3 +246,41 @@ def test_portable_dict_partition():
         assert key not in pd
     assert pd["fan_aliases"] == {"f": "n"}
     assert pd["hidden_chart_series"] == ["x"]
+
+
+# ---------------------------------------------------------------------------
+# DEC-224 (v3): vestige-key drop migration
+# ---------------------------------------------------------------------------
+
+
+def test_dec224_v3_drops_vestige_keys_on_load_and_resave():
+    """A v2 file carrying the four removed keys loads clean at version 3, and
+    the persisted form no longer contains them (from_dict ignores; to_dict no
+    longer emits)."""
+    legacy = {
+        "version": 2,
+        "theme_name": "Kept",
+        "fan_zone_order": ["zone_a"],
+        "fan_zones_collapsed": True,
+        "card_sensor_bindings": {"cpu_temp": "sensor:cpu1"},
+        "show_hardware_guidance": False,
+    }
+    s = AppSettings.from_dict(legacy)
+    assert s.version == 3
+    assert s.theme_name == "Kept"
+    out = s.to_dict()
+    for dead in (
+        "fan_zone_order",
+        "fan_zones_collapsed",
+        "card_sensor_bindings",
+        "show_hardware_guidance",
+    ):
+        assert dead not in out
+
+
+def test_dec224_v3_migration_is_idempotent_and_gated():
+    # A v3 file passes through unchanged; a legacy versionless file still gets
+    # the DEC-216 page shift AND lands at v3.
+    assert AppSettings.from_dict({"version": 3}).version == 3
+    m = AppSettings.from_dict({"last_page_index": 6})
+    assert (m.last_page_index, m.version) == (5, 3)

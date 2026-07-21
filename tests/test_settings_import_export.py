@@ -150,3 +150,17 @@ class TestThemeColorImport:
         assert skipped == 1
         assert (themes_dir() / "good.json").exists()
         assert not (themes_dir() / "bad.json").exists()
+
+    def test_oversized_import_rejected_cleanly(self, tmp_path, qtbot, monkeypatch):
+        """The live import path reads via load_json_capped — an oversized file
+        must be rejected without a wholesale read or a crash, leaving settings
+        untouched. (Re-vehicled from the removed service-level
+        ``import_settings`` test in the 2026-07-21 sweep.)"""
+        from control_ofc.paths import MAX_IMPORT_BYTES
+
+        page, svc = _make_page(tmp_path, qtbot, monkeypatch)
+        before = svc.settings.theme_name
+        big = tmp_path / "huge_settings.json"
+        big.write_bytes(b'{"x": "' + b"A" * (MAX_IMPORT_BYTES + 100) + b'"}')
+        _drive_import(page, monkeypatch, big)  # must not raise
+        assert svc.settings.theme_name == before

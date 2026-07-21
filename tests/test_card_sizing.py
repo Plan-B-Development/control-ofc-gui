@@ -24,19 +24,25 @@ from control_ofc.services.profile_service import (
 from control_ofc.ui.pages.controls_page import ControlsPage
 from control_ofc.ui.theme import ThemeTokens, active_theme
 from control_ofc.ui.widgets.card_metrics import (
-    CARD_SIZE_TIERS,
+    CARD_SIZE_COMFORTABLE,
+    CARD_SIZE_COMPACT,
+    CARD_SIZE_LARGE,
     DEFAULT_CARD_SIZE,
     card_dimensions,
 )
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
 
+# Local tier tuple (the CARD_SIZE_TIERS aggregate was removed unused in the
+# 2026-07-21 sweep; the individual tier constants remain the public surface).
+_TIERS = (CARD_SIZE_COMPACT, CARD_SIZE_COMFORTABLE, CARD_SIZE_LARGE)
+
 
 class TestCardDimensions:
     """The pure sizing function scales with font and tier, and is bounded."""
 
     def test_height_scales_with_font(self):
-        for tier in CARD_SIZE_TIERS:
+        for tier in _TIERS:
             assert (
                 card_dimensions(16, tier)[1]
                 > card_dimensions(10, tier)[1]
@@ -44,7 +50,7 @@ class TestCardDimensions:
             )
 
     def test_width_scales_with_font(self):
-        for tier in CARD_SIZE_TIERS:
+        for tier in _TIERS:
             assert (
                 card_dimensions(16, tier)[0]
                 > card_dimensions(10, tier)[0]
@@ -71,7 +77,7 @@ class TestCardDimensions:
 
     def test_default_tier_is_comfortable(self):
         assert DEFAULT_CARD_SIZE == "comfortable"
-        assert DEFAULT_CARD_SIZE in CARD_SIZE_TIERS
+        assert DEFAULT_CARD_SIZE in _TIERS
 
 
 class TestCardWidgetSizing:

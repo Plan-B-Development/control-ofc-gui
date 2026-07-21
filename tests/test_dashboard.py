@@ -223,65 +223,6 @@ class TestModeBadge:
         assert window.footer._mode_label.text() == "Automatic"
 
 
-class TestSensorPickerDialog:
-    """R10-001/R11-001: Dialog shows sensor values and doesn't affect chart."""
-
-    def test_dialog_shows_sensor_values(self, qtbot):
-        """Sensor value is displayed next to radio button in the dialog."""
-        from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
-
-        sensors = [SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=55.3, age_ms=50)]
-        dialog = SensorPickerDialog(category="cpu_temp", sensors=sensors)
-        qtbot.addWidget(dialog)
-        assert "55.3" in dialog._value_labels["s1"].text()
-
-    def test_dialog_updates_values(self, qtbot):
-        """Value labels update when update_values is called."""
-        from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
-
-        sensors = [SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=40.0, age_ms=50)]
-        dialog = SensorPickerDialog(category="cpu_temp", sensors=sensors)
-        qtbot.addWidget(dialog)
-        assert "40.0" in dialog._value_labels["s1"].text()
-
-        new_sensors = [SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=62.5, age_ms=50)]
-        dialog.update_values(new_sensors, [])
-        assert "62.5" in dialog._value_labels["s1"].text()
-
-    def test_dialog_shows_fan_rpm(self, qtbot):
-        """Fan RPM values displayed in the dialog."""
-        from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
-
-        fans = [FanReading(id="openfan:ch00", source="openfan", rpm=1200, age_ms=50)]
-        dialog = SensorPickerDialog(category="fans", fans=fans)
-        qtbot.addWidget(dialog)
-        assert "1200" in dialog._value_labels["openfan:ch00"].text()
-
-    def test_dialog_does_not_change_chart_visibility(self, qtbot):
-        """R11-001: Selecting a sensor in the dialog must not affect the chart."""
-        from control_ofc.services.series_selection import SeriesSelectionModel
-        from control_ofc.ui.widgets.series_chooser_dialog import SensorPickerDialog
-
-        selection = SeriesSelectionModel()
-        selection.update_known_keys(["sensor:s1", "sensor:s2"])
-        hidden_before = set(selection.to_dict()["hidden_keys"])
-
-        sensors = [
-            SensorReading(id="s1", label="CPU1", kind="CpuTemp", value_c=45.0, age_ms=50),
-            SensorReading(id="s2", label="CPU2", kind="CpuTemp", value_c=50.0, age_ms=50),
-        ]
-        dialog = SensorPickerDialog(category="cpu_temp", sensors=sensors)
-        qtbot.addWidget(dialog)
-
-        # Select a radio button
-        dialog._on_selected("s2")
-        dialog.accept()
-
-        # Chart selection model must be unchanged
-        hidden_after = set(selection.to_dict()["hidden_keys"])
-        assert hidden_before == hidden_after
-
-
 class TestProfilePosition:
     """DEC-222: the status strip was removed, but the Dashboard keeps its own
     profile selector so the landing page can still switch profiles directly."""

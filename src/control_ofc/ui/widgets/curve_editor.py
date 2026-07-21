@@ -299,10 +299,6 @@ class CurveEditor(QWidget):
             if spin is not None:
                 spin.setMinimum(self._min_output)
 
-    @property
-    def min_output(self) -> float:
-        return self._min_output
-
     def eventFilter(self, obj, event) -> bool:
         """Intercept mouse press on plot viewport for press-to-drag."""
         if obj is self._plot_widget.viewport():

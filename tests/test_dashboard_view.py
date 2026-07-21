@@ -13,14 +13,12 @@ from control_ofc.api.models import (
     Capabilities,
     FanReading,
     HwmonCapability,
-    HwmonHeader,
     OpenfanCapability,
     SensorReading,
 )
 from control_ofc.constants import EXPECTED_API_VERSION
 from control_ofc.services.dashboard_view import (
     build_capabilities_vm,
-    fan_tooltip,
     safety_detail_text,
 )
 
@@ -31,36 +29,6 @@ def _sensor(id="s", kind="cpu_temp", value_c=50.0, age_ms=100, rate=None):
 
 def _fan(id="f", source="openfan", rpm=1000, pwm=50, age_ms=100):
     return FanReading(id=id, source=source, rpm=rpm, last_commanded_pwm=pwm, age_ms=age_ms)
-
-
-class TestFanTooltip:
-    def test_non_hwmon_is_id_only(self):
-        assert fan_tooltip(_fan(id="ch1", source="openfan"), []) == "ID: ch1"
-
-    def test_hwmon_read_only_is_annotated(self):
-        header = HwmonHeader(id="hwmon:x:1", chip_name="nct6799", pwm_mode=1, is_writable=False)
-        tip = fan_tooltip(_fan(id="hwmon:x:1", source="hwmon"), [header])
-        assert "Chip: nct6799" in tip
-        assert "Mode: PWM" in tip
-        assert "Status: read-only" in tip
-
-    def test_hwmon_without_matching_header_is_id_only(self):
-        assert fan_tooltip(_fan(id="hwmon:x:1", source="hwmon"), []) == "ID: hwmon:x:1"
-
-    def test_hwmon_unknown_chip_omits_driver_line(self):
-        # A chip with no guidance entry still shows Chip + mode, but no Driver line.
-        header = HwmonHeader(id="hwmon:x:1", chip_name="totallyunknownchip", pwm_mode=0)
-        tip = fan_tooltip(_fan(id="hwmon:x:1", source="hwmon"), [header])
-        assert "Chip: totallyunknownchip" in tip
-        assert "Driver:" not in tip
-        assert "Mode: DC" in tip
-
-    def test_hwmon_unexposed_pwm_mode_omits_mode_line(self):
-        # pwm_mode=None (not exposed by the chip) → no Mode line.
-        header = HwmonHeader(id="hwmon:x:1", chip_name="nct6799", pwm_mode=None)
-        tip = fan_tooltip(_fan(id="hwmon:x:1", source="hwmon"), [header])
-        assert "Chip: nct6799" in tip
-        assert "Mode:" not in tip
 
 
 # ─── build_capabilities_vm ───────────────────────────────────────────────

@@ -93,10 +93,10 @@ class TestWindowGeometryPersistence:
         svc = AppSettingsService()
         svc.update(last_page_index=3, window_geometry=[200, 200, 800, 600])
 
-        export_path = tmp_path / "exported.json"
-        svc.export_settings(export_path)
-
-        data = json.loads(export_path.read_text())
+        # Re-vehicled off the removed service export (2026-07-21 sweep): the
+        # property is that geometry/last-page ARE in the full settings dict
+        # (vs portable_dict, which strips machine-specific keys).
+        data = svc.settings.to_dict()
         assert data["last_page_index"] == 3
         assert data["window_geometry"] == [200, 200, 800, 600]
 

@@ -81,18 +81,12 @@ class ModalDialog(QDialog):
     def body_layout(self) -> QVBoxLayout:
         return self._body_layout
 
-    def set_body_widget(self, widget: QWidget) -> None:
-        self._body_layout.addWidget(widget)
-
     def add_footer_button(
         self, text: str, variant: str = "secondary", *, object_name: str | None = None
     ) -> QPushButton:
         button = make_button(text, variant, object_name=object_name, parent=self._footer)
         self._footer_layout.addWidget(button)
         return button
-
-    def set_title(self, title: str) -> None:
-        self._title.setText(title)
 
     # -- scrim lifecycle --
 

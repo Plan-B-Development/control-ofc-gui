@@ -203,20 +203,22 @@ def _warning_note(resp: object) -> str:
 
 def _violation_summary(err: DaemonError) -> str:
     """Build a human-readable reason from a 400's ``field_violations`` details,
-    falling back to the envelope message."""
-    details = err.details
-    violations = details.get("field_violations") if isinstance(details, dict) else None
-    if isinstance(violations, list) and violations:
-        parts: list[str] = []
-        for v in violations:
-            if not isinstance(v, dict):
-                continue
-            f = str(v.get("field", "")).strip()
-            d = str(v.get("description") or v.get("reason") or "").strip()
-            parts.append(f"{f}: {d}" if f and d else (f or d))
-        parts = [p for p in parts if p]
-        if parts:
-            return "; ".join(parts)
+    falling back to the envelope message.
+
+    Extraction goes through :func:`parse_field_violations` (the DEC-160 helper
+    built for exactly this payload) instead of raw dict access — adopted in the
+    2026-07-21 audit sweep, which found the helper built-but-bypassed.
+    """
+    from control_ofc.api.models import parse_field_violations
+
+    parts: list[str] = []
+    for v in parse_field_violations(err.details):
+        f = v.field.strip()
+        d = (v.description or v.reason).strip()
+        parts.append(f"{f}: {d}" if f and d else (f or d))
+    parts = [p for p in parts if p]
+    if parts:
+        return "; ".join(parts)
     return err.message or err.code or "validation failed"
 
 

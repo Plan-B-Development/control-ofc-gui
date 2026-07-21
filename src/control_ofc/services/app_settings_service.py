@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 
 from control_ofc.colors import is_valid_color
 from control_ofc.paths import app_settings_path, atomic_write, load_json_capped
@@ -21,8 +20,6 @@ MACHINE_SPECIFIC_KEYS = frozenset(
         "window_geometry",
         "last_page_index",
         "controls_card_sizes",
-        "fan_zone_order",
-        "card_sensor_bindings",
         "series_colors",
         "diagnostics_hidden_sensor_ids",
         "sensor_class_overrides",
@@ -137,7 +134,7 @@ def _as_card_sizes(value: object, default: dict[str, list[int]]) -> dict[str, li
 class AppSettings:
     """GUI preferences. Persisted at ~/.config/control-ofc/app_settings.json."""
 
-    version: int = 2  # DEC-216: bumped for the page-index renumber migration
+    version: int = 3  # v2 = DEC-216 page-index renumber; v3 = DEC-224 vestige-key drop
     default_startup_page: int = 0  # PAGE_DASHBOARD
     restore_last_page: bool = True
     demo_on_disconnect: bool = False
@@ -151,13 +148,6 @@ class AppSettings:
     # the dashboard's retired fan-zone grid. Dormant since DEC-222 — retained so
     # no settings-schema migration is needed and saved zones are not lost.
     fan_zones: dict[str, str] = field(default_factory=dict)
-    # DEC-187: user-defined order of the dashboard fan-group cards (list of group
-    # keys). Machine-specific — keys derive from local hardware/zones — so excluded
-    # from portable export via MACHINE_SPECIFIC_KEYS.
-    fan_zone_order: list[str] = field(default_factory=list)
-    # DEC-187: True when the dashboard fan-group section is collapsed (hidden).
-    # Portable: a behaviour preference like restore_last_page.
-    fan_zones_collapsed: bool = False
     hidden_chart_series: list[str] = field(default_factory=list)
     # DEC-181: True once the dashboard has seeded the curated first-run chart
     # subset. Needed because hidden_chart_series == [] is indistinguishable
@@ -165,7 +155,6 @@ class AppSettings:
     # chose "show all" (must NOT be re-decluttered). Without this flag the
     # dashboard cannot tell them apart — do not seed first-run defaults without it.
     chart_series_seeded: bool = False
-    card_sensor_bindings: dict[str, str] = field(default_factory=dict)
     show_gpu_zero_rpm_warning: bool = True
     # DEC-157: one-time popup explaining the AIO pump floor ("don't run the
     # pump too low"), shown when an AIO pump is first added to a control. Mirrors
@@ -190,7 +179,6 @@ class AppSettings:
     daemon_startup_delay_secs: int = 0  # Daemon startup delay (0-30s, daemon-side)
     hide_igpu_sensors: bool = True  # Auto-hide iGPU sensors when dGPU present
     hide_unused_fan_headers: bool = True  # Auto-hide fan headers with 0 RPM
-    show_hardware_guidance: bool = True  # Show hardware readiness guidance in diagnostics
 
     # DEC-128: Controls-page card density tier — "compact" | "comfortable" |
     # "large". Cards auto-scale with the theme font size; this tier multiplies
@@ -251,6 +239,12 @@ class AppSettings:
             if last_page >= 4:
                 last_page -= 1
             raw_version = 2
+        # DEC-224 (v3): four written-never-read keys dropped (fan_zone_order,
+        # fan_zones_collapsed, card_sensor_bindings, show_hardware_guidance).
+        # No data transform — from_dict simply no longer reads them, so the
+        # next save persists a clean v3 file. Idempotent.
+        if raw_version < 3:
+            raw_version = 3
         return AppSettings(
             version=raw_version,
             default_startup_page=startup_page,
@@ -262,11 +256,8 @@ class AppSettings:
             theme_name=_as_str(data.get("theme_name"), "Default Dark"),
             fan_aliases=_as_str_dict(data.get("fan_aliases"), {}),
             fan_zones=_as_str_dict(data.get("fan_zones"), {}),
-            fan_zone_order=_as_str_list(data.get("fan_zone_order"), []),
-            fan_zones_collapsed=_as_bool(data.get("fan_zones_collapsed"), False),
             hidden_chart_series=_as_str_list(data.get("hidden_chart_series"), []),
             chart_series_seeded=_as_bool(data.get("chart_series_seeded"), False),
-            card_sensor_bindings=_as_str_dict(data.get("card_sensor_bindings"), {}),
             show_gpu_zero_rpm_warning=_as_bool(data.get("show_gpu_zero_rpm_warning"), True),
             show_aio_pump_info=_as_bool(data.get("show_aio_pump_info"), True),
             daemon_import_prompted=_as_bool(data.get("daemon_import_prompted"), False),
@@ -282,7 +273,6 @@ class AppSettings:
             ),
             hide_igpu_sensors=_as_bool(data.get("hide_igpu_sensors"), True),
             hide_unused_fan_headers=_as_bool(data.get("hide_unused_fan_headers"), True),
-            show_hardware_guidance=_as_bool(data.get("show_hardware_guidance"), True),
             card_size=_as_enum(data.get("card_size"), _CARD_SIZES, "comfortable"),
             controls_card_sizes=_as_card_sizes(data.get("controls_card_sizes"), {}),
             acknowledged_kernel_warnings=_as_str_list(data.get("acknowledged_kernel_warnings"), []),
@@ -334,17 +324,6 @@ class AppSettingsService:
         merged.update({k: v for k, v in kwargs.items() if hasattr(self._settings, k)})
         self._settings = AppSettings.from_dict(merged)
         self.save()
-
-    def export_settings(self, path: Path) -> None:
-        """Export settings to a user-chosen file (atomic write for crash safety)."""
-        from control_ofc.paths import atomic_write
-
-        atomic_write(path, json.dumps(self._settings.to_dict(), indent=2) + "\n")
-
-    def import_settings(self, path: Path) -> AppSettings:
-        """Import settings from file. Returns the loaded settings (caller decides to apply)."""
-        data = load_json_capped(path)
-        return AppSettings.from_dict(data)
 
     def import_settings_from_dict(self, data: dict) -> AppSettings:
         """Import settings from a dict (e.g., from a comprehensive export file)."""

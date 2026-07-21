@@ -114,7 +114,7 @@ class TestModes:
         m = self._model()
         m.apply_mode(ChartMode.COMBINED, None)
         assert all(m.is_visible(k) for k in m.known_keys())
-        assert m.active_mode == ChartMode.COMBINED
+        assert m._active_mode == ChartMode.COMBINED
 
     def test_thermals_only_temps(self):
         m = self._model()

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QPushButton, QTableWidget, QWidget
 
 from control_ofc.ui.components.badges import StatusPill, pill_class_for
 from control_ofc.ui.components.buttons import make_button
-from control_ofc.ui.components.cards import BracketCard, Card, SectionHeader
+from control_ofc.ui.components.cards import Card, SectionHeader
 from control_ofc.ui.components.dialog import ModalDialog
 from control_ofc.ui.components.tables import apply_dense_table
 
@@ -59,24 +59,11 @@ def test_card_class(qtbot):
     assert card.property("class") == "Card"
 
 
-def test_bracket_card_warning_toggle(qtbot):
-    card = BracketCard()
-    qtbot.addWidget(card)
-    assert card.property("class") == "BracketCard"
-    assert card.property("warning") == "false"
-    card.set_warning(True)
-    assert card.property("warning") == "true"
-    card.set_warning(False)
-    assert card.property("warning") == "false"
-
-
 def test_section_header(qtbot):
     header = SectionHeader("Fan Array")
     qtbot.addWidget(header)
     assert header.title() == "FAN ARRAY"
     assert header.objectName() == "SectionHeader_FanArray"
-    header.set_title("Thermal Sensors")
-    assert header.title() == "THERMAL SENSORS"
 
 
 # ── dense table ──
@@ -102,7 +89,7 @@ def test_modal_dialog_structure(qtbot):
     assert save.property("variant") == "primary"
     assert save.objectName() == "Dlg_Save"
     body = QWidget()
-    dlg.set_body_widget(body)
+    dlg.body_layout().addWidget(body)
     assert body.parent() is dlg._body
 
 
