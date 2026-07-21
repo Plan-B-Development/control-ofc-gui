@@ -15,6 +15,15 @@
   `~/.config/control-ofc/profiles/`. 18 regression tests, kill-verified.
 
 ### Changed
+- **Regression-test hardening (2026-07-21 audit remediation, Phase 4; no
+  behaviour change).** The thermal-banner tests now exercise the daemon's real
+  `"emergency"` wire string (the old phantom `"force"` only hit the catch-all
+  branch) and pin the state literal in the banner text, plus a new
+  `"recovery"`-shows-banner test; the v4/v5/v6 migration-resave tests gain a
+  contentful fixture proving curve/control content survives migration; a new
+  test pins the migration-resave disk-failure contract (per-file error, parsed
+  profile retained, no crash); and the demo evaluator's deliberate
+  no-deadband divergence (DEC-096 daemon-only) is now documented by test.
 - **API-contract + docs-pack corrections (2026-07-21 audit remediation, Phase 1;
   docs-only, no behaviour change).** `docs/08_API_Integration_Contract.md` now
   documents DEC-218 (`POST /profile/deactivate` clears all standing

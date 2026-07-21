@@ -1051,6 +1051,95 @@ def test_profile_path_rejects_traversal_id(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("version", [4, 5, 6])
+def test_migration_resave_preserves_curve_and_control_content(tmp_path, monkeypatch, version):
+    """TEST-2 (2026-07-21 audit): the empty-fixture resave test below cannot
+    see content corruption — a migration bug that cleared or mutated curves or
+    controls stayed invisible. A contentful pre-v7 profile must come through
+    the migration resave with curve id/sensor/points and control/member intact,
+    on disk and in memory."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    pdir = tmp_path / "control-ofc" / "profiles"
+    pdir.mkdir(parents=True, exist_ok=True)
+    legacy = pdir / "legacy.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "id": "legacy",
+                "name": "Legacy",
+                "version": version,
+                "controls": [
+                    {
+                        "id": "ctl1",
+                        "name": "Front",
+                        "curve_id": "crv1",
+                        "members": [{"source": "openfan", "member_id": "openfan:ch00"}],
+                    }
+                ],
+                "curves": [
+                    {
+                        "id": "crv1",
+                        "name": "Ramp",
+                        "type": "graph",
+                        "sensor_id": "cpu",
+                        "points": [
+                            {"temp_c": 40.0, "output_pct": 20.0},
+                            {"temp_c": 80.0, "output_pct": 100.0},
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    svc = ProfileService()
+    errors = svc.load()
+    assert errors == []
+
+    rewritten = json.loads(legacy.read_text())
+    assert rewritten["version"] == PROFILE_SCHEMA_VERSION
+    assert [c["id"] for c in rewritten["curves"]] == ["crv1"]
+    assert rewritten["curves"][0]["sensor_id"] == "cpu"
+    assert len(rewritten["curves"][0]["points"]) == 2
+    assert [c["id"] for c in rewritten["controls"]] == ["ctl1"]
+    assert rewritten["controls"][0]["members"][0]["member_id"] == "openfan:ch00"
+    prof = svc.get_profile("legacy")
+    assert prof is not None
+    assert prof.curves[0].points[0].temp_c == 40.0
+    assert prof.controls[0].members[0].member_id == "openfan:ch00"
+
+
+def test_migration_resave_write_failure_surfaces_error_keeps_profile(tmp_path, monkeypatch):
+    """TEST-5 (2026-07-21 audit): a failing local write during the migration
+    resave (e.g. read-only filesystem) must surface as a per-file load error —
+    not crash ``load()`` and not silently drop the already-parsed profile from
+    memory."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    pdir = tmp_path / "control-ofc" / "profiles"
+    pdir.mkdir(parents=True, exist_ok=True)
+    legacy = pdir / "legacy.json"
+    legacy.write_text(
+        json.dumps({"id": "legacy", "name": "L", "version": 4, "controls": [], "curves": []})
+    )
+
+    import control_ofc.services.profile_service as ps_mod
+
+    real_atomic_write = ps_mod.atomic_write
+
+    def failing_write(path, content):
+        if "legacy" in str(path):
+            raise PermissionError("read-only filesystem")
+        return real_atomic_write(path, content)
+
+    monkeypatch.setattr(ps_mod, "atomic_write", failing_write)
+
+    svc = ProfileService()
+    errors = svc.load()
+
+    assert any("legacy" in src and "read-only filesystem" in msg for src, msg in errors)
+    assert svc.get_profile("legacy") is not None, "parsed profile must survive in memory"
+
+
+@pytest.mark.parametrize("version", [4, 5, 6])
 def test_load_resaves_when_migrating_from_older_schema(tmp_path, monkeypatch, version):
     """Loading any pre-v7 profile from disk must re-save it at the current schema
     version — not just v3 (the resave fires for every ``version < PROFILE_SCHEMA_VERSION``

@@ -130,3 +130,37 @@ def test_emits_outputs_changed(qtbot):
 def test_no_active_profile_is_noop(qtbot):
     dc = DemoController(ProfileService(), DemoService(), AppState())
     dc.tick()  # must not raise; emits nothing
+
+
+def test_no_deadband_output_tracks_sub_2c_fall_immediately(qtbot):
+    """TEST-6 (2026-07-21 audit) — divergence pin: the demo evaluator is
+    stateless ``interpolate()`` and deliberately does NOT replicate the
+    daemon's 2 °C falling-temperature deadband (DEC-096, CLAUDE.md). A second
+    tick 1 °C colder must move the output immediately; this documents the
+    divergence and guards against a stateful deadband creeping into demo."""
+    curve = CurveConfig(
+        id="c",
+        type=CurveType.GRAPH,
+        sensor_id="cpu",
+        points=[CurvePoint(40.0, 20.0), CurvePoint(80.0, 100.0)],
+    )
+    ctrl = LogicalControl(
+        id="lc",
+        curve_id="c",
+        members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+    )
+    state = AppState()
+    state.set_sensors([SensorReading(id="cpu", kind="CpuTemp", label="t", value_c=60.0, age_ms=10)])
+    demo = DemoService()
+    ps = ProfileService()
+    ps._profiles["p"] = Profile(id="p", name="P", controls=[ctrl], curves=[curve])
+    ps.set_active("p")
+    dc = DemoController(ps, demo, state)
+
+    dc.tick()
+    assert demo._fan_pwm["openfan:ch00"] == 60
+
+    # 1 °C fall — inside the daemon's deadband — must still update at once.
+    state.set_sensors([SensorReading(id="cpu", kind="CpuTemp", label="t", value_c=59.0, age_ms=10)])
+    dc.tick()
+    assert demo._fan_pwm["openfan:ch00"] == 58

@@ -476,10 +476,27 @@ class TestThermalBanner:
         dash = window.dashboard_page
         assert dash._thermal_banner.isHidden()
 
-        app_state.set_status(DaemonStatus(thermal_state="force"))
+        app_state.set_status(DaemonStatus(thermal_state="emergency"))
 
         assert not dash._thermal_banner.isHidden()
         assert "Thermal protection" in dash._thermal_banner._message_label.text()
+        # Contract pin (TEST-1, 2026-07-21 audit): "emergency" is the daemon's
+        # real 105 °C-force string (safety_tick.rs). The old test sent a
+        # phantom "force" state that only exercised the catch-all branch — a
+        # regression breaking the banner for the real emergency state stayed
+        # green. Pin the literal so the wire string can't silently drift.
+        assert "emergency" in dash._thermal_banner._message_label.text()
+
+    def test_recovery_state_shows_banner(self, qtbot, window, app_state):
+        # "recovery" (the two 60% cooldown cycles after release) is a
+        # non-"normal" state: the banner must stay up and name it.
+        dash = window.dashboard_page
+        assert dash._thermal_banner.isHidden()
+
+        app_state.set_status(DaemonStatus(thermal_state="recovery"))
+
+        assert not dash._thermal_banner.isHidden()
+        assert "recovery" in dash._thermal_banner._message_label.text()
 
     def test_no_sensor_fallback_shows_banner_with_state(self, qtbot, window, app_state):
         # DEC-170 contract pin: the daemon's "no_sensor_fallback" thermal_state
@@ -495,7 +512,7 @@ class TestThermalBanner:
 
     def test_thermal_recovery_clears_banner(self, qtbot, window, app_state):
         dash = window.dashboard_page
-        app_state.set_status(DaemonStatus(thermal_state="force"))
+        app_state.set_status(DaemonStatus(thermal_state="emergency"))
         assert not dash._thermal_banner.isHidden()
 
         app_state.set_status(DaemonStatus(thermal_state="normal"))
