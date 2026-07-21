@@ -134,6 +134,21 @@ class _OverrideWorker(QObject):
             self.renew_result.emit(control_id, token, result.override_token, None)
         except DaemonError as exc:
             self.renew_result.emit(control_id, token, None, exc)
+        except Exception as exc:
+            # CONC-4: a non-DaemonError escape (client-layer bug) must still
+            # deliver a result — the in-flight guard is cleared by the result
+            # handler, so a swallowed slot exception would silently stall this
+            # control's renews until release. Shape it as a DaemonError so the
+            # handler's lapse path (error.code) applies unchanged.
+            logging.getLogger(__name__).warning(
+                "Override renew crashed for %s: %s", control_id, exc
+            )
+            self.renew_result.emit(
+                control_id,
+                token,
+                None,
+                DaemonError(code="internal_error", message=str(exc), status=0),
+            )
 
     @Slot(str, int)
     def release(self, control_id: str, token: int) -> None:
@@ -213,6 +228,11 @@ class ControlsPage(QWidget):
         # daemon restarted), so the card reverts. The value timer debounces a
         # live slider drag into a single re-pin.
         self._overrides: dict[str, int] = {}
+        # CONC-4 (2026-07-21 audit): controls whose renew is currently in
+        # flight on the worker. A daemon response slower than one renew period
+        # must not queue a duplicate renew; cleared when the result arrives
+        # (either outcome) or the override is released.
+        self._renew_in_flight: set[str] = set()
         # F-2: per-held-grant advised renew cadence (control_id -> renew_secs),
         # kept in lockstep with ``_overrides``. The single shared renew timer is
         # driven from the MIN across all held grants so a longer-cadence grant
@@ -1786,6 +1806,7 @@ class ControlsPage(QWidget):
         self._override_pending.pop(control_id, None)
         token = self._overrides.pop(control_id, None)
         self._override_renew_secs.pop(control_id, None)
+        self._renew_in_flight.discard(control_id)
         if not self._overrides:
             self._override_renew_timer.stop()
         if token is None or self._override_worker is None:
@@ -1810,6 +1831,13 @@ class ControlsPage(QWidget):
             self._override_renew_timer.stop()
             return
         for control_id, token in list(self._overrides.items()):
+            if control_id in self._renew_in_flight:
+                # CONC-4: the previous renew is still on the worker — skip
+                # this cycle rather than queue a duplicate. Harmless today
+                # (double-renew is idempotent) but keeps the worker queue
+                # bounded under a stalled daemon.
+                continue
+            self._renew_in_flight.add(control_id)
             self._request_renew.emit(control_id, token)
 
     def _on_renew_result(
@@ -1824,6 +1852,7 @@ class ControlsPage(QWidget):
         take is valid, so the rejection is a self-inflicted race and must be
         ignored, never treated as a lapse (else the card reverts while the daemon
         keeps the fan pinned until the deadman)."""
+        self._renew_in_flight.discard(control_id)
         if error is not None:
             if self._overrides.get(control_id) != sent_token:
                 # Superseded by our own re-pin — the newer token renews next cycle.

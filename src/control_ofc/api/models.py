@@ -940,13 +940,55 @@ class InventoryPreferences:
 
 
 @dataclass
+class InventoryPwmControl:
+    """One controllable PWM header from GET /inventory/hwmon ``pwm_controls``
+    (mirrors the daemon's ``responses.rs::PwmHeaderEntry`` field-for-field;
+    CONTR-1, 2026-07-21 audit)."""
+
+    id: str = ""
+    label: str = ""
+    chip_name: str = ""
+    device_id: str = ""
+    pwm_index: int = 0
+    supports_enable: bool = False
+    rpm_available: bool = False
+    min_pwm_percent: int = 0
+    max_pwm_percent: int = 100
+    is_writable: bool = False
+    # 0 = DC, 1 = PWM; None when the pwmN_mode file is not exposed (the daemon
+    # omits the key).
+    pwm_mode: int | None = None
+    # Daemon-authoritative AIO hint (Kraken/Aquacomputer). Always present from
+    # any daemon that serves this endpoint (≥ 2.6.0, DEC-200 — later than the
+    # field's 1.18.0 introduction); the False default is a forward-compat
+    # safety net only.
+    is_aio: bool = False
+
+
+@dataclass
+class InventoryFanInput:
+    """One monitor-only fan line from GET /inventory/hwmon
+    ``monitor_only_fans`` (daemon ``FanInputEntry``): a ``fanN_input``
+    tachometer with no matching ``pwmN`` — visible, never controllable."""
+
+    id: str = ""
+    source: str = "hwmon"
+    chip_name: str = ""
+    label: str = ""
+    fan_index: int = 0
+
+
+@dataclass
 class HwmonInventory:
-    """Response from GET /inventory/hwmon — the Phase-4 subset the GUI consumes:
-    classified temp sensors + default-CPU recommendation + persisted
-    preferences. ``pwm_controls``/``monitor_only_fans`` are not modelled yet."""
+    """Response from GET /inventory/hwmon: classified temp sensors, the
+    controllable PWM headers, monitor-only fan tachometers, the default-CPU
+    recommendation, and persisted sensor preferences."""
 
     api_version: int = 1
     temp_sensors: list[InventoryTempSensor] = field(default_factory=list)
+    pwm_controls: list[InventoryPwmControl] = field(default_factory=list)
+    # The daemon omits the key when empty (additive) → default [].
+    monitor_only_fans: list[InventoryFanInput] = field(default_factory=list)
     default_cpu: DefaultCpuSensor | None = None
     preferences: InventoryPreferences | None = None
 
@@ -1463,6 +1505,16 @@ def parse_hwmon_inventory(data: dict) -> HwmonInventory:
         for s in data.get("temp_sensors", [])
         if isinstance(s, dict)
     ]
+    pwm_controls = [
+        InventoryPwmControl(**_filter_fields(InventoryPwmControl, p))
+        for p in data.get("pwm_controls", [])
+        if isinstance(p, dict)
+    ]
+    monitor_only_fans = [
+        InventoryFanInput(**_filter_fields(InventoryFanInput, f))
+        for f in data.get("monitor_only_fans", [])
+        if isinstance(f, dict)
+    ]
     default_cpu = None
     dc_raw = data.get("default_cpu")
     if isinstance(dc_raw, dict) and dc_raw:
@@ -1474,6 +1526,8 @@ def parse_hwmon_inventory(data: dict) -> HwmonInventory:
     return HwmonInventory(
         api_version=data.get("api_version", 1),
         temp_sensors=temp_sensors,
+        pwm_controls=pwm_controls,
+        monitor_only_fans=monitor_only_fans,
         default_cpu=default_cpu,
         preferences=preferences,
     )

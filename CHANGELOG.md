@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- **`GET /inventory/hwmon` is now fully modelled (2026-07-21 audit CONTR-1).**
+  `parse_hwmon_inventory()` no longer drops `pwm_controls` and
+  `monitor_only_fans`: new `InventoryPwmControl` (mirrors the daemon's
+  `PwmHeaderEntry` field-for-field, incl. `pwm_mode`'s omitted-when-absent
+  optionality) and `InventoryFanInput` (`FanInputEntry`) dataclasses with
+  additive defaults — both lists default to `[]` on older payloads. Parsing
+  completeness only; no UI consumes the new fields yet.
+
 ### Security
 - **Profile ids are validated and path-contained (DEC-223; 2026-07-21 audit
   SEC-1).** `Profile.from_dict` now rejects an id containing `/`, `\`, `..`,
@@ -15,6 +24,12 @@
   `~/.config/control-ofc/profiles/`. 18 regression tests, kill-verified.
 
 ### Changed
+- **Override-renew in-flight guard (2026-07-21 audit CONC-4; defensive
+  hardening, no behaviour change on a healthy daemon).** The ~5 s renew timer
+  no longer dispatches a duplicate renew for a control whose previous renew is
+  still on the worker (daemon response slower than one renew period) — the
+  worker queue stays bounded under a stalled daemon. The flag clears on every
+  result outcome and on release; double-renew remains idempotent.
 - **Regression-test hardening (2026-07-21 audit remediation, Phase 4; no
   behaviour change).** The thermal-banner tests now exercise the daemon's real
   `"emergency"` wire string (the old phantom `"force"` only hit the catch-all

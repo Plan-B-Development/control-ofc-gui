@@ -367,6 +367,131 @@ class TestManualOverrideLiveWiring:
         assert "lc1" not in page._overrides
         assert not page._control_cards["lc1"]._manual_btn.isChecked()
 
+    def test_renew_skipped_while_prior_renew_in_flight(self, qtbot, app_state, profile_service):
+        """CONC-4 (2026-07-21 audit): a renew still on the worker (daemon
+        slower than one renew period) must suppress this cycle's dispatch for
+        that control, keeping the worker queue bounded under a stalled daemon;
+        the arriving result re-enables dispatch."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+        client.override_renew.reset_mock()
+
+        page._renew_in_flight.add("lc1")  # prior renew still pending
+        page._renew_overrides()
+        client.override_renew.assert_not_called()
+
+        page._on_renew_result("lc1", 7, 7, None)  # pending result lands
+        assert "lc1" not in page._renew_in_flight
+
+        page._renew_overrides()  # next cycle dispatches again
+        assert client.override_renew.call_count == 1
+
+    def test_renew_in_flight_flag_lifecycle_completes(self, qtbot, app_state, profile_service):
+        """A normal renew cycle marks and clears the in-flight flag. Under the
+        synchronous test wiring the two timer fires run sequentially (each
+        completes inline) — true overlap is pinned by the previous test via
+        manual flag injection; this one pins the clean end-state and token
+        idempotence of back-to-back cycles."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.models import OverrideRenewResult
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        client.override_renew.return_value = OverrideRenewResult(
+            control_id="lc1", override_token=7, ttl_secs=15, expires_in_secs=15
+        )
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        page._renew_overrides()
+        page._renew_overrides()
+
+        assert page._renew_in_flight == set()
+        assert page._overrides["lc1"] == 7
+
+    def test_renew_in_flight_cleared_on_superseded_error(self, qtbot, app_state, profile_service):
+        """The result handler clears the flag on EVERY outcome — including the
+        self-superseded stale rejection it otherwise ignores — so a re-pinned
+        control keeps renewing."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+        page._overrides["lc1"] = 9  # re-pin superseded token 7
+        page._renew_in_flight.add("lc1")
+
+        page._on_renew_result(
+            "lc1", 7, None, DaemonError(code="stale_fencing_token", message="x", status=409)
+        )
+
+        assert "lc1" not in page._renew_in_flight
+        assert page._overrides["lc1"] == 9
+
+    def test_stale_renew_success_after_own_repin_does_not_clobber_token(
+        self, qtbot, app_state, profile_service
+    ):
+        """Success twin of the stale-rejection guard (DEC-220): an in-flight
+        renew for a superseded token that SUCCEEDS must clear the in-flight
+        flag without overwriting the re-pinned token."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+        page._overrides["lc1"] = 9  # re-pin superseded token 7
+        page._renew_in_flight.add("lc1")
+
+        page._on_renew_result("lc1", 7, 8, None)  # old renew came back OK
+
+        assert page._overrides["lc1"] == 9  # re-pinned token survives
+        assert "lc1" not in page._renew_in_flight
+
+    def test_renew_worker_crash_still_delivers_result_and_clears_flag(
+        self, qtbot, app_state, profile_service
+    ):
+        """CONC-4 review F1: a non-DaemonError escape from the client layer
+        must still produce a renew result (shaped as internal_error) — the
+        in-flight flag clears and the card reverts instead of renews stalling
+        silently until release."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        client.override_renew.side_effect = RuntimeError("boom")
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        page._renew_overrides()
+
+        assert page._renew_in_flight == set()
+        assert "lc1" not in page._overrides
+        assert not page._control_cards["lc1"]._manual_btn.isChecked()
+
+    def test_release_clears_in_flight_flag(self, qtbot, app_state, profile_service):
+        """Releasing an override drops any pending-renew marker so a fresh
+        take/renew cycle starts clean."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+        page._renew_in_flight.add("lc1")
+
+        page._release_override("lc1")
+
+        assert "lc1" not in page._renew_in_flight
+
     def test_stale_renew_after_own_repin_does_not_revert(self, qtbot, app_state, profile_service):
         """DEC-220 release-review regression (P2): a slider re-pin mints a new
         fencing token; a renew dispatched for the PRIOR token then comes back

@@ -665,6 +665,33 @@ def test_parse_hwmon_inventory_full():
             "source": "user",
         },
         "preferences": {"cpu_sensor_id": "hwmon:k10temp:x:Tctl"},
+        "pwm_controls": [
+            {
+                "id": "hwmon:nct6799:isa:pwm2",
+                "label": "pwm2",
+                "chip_name": "nct6799",
+                "device_id": "isa",
+                "pwm_index": 2,
+                "supports_enable": True,
+                "rpm_available": True,
+                # Deliberately non-default values so a field-name typo cannot
+                # hide behind the dataclass default.
+                "min_pwm_percent": 5,
+                "max_pwm_percent": 95,
+                "is_writable": True,
+                "pwm_mode": 1,
+                "is_aio": False,
+            }
+        ],
+        "monitor_only_fans": [
+            {
+                "id": "hwmon:nct6799:isa:fan5",
+                "source": "hwmon",
+                "chip_name": "nct6799",
+                "label": "fan5",
+                "fan_index": 5,
+            }
+        ],
     }
     inv = parse_hwmon_inventory(data)
     assert inv.temp_sensors[0].classification == "cpu_tctl"
@@ -672,6 +699,28 @@ def test_parse_hwmon_inventory_full():
     assert inv.default_cpu.source == "user"
     assert inv.preferences.cpu_sensor_id == "hwmon:k10temp:x:Tctl"
     assert inv.preferences.mb_sensor_id is None
+    # CONTR-1 (2026-07-21 audit): the previously-dropped lists are modelled.
+    # Every field is asserted so a dataclass field-name typo (which
+    # _filter_fields would silently drop, substituting the default) trips here.
+    pwm = inv.pwm_controls[0]
+    assert pwm.id == "hwmon:nct6799:isa:pwm2"
+    assert pwm.label == "pwm2"
+    assert pwm.chip_name == "nct6799"
+    assert pwm.device_id == "isa"
+    assert pwm.pwm_index == 2
+    assert pwm.supports_enable is True
+    assert pwm.rpm_available is True
+    assert pwm.min_pwm_percent == 5
+    assert pwm.max_pwm_percent == 95
+    assert pwm.is_writable is True
+    assert pwm.pwm_mode == 1
+    assert pwm.is_aio is False
+    fan = inv.monitor_only_fans[0]
+    assert fan.id == "hwmon:nct6799:isa:fan5"
+    assert fan.source == "hwmon"
+    assert fan.chip_name == "nct6799"
+    assert fan.label == "fan5"
+    assert fan.fan_index == 5
 
 
 def test_parse_hwmon_inventory_absent_optionals_default_none():
@@ -679,18 +728,27 @@ def test_parse_hwmon_inventory_absent_optionals_default_none():
     assert inv.default_cpu is None
     assert inv.preferences is None
     assert inv.temp_sensors == []
+    # monitor_only_fans is omitted-when-empty on the wire; pwm_controls may be
+    # absent from older payloads — both default to [].
+    assert inv.pwm_controls == []
+    assert inv.monitor_only_fans == []
 
 
 def test_parse_hwmon_inventory_ignores_unknown_fields():
-    # Forward-compat: unknown daemon fields (incl. unmodelled pwm_controls /
-    # monitor_only_fans) must not break parsing.
+    # Forward-compat: unknown daemon fields must not break parsing, and a
+    # minimal entry parses to per-field defaults (additive tolerance).
     data = {
         "temp_sensors": [{"id": "s1", "classification": "vrm_temp", "future_field": 99}],
-        "pwm_controls": [{"id": "p1"}],
-        "monitor_only_fans": [{"id": "f1"}],
+        "pwm_controls": [{"id": "p1", "future_field": 1}],
+        "monitor_only_fans": [{"id": "f1", "future_field": 2}],
     }
     inv = parse_hwmon_inventory(data)
     assert inv.temp_sensors[0].classification == "vrm_temp"
+    assert inv.pwm_controls[0].id == "p1"
+    assert inv.pwm_controls[0].pwm_mode is None  # absent optional
+    assert inv.pwm_controls[0].is_writable is False  # safe default
+    assert inv.monitor_only_fans[0].id == "f1"
+    assert inv.monitor_only_fans[0].source == "hwmon"
 
 
 def test_parse_inventory_readiness_and_defensive_entries():
