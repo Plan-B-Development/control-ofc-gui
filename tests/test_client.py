@@ -158,3 +158,40 @@ class TestInventoryAndPreferredSensors:
         client._get.assert_called_once_with("/inventory/hwmon")
         assert inv.temp_sensors[0].classification == "cpu_tctl"
         assert inv.default_cpu.source == "auto"
+
+    # Wire-protocol coverage for the two live preferred-sensor POSTs. Restored
+    # during the v2.26.0 release review: the DEC-224 dead-code sweep removed
+    # these alongside the legitimately-dead `test_inventory_readiness_calls_get`
+    # (they shared this class), leaving `set_preferred_{cpu,mb}_sensor`'s
+    # endpoint/payload contract tested only through UI stubs. These methods are
+    # live (settings_page + overview_page); a typo in the path or `sensor_id`
+    # key would otherwise be silent until a real daemon connection.
+    def test_set_preferred_cpu_sensor_posts_id(self):
+        client = self._make_client(
+            post_return={"updated": True, "role": "cpu", "preferred_sensor": "hwmon:x:Tctl"}
+        )
+        res = client.set_preferred_cpu_sensor("hwmon:x:Tctl")
+        client._post.assert_called_once_with(
+            "/config/preferred-cpu-sensor", json={"sensor_id": "hwmon:x:Tctl"}
+        )
+        assert res.updated is True
+        assert res.preferred_sensor == "hwmon:x:Tctl"
+
+    def test_set_preferred_cpu_sensor_clears_with_none(self):
+        client = self._make_client(
+            post_return={"updated": True, "role": "cpu", "preferred_sensor": None}
+        )
+        res = client.set_preferred_cpu_sensor(None)
+        client._post.assert_called_once_with(
+            "/config/preferred-cpu-sensor", json={"sensor_id": None}
+        )
+        assert res.preferred_sensor is None
+
+    def test_set_preferred_mb_sensor_posts_id(self):
+        client = self._make_client(
+            post_return={"updated": True, "role": "mb", "preferred_sensor": "hwmon:x:SYSTIN"}
+        )
+        client.set_preferred_mb_sensor("hwmon:x:SYSTIN")
+        client._post.assert_called_once_with(
+            "/config/preferred-mb-sensor", json={"sensor_id": "hwmon:x:SYSTIN"}
+        )
