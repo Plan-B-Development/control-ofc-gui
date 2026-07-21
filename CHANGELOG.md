@@ -1,6 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## [2.26.0] — 2026-07-21
+
+Audit-2026-07-21 remediation (GUI side): a profile-id path-traversal fix
+(DEC-223), the `GET /inventory/hwmon` fields now modelled (CONTR-1), an
+override-renew in-flight guard (CONC-4), test hardening, a ~1170-line
+verified-dead-code sweep (DEC-224, settings schema v2→v3), and a 3.3×
+dashboard-chart tick speedup (EFF-1). No user-visible UI change; no breaking
+contract change (`EXPECTED_API_VERSION` stays 1). Pairs with
+`control-ofc-daemon` ≥ v2.11.0 (unchanged — no new daemon feature required).
 
 ### Added
 - **`GET /inventory/hwmon` is now fully modelled (2026-07-21 audit CONTR-1).**
