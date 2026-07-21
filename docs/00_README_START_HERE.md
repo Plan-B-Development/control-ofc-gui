@@ -26,6 +26,7 @@ This pack is the **working source of truth** for building the Linux-first deskto
 19. `21_AMD_Motherboard_Fan_Control_Guide.md` — vendor-by-vendor setup, drivers, quirks, troubleshooting
 20. `22_AMD_Sensor_Interpretation_Deep_Dive.md` — what sensor readings actually mean and confidence levels
 21. `23_Intel_Motherboard_Fan_Control_Guide.md` — Intel LGA1700 / LGA1851 companion to the AMD guide (DEC-110)
+22. `24_Cooling_Hardware_Readiness_Guide.md` — Hardware-page cooling-readiness checks explained: what each finding means and how to fix it (DEC-206/207; target of the page's "Learn how" links)
 
 > Slots 16 (`16_User_Decisions_and_API_Notes_Reference.md`) and 17 ("Documentation Audit / Traceability Matrix") are intentionally absent from the published pack. Doc 16 is a local-only running log (gitignored). Doc 17's traceability function is now performed by the per-release `CHANGELOG.md` entries.
 

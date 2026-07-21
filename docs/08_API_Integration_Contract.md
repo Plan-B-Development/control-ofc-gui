@@ -145,6 +145,8 @@ upper bounds:
 
 - `verify_hwmon_pwm` — daemon sleeps **6 s** (raised from 3 s in DEC-101);
   client timeout is **12 s**.
+- `verify_gpu_fan` — daemon sleeps the same **6 s** settle (shared
+  `VERIFY_WAIT_SECONDS` constant); client timeout is **12 s**.
 
 `DaemonTimeout` is a distinct subclass of `DaemonError` (separate from
 `DaemonUnavailable`) so callers can distinguish "the daemon is slow" from
@@ -738,6 +740,12 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
 ### Profile activation
 - `POST /profile/activate` — `{"profile_path": "/path/to/profile.json"}` or `{"profile_id": "quiet"}`
   - Daemon validates, applies, and persists active profile to `/var/lib/control-ofc/daemon_state.json`
+  - `profile_path` must canonicalize to a path **inside a registered profile
+    search directory**, else `400 validation_error` ("profile_path must be
+    within a profile search directory"). The GUI always qualifies — it
+    registers its own profiles dir as a search dir on connect (see the
+    store-of-record note below); independent API consumers must register
+    theirs via `POST /config/profile-search-dirs` first.
   - Returns `{"activated": true, "profile_id": "...", "profile_name": "..."}`
   - GUI must only update "active" state after daemon confirms success
 - `POST /profile/deactivate` — body ignored (DEC-097, daemon v1.6.0+)
@@ -745,6 +753,11 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
     releases the daemon's internal `profile-engine` lease so a later
     re-activate cleanly re-takes it. (There is no GUI lease to preserve as
     of 2.0.0 — DEC-165.)
+  - **Also clears all active control-overrides (DEC-218, daemon ≥ 2.12.0)** —
+    deactivation relinquishes curve-driven control, so standing manual
+    overrides are dropped symmetrically with activation (DEC-189). A client
+    renewing a pre-deactivate override receives `404 override_expired`
+    (re-take, don't renew). Fan-identify stops are **not** cleared.
   - Idempotent: returns `{"deactivated": true, "previous_profile_id": null,
     "previous_profile_name": null}` when no profile was active. With an
     active profile, the previous values are populated.
@@ -783,6 +796,12 @@ The GUI is poll-only and already drops its Manual cards when `/poll` no longer r
 no client action is required. Fan-identify stops (below) are per physical fan and are **not** cleared
 by an activation.
 
+**Deactivating a profile also clears all active control-overrides (DEC-218, daemon ≥ 2.12.0),**
+symmetric with activation: with no profile active there is no curve to revert to, so the standing
+live intent is dropped rather than left to re-apply onto a same-id control in the next activated
+profile. As with activation, no client action is required — the next renew is rejected
+`404 override_expired` and the card reverts. Identify stops survive deactivation too.
+
 ### Fan identify (DEC-166, daemon ≥ 1.21.0)
 
 Per-fan stop/restore for the Fan Wizard, with a deadman auto-restore. Replaces the wizard's global
@@ -793,6 +812,13 @@ freeze + raw writes.
   `stop` forces the fan to 0 (floor-exempt — even a pump) and auto-restores after the deadman;
   `restore` clears it (the engine resumes the fan's curve value). `404` if the fan id is unknown on
   `stop`; `400` on a bad action. Only the named fan is affected — others keep curve-controlling.
+
+The floor-exempt `stop` on a world-writable socket (0666, DEC-049) means any local user can hold a
+pump-class header stopped by re-issuing `stop` inside the deadman window. This is an **accepted,
+bounded risk** (2026-07-21 audit): identification requires stopping any fan by design (DEC-166),
+the deadman limits an abandoned stop to one TTL, and a thermal emergency outranks the overlay —
+the daemon's 105 °C `force_all` (and the no-sensor 40 % fallback) drives every OpenFan + writable
+hwmon header directly, spinning a stalled pump back up regardless of standing identify-stops.
 
 ### GPU fan reset
 - `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM). **AMD GPUs only** — an `nvidia_gpu:` / `intel_gpu:` BDF returns `404 validation_error` (read-only fans).
@@ -816,7 +842,7 @@ Probes whether a GPU fan-control write actually takes effect, catching the
 silent failures static diagnostics miss (`ppfeaturemask` bit 14 unset, SMU
 firmware/driver mismatch, BIOS overdrive lock). The daemon drives a test speed
 biased **upward** (idle/low → 75%, already-high → 100%, clamped to OD_RANGE so
-cooling is never reduced), sleeps `GPU_VERIFY_WAIT_SECONDS = 6 s` (matching the
+cooling is never reduced), sleeps `VERIFY_WAIT_SECONDS = 6 s` (matching the
 hwmon verify), reads back the applied PMFW `fan_curve` (or legacy `pwm1`) plus
 `fan1_input` RPM and `fan_zero_rpm_enable`, then restores the prior state
 (re-applies the last commanded speed if the GPU was being driven, else resets to

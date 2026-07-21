@@ -71,9 +71,9 @@ answer "what is this sensor, what is it doing, and is it reliable?" at a
 glance — without forcing the user to hover every cell (DEC-117).
 
 **Header summary line** above the table:
-`Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · V unavailable · M hidden`
+`Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · U unavailable · M hidden`
 (empty kind buckets are suppressed; the line collapses to `Sensors: —` when
-no sensors are reported.) The `V unavailable` bucket counts daemon-reported
+no sensors are reported.) The `U unavailable` bucket counts daemon-reported
 `unavailable_sensors[]` entries (DEC-193) and is sourced from the status poll,
 not the sensor table re-render.
 

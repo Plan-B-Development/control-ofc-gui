@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Changed
+- **API-contract + docs-pack corrections (2026-07-21 audit remediation, Phase 1;
+  docs-only, no behaviour change).** `docs/08_API_Integration_Contract.md` now
+  documents DEC-218 (`POST /profile/deactivate` clears all standing
+  control-overrides, daemon ≥ 2.12.0 — in the deactivate section and the
+  override lifecycle), the `verify_gpu_fan` 12 s per-call timeout, the
+  `profile_path` search-directory confinement (`400 validation_error` outside a
+  registered dir), and the accepted bounded-risk posture of floor-exempt
+  identify-stops (DEC-166 / DEC-049). `docs/00_README_START_HERE.md` reading
+  order gains `24_Cooling_Hardware_Readiness_Guide.md`; `docs/07`'s
+  sensor-summary placeholder letter now matches the manual (`U unavailable`).
 - **Super-I/O hardware-guidance refresh (2026-07-21 `/superio-curator` review).**
   The in-app NCT6687 driver note and `docs/19_Hardware_Compatibility.md` now cover
   current-generation boards — MSI B850/X870 (AM5) and B760/B860 (Intel), including
