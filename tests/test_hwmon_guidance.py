@@ -96,6 +96,19 @@ class TestLookupChipGuidance:
         assert g is not None
         assert g.driver_url.startswith("http")
 
+    def test_nct6687_notes_cover_current_gen_boards(self):
+        # superio-curator review 2026-07-21: Fred78290/nct6687d added MSI B850
+        # GAMING PRO WIFI6E (#182) and MAG B860M Mortar WiFi (#183); the in-app
+        # guidance must not lag a board generation behind the current AM5/Intel gens.
+        g = lookup_chip_guidance("nct6687")
+        assert g is not None
+        # Structural facts that actually mislead users if wrong (per test-review):
+        # NCT6687-R needs the out-of-tree driver, and this is the actionable remedy.
+        assert g.in_mainline is False
+        assert g.driver_package == "nct6687d-dkms-git (AUR)"
+        # Board-generation currency (the 2026-07 refresh):
+        assert "B850" in g.notes or "B860" in g.notes
+
 
 class TestFormatDriverStatus:
     def test_loaded_mainline(self):

@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Super-I/O hardware-guidance refresh (2026-07-21 `/superio-curator` review).**
+  The in-app NCT6687 driver note and `docs/19_Hardware_Compatibility.md` now cover
+  current-generation boards — MSI B850/X870 (AM5) and B760/B860 (Intel), including
+  the B850 GAMING PRO WIFI6E and MAG B860M Mortar WiFi added upstream to the
+  `nct6687d` board table — so the guidance no longer lags a board generation behind.
+  The kernel-verification stamp is refreshed to 7.2-rc4 (master 2026-07-21), the
+  IT8665E entry gains a watch-note for frankcrawford/it87 PR #120 (removes the MMIO
+  path behind the `mmio=off` workaround), and the non-chip "IT8883" row is rescoped
+  to the Gigabyte desktop dual-chip context with an unverified issue #117 (AAEON
+  Elkhart Lake) caveat. Guidance/doc-only; no API, schema, settings, or behaviour
+  change (`EXPECTED_API_VERSION` stays 1).
+
 ## [2.25.0] — 2026-07-19
 
 Dashboard rebuild: the telemetry graph is now the primary component, with a compact

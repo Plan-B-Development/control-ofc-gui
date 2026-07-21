@@ -38,7 +38,7 @@ and the mainline `nct6683` driver
 |-----------|---------|-----------------|-----------------------------------------------|
 | NCT6683   | `0xc730` | `nct6683` (mainline) | older MSI / ASRock |
 | NCT6686D  | `0xd440` | `nct6683` (mainline; read-only) or `nct6686d` (out-of-tree) | ASRock B650 Steel Legend WiFi, BC-250 |
-| NCT6687-R | `0xd590` | `nct6687d-dkms-git` (out-of-tree only) | MSI MAG B550 TOMAHAWK, MAG B650 TOMAHAWK, MPG/MEG X670E |
+| NCT6687-R | `0xd590` | `nct6687d-dkms-git` (out-of-tree only) | MSI MAG B550 TOMAHAWK, MAG B650 TOMAHAWK, MPG/MEG X670E, B850 GAMING PRO WIFI6E, MAG B860M Mortar WiFi (added to the `nct6687d` board table 2026-06) |
 
 (NCT6797D = `0xd450` and NCT6798D = `0xd428` are separate
 `nct6775`-driven chips — see the `nct6775-platform.c` constants in the
@@ -71,15 +71,15 @@ writes until resolved.
 
 | Chip Series | Kernel Driver | Mainline | Package |
 |-------------|--------------|----------|---------|
-| Legacy IT87xx (IT8603E/IT8620E/IT8622E/IT8628E, IT8705F–IT8795E) | `it87` | Yes (per the mainline `enum chips`, verified against v7.1 / 7.2-rc1) | linux (built-in) |
-| IT8625E | `it87` | **No** (mainlining in flight on lore, not landed as of 7.1 / 7.2-rc1, July 2026) | `it87-dkms-git` (AUR) |
-| IT8665E | `it87` | **No** | `it87-dkms-git` (AUR) — **needs `mmio=off` on 2026-03+ builds** ([issue #106](https://github.com/frankcrawford/it87/issues/106)) |
+| Legacy IT87xx (IT8603E/IT8620E/IT8622E/IT8628E, IT8705F–IT8795E) | `it87` | Yes (per the mainline `enum chips`, verified against v7.1 / 7.2-rc4, master 2026-07-21) | linux (built-in) |
+| IT8625E | `it87` | **No** (mainlining in flight on lore, not landed as of 7.1 / 7.2-rc4, July 2026) | `it87-dkms-git` (AUR) |
+| IT8665E | `it87` | **No** | `it87-dkms-git` (AUR) — **needs `mmio=off` on 2026-03+ builds** ([issue #106](https://github.com/frankcrawford/it87/issues/106)); a driver-side fix is in flight ([PR #120](https://github.com/frankcrawford/it87/pull/120), opened 2026-07-19, removes MMIO for IT8665E) |
 | IT8686E | `it87` | **No** | `it87-dkms-git` (AUR) |
 | IT8688E | `it87` | **No** | `it87-dkms-git` (AUR) |
 | IT8689E | `it87` | **Yes (control) since 7.1** — six PWM + `FEAT_FANCTL_ONOFF` (commit `66b8eaf`, merged 2026-03-31; 7.1 released 2026-06-14) | `it87-dkms-git` (AUR) still recommended pre-7.1 (6.12 / 6.18 LTS) and for board Rev 1 quirks; the GUI still labels it out-of-tree for this reason (DEC-144) |
 | IT8696E | `it87` | **No** | `it87-dkms-git` (AUR) — primary on AM5 800-series Gigabyte boards |
 | IT87952E | `it87` | **Yes since 6.4 for enumeration** (commit `d44cb4c`) — secondary-chip *control* on dual-IO Gigabyte boards needs the DKMS MMIO path | `it87-dkms-git` (AUR) for control — secondary chip on dual-IO Gigabyte boards (e.g. X870E AORUS MASTER) |
-| "IT8883" | *(not a real chip)* | — | Device-ID `0x8883` is the stuck-in-config-mode *symptom* of a secondary Super-I/O, not a chip ([#70](https://github.com/frankcrawford/it87/issues/70)); a clean read is `0x8695` (IT87952E). See the STEALTH ICE row below |
+| "IT8883" | *(not a distinct desktop chip)* | — | On Gigabyte desktop dual-chip boards, device-ID `0x8883` is the stuck-in-config-mode *symptom* of a secondary Super-I/O, not a chip ([#70](https://github.com/frankcrawford/it87/issues/70)); a clean read is `0x8695` (IT87952E). See the STEALTH ICE row below. *(Scope caveat: [issue #117](https://github.com/frankcrawford/it87/issues/117) (opened 2026-07-12) requests `0x8883` support for an AAEON **Elkhart Lake embedded** board as a possible distinct chip — unverified single report; does not change the desktop behaviour above.)* |
 
 The out-of-tree `it87` driver is maintained by Frank Crawford:
 https://github.com/frankcrawford/it87
@@ -141,7 +141,10 @@ on **IT8665E** boards (X399 era, e.g. ASUS ROG Zenith Extreme): values
 written are mangled (180 is stored as ~4) through a maintainer-confirmed
 broken legacy FEAT_MMIO path
 ([issue #106](https://github.com/frankcrawford/it87/issues/106), open).
-On those boards set `options it87 mmio=off` instead.
+On those boards set `options it87 mmio=off` instead. **Watch:** frankcrawford/it87
+[PR #120](https://github.com/frankcrawford/it87/pull/120) (opened 2026-07-19, not yet
+merged) removes the MMIO path for IT8665E to fix #106 at the driver level — once it
+lands, updating the DKMS build should replace the `mmio=off` workaround.
 
 The control-ofc daemon detects this case (DEC-101): when DMI matches
 a known dual-chip board but only one ITE chip enumerated, the
@@ -613,13 +616,13 @@ directory and the driver DMI tables cited inline above):
 
 **Out-of-tree drivers**
 - [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) — MSI NCT6686D / NCT6687D, `fan_config=msi_alt1` & `msi_fan_brute_force` params (no tagged releases; DKMS off `main`, `MODULE_VERSION` 1.0.0); [PR #164](https://github.com/Fred78290/nct6687d/pull/164) removed the `0xd450` collision (merged 2026-05-19)
-- [frankcrawford/it87](https://github.com/frankcrawford/it87) — IT8625E+ support, `force_id` / `ignore_resource_conflict` / `mmio` params; [PR #95](https://github.com/frankcrawford/it87/pull/95) (MMIO default on, 2026-03), [PR #102](https://github.com/frankcrawford/it87/pull/102) (ISA-bridge MMIO/H2RAM merge, 2026-04); issues [#64](https://github.com/frankcrawford/it87/issues/64) (secondary-chip fan control, closed 2025-12), [#70](https://github.com/frankcrawford/it87/issues/70), [#81](https://github.com/frankcrawford/it87/issues/81), [#89](https://github.com/frankcrawford/it87/issues/89) (X870E AORUS ELITE X3D dual-chip report, closed 2026-01-13), [#92](https://github.com/frankcrawford/it87/issues/92) (B650 GAMING X AX V2 ACPI bind failure, closed 2026-02-23), [#94](https://github.com/frankcrawford/it87/issues/94) (DKMS module-path quirk on CachyOS-LTS/Tumbleweed), [#96](https://github.com/frankcrawford/it87/issues/96) (IT8689E Rev 1 — temps-to-90 partial stopgap, driver fix in PR #114), [#99](https://github.com/frankcrawford/it87/issues/99) (IT8792 suspend/resume, still open), [#103](https://github.com/frankcrawford/it87/issues/103) (X870E AORUS MASTER community label mapping), [#106](https://github.com/frankcrawford/it87/issues/106) (IT8665E mmio-default regression), [#108](https://github.com/frankcrawford/it87/issues/108) (`-Werror=unused-function` build failure); open PRs [#114](https://github.com/frankcrawford/it87/pull/114) (IT8689E/IT8696E manual PWM), [#110](https://github.com/frankcrawford/it87/pull/110) (force_pwm)
+- [frankcrawford/it87](https://github.com/frankcrawford/it87) — IT8625E+ support, `force_id` / `ignore_resource_conflict` / `mmio` params; [PR #95](https://github.com/frankcrawford/it87/pull/95) (MMIO default on, 2026-03), [PR #102](https://github.com/frankcrawford/it87/pull/102) (ISA-bridge MMIO/H2RAM merge, 2026-04); issues [#64](https://github.com/frankcrawford/it87/issues/64) (secondary-chip fan control, closed 2025-12), [#70](https://github.com/frankcrawford/it87/issues/70), [#81](https://github.com/frankcrawford/it87/issues/81), [#89](https://github.com/frankcrawford/it87/issues/89) (X870E AORUS ELITE X3D dual-chip report, closed 2026-01-13), [#92](https://github.com/frankcrawford/it87/issues/92) (B650 GAMING X AX V2 ACPI bind failure, closed 2026-02-23), [#94](https://github.com/frankcrawford/it87/issues/94) (DKMS module-path quirk on CachyOS-LTS/Tumbleweed), [#96](https://github.com/frankcrawford/it87/issues/96) (IT8689E Rev 1 — temps-to-90 partial stopgap, driver fix in PR #114), [#99](https://github.com/frankcrawford/it87/issues/99) (IT8792 suspend/resume, still open), [#103](https://github.com/frankcrawford/it87/issues/103) (X870E AORUS MASTER community label mapping), [#106](https://github.com/frankcrawford/it87/issues/106) (IT8665E mmio-default regression), [#108](https://github.com/frankcrawford/it87/issues/108) (`-Werror=unused-function` build failure); open PRs [#114](https://github.com/frankcrawford/it87/pull/114) (IT8689E/IT8696E manual PWM, still open as of 2026-07-21), [#110](https://github.com/frankcrawford/it87/pull/110) (force_pwm), [#120](https://github.com/frankcrawford/it87/pull/120) (remove MMIO for IT8665E — fixes #106, opened 2026-07-19), [#119](https://github.com/frankcrawford/it87/pull/119) (GA-X570S-AERO-G sensors config)
 
 **Mainline it87 chip support (cross-checked against the kernel source)**
-- [torvalds/linux `drivers/hwmon/it87.c`](https://github.com/torvalds/linux/blob/master/drivers/hwmon/it87.c) — `enum chips` (v7.1 / 7.2-rc1 verified: includes `it8622`, `it8689`, `it87952`; excludes `it8625`, `it8665`, `it8686`, `it8688`, `it8696`)
+- [torvalds/linux `drivers/hwmon/it87.c`](https://github.com/torvalds/linux/blob/master/drivers/hwmon/it87.c) — `enum chips` (v7.1 / 7.2-rc4 verified against master 2026-07-21: includes `it8622`, `it8689`, `it87952`; excludes `it8625`, `it8665`, `it8686`, `it8688`, `it8696`, `it8613`)
 - IT87952E mainline since kernel **6.4** — commit [`d44cb4c`](https://github.com/torvalds/linux/commit/d44cb4c) (2023)
 - IT8689E mainline from kernel **7.1** — **fan control** (six PWM channels, `FEAT_SIX_PWM` + `FEAT_FANCTL_ONOFF`), not sensors-only; commit [`66b8eaf`](https://github.com/torvalds/linux/commit/66b8eaf) (author 2026-03-22, merged 2026-03-31), released in 7.1 on 2026-06-14. Separately, some Gigabyte **Rev 1** boards have an EC/BIOS quirk that overrides PWM writes ([issue #96](https://github.com/frankcrawford/it87/issues/96)); the maintainer's temps-to-90 stopgap is partial (CPU fan only), with the driver-side fix pending in [PR #114](https://github.com/frankcrawford/it87/pull/114)
-- IT8625E / IT8613E mainlining in flight: [lore IT8625E v2 thread](https://lore.kernel.org/lkml/b6c2731b-8fac-4e7a-ab0c-2f36e8a64a69@roeck-us.net/T/), [LWN: it87 IT8613E v4 series](https://lwn.net/Articles/1054427/) — neither landed as of 7.1 / 7.2-rc1 (July 2026)
+- IT8625E / IT8613E mainlining in flight: [lore IT8625E v2 thread](https://lore.kernel.org/lkml/b6c2731b-8fac-4e7a-ab0c-2f36e8a64a69@roeck-us.net/T/), [LWN: it87 IT8613E v4 series](https://lwn.net/Articles/1054427/) — neither landed as of 7.1 / 7.2-rc4 (July 2026)
 
 **GPU device IDs & kernel regressions**
 - AMD `amdgpu.ids` (libdrm) and `pci.ids` (hwdata) — Navi 48 `0x7550` (RX 9070 XT rev `0xC0` / RX 9070 rev `0xC3`) and `0x7551` (Radeon AI PRO R9700)

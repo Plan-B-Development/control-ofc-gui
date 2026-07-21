@@ -295,8 +295,8 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "Some MSI boards report all headers as read-only until Smart Fan Mode is disabled.",
         ],
         notes=(
-            "Nuvoton NCT6687-R — common on MSI B550/X570/B650/X670 boards. "
-            "Requires out-of-tree driver."
+            "Nuvoton NCT6687-R — common on MSI B550/X570/B650/X670 and current "
+            "B850/X870 (AM5) / B760/B860 (Intel) boards. Requires out-of-tree driver."
         ),
     ),
     ChipGuidance(
