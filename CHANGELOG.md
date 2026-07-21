@@ -46,6 +46,17 @@
   `~/.config/control-ofc/profiles/`. 18 regression tests, kill-verified.
 
 ### Changed
+- **Dashboard chart tick cost cut 3.3× (2026-07-21 audit EFF-1).**
+  `TimelineChart.update_chart` no longer rebuilds full numpy arrays from
+  Python lists for every visible series each second — a per-series
+  `_SeriesCache` mirrors history append-only (new `HistoryStore.generation` /
+  `readings_since` API; full rebuild only on a prefill merge or clear) and
+  serves the visible window as a searchsorted cut + array views, the
+  streaming pattern pyqtgraph recommends (pyqtgraph#1737). Measured at 30
+  series × 7200 points: **14.62 → 4.41 ms** median per tick. Cache memory is
+  compaction-bounded to ~one 2 h retention window per series. Also fixes a
+  latent `AttributeError` in `TimelineChart.cleanup()` for selection-less
+  charts (found by the benchmark harness).
 - **Override-renew in-flight guard (2026-07-21 audit CONC-4; defensive
   hardening, no behaviour change on a healthy daemon).** The ~5 s renew timer
   no longer dispatches a duplicate renew for a control whose previous renew is

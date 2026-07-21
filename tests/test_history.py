@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 
 from control_ofc.api.models import FanReading, HistoryPoint, SensorReading
-from control_ofc.services.history_store import HistoryStore
+from control_ofc.services.history_store import HistoryStore, TimestampedReading
 
 
 def test_record_sensors():
@@ -271,3 +271,60 @@ def test_prune_drops_entry_just_past_cutoff():
         series = store.get_series("sensor:cpu")
         assert len(series) == 1
         assert series[0].value == 20.0
+
+
+# ---------------------------------------------------------------------------
+# EFF-1 (2026-07-21): generation + readings_since — the incremental-cache API
+# ---------------------------------------------------------------------------
+
+
+def test_readings_since_returns_strictly_newer_ascending():
+    store = HistoryStore()
+    key = "sensor:cpu"
+    dq = store._series.setdefault(key, __import__("collections").deque())
+    for i in range(5):
+        dq.append(TimestampedReading(timestamp=100.0 + i, value=float(i)))
+
+    newer = store.readings_since(key, 101.0)  # strictly greater — 101 excluded
+    assert [r.timestamp for r in newer] == [102.0, 103.0, 104.0]
+    assert [r.value for r in newer] == [2.0, 3.0, 4.0]
+
+    assert store.readings_since(key, 104.0) == []
+    assert [r.timestamp for r in store.readings_since(key, float("-inf"))] == [
+        100.0,
+        101.0,
+        102.0,
+        103.0,
+        104.0,
+    ]
+
+
+def test_readings_since_unknown_key_is_empty():
+    assert HistoryStore().readings_since("sensor:nope", 0.0) == []
+
+
+def test_generation_stable_across_plain_appends():
+    store = HistoryStore()
+    key = "sensor:cpu"
+    assert store.generation(key) == 0
+    store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=50.0, age_ms=10)])
+    store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=51.0, age_ms=10)])
+    assert store.generation("sensor:cpu") == 0  # append-only → cache stays valid
+
+
+def test_generation_bumps_on_prefill_merge():
+    store = HistoryStore()
+    store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=50.0, age_ms=10)])
+    key = "sensor:cpu"
+    before = store.generation(key)
+    now_ms = int(time.time() * 1000)
+    store.prefill_sensor("cpu", [HistoryPoint(ts=now_ms - 5000, v=42.0)])
+    assert store.generation(key) == before + 1  # merge restructured the series
+
+
+def test_generation_bumps_on_clear():
+    store = HistoryStore()
+    store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=50.0, age_ms=10)])
+    before = store.generation("sensor:cpu")
+    store.clear()
+    assert store.generation("sensor:cpu") == before + 1

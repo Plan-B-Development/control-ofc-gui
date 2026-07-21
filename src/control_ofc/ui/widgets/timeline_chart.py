@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.constants import HISTORY_DURATION_S
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import ChartMode
 from control_ofc.ui.theme import ThemeTokens, active_theme
@@ -59,6 +60,82 @@ _DEFAULT_MODE_INDEX = 0  # Combined
 _MAX_ANNOTATIONS = 40
 
 
+class _SeriesCache:
+    """Append-only numpy mirror of one history series (EFF-1, 2026-07-21 audit).
+
+    ``xs``/``ys`` hold absolute monotonic timestamps/values; ``count`` is the
+    valid prefix (arrays over-allocate geometrically, compacting entries older
+    than the longest chart range before growing). Steady-state ticks append
+    only the new tail readings and serve the visible window as a searchsorted
+    cut + array views — O(window) per tick instead of rebuilding O(history)
+    Python lists into fresh arrays every second, the streaming pattern
+    pyqtgraph recommends over per-frame full-array rebuilds
+    (github.com/pyqtgraph/pyqtgraph/issues/1737). Rebuilt from scratch whenever
+    the store reports a new per-key generation (prefill merge / clear). Pure
+    numpy — no Qt — so it is unit-testable without a widget.
+    """
+
+    __slots__ = ("count", "generation", "xs", "ys")
+
+    def __init__(self, readings, generation: int) -> None:
+        n = len(readings)
+        cap = max(256, 2 * n)
+        self.xs = np.empty(cap, dtype=np.float64)
+        self.ys = np.empty(cap, dtype=np.float64)
+        for i, r in enumerate(readings):
+            self.xs[i] = r.timestamp
+            self.ys[i] = r.value
+        self.count = n
+        self.generation = generation
+
+    @property
+    def last_ts(self) -> float:
+        return float(self.xs[self.count - 1]) if self.count else float("-inf")
+
+    def append(self, readings) -> None:
+        for r in readings:
+            if self.count == len(self.xs):
+                self._make_room()
+            self.xs[self.count] = r.timestamp
+            self.ys[self.count] = r.value
+            self.count += 1
+
+    def _make_room(self) -> None:
+        # Compact first: drop entries older than the longest chart range,
+        # measured from the newest cached point — bounds memory to ~one
+        # retention window per series. Grow only if compaction freed nothing.
+        # NOTE: HISTORY_DURATION_S must stay >= max(TIME_RANGES) seconds (both
+        # are 2 h today) — a longer selectable range would need a matching
+        # retention bump here AND in HistoryStore, or the widest window would
+        # show a compacted (truncated) left edge.
+        cutoff = self.xs[self.count - 1] - HISTORY_DURATION_S
+        cut = int(np.searchsorted(self.xs[: self.count], cutoff, side="left"))
+        if cut > 0:
+            kept = self.count - cut
+            self.xs[:kept] = self.xs[cut : self.count]
+            self.ys[:kept] = self.ys[cut : self.count]
+            self.count = kept
+        if self.count == len(self.xs):
+            self.xs = np.resize(self.xs, len(self.xs) * 2)
+            self.ys = np.resize(self.ys, len(self.ys) * 2)
+
+    def window(self, now: float, window_s: float):
+        """``(x_rel, y)`` for the visible window — ``x`` shifted relative to
+        *now* (one small window-sized allocation), ``y`` a zero-copy view.
+
+        INVARIANT: ``y`` ALIASES this cache's mutable buffer, and pyqtgraph
+        0.14 holds passed arrays by reference (``.view(np.ndarray)`` in
+        PlotDataItem/PlotCurveItem — no copy). This is safe only because
+        ``update_chart`` appends and hands the fresh view to ``setData``
+        within one synchronous pass: never introduce event-loop re-entry
+        (processEvents, dialogs) between ``_windowed_series`` and the
+        ``setData`` call, or a paint may observe a mid-mutation buffer."""
+        lo = int(np.searchsorted(self.xs[: self.count], now - window_s, side="left"))
+        if lo >= self.count:
+            return None, None
+        return self.xs[lo : self.count] - now, self.ys[lo : self.count]
+
+
 class TimelineChart(QWidget):
     """Live-updating dual-axis chart with selection-model-driven visibility."""
 
@@ -82,6 +159,8 @@ class TimelineChart(QWidget):
         self._theme = active_theme()
         self._color_overrides: dict[str, str] = color_overrides or {}
         self._time_range_s = 300  # default 5 minutes
+        # EFF-1: per-key incremental numpy mirrors of the history series.
+        self._series_cache: dict[str, _SeriesCache] = {}
         self._temp_items: dict[str, pg.PlotDataItem] = {}
         self._rpm_items: dict[str, pg.PlotCurveItem] = {}
         # Single-point "latest value" markers, keyed like the series dicts but
@@ -315,8 +394,13 @@ class TimelineChart(QWidget):
         if app is not None:
             with contextlib.suppress(RuntimeError, TypeError):
                 app.applicationStateChanged.disconnect(self._on_app_state_changed)
-        with contextlib.suppress(RuntimeError, TypeError):
-            self._selection.selection_changed.disconnect(self.update_chart)
+        if self._selection is not None:
+            # Guard mirrors the constructor's `if self._selection:` connect —
+            # a selection-less chart must not AttributeError here (found by
+            # the EFF-1 bench harness, 2026-07-21).
+            with contextlib.suppress(RuntimeError, TypeError):
+                self._selection.selection_changed.disconnect(self.update_chart)
+        self._series_cache.clear()
         if self._proxy is not None:
             with contextlib.suppress(RuntimeError, TypeError):
                 self._proxy.disconnect()
@@ -464,6 +548,27 @@ class TimelineChart(QWidget):
         # Fallback: use raw history keys (startup or no selection model)
         return [k for k in self._history.series_keys() if not k.endswith(":pwm")]
 
+    def _windowed_series(self, key: str, now: float):
+        """Visible-window ``(x_rel, y)`` for *key* via the incremental cache
+        (EFF-1, 2026-07-21 audit): a full array rebuild happens only when the
+        store reports a new generation for the key (prefill merge / clear);
+        every other tick appends the new tail readings and slices the window.
+        Returns ``(None, None)`` when the key has no history."""
+        gen = self._history.generation(key)
+        cache = self._series_cache.get(key)
+        if cache is None or cache.generation != gen:
+            readings = self._history.get_series(key)
+            if not readings:
+                self._series_cache.pop(key, None)
+                return None, None
+            cache = _SeriesCache(readings, gen)
+            self._series_cache[key] = cache
+        else:
+            new = self._history.readings_since(key, cache.last_ts)
+            if new:
+                cache.append(new)
+        return cache.window(now, self._time_range_s)
+
     def update_chart(self) -> None:
         """Refresh the chart from history data."""
         now = time.monotonic()
@@ -487,18 +592,8 @@ class TimelineChart(QWidget):
                     self._latest_items[key].setData([], [])
                 continue
 
-            series = self._history.get_series(key)
-            if not series:
-                continue
-
-            x = np.array([r.timestamp - now for r in series])
-            y = np.array([r.value for r in series])
-
-            mask = x >= -self._time_range_s
-            x = x[mask]
-            y = y[mask]
-
-            if len(x) == 0:
+            x, y = self._windowed_series(key, now)
+            if x is None or len(x) == 0:
                 continue
 
             color = self.color_for_key(key)
@@ -537,15 +632,17 @@ class TimelineChart(QWidget):
                     self._rpm_items[key].setData(x, y)
                 self._update_latest_dot(key, x[-1], y[-1], color, self._rpm_vb)
 
-        # Remove stale items
+        # Remove stale items (and their cached arrays)
         for key in list(self._temp_items):
             if key not in all_keys:
                 plot.removeItem(self._temp_items.pop(key))
+                self._series_cache.pop(key, None)
                 if key in self._latest_items:
                     plot.removeItem(self._latest_items.pop(key))
         for key in list(self._rpm_items):
             if key not in all_keys and self._rpm_vb:
                 self._rpm_vb.removeItem(self._rpm_items.pop(key))
+                self._series_cache.pop(key, None)
                 if key in self._latest_items:
                     self._rpm_vb.removeItem(self._latest_items.pop(key))
 

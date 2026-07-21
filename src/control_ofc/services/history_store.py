@@ -29,6 +29,8 @@ class HistoryStore:
     def __init__(self, max_age_s: float = HISTORY_DURATION_S) -> None:
         self._max_age_s = max_age_s
         self._series: dict[str, deque[TimestampedReading]] = {}
+        # Per-key counter bumped by non-append-only mutations (see generation()).
+        self._generation: dict[str, int] = {}
 
     def record_sensors(self, sensors: list[SensorReading]) -> None:
         now = time.monotonic()
@@ -50,6 +52,39 @@ class HistoryStore:
 
     def series_keys(self) -> list[str]:
         return list(self._series.keys())
+
+    def generation(self, key: str) -> int:
+        """Monotonic per-key counter bumped by any NON-append-only mutation
+        (the :meth:`prefill_sensor` merge, :meth:`clear`).
+
+        Lets a consumer keep an incremental cache of the append-only tail
+        (EFF-1, 2026-07-21 audit) and fall back to a full rebuild only when
+        the series was restructured. Left-side age pruning deliberately does
+        NOT bump it: pruned entries are strictly older than any cached tail,
+        so a windowed consumer never misses data from them.
+        """
+        return self._generation.get(key, 0)
+
+    def readings_since(self, key: str, after_ts: float) -> list[TimestampedReading]:
+        """Readings with ``timestamp`` strictly greater than *after_ts*,
+        ascending — O(new), scanning from the right of the deque. The
+        incremental-read half of the :meth:`generation` contract (valid only
+        while the generation is unchanged; live appends are monotonic).
+
+        Strict ``>`` assumes no two readings of one key share a timestamp
+        across calls — guaranteed today (one ``time.monotonic()`` stamp per
+        1 Hz record pass; prefill dedupes exact timestamps and bumps the
+        generation anyway)."""
+        series = self._series.get(key)
+        if not series:
+            return []
+        out: list[TimestampedReading] = []
+        for r in reversed(series):
+            if r.timestamp <= after_ts:
+                break
+            out.append(r)
+        out.reverse()
+        return out
 
     def prefill_sensor(self, sensor_id: str, points: list[HistoryPoint]) -> None:
         """Pre-fill history from the daemon's ring buffer (first connect and
@@ -86,9 +121,12 @@ class HistoryStore:
                 continue
             deduped.append(r)
         self._series[key] = deduped
+        self._generation[key] = self._generation.get(key, 0) + 1
         self._prune(key)
 
     def clear(self) -> None:
+        for key in self._series:
+            self._generation[key] = self._generation.get(key, 0) + 1
         self._series.clear()
 
     def _append(self, key: str, timestamp: float, value: float) -> None:
