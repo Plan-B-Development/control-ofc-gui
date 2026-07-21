@@ -46,6 +46,11 @@
   `~/.config/control-ofc/profiles/`. 18 regression tests, kill-verified.
 
 ### Changed
+- **Packaging: `check()` scope documented (2026-07-21 audit PKG-4; comment
+  only).** The AUR `PKGBUILD` `check()` runs byte-compilation only; a comment
+  now records that the full pytest suite runs in `ci.yml` (the makepkg build
+  container has no PySide6/pytest), so the compile-only check is intentional,
+  not an omission. namcap clean.
 - **Dashboard chart tick cost cut 3.3× (2026-07-21 audit EFF-1).**
   `TimelineChart.update_chart` no longer rebuilds full numpy arrays from
   Python lists for every visible series each second — a per-series

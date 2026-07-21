@@ -34,6 +34,11 @@ build() {
 
 check() {
     cd "$pkgname-$pkgver"
+    # Byte-compilation only (2026-07-21 audit PKG-4): the full pytest suite
+    # (2600+ tests) runs in ci.yml with QT_QPA_PLATFORM=offscreen. The
+    # makepkg build container installs only base-devel + build tooling, not
+    # PySide6/pytest/httpx/pyqtgraph/numpy, so a headless test run is not
+    # available here — compileall is the buildable smoke check.
     python -m compileall -q src/
 }
 
