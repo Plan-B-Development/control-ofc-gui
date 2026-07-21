@@ -576,6 +576,15 @@ class Profile:
     def from_dict(data: dict) -> Profile:
         version = data.get("version", 1)
 
+        # DEC-223: reject an unsafe id at the parse boundary, before either
+        # construction path below — the id becomes an on-disk filename under
+        # profiles_dir() (see profile_file_path). A missing id stays legal
+        # (each path generates one). Callers already surface exceptions from
+        # this method as per-profile load errors.
+        raw_id = data.get("id")
+        if raw_id is not None and (not isinstance(raw_id, str) or not _is_safe_profile_id(raw_id)):
+            raise ValueError(f"unsafe profile id: {raw_id!r}")
+
         if version < 2 and "assignments" in data:
             profile = _migrate_v1_profile(data)
             # Apply the v4 floor pass to v1-migrated profiles too so the
@@ -619,6 +628,53 @@ class Profile:
             curves=curves,
             version=PROFILE_SCHEMA_VERSION,
         )
+
+
+# ---------------------------------------------------------------------------
+# Profile id / path safety (DEC-223)
+# ---------------------------------------------------------------------------
+
+_MAX_PROFILE_ID_BYTES = 128
+"""Byte cap mirroring the daemon's ``MAX_PROFILE_ID_BYTES`` (profile.rs)."""
+
+
+def _is_safe_profile_id(value: str) -> bool:
+    """Whether *value* is usable as a profile id (and thus an on-disk stem).
+
+    Mirrors the daemon's ``is_safe_profile_id`` (``profile.rs``, the store's
+    single id-safety rule): non-empty, ≤128 UTF-8 bytes, no ``/`` or ``\\``,
+    no ``..``, no Unicode control character (C0/C1/DEL). A profile id names a
+    file under :func:`~control_ofc.paths.profiles_dir` (see
+    :func:`profile_file_path`), so a separator or dot-dot would address a file
+    outside it — DEC-223, the profile-side twin of the DEC-217 theme-name rule.
+    """
+    if not value or len(value.encode("utf-8")) > _MAX_PROFILE_ID_BYTES:
+        return False
+    if "/" in value or "\\" in value or ".." in value:
+        return False
+    return not any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in value)
+
+
+def profile_file_path(profile_id: str) -> Path:
+    """Derive the on-disk cache path for *profile_id*.
+
+    The one sanctioned way to turn a profile id into a file path — call sites
+    must not hand-compose ``profiles_dir() / f"{id}.json"``. Unsafe ids are
+    already rejected at the parse boundary (:meth:`Profile.from_dict`); this
+    is the second line of defence for an id that arrives another way, and the
+    containment check on the *resolved* destination also catches a
+    profiles-dir entry that symlinks outside (DEC-223; same posture as
+    ``theme_file_path`` / DEC-217).
+
+    Raises ``ValueError`` when *profile_id* has no safe representation.
+    """
+    if not _is_safe_profile_id(profile_id):
+        raise ValueError(f"unsafe profile id: {profile_id!r}")
+    base = profiles_dir()
+    dest = base / f"{profile_id}.json"
+    if not dest.resolve().is_relative_to(base.resolve()):
+        raise ValueError(f"profile id escapes {base}: {profile_id!r}")
+    return dest
 
 
 # ---------------------------------------------------------------------------
@@ -1512,7 +1568,7 @@ class ProfileService(QObject):
 
     def _write_local(self, profile: Profile) -> None:
         """Write a profile to the local cache dir (atomic; 0600 via paths)."""
-        path = profiles_dir() / f"{profile.id}.json"
+        path = profile_file_path(profile.id)
         atomic_write(path, json.dumps(profile.to_dict(), indent=2) + "\n")
 
     def save_profile(self, profile: Profile) -> None:
@@ -1670,7 +1726,7 @@ class ProfileService(QObject):
                     e.message,
                 )
         profile = self._profiles.pop(profile_id)
-        path = profiles_dir() / f"{profile.id}.json"
+        path = profile_file_path(profile.id)
         if path.exists():
             path.unlink()
         self._daemon_ids.discard(profile_id)
@@ -1685,5 +1741,10 @@ class ProfileService(QObject):
         return self._profiles.get(profile_id)
 
     def profile_path(self, profile_id: str) -> Path:
-        """Return the filesystem path for a profile's JSON file."""
-        return profiles_dir() / f"{profile_id}.json"
+        """Return the filesystem path for a profile's JSON file.
+
+        Raises ``ValueError`` for an id that cannot safely name a file under
+        the profiles dir (DEC-223) — ids from this service's own registry
+        always can.
+        """
+        return profile_file_path(profile_id)

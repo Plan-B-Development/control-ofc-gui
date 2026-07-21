@@ -478,3 +478,36 @@ def test_no_client_is_pure_local(cfg):
     assert svc.is_published(p.id) is False
     assert svc.offline is False
     assert (profiles_dir() / f"{p.id}.json").exists()
+
+
+def test_daemon_document_with_traversal_id_is_rejected_not_mirrored(cfg):
+    """DEC-223: a malicious/compromised daemon returning a stored document
+    whose ``id`` traverses must surface as a per-profile hydrate error
+    (DEC-175 keeps the rest intact) and must not be mirrored to disk —
+    neither inside the profiles dir nor through the traversal."""
+    fake = FakeDaemonClient()
+    fake.store["../evil"] = {
+        "id": "../evil",
+        "name": "Evil",
+        "version": 7,
+        "controls": [],
+        "curves": [],
+    }
+    fake.store["good"] = {
+        "id": "good",
+        "name": "Good",
+        "version": 7,
+        "controls": [],
+        "curves": [],
+    }
+    svc = ProfileService(client=fake)
+    errors = svc.load()
+
+    assert any("unsafe profile id" in msg for _, msg in errors)
+    assert svc.get_profile("../evil") is None
+    assert svc.get_profile("good") is not None
+    # The pre-fix mirror write would have landed at <config>/evil.json
+    # (profiles/../evil.json). Only good.json may exist, inside the dir.
+    assert not (cfg / "control-ofc" / "evil.json").exists()
+    assert (profiles_dir() / "good.json").exists()
+    assert sorted(p.name for p in profiles_dir().glob("*.json")) == ["good.json"]

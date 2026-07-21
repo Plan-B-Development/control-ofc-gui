@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Security
+- **Profile ids are validated and path-contained (DEC-223; 2026-07-21 audit
+  SEC-1).** `Profile.from_dict` now rejects an id containing `/`, `\`, `..`,
+  control characters, or exceeding 128 UTF-8 bytes (mirroring the daemon's
+  `is_safe_profile_id`), and every id→path sink (`_write_local`,
+  `delete_profile`, `profile_path`) routes through a new `profile_file_path()`
+  accessor that also containment-checks the resolved destination against the
+  profiles dir (the DEC-217 theme pattern). Closes a CWE-22 where a crafted
+  profile document — compromised daemon response, hostile import bundle, or
+  planted cache file — could write or delete `.json` files outside
+  `~/.config/control-ofc/profiles/`. 18 regression tests, kill-verified.
+
 ### Changed
 - **API-contract + docs-pack corrections (2026-07-21 audit remediation, Phase 1;
   docs-only, no behaviour change).** `docs/08_API_Integration_Contract.md` now

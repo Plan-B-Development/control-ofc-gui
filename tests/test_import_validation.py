@@ -136,6 +136,49 @@ class TestProfileImportValidation:
 _NONFINITE = [float("inf"), float("-inf"), float("nan"), 1e400, "oops"]
 
 
+class TestProfileIdSafety:
+    """DEC-223: unsafe profile ids are rejected at the parse boundary.
+
+    The id becomes an on-disk filename under ``profiles_dir()`` (CWE-22), so
+    ``Profile.from_dict`` must refuse anything the daemon's
+    ``is_safe_profile_id`` would refuse — separators, dot-dot, control
+    characters, over-long or non-string ids — on *every* construction path.
+    """
+
+    @pytest.mark.parametrize(
+        "bad_id",
+        [
+            "../evil",
+            "..",
+            "a/b",
+            "a\\b",
+            "x" * 129,
+            "a\x00b",
+            "a\x1bb",
+            "a\x7fb",
+            "",
+            5,
+        ],
+    )
+    def test_unsafe_profile_id_rejected(self, bad_id):
+        with pytest.raises(ValueError, match="unsafe profile id"):
+            Profile.from_dict({"id": bad_id, "name": "X", "version": 7})
+
+    def test_unsafe_id_rejected_on_v1_migration_path_too(self):
+        """The v1 ``assignments`` early-return branch must not bypass the guard."""
+        with pytest.raises(ValueError, match="unsafe profile id"):
+            Profile.from_dict({"id": "../evil", "version": 1, "assignments": []})
+
+    def test_max_length_id_accepted(self):
+        """128 UTF-8 bytes is the daemon's cap — the boundary value passes."""
+        p = Profile.from_dict({"id": "x" * 128, "name": "X", "version": 7})
+        assert p.id == "x" * 128
+
+    def test_missing_id_still_generates_one(self):
+        p = Profile.from_dict({"name": "X", "version": 7})
+        assert p.id and len(p.id) == 8
+
+
 class TestScalarFieldFiniteness:
     @pytest.mark.parametrize("bad", _NONFINITE)
     @pytest.mark.parametrize(
@@ -301,6 +344,25 @@ class TestSettingsPageImportValidation:
         assert (profiles / "good.json").exists()
         assert not (profiles / "bad.json").exists()
         assert not (profiles / "also_bad.json").exists()
+
+    def test_bundle_smuggled_traversal_id_skipped(self, tmp_path, qtbot, monkeypatch):
+        """DEC-223: a bundle entry whose *key* is safe but whose content id
+        traverses must be skipped — nothing written inside or outside the
+        profiles dir under the hostile id."""
+        page, profiles, _themes = self._make_page(tmp_path, qtbot, monkeypatch)
+        data = {
+            "innocent": {
+                "id": "../../escaped",
+                "name": "Evil",
+                "version": 3,
+                "controls": [],
+                "curves": [],
+            }
+        }
+        skipped = page._import_profiles(data)
+        assert skipped == 1
+        assert not (profiles / "innocent.json").exists()
+        assert not (tmp_path / "escaped.json").exists()
 
     def test_valid_theme_imported(self, tmp_path, qtbot, monkeypatch):
         page, _profiles, themes = self._make_page(tmp_path, qtbot, monkeypatch)

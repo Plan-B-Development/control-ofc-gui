@@ -994,6 +994,62 @@ def test_load_resaves_when_migrating_from_v3(tmp_path, monkeypatch):
     assert rewritten["version"] == PROFILE_SCHEMA_VERSION
 
 
+def test_local_file_with_traversal_id_is_rejected_not_resaved(tmp_path, monkeypatch):
+    """DEC-223 regression: a cached/imported file whose *content* id traverses
+    (old schema, so the migration resave would fire) must surface as a
+    per-file load error — and must not write through the traversal."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    pdir = tmp_path / "control-ofc" / "profiles"
+    pdir.mkdir(parents=True)
+    (pdir / "smuggled.json").write_text(
+        json.dumps(
+            {
+                "id": "../../escaped",
+                "name": "Evil",
+                "version": 4,
+                "controls": [],
+                "curves": [],
+            }
+        )
+    )
+
+    svc = ProfileService()
+    errors = svc.load()
+
+    assert any("unsafe profile id" in msg for _, msg in errors)
+    assert svc.get_profile("../../escaped") is None
+    # The pre-fix resave would have landed at tmp_path/escaped.json
+    # (profiles/../../escaped.json). It must not exist anywhere.
+    assert not (tmp_path / "escaped.json").exists()
+    assert not (tmp_path / "control-ofc" / "escaped.json").exists()
+
+
+def test_delete_profile_with_traversal_id_cannot_unlink_outside(tmp_path, monkeypatch):
+    """DEC-223 second line of defence: even a registry entry carrying a hostile
+    id (impossible via load since the from_dict guard, simulated here for any
+    future path that bypasses it) must not unlink outside the profiles dir."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    pdir = tmp_path / "control-ofc" / "profiles"
+    pdir.mkdir(parents=True)
+    victim = tmp_path / "control-ofc" / "victim.json"
+    victim.write_text("{}")
+
+    svc = ProfileService()
+    svc.load()
+    svc._profiles["../victim"] = Profile(id="../victim", name="Evil")
+    with pytest.raises(ValueError, match="unsafe profile id"):
+        svc.delete_profile("../victim")
+    assert victim.exists(), "unlink must not escape the profiles dir"
+
+
+def test_profile_path_rejects_traversal_id(tmp_path, monkeypatch):
+    """DEC-223: the public path accessor refuses ids it cannot contain."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    svc = ProfileService()
+    with pytest.raises(ValueError, match="unsafe profile id"):
+        svc.profile_path("../evil")
+
+
 @pytest.mark.parametrize("version", [4, 5, 6])
 def test_load_resaves_when_migrating_from_older_schema(tmp_path, monkeypatch, version):
     """Loading any pre-v7 profile from disk must re-save it at the current schema
