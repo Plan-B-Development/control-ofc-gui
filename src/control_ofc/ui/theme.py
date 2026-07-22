@@ -11,6 +11,10 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # PySide6 is imported lazily so token-only use stays Qt-free
+    from PySide6.QtGui import QPalette
 
 # ---------------------------------------------------------------------------
 # Migration map: old token name -> new token name
@@ -203,6 +207,109 @@ def active_theme() -> ThemeTokens:
     return _active_theme if _active_theme is not None else default_dark_theme()
 
 
+# Token -> QPalette role map, as (role_name, token_name) pairs. Kept as data so
+# a test can assert every entry resolves and no role is left on Qt's default.
+_PALETTE_ROLES: tuple[tuple[str, str], ...] = (
+    # Base canvas + the text that sits on it.
+    ("Window", "app_bg"),
+    ("WindowText", "text_primary"),
+    # Editable/scrollable content surfaces (QPlainTextEdit, unstyled item views).
+    ("Base", "input_bg"),
+    ("AlternateBase", "table_row_alt_bg"),
+    ("Text", "input_text"),
+    ("PlaceholderText", "input_placeholder"),
+    # Native-drawn buttons; mirrors the QPushButton QSS rule.
+    ("Button", "surface_2"),
+    ("ButtonText", "text_primary"),
+    ("BrightText", "status_crit"),
+    # Mirrors the QToolTip QSS rule.
+    ("ToolTipBase", "surface_2"),
+    ("ToolTipText", "text_primary"),
+    ("Highlight", "selected_bg"),
+    ("HighlightedText", "text_primary"),
+    ("Link", "accent_primary"),
+    ("LinkVisited", "accent_secondary"),
+    # 3D frame shading — keeps any style-drawn bevel in the theme's tones.
+    ("Light", "surface_3"),
+    ("Midlight", "surface_2"),
+    ("Mid", "border_default"),
+    ("Dark", "app_bg"),
+    ("Shadow", "code_block_bg"),
+    # Qt 6.6+. Fusion does not paint it today, but a style that does must not
+    # reach for Qt's stock accent. Resolved defensively — see build_palette.
+    ("Accent", "accent_primary"),
+)
+
+# Disabled-group overrides, same shape.
+_PALETTE_DISABLED_ROLES: tuple[tuple[str, str], ...] = (
+    ("WindowText", "disabled_text"),
+    ("Text", "disabled_text"),
+    ("ButtonText", "disabled_text"),
+    ("Base", "disabled_bg"),
+    ("Button", "disabled_bg"),
+    ("Highlight", "disabled_bg"),
+    ("HighlightedText", "disabled_text"),
+)
+
+
+def build_palette(tokens: ThemeTokens) -> QPalette:
+    """Build a ``QPalette`` that agrees with :func:`build_stylesheet` (DEC-226).
+
+    Qt's stylesheet engine re-resolves each styled widget's palette from the
+    *application* palette rather than inheriting the parent's QSS-derived
+    colours. So every surface Qt paints from the palette instead of from a QSS
+    rule falls back to Qt's built-in light palette — a ``QScrollArea``'s content
+    widget (``setWidget()`` force-enables ``autoFillBackground``), a
+    ``QPlainTextEdit`` viewport, a tooltip, a native bevel.
+
+    Until DEC-225 the blanket ``QWidget { background-color: app_bg }`` rule
+    matched every widget and hid that; removing it exposed Qt's ``#efefef``
+    Window on the scroll surfaces and ``#ffffff`` Base on the Logs snapshot
+    panes. Painting the palette from the same tokens is the durable fix: QSS
+    keeps owning the styled chrome, and the palette backs everything QSS does
+    not paint.
+    """
+    from PySide6.QtGui import QColor, QPalette
+
+    def colour(token_name: str) -> QColor:
+        """The token's colour, falling back to the built-in default if Qt
+        rejects it. ``is_valid_color`` accepts ``#RGBA``, which ``QColor`` does
+        not — and an invalid QColor is stored as opaque *black*, so a single
+        4-digit hex in a hand-edited theme would black out a whole surface.
+        A dropped QSS declaration merely falls through; a palette role cannot."""
+        parsed = QColor(getattr(tokens, token_name))
+        if parsed.isValid():
+            return parsed
+        return QColor(getattr(ThemeTokens(), token_name))
+
+    palette = QPalette()
+    for role_name, token_name in _PALETTE_ROLES:
+        # getattr with a default: ``Accent`` only exists on Qt >= 6.6, and a
+        # role Qt does not know is skipped rather than crashing the theme.
+        role = getattr(QPalette.ColorRole, role_name, None)
+        if role is not None:
+            palette.setColor(role, colour(token_name))
+    disabled = QPalette.ColorGroup.Disabled
+    for role_name, token_name in _PALETTE_DISABLED_ROLES:
+        role = getattr(QPalette.ColorRole, role_name, None)
+        if role is not None:
+            palette.setColor(disabled, role, colour(token_name))
+    return palette
+
+
+def apply_theme_palette(tokens: ThemeTokens) -> None:
+    """Apply the theme's palette to the application (DEC-226).
+
+    Must run alongside ``setStyleSheet`` at every theme-application site, or
+    unstyled surfaces revert to Qt's light default.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app:
+        app.setPalette(build_palette(tokens))
+
+
 def apply_theme_font(tokens: ThemeTokens) -> None:
     """Apply the theme's font family and base size to the application."""
     from PySide6.QtGui import QFont, QFontDatabase
@@ -217,6 +324,26 @@ def apply_theme_font(tokens: ThemeTokens) -> None:
     app = QApplication.instance()
     if app:
         app.setFont(font)
+
+
+def apply_theme(tokens: ThemeTokens) -> None:
+    """Apply *tokens* to the running application — the single entry point.
+
+    Registers the theme as active, then pushes all three application-level
+    channels: palette, stylesheet, font. A theme is only fully applied when all
+    three land, and the regression this consolidates (DEC-226) was exactly a
+    site that pushed two of three. Callers that need extra propagation (e.g.
+    ``MainWindow`` refreshing per-page chart colours) call this first, then do
+    their own work.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    set_active_theme(tokens)
+    apply_theme_palette(tokens)
+    app = QApplication.instance()
+    if app:
+        app.setStyleSheet(build_stylesheet(tokens))
+    apply_theme_font(tokens)
 
 
 def default_dark_theme() -> ThemeTokens:
@@ -554,10 +681,11 @@ def combo_arrow_svg_path(color: str) -> str | None:
 
     Styling ``QComboBox::drop-down`` (as this theme does, to drop the native
     separator) makes Qt discard the native down-arrow entirely, so we must
-    supply one. The app is stylesheet-only with no bundled image assets and
-    supports arbitrary custom theme colours, so a static asset cannot follow
-    the theme — instead we generate a tiny chevron SVG in the requested colour
-    and reference it from the stylesheet (DEC-113).
+    supply one. The app bundles no image assets and supports arbitrary custom
+    theme colours, so a static asset cannot follow the theme — instead we
+    generate a tiny chevron SVG in the requested colour and reference it from
+    the stylesheet (DEC-113). The theme palette (DEC-226) carries colours, not
+    glyphs, so it cannot supply the arrow either.
 
     The file is keyed by colour so repeated calls for the same theme reuse it.
     Returns ``None`` (and the caller omits the rule) if the cache is not
@@ -876,6 +1004,18 @@ def build_stylesheet(t: ThemeTokens) -> str:
 
     QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
         border-color: {t.input_border_focus};
+    }}
+
+    /* Read-only output panes — the Logs snapshot previews and the inspector's
+       raw message. Both are monospace command/log output, which is what
+       code_block_bg exists for; sitting them on the card surface with no rule
+       left the frame to the native sunken bevel (DEC-226). */
+    QPlainTextEdit {{
+        background-color: {t.code_block_bg};
+        color: {t.text_primary};
+        border: 1px solid {t.border_default};
+        border-radius: 4px;
+        padding: 4px;
     }}
 
     /* Tab widgets */

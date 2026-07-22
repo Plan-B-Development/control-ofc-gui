@@ -475,19 +475,13 @@ class MainWindow(QWidget):
         self._reflect_sidebar_active_profile()
 
     def _on_theme_changed(self, tokens) -> None:
-        from PySide6.QtWidgets import QApplication
+        from control_ofc.ui.theme import apply_theme
 
-        from control_ofc.ui.theme import apply_theme_font, build_stylesheet, set_active_theme
-
-        # Register the new theme so widgets without a parent reference
-        # (diagnostics page, timeline chart, etc.) read the live tokens on
-        # the next render instead of an import-time snapshot (DEC-109).
-        set_active_theme(tokens)
-
-        app = QApplication.instance()
-        if app:
-            app.setStyleSheet(build_stylesheet(tokens))
-        apply_theme_font(tokens)
+        # Registers the theme as active — so widgets without a parent reference
+        # (timeline chart, readiness views) read live tokens on the next render
+        # instead of an import-time snapshot (DEC-109) — and pushes palette +
+        # stylesheet + font (DEC-226).
+        apply_theme(tokens)
         self.controls_page.set_theme(tokens)
         # Propagate to widgets that need to refresh internal styling
         # (chart background, axis colours, freshness cell colours).

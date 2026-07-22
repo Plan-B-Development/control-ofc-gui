@@ -24,12 +24,10 @@ from control_ofc.ui.fonts import register_bundled_fonts
 from control_ofc.ui.main_window import MainWindow
 from control_ofc.ui.theme import (
     ThemeTokens,
-    apply_theme_font,
-    build_stylesheet,
+    apply_theme,
     default_dark_theme,
     ensure_bundled_themes_installed,
     load_theme,
-    set_active_theme,
 )
 
 logging.basicConfig(
@@ -194,12 +192,12 @@ def main() -> None:
 
     # Resolve the persisted theme (or fall back to Default Dark) and apply it
     # *after* themes_dir is correct so the selection actually loads from the
-    # right location. The active theme is registered so widgets that don't
-    # carry a parent reference can look up live tokens via active_theme().
+    # right location. apply_theme registers the active theme — so widgets that
+    # don't carry a parent reference can look up live tokens via active_theme()
+    # — and pushes all three application channels: palette, stylesheet, font
+    # (DEC-226).
     theme = _resolve_startup_theme(s.theme_name)
-    set_active_theme(theme)
-    qt_app.setStyleSheet(build_stylesheet(theme))
-    apply_theme_font(theme)
+    apply_theme(theme)
 
     parser = argparse.ArgumentParser(description="Control-OFC desktop fan control GUI")
     parser.add_argument("--socket", default=DEFAULT_SOCKET_PATH, help="Daemon socket path")

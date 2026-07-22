@@ -152,11 +152,11 @@ class ColorSwatch(QPushButton):
 
     def _pick_color(self) -> None:
         initial = QColor(self._color)
-        # Temporarily clear the app stylesheet to prevent the global
-        # QWidget {} rule from corrupting QColorDialog's internal
-        # custom-painted widgets (spectrum, hue strip, preview).
-        # The app-level rule cascades into all child widgets and cannot
-        # be overridden by dialog-level setStyleSheet().
+        # Temporarily clear the app stylesheet so its rules cannot reach
+        # QColorDialog's internal custom-painted widgets (spectrum, hue strip,
+        # preview) — an app-level rule cascades into every child and a
+        # dialog-level setStyleSheet() cannot override it. The theme palette
+        # stays applied, so the dialog still follows the active theme (DEC-226).
         app = QApplication.instance()
         saved_stylesheet = app.styleSheet() if app else ""
         if app:

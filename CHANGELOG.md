@@ -1,5 +1,41 @@
 # Changelog
 
+## [2.27.1] — 2026-07-22
+
+Fixes a regression shipped in v2.27.0: a grey (and, on the Logs page, white)
+panel appeared behind the cards on every scrollable page. GUI-only, presentation
+layer; no contract change (`EXPECTED_API_VERSION` stays 1). Pairs with
+`control-ofc-daemon` (unchanged, ≥ v2.11.0).
+
+### Fixed
+- **Grey/white panels behind the cards on every scrollable page (DEC-226).**
+  v2.27.0 removed the blanket `QWidget` background rule (DEC-225) — correctly,
+  but that rule had been the only thing keeping Qt's built-in *light* palette out
+  of view. Qt's stylesheet engine resolves each widget's palette from the
+  application palette rather than from its parent's stylesheet colours, and the
+  app had never set one, so every surface Qt paints from the palette instead of
+  from a stylesheet rule fell back to Qt's defaults: `#efefef` behind the
+  dashboard fan cards, the Controls columns and the whole body of Overview,
+  System State, Hardware, Settings and Theme, and `#ffffff` in the four Logs
+  diagnostic-snapshot panes. The theme now paints a `QPalette` from the same
+  tokens as the stylesheet, so those surfaces take the application background.
+- **Logs diagnostic-snapshot panes are styled output surfaces.**
+  `QPlainTextEdit` had no stylesheet rule at all, leaving its frame to the
+  platform's sunken bevel. Every one of them is read-only monospace command/log
+  output, so they now use the `code_block_bg` surface with a 1px border in the
+  theme's border tone.
+- **A custom theme with a 4-digit hex colour no longer blacks out a surface.**
+  Theme validation accepts `#RGBA`, but Qt's colour parser does not and stores
+  what it cannot parse as opaque black. Stylesheet rules simply drop such a
+  value; a palette colour cannot, so the palette falls back to the built-in
+  default for that token.
+
+### Changed
+- **One entry point for applying a theme.** `apply_theme()` registers the active
+  theme and pushes palette, stylesheet and font together; startup, the in-app
+  theme switch and the release tooling all route through it. Applying a theme
+  through only some of the three channels is what shipped this regression.
+
 ## [2.27.0] — 2026-07-22
 
 Fixes an accidental background leak that made text on the dashboard fan cards

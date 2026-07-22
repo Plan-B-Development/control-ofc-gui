@@ -5,8 +5,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+from PySide6.QtWidgets import QApplication
+
 from control_ofc.ui.theme import (
+    _PALETTE_DISABLED_ROLES,
+    _PALETTE_ROLES,
     _migrate_tokens,
+    build_palette,
     build_stylesheet,
     check_contrast_warnings,
     contrast_ratio,
@@ -394,8 +400,15 @@ class TestBackgroundLeakGuard:
 
     @staticmethod
     def _block(qss: str, selector: str) -> str:
-        """Best-effort body of the first ``selector {{ ... }}`` rule."""
-        m = re.search(re.escape(selector) + r"\s*\{([^{}]*)\}", qss)
+        """Body of the ``selector { ... }`` rule where *selector* is the whole
+        selector.
+
+        Anchored to the start of a line so a compound rule that merely *ends*
+        with the same word cannot be returned instead — unanchored, asking for
+        ``QPushButton`` yields the body of ``#Sidebar QPushButton``, and the
+        assertion then silently checks the wrong rule.
+        """
+        m = re.search(r"(?m)^[ \t]*" + re.escape(selector) + r"\s*\{([^{}]*)\}", qss)
         return m.group(1) if m else ""
 
     def test_global_qwidget_rule_paints_no_background(self):
@@ -427,3 +440,386 @@ class TestBackgroundLeakGuard:
         t = default_dark_theme()
         block = self._block(build_stylesheet(t), ".CardDivider")
         assert t.border_default in block
+
+
+# ---------------------------------------------------------------------------
+# Palette (DEC-226)
+# ---------------------------------------------------------------------------
+
+# Qt's built-in light palette — the exact colours that leaked through in v2.27.0.
+QT_DEFAULT_WINDOW = "#efefef"
+QT_DEFAULT_BASE = "#ffffff"
+
+
+@pytest.fixture
+def restore_app_theme(qtbot):
+    """Save/restore everything ``apply_theme`` mutates.
+
+    That is all four channels: the application palette, stylesheet and font,
+    plus ``theme._active_theme`` — the module global behind ``active_theme()``,
+    which eight other test modules read. Restoring three of the four would leave
+    the probe theme active for the rest of the session, which is the same
+    "applied only some of the channels" mistake this release is fixing.
+
+    Depends on ``qtbot`` so a QApplication exists: without it the fixture is
+    order-dependent and errors when the test is run on its own.
+    """
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QApplication
+
+    from control_ofc.ui import theme as theme_mod
+
+    app = QApplication.instance()
+    saved_palette = QPalette(app.palette())
+    saved_stylesheet = app.styleSheet()
+    saved_font = app.font()
+    saved_active = theme_mod._active_theme
+    try:
+        yield app
+    finally:
+        app.setPalette(saved_palette)
+        app.setStyleSheet(saved_stylesheet)
+        app.setFont(saved_font)
+        theme_mod._active_theme = saved_active
+
+
+class TestThemePalette:
+    """DEC-226: Qt's stylesheet engine re-resolves each styled widget's palette
+    from the *application* palette instead of inheriting the parent's QSS-derived
+    colours. Every surface Qt paints from the palette rather than from a QSS rule
+    therefore needs the palette to carry the theme, or it falls back to Qt's light
+    default. Until DEC-225 the blanket ``QWidget`` background hid that; removing
+    it put ``#efefef`` behind every scroll viewport and ``#ffffff`` behind the
+    Logs snapshot panes."""
+
+    def test_window_role_is_app_bg(self):
+        """The user-visible symptom: the canvas behind the dashboard fan cards."""
+        from PySide6.QtGui import QPalette
+
+        t = default_dark_theme()
+        assert build_palette(t).color(QPalette.ColorRole.Window).name() == t.app_bg.lower()
+
+    def test_base_role_is_input_bg(self):
+        """Base backs QPlainTextEdit and any unstyled item view."""
+        from PySide6.QtGui import QPalette
+
+        t = default_dark_theme()
+        assert build_palette(t).color(QPalette.ColorRole.Base).name() == t.input_bg.lower()
+
+    def test_every_role_qt_exposes_is_mapped(self):
+        """The regression guard with real teeth. Any role missing from the map
+        keeps Qt's stock colour — which is the entire bug: unmapped Window and
+        Base put #efefef and #ffffff on screen. A hex-denylist would only catch
+        the two roles that happened to leak; this catches all of them, and also
+        trips deliberately when a Qt upgrade adds a role nobody has judged yet.
+
+        ``NoRole`` is a sentinel, not a colour, and ``NColorRoles`` is the enum
+        terminator — neither is paintable, so both are excluded."""
+        from PySide6.QtGui import QPalette
+
+        mapped = {role for role, _ in _PALETTE_ROLES}
+        exposed = {
+            role.name
+            for role in QPalette.ColorRole
+            if role not in (QPalette.ColorRole.NoRole, QPalette.ColorRole.NColorRoles)
+        }
+        assert not (exposed - mapped), (
+            f"roles left on Qt's stock colour: {sorted(exposed - mapped)}"
+        )
+
+    def test_every_role_resolves_to_the_token_it_should(self):
+        """Complements the coverage test: a role can be listed and still be wired
+        to the wrong token.
+
+        The expected pairs are written out here independently rather than read
+        back from ``_PALETTE_ROLES`` — a test that sources its expectation from
+        the table it is checking cannot detect two roles being transposed, which
+        is the likeliest way this table goes wrong."""
+        from PySide6.QtGui import QPalette
+
+        expected = {
+            "Window": "app_bg",
+            "WindowText": "text_primary",
+            "Base": "input_bg",
+            "AlternateBase": "table_row_alt_bg",
+            "Text": "input_text",
+            "PlaceholderText": "input_placeholder",
+            "Button": "surface_2",
+            "ButtonText": "text_primary",
+            "BrightText": "status_crit",
+            "ToolTipBase": "surface_2",
+            "ToolTipText": "text_primary",
+            "Highlight": "selected_bg",
+            "HighlightedText": "text_primary",
+            "Link": "accent_primary",
+            "LinkVisited": "accent_secondary",
+            "Light": "surface_3",
+            "Midlight": "surface_2",
+            "Mid": "border_default",
+            "Dark": "app_bg",
+            "Shadow": "code_block_bg",
+            "Accent": "accent_primary",
+        }
+        expected_disabled = {
+            "WindowText": "disabled_text",
+            "Text": "disabled_text",
+            "ButtonText": "disabled_text",
+            "Base": "disabled_bg",
+            "Button": "disabled_bg",
+            "Highlight": "disabled_bg",
+            "HighlightedText": "disabled_text",
+        }
+        # Adding a role to the source table without judging it here must fail.
+        assert dict(_PALETTE_ROLES) == expected
+        assert dict(_PALETTE_DISABLED_ROLES) == expected_disabled
+
+        t = default_dark_theme()
+        palette = build_palette(t)
+        for role_name, token_name in expected.items():
+            role = getattr(QPalette.ColorRole, role_name, None)
+            if role is None:  # role absent on this Qt — skipped by build_palette too
+                continue
+            assert palette.color(role).name() == getattr(t, token_name).lower(), role_name
+        disabled = QPalette.ColorGroup.Disabled
+        for role_name, token_name in expected_disabled.items():
+            role = getattr(QPalette.ColorRole, role_name, None)
+            if role is None:
+                continue
+            assert palette.color(disabled, role).name() == getattr(t, token_name).lower(), role_name
+
+    def test_palette_agrees_with_the_stylesheet(self):
+        """The palette exists to back what QSS paints, so where both cover a
+        surface they must not disagree — a tooltip or button that changes colour
+        depending on which engine drew it is the same class of bug. Reads the
+        colour out of the generated stylesheet rather than re-asserting the
+        palette map against itself, so drifting either side fails this."""
+        from PySide6.QtGui import QPalette
+
+        t = default_dark_theme()
+        palette = build_palette(t)
+        qss = build_stylesheet(t)
+        block = TestBackgroundLeakGuard._block
+        for selector, role_name in (
+            ("QToolTip", "ToolTipBase"),
+            ("QPushButton", "Button"),
+        ):
+            rule = block(qss, selector)
+            assert rule, f"{selector} rule missing"
+            role = getattr(QPalette.ColorRole, role_name)
+            assert palette.color(role).name() in rule.lower(), (
+                f"{role_name} palette colour is not the one {selector} paints"
+            )
+
+    def test_invalid_token_colour_falls_back_instead_of_going_black(self):
+        """``is_valid_color`` accepts #RGBA but QColor does not, and Qt stores an
+        invalid QColor as opaque black — so one 4-digit hex in a hand-edited
+        theme would black out a whole surface. A dropped QSS declaration merely
+        falls through; a palette role cannot, so build_palette must fall back."""
+        from PySide6.QtGui import QColor, QPalette
+
+        assert not QColor("#abcd").isValid()  # the premise
+        t = default_dark_theme()
+        t.app_bg = "#abcd"
+        window = build_palette(t).color(QPalette.ColorRole.Window).name()
+        assert window != "#000000"
+        assert window == default_dark_theme().app_bg.lower()
+
+    def test_custom_tokens_flow_through(self):
+        """A user theme must move the palette too, not just the stylesheet."""
+        from PySide6.QtGui import QPalette
+
+        t = default_dark_theme()
+        t.app_bg = "#123456"
+        t.input_bg = "#654321"
+        palette = build_palette(t)
+        assert palette.color(QPalette.ColorRole.Window).name() == "#123456"
+        assert palette.color(QPalette.ColorRole.Base).name() == "#654321"
+
+    def test_disabled_group_uses_the_disabled_tokens(self):
+        from PySide6.QtGui import QPalette
+
+        t = default_dark_theme()
+        palette = build_palette(t)
+        disabled = QPalette.ColorGroup.Disabled
+        assert palette.color(disabled, QPalette.ColorRole.Text).name() == t.disabled_text.lower()
+        assert palette.color(disabled, QPalette.ColorRole.Base).name() == t.disabled_bg.lower()
+
+    def test_apply_theme_pushes_all_three_channels(self, restore_app_theme):
+        """A site that pushes only some of palette/stylesheet/font is the DEC-226
+        regression itself, so the entry point must push all three."""
+        from PySide6.QtGui import QPalette
+
+        from control_ofc.ui.theme import active_theme, apply_theme
+
+        app = restore_app_theme
+        t = default_dark_theme()
+        t.name = "Palette Probe"
+        t.app_bg = "#010203"
+        apply_theme(t)
+        assert app.palette().color(QPalette.ColorRole.Window).name() == "#010203"
+        assert "#010203" in app.styleSheet()
+        assert app.font().family() == t.font_family
+        assert active_theme().name == "Palette Probe"
+
+
+class TestUnstyledSurfacesRenderThemed:
+    """Pixel-level guard for DEC-226. A stylesheet-only assertion cannot catch
+    this bug — the leaked colours never appeared in the QSS text; they came from
+    the palette behind it. These tests paint the two widget shapes that actually
+    regressed and read the result back."""
+
+    @staticmethod
+    def _render(widget, point):
+        widget.show()
+        QApplication.processEvents()
+        colour = widget.grab().toImage().pixelColor(*point).name()
+        widget.hide()
+        return colour
+
+    def test_scroll_area_canvas_is_app_bg(self, qtbot, restore_app_theme):
+        """The dashboard fan-card backdrop. ``QScrollArea.setWidget()`` force-sets
+        ``autoFillBackground`` on the content widget, so it paints the palette's
+        Window role — grey until the theme palette is applied."""
+        from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
+
+        from control_ofc.ui.theme import apply_theme
+
+        t = default_dark_theme()
+        apply_theme(t)
+
+        host = QWidget()
+        host.setObjectName("MainWindow")
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(QWidget())
+        layout.addWidget(scroll)
+        host.resize(200, 200)
+        qtbot.addWidget(host)
+
+        colour = self._render(host, (100, 150))
+        assert colour != QT_DEFAULT_WINDOW, "Qt's light Window role is showing through"
+        assert colour == t.app_bg.lower()
+
+    def test_readonly_output_pane_is_the_code_surface(self, qtbot, restore_app_theme):
+        """The Logs snapshot panes. ``QPlainTextEdit`` had no QSS rule at all, so
+        its viewport painted the palette's Base role — pure white until DEC-226."""
+        from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
+
+        from control_ofc.ui.theme import apply_theme
+
+        t = default_dark_theme()
+        apply_theme(t)
+
+        host = QWidget()
+        host.setObjectName("MainWindow")
+        layout = QVBoxLayout(host)
+        pane = QPlainTextEdit()
+        pane.setReadOnly(True)
+        layout.addWidget(pane)
+        host.resize(200, 200)
+        qtbot.addWidget(host)
+
+        colour = self._render(host, (100, 100))
+        assert colour != QT_DEFAULT_BASE, "Qt's white Base role is showing through"
+        assert colour == t.code_block_bg.lower()
+
+    def test_light_preset_canvas_is_its_own_app_bg(self, qtbot, restore_app_theme):
+        """The light preset is the case a dark-only guard cannot speak for: its
+        tokens sit near Qt's stock light values, so 'not #efefef' is a weak
+        assertion there and the exact token is the only real check."""
+        from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
+
+        from control_ofc.ui.theme import apply_theme
+
+        preset = Path(__file__).resolve().parent.parent / (
+            "src/control_ofc/ui/presets/solar_light.json"
+        )
+        t = load_theme(preset)
+        assert t.app_bg.lower() != default_dark_theme().app_bg.lower()  # really a light theme
+        apply_theme(t)
+
+        host = QWidget()
+        host.setObjectName("MainWindow")
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(QWidget())
+        layout.addWidget(scroll)
+        host.resize(200, 200)
+        qtbot.addWidget(host)
+
+        assert self._render(host, (100, 150)) == t.app_bg.lower()
+
+
+class TestThemeSwitchAppliesPalette:
+    """Switching theme must move every channel, not just the stylesheet. Startup
+    and the switch path are separate call sites, and this release exists because
+    a theme was applied through only some of its channels — so the switch path
+    gets its own guard rather than trusting that it matches startup."""
+
+    def test_main_window_theme_change_repaints_the_palette(self, qtbot, restore_app_theme):
+        from PySide6.QtGui import QPalette
+
+        from control_ofc.services.app_settings_service import AppSettingsService
+        from control_ofc.services.app_state import AppState
+        from control_ofc.services.profile_service import ProfileService
+        from control_ofc.ui.main_window import MainWindow
+
+        app = restore_app_theme
+        profile_svc = ProfileService()
+        profile_svc.load()
+        win = MainWindow(
+            state=AppState(),
+            settings_service=AppSettingsService(),
+            profile_service=profile_svc,
+        )
+        qtbot.addWidget(win)
+
+        switched = default_dark_theme()
+        switched.name = "Switched"
+        switched.app_bg = "#0b0c0d"
+        win._on_theme_changed(switched)
+
+        assert app.palette().color(QPalette.ColorRole.Window).name() == "#0b0c0d"
+
+
+class TestReadOnlyPaneStyling:
+    """The one unstyled widget class that earned a rule rather than just palette
+    backing. Every ``QPlainTextEdit`` in the app — the four Logs snapshot
+    previews and the log inspector's raw-message pane — is read-only monospace
+    command/log output, which is what code_block_bg is for (DEC-226)."""
+
+    def test_plain_text_edit_uses_the_code_block_surface(self):
+        t = default_dark_theme()
+        block = TestBackgroundLeakGuard._block(build_stylesheet(t), "QPlainTextEdit")
+        assert block, "QPlainTextEdit rule missing"
+        assert t.code_block_bg in block
+        assert t.border_default in block
+
+
+class TestApplyThemeIsTheOnlyEntryPoint:
+    """DEC-226 shipped because the theme was applied through only some of its
+    channels. ``apply_theme`` now bundles all four, but that is a convention
+    until something enforces it — a new site that reaches for ``setStyleSheet``
+    with a generated stylesheet directly would silently reintroduce the bug.
+    This pins the convention as a source-level guard."""
+
+    def test_no_module_pushes_a_generated_stylesheet_outside_apply_theme(self):
+        src = Path(__file__).resolve().parent.parent / "src"
+        offenders = []
+        for path in src.rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if "setStyleSheet(build_stylesheet(" not in line.replace(" ", ""):
+                    continue
+                # theme.apply_theme is the sanctioned site.
+                if path.name == "theme.py":
+                    continue
+                offenders.append(f"{path.relative_to(src)}:{lineno}")
+        assert not offenders, (
+            "these push a generated stylesheet without the palette/font that go "
+            f"with it — route them through apply_theme(): {offenders}"
+        )

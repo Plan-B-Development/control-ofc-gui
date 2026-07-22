@@ -510,9 +510,10 @@ visibility-gated labels keep working unchanged inside the sections.
 
 ### Combo-box down-arrow (DEC-113)
 The theme styles `QComboBox::drop-down`, which makes Qt drop the native
-down-arrow. The app is stylesheet-only (no `QPalette`) and ships no image
-assets, and supports arbitrary custom theme colours, so a static asset cannot
-follow the theme. `theme.combo_arrow_svg_path(color)` instead generates a tiny
+down-arrow. The app ships no image assets and supports arbitrary custom theme
+colours, so a static asset cannot follow the theme. (Since DEC-226 the theme
+also paints a `QPalette` from the same tokens, but a palette carries colours,
+not glyphs — it cannot supply the arrow either.) `theme.combo_arrow_svg_path(color)` instead generates a tiny
 chevron SVG in the theme's `text_secondary` colour to the cache dir and the
 stylesheet references it via `QComboBox::down-arrow { image: url(…) }`. It
 degrades gracefully (no rule) if the cache is not writable.

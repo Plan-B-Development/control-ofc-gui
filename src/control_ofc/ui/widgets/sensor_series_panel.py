@@ -158,9 +158,11 @@ class SensorSeriesPanel(QFrame):
         from PySide6.QtWidgets import QApplication, QColorDialog
 
         current = QColor(self._chart.color_for_key(series_key))
-        # Temporarily clear the app stylesheet to prevent the global
-        # QWidget {} rule from corrupting QColorDialog's internal
-        # custom-painted widgets (spectrum, hue strip, preview).
+        # Temporarily clear the app stylesheet so its rules cannot reach
+        # QColorDialog's internal custom-painted widgets (spectrum, hue strip,
+        # preview) — an app-level rule cascades into every child and a
+        # dialog-level setStyleSheet() cannot override it. The theme palette
+        # stays applied, so the dialog still follows the active theme (DEC-226).
         app = QApplication.instance()
         saved_stylesheet = app.styleSheet() if app else ""
         if app:
