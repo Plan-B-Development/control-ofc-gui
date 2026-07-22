@@ -615,14 +615,20 @@ def build_stylesheet(t: ThemeTokens) -> str:
         else ""
     )
     return f"""
-    /* Global */
+    /* Global — base text + font ONLY. A blanket ``background-color`` here would
+       paint every bare container (fan-card metric columns, control-card sub-rows,
+       dialog bodies) in app_bg, which then leaks through the transparent labels
+       sitting on top of a lighter .Card surface. Anchoring the window fill on the
+       top-level #MainWindow instead lets bare containers stay transparent and
+       reveal whatever surface they actually sit on (DEC-225). */
     QWidget {{
-        background-color: {t.app_bg};
         color: {t.text_primary};
         font-size: {fs["body"]}pt;
     }}
 
-    QMainWindow {{
+    /* Window base fill. The app's top-level is a QWidget (MainWindow), not a
+       QMainWindow, so the base app background is anchored on its objectName. */
+    #MainWindow {{
         background-color: {t.app_bg};
     }}
 
@@ -743,6 +749,14 @@ def build_stylesheet(t: ThemeTokens) -> str:
     .CardMeta {{
         color: {t.text_secondary};
         font-size: {fs["small"]}pt;
+    }}
+
+    /* Hairline rule between the dashboard fan-card metric columns (DEC-225): a
+       1px vertical line in the card's own border tone, so the RPM/SPEED/TEMP
+       trio stays scannable without an inset panel of a different colour. */
+    .CardDivider {{
+        background-color: {t.border_default};
+        border: none;
     }}
 
     .ValueLabel {{
@@ -979,6 +993,28 @@ def build_stylesheet(t: ThemeTokens) -> str:
     QDialog {{
         background-color: {t.modal_bg};
         border: 1px solid {t.modal_border};
+    }}
+
+    /* Popup menus (e.g. the curve-card Actions dropdown). Needs an explicit fill
+       now the blanket QWidget background is gone (DEC-225); uses the same raised
+       surface as the QComboBox popup for consistency. */
+    QMenu {{
+        background-color: {t.surface_1};
+        color: {t.text_primary};
+        border: 1px solid {t.border_default};
+        padding: 4px;
+    }}
+    QMenu::item {{
+        padding: 4px 24px 4px 12px;
+        border-radius: 4px;
+    }}
+    QMenu::item:selected {{
+        background-color: {t.selected_bg};
+    }}
+    QMenu::separator {{
+        height: 1px;
+        background-color: {t.border_default};
+        margin: 4px 6px;
     }}
 
     /* Warning/status chips. The four advisory-severity tiers (DEC-158) map

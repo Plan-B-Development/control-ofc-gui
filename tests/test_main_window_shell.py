@@ -46,6 +46,14 @@ def test_shell_has_ribbon_and_footer(window):
     assert window.footer.objectName() == "StatusFooter_Root"
 
 
+def test_window_object_name_anchors_the_base_fill(window):
+    """DEC-225: the ``#MainWindow`` QSS rule paints the app's base background now
+    the blanket ``QWidget`` fill is gone. If this objectName is dropped the window
+    renders unpainted while the stylesheet still parses cleanly, so the widget-side
+    half of the fix needs its own guard."""
+    assert window.objectName() == "MainWindow"
+
+
 def test_overview_routes_to_overview_page(qtbot, window):
     # DEC-209: Overview now opens its own page, not the Diagnostics Overview tab.
     _click_nav(qtbot, window, "NavButton_Overview")

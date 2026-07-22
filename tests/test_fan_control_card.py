@@ -8,6 +8,7 @@ state, and that it never grows a control affordance.
 from __future__ import annotations
 
 import pytest
+from PySide6.QtWidgets import QFrame
 
 from control_ofc.services.fan_cards_view import FanCardVM, FanState
 from control_ofc.services.profile_service import CurveConfig, CurvePoint
@@ -267,3 +268,47 @@ class TestUntrustedText:
         qtbot.addWidget(card)
         assert "&lt;b&gt;PWNED&lt;/b&gt;" in card._edit_btn.toolTip()
         assert "<b>" not in card._edit_btn.toolTip()
+
+
+class TestMetricDividers:
+    """DEC-225: the RPM/SPEED/TEMP trio sits flush on the card surface, separated
+    by 1px hairline rules rather than an inset panel of a different tone (the
+    app_bg blocks that used to sit behind the values)."""
+
+    @staticmethod
+    def _dividers(card):
+        return [f for f in card.findChildren(QFrame) if f.property("class") == "CardDivider"]
+
+    def test_two_hairline_dividers_between_the_three_metrics(self, qtbot):
+        card = FanControlCard(_vm())
+        qtbot.addWidget(card)
+        dividers = self._dividers(card)
+        assert len(dividers) == 2
+        # A rule, not a block: pinned to 1px wide.
+        for d in dividers:
+            assert d.minimumWidth() == 1
+            assert d.maximumWidth() == 1
+
+    def test_divider_object_names_are_unique_per_control(self, qtbot):
+        a = FanControlCard(_vm(control_id="c1"))
+        b = FanControlCard(_vm(control_id="c2"))
+        qtbot.addWidget(a)
+        qtbot.addWidget(b)
+        a_names = {d.objectName() for d in self._dividers(a)}
+        assert a_names == {"FanCard_Divider_rpmSpeed_c1", "FanCard_Divider_speedTemp_c1"}
+        assert a_names.isdisjoint({d.objectName() for d in self._dividers(b)})
+
+    def test_metric_area_declares_no_opaque_fill(self, qtbot):
+        """No metric label or its column wrapper may hard-code an opaque inline
+        background: they must inherit the card's ``.Card`` surface so the values
+        sit flush on it. (This guards the inline-stylesheet side only; the global
+        blanket-``QWidget`` leak itself is guarded by
+        ``test_theme_system.TestBackgroundLeakGuard``.)"""
+        card = FanControlCard(_vm())
+        qtbot.addWidget(card)
+        for label in (card._rpm_value, card._speed_value, card._temp_value):
+            for widget in (label, label.parentWidget()):
+                sheet = widget.styleSheet()
+                assert "background-color" not in sheet
+                if "background:" in sheet:
+                    assert "transparent" in sheet

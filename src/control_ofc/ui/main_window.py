@@ -64,6 +64,11 @@ class MainWindow(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        # Anchor the app's base background on this objectName. The top-level is a
+        # QWidget (not a QMainWindow), and the blanket ``QWidget`` background was
+        # removed to stop app_bg leaking through bare containers onto lighter card
+        # surfaces (DEC-225), so the window fill is anchored explicitly here.
+        self.setObjectName("MainWindow")
         self.setWindowTitle("Control-OFC — Fan Control")
         self.setMinimumSize(1200, 750)
         self.resize(1400, 850)

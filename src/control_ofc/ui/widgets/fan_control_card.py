@@ -22,6 +22,7 @@ from html import escape
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -100,11 +101,15 @@ class FanControlCard(Card):
         self._count.setStyleSheet("background: transparent;")
         layout.addWidget(self._count)
 
-        # Row 3: the RPM / SPEED / TEMP triple, column-labelled above the values.
+        # Row 3: the RPM / SPEED / TEMP triple, column-labelled above the values
+        # and separated by 1px hairline rules (DEC-225). The values sit flush on
+        # the card surface — no inset panel of a different tone behind them.
         metrics = QHBoxLayout()
         metrics.setSpacing(10)
         self._rpm_value = self._add_metric(metrics, "RPM", f"FanCard_Value_rpm_{slug}")
+        self._add_metric_divider(metrics, f"FanCard_Divider_rpmSpeed_{slug}")
         self._speed_value = self._add_metric(metrics, "SPEED", f"FanCard_Value_speed_{slug}")
+        self._add_metric_divider(metrics, f"FanCard_Divider_speedTemp_{slug}")
         self._temp_value = self._add_metric(metrics, "TEMP", f"FanCard_Value_temp_{slug}")
         metrics.addStretch(1)
         layout.addLayout(metrics)
@@ -150,6 +155,18 @@ class FanControlCard(Card):
         column_layout.addWidget(value)
         row.addWidget(column)
         return value
+
+    @staticmethod
+    def _add_metric_divider(row: QHBoxLayout, object_name: str) -> None:
+        """A 1px vertical hairline between two metric columns (DEC-225).
+
+        Styled via the ``.CardDivider`` class so it tracks the active theme's
+        border tone; the fixed 1px width keeps it a rule rather than a block."""
+        divider = QFrame()
+        divider.setObjectName(object_name)
+        divider.setProperty("class", "CardDivider")
+        divider.setFixedWidth(1)
+        row.addWidget(divider)
 
     # ── updates ──────────────────────────────────────────────────────
 

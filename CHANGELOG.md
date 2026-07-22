@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.27.0] — 2026-07-22
+
+Fixes an accidental background leak that made text on the dashboard fan cards
+appear on a darker inset panel instead of flush on the card surface (DEC-225),
+and refreshes the fan-card metrics to sit flush with subtle 1px hairline
+dividers. GUI-only, presentation layer; no contract change
+(`EXPECTED_API_VERSION` stays 1). Pairs with `control-ofc-daemon` (unchanged).
+
+### Fixed
+- **App-wide `app_bg` background leak (DEC-225).** The global `QWidget`
+  stylesheet rule painted a blanket dark `app_bg` fill on every bare container,
+  which showed through the transparent labels stacked on top of the lighter card
+  surface — most visibly as darker blocks behind the dashboard fan cards'
+  RPM/SPEED/TEMP values. The blanket fill is removed (base text colour + font
+  size stay); bare containers are now transparent and reveal the real surface
+  they sit on. The window base fill is re-anchored on `#MainWindow`, and the two
+  top-level surfaces that relied on the blanket rule (`#MainWindow`, `QMenu`) get
+  explicit fills. Deliberate darker surfaces (System State issue tiles, the
+  copy-command code block) are unchanged.
+
+### Changed
+- **Dashboard fan-card metrics sit flush on the card (DEC-225).** The
+  RPM/SPEED/TEMP trio is now separated by subtle 1px vertical hairlines
+  (`.CardDivider`) instead of the accidental inset panel — matching the flush,
+  on-surface look of the curve cards.
+
 ## [2.26.0] — 2026-07-21
 
 Audit-2026-07-21 remediation (GUI side): a profile-id path-traversal fix

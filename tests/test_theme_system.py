@@ -383,3 +383,47 @@ class TestStartupPageNavSync:
             assert win.page_stack.currentIndex() == PAGE_SETTINGS
             checked_btn = win.sidebar._group.checkedId()
             assert checked_btn == PAGE_SETTINGS
+
+
+class TestBackgroundLeakGuard:
+    """DEC-225: the blanket ``QWidget`` rule must not paint a background, or
+    app_bg leaks through every bare container onto the lighter .Card surfaces
+    (the dashboard fan-card metric blocks were the visible symptom). The window
+    fill is anchored on #MainWindow instead, and the top-level popup surface that
+    used to free-ride on the blanket rule (QMenu) keeps an explicit fill."""
+
+    @staticmethod
+    def _block(qss: str, selector: str) -> str:
+        """Best-effort body of the first ``selector {{ ... }}`` rule."""
+        m = re.search(re.escape(selector) + r"\s*\{([^{}]*)\}", qss)
+        return m.group(1) if m else ""
+
+    def test_global_qwidget_rule_paints_no_background(self):
+        """A blanket QWidget background is exactly the leak — it must be gone,
+        while the base text colour + font size stay."""
+        block = self._block(build_stylesheet(default_dark_theme()), "QWidget")
+        assert block, "global QWidget rule missing"
+        assert "background-color" not in block
+        assert "color:" in block
+
+    def test_window_fill_is_anchored_on_mainwindow(self):
+        """Removing the blanket fill must not leave the top-level window unpainted."""
+        t = default_dark_theme()
+        block = self._block(build_stylesheet(t), "#MainWindow")
+        assert "background-color" in block
+        assert t.app_bg in block
+
+    def test_popup_menu_has_an_explicit_fill(self):
+        """QMenu used to free-ride on the blanket QWidget background (DEC-225); it
+        must now carry its own explicit surface_1 fill (a bare "has a
+        background-color" check would pass on a wrong hardcoded colour)."""
+        t = default_dark_theme()
+        block = self._block(build_stylesheet(t), "QMenu")
+        assert block, "QMenu rule missing"
+        assert t.surface_1 in block
+
+    def test_fan_card_metric_divider_class_is_theme_driven(self):
+        """The hairline that replaces the inset panel takes the border tone."""
+        t = default_dark_theme()
+        block = self._block(build_stylesheet(t), ".CardDivider")
+        assert t.border_default in block
