@@ -103,9 +103,25 @@ below. Demo is startup-only (there is no demo → live transition), so refusing 
 write is sufficient; nothing needs snapshotting or restoring.
 
 Any future GUI-owned map keyed by hardware id must make the same choice
-explicitly. `hidden_chart_series`, `series_colors` and `chart_series_seeded`
-currently persist from demo and share the id-collision problem at lower blast
-radius (chart preferences, not names) — deliberately left for their own change.
+explicitly.
+
+**Still leaking — deferred to its own change (OPEN).** Four writers persist
+hardware-keyed state from a demo session and are *not* behind the guard. The
+scope for DEC-227 was deliberately limited to the fan-label maps, but a release
+security review sharpened the severity, so it is recorded here rather than lost:
+
+| Writer | Key | Why it matters |
+|---|---|---|
+| `dashboard_page._maybe_seed_chart_defaults` | `chart_series_seeded` | **Irreversible by design** — the flag exists precisely so a returning user is never re-decluttered, so one demo launch permanently consumes the real user's first-run chart seeding. Fires with **no user action at all**, as soon as demo ticks deliver sensors and fans. |
+| `main_window._persist_series_selection` | `hidden_chart_series` | Portable (not in `MACHINE_SPECIFIC_KEYS`), so demo-derived keys travel in a Settings export — the same propagation path as the `fan_aliases` bug DEC-227 fixed. |
+| `main_window._persist_sensor_class_override` | `sensor_class_overrides` | A coolant override set on a demo sensor id lands on the identically-named real sensor. |
+| `sensor_series_panel._on_item_clicked` (colour picker) | `series_colors` | Writes `settings.series_colors[key]` and `save()` directly, bypassing `AppSettingsService.update()` entirely. |
+
+Blast radius is display/chart preferences only — no PWM, safety, or profile
+effect — which is why it was not treated as a release blocker. The first two
+`main_window` handlers are one-line guard additions; the page-owned writers need
+a `persist_allowed` predicate or an `OperationMode.DEMO` check. When this lands,
+`_demo_blocks_persist`'s docstring should say "every per-hardware map".
 
 ## Suggested implementation approach
 Create a demo service that emits the same internal models used by live mode.

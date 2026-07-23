@@ -302,9 +302,22 @@ Expected fields:
 - age_ms
 - stall_detected (optional bool) — daemon-asserted; set when commanded PWM is above the daemon's `STALL_PWM_THRESHOLD` (20%, i.e. ≥21%) but measured RPM is zero. Evaluated per-tick from the latest snapshot (no multi-cycle counter); `null`/omitted when RPM is not polled. Surfaced by the GUI as an `error`-level warning.
 
-Note: fans do **not** include `label` or `kind` from the daemon. Display names come from: user alias (GUI-owned) > hwmon header label (for hwmon fans) > fan id.
+Note: fans do **not** include `label` or `kind` from the daemon — every display name is
+derived GUI-side by `AppState.fan_display_name` / `fan_fallback_name`, in this order:
 
-Fan `source` is `"openfan"`, `"hwmon"`, `"amd_gpu"`, `"intel_gpu"`, or `"nvidia_gpu"`. GPU fan IDs embed the PCI BDF: `amd_gpu:{bdf}`, `intel_gpu:{bdf}`, and `nvidia_gpu:{bdf}`. Intel (DEC-121) and NVIDIA (DEC-204) GPU fans are **read-only** — `rpm` is reported when available (and NVIDIA additionally reports a measured `duty_pct`), but `last_commanded_pwm` is always absent; the GUI must never issue a write to an `intel_gpu:`/`nvidia_gpu:` target.
+1. user alias (GUI-owned, `fan_aliases`; authored from the Dashboard Sensors rail, the
+   read-only fan cards, the Overview fan table, or the Fan Wizard — DEC-227)
+2. GPU model name, for `amd_gpu:` / `intel_gpu:` / `nvidia_gpu:` fans
+3. OpenFan channel label — `openfan:ch00` renders as `OpenFan CH0` (DEC-227)
+4. hwmon header `label` from `GET /hwmon/headers` (hwmon fans only)
+5. `/etc/sensors.d` + the in-repo board fallback table (`hwmon_label_resolver`, hwmon only)
+6. raw fan id, as a last resort
+
+Tier 5 fires only when tier 4's label is **empty**; a daemon that echoes the sysfs node
+name (`label: "pwm1"`) therefore short-circuits the resolver — see
+`docs/14_Risks_Gaps_and_Future_Work.md` gap #16 (OPEN).
+
+Fan `source` is `"openfan"`, `"hwmon"`, `"amd_gpu"`, `"intel_gpu"`, or `"nvidia_gpu"`. GPU fan IDs embed the PCI BDF: `amd_gpu:{bdf}`, `intel_gpu:{bdf}`, and `nvidia_gpu:{bdf}`. OpenFan fan IDs are `openfan:ch{NN}`, where `NN` is the **zero-padded** channel index (hardware-fixed range 0–9, `NUM_CHANNELS = 10`). The GUI parses that index for tier 3 above, so the padding and decimal form are part of the contract; a non-decimal suffix falls through to the raw id rather than being guessed at. Intel (DEC-121) and NVIDIA (DEC-204) GPU fans are **read-only** — `rpm` is reported when available (and NVIDIA additionally reports a measured `duty_pct`), but `last_commanded_pwm` is always absent; the GUI must never issue a write to an `intel_gpu:`/`nvidia_gpu:` target.
 
 ### GET /hwmon/headers
 Use to discover:

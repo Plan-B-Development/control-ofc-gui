@@ -23,7 +23,11 @@ from control_ofc.services.app_state import MAX_FAN_ALIAS_LEN, AppState
 from control_ofc.services.overview_view import build_fan_rows
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
-from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
+from control_ofc.ui.widgets.sensor_series_panel import (
+    _FAN_KEY_PREFIX,
+    _FAN_KEY_SUFFIX,
+    SensorSeriesPanel,
+)
 
 OPENFAN = "openfan:ch00"
 AIO_ID = "hwmon:nct6799:pwm1"
@@ -91,6 +95,29 @@ class TestApplyFanRename:
         state = _aio_state()
         state.apply_fan_rename(AIO_ID, "Pump (AIO)")
         assert AIO_ID not in state.fan_aliases
+
+    def test_recommitting_an_aliased_aio_row_keeps_the_alias(self):
+        """The load-bearing fallback-vs-display distinction, on the hardest case.
+
+        An already-aliased AIO fan renders "Kraken (AIO)", so the editor pre-fills
+        with that. Stripping the tag yields "Kraken" — which equals the *display*
+        name but NOT the *fallback* name ("Pump"). Comparing against
+        `fan_display_name` instead of `fan_fallback_name` would therefore read this
+        as "unchanged, clear it" and silently delete the user's name — and with it
+        the alias pin that keeps a 0-RPM fan on screen.
+        """
+        state = _aio_state()
+        state.apply_fan_rename(AIO_ID, "Kraken")
+        assert state.fan_aliases[AIO_ID] == "Kraken"
+        state.apply_fan_rename(AIO_ID, "Kraken (AIO)")
+        assert state.fan_aliases[AIO_ID] == "Kraken"
+
+    def test_aio_tag_is_stripped_before_the_cap_is_applied(self):
+        """Ordering matters: capping first would eat 6 chars of a max-length name."""
+        state = _aio_state()
+        name = "K" * MAX_FAN_ALIAS_LEN
+        state.apply_fan_rename(AIO_ID, f"{name} (AIO)")
+        assert state.fan_aliases[AIO_ID] == name
 
     def test_alias_is_length_capped(self):
         state = AppState()
@@ -229,6 +256,10 @@ class TestPanelDelegate:
         delegate = panel._tree.itemDelegate()
         option = QStyleOptionViewItem()
         model = panel._tree.model()
+        # The positive case matters as much as the negatives: a createEditor that
+        # returned None for everything would disable renaming entirely and still
+        # satisfy the two assertions below.
+        assert delegate.createEditor(panel._tree, option, model.index(0, 0)) is not None
         assert delegate.createEditor(panel._tree, option, model.index(0, 1)) is None
         assert delegate.createEditor(panel._tree, option, model.index(0, 2)) is None
 
@@ -257,8 +288,12 @@ class TestPanelDelegate:
         untouched — this pins that, because a wrong branch there would silently
         hide chart series.
         """
-        key = f"fan:{OPENFAN}:rpm"
         item = panel._fan_items[OPENFAN]
+        # Built from the row's own series key rather than hardcoded, so a change
+        # to the key format fails loudly here instead of silently comparing
+        # against a key the selection model never holds.
+        key = item.data(0, Qt.ItemDataRole.UserRole)
+        assert key == f"{_FAN_KEY_PREFIX}{OPENFAN}{_FAN_KEY_SUFFIX}"
         item.setCheckState(0, Qt.CheckState.Unchecked)
         assert panel._selection.is_hidden(key)
         item.setCheckState(0, Qt.CheckState.Checked)
@@ -371,7 +406,7 @@ class TestFanCardRename:
 
         card = FanControlCard(self._vm())
         qtbot.addWidget(card)
-        assert card._rename_fan_id == "amd_gpu:0000:03:00.0"
+        assert card.build_rename_menu() is not None
 
     def test_control_card_is_not_renamable(self, qtbot):
         """A control card is titled with profile data — renaming it is a profile
@@ -388,7 +423,65 @@ class TestFanCardRename:
             )
         )
         qtbot.addWidget(card)
-        assert card._rename_fan_id == ""
+        assert card.build_rename_menu() is None
+
+    def test_update_vm_revokes_renameability(self, qtbot):
+        """Cards are re-rendered in place each poll, so a card that stops being
+        read-only must stop offering a rename — not keep a stale fan id."""
+        from control_ofc.ui.widgets.fan_control_card import FanControlCard
+
+        card = FanControlCard(self._vm())
+        qtbot.addWidget(card)
+        assert card.build_rename_menu() is not None
+
+        card.update_vm(
+            self._vm(
+                control_id="ctl-1",
+                card_key="ctl-1",
+                is_read_only=False,
+                fan_count=3,
+                member_fan_ids=("a", "b", "c"),
+            )
+        )
+        assert card.build_rename_menu() is None
+
+    def test_update_vm_grants_renameability(self, qtbot):
+        from control_ofc.ui.widgets.fan_control_card import FanControlCard
+
+        card = FanControlCard(
+            self._vm(control_id="ctl-1", card_key="ctl-1", is_read_only=False, fan_count=3)
+        )
+        qtbot.addWidget(card)
+        assert card.build_rename_menu() is None
+
+        card.update_vm(self._vm())
+        assert card.build_rename_menu() is not None
+
+    def test_dashboard_wires_the_card_rename_signal(self, qtbot, monkeypatch):
+        """The connect() at card-creation time, end to end.
+
+        Without this, deleting `card.rename_requested.connect(...)` would break
+        right-click rename on every Dashboard fan card while the card-level and
+        page-level tests both kept passing — the signal still fires, and
+        `_rename_fan` still works when called directly. Nothing would fail.
+        """
+        from PySide6.QtWidgets import QInputDialog
+
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
+
+        state = AppState()
+        page = DashboardPage(state=state)
+        qtbot.addWidget(page)
+        # A read-only (NVIDIA, no write path) fan gets its own per-fan card.
+        gpu_id = "nvidia_gpu:0000:01:00.0"
+        state.set_fans([FanReading(id=gpu_id, source="nvidia_gpu", rpm=1000)])
+        page._refresh_fan_cards()
+
+        card = next(c for c in page._fan_cards.values() if c.build_rename_menu() is not None)
+        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("My GPU Fan", True))
+        card.build_rename_menu().actions()[0].trigger()
+
+        assert state.fan_aliases == {gpu_id: "My GPU Fan"}
 
     def test_rename_action_emits_the_fan_id(self, qtbot):
         from control_ofc.ui.widgets.fan_control_card import FanControlCard
@@ -477,6 +570,36 @@ class TestRenamePrompts:
         page._prompt_fan_rename(OPENFAN)
         assert state.fan_aliases == {OPENFAN: "Front Intake"}
 
+    def test_overview_accepting_an_empty_name_clears(self, qtbot, monkeypatch):
+        """Accepting an emptied field must route through the rule and clear,
+        not be short-circuited as "nothing typed"."""
+        from control_ofc.ui.pages.overview_page import OverviewPage
+
+        state = AppState()
+        state.set_fan_alias(OPENFAN, "Old Name")
+        page = OverviewPage(state=state)
+        qtbot.addWidget(page)
+        self._answer(monkeypatch, "", True)
+        page._prompt_fan_rename(OPENFAN)
+        assert OPENFAN not in state.fan_aliases
+
+    def test_overview_menu_offered_for_a_pwm_only_row(self, qtbot):
+        """PWM-only header rows are renamable too — they carry a header id."""
+        from control_ofc.api.models import HwmonHeader
+        from control_ofc.ui.pages.overview_page import OverviewPage
+
+        state = AppState()
+        header = HwmonHeader(id="hwmon:nct6798:pwm2", label="SYS", is_writable=True)
+        state.set_hwmon_headers([header])
+        page = OverviewPage(state=state)
+        qtbot.addWidget(page)
+        state.set_fans([])
+
+        assert page._row_to_fan_id(0) == "hwmon:nct6798:pwm2"
+        menu = page.build_fan_menu("hwmon:nct6798:pwm2")
+        assert menu is not None
+        assert "Overview_Action_renameFan" in [a.objectName() for a in menu.actions()]
+
 
 # ── Demo persistence guard (data-loss regression) ────────────────────
 
@@ -509,8 +632,13 @@ class TestDemoPersistenceGuard:
         on_disk = _persisted_aliases(tmp_path)
         assert on_disk == {OPENFAN: "My Real Intake"}
         assert "Renamed In Demo" not in on_disk.values()
-        # None of demo's synthetic labels leaked either.
-        assert "Front Intake 1" not in on_disk.values()
+        # And no *other* demo alias leaked. Checked on a fan the test never
+        # renamed: asserting on openfan:ch00's own demo label would pass even
+        # unguarded, because the rename overwrote that entry anyway.
+        from control_ofc.services.demo_service import DemoService
+
+        assert "openfan:ch02" not in on_disk
+        assert DemoService.fan_aliases()["openfan:ch02"] not in on_disk.values()
 
     def test_demo_zone_change_does_not_persist(self, qtbot, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))

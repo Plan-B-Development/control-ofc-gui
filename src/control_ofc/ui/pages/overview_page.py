@@ -129,8 +129,13 @@ class OverviewPage(QWidget):
             # here) re-renders this table so both surfaces stay in step.
             state.sensor_class_override_changed.connect(lambda *_: self._render_sensors_table())
             # DEC-227: a rename from any surface repaints this table immediately
-            # instead of leaving a stale name until the next poll.
-            state.fan_alias_changed.connect(lambda *_: self._on_fans(state.fans))
+            # instead of leaving a stale name until the next poll. Bound method,
+            # not a lambda capturing `state`: a lambda's lifetime is the sender's,
+            # so an AppState outliving this page would re-enter _on_fans against
+            # a deleted C++ widget. PySide6 drops a bound-method connection when
+            # the receiver is collected. Matters here because the py3.12 CI job
+            # has an open PySide6 teardown-lifetime segfault (see CLAUDE.md).
+            state.fan_alias_changed.connect(self._on_fan_alias_changed)
 
     # ── UI construction ──────────────────────────────────────────────
 
@@ -501,6 +506,11 @@ class OverviewPage(QWidget):
     def _toggle_hidden_group(self) -> None:
         self._hidden_group_expanded = not self._hidden_group_expanded
         self._render_sensors_table()
+
+    def _on_fan_alias_changed(self, _fan_id: str, _display_name: str) -> None:
+        """Repaint the fan table after a rename from any surface (DEC-227)."""
+        if self._state is not None:
+            self._on_fans(self._state.fans)
 
     def _row_to_fan_id(self, row: int) -> str:
         """Fan/header id behind a fan-table row, or "" if there is none."""
