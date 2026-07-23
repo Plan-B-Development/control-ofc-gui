@@ -24,6 +24,7 @@ MACHINE_SPECIFIC_KEYS = frozenset(
         "diagnostics_hidden_sensor_ids",
         "sensor_class_overrides",
         "acknowledged_kernel_warnings",
+        "fan_aliases_seeded",
         "profiles_dir_override",
         "themes_dir_override",
         "export_default_dir",
@@ -148,6 +149,13 @@ class AppSettings:
     # the dashboard's retired fan-zone grid. Dormant since DEC-222 — retained so
     # no settings-schema migration is needed and saved zones are not lost.
     fan_zones: dict[str, str] = field(default_factory=dict)
+    # DEC-228: set once the GUI has adopted profile `member_label`s as fan
+    # aliases. Needed for the same reason as `chart_series_seeded` (DEC-181):
+    # without it, an alias the user deliberately *clears* would be re-seeded from
+    # the profile on the next launch and could never be removed. Machine-specific
+    # (it describes what this install has already done), so it is excluded from
+    # portable export via MACHINE_SPECIFIC_KEYS.
+    fan_aliases_seeded: bool = False
     hidden_chart_series: list[str] = field(default_factory=list)
     # DEC-181: True once the dashboard has seeded the curated first-run chart
     # subset. Needed because hidden_chart_series == [] is indistinguishable
@@ -256,6 +264,7 @@ class AppSettings:
             theme_name=_as_str(data.get("theme_name"), "Default Dark"),
             fan_aliases=_as_str_dict(data.get("fan_aliases"), {}),
             fan_zones=_as_str_dict(data.get("fan_zones"), {}),
+            fan_aliases_seeded=_as_bool(data.get("fan_aliases_seeded"), False),
             hidden_chart_series=_as_str_list(data.get("hidden_chart_series"), []),
             chart_series_seeded=_as_bool(data.get("chart_series_seeded"), False),
             show_gpu_zero_rpm_warning=_as_bool(data.get("show_gpu_zero_rpm_warning"), True),

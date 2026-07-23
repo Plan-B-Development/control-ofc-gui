@@ -9,6 +9,8 @@ key from the pre-redesign dialog is preserved so the ~15 tests + the page's
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -45,11 +47,15 @@ class FanRoleDialog(ModalDialog):
         control: LogicalControl,
         curves: list[CurveConfig],
         parent=None,
+        display_name: Callable[[str, str], str] | None = None,
     ) -> None:
         super().__init__(f"Edit Fan Role: {control.name}", parent)
         self.setMinimumWidth(460)
         self._control = control
         self._delete_requested = False
+        # DEC-228: (member_id, cached member_label) -> name to show, so a rename
+        # made on any surface reaches these chips.
+        self._display_name = display_name or (lambda mid, label: label or mid)
 
         layout = self.body_layout()
         layout.setSpacing(10)
@@ -231,7 +237,7 @@ class FanRoleDialog(ModalDialog):
             grid.addWidget(empty, 0, 0)
             return holder
         for i, member in enumerate(members):
-            chip = QLabel(member.member_label or member.member_id)
+            chip = QLabel(self._display_name(member.member_id, member.member_label))
             chip.setProperty("class", "CardMeta")
             chip.setToolTip(member.member_id)
             grid.addWidget(chip, i // 2, i % 2)
@@ -270,7 +276,7 @@ class FanRoleDialog(ModalDialog):
 
         for m in gpu_members:
             row = QHBoxLayout()
-            label = QLabel(m.member_label or m.member_id)
+            label = QLabel(self._display_name(m.member_id, m.member_label))
             row.addWidget(label, 1)
             check = QCheckBox("Allow zero-RPM idle")
             check.setObjectName(f"FanRoleDialog_Check_zeroRpm_{m.member_id}")

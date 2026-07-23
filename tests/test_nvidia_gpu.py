@@ -496,7 +496,9 @@ class TestControlsMemberPickerExcludesNvidia:
         captured: dict = {"available": None}
 
         class _StubDialog:
-            def __init__(self, _current, available, _assigned=None, role_name="", parent=None):
+            def __init__(
+                self, _current, available, _assigned=None, role_name="", parent=None, **_kw
+            ):
                 captured["available"] = available
 
             def exec(self):

@@ -130,6 +130,11 @@ Two things worth knowing:
   a header that is idle right now stays visible once you have named it. Clearing
   the name lets it drop out of the list again.
 
+If you already named your fans while setting them up in a profile, those names are
+picked up automatically the first time this version runs — you do not need to
+retype anything. From then on the name lives with the fan, so renaming it here
+updates the Controls page too.
+
 To work out which physical fan is which before naming them, use the
 **Fan Configuration Wizard** on the [Controls page](controls.md) — it stops one
 fan at a time so you can see which one slows down.

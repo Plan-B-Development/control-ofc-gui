@@ -6,6 +6,8 @@ Editing members/curve/overrides happens in a dialog, not on the card.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
@@ -64,8 +66,13 @@ class ControlCard(QFrame):
         card_size: str = DEFAULT_CARD_SIZE,
         user_size: tuple[int, int] | None = None,
         parent=None,
+        display_name: Callable[[str, str], str] | None = None,
     ) -> None:
         super().__init__(parent)
+        # DEC-228: resolves (member_id, cached member_label) -> the name to show,
+        # so a rename made anywhere reaches these rows. Defaults to the old
+        # cached-label behaviour when no resolver is supplied (tests, previews).
+        self._display_name = display_name or (lambda mid, label: label or mid)
         self.setProperty("class", "Card")
         self._control = control
         self._last_output_pct: float | None = None
@@ -435,7 +442,7 @@ class ControlCard(QFrame):
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(4)
-            name = QLabel(member.member_label or member.member_id)
+            name = QLabel(self._display_name(member.member_id, member.member_label))
             name.setProperty("class", "CardMeta")
             name.setStyleSheet("background: transparent;")
             row_layout.addWidget(name, 1)
@@ -551,7 +558,7 @@ class ControlCard(QFrame):
     def _members_text(self, control: LogicalControl) -> str:
         if not control.members:
             return "No outputs assigned"
-        labels = [m.member_label or m.member_id for m in control.members]
+        labels = [self._display_name(m.member_id, m.member_label) for m in control.members]
         text = ", ".join(labels[:3])
         if len(labels) > 3:
             text += f" +{len(labels) - 3} more"

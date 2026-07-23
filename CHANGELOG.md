@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.29.0] — 2026-07-23
+
+Recovers fan names you had already saved. If you named your fans while setting up
+a profile, those names now appear everywhere in the app instead of placeholder
+channel names. GUI-only; no contract, profile-schema or settings-schema change
+(`EXPECTED_API_VERSION` stays 1). Pairs with `control-ofc-daemon` (unchanged,
+≥ v2.11.0).
+
+### Fixed
+- **Fan names saved with a profile are now used throughout the app (DEC-228).**
+  Naming a fan while assigning it to a control stored that name with the profile,
+  but the dashboard, sensors rail and overview table read a separate list — so
+  they showed `OpenFan CH0` and the like even though you had already named
+  everything. Your saved names are adopted automatically on first launch after
+  this update; nothing to retype. Renaming a fan afterwards still works exactly as
+  before, and a name you clear stays cleared.
+- **Fan names no longer pick up status text.** Adding a fan to a control could
+  save its status badge as part of its name — leaving fans called things like
+  "OpenFan CH2 (no fan detected)". Badges are display-only now and are never
+  stored. This also protects the pump/CPU minimum-speed rule, which reads that
+  name.
+- **Renaming a fan updates the Controls page too.** Control cards, fan-role chips
+  and the member editor kept showing the name a fan had when it was assigned, so
+  the same fan could appear under two different names on different pages.
+
 ## [2.28.0] — 2026-07-23
 
 Fans can now be renamed from the places their names are shown, and an unnamed

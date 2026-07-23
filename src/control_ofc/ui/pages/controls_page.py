@@ -478,6 +478,10 @@ class ControlsPage(QWidget):
             # foreign override (another client, or this GUI restarted within the
             # TTL) shows on the card instead of a stale "Curve".
             self._state.status_updated.connect(self._on_status_reconcile)
+            # DEC-228: member rows render through member_display_name, so a
+            # rename made on any surface must repaint them rather than leave the
+            # cached member_label showing until the page is rebuilt.
+            self._state.fan_alias_changed.connect(self._on_fan_alias_changed)
 
     def set_demo_controller(self, demo_controller: DemoController | None) -> None:
         """Inject the demo-mode mini-evaluator (DEC-165).
@@ -625,6 +629,10 @@ class ControlsPage(QWidget):
 
     def _on_profiles_changed(self) -> None:
         """Profiles created/renamed/deleted elsewhere — re-render the page."""
+        self._refresh_all()
+
+    def _on_fan_alias_changed(self, _fan_id: str, _display_name: str) -> None:
+        """A fan was renamed somewhere — repaint member rows (DEC-228)."""
         self._refresh_all()
 
     def confirm_discard_unsaved(self) -> bool:
@@ -833,6 +841,7 @@ class ControlsPage(QWidget):
                 profile.curves,
                 card_size=tier,
                 user_size=self._stored_card_size(control.id),
+                display_name=self._state.member_display_name,
             )
             card.selected.connect(self._on_control_selected)
             card.delete_requested.connect(self._on_delete_control)
@@ -1071,7 +1080,12 @@ class ControlsPage(QWidget):
 
         from control_ofc.ui.widgets.fan_role_dialog import FanRoleDialog
 
-        dlg = FanRoleDialog(control, profile.curves, parent=self)
+        dlg = FanRoleDialog(
+            control,
+            profile.curves,
+            parent=self,
+            display_name=self._state.member_display_name,
+        )
         dlg.set_edit_members_callback(self._on_edit_members)
         if dlg.exec():
             result = dlg.get_result()
@@ -1162,6 +1176,9 @@ class ControlsPage(QWidget):
                 if fan.source in ("intel_gpu", "nvidia_gpu"):
                     continue
                 label = self._state.fan_display_name(fan.id)
+                # DEC-228: the undecorated name is what gets persisted as
+                # member_label; `label` below accumulates display-only badges.
+                clean_label = label
                 if fan.source == "amd_gpu" and not gpu_writable:
                     label = f"{label} (read-only)"
                 # A2: surface "no fan detected" / PWM-only states in the picker
@@ -1179,6 +1196,7 @@ class ControlsPage(QWidget):
                     "id": fan.id,
                     "source": fan.source,
                     "label": label,
+                    "clean_label": clean_label,
                     "rpm": fan.rpm,  # DEC-214: live RPM (None → "no fan", never invented)
                 }
                 if tip:
@@ -1195,7 +1213,8 @@ class ControlsPage(QWidget):
                 if not header.is_writable:
                     continue
                 if not any(a["id"] == header.id for a in available):
-                    label = header.label or header.id
+                    label = self._state.fan_display_name(header.id) or header.id
+                    clean_label = label
                     presence = classify_fan_presence(None, header)
                     if PRESENCE_BADGE.get(presence):
                         label = f"{label} ({PRESENCE_BADGE[presence]})"
@@ -1215,6 +1234,7 @@ class ControlsPage(QWidget):
                             "id": header.id,
                             "source": "hwmon",
                             "label": label,
+                            "clean_label": clean_label,
                             "rpm": None,  # header with no live fan reading → "no fan"
                             "tooltip": "\n".join(p for p in tip_parts if p),
                         }
@@ -1230,7 +1250,12 @@ class ControlsPage(QWidget):
         from control_ofc.ui.widgets.member_editor import MemberEditorDialog
 
         dlg = MemberEditorDialog(
-            control.members, available, assigned_elsewhere, role_name=control.name, parent=self
+            control.members,
+            available,
+            assigned_elsewhere,
+            role_name=control.name,
+            parent=self,
+            display_name=self._state.member_display_name,
         )
         if dlg.exec():
             new_members = dlg.get_members()

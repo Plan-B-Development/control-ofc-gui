@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 
@@ -17,6 +18,7 @@ from control_ofc.services.dashboard_view import safety_detail_text
 from control_ofc.services.demo_controller import DemoController
 from control_ofc.services.demo_service import DemoService
 from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.services.fan_alias_seed import seed_fan_aliases_from_profiles
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.profile_import_service import should_offer_import
 from control_ofc.services.profile_service import ProfileService
@@ -103,6 +105,12 @@ class MainWindow(QWidget):
             self._settings_service.settings.sensor_class_overrides
         )
         self._series_selection.load_hidden(self._settings_service.settings.hidden_chart_series)
+
+        # DEC-228: one-time adoption of profile member labels as fan aliases.
+        # Skipped in demo mode — demo replaces fan_aliases with its own synthetic
+        # map, so there is nothing of the user's to recover and the ids collide.
+        if not self._demo_mode and not self._settings_service.settings.fan_aliases_seeded:
+            self._state.fans_updated.connect(self._maybe_seed_fan_aliases)
 
         # Persist alias and series changes back to settings
         self._state.fan_alias_changed.connect(self._persist_fan_alias)
@@ -646,6 +654,46 @@ class MainWindow(QWidget):
         self._demo_timer.timeout.connect(self._demo_tick)
         self._demo_timer.start()
         self._demo_tick()
+
+    def _maybe_seed_fan_aliases(self, fans: list) -> None:
+        """Adopt profile member labels as fan aliases, once (DEC-228).
+
+        Users who named their fans while building a profile wrote those names to
+        ``ControlMember.member_label``, which no *display* surface reads — every
+        one of them resolves through ``fan_display_name``, i.e. ``fan_aliases``.
+        This reconciles the two stores so the names the user already authored
+        appear everywhere, without asking them to retype anything.
+
+        Deferred to the first fan poll rather than done beside the other settings
+        restores in ``__init__``: the seeder needs to know which fans actually
+        exist so it can drop members left behind by retired id schemes, and
+        ``state.fans`` is empty until the daemon has been polled.
+
+        Runs once — ``fan_aliases_seeded`` is set even when nothing is adopted,
+        so an alias the user later clears is never resurrected (the
+        ``chart_series_seeded`` precedent, DEC-181).
+        """
+        if not fans:
+            return  # no hardware known yet; wait for a poll that reports some
+        with contextlib.suppress(RuntimeError, TypeError):
+            self._state.fans_updated.disconnect(self._maybe_seed_fan_aliases)
+
+        active = self._profile_service.active_profile
+        seeded = seed_fan_aliases_from_profiles(
+            self._profile_service.profiles,
+            self._state.fan_aliases,
+            {f.id for f in fans},
+            self._state.fan_fallback_name,
+            active_profile_id=active.id if active else "",
+        )
+        self._state.fan_aliases.update(seeded)
+        self._settings_service.update(
+            fan_aliases=dict(self._state.fan_aliases), fan_aliases_seeded=True
+        )
+        if seeded:
+            log.info("Adopted %d fan label(s) from saved profiles", len(seeded))
+            for fan_id in seeded:
+                self._state.fan_alias_changed.emit(fan_id, self._state.fan_display_name(fan_id))
 
     def _demo_blocks_persist(self, what: str) -> bool:
         """Whether a per-hardware map must stay session-only (DEC-227).

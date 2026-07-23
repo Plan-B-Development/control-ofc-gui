@@ -249,6 +249,26 @@ class AppState(QObject):
             return self.fan_aliases[fan_id]
         return self.fan_fallback_name(fan_id)
 
+    def member_display_name(self, member_id: str, member_label: str = "") -> str:
+        """Display name for a profile member — the control-surface counterpart of
+        :meth:`fan_display_name` (DEC-228).
+
+        Control cards, fan-role chips and the member editor render a member's
+        *cached* ``member_label``, which is a snapshot taken when the member was
+        added. A later rename updated ``fan_aliases`` and left that snapshot
+        stale, so the same fan showed two different names depending on which page
+        you were looking at. A live alias therefore wins here.
+
+        Note the tiers cannot be collapsed to ``fan_display_name(id) or label``:
+        ``fan_display_name`` falls back to a synthesised name and so is *never*
+        empty, which would make the cached label unreachable.
+        """
+        if member_id in self.fan_aliases:
+            return self.fan_aliases[member_id]
+        if member_label:
+            return member_label
+        return self.fan_fallback_name(member_id)
+
     def fan_fallback_name(self, fan_id: str) -> str:
         """Return the best display name for a fan *ignoring* any user alias.
 

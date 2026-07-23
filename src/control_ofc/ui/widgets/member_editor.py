@@ -10,6 +10,8 @@ never fabricated.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -34,11 +36,14 @@ class MemberEditorDialog(ModalDialog):
         assigned_elsewhere: dict[str, str] | None = None,  # fan_id -> role_name
         role_name: str = "",
         parent=None,
+        display_name: Callable[[str, str], str] | None = None,
     ) -> None:
         super().__init__(f"Edit Role: {role_name}" if role_name else "Edit Members", parent)
         self.setMinimumSize(560, 400)
 
         self._result_members: list[ControlMember] = []
+        # DEC-228: (member_id, cached member_label) -> name to show.
+        self._display_name = display_name or (lambda mid, label: label or mid)
         # Live RPM per output id (None = present-but-no-fan); absent id = unknown.
         self._rpm_by_id = {out["id"]: out.get("rpm") for out in available_outputs if "rpm" in out}
 
@@ -134,7 +139,8 @@ class MemberEditorDialog(ModalDialog):
                 self._available_list.addItem(item)
 
         for m in current_members:
-            text = f"[{m.source}] {m.member_label or m.member_id}" + self._rpm_suffix(m.member_id)
+            shown = self._display_name(m.member_id, m.member_label)
+            text = f"[{m.source}] {shown}" + self._rpm_suffix(m.member_id)
             item = QListWidgetItem(text)
             item.setData(
                 Qt.ItemDataRole.UserRole,
@@ -183,7 +189,13 @@ class MemberEditorDialog(ModalDialog):
                 ControlMember(
                     source=data["source"],
                     member_id=data["id"],
-                    member_label=data.get("label", ""),
+                    # DEC-228: persist the *undecorated* name. The picker's
+                    # "label" carries display badges ("(read-only)",
+                    # "(no fan detected)", "(AIO pump)") that describe hardware
+                    # state, not the user's name for the fan — and member_label
+                    # feeds infer_member_role, which sets the DEC-095/162
+                    # CPU/pump PWM floor. A badge must never reach it.
+                    member_label=data.get("clean_label") or data.get("label", ""),
                 )
             )
         return members

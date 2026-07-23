@@ -176,6 +176,12 @@ These belong to the daemon runtime/config:
   authored from the Dashboard Sensors rail, the read-only fan cards and the
   Overview fan table as well as the Fan Configuration Wizard; values are capped at
   64 characters.
+- **`fan_aliases_seeded`** (DEC-228) — set once the GUI has adopted profile
+  `member_label`s into `fan_aliases`. **Machine-specific** (it records what this
+  install has already done, not a preference), so it is in `MACHINE_SPECIFIC_KEYS`
+  and excluded from portable export. Without it, an alias the user deliberately
+  clears would be re-seeded from the profile on the next launch and could never be
+  removed — the same reasoning as `chart_series_seeded` (DEC-181).
 - **Import merges, preserving local machine state:** imported values overlay the
   current settings, and machine-specific keys are stripped from the incoming
   data, so importing a shared (or legacy full) file never moves your window or

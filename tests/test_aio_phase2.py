@@ -281,7 +281,7 @@ def test_member_picker_tags_aio_pump(qtbot, app_state, profile_service, monkeypa
     captured: dict = {}
 
     class _FakeMemberDialog:
-        def __init__(self, members, available, assigned=None, role_name="", parent=None):
+        def __init__(self, members, available, assigned=None, role_name="", parent=None, **_kw):
             captured["available"] = available
 
         def exec(self):

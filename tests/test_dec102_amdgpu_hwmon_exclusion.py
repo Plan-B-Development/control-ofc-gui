@@ -91,6 +91,7 @@ class TestEditMembersPickerFiltersUnwritableHeaders:
                 _assigned_elsewhere=None,
                 role_name="",
                 parent=None,
+                **_kw,
             ):
                 captured["available"] = available
                 # The dialog is constructed lazily inside _on_edit_members

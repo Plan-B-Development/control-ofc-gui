@@ -150,6 +150,21 @@ A **control** card is titled with `control.name`, which is profile data — rena
 it is a profile write and stays on the Controls page (DEC-222). Sensors are not
 renamable: their labels are daemon-owned and there is no sensor-alias setting.
 
+**One-time adoption of profile labels (DEC-228).** A fan's name used to live in two
+places that never reconciled: `fan_aliases` (read by every *display* surface, via
+`fan_display_name`) and `ControlMember.member_label` (read by the *control*
+surfaces). A user who named their fans while building a profile filled only the
+second, so the display surfaces showed a fallback. On the first fan poll,
+`services/fan_alias_seed.py` adopts those labels into `fan_aliases` — once, gated
+by `AppSettings.fan_aliases_seeded`, so a cleared alias is never resurrected.
+Labels are stripped of picker badges, length-capped, and skipped when they equal
+the fan's fallback name (adopting one would pin an idle header visible, per the
+DEC-227 rule). Never runs in demo mode. Profiles are read, never written.
+
+**Control surfaces resolve through `AppState.member_display_name`** (alias >
+cached `member_label` > fallback), so a rename made anywhere reaches control-card
+member rows, fan-role chips and the member editor.
+
 ## Warning behaviours
 If a fan or sensor is stale:
 - reflect it in the footer health rollup and the Logs page's Active Warnings list
