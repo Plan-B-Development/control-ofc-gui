@@ -306,7 +306,9 @@ Note: fans do **not** include `label` or `kind` from the daemon — every displa
 derived GUI-side by `AppState.fan_display_name` / `fan_fallback_name`, in this order:
 
 1. user alias (GUI-owned, `fan_aliases`; authored from the Dashboard Sensors rail, the
-   read-only fan cards, the Overview fan table, or the Fan Wizard — DEC-227)
+   read-only fan cards, the Overview fan table, or the Fan Wizard — DEC-227). On the
+   first fan poll, any name already saved as a profile `member_label` is adopted into
+   this store once (DEC-228)
 2. GPU model name, for `amd_gpu:` / `intel_gpu:` / `nvidia_gpu:` fans
 3. OpenFan channel label — `openfan:ch00` renders as `OpenFan CH0` (DEC-227)
 4. hwmon header `label` from `GET /hwmon/headers` (hwmon fans only)
@@ -316,6 +318,17 @@ derived GUI-side by `AppState.fan_display_name` / `fan_fallback_name`, in this o
 Tier 5 fires only when tier 4's label is **empty**; a daemon that echoes the sysfs node
 name (`label: "pwm1"`) therefore short-circuits the resolver — see
 `docs/14_Risks_Gaps_and_Future_Work.md` gap #16 (OPEN).
+
+**Profile member labels are a separate store with a different job (DEC-228).**
+`ControlMember.member_label` lives in the profile document — which the daemon holds as
+the store of record (DEC-160) and round-trips verbatim — and is *not* a display-name
+tier. The control surfaces resolve through `AppState.member_display_name`
+(alias > cached `member_label` > fallback), and `member_label` itself is kept
+**hardware-truthful** rather than set to the user's alias, because both the GUI's
+`infer_member_role` and the daemon's `member_is_pump_or_cpu` match "cpu"/"pump"/"aio"
+against it to apply the DEC-095/162 30% CPU/pump floor. The daemon's classifier mirrors
+the GUI's rather than detecting pumps independently, so what the GUI writes there sets
+the floor on **both** sides.
 
 Fan `source` is `"openfan"`, `"hwmon"`, `"amd_gpu"`, `"intel_gpu"`, or `"nvidia_gpu"`. GPU fan IDs embed the PCI BDF: `amd_gpu:{bdf}`, `intel_gpu:{bdf}`, and `nvidia_gpu:{bdf}`. OpenFan fan IDs are `openfan:ch{NN}`, where `NN` is the **zero-padded** channel index (hardware-fixed range 0–9, `NUM_CHANNELS = 10`). The GUI parses that index for tier 3 above, so the padding and decimal form are part of the contract; a non-decimal suffix falls through to the raw id rather than being guessed at. Intel (DEC-121) and NVIDIA (DEC-204) GPU fans are **read-only** — `rpm` is reported when available (and NVIDIA additionally reports a measured `duty_pct`), but `last_commanded_pwm` is always absent; the GUI must never issue a write to an `intel_gpu:`/`nvidia_gpu:` target.
 

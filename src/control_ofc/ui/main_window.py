@@ -687,13 +687,23 @@ class MainWindow(QWidget):
             active_profile_id=active.id if active else "",
         )
         self._state.fan_aliases.update(seeded)
+        if self._demo_blocks_persist("fan_aliases"):
+            return  # defensive: demo never reaches here (the connect is gated)
         self._settings_service.update(
             fan_aliases=dict(self._state.fan_aliases), fan_aliases_seeded=True
         )
         if seeded:
             log.info("Adopted %d fan label(s) from saved profiles", len(seeded))
-            for fan_id in seeded:
-                self._state.fan_alias_changed.emit(fan_id, self._state.fan_display_name(fan_id))
+            # Every adopted row needs its own emit — the per-row repaint handlers
+            # key off the fan id — but the settings file has just been written in
+            # full, so the persist slot is stood down for the burst rather than
+            # rewriting the file once per fan.
+            self._state.fan_alias_changed.disconnect(self._persist_fan_alias)
+            try:
+                for fan_id in seeded:
+                    self._state.fan_alias_changed.emit(fan_id, self._state.fan_display_name(fan_id))
+            finally:
+                self._state.fan_alias_changed.connect(self._persist_fan_alias)
 
     def _demo_blocks_persist(self, what: str) -> bool:
         """Whether a per-hardware map must stay session-only (DEC-227).

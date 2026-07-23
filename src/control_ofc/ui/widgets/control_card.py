@@ -137,6 +137,7 @@ class ControlCard(QFrame):
         self._member_rows_layout.setContentsMargins(0, 0, 0, 0)
         self._member_rows_layout.setSpacing(1)
         self._member_row_rpm: dict[str, QLabel] = {}
+        self._member_row_name: dict[str, QLabel] = {}
         layout.addWidget(self._member_rows)
         self._rebuild_member_rows(control)
 
@@ -437,12 +438,14 @@ class ControlCard(QFrame):
                 widget.setParent(None)  # detach now so a rebuild can't reuse a stale row
                 widget.deleteLater()
         self._member_row_rpm = {}
+        self._member_row_name = {}
         for member in control.members:
             row = QWidget()
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(4)
             name = QLabel(self._display_name(member.member_id, member.member_label))
+            self._member_row_name[member.member_id] = name
             name.setProperty("class", "CardMeta")
             name.setStyleSheet("background: transparent;")
             row_layout.addWidget(name, 1)
@@ -554,6 +557,19 @@ class ControlCard(QFrame):
         )
 
     # ─── Internals ───────────────────────────────────────────────────
+
+    def refresh_member_names(self) -> None:
+        """Re-resolve member row names in place after a rename (DEC-228).
+
+        Deliberately *not* a card rebuild: ``ControlsPage._refresh_controls_grid``
+        releases every live manual override before destroying cards (DEC-163), so
+        routing a rename through it would silently drop the user's override.
+        """
+        for member in self._control.members:
+            row_label = self._member_row_name.get(member.member_id)
+            if row_label is not None:
+                row_label.setText(self._display_name(member.member_id, member.member_label))
+        self._members_label.setText(self._members_text(self._control))
 
     def _members_text(self, control: LogicalControl) -> str:
         if not control.members:

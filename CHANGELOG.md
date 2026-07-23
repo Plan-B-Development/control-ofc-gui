@@ -15,7 +15,7 @@ channel names. GUI-only; no contract, profile-schema or settings-schema change
   they showed `OpenFan CH0` and the like even though you had already named
   everything. Your saved names are adopted automatically on first launch after
   this update; nothing to retype. Renaming a fan afterwards still works exactly as
-  before, and a name you clear stays cleared.
+  before, and a name you clear after the update stays cleared.
 - **Fan names no longer pick up status text.** Adding a fan to a control could
   save its status badge as part of its name — leaving fans called things like
   "OpenFan CH2 (no fan detected)". Badges are display-only now and are never

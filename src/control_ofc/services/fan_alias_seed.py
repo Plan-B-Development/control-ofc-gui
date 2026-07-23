@@ -17,13 +17,16 @@ the raw-id fallback with a plausible synthetic name (``OpenFan CH0``), so a
 missing label began to read as the app deliberately overriding the user.
 
 This module is the reconciliation: a **pure**, Qt-free function that derives the
-aliases a user has effectively already authored. It is run once (gated by
-``AppSettings.fan_aliases_seeded``) so that an alias the user later *clears* is
-not resurrected on the next launch.
+aliases a user has effectively already authored. It runs once (gated by
+``AppSettings.fan_aliases_seeded``) so that an alias the user clears *after* the
+seed is not resurrected on the next launch. An alias
+cleared on an older version is indistinguishable from one never set, so the seed
+does adopt the profile label for it — once.
 
-It deliberately does **not** touch ``member_label``. That field feeds
-``infer_member_role``, which sets the DEC-095/162 CPU/pump minimum-PWM floor —
-leaving it byte-identical keeps the safety path out of this change entirely.
+The seed deliberately does **not** write ``member_label``. That field feeds
+``infer_member_role`` (and its daemon mirror ``member_is_pump_or_cpu``), which
+set the DEC-095/162 CPU/pump minimum-PWM floor — leaving it byte-identical keeps
+the safety path out of this migration entirely.
 """
 
 from __future__ import annotations
@@ -58,18 +61,65 @@ _TRAILING_BADGE_RE = re.compile(
 )
 
 
+# Longest label the stripper will consider. The badge regex is an alternation over
+# a repeatedly-applied sub, which is superlinear in the input: a crafted 176 kB
+# label measured ~58 s, and profiles are untrusted input (a file import, or the
+# 0666 daemon store any local user can POST to). The seed runs on the Qt main
+# thread during the first poll, so an unclamped label would freeze the GUI on
+# every launch — the one-shot flag is never written, so it would never recover.
+# Well above MAX_FAN_ALIAS_LEN, so it cannot truncate a legitimate name.
+_MAX_STRIP_INPUT = 512
+
+# Belt-and-braces bound on the strip loop. Each firing `sub` removes at least ten
+# characters so it already terminates; this caps the work regardless.
+_MAX_STRIP_PASSES = 8
+
+# Prefixes of daemon-minted fan ids. A label matching one is an id, not a name —
+# see `_is_raw_id`.
+_FAN_ID_PREFIXES = ("openfan:", "hwmon:", "amd_gpu:", "intel_gpu:", "nvidia_gpu:")
+
+
+def _is_raw_id(label: str, member_id: str) -> bool:
+    """True when *label* is a daemon fan id rather than a name a user chose.
+
+    Before DEC-227 gave OpenFan channels a readable fallback, ``fan_display_name``
+    returned the raw id — and the member picker cached whatever it displayed into
+    ``member_label``. So profiles authored on <= v2.27.1 are full of labels like
+    ``"openfan:ch00"``. Adopting those would invert this release's whole purpose:
+    the rail would show the id it is supposed to replace, and because an alias
+    means "keep this fan visible" to ``filter_displayable_fans``, every idle
+    channel would also be pinned on screen — permanently, since the seed is
+    one-shot.
+
+    The equality check catches the exact case; the prefix check also catches a
+    label carrying some *other* fan's id.
+    """
+    return label == member_id or label.startswith(_FAN_ID_PREFIXES)
+
+
 def strip_member_label_decorations(label: str) -> str:
     """Remove any trailing picker badges from *label*.
 
     Applied repeatedly, because the picker can stack two (e.g. a read-only AIO
     header renders as ``"Pump (read-only) (AIO pump)"``).
+
+    **Only safe for deriving a display alias.** This strips the ``(AIO …)`` tag
+    too, and that tag is role-bearing where it is *stored*: both
+    ``infer_member_role`` and the daemon's ``member_is_pump_or_cpu`` match
+    "cpu"/"pump"/"aio" against ``member_label`` to decide the DEC-095/162 30%
+    pump floor. Aliases feed only ``fan_display_name``, so full stripping is
+    correct here — but never route ``member_label`` through this function.
+    The picker keeps the AIO tag in its ``clean_label`` for exactly that reason.
     """
-    cleaned = (label or "").strip()
-    while True:
+    if not isinstance(label, str):
+        return ""  # a hand-edited/hostile profile can carry any JSON type here
+    cleaned = label[:_MAX_STRIP_INPUT].strip()
+    for _ in range(_MAX_STRIP_PASSES):
         stripped = _TRAILING_BADGE_RE.sub("", cleaned)
         if stripped == cleaned:
-            return cleaned.strip()
+            break
         cleaned = stripped.strip()
+    return cleaned.strip()
 
 
 def collect_member_labels(
@@ -132,6 +182,8 @@ def seed_fan_aliases_from_profiles(
             continue
         capped = label[:MAX_FAN_ALIAS_LEN].strip()
         if not capped or capped == fallback_name(member_id):
+            continue
+        if _is_raw_id(capped, member_id):
             continue
         seeded[member_id] = capped
     return seeded

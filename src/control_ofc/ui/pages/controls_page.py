@@ -50,6 +50,7 @@ from control_ofc.services.profile_service import (
     CurveType,
     LogicalControl,
     ProfileService,
+    _label_indicates_cpu_or_pump,
     apply_role_floor,
     mix_candidate_curves,
     sync_candidate_controls,
@@ -162,6 +163,37 @@ class _OverrideWorker(QObject):
             with contextlib.suppress(Exception):
                 self._client.close()
             self._client = None
+
+
+def _role_preserving_label(display_name: str, header, source: str) -> str:
+    """Pick what to persist as ``ControlMember.member_label`` (DEC-228).
+
+    ``member_label`` is not only a name: both ``infer_member_role`` and the
+    daemon's ``member_is_pump_or_cpu`` match "cpu"/"pump"/"aio" against it to
+    apply the DEC-095/162 30% CPU/pump floor, and the daemon's classifier mirrors
+    the GUI's rather than detecting pumps independently — so whatever is written
+    here sets the floor on *both* sides.
+
+    Neither candidate is reliably the safer one, so the rule is simply **never
+    lower the inferred role**:
+
+    * the user's alias can carry the role where sysfs does not — the daemon
+      synthesises ``"pwm7"`` for any header with no ``pwmN_label``/``fanN_label``
+      (`read_label`), so on a typical board the alias is the *only* way to say
+      "this is the pump";
+    * the sysfs label can carry it where the alias does not — a header labelled
+      ``CPU_OPT`` that the user renamed to "My Fan".
+
+    Display is unaffected either way: every member surface resolves through
+    ``AppState.member_display_name``, which prefers the live alias over this cache.
+    """
+    if source != "hwmon" or header is None or not header.label:
+        return display_name
+    if _label_indicates_cpu_or_pump(header.label) and not _label_indicates_cpu_or_pump(
+        display_name
+    ):
+        return header.label
+    return display_name
 
 
 class ControlsPage(QWidget):
@@ -632,8 +664,14 @@ class ControlsPage(QWidget):
         self._refresh_all()
 
     def _on_fan_alias_changed(self, _fan_id: str, _display_name: str) -> None:
-        """A fan was renamed somewhere — repaint member rows (DEC-228)."""
-        self._refresh_all()
+        """A fan was renamed somewhere — repaint member rows in place (DEC-228).
+
+        Not ``_refresh_all``: that rebuilds the grid, and the rebuild releases
+        every live manual override first (DEC-163). Renaming a fan must not cost
+        the user an override they are holding.
+        """
+        for card in self._control_cards.values():
+            card.refresh_member_names()
 
     def confirm_discard_unsaved(self) -> bool:
         """Ask whether to discard in-progress edits before switching profiles.
@@ -1176,9 +1214,18 @@ class ControlsPage(QWidget):
                 if fan.source in ("intel_gpu", "nvidia_gpu"):
                     continue
                 label = self._state.fan_display_name(fan.id)
-                # DEC-228: the undecorated name is what gets persisted as
-                # member_label; `label` below accumulates display-only badges.
-                clean_label = label
+                # DEC-228: what gets persisted as member_label — deliberately NOT
+                # the display name. member_label is not only a name: both
+                # infer_member_role and the daemon's member_is_pump_or_cpu match
+                # "cpu"/"pump"/"aio" against it to apply the DEC-095/162 30%
+                # CPU/pump floor. A user alias ("My Fan") can lack those words
+                # where the sysfs label ("CPU_OPT") carries them, so for hwmon
+                # members the hardware-truthful label is what gets stored;
+                # otherwise renaming a CPU header would quietly drop a new
+                # control to the 20% chassis floor. Display is unaffected — every
+                # member surface resolves through AppState.member_display_name,
+                # which prefers the live alias over this cache.
+                clean_label = _role_preserving_label(label, header_by_id.get(fan.id), fan.source)
                 if fan.source == "amd_gpu" and not gpu_writable:
                     label = f"{label} (read-only)"
                 # A2: surface "no fan detected" / PWM-only states in the picker
@@ -1190,7 +1237,9 @@ class ControlsPage(QWidget):
                 # DEC-157: tag liquid-cooler headers so AIO members are obvious.
                 h_aio = header_by_id.get(fan.id)
                 if fan.source == "hwmon" and h_aio is not None and h_aio.is_aio:
-                    label += " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
+                    aio_tag = " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
+                    label += aio_tag
+                    clean_label += aio_tag  # role-bearing — see above
                 tip = PRESENCE_TOOLTIP.get(presence, "") if presence != FanPresence.PRESENT else ""
                 entry = {
                     "id": fan.id,
@@ -1214,12 +1263,14 @@ class ControlsPage(QWidget):
                     continue
                 if not any(a["id"] == header.id for a in available):
                     label = self._state.fan_display_name(header.id) or header.id
-                    clean_label = label
+                    clean_label = _role_preserving_label(label, header, "hwmon")
                     presence = classify_fan_presence(None, header)
                     if PRESENCE_BADGE.get(presence):
                         label = f"{label} ({PRESENCE_BADGE[presence]})"
                     if header.is_aio:
-                        label += " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
+                        aio_tag = " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
+                        label += aio_tag
+                        clean_label += aio_tag  # role-bearing — see above
                     tip_parts = [f"ID: {header.id}"]
                     if header.chip_name:
                         tip_parts.append(f"Chip: {header.chip_name}")
