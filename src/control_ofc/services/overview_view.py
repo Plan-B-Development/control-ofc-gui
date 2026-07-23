@@ -27,6 +27,7 @@ from control_ofc.api.models import (
     HwmonHeader,
     SensorReading,
 )
+from control_ofc.knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from control_ofc.knowledge.sensor_knowledge import (
     classify_sensor,
     classify_sensor_with_overrides,
@@ -505,7 +506,11 @@ def build_fan_rows(
             "Source: hwmon (PWM output only — no RPM tachometer)",
             f"Control method: {control_method}",
         ]
-        if h.label:
+        # DEC-229: the daemon synthesises "pwmN" when the chip publishes no
+        # label file. Repeating that under "Label:" would contradict the
+        # resolved row name directly above it and pass off an invented value
+        # as sysfs truth, so the line is dropped rather than filled in.
+        if h.label and not is_placeholder_hwmon_label(h.label, h.pwm_index):
             tip_parts.append(f"Label: {h.label}")
         if h.chip_name:
             tip_parts.append(f"Chip: {h.chip_name}")

@@ -85,6 +85,42 @@ class TestApplyFanRename:
         state.apply_fan_rename(OPENFAN, "Front Intake")
         assert state.fan_aliases == {OPENFAN: "Front Intake"}
 
+    def test_alias_matching_a_newly_resolvable_fallback_becomes_clearable(self):
+        """DEC-229's one behavioural interaction with DEC-227, pinned deliberately.
+
+        Users on a label-less board worked around gap #16 by renaming `pwm1` to
+        "CPU_FAN" by hand. Now the fallback *itself* resolves to CPU_FAN, so that
+        alias equals the fallback and a no-op Enter clears it. Displayed name is
+        unchanged either way; the only real effect is that the fan can drop out
+        of the `hide_unused` filter, which is why this is documented rather than
+        migrated.
+        """
+        from control_ofc.api.models import BoardInfo
+        from control_ofc.knowledge.hwmon_label_resolver import (
+            clear_libsensors_cache,
+        )
+
+        clear_libsensors_cache()
+        try:
+            fan_id = "hwmon:it8696:it87.2624:pwm1:pwm1"
+            state = AppState()
+            state.board_info = BoardInfo(
+                vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER"
+            )
+            state.set_hwmon_headers(
+                [HwmonHeader(id=fan_id, label="pwm1", chip_name="it8696", pwm_index=1)]
+            )
+
+            state.apply_fan_rename(fan_id, "CPU_FAN")
+            assert state.fan_aliases == {}  # equals the fallback ⇒ not an alias
+            assert state.fan_display_name(fan_id) == "CPU_FAN"  # …and looks identical
+
+            # A name that is genuinely the user's is still stored.
+            state.apply_fan_rename(fan_id, "My CPU Cooler")
+            assert state.fan_aliases == {fan_id: "My CPU Cooler"}
+        finally:
+            clear_libsensors_cache()
+
     def test_aio_suffix_is_never_captured_into_the_alias(self):
         state = _aio_state()
         state.apply_fan_rename(AIO_ID, "Kraken Pump (AIO)")

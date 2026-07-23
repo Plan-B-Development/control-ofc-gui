@@ -29,6 +29,7 @@ from PySide6.QtCore import QObject, Signal
 
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.constants import DEFAULT_CURVE_POINTS
+from control_ofc.knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from control_ofc.knowledge.sensor_knowledge import (
     classify_sensor_with_overrides,
     is_liquid_cooler_chip,
@@ -37,6 +38,7 @@ from control_ofc.paths import atomic_write, load_json_capped, profiles_dir
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
+    from control_ofc.api.models import HwmonHeader
 
 log = logging.getLogger(__name__)
 
@@ -328,7 +330,11 @@ class ControlMember:
 # enforces the pump/CPU 30% floor as a hard backstop at both validate time and
 # every eval tick (DEC-162), plus the 105°C thermal-emergency rule. The 20%
 # chassis / 0% GPU floors stay GUI-only. Roles are inferred from member labels
-# because the daemon's header label is the only authoritative classifier we have.
+# because the *resolved* display name is the best classifier we have — DEC-229
+# retired the older claim that the daemon's header label was the authoritative
+# one: on a chip that publishes no label file the daemon synthesises `pwmN`,
+# which carries no role at all, and the GUI's own board table is what knows the
+# header is CPU_FAN.
 
 CONTROL_ROLE_GPU = "gpu"
 CONTROL_ROLE_CPU_PUMP = "cpu_or_pump"
@@ -915,6 +921,30 @@ class AioDetection:
     monitor_only: bool  # an AIO is present but no writable pump exists
 
 
+def _real_header_label(header: HwmonHeader) -> str:
+    """A header's label, or ``""`` when the daemon only synthesised one.
+
+    DEC-229: ``HwmonHeader.label`` is never empty — a chip with no
+    ``pwmN_label``/``fanN_label`` file gets ``"pwmN"`` invented for it — so the
+    ``h.label or <default>`` idiom silently stops producing its default. Here
+    that meant an AIO pump on such a board was named ``"pwm1"`` instead of
+    ``"Pump"``, and ``member_label`` is the DEC-095/162 floor input, so the
+    pump lost its 30% floor and got the 20% chassis one.
+
+    This is deliberately the raw-label check only: ``detect_aio_setup`` is a
+    pure function with no board identity to consult, so it cannot reach the
+    ``/etc/sensors.d`` or board-table tiers.
+
+    Reads the fields directly rather than via ``getattr`` defaults: a duck-typed
+    stand-in that lacks ``pwm_index`` should fail loudly in a test, not silently
+    compare against ``"pwm-1"`` and never match.
+    """
+    label = header.label or ""
+    if is_placeholder_hwmon_label(label, header.pwm_index):
+        return ""
+    return label
+
+
 def detect_aio_setup(
     headers: list, sensors: list, sensor_overrides: dict | None = None
 ) -> AioDetection:
@@ -931,18 +961,22 @@ def detect_aio_setup(
 
     pump_header = None
     if writable:
-        pumps = [h for h in writable if "pump" in (h.label or "").lower()]
+        pumps = [h for h in writable if "pump" in _real_header_label(h).lower()]
         pump_header = pumps[0] if pumps else min(writable, key=lambda h: h.pwm_index)
 
     pump_member = (
         ControlMember(
-            source="hwmon", member_id=pump_header.id, member_label=pump_header.label or "Pump"
+            source="hwmon",
+            member_id=pump_header.id,
+            member_label=_real_header_label(pump_header) or "Pump",
         )
         if pump_header is not None
         else None
     )
     radiator_members = [
-        ControlMember(source="hwmon", member_id=h.id, member_label=h.label or "Radiator")
+        ControlMember(
+            source="hwmon", member_id=h.id, member_label=_real_header_label(h) or "Radiator"
+        )
         for h in writable
         if pump_header is None or h.id != pump_header.id
     ]

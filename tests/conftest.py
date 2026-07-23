@@ -219,6 +219,30 @@ def _sync_override_dispatch(monkeypatch):
     monkeypatch.setattr(ControlsPage, "_OVERRIDE_USE_THREAD", False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_libsensors(monkeypatch):
+    """Keep the host's ``/etc/sensors.d`` out of every test (DEC-229).
+
+    ``load_libsensors_configs(paths=[])`` does **not** isolate, which is the
+    trap: the body reads ``search_paths = paths or LIBSENSORS_CONFIG_PATHS``, so
+    an empty list is falsy and means "use the system defaults". Tests that
+    passed ``[]`` — including the resolver's own pre-existing ones — therefore
+    read the real ``/etc/sensors3.conf`` and their results depended on the
+    machine running them. They pass on this host only because its ``it87-*``
+    block happens to carry no fan labels.
+
+    Emptying the module constant is what actually isolates. Tests that want
+    specific config files still monkeypatch the constant themselves or pass a
+    non-empty ``paths=`` / ``sensors_paths=``; both win over this fixture.
+    """
+    from control_ofc.knowledge import hwmon_label_resolver as r
+
+    monkeypatch.setattr(r, "LIBSENSORS_CONFIG_PATHS", [])
+    r.clear_libsensors_cache()
+    yield
+    r.clear_libsensors_cache()
+
+
 @pytest.fixture()
 def fake_client():
     return FakeDaemonClient()

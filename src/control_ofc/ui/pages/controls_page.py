@@ -165,7 +165,7 @@ class _OverrideWorker(QObject):
             self._client = None
 
 
-def _role_preserving_label(display_name: str, header, source: str) -> str:
+def _role_preserving_label(display_name: str, fallback_label: str, source: str) -> str:
     """Pick what to persist as ``ControlMember.member_label`` (DEC-228).
 
     ``member_label`` is not only a name: both ``infer_member_role`` and the
@@ -177,22 +177,29 @@ def _role_preserving_label(display_name: str, header, source: str) -> str:
     Neither candidate is reliably the safer one, so the rule is simply **never
     lower the inferred role**:
 
-    * the user's alias can carry the role where sysfs does not — the daemon
-      synthesises ``"pwm7"`` for any header with no ``pwmN_label``/``fanN_label``
-      (`read_label`), so on a typical board the alias is the *only* way to say
-      "this is the pump";
-    * the sysfs label can carry it where the alias does not — a header labelled
-      ``CPU_OPT`` that the user renamed to "My Fan".
+    * the user's alias can carry the role where the hardware does not — the
+      daemon synthesises ``"pwm7"`` for any header with no
+      ``pwmN_label``/``fanN_label`` (`read_label`), so where nothing else knows
+      the header the alias is the only way to say "this is the pump";
+    * the hardware-side label can carry it where the alias does not — a header
+      labelled ``CPU_OPT`` that the user renamed to "My Fan".
+
+    ``fallback_label`` is ``AppState.fan_fallback_name`` — the *resolved* name
+    (sysfs label, else ``/etc/sensors.d``, else the board table), empty for a
+    non-hwmon member. Comparing against the resolved name rather than the raw
+    ``HwmonHeader.label`` is what makes this work on boards whose chip publishes
+    no labels at all (DEC-229): there the raw label is the placeholder ``pwm1``,
+    which carries no role, while the board table answers ``CPU_FAN``, which does.
 
     Display is unaffected either way: every member surface resolves through
     ``AppState.member_display_name``, which prefers the live alias over this cache.
     """
-    if source != "hwmon" or header is None or not header.label:
+    if source != "hwmon" or not fallback_label:
         return display_name
-    if _label_indicates_cpu_or_pump(header.label) and not _label_indicates_cpu_or_pump(
+    if _label_indicates_cpu_or_pump(fallback_label) and not _label_indicates_cpu_or_pump(
         display_name
     ):
-        return header.label
+        return fallback_label
     return display_name
 
 
@@ -963,7 +970,9 @@ class ControlsPage(QWidget):
         for header in self._state.hwmon_headers:
             if not header.is_writable or header.id == pump_id or header.id in seen:
                 continue
-            label = header.label or header.id
+            # Resolved, not raw h.label (DEC-229) — matches the fan branch above
+            # and keeps a placeholder "pwm1" out of the radiator picker.
+            label = self._state.fan_display_name(header.id) or header.id
             candidates.append(
                 {
                     "id": header.id,
@@ -999,8 +1008,21 @@ class ControlsPage(QWidget):
         if not dlg.exec():
             return
         res = dlg.get_result()
+        # DEC-229: this was the one member-persisting path in the file that did
+        # NOT go through _role_preserving_label, so it stored the alias-first
+        # display name verbatim. A header whose real label carries a role word
+        # (PUMP_2, CPU_OPT) that the user had renamed to "Front Rad" therefore
+        # persisted a role-less member_label and fell from the 30% pump floor to
+        # the 20% chassis one — on both sides, since the daemon mirrors this
+        # classification rather than re-deriving it (DEC-095/162).
         radiator_members = [
-            ControlMember(source=c["source"], member_id=c["id"], member_label=c["label"])
+            ControlMember(
+                source=c["source"],
+                member_id=c["id"],
+                member_label=_role_preserving_label(
+                    c["label"], self._state.fan_fallback_name(c["id"]), c["source"]
+                ),
+            )
             for c in res["radiator_members"]
         ]
         created = build_aio_controls(
@@ -1225,7 +1247,15 @@ class ControlsPage(QWidget):
                 # control to the 20% chassis floor. Display is unaffected — every
                 # member surface resolves through AppState.member_display_name,
                 # which prefers the live alias over this cache.
-                clean_label = _role_preserving_label(label, header_by_id.get(fan.id), fan.source)
+                # Resolved fallback, not the raw header label — see DEC-229 in
+                # _role_preserving_label. Empty when this fan has no header, so
+                # a raw daemon id can never be mistaken for a role-bearing name.
+                fallback = (
+                    self._state.fan_fallback_name(fan.id)
+                    if header_by_id.get(fan.id) is not None
+                    else ""
+                )
+                clean_label = _role_preserving_label(label, fallback, fan.source)
                 if fan.source == "amd_gpu" and not gpu_writable:
                     label = f"{label} (read-only)"
                 # A2: surface "no fan detected" / PWM-only states in the picker
@@ -1263,7 +1293,9 @@ class ControlsPage(QWidget):
                     continue
                 if not any(a["id"] == header.id for a in available):
                     label = self._state.fan_display_name(header.id) or header.id
-                    clean_label = _role_preserving_label(label, header, "hwmon")
+                    clean_label = _role_preserving_label(
+                        label, self._state.fan_fallback_name(header.id), "hwmon"
+                    )
                     presence = classify_fan_presence(None, header)
                     if PRESENCE_BADGE.get(presence):
                         label = f"{label} ({PRESENCE_BADGE[presence]})"

@@ -75,6 +75,74 @@ class TestDetectAioSetup:
         assert det.pump_member is None
         assert det.monitor_only
 
+    def test_synthesised_label_does_not_become_the_member_name(self):
+        """DEC-229: `h.label or "Pump"` stopped producing its default.
+
+        The daemon invents `pwmN` for a header whose chip publishes no label
+        file, so `label` is never empty and the AIO pump was named `pwm1`.
+        """
+        headers = [
+            _header("hwmon:z53:d:pwm1:pwm1", "pwm1", "z53", pwm_index=1),
+            _header("hwmon:z53:d:pwm2:pwm2", "pwm2", "z53", pwm_index=2),
+        ]
+        det = detect_aio_setup(headers, [], {})
+        assert det.pump_member.member_label == "Pump"
+        assert [m.member_label for m in det.radiator_members] == ["Radiator"]
+
+    def test_aio_placeholder_fix_is_naming_only_the_floor_never_depended_on_it(self):
+        """Scope guard: here DEC-229 renames, it does not rescue a floor.
+
+        Every header that can reach this function is on a liquid-cooler chip —
+        `detect_aio_setup` filters on `h.is_aio`, and the daemon sets that solely
+        from `is_liquid_cooler_chip(chip_name)` (`pwm_discovery.rs:116`, the only
+        assignment site), whose list is Kraken/Aquacomputer parts. A motherboard
+        chip is therefore never `is_aio`, and constructing one here would test an
+        input the system cannot produce.
+
+        On the chips that *can* arrive, `_member_is_aio_header` already recovers
+        the pump role from the chip segment of the member id, so the 30% floor
+        held even when the label was the useless `pwm1`. Asserting that
+        explicitly stops a future reader — or a changelog — from claiming this
+        change restored a safety property that was never lost.
+        """
+        from control_ofc.services.profile_service import (
+            LogicalControl,
+            apply_role_floor,
+            infer_member_role,
+        )
+
+        headers = [_header("hwmon:z53:d:pwm1:pwm1", "pwm1", "z53", pwm_index=1)]
+        det = detect_aio_setup(headers, [], {})
+        assert det.pump_member.member_label == "Pump"  # the naming fix
+
+        # …and the pre-fix label would have kept the floor anyway, via the id.
+        stale = ControlMember(
+            source="hwmon", member_id="hwmon:z53:d:pwm1:pwm1", member_label="pwm1"
+        )
+        assert infer_member_role(stale) == "cpu_or_pump"
+        for member in (det.pump_member, stale):
+            ctl = LogicalControl(id="c", name="Pump", members=[member])
+            apply_role_floor(ctl)
+            assert ctl.minimum_pct == 30
+
+    def test_motherboard_chips_never_reach_aio_detection(self):
+        """The filter that makes the test above the correct scope.
+
+        Pins the `h.is_aio` gate itself: a motherboard header, even one the user
+        has an AIO plugged into, is dropped before pump/radiator construction.
+        """
+        headers = [_header("hwmon:nct6798:x:pwm1:pwm1", "pwm1", "nct6798", is_aio=False)]
+        det = detect_aio_setup(headers, [], {})
+        assert det.pump_member is None
+        assert det.radiator_members == []
+
+    def test_real_label_is_still_kept_verbatim(self):
+        """The DEC-229 predicate stays narrow here too — `pwm2` on header 1
+        names a *different* header and is therefore real information."""
+        headers = [_header("hwmon:z53:d:pwm1:f", "pwm2", "z53", pwm_index=1)]
+        det = detect_aio_setup(headers, [], {})
+        assert det.pump_member.member_label == "pwm2"
+
 
 # ---------------------------------------------------------------------------
 # build_aio_controls

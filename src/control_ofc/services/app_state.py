@@ -95,10 +95,13 @@ class AppState(QObject):
         # conservative auto-classifier missed.
         self.sensor_class_overrides: dict[str, str] = {}
 
-        # DMI board info supplied by /diagnostics/hardware. Used by
-        # ``hwmon_label_resolver`` to apply per-board fallback labels
-        # (A3) when the daemon's sysfs label is empty and no
-        # /etc/sensors.d entry matches.
+        # DMI board info supplied by /diagnostics/hardware, written only by
+        # ``DiagnosticsService.set_hw_diagnostics``. Used by
+        # ``hwmon_label_resolver`` to apply per-board fallback labels (A3) when
+        # no /etc/sensors.d entry matches and the daemon's sysfs label is either
+        # empty *or* a synthesised ``pwmN`` placeholder — the latter is the
+        # common case and the one DEC-229 exists for, so a non-empty label does
+        # not mean this is unused.
         self.board_info: BoardInfo = BoardInfo()
 
         # Per-sensor session min/max tracker (resets on reconnect)
@@ -275,10 +278,12 @@ class AppState(QObject):
         Priority:
             1. GPU model name (for ``amd_gpu:`` / ``intel_gpu:`` / ``nvidia_gpu:``)
             2. OpenFan channel label (``openfan:ch00`` -> ``OpenFan CH0``)
-            3. daemon-supplied sysfs ``HwmonHeader.label`` (for hwmon fans)
-            4. ``hwmon_label_resolver`` — ``/etc/sensors.d`` and the
-               in-repo board fallback table (A3)
-            5. raw ``fan_id`` as a last resort
+            3. ``hwmon_label_resolver`` (hwmon fans) — the daemon-supplied
+               sysfs ``HwmonHeader.label``, then ``/etc/sensors.d``, then the
+               in-repo board fallback table (A3), then raw ``pwmN``. A label
+               the daemon merely synthesised from the node id is skipped
+               rather than treated as authoritative (DEC-229)
+            4. raw ``fan_id`` as a last resort
 
         Split out of :meth:`fan_display_name` for DEC-227: ``apply_fan_rename``
         compares the user's typed text against this to tell "they renamed it"
@@ -312,10 +317,13 @@ class AppState(QObject):
                 return f"OpenFan CH{int(channel)}"
         for h in self.hwmon_headers:
             if h.id == fan_id:
-                if h.label:
-                    return h.label
+                # DEC-229: the resolver owns tiers 2-5, including whether the
+                # daemon's label is real or a synthesised "pwmN" placeholder.
+                # A short-circuit on `h.label` here would defeat that — the
+                # placeholder is non-empty, so it used to win over the board
+                # table that knew the header was CPU_FAN.
                 return resolve_hwmon_header_label(
-                    sysfs_label="",
+                    sysfs_label=h.label,
                     chip_name=h.chip_name,
                     pwm_index=h.pwm_index,
                     board_vendor=self.board_info.vendor,

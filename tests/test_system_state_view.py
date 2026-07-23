@@ -291,6 +291,34 @@ def test_build_verify_headers_writable_only():
     ]
 
 
+def test_build_verify_headers_prefers_the_resolved_name():
+    """DEC-229: the combo must name headers the way the rest of the app does.
+
+    With the raw `HwmonHeader.label` it offered the daemon's synthesised `pwm1`
+    — an id the user has seen nowhere else — so picking the right header to
+    verify meant guessing. The resolver (alias, sysfs, sensors.d, board table)
+    is injected rather than reached for, keeping this layer Qt- and state-free.
+    """
+    headers = [
+        HwmonHeader(id="hwmon:it8696:pwm1", label="pwm1", pwm_index=1, is_writable=True),
+        HwmonHeader(id="hwmon:it8696:pwm2", label="pwm2", pwm_index=2, is_writable=True),
+    ]
+    resolved = {"hwmon:it8696:pwm1": "CPU_FAN", "hwmon:it8696:pwm2": "My Rad Fans"}
+    entries = build_verify_headers(headers, resolved.get)
+    assert entries == [
+        ("CPU_FAN (hwmon:it8696:pwm1)", "hwmon:it8696:pwm1"),
+        ("My Rad Fans (hwmon:it8696:pwm2)", "hwmon:it8696:pwm2"),
+    ]
+
+
+def test_build_verify_headers_falls_back_when_resolver_is_silent():
+    """An injected resolver that answers nothing must not blank the combo."""
+    headers = [HwmonHeader(id="hwmon:nct6798:pwm1", label="CPU", is_writable=True)]
+    assert build_verify_headers(headers, lambda _hid: "") == [
+        ("CPU (hwmon:nct6798:pwm1)", "hwmon:nct6798:pwm1")
+    ]
+
+
 def test_module_collision_detail_from_daemon():
     from control_ofc.api.models import ModuleCollisionInfo
     from control_ofc.services.system_state_view import build_module_collision_detail

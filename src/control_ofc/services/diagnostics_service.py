@@ -121,6 +121,35 @@ class DiagnosticsService(QObject):
     def events(self) -> list[DiagEvent]:
         return list(self._events)
 
+    def set_hw_diagnostics(self, result: HardwareDiagnosticsResult) -> None:
+        """Record a ``GET /diagnostics/hardware`` result — the **only** writer.
+
+        Two consumers, one entry point (DEC-229): the shared cache that pages
+        render from, and ``AppState.board_info``, which the DMI-keyed hwmon
+        label fallback table matches on. Splitting them is what broke gap #16 —
+        the retired ``DiagnosticsPage`` pushed the board into ``AppState``, its
+        v2.22.0 replacement kept only the cache, and `board_info` silently had
+        no writer for seven minor releases (nothing failed loudly because the
+        placeholder-label short-circuit masked it). Keeping both sides here
+        means a future page can drop the *call* but not half of it.
+
+        The two halves update on different rules. The **cache** always takes the
+        newest result — a rescan legitimately refreshes header counts and revert
+        tallies. **Board identity never downgrades**: this is not a startup-only
+        latch (``SystemStatePage._on_rescan_ok`` re-fetches on every "Rescan
+        Hardware" click), and DMI is a boot-time constant, so a re-read that
+        comes back blank is a failed read, not a board that stopped existing.
+        Overwriting on one would silently revert every hwmon fan to ``pwmN``
+        mid-session and hand ``_role_preserving_label`` a role-less name again —
+        re-opening the very floor bug this change closes, from a button click.
+        """
+        self.last_hw_diagnostics = result
+        if self._state is None:
+            return
+        incoming, known = result.board, self._state.board_info
+        if (incoming.vendor or incoming.name) or not (known.vendor or known.name):
+            self._state.board_info = incoming
+
     def log_event(self, level: str, source: str, message: str) -> None:
         event = DiagEvent(
             timestamp=time.time(),

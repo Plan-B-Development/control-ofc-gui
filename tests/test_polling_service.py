@@ -9,13 +9,17 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import (
     ActiveProfileInfo,
+    BoardInfo,
     Capabilities,
     ConnectionState,
     DaemonStatus,
     FanReading,
+    HardwareDiagnosticsResult,
     OperationMode,
     SensorReading,
 )
@@ -46,6 +50,9 @@ def _make_mock_client() -> MagicMock:
     client.sensors.return_value = [SensorReading(id="cpu", value_c=45.0, age_ms=100)]
     client.fans.return_value = [FanReading(id="fan0", rpm=1200, age_ms=100)]
     client.sensor_history.return_value = MagicMock(points=[])
+    client.hardware_diagnostics.return_value = HardwareDiagnosticsResult(
+        board=BoardInfo(vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER")
+    )
     return client
 
 
@@ -56,6 +63,7 @@ def _make_failing_client() -> MagicMock:
         "capabilities",
         "hwmon_headers",
         "active_profile",
+        "hardware_diagnostics",
         "poll",
         "status",
         "sensors",
@@ -135,6 +143,107 @@ class TestPollWorkerFirstPoll:
 
         worker.poll()  # second poll -- should skip caps
         mock_client.capabilities.assert_not_called()
+
+
+class TestPollWorkerHardwareDiagnosticsPrefetch:
+    """DEC-229: `/diagnostics/hardware` once at startup, for the board identity.
+
+    The DMI board keys the hwmon label fallback table, so fan names on a chip
+    that publishes no labels depend on it. Before this nothing outside the
+    System State page ever asked, so the names only became correct if the user
+    happened to visit that page.
+    """
+
+    def test_first_poll_prefetches_hardware_diagnostics(self, qtbot):
+        mock_client = _make_mock_client()
+        worker = _make_worker(mock_client)
+        spy = _collect_signal(worker.hw_diagnostics_ready)
+
+        worker.poll()
+
+        mock_client.hardware_diagnostics.assert_called_once()
+        assert len(spy) == 1
+        assert spy[0][0].board.name == "X870E AORUS MASTER"
+
+    def test_prefetch_latches_after_success(self, qtbot):
+        """Board identity cannot change without a reboot — once is enough.
+
+        Asserted against a forced caps cycle, not just the next poll: without
+        the latch this would re-fetch every `_caps_interval` for the process
+        lifetime.
+        """
+        mock_client = _make_mock_client()
+        worker = _make_worker(mock_client)
+        worker.poll()
+        mock_client.hardware_diagnostics.reset_mock()
+
+        worker._poll_count = 0  # force another capabilities cycle
+        worker.poll()
+
+        mock_client.hardware_diagnostics.assert_not_called()
+
+    def test_failed_prefetch_does_not_latch(self, qtbot):
+        """A GUI started before the daemon must still learn the board."""
+        mock_client = _make_mock_client()
+        mock_client.hardware_diagnostics.side_effect = _DAEMON_ERROR
+        worker = _make_worker(mock_client)
+        spy = _collect_signal(worker.hw_diagnostics_ready)
+
+        worker.poll()
+        assert spy == []
+        # The rest of the cycle is unaffected — this is best-effort, not fatal.
+        assert worker._consecutive_failures == 0
+
+        mock_client.hardware_diagnostics.side_effect = None
+        worker._poll_count = 0
+        worker.poll()
+        assert len(spy) == 1
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            AttributeError("'list' object has no attribute 'get'"),
+            TypeError("malformed response"),
+            KeyError("board"),
+            ValueError("bad json"),
+            _DAEMON_ERROR,
+        ],
+    )
+    def test_prefetch_failure_never_touches_the_poll_cycle(self, qtbot, exc):
+        """A cosmetic naming lookup must not be able to take down telemetry.
+
+        The original narrow `except (DaemonError, ConnectionError, OSError,
+        KeyError, ValueError)` missed the two exceptions a malformed-but-200
+        response actually produces, because `parse_hardware_diagnostics` does
+        bare `data.get(...)`:
+
+        * `TypeError` reached the *outer* poll handler and faked a disconnect —
+          the GUI showed "disconnected" against a perfectly healthy daemon;
+        * `AttributeError` escaped **both** handlers. Because it raised before
+          `_poll_count += 1`, `_poll_count % _caps_interval == 0` stayed true
+          forever: the caps branch re-fired every tick, status/sensors/fans were
+          never emitted, neither `connected` nor `disconnected` ever fired (so no
+          backoff and no state transition), and the Qt excepthook logged one
+          CRITICAL per second into the bounded deque the support bundle reads.
+
+        Asserting the *cycle* is intact — not merely that nothing raised — is
+        what makes this catch a re-narrowing of the except clause.
+        """
+        mock_client = _make_mock_client()
+        mock_client.hardware_diagnostics.side_effect = exc
+        worker = _make_worker(mock_client)
+        connected_spy = _collect_signal(worker.connected)
+        fans_spy = _collect_signal(worker.fans_ready)
+        hw_spy = _collect_signal(worker.hw_diagnostics_ready)
+
+        worker.poll()
+
+        assert hw_spy == []  # nothing published from a failed fetch
+        assert len(fans_spy) == 1  # …and the real telemetry still went out
+        assert len(connected_spy) == 1
+        assert worker._consecutive_failures == 0  # no false disconnect
+        assert worker._poll_count == 1  # cycle completed → no re-fire wedge
+        assert worker._hw_diag_sent is False  # unlatched, so it retries
 
 
 class TestPollWorkerBatchFallback:
@@ -435,6 +544,92 @@ class TestPollingServiceActiveProfile:
         assert state.active_profile_name == "Existing"
 
 
+class TestPollingServiceHardwareDiagnostics:
+    """DEC-229: the prefetch result reaches its single writer, and only it."""
+
+    def test_on_hw_diagnostics_publishes_board_to_app_state(self, qtbot):
+        from control_ofc.services.diagnostics_service import DiagnosticsService
+
+        state = AppState()
+        svc = _make_polling_service(state)
+        svc._diag = DiagnosticsService(state)
+
+        result = HardwareDiagnosticsResult(
+            board=BoardInfo(vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER")
+        )
+        svc._on_hw_diagnostics(result)
+
+        assert state.board_info.name == "X870E AORUS MASTER"
+        assert svc._diag.last_hw_diagnostics is result
+
+    def test_on_hw_diagnostics_without_a_diagnostics_service_is_a_noop(self, qtbot):
+        """Degraded, never wrong: no service ⇒ the resolver falls back to pwmN."""
+        state = AppState()
+        svc = _make_polling_service(state)  # _diag is None
+
+        svc._on_hw_diagnostics(HardwareDiagnosticsResult(board=BoardInfo(vendor="X", name="Y")))
+
+        assert state.board_info.vendor == ""
+
+    def test_board_identity_never_downgrades_but_the_cache_still_refreshes(self, qtbot):
+        """DEC-229: a blank DMI re-read must not un-name every fan.
+
+        `set_hw_diagnostics` is not a startup-only latch —
+        `SystemStatePage._on_rescan_ok` re-fetches on every "Rescan Hardware"
+        click. DMI is a boot-time constant, so a re-read that returns blank is a
+        failed read, not a board that stopped existing; taking it would revert
+        every hwmon fan to `pwmN` mid-session and feed `_role_preserving_label` a
+        role-less name again, re-opening the floor bug from a button click.
+
+        The cache has the opposite rule and must still take the new result — a
+        rescan legitimately refreshes header counts and revert tallies.
+        """
+        from control_ofc.services.diagnostics_service import DiagnosticsService
+
+        state = AppState()
+        diag = DiagnosticsService(state)
+        good = HardwareDiagnosticsResult(
+            board=BoardInfo(vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER")
+        )
+        diag.set_hw_diagnostics(good)
+
+        blank = HardwareDiagnosticsResult(board=BoardInfo())
+        diag.set_hw_diagnostics(blank)
+
+        assert state.board_info.name == "X870E AORUS MASTER"  # identity held
+        assert diag.last_hw_diagnostics is blank  # …cache still refreshed
+
+        # A genuinely different board still wins — this is not a one-shot latch.
+        other = HardwareDiagnosticsResult(board=BoardInfo(vendor="ASUS", name="ProArt X870E"))
+        diag.set_hw_diagnostics(other)
+        assert state.board_info.name == "ProArt X870E"
+
+    def test_first_board_is_taken_even_when_partially_blank(self, qtbot):
+        """The guard must not deadlock an unknown board into staying unknown."""
+        from control_ofc.services.diagnostics_service import DiagnosticsService
+
+        state = AppState()
+        diag = DiagnosticsService(state)
+        # Vendor-only is still identity — the fallback table matches on either.
+        diag.set_hw_diagnostics(HardwareDiagnosticsResult(board=BoardInfo(vendor="ASRock")))
+        assert state.board_info.vendor == "ASRock"
+
+    def test_set_hw_diagnostics_without_a_state_still_caches(self, qtbot):
+        """The cache-only branch: a service built without an AppState.
+
+        The dangerous direction (dropping the board push) is pinned elsewhere;
+        this pins the other arm so inverting the `is not None` guard cannot pass.
+        """
+        from control_ofc.services.diagnostics_service import DiagnosticsService
+
+        diag = DiagnosticsService()  # no AppState
+        result = HardwareDiagnosticsResult(board=BoardInfo(vendor="X", name="Y"))
+
+        diag.set_hw_diagnostics(result)  # must not raise
+
+        assert diag.last_hw_diagnostics is result
+
+
 # ---------------------------------------------------------------------------
 # PollingService lifecycle (T9 audit finding)
 # ---------------------------------------------------------------------------
@@ -564,6 +759,36 @@ class TestPollingServiceConstruction:
             assert state.connection == ConnectionState.CONNECTED
             svc._worker.disconnected.emit()
             assert state.connection == ConnectionState.DISCONNECTED
+        finally:
+            svc.shutdown()
+
+    def test_init_wires_hw_diagnostics_signal_through_to_board_info(self, tmp_path):
+        """DEC-229: the connect() for `hw_diagnostics_ready` must exist.
+
+        This is the whole point of blocker 2's fix, and it was the one production
+        line with no test: deleting
+        `self._worker.hw_diagnostics_ready.connect(self._on_hw_diagnostics)`
+        from `__init__` left the entire suite green, because the worker-side
+        emit and the `_on_hw_diagnostics` slot were each tested in isolation and
+        nothing exercised the wire between them. The regression would have been
+        invisible until a user reported fan names still reading `pwmN`.
+
+        Needs a real DiagnosticsService — `_diag` is None by default, and the
+        slot no-ops without it.
+        """
+        from control_ofc.services.diagnostics_service import DiagnosticsService
+
+        state = AppState()
+        diag = DiagnosticsService(state)
+        svc = PollingService(state, str(tmp_path / "nonexistent.sock"), diagnostics=diag)
+        try:
+            result = HardwareDiagnosticsResult(
+                board=BoardInfo(vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER")
+            )
+            svc._worker.hw_diagnostics_ready.emit(result)
+
+            assert state.board_info.name == "X870E AORUS MASTER"
+            assert diag.last_hw_diagnostics is result
         finally:
             svc.shutdown()
 

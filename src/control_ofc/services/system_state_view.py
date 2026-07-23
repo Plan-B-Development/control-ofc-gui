@@ -20,6 +20,7 @@ same way).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from html import escape
 
@@ -485,9 +486,22 @@ def build_registry_rows(diag: HardwareDiagnosticsResult) -> list[ChipRegistryRow
     return rows
 
 
-def build_verify_headers(headers: list[HwmonHeader]) -> list[tuple[str, str]]:
-    """Writable-header combo entries: ``[("label (id)", id), …]``."""
-    return [(f"{h.label or h.id} ({h.id})", h.id) for h in headers if h.is_writable]
+def build_verify_headers(
+    headers: list[HwmonHeader],
+    display_name: Callable[[str], str] | None = None,
+) -> list[tuple[str, str]]:
+    """Writable-header combo entries: ``[("name (id)", id), …]``.
+
+    ``display_name`` is ``AppState.fan_display_name`` (DEC-229). Without it the
+    combo showed the raw ``HwmonHeader.label``, which on a chip that publishes
+    no label files is the daemon's synthesised ``pwmN`` — so the user picked a
+    header to verify by an id they had never seen anywhere else in the app.
+    Optional so the pure layer stays callable without an ``AppState``.
+    """
+    resolve = display_name or (lambda hid: "")
+    return [
+        (f"{resolve(h.id) or h.label or h.id} ({h.id})", h.id) for h in headers if h.is_writable
+    ]
 
 
 def build_system_state_vm(diag: HardwareDiagnosticsResult) -> SystemStateVM:

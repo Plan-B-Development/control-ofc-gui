@@ -311,13 +311,29 @@ derived GUI-side by `AppState.fan_display_name` / `fan_fallback_name`, in this o
    this store once (DEC-228)
 2. GPU model name, for `amd_gpu:` / `intel_gpu:` / `nvidia_gpu:` fans
 3. OpenFan channel label — `openfan:ch00` renders as `OpenFan CH0` (DEC-227)
-4. hwmon header `label` from `GET /hwmon/headers` (hwmon fans only)
+4. hwmon header `label` from `GET /hwmon/headers` (hwmon fans only) — **unless it is a
+   synthesised placeholder**, see below
 5. `/etc/sensors.d` + the in-repo board fallback table (`hwmon_label_resolver`, hwmon only)
-6. raw fan id, as a last resort
+6. raw `pwmN` for a fan that matches a known hwmon header; the raw fan id otherwise (a fan
+   in no header list at all), as a last resort
 
-Tier 5 fires only when tier 4's label is **empty**; a daemon that echoes the sysfs node
-name (`label: "pwm1"`) therefore short-circuits the resolver — see
-`docs/14_Risks_Gaps_and_Future_Work.md` gap #16 (OPEN).
+**`HwmonHeader.label` is never empty, and may be invented (DEC-229).** The daemon's
+`read_label` tries `pwm{N}_label`, then `fan{N}_label`, then *synthesises* `pwm{N}` — and
+the it87 driver publishes no label files for most Gigabyte boards, so the synthesised form
+is common. Tiers 4-6 therefore live inside `resolve_hwmon_header_label`, which skips a
+label exactly equal to the header's own `pwm{index}` token (`is_placeholder_hwmon_label`)
+and lets tiers 5-6 run. The predicate is deliberately exact rather than a "looks generic"
+heuristic: `pwm[1-*]_label` is not a documented hwmon attribute at all (only
+`fan[1-*]_label` is), and discarding a genuine board label would be the worse failure.
+
+Note the label is also **embedded in the header id** (`hwmon:<chip>:<device>:pwmN:<label>`),
+which is why the daemon cannot simply send `label: ""` for the synthesised case — every
+saved profile member id and `fan_aliases` key would change.
+
+Tier 5's board-table half is keyed on DMI `(vendor, board)` from `GET /diagnostics/hardware`,
+which the GUI fetches once on the first capabilities cycle and stores in `AppState.board_info`
+via `DiagnosticsService.set_hw_diagnostics` (its single writer). With no board identity the
+table cannot match and tier 6 answers — degraded, never wrong.
 
 **Profile member labels are a separate store with a different job (DEC-228).**
 `ControlMember.member_label` lives in the profile document — which the daemon holds as

@@ -448,6 +448,13 @@ class FanReading:
 @dataclass
 class HwmonHeader:
     id: str = ""
+    # DEC-229: never empty, and not always real. The daemon's `read_label` tries
+    # `pwmN_label`, then `fanN_label`, then *synthesises* `pwm{pwm_index}` — and
+    # the it87 driver publishes no label files for most Gigabyte boards, so the
+    # synthesised form is common. Resolve through
+    # `hwmon_label_resolver.resolve_hwmon_header_label` (or `AppState`) rather
+    # than reading this field directly; `is_placeholder_hwmon_label` is the test.
+    # Note the label is also embedded in `id` (`hwmon:<chip>:<dev>:pwmN:<label>`).
     label: str = ""
     chip_name: str = ""
     device_id: str = ""

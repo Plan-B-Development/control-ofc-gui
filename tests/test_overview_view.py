@@ -96,6 +96,22 @@ def test_build_fan_rows_pwm_only_synthesis_and_freshness():
     assert rows[1].rpm_text == "—" and rows[1].pwm_text == "—"
 
 
+def test_build_fan_rows_pwm_only_tooltip_hides_a_synthesised_label():
+    """DEC-229: don't pass off the daemon's invented `pwmN` as sysfs truth.
+
+    The row *name* already resolves (DEC-227), so a "Label: pwm1" line beneath
+    it contradicts the name directly above and claims a hardware source the
+    value never had. A real label is still reported.
+    """
+    real = HwmonHeader(id="hwmon:it8696:pwm1", label="CPU_FAN", pwm_index=1, is_writable=True)
+    fake = HwmonHeader(id="hwmon:it8696:pwm2", label="pwm2", pwm_index=2, is_writable=True)
+    rows = ov.build_fan_rows([], [real, fake], None, display_name=lambda x: "Resolved")
+    assert "Label: CPU_FAN" in rows[0].row_tooltip
+    assert "Label:" not in rows[1].row_tooltip
+    # The rest of the tooltip is untouched — only the label line is suppressed.
+    assert "ID: hwmon:it8696:pwm2" in rows[1].row_tooltip
+
+
 def test_build_fan_rows_freshness_state_map():
     fans = [
         FanReading(id="a", source="openfan", rpm=1, age_ms=500),

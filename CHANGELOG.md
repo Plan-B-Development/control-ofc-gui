@@ -1,5 +1,42 @@
 # Changelog
 
+## [2.30.0] — 2026-07-23
+
+Motherboard fans that showed up as `pwm1`, `pwm2`, … now get their real header
+names (`CPU_FAN`, `SYS_FAN1`, …) on boards we recognise. GUI-only; no contract,
+profile-schema or settings-schema change (`EXPECTED_API_VERSION` stays 1). Pairs
+with `control-ofc-daemon` (unchanged, ≥ v2.11.0).
+
+### Fixed
+- **Motherboard fan headers now show their real names (DEC-229).** On many boards
+  — including every Gigabyte board using the it87 driver — the chip publishes no
+  fan names, so the app showed `pwm1`…`pwm5`. It has always shipped a table of
+  known board layouts that would have answered `CPU_FAN` / `SYS_FAN1` / `CPU_OPT`,
+  but two separate problems kept it from ever being consulted: the placeholder
+  name counted as a real one, and the app had stopped recording which motherboard
+  you have (a regression introduced in v2.22.0). Both are fixed, so the names
+  appear on first launch after this update — no configuration needed. Boards not
+  in the table, and boards with no `/etc/sensors.d` config, still show `pwmN`.
+- **Your CPU fan and pump keep their 30% minimum speed.** The name of a fan
+  header is what tells the app (and the daemon) that a fan is a CPU fan or a pump,
+  and therefore gets the higher minimum-speed floor. With the name reading `pwm1`,
+  a *newly created* control on the CPU header was being set up at the 20% case-fan
+  floor instead. Existing controls are unaffected — the app never lowers a floor
+  you already have.
+- **The guided AIO setup names the pump "Pump" again**, rather than `pwm1`, on a
+  cooler whose chip publishes no header names. Naming only — a liquid cooler is
+  recognised by its chip, so its minimum-speed floor was never at risk.
+- **The System State verify list and the AIO radiator picker** now name headers
+  the same way the rest of the app does, instead of showing an identifier you had
+  seen nowhere else.
+
+### Note
+If you worked around the old behaviour by manually renaming a fan to exactly the
+name it now resolves to (e.g. typing `CPU_FAN` over `pwm1`), your custom name and
+the automatic one are now identical. The fan looks the same either way; the only
+difference is that pressing Enter on that name without changing it clears the
+custom name, which can let the fan be hidden by *Hide unused fan headers*.
+
 ## [2.29.0] — 2026-07-23
 
 Recovers fan names you had already saved. If you named your fans while setting up

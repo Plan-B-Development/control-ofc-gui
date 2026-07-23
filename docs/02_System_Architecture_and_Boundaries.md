@@ -111,9 +111,11 @@ control_ofc/
     app_state.py
     demo_controller.py        # demo-only curve evaluator (no daemon, no hardware) — DEC-165
     demo_service.py
-    diagnostics_service.py
+    diagnostics_service.py     # event log + support bundle; sole writer of the shared
+                               #   /diagnostics/hardware cache AND AppState.board_info (DEC-229)
     history_store.py
-    polling.py
+    polling.py                 # 1 Hz poll + periodic capabilities cycle; prefetches
+                               #   /diagnostics/hardware once at startup (DEC-229)
     profile_import_service.py  # one-time local->daemon profile import — DEC-161
     profile_service.py         # daemon-backed profile CRUD + local draft cache — DEC-160/161
     series_selection.py

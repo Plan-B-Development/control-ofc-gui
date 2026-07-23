@@ -138,14 +138,28 @@ Use **Test PWM Control** on the header — if the write is effective but RPM doe
 
 ## Per-board hwmon header label resolver
 
-The daemon reports each hwmon header with whatever label `/sys` exposes. On many boards the kernel returns generic labels like `pwm1` / `pwm2` / `pwm3` because the chip itself does not know the silkscreen names.
+On many boards the chip publishes no fan-header names at all — the silkscreen
+labels printed next to the headers (`CPU_FAN`, `SYS_FAN1`, …) live on the board,
+not in the chip. Every Gigabyte board using the `it87` driver is in this
+category. Where sysfs has no name, the daemon reports the header's own node id
+(`pwm1`, `pwm2`, …) as a stand-in.
 
-The GUI fills in the gap with a **per-board label resolver** that picks names in this priority order:
+The GUI fills in the gap with a **per-board label resolver** that picks names in
+this priority order:
 
-1. **User alias** (set via the [Fan Wizard](fan-wizard.md))
-2. **Daemon-supplied sysfs label** (when the kernel knows it)
+1. **User alias** (set via the [Fan Wizard](fan-wizard.md), or by renaming a fan
+   wherever it appears)
+2. **Daemon-supplied sysfs label** — *when the chip really published one*. A
+   label that just restates the header's own node id (`pwm1` on header 1) is a
+   stand-in, not a name, and is skipped so the steps below get their turn
 3. **`/etc/sensors.d` and `/usr/share/sensors/*` chip-block labels** (libsensors config, parsed for `chip` / `label` / `ignore` directives)
-4. **In-repo fallback table** (curated per-board mapping)
+4. **In-repo fallback table** (curated per-board mapping, matched on your
+   motherboard's vendor and model)
+5. **The node id** (`pwm1`), when nothing above knows the board
+
+> Before v2.30.0, step 2 accepted the stand-in as a real name, so steps 3-5 never
+> ran and every header on such a board displayed as `pwmN`. If you renamed your
+> fans by hand to work around that, your names are kept — a user alias still wins.
 
 The fallback table currently covers the **Gigabyte X870E AORUS MASTER** as a worked example:
 

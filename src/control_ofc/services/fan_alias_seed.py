@@ -93,8 +93,24 @@ def _is_raw_id(label: str, member_id: str) -> bool:
 
     The equality check catches the exact case; the prefix check also catches a
     label carrying some *other* fan's id.
+
+    **The bare ``pwmN`` form (DEC-229).** A hwmon member id is
+    ``hwmon:<chip>:<device>:pwmN:<label>``, and on a chip that publishes no label
+    file the daemon synthesises ``pwmN`` for that last segment — so profiles
+    authored before DEC-229 cached a bare ``"pwm1"`` here. That is the same class
+    of machine addressing as a full id, but neither check above sees it, and the
+    caller's "equal to the fallback ⇒ skip" guard stopped catching it the moment
+    DEC-229 made the fallback resolve to ``CPU_FAN`` instead. Without this the
+    fix defeats itself on exactly the machines it targets: the seed would promote
+    the stale ``"pwm1"`` to a *user alias*, which outranks the resolver, and
+    since the seed is one-shot the board table could never be consulted again.
+    Comparing against the id's own ``pwmN`` segment — not a general ``pwm\\d+``
+    pattern — keeps a genuine board label such as ``CPU_FAN`` adoptable.
     """
-    return label == member_id or label.startswith(_FAN_ID_PREFIXES)
+    if label == member_id or label.startswith(_FAN_ID_PREFIXES):
+        return True
+    parts = member_id.split(":")
+    return len(parts) > 3 and parts[0] == "hwmon" and label == parts[3]
 
 
 def strip_member_label_decorations(label: str) -> str:

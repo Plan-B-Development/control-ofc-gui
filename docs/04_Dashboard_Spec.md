@@ -135,9 +135,17 @@ The daemon's fan response includes `id` and `source` but not a display label. Th
 1. user alias (GUI-owned, persisted locally)
 2. GPU model name (for `amd_gpu:` / `intel_gpu:` / `nvidia_gpu:` fans)
 3. OpenFan channel label — `openfan:ch00` renders as **OpenFan CH0** (DEC-227). Display only; it is never stored as an alias, so it cannot pin an idle header visible via the "user labelled it" rule in `filter_displayable_fans`
-4. hwmon header label (from `GET /hwmon/headers`, for hwmon fans only)
-5. `/etc/sensors.d` + in-repo board fallback table (hwmon only)
-6. stable fan id as a last resort
+4. hwmon header label (from `GET /hwmon/headers`, for hwmon fans only) — **unless it is a
+   synthesised `pwmN` placeholder**, in which case tiers 5-6 run. The daemon invents
+   `pwm{N}` when the chip publishes neither `pwmN_label` nor `fanN_label`, so a non-empty
+   label is not automatically a real one; `is_placeholder_hwmon_label` skips the exact
+   `pwm{index}` restatement of the header's own id (DEC-229). This is safety-relevant, not
+   only cosmetic — the resolved name is what `_role_preserving_label` persists as
+   `ControlMember.member_label`, which sets the DEC-095/162 30% CPU/pump floor
+5. `/etc/sensors.d` + in-repo board fallback table (hwmon only). The board half is keyed on
+   DMI vendor/model from `AppState.board_info`, written only by
+   `DiagnosticsService.set_hw_diagnostics`
+6. raw `pwmN` for a known hwmon header; the stable fan id otherwise, as a last resort
 
 **Renaming (DEC-227).** A fan is renamable from every surface that shows its name:
 the Sensors rail (double-click the name, or F2, or right-click ▸ "Rename fan…"),

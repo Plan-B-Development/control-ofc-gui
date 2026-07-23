@@ -93,6 +93,67 @@ def _page(qtbot, *, state=None, client=None, profile_service=None):
     return page, s
 
 
+# ── Hardware-diagnostics handoff ─────────────────────────────────────────
+
+
+def test_hw_diag_ok_publishes_board_to_app_state(qtbot):
+    """DEC-229 regression (gap #16 blocker 2): the board must reach AppState.
+
+    `AppState.board_info` keys the DMI-matched hwmon label fallback table, and
+    from GUI v2.22.0 to v2.29.0 it had **no production writer at all** — commit
+    090370e retired `DiagnosticsPage` (which pushed it) and its replacement kept
+    only the cache. Nothing failed loudly because the placeholder-label
+    short-circuit masked it. This test is the coverage whose absence let that
+    through: it fails if a future page drops the AppState half again.
+    """
+    page, state = _page(qtbot)
+    assert state.board_info.vendor == ""  # precondition: nothing published yet
+
+    page._on_hw_diag_ok(_diag_acpi())
+
+    assert state.board_info.vendor == "ASUS"
+    assert state.board_info.name == "ProArt X870E"
+    # …and the shared cache is still warmed — both halves, one call.
+    assert page._diag.last_hw_diagnostics is not None
+
+
+def test_hw_diag_ok_board_reaches_the_label_resolver(qtbot):
+    """The end-to-end point of blocker 2: names change on screen.
+
+    Asserting `board_info` alone would pass against a writer that stored the
+    board somewhere the resolver never reads, so this drives the actual
+    display-name path with a header whose label is the daemon's `pwm1`
+    placeholder.
+    """
+    from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
+
+    clear_libsensors_cache()
+    try:
+        page, state = _page(qtbot)
+        state.set_hwmon_headers(
+            [
+                HwmonHeader(
+                    id="hwmon:it8696:it87.2624:pwm1:pwm1",
+                    label="pwm1",
+                    chip_name="it8696",
+                    pwm_index=1,
+                )
+            ]
+        )
+        fan_id = "hwmon:it8696:it87.2624:pwm1:pwm1"
+        assert state.fan_display_name(fan_id) == "pwm1"  # board unknown → degraded
+
+        page._on_hw_diag_ok(
+            _diag(
+                board=BoardInfo(vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER")
+            )
+        )
+
+        assert state.fan_display_name(fan_id) == "CPU_FAN"
+    finally:
+        clear_libsensors_cache()
+
+
 # ── Rendering ────────────────────────────────────────────────────────────
 
 

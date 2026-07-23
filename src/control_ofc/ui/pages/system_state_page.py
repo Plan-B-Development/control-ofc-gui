@@ -284,8 +284,9 @@ class SystemStatePage(QWidget):
     @Slot(object)
     def _on_hw_diag_ok(self, result: HardwareDiagnosticsResult) -> None:
         # Warm the shared cache (Overview/Sensors read board vendor from it on
-        # their next poll) and render this page.
-        self._diag.last_hw_diagnostics = result
+        # their next poll) *and* AppState.board_info, which the hwmon label
+        # fallback table keys on — set_hw_diagnostics owns both (DEC-229).
+        self._diag.set_hw_diagnostics(result)
         self._render(result)
 
     @Slot(str, str)
@@ -313,7 +314,8 @@ class SystemStatePage(QWidget):
     def _populate_verify_combo(self) -> None:
         self._verify_combo.clear()
         headers = self._state.hwmon_headers if self._state else []
-        for text, hid in build_verify_headers(headers):
+        resolve = self._state.fan_display_name if self._state else None
+        for text, hid in build_verify_headers(headers, resolve):
             self._verify_combo.addItem(text, hid)
         self._verify_btn.setEnabled(self._verify_combo.count() > 0)
 

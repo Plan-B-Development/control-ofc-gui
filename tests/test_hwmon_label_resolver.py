@@ -16,6 +16,7 @@ from control_ofc.knowledge.hwmon_label_resolver import (
     BoardKey,
     FallbackLabel,
     clear_libsensors_cache,
+    is_placeholder_hwmon_label,
     parse_libsensors_config,
     resolve_hwmon_header_label,
     resolve_label_from_fallback,
@@ -406,6 +407,65 @@ class TestResolverPriority:
             sensors_paths=[str(cfg)],
         )
         assert label == "FROM_PWM"
+
+    def test_synthesised_label_does_not_win(self):
+        """DEC-229: a `pwmN` placeholder must not outrank the fallback table."""
+        label = resolve_hwmon_header_label(
+            sysfs_label="pwm1",
+            chip_name="it8696",
+            pwm_index=1,
+            board_vendor="Gigabyte Technology Co., Ltd.",
+            board_name="X870E AORUS MASTER",
+            sensors_paths=[],
+        )
+        assert label == "CPU_FAN"
+
+    def test_libsensors_also_outranks_a_synthesised_label(self, tmp_path):
+        """docs/14 gap #16 asked whether /etc/sensors.d should beat a
+        placeholder too, not just an empty label. It should — the placeholder is
+        skipped outright, so *every* lower tier gets its turn, in order."""
+        cfg = tmp_path / "x870e.conf"
+        cfg.write_text('chip "it8696-isa-0a40"\n    label fan1 "USER_OVERRIDE"\n')
+        label = resolve_hwmon_header_label(
+            sysfs_label="pwm1",
+            chip_name="it8696",
+            pwm_index=1,
+            board_vendor="Gigabyte Technology Co., Ltd.",
+            board_name="X870E AORUS MASTER",
+            sensors_paths=[str(cfg)],
+        )
+        assert label == "USER_OVERRIDE"
+
+
+# ─── Placeholder predicate (DEC-229) ───────────────────────────────────
+
+
+class TestPlaceholderPredicate:
+    """`is_placeholder_hwmon_label` is deliberately an exact match.
+
+    The daemon synthesises exactly `pwm{index}`, and `pwm[1-*]_label` is not a
+    documented hwmon attribute (only `fan[1-*]_label` is —
+    docs.kernel.org/hwmon/sysfs-interface.html), so a driver publishing a real
+    label of literally `pwmN` is not a realistic case. Anything wider would
+    discard genuine board labels.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "pwm_index", "expected"),
+        [
+            ("pwm1", 1, True),  # the live X870E / IT8696E case
+            ("pwm10", 10, True),
+            ("pwm2", 1, False),  # names a different header ⇒ real information
+            ("pwm1", 10, False),
+            ("CPU_FAN", 1, False),
+            ("", 1, False),  # absent, not placeholder — callers test both
+            ("PWM1", 1, False),  # case-sensitive: sysfs never shouts
+            ("pwm1 ", 1, False),  # no trimming — a stray space is not ours to guess at
+            ("fan1", 1, False),  # the fanN_label form is a real kernel attribute
+        ],
+    )
+    def test_predicate_table(self, label, pwm_index, expected):
+        assert is_placeholder_hwmon_label(label, pwm_index) is expected
 
 
 # ─── Cache behaviour ───────────────────────────────────────────────────

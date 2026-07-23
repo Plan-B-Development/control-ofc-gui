@@ -486,7 +486,12 @@ visibility-gated labels keep working unchanged inside the sections.
   notes and are not counted as problems**.
 - **Auto-fetch** — opening the System State page fetches `/diagnostics/hardware`
   once per session (guarded), so the verdict + checklist populate without a
-  manual *Refresh* click.
+  manual *Refresh* click. Since DEC-229 the poll worker also prefetches it once
+  on the first capabilities cycle: the DMI board identity keys the hwmon label
+  fallback table, so fan names on a chip that publishes no labels would otherwise
+  stay `pwmN` until the user happened to visit this page. Both paths land in
+  `DiagnosticsService.set_hw_diagnostics`, the single writer of the shared cache
+  **and** of `AppState.board_info`.
 - **Issue checklist (inline "To fix")** — the always-visible checklist (above)
   renders one row per detected problem (ACPI, module collision, GPU
   `ppfeaturemask`, dual-chip, all-read-only, …) with its one-line fix and a

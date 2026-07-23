@@ -199,6 +199,106 @@ def test_fan_display_name_sysfs_label_wins_over_resolver():
         clear_libsensors_cache()
 
 
+def _x870e_state(label: str, *, pwm_index: int = 1, chip: str = "it8696") -> AppState:
+    """AppState primed with the reporter's live hardware (DEC-229).
+
+    Values taken verbatim from this host's daemon: `GET /hwmon/headers` returns
+    five `it8696` headers whose labels are `pwm1`…`pwm5`, and
+    `GET /diagnostics/hardware` reports the Gigabyte X870E AORUS MASTER — a
+    (vendor, board, chip) triple the in-repo fallback table has a *verified*
+    entry for.
+    """
+    from control_ofc.api.models import BoardInfo
+
+    state = AppState()
+    state.board_info = BoardInfo(
+        vendor="Gigabyte Technology Co., Ltd.",
+        name="X870E AORUS MASTER",
+    )
+    state.set_hwmon_headers(
+        [
+            HwmonHeader(
+                id=f"hwmon:{chip}:it87.2624:pwm{pwm_index}:pwm{pwm_index}",
+                label=label,
+                chip_name=chip,
+                pwm_index=pwm_index,
+            ),
+        ]
+    )
+    return state
+
+
+def test_fan_display_name_synthesised_pwm_label_does_not_defeat_resolver():
+    """DEC-229 regression (gap #16 blocker 1): `pwm1` is not a real label.
+
+    The daemon's `read_label` *synthesises* `format!("pwm{N}")` when the chip
+    exposes neither `pwmN_label` nor `fanN_label`, so `HwmonHeader.label` is
+    never empty. Treating "non-empty" as "authoritative" short-circuited tiers
+    3-5 and the user saw five fans named pwm1…pwm5 on a board the fallback
+    table knows. Fails with 'pwm1' if the placeholder check is removed.
+    """
+    from control_ofc.knowledge.hwmon_label_resolver import (
+        clear_libsensors_cache,
+    )
+
+    clear_libsensors_cache()
+    try:
+        state = _x870e_state("pwm1")
+        assert state.fan_display_name("hwmon:it8696:it87.2624:pwm1:pwm1") == "CPU_FAN"
+        # …and the mapping is per-header, not a blanket "any pwm → CPU_FAN".
+        state5 = _x870e_state("pwm5", pwm_index=5)
+        assert state5.fan_display_name("hwmon:it8696:it87.2624:pwm5:pwm5") == "CPU_OPT"
+    finally:
+        clear_libsensors_cache()
+
+
+def test_fan_display_name_real_label_still_outranks_fallback_table():
+    """The DEC-229 predicate must stay narrow — a real label always wins.
+
+    Guards against widening `is_placeholder_hwmon_label` into a "looks generic"
+    heuristic: a wrong name is worse than an unhelpful one. `CPU_OPT` on pwm1
+    is a real label (the table would say `CPU_FAN`); `pwm2` on pwm1 restates a
+    *different* header's id and so is information, not a placeholder.
+    """
+    from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
+
+    clear_libsensors_cache()
+    try:
+        assert _x870e_state("CPU_OPT").fan_display_name("hwmon:it8696:it87.2624:pwm1:pwm1") == (
+            "CPU_OPT"
+        )
+        assert _x870e_state("pwm2").fan_display_name("hwmon:it8696:it87.2624:pwm1:pwm1") == "pwm2"
+    finally:
+        clear_libsensors_cache()
+
+
+def test_fan_display_name_placeholder_falls_back_to_pwm_when_board_unknown():
+    """No board identity ⇒ the table cannot match ⇒ `pwmN` is still the answer.
+
+    This is the *degraded* path, and it is why gap #16 had a second blocker:
+    with `AppState.board_info` unwritten (its state from GUI v2.22.0 to v2.29.0)
+    the placeholder fix alone changes nothing on screen.
+    """
+    from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
+
+    clear_libsensors_cache()
+    try:
+        state = AppState()  # board_info left at its empty default
+        state.set_hwmon_headers(
+            [
+                HwmonHeader(
+                    id="hwmon:it8696:it87.2624:pwm1:pwm1",
+                    label="pwm1",
+                    chip_name="it8696",
+                    pwm_index=1,
+                ),
+            ]
+        )
+        assert state.fan_display_name("hwmon:it8696:it87.2624:pwm1:pwm1") == "pwm1"
+    finally:
+        clear_libsensors_cache()
+
+
 def test_warning_count_updates(qtbot):
     state = AppState()
     signals = []

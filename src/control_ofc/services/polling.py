@@ -39,6 +39,7 @@ class _PollWorker(QObject):
     fans_ready = Signal(list)
     headers_ready = Signal(list)
     active_profile_ready = Signal(object)  # ActiveProfileInfo | None
+    hw_diagnostics_ready = Signal(object)  # HardwareDiagnosticsResult
 
     # Connection state
     connected = Signal()
@@ -56,6 +57,11 @@ class _PollWorker(QObject):
         # next invocation is skipped outright. The worker lives on a single
         # thread, so a plain bool is race-free (no lock needed).
         self._in_flight = False
+        # DEC-229: latches once /diagnostics/hardware has been fetched. DMI
+        # board identity cannot change without a reboot, so one success per
+        # process is enough — but a *failed* attempt must not latch, or a GUI
+        # started before the daemon would never learn the board.
+        self._hw_diag_sent = False
         self._caps_interval = max(1, CAPABILITIES_REFRESH_INTERVAL_S * 1000 // POLL_INTERVAL_MS)
         self._history = history
         # P2-D: dirs already announced to the daemon. Logged at INFO the
@@ -114,6 +120,33 @@ class _PollWorker(QObject):
                 except (DaemonError, ConnectionError, OSError):
                     # Best-effort: older daemons may not support active_profile endpoint.
                     log.warning("Failed to query daemon active profile — GUI may be out of sync")
+                # DEC-229: the DMI board identity keys the hwmon label fallback
+                # table, so fan names on a board whose chip reports no labels
+                # depend on it. Fetching it here (~0.6 ms, once) makes those
+                # names correct from the first poll; previously nothing outside
+                # the System State page ever asked, so the board stayed unknown
+                # until the user happened to visit that page.
+                if not self._hw_diag_sent:
+                    try:
+                        self.hw_diagnostics_ready.emit(client.hardware_diagnostics())
+                        self._hw_diag_sent = True
+                    except Exception as e:
+                        # Deliberately broader than the poll cycle's own handler.
+                        # This is a cosmetic naming lookup; it must never be able
+                        # to affect telemetry. `parse_hardware_diagnostics` does
+                        # bare `data.get(...)`, so a well-formed 200 carrying a
+                        # malformed body raises AttributeError/TypeError — which
+                        # the narrow tuple missed. AttributeError escaped BOTH
+                        # handlers, and because it raised before `_poll_count +=
+                        # 1` the caps branch re-fired every tick: no status /
+                        # sensors / fans, no connected or disconnected emit (so
+                        # no backoff and no state change), and one CRITICAL per
+                        # second into the bounded event deque the support bundle
+                        # reads. TypeError merely reached the outer handler and
+                        # faked a disconnect. Neither is reachable against a
+                        # well-formed daemon, but the blast radius is the whole
+                        # GUI and the cost of catching broadly here is nil.
+                        log.debug("Hardware diagnostics prefetch failed: %s", e)
                 # Register the GUI's profile directory with the daemon so
                 # POST /profile/activate accepts GUI-owned profile paths. Runs
                 # on this worker thread to avoid stalling the Qt main loop on
@@ -259,6 +292,7 @@ class PollingService(QObject):
         self._worker.fans_ready.connect(state.set_fans)
         self._worker.headers_ready.connect(state.set_hwmon_headers)
         self._worker.active_profile_ready.connect(self._on_active_profile)
+        self._worker.hw_diagnostics_ready.connect(self._on_hw_diagnostics)
         self._worker.connected.connect(self._on_connected)
         self._worker.disconnected.connect(self._on_disconnected)
 
@@ -325,6 +359,18 @@ class PollingService(QObject):
                 )
         else:
             log.debug("Daemon has no active profile")
+
+    def _on_hw_diagnostics(self, result) -> None:
+        """Hand the startup ``/diagnostics/hardware`` result to its single writer.
+
+        DEC-229: ``DiagnosticsService.set_hw_diagnostics`` owns both the shared
+        cache and ``AppState.board_info``; polling deliberately does not write
+        either directly. With no diagnostics service wired the board stays
+        unknown and the label resolver falls back to ``pwmN`` — degraded names,
+        never wrong ones.
+        """
+        if self._diag is not None:
+            self._diag.set_hw_diagnostics(result)
 
     def _on_disconnected(self) -> None:
         was_connected = self._was_connected

@@ -10,10 +10,14 @@ MASTER instead of CPU_FAN / SYS_FAN1 / SYS_FAN2 …
 Priority (callers should check 1 first):
 
     1. ``app_settings.fan_aliases[fan_id]``           ← caller's job
-    2. ``HwmonHeader.label`` (daemon-supplied sysfs)  ← caller's job
+    2. ``HwmonHeader.label`` (daemon-supplied sysfs)  ← this module
     3. ``/etc/sensors.d/*.conf`` and friends          ← this module
     4. In-repo ``HWMON_LABEL_FALLBACK`` table          ← this module
     5. raw sensor name (``pwmN``)                      ← this module
+
+Tier 2 lives here rather than in the caller because the daemon *synthesises*
+``pwmN`` when the chip exposes no label file, so "non-empty" does not mean
+"authoritative" — see :func:`is_placeholder_hwmon_label` (DEC-229).
 
 Reading ``/etc/sensors.d/*.conf`` is plain user-space file I/O, not
 hardware access — it does not violate the GUI ↔ daemon boundary.
@@ -505,6 +509,34 @@ def resolve_label_from_fallback(
     return None
 
 
+def is_placeholder_hwmon_label(label: str, pwm_index: int) -> bool:
+    """Is ``label`` the daemon's synthesised stand-in rather than a real name?
+
+    The daemon's ``read_label`` (``hwmon/pwm_discovery.rs``) tries
+    ``pwm{N}_label``, then ``fan{N}_label``, and when neither file exists
+    **synthesises** ``format!("pwm{N}")`` — so ``HwmonHeader.label`` is never
+    empty and a caller treating "non-empty" as "authoritative" short-circuits
+    the tiers below it (DEC-229). On the X870E AORUS MASTER / IT8696E every
+    header arrives as ``pwm1``…``pwm5`` while the in-repo table knows the board
+    and would answer ``CPU_FAN``.
+
+    The predicate is deliberately an **exact** match on the header's own
+    ``pwm{index}`` token, not a "looks generic" heuristic:
+
+    * the daemon's synthesis is exact, so nothing wider is needed;
+    * ``pwm[1-*]_label`` is not a documented hwmon attribute at all
+      (docs.kernel.org/hwmon/sysfs-interface.html — only ``fan[1-*]_label``
+      is), so a driver reporting a real ``fanN_label`` of literally ``pwmN``
+      is not a realistic case;
+    * a wider rule would discard genuine board labels, which is the worse
+      failure — a wrong name outranks a merely unhelpful one.
+
+    ``pwm2`` on header 1 is therefore *not* a placeholder: it does not restate
+    that header's own id, so it is information we did not otherwise have.
+    """
+    return bool(label) and label == f"pwm{pwm_index}"
+
+
 def resolve_hwmon_header_label(
     *,
     sysfs_label: str,
@@ -519,14 +551,15 @@ def resolve_hwmon_header_label(
     The caller is responsible for the user-alias check (priority 1).
     This function covers priorities 2-5:
 
-        2. daemon-supplied ``sysfs_label`` (may be empty)
+        2. daemon-supplied ``sysfs_label`` (may be empty *or* a synthesised
+           ``pwmN`` placeholder — see :func:`is_placeholder_hwmon_label`)
         3. libsensors config lookup, ``pwmN`` and ``fanN`` keys
         4. in-repo fallback table
         5. raw ``pwmN`` as the last resort
 
     Args:
         sysfs_label: ``HwmonHeader.label`` from the daemon (passes
-            through if non-empty).
+            through when non-empty and not a placeholder).
         chip_name: ``HwmonHeader.chip_name`` (e.g. ``it8696``).
         pwm_index: ``HwmonHeader.pwm_index`` (the N in ``pwmN``).
         board_vendor: DMI ``board_vendor`` from
@@ -534,7 +567,7 @@ def resolve_hwmon_header_label(
         board_name: DMI ``board_name``. Empty ⇒ skip name match.
         sensors_paths: Override libsensors search paths (tests only).
     """
-    if sysfs_label:
+    if sysfs_label and not is_placeholder_hwmon_label(sysfs_label, pwm_index):
         return sysfs_label
     pwm_key = f"pwm{pwm_index}"
     fan_key = f"fan{pwm_index}"

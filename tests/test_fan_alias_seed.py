@@ -45,6 +45,21 @@ def _profile(pid: str, members: list[tuple[str, str]], name: str = "P") -> Profi
     )
 
 
+def _profile_hwmon(pid: str, member_id: str, label: str) -> Profile:
+    """A profile whose single member is an hwmon header (not OpenFan)."""
+    return Profile(
+        id=pid,
+        name="P",
+        controls=[
+            LogicalControl(
+                id=f"{pid}-ctl",
+                name="Case",
+                members=[ControlMember(source="hwmon", member_id=member_id, member_label=label)],
+            )
+        ],
+    )
+
+
 def _state(fan_ids: list[str]) -> AppState:
     state = AppState()
     state.fans = [FanReading(id=f, source="openfan", rpm=1000) for f in fan_ids]
@@ -207,6 +222,54 @@ class TestRawIdLabelsAreNotAdopted:
             [_profile("p", [(CH0, "Front: top")])], {}, {CH0}, state.fan_fallback_name
         )
         assert seeded == {CH0: "Front: top"}
+
+    @staticmethod
+    def _x870e_state(hid: str) -> AppState:
+        from control_ofc.api.models import BoardInfo
+
+        state = AppState()
+        state.board_info = BoardInfo(
+            vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER"
+        )
+        state.set_hwmon_headers(
+            [HwmonHeader(id=hid, label="pwm1", chip_name="it8696", pwm_index=1)]
+        )
+        state.fans = [FanReading(id=hid, source="hwmon", rpm=900)]
+        return state
+
+    def test_a_bare_pwm_node_label_is_skipped(self):
+        """DEC-229 would otherwise defeat itself through this seed.
+
+        Profiles authored before DEC-229 cached the then-displayed `"pwm1"` as
+        `member_label`. The "equal to the fallback ⇒ skip" guard used to catch
+        that, because the fallback *was* `"pwm1"` — but the moment DEC-229 made
+        the fallback resolve to `CPU_FAN`, the two stopped matching and
+        `_is_raw_id` did not recognise the bare form either. The seed would then
+        promote the stale placeholder to a **user alias**, which outranks the
+        resolver, and since the seed is one-shot the board table could never be
+        consulted again: `pwm1` baked in permanently, on exactly the machines
+        this release exists to fix. Verified to reproduce before the fix.
+        """
+        hid = "hwmon:it8696:it87.2624:pwm1:pwm1"
+        state = self._x870e_state(hid)
+        assert state.fan_fallback_name(hid) == "CPU_FAN"  # precondition
+
+        seeded = seed_fan_aliases_from_profiles(
+            [_profile_hwmon("old", hid, "pwm1")], {}, {hid}, state.fan_fallback_name
+        )
+        assert seeded == {}
+        state.fan_aliases.update(seeded)
+        assert state.fan_display_name(hid) == "CPU_FAN"
+
+    def test_a_real_board_label_is_still_adopted(self):
+        """The guard must stay narrow — it compares the id's own pwmN segment,
+        not a general `pwm\\d+` pattern, so a genuine name is untouched."""
+        hid = "hwmon:it8696:it87.2624:pwm1:pwm1"
+        state = self._x870e_state(hid)
+        seeded = seed_fan_aliases_from_profiles(
+            [_profile_hwmon("p", hid, "My Cooler")], {}, {hid}, state.fan_fallback_name
+        )
+        assert seeded == {hid: "My Cooler"}
 
 
 class TestStripIsBounded:
@@ -514,6 +577,168 @@ class TestPersistedLabelKeepsItsRole:
         assert entries[hid]["clean_label"] == "Pump"
         assert self._role(entries[hid]["clean_label"]) == "cpu_or_pump"
         assert self._role("pwm7") == "chassis"  # what a sysfs-label-first rule stores
+
+    def test_a_role_bearing_fallback_outranks_an_alias_that_lacks_one(self):
+        """Documents the *raise* direction of "never lower the inferred role".
+
+        The rule is deliberately asymmetric, so the mirror case needs pinning
+        too: a user who aliases the X870E's unverified `SYS_FAN5_PUMP` header to
+        "Radiator Fan" still gets the 30% floor, because the resolved label
+        carries "pump" and the alias does not. That is the intended outcome —
+        the floor is a safety minimum, so resolving a genuine ambiguity upward
+        is the correct bias — but it is a real behaviour change on a mapping the
+        table itself marks unverified, and it should fail loudly if reversed.
+        """
+        from control_ofc.api.models import BoardInfo
+        from control_ofc.ui.pages.controls_page import _role_preserving_label
+
+        hid = "hwmon:it87952:it87.2656:pwm1:pwm1"
+        state = AppState()
+        state.board_info = BoardInfo(
+            vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER"
+        )
+        state.set_hwmon_headers(
+            [HwmonHeader(id=hid, label="pwm1", chip_name="it87952", pwm_index=1)]
+        )
+        state.set_fan_alias(hid, "Radiator Fan")
+
+        fallback = state.fan_fallback_name(hid)
+        assert fallback.startswith("SYS_FAN5_PUMP")
+        persisted = _role_preserving_label("Radiator Fan", fallback, "hwmon")
+        assert persisted == fallback
+        assert self._role(persisted) == "cpu_or_pump"
+
+    def test_aio_radiator_members_keep_their_role(
+        self, qtbot, monkeypatch, app_state, profile_service
+    ):
+        """DEC-229: the Configure-AIO radiator list persisted an unguarded name.
+
+        This was the one member-persisting path in `controls_page.py` that did
+        not route through `_role_preserving_label`, so it stored the alias-first
+        display name verbatim. A header whose real label carries a role word
+        (`PUMP_2` — common on boards exposing two pump headers) that the user had
+        renamed to "Front Rad" therefore persisted a role-less `member_label` and
+        dropped from the 30% pump floor to the 20% chassis one, on both sides.
+
+        Drives the real `_on_configure_aio` with a faked dialog rather than
+        asserting the helper: a first version of this test called
+        `_role_preserving_label` directly, and reverting the production fix left
+        it green — the whole defect was that the *call site* skipped the helper,
+        so only the call site is worth pinning. `_role_preserving_label` had no
+        call-site coverage at all before this.
+        """
+        from control_ofc.api.models import SensorReading
+        from control_ofc.ui.pages.controls_page import ControlsPage
+
+        pump_id = "hwmon:z53:d:pwm1:Pump"
+        rad_id = "hwmon:nct6798:x:pwm3:PUMP_2"
+        app_state.hwmon_headers = [
+            HwmonHeader(
+                id=pump_id,
+                label="Pump",
+                chip_name="z53",
+                pwm_index=1,
+                is_writable=True,
+                is_aio=True,
+            ),
+            HwmonHeader(
+                id=rad_id, label="PUMP_2", chip_name="nct6798", pwm_index=3, is_writable=True
+            ),
+        ]
+        app_state.sensors = [
+            SensorReading(id="hwmon:z53:d:Coolant", kind="coolant_temp", label="Coolant")
+        ]
+        app_state.fans = [FanReading(id=rad_id, source="hwmon", rpm=1100)]
+        # The user renamed the second pump header to something role-less.
+        app_state.set_fan_alias(rad_id, "Front Rad")
+
+        page = ControlsPage(state=app_state, profile_service=profile_service)
+        qtbot.addWidget(page)
+        profile = page._get_current_profile()
+
+        captured: dict = {}
+
+        class _FakeDialog:
+            def __init__(self, **kwargs):
+                captured["candidates"] = kwargs["fan_candidates"]
+
+            def exec(self):
+                return True
+
+            def get_result(self):
+                rad = next(c for c in captured["candidates"] if c["id"] == rad_id)
+                return {
+                    "pump_pct": 80,
+                    "radiator_members": [rad],  # what the user picked
+                    "radiator_sensor_id": "hwmon:z53:d:Coolant",
+                }
+
+        monkeypatch.setattr("control_ofc.ui.widgets.aio_config_dialog.AioConfigDialog", _FakeDialog)
+        page._on_configure_aio()
+
+        rad_control = next(c for c in profile.controls if "Radiator" in c.name)
+        member = rad_control.members[0]
+        assert member.member_id == rad_id
+        assert member.member_label == "PUMP_2"  # role preserved, not "Front Rad"
+        assert self._role(member.member_label) == "cpu_or_pump"
+        assert self._role("Front Rad") == "chassis"  # the regression, if stored raw
+        assert rad_control.minimum_pct == 30
+
+    def test_aliased_cpu_header_keeps_its_floor_on_a_label_less_chip(
+        self, qtbot, monkeypatch, app_state, profile_service
+    ):
+        """DEC-229: the CPU_OPT case, on the far more common board.
+
+        `test_aliased_cpu_header_keeps_its_pump_floor` above only works because
+        that chip publishes a real `CPU_OPT` label. On the reporter's IT8696E
+        the chip publishes nothing, the daemon synthesises `pwm1`, and the role
+        lives *only* in the board fallback table — so comparing against the raw
+        `HwmonHeader.label` found no role to preserve and a renamed CPU header
+        was still baked at the 20% chassis floor. Comparing against the resolved
+        fallback (`CPU_FAN`) is what closes it.
+        """
+        from control_ofc.api.models import BoardInfo
+        from control_ofc.knowledge.hwmon_label_resolver import (
+            clear_libsensors_cache,
+        )
+        from control_ofc.services.profile_service import apply_role_floor
+
+        clear_libsensors_cache()
+        try:
+            hid = "hwmon:it8696:it87.2624:pwm1:pwm1"
+            app_state.board_info = BoardInfo(
+                vendor="Gigabyte Technology Co., Ltd.", name="X870E AORUS MASTER"
+            )
+            header = HwmonHeader(
+                id=hid, label="pwm1", chip_name="it8696", pwm_index=1, is_writable=True
+            )
+            entries = self._picker_entries(
+                qtbot,
+                monkeypatch,
+                app_state,
+                profile_service,
+                header,
+                "My Fan",
+                [FanReading(id=hid, source="hwmon", rpm=1200)],
+            )
+            assert "My Fan" in entries[hid]["label"]  # the user still sees their name
+            assert entries[hid]["clean_label"] == "CPU_FAN"  # …but the role is persisted
+            assert self._role(entries[hid]["clean_label"]) == "cpu_or_pump"
+
+            # The safety consequence, spelled out: 30% floor, not 20%.
+            control = LogicalControl(
+                id="c1",
+                name="CPU",
+                members=[
+                    ControlMember(
+                        source="hwmon", member_id=hid, member_label=entries[hid]["clean_label"]
+                    )
+                ],
+            )
+            apply_role_floor(control)
+            assert control.minimum_pct == 30
+        finally:
+            clear_libsensors_cache()
 
     def test_picker_clean_label_still_drops_state_badges(
         self, qtbot, monkeypatch, app_state, profile_service
