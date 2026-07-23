@@ -647,10 +647,33 @@ class MainWindow(QWidget):
         self._demo_timer.start()
         self._demo_tick()
 
+    def _demo_blocks_persist(self, what: str) -> bool:
+        """Whether a per-hardware map must stay session-only (DEC-227).
+
+        ``_start_demo_mode`` *replaces* the fan alias/zone maps with DemoService's
+        synthetic ones, and demo fan ids collide exactly with real hardware ids
+        (``openfan:ch00`` …). Persisting from a demo session would therefore both
+        wipe the user's real labels and write demo names onto their actual fans —
+        and ``fan_aliases`` is portable (not in ``MACHINE_SPECIFIC_KEYS``), so the
+        pollution can travel in a Settings export. ``docs/10_Demo_Mode_Spec.md``:
+        demo must never overwrite the user's real runtime settings.
+
+        Demo is startup-only (there is no demo -> live transition), so refusing the
+        write is sufficient — nothing needs snapshotting or restoring.
+        """
+        if self._demo_mode:
+            log.debug("Demo mode — not persisting %s (session-only)", what)
+            return True
+        return False
+
     def _persist_fan_alias(self, _fan_id: str, _display_name: str) -> None:
+        if self._demo_blocks_persist("fan_aliases"):
+            return
         self._settings_service.update(fan_aliases=dict(self._state.fan_aliases))
 
     def _persist_fan_zones(self, _fan_id: str, _zone_name: str) -> None:
+        if self._demo_blocks_persist("fan_zones"):
+            return
         self._settings_service.update(fan_zones=dict(self._state.fan_zones))
 
     def _persist_sensor_class_override(self, _sensor_id: str, _source_class: str) -> None:

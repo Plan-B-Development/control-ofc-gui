@@ -221,6 +221,50 @@ hardware-blocked (no NVIDIA hardware to verify against). NVIDIA fans are never
 offered as writable curve members, mirroring the Intel Arc read-only pattern
 (§14).
 
+### 16. hwmon fans display `pwm1`, not `CPU_FAN` — a placeholder label defeats the resolver (OPEN)
+
+**Found 2026-07-23 while investigating DEC-227. Not fixed there — out of that
+change's approved scope. Revisit shortly.**
+
+`GET /hwmon/headers` returns `label` echoing the sysfs *pwm node name* when the
+chip exposes no `fanN_label` file. On the X870E AORUS MASTER (IT8696E) every
+header comes back as:
+
+```
+hwmon:it8696:it87.2624:pwm1:pwm1   label='pwm1'
+hwmon:it8696:it87.2624:pwm2:pwm2   label='pwm2'   … through pwm5
+```
+
+`AppState.fan_fallback_name` treats **any non-empty** `HwmonHeader.label` as
+authoritative (step 3) and only consults `/etc/sensors.d` plus the in-repo board
+fallback table (step 4, A3) when the label is empty. `'pwm1'` is non-empty, so
+the resolver — which *does* know this board and would return `CPU_FAN` — never
+runs. The user sees five fans named `pwm1`…`pwm5`.
+
+This is the same failure the user originally reported for OpenFan (a fan showing
+internal addressing instead of a name), reached by a different route: OpenFan had
+*no* label source, hwmon has a *placeholder* one that outranks the good source.
+
+Likely fix (GUI-side, no daemon change): treat a label that merely restates the
+pwm node id as absent, so step 4 runs. A narrow predicate — the label equals the
+header's own `pwm{index}` token — is preferable to a general "looks generic"
+heuristic, which would risk discarding a real board label.
+
+Open questions for the revisit:
+- Should the daemon send `label: null` rather than echoing the node name? That is
+  the more truthful contract, but it is a cross-stack change and older daemons
+  would still send the placeholder, so the GUI needs the guard regardless.
+- `/etc/sensors.d` should probably outrank a placeholder too, not just an empty
+  label — worth confirming against a board where both exist.
+- Verify no board legitimately reports a `fanN_label` of literally `pwmN`.
+
+Note the interaction with DEC-227: a user can already work around this by
+renaming the fan, and a rename is compared against `fan_fallback_name`. If the
+fallback later changes from `pwm1` to `CPU_FAN`, an alias someone stored as
+`"CPU_FAN"` would then equal the fallback — harmless (the name shown is
+identical), but it means such an alias becomes clearable-by-no-op. No migration
+needed; call it out in the fix's ADR.
+
 ## Resolved Gaps (previously listed as future work)
 
 > **Historical ledger.** Each row records a fix at the version in its Evidence

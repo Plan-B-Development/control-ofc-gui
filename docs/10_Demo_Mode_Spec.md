@@ -86,6 +86,27 @@ Demo mode must never:
 - imply real hardware safety state
 - overwrite the user's real runtime settings without clear confirmation
 
+### GUI-owned per-hardware maps are session-only in demo (DEC-227)
+`_start_demo_mode` **replaces** `AppState.fan_aliases` / `fan_zones` with
+`DemoService`'s synthetic maps, and demo fan ids are deliberately realistic —
+`openfan:ch00` … `openfan:ch07` are the canonical OpenFan channel ids. Any
+persistence of those maps from a demo session would therefore both wipe the
+user's real labels and write demo names onto their actual hardware, and
+`fan_aliases` is portable (see `docs/06`), so the pollution could travel in a
+shared export.
+
+`MainWindow._persist_fan_alias` / `_persist_fan_zones` accordingly refuse to write
+while `_demo_mode` is set. Renaming a fan in demo works for the session and is
+silently not saved — demo hardware is synthetic, so persisting a name for it is
+meaningless, and the feature stays demonstrable for the hardware-less tester
+below. Demo is startup-only (there is no demo → live transition), so refusing the
+write is sufficient; nothing needs snapshotting or restoring.
+
+Any future GUI-owned map keyed by hardware id must make the same choice
+explicitly. `hidden_chart_series`, `series_colors` and `chart_series_seeded`
+currently persist from demo and share the id-collision problem at lower blast
+radius (chart preferences, not names) — deliberately left for their own change.
+
 ## Suggested implementation approach
 Create a demo service that emits the same internal models used by live mode.
 Do not build a completely separate UI code path.

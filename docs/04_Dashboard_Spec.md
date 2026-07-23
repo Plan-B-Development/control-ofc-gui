@@ -131,10 +131,24 @@ The series panel groups coolant temperatures (`coolant_temp`) under an **"AIO / 
 and liquid-cooler pump/radiator fans are tagged "(AIO)" so an AIO reads as a cluster (DEC-157).
 
 ## Fan naming
-The daemon's fan response includes `id` and `source` but not a display label. The dashboard uses the best available display name in this order (renaming itself is done from the fan wizard / Controls page — the raw fan table that once hosted a double-click rename was removed in DEC-222):
+The daemon's fan response includes `id` and `source` but not a display label. The dashboard uses the best available display name in this order:
 1. user alias (GUI-owned, persisted locally)
-2. hwmon header label (from `GET /hwmon/headers`, for hwmon fans only)
-3. stable fan id (e.g. `openfan:ch00`)
+2. GPU model name (for `amd_gpu:` / `intel_gpu:` / `nvidia_gpu:` fans)
+3. OpenFan channel label — `openfan:ch00` renders as **OpenFan CH0** (DEC-227). Display only; it is never stored as an alias, so it cannot pin an idle header visible via the "user labelled it" rule in `filter_displayable_fans`
+4. hwmon header label (from `GET /hwmon/headers`, for hwmon fans only)
+5. `/etc/sensors.d` + in-repo board fallback table (hwmon only)
+6. stable fan id as a last resort
+
+**Renaming (DEC-227).** A fan is renamable from every surface that shows its name:
+the Sensors rail (double-click the name, or F2, or right-click ▸ "Rename fan…"),
+the read-only fan cards, and the Overview fan table. Clearing the text — or
+committing the name already shown — removes the alias rather than storing one, so
+pressing Enter on an untouched row is a true no-op. The "(AIO)" tag is
+presentation, not part of the name, and is stripped on the way in.
+
+A **control** card is titled with `control.name`, which is profile data — renaming
+it is a profile write and stays on the Controls page (DEC-222). Sensors are not
+renamable: their labels are daemon-owned and there is no sensor-alias setting.
 
 ## Warning behaviours
 If a fan or sensor is stale:

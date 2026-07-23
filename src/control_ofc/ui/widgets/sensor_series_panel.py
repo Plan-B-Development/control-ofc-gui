@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QModelIndex, QPoint, Qt
+from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QFrame,
     QLineEdit,
+    QMenu,
+    QStyledItemDelegate,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -21,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.models import FanReading, SensorReading
 from control_ofc.knowledge.sensor_knowledge import classify_sensor, format_sensor_tooltip
+from control_ofc.services.app_state import AIO_SUFFIX
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.qt_util import block_signals
@@ -58,6 +61,11 @@ _GROUP_ORDER = [
     "fans_openfan",
 ]
 
+# Series-key envelope for a fan row: "fan:<fan_id>:rpm". Fan ids contain colons of
+# their own, so callers slice these off rather than splitting on ":".
+_FAN_KEY_PREFIX = "fan:"
+_FAN_KEY_SUFFIX = ":rpm"
+
 _GROUP_LABELS = {
     "cpu": "CPU",
     "gpu": "GPU",
@@ -69,6 +77,43 @@ _GROUP_LABELS = {
     "fans_hwmon": "Fans \u2014 hwmon",
     "fans_openfan": "Fans \u2014 OpenFan",
 }
+
+
+class _FanRowDelegate(QStyledItemDelegate):
+    """Editing rules for the series tree (DEC-227).
+
+    Two column-scoped jobs:
+
+    * ``Qt.ItemIsEditable`` is a per-*item* flag, so marking a fan row editable
+      would otherwise let a stray double-click type over its "1200 RPM" reading
+      or its colour swatch. Refusing an editor outside column 0 scopes editing
+      to the name.
+    * ``setModelData`` is the commit hook. It hands the typed text to the panel
+      and deliberately does **not** call ``super()``, so Qt never writes the raw
+      text into the item — the panel re-renders the row from the alias that was
+      actually stored, which may differ (``AppState.apply_fan_rename`` strips the
+      "(AIO)" tag, caps length, and treats the fallback name as "clear"). It also
+      means ``itemChanged`` never fires for a rename, so the checkbox ->
+      ``SeriesSelectionModel`` path in ``_on_item_changed`` stays untouched.
+    """
+
+    NAME_COLUMN = 0
+
+    def __init__(self, panel: SensorSeriesPanel) -> None:
+        super().__init__(panel)
+        self._panel = panel
+
+    def createEditor(self, parent: QWidget, option, index: QModelIndex):
+        if index.column() != self.NAME_COLUMN:
+            return None
+        return super().createEditor(parent, option, index)
+
+    def setModelData(self, editor: QWidget, model, index: QModelIndex) -> None:
+        if index.column() != self.NAME_COLUMN:
+            return
+        fan_id = self._panel.fan_id_for_index(index)
+        if fan_id:
+            self._panel.rename_fan(fan_id, editor.text())
 
 
 class SensorSeriesPanel(QFrame):
@@ -95,9 +140,14 @@ class SensorSeriesPanel(QFrame):
         self._sensor_items: dict[str, QTreeWidgetItem] = {}  # sensor_id → tree item
         self._fan_items: dict[str, QTreeWidgetItem] = {}  # fan_id → tree item
         self._updating = False  # Guard against re-entrant checkbox signals
+        self._aio_ids: set[str] = set()  # DEC-157 liquid-cooler header ids
 
         self._build_ui()
         self._selection.selection_changed.connect(self._sync_checkboxes_from_model)
+        # DEC-227: a rename from any surface (this panel, a fan card, the Overview
+        # table, the wizard) repaints the affected row without waiting for a poll.
+        if self._state:
+            self._state.fan_alias_changed.connect(self._on_fan_alias_changed)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -124,6 +174,12 @@ class SensorSeriesPanel(QFrame):
         self._tree.header().resizeSection(2, 24)
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.itemClicked.connect(self._on_item_clicked)
+        # DEC-227: in-place fan rename. Editing uses Qt's default DoubleClicked |
+        # EditKeyPressed triggers (double-click the name, or F2) — the delegate
+        # keeps the editor off the value/colour columns and owns the commit.
+        self._tree.setItemDelegate(_FanRowDelegate(self))
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._tree, 1)
 
         # Chart reference for colour sync (set by DashboardPage after construction)
@@ -223,6 +279,9 @@ class SensorSeriesPanel(QFrame):
             hide_unused = self._settings_service.settings.hide_unused_fan_headers
         aliases = self._state.fan_aliases if self._state else {}
         displayable = filter_displayable_fans(fans, aliases, hide_unused)
+
+        # Once per pass, not once per row — both branches below label rows from it.
+        self._refresh_aio_ids()
 
         new_ids = [f.id for f in displayable]
         structure_changed = new_ids != self._known_fan_ids
@@ -333,6 +392,103 @@ class SensorSeriesPanel(QFrame):
             rate_c_per_s=s.rate_c_per_s,
         )
 
+    # ── Fan row labelling / renaming ─────────────────────────────────
+
+    def _refresh_aio_ids(self) -> None:
+        """Cache the DEC-157 liquid-cooler header ids for this update pass."""
+        self._aio_ids = (
+            {h.id for h in self._state.hwmon_headers if getattr(h, "is_aio", False)}
+            if self._state
+            else set()
+        )
+
+    def _fan_row_label(self, fan_id: str) -> str:
+        """Build a fan row's name cell — display name plus the DEC-157 "(AIO)" tag.
+
+        The single place a fan row label is composed. It used to be built inline
+        in ``_rebuild_fan_items`` while ``_update_fan_values`` recomputed a bare
+        ``fan_display_name``, so the "(AIO)" tag survived exactly one poll before
+        the next tick overwrote it (DEC-227). One formatter makes that class of
+        drift structurally impossible.
+        """
+        if not self._state:
+            return fan_id
+        label = self._state.fan_display_name(fan_id)
+        if fan_id in self._aio_ids:
+            label = f"{label}{AIO_SUFFIX}"
+        return label
+
+    @staticmethod
+    def _fan_id_for_item(item: QTreeWidgetItem) -> str:
+        """Recover the fan id from a row's series key, or "" for a non-fan row.
+
+        Sliced rather than split: fan ids contain colons of their own
+        (``hwmon:it8696:it87.2624:pwm1:pwm1``).
+        """
+        key = item.data(0, Qt.ItemDataRole.UserRole) or ""
+        if key.startswith(_FAN_KEY_PREFIX) and key.endswith(_FAN_KEY_SUFFIX):
+            return key[len(_FAN_KEY_PREFIX) : -len(_FAN_KEY_SUFFIX)]
+        return ""
+
+    def fan_id_for_index(self, index: QModelIndex) -> str:
+        """Fan id behind a model index, or "" if it is not a fan row."""
+        item = self._tree.itemFromIndex(index)
+        return self._fan_id_for_item(item) if item else ""
+
+    def rename_fan(self, fan_id: str, text: str) -> None:
+        """Apply an inline rename (DEC-227). No dialog — callable straight from tests.
+
+        Delegates the rule to :meth:`AppState.apply_fan_rename` so this panel, the
+        read-only fan cards and the Overview fan table cannot drift apart. The row
+        is re-rendered by the resulting ``fan_alias_changed`` signal rather than
+        here, so a rename originating anywhere lands identically.
+        """
+        if self._state:
+            self._state.apply_fan_rename(fan_id, text)
+
+    def _on_fan_alias_changed(self, fan_id: str, _display_name: str) -> None:
+        """Re-render one fan row immediately rather than waiting for the next poll."""
+        item = self._fan_items.get(fan_id)
+        if item is None:
+            return
+        with block_signals(self._tree):
+            item.setText(0, self._fan_row_label(fan_id))
+        self._apply_search_filter()
+
+    def build_fan_menu(self, item: QTreeWidgetItem | None) -> QMenu | None:
+        """Build the right-click menu for *item*, or None if it is not a fan row.
+
+        Kept separate from showing it so the menu's contents are assertable
+        without driving a real popup. Sensor rows get no menu: sensor labels are
+        daemon-owned and there is no sensor-alias setting to write.
+        """
+        if item is None:
+            return None
+        fan_id = self._fan_id_for_item(item)
+        if not fan_id:
+            return None
+        menu = QMenu(self)
+        rename = QAction("Rename fan…", self)
+        rename.setObjectName("SensorSeriesPanel_Action_renameFan")
+        rename.triggered.connect(lambda: self._tree.editItem(item, 0))
+        menu.addAction(rename)
+        if self._state and fan_id in self._state.fan_aliases:
+            reset = QAction("Reset to default name", self)
+            reset.setObjectName("SensorSeriesPanel_Action_resetFanName")
+            reset.triggered.connect(lambda: self.rename_fan(fan_id, ""))
+            menu.addAction(reset)
+        return menu
+
+    def _on_context_menu(self, pos: QPoint) -> None:
+        """Right-click a fan row to rename it.
+
+        Double-click and F2 already open the editor; this exists because neither
+        is discoverable on its own.
+        """
+        menu = self.build_fan_menu(self._tree.itemAt(pos))
+        if menu is not None:
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
+
     # ── Fan rebuild/update ───────────────────────────────────────────
 
     def _rebuild_fan_items(self, fans: list[FanReading]) -> None:
@@ -345,14 +501,6 @@ class SensorSeriesPanel(QFrame):
                     parent.removeChild(item)
             self._fan_items.clear()
 
-            # DEC-157: liquid-cooler headers carry the daemon is_aio flag; tag
-            # their fans "(AIO)" so the pump/radiator are obvious in the tree.
-            aio_ids = (
-                {h.id for h in self._state.hwmon_headers if getattr(h, "is_aio", False)}
-                if self._state
-                else set()
-            )
-
             for f in fans:
                 if f.source in ("amd_gpu", "intel_gpu", "nvidia_gpu"):
                     group_key = "fans_gpu"
@@ -363,18 +511,20 @@ class SensorSeriesPanel(QFrame):
                 group_label = _GROUP_LABELS[group_key]
                 group_item = self._ensure_group(group_key, group_label)
 
-                series_key = f"fan:{f.id}:rpm"
-                display_name = self._state.fan_display_name(f.id) if self._state else f.id
-                if f.id in aio_ids:
-                    display_name = f"{display_name} (AIO)"
+                series_key = f"{_FAN_KEY_PREFIX}{f.id}{_FAN_KEY_SUFFIX}"
                 rpm_text = f"{f.rpm} RPM" if f.rpm is not None else "\u2014"
 
                 item = QTreeWidgetItem(group_item)
-                item.setText(0, display_name)
+                item.setText(0, self._fan_row_label(f.id))
                 item.setText(1, rpm_text)
-                item.setToolTip(0, f"ID: {f.id}")
+                item.setToolTip(0, f"ID: {f.id}\nDouble-click or press F2 to rename")
                 item.setData(0, Qt.ItemDataRole.UserRole, series_key)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                # DEC-227: fan rows are renamable in place; sensor rows are not
+                # (sensor labels are daemon-owned and there is no alias setting
+                # for them). _FanRowDelegate scopes the editor to column 0.
+                item.setFlags(
+                    item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable
+                )
                 # Default-visible at first discovery — see _rebuild_sensor_items.
                 item.setCheckState(
                     0,
@@ -396,11 +546,12 @@ class SensorSeriesPanel(QFrame):
                 rpm_text = f"{f.rpm} RPM" if f.rpm is not None else "\u2014"
                 if item.text(1) != rpm_text:
                     item.setText(1, rpm_text)
-                # Update display name in case alias changed
-                if self._state:
-                    display_name = self._state.fan_display_name(f.id)
-                    if item.text(0) != display_name:
-                        item.setText(0, display_name)
+                # Re-resolve the name in case an alias changed. Must go through
+                # _fan_row_label \u2014 recomputing a bare fan_display_name here is
+                # what used to erase the "(AIO)" tag on the second poll.
+                label = self._fan_row_label(f.id)
+                if item.text(0) != label:
+                    item.setText(0, label)
 
     # ── Group management ─────────────────────────────────────────────
 

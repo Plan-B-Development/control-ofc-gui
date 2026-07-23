@@ -20,11 +20,13 @@ from __future__ import annotations
 
 from html import escape
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -65,10 +67,16 @@ class FanControlCard(Card):
     # control_id of the card whose Edit was clicked ("" for the Unassigned card,
     # which has no control to focus — the page just opens Controls).
     edit_requested = Signal(str)
+    # DEC-227: fan_id the user asked to rename. Read-only cards only — see
+    # _renamable_fan_id for why a control card can never emit this.
+    rename_requested = Signal(str)
 
     def __init__(self, vm: FanCardVM, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._control_id = vm.control_id
+        self._rename_fan_id = self._renamable_fan_id(vm)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
         slug = _card_slug(vm.card_key)
         self.setObjectName(f"FanCard_Root_{slug}")
 
@@ -170,9 +178,43 @@ class FanControlCard(Card):
 
     # ── updates ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _renamable_fan_id(vm: FanCardVM) -> str:
+        """The fan this card can rename, or "" if renaming makes no sense here.
+
+        Only a read-only card names a *fan*: it is built one-per-fan
+        (``fan_cards_view``), so its label is that fan's ``fan_display_name`` and
+        renaming it writes a GUI-owned alias. Every other card is titled with its
+        control's ``name``, which is **profile data** — editing that is a profile
+        write and stays on the Controls page (DEC-222).
+        """
+        if vm.is_read_only and len(vm.member_fan_ids) == 1:
+            return vm.member_fan_ids[0]
+        return ""
+
+    def build_rename_menu(self) -> QMenu | None:
+        """Build this card's context menu, or None when it names no fan.
+
+        Split from showing it so the contents are assertable without a real popup.
+        """
+        if not self._rename_fan_id:
+            return None
+        menu = QMenu(self)
+        rename = QAction("Rename fan…", self)
+        rename.setObjectName("FanCard_Action_renameFan")
+        rename.triggered.connect(lambda: self.rename_requested.emit(self._rename_fan_id))
+        menu.addAction(rename)
+        return menu
+
+    def _on_context_menu(self, pos: QPoint) -> None:
+        menu = self.build_rename_menu()
+        if menu is not None:
+            menu.exec(self.mapToGlobal(pos))
+
     def update_vm(self, vm: FanCardVM) -> None:
         """Re-render from a fresh VM. Cheap and idempotent (called each poll)."""
         self._control_id = vm.control_id
+        self._rename_fan_id = self._renamable_fan_id(vm)
         self._name.setText(vm.label)
         self._count.setText(
             "No fans assigned"

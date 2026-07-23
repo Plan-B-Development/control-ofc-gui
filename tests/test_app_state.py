@@ -49,8 +49,28 @@ def test_fan_display_name_hwmon_label():
 
 
 def test_fan_display_name_fallback_to_id():
+    """An id nothing can resolve still falls back to the raw id."""
     state = AppState()
-    assert state.fan_display_name("openfan:ch05") == "openfan:ch05"
+    assert state.fan_display_name("mystery:fan9") == "mystery:fan9"
+
+
+def test_fan_display_name_openfan_channel_label():
+    """DEC-227: an unnamed OpenFan channel reads as a channel, not a daemon id.
+
+    OpenFan has no label source at all — no sysfs label, and the daemon reports
+    only a channel count — so before this every channel rendered as its raw id.
+    """
+    state = AppState()
+    assert state.fan_display_name("openfan:ch05") == "OpenFan CH5"
+    assert state.fan_display_name("openfan:ch00") == "OpenFan CH0"
+    assert state.fan_display_name("openfan:ch10") == "OpenFan CH10"
+
+
+def test_fan_display_name_openfan_malformed_channel_falls_back_to_id():
+    """Only a plain number is a channel — never invent one from junk."""
+    state = AppState()
+    assert state.fan_display_name("openfan:chXX") == "openfan:chXX"
+    assert state.fan_display_name("openfan:ch") == "openfan:ch"
 
 
 def test_fan_display_name_uses_label_resolver_when_sysfs_label_empty():

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QMenu,
     QScrollArea,
@@ -127,6 +128,9 @@ class OverviewPage(QWidget):
             # A classification override set on the Diagnostics Sensors tab (or
             # here) re-renders this table so both surfaces stay in step.
             state.sensor_class_override_changed.connect(lambda *_: self._render_sensors_table())
+            # DEC-227: a rename from any surface repaints this table immediately
+            # instead of leaving a stale name until the next poll.
+            state.fan_alias_changed.connect(lambda *_: self._on_fans(state.fans))
 
     # ── UI construction ──────────────────────────────────────────────
 
@@ -151,6 +155,8 @@ class OverviewPage(QWidget):
         self._fan_table.setHorizontalHeaderLabels(_FAN_COLS)
         apply_dense_table(self._fan_table)
         self._fan_table.horizontalHeader().setStretchLastSection(True)
+        self._fan_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._fan_table.customContextMenuRequested.connect(self._on_fan_context_menu)
         layout.addWidget(self._fan_table)
 
         sensor_header = SectionHeader(
@@ -295,6 +301,9 @@ class OverviewPage(QWidget):
                 item = self._fan_table.item(r, c)
                 item.setText(text)
                 item.setToolTip(vm.control_method_tooltip if c == 2 else vm.row_tooltip)
+            # DEC-227: the table has no ID column, so carry the id on the row's
+            # first cell — that is how a right-click finds the fan it named.
+            self._fan_table.item(r, 0).setData(Qt.ItemDataRole.UserRole, vm.fan_id)
             self._set_pill(
                 self._fan_table, r, _FAN_FRESH_COL, vm.freshness_label, vm.freshness_state
             )
@@ -492,6 +501,53 @@ class OverviewPage(QWidget):
     def _toggle_hidden_group(self) -> None:
         self._hidden_group_expanded = not self._hidden_group_expanded
         self._render_sensors_table()
+
+    def _row_to_fan_id(self, row: int) -> str:
+        """Fan/header id behind a fan-table row, or "" if there is none."""
+        if row < 0 or row >= self._fan_table.rowCount():
+            return ""
+        cell = self._fan_table.item(row, 0)
+        if cell is None:
+            return ""
+        return cell.data(Qt.ItemDataRole.UserRole) or ""
+
+    def build_fan_menu(self, fan_id: str) -> QMenu | None:
+        """Build the fan-row right-click menu, or None when there is nothing to name.
+
+        Split from showing it so the contents are assertable without a real popup.
+        """
+        if not fan_id or self._state is None:
+            return None
+        menu = QMenu(self)
+        rename = QAction("Rename fan…", self)
+        rename.setObjectName("Overview_Action_renameFan")
+        rename.triggered.connect(lambda: self._prompt_fan_rename(fan_id))
+        menu.addAction(rename)
+        if fan_id in self._state.fan_aliases:
+            reset = QAction("Reset to default name", self)
+            reset.setObjectName("Overview_Action_resetFanName")
+            reset.triggered.connect(lambda: self._state.apply_fan_rename(fan_id, ""))
+            menu.addAction(reset)
+        return menu
+
+    def _on_fan_context_menu(self, pos: QPoint) -> None:
+        """Right-click a fan row to rename it (DEC-227).
+
+        Mirrors the Sensors rail: the label shown here is the same
+        ``fan_display_name``, so it should be authorable from here too.
+        """
+        menu = self.build_fan_menu(self._row_to_fan_id(self._fan_table.indexAt(pos).row()))
+        if menu is not None:
+            menu.exec(self._fan_table.viewport().mapToGlobal(pos))
+
+    def _prompt_fan_rename(self, fan_id: str) -> None:
+        """Ask for a new fan name. The rule itself lives on AppState."""
+        if self._state is None:
+            return
+        current = self._state.fan_display_name(fan_id)
+        name, ok = QInputDialog.getText(self, "Rename Fan", "Fan name:", text=current)
+        if ok:
+            self._state.apply_fan_rename(fan_id, name)
 
     def _row_to_sensor(self, row: int) -> SensorReading | None:
         if row < 0 or row >= self._sensor_table.rowCount() or self._is_hidden_toggle_row(row):

@@ -73,7 +73,12 @@ Once saved, fan labels propagate across the entire application:
 - Overview page — fan status table
 - Profile files — member labels are snapshotted into the profile JSON
 
-Labels are stored as `fan_aliases` in `app_settings.json` and persist across sessions. Display names always prefer your alias, then the GPU model or hwmon header label, then the raw hardware ID.
+Labels are stored as `fan_aliases` in `app_settings.json` and persist across sessions. Display names always prefer your alias, then the GPU model, then the OpenFan channel label (`OpenFan CH0`), then the hwmon header label, then the raw hardware ID.
+
+You do not have to run the wizard to rename a fan. Once you know which fan is
+which, you can rename one directly wherever it appears — see
+[Naming your fans](dashboard.md#naming-your-fans). The wizard is for the harder
+question the rename cannot answer: *which physical fan is this?*
 
 ---
 

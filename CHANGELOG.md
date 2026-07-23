@@ -1,5 +1,42 @@
 # Changelog
 
+## [2.28.0] — 2026-07-23
+
+Fans can now be renamed from the places their names are shown, and an unnamed
+OpenFan channel finally reads as a channel instead of a raw daemon id. Carries
+two bug fixes found while investigating. GUI-only; no contract, profile-schema or
+settings-schema change (`EXPECTED_API_VERSION` stays 1). Pairs with
+`control-ofc-daemon` (unchanged, ≥ v2.11.0).
+
+### Added
+- **Rename a fan from the Dashboard, a fan card, or the Overview table
+  (DEC-227).** Previously the only way to name a fan was the Fan Configuration
+  Wizard on the Controls page — an eight-second-per-fan spin-down identification
+  run — so names were shown in one place and could only be written in another. On
+  the Dashboard's Thermal Sensors rail, double-click a fan's name or press F2 to
+  edit it in place; read-only fan cards and the Overview fan table offer
+  "Rename fan…" on right-click. Clearing the text restores the default name.
+  Renaming a *control* card is still a profile edit and stays on Controls.
+- **Unnamed OpenFan channels read as "OpenFan CH0" (DEC-227).** An OpenFan fan has
+  no label from anywhere — the controller reports only a channel count, and no
+  hwmon header describes it — so until you named one it appeared as
+  `openfan:ch00`. This is a display name only: it is never saved as a custom
+  label, so it does not interfere with hiding unused fan headers.
+
+### Fixed
+- **The "(AIO)" tag on a liquid-cooler fan vanished after about a second
+  (DEC-227).** The Sensors rail added the tag when it first discovered the fan,
+  then rebuilt the row's name without it on the very next refresh — so the tag was
+  visible once and never again, despite being documented. Row names are now built
+  in exactly one place.
+- **Demo mode could overwrite your real fan names (DEC-227).** Demo replaces the
+  fan-name map with its own synthetic one, whose ids are identical to real
+  hardware ids, and any name change in a demo session saved that map over your
+  settings — erasing your real names and writing demo ones onto your actual fans.
+  Reachable without asking for demo explicitly, via "start in demo mode when the
+  daemon is unreachable", and fan names travel with a settings export. Demo now
+  keeps name changes to the session and never writes them to disk.
+
 ## [2.27.1] — 2026-07-22
 
 Fixes a regression shipped in v2.27.0: a grey (and, on the Logs page, white)

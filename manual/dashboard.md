@@ -108,6 +108,35 @@ tagged **(AIO)**. Type in the "Search sensors…" box to filter; click a row's c
 show/hide its line on the chart; toggle a whole group to declutter. Hidden series persist
 across sessions.
 
+### Naming your fans
+
+OpenFan channels arrive with no name of their own, so they start out as
+**OpenFan CH0**, **OpenFan CH1** and so on. To give one a name that means
+something — "Front Intake", "Radiator Push" — **double-click it** in the Sensors
+panel (or select it and press **F2**, or right-click it and choose
+**Rename fan…**). The name applies everywhere at once: fan cards, the Overview
+table, curve and fan-role pickers.
+
+To go back to the default name, clear the text and press Enter, or right-click and
+choose **Reset to default name**. Pressing Enter without changing anything does
+nothing at all — it will not quietly turn the displayed name into a custom one.
+
+Two things worth knowing:
+
+- The **(AIO)** tag is not part of the name. You do not need to type it and you
+  cannot remove it by renaming — it marks a fan the daemon reports as belonging to
+  a liquid cooler.
+- Naming a fan also keeps it on screen when **Hide unused fan headers** is on, so
+  a header that is idle right now stays visible once you have named it. Clearing
+  the name lets it drop out of the list again.
+
+To work out which physical fan is which before naming them, use the
+**Fan Configuration Wizard** on the [Controls page](controls.md) — it stops one
+fan at a time so you can see which one slows down.
+
+> In demo mode you can rename fans to try the feature out, but the names are not
+> saved — demo hardware is not real, and your actual fan names are left untouched.
+
 > Both the **event log** and the **active warnings** list live on the
 > [Logs page](diagnostics.md), side by side — the event feed is history, the warnings
 > list is what is wrong right now. Use the profile selector in the page header to

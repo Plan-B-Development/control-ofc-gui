@@ -24,6 +24,22 @@ from control_ofc.api.models import (
 from control_ofc.knowledge.hwmon_label_resolver import resolve_hwmon_header_label
 from control_ofc.services.session_stats import SessionStatsTracker
 
+# DEC-227: presentation suffix tagging a liquid-cooler fan in the Dashboard's
+# Sensors rail. It is a hardware fact rendered onto the row, never part of the
+# stored name — ``apply_fan_rename`` strips it back off on the way in so a
+# round-trip through an in-place editor cannot capture it into settings.
+AIO_SUFFIX = " (AIO)"
+
+# DEC-227: upper bound on a user-authored fan alias. Aliases are user-controlled,
+# persisted to app_settings.json and portable via Settings export, so an unbounded
+# string would bloat the settings file and break row layout on every surface.
+MAX_FAN_ALIAS_LEN = 64
+
+# DEC-227: id prefix of an OpenFan channel fan ("openfan:ch00"). Matched strictly —
+# anything after it that is not a plain number falls through to the raw id rather
+# than inventing a channel number.
+_OPENFAN_CH_PREFIX = "openfan:ch"
+
 
 class AppState(QObject):
     """Observable application state. Emits signals when data changes."""
@@ -174,9 +190,43 @@ class AppState(QObject):
         return cleaned
 
     def set_fan_alias(self, fan_id: str, alias: str) -> None:
-        """Set or clear a fan alias. Empty/whitespace-only string clears."""
+        """Set or clear a fan alias. Empty/whitespace-only string clears.
+
+        Capped at ``MAX_FAN_ALIAS_LEN`` here rather than at each call site, so
+        every writer (fan wizard, the DEC-227 rename surfaces) is bounded.
+        """
+        if alias:
+            # Strip before capping so the limit counts characters of actual name,
+            # not leading whitespace that _set_or_clear is about to discard.
+            alias = alias.strip()[:MAX_FAN_ALIAS_LEN]
         self._set_or_clear(self.fan_aliases, fan_id, alias)
         self.fan_alias_changed.emit(fan_id, self.fan_display_name(fan_id))
+
+    def apply_fan_rename(self, fan_id: str, text: str) -> None:
+        """Apply a user rename of *fan_id* from any surface (DEC-227).
+
+        Shared by every rename affordance — the Dashboard Sensors rail, the
+        read-only fan cards and the Overview fan table — so they cannot drift
+        apart. Qt-free, so the rule is unit-testable without a widget.
+
+        Empty text clears the alias. So does text equal to the fan's *fallback*
+        name: an in-place ``QTreeWidgetItem`` editor opens pre-filled with the
+        already-resolved label (Qt aliases ``EditRole`` to ``DisplayRole``), so
+        without this rule merely pressing Enter on an unchanged row would mint an
+        alias — and ``fan_display.filter_displayable_fans`` reads "has an alias"
+        as "the user wants this fan visible", which would silently pin a 0-RPM
+        header on screen forever.
+
+        The presentation-only ``(AIO)`` tag is stripped back off for the same
+        reason. Consequence: a fan cannot be named literally "Front (AIO)".
+        """
+        cleaned = (text or "").strip()
+        if cleaned.endswith(AIO_SUFFIX):
+            cleaned = cleaned[: -len(AIO_SUFFIX)].strip()
+        cleaned = cleaned[:MAX_FAN_ALIAS_LEN]
+        if cleaned == self.fan_fallback_name(fan_id):
+            cleaned = ""
+        self.set_fan_alias(fan_id, cleaned)
 
     def set_sensor_class_override(self, sensor_id: str, source_class: str) -> None:
         """Force (or clear) a sensor's display classification (DEC-156).
@@ -193,17 +243,27 @@ class AppState(QObject):
 
         Priority:
             1. user alias (``fan_aliases``)
-            2. GPU model name (for ``amd_gpu:`` fans)
+            2. everything else — see :meth:`fan_fallback_name`
+        """
+        if fan_id in self.fan_aliases:
+            return self.fan_aliases[fan_id]
+        return self.fan_fallback_name(fan_id)
+
+    def fan_fallback_name(self, fan_id: str) -> str:
+        """Return the best display name for a fan *ignoring* any user alias.
+
+        Priority:
+            1. GPU model name (for ``amd_gpu:`` / ``intel_gpu:`` / ``nvidia_gpu:``)
+            2. OpenFan channel label (``openfan:ch00`` -> ``OpenFan CH0``)
             3. daemon-supplied sysfs ``HwmonHeader.label`` (for hwmon fans)
             4. ``hwmon_label_resolver`` — ``/etc/sensors.d`` and the
                in-repo board fallback table (A3)
             5. raw ``fan_id`` as a last resort
 
-        Steps 4 onward only fire for hwmon fans; OpenFan and GPU fans
-        keep their existing precedence.
+        Split out of :meth:`fan_display_name` for DEC-227: ``apply_fan_rename``
+        compares the user's typed text against this to tell "they renamed it"
+        from "they pressed Enter on the name already shown".
         """
-        if fan_id in self.fan_aliases:
-            return self.fan_aliases[fan_id]
         if fan_id.startswith("amd_gpu:"):
             if self.capabilities and self.capabilities.amd_gpu.present:
                 return f"{self.capabilities.amd_gpu.display_label} Fan"
@@ -216,6 +276,16 @@ class AppState(QObject):
             if self.capabilities and self.capabilities.nvidia_gpu.present:
                 return f"{self.capabilities.nvidia_gpu.display_label} Fan"
             return "NVIDIA D-GPU Fan"
+        # DEC-227: an OpenFan channel has no label source at all — the daemon
+        # reports only a channel count, and no hwmon header carries an
+        # "openfan:" id — so without this every unnamed channel rendered as its
+        # raw daemon id. Presentation only: this is never written into
+        # fan_aliases, so it cannot make filter_displayable_fans treat an
+        # unnamed 0-RPM channel as one the user asked to keep visible.
+        if fan_id.startswith(_OPENFAN_CH_PREFIX):
+            channel = fan_id[len(_OPENFAN_CH_PREFIX) :]
+            if channel.isdigit():
+                return f"OpenFan CH{int(channel)}"
         for h in self.hwmon_headers:
             if h.id == fan_id:
                 if h.label:

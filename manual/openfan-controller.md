@@ -56,6 +56,12 @@ Two cases need a manual step:
 
 A channel number does not tell you which physical fan is on it. The [Fan Wizard](fan-wizard.md) solves this: it stops one fan at a time so you can see (or hear) which fan slows down, then lets you give it a friendly name. The wizard handles OpenFan channels the same way it handles motherboard and GPU fans, and the daemon automatically restores the fan if the process is interrupted.
 
+The controller does not store channel names, so until you name one a channel shows
+as **OpenFan CH0**, **OpenFan CH1**, and so on. Once you know which is which, you
+can rename a channel directly wherever it appears — double-click it in the
+Dashboard's Sensors panel, or right-click it there or in the Overview fan table.
+See [Naming your fans](dashboard.md#naming-your-fans).
+
 ## Using it in profiles
 
 OpenFan channels are first-class fans in Control-OFC. On the [Controls](controls.md) page you can:

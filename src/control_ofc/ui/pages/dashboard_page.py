@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QPushButton,
     QScrollArea,
@@ -816,6 +817,7 @@ class DashboardPage(QWidget):
             if card is None:
                 card = FanControlCard(vm)
                 card.edit_requested.connect(self.open_control)
+                card.rename_requested.connect(self._rename_fan)
                 self._fan_cards[vm.card_key] = card
                 self._fan_cards_layout.addWidget(card)
             else:
@@ -866,6 +868,21 @@ class DashboardPage(QWidget):
     def _on_fan_alias_changed(self, fan_id: str, display_name: str) -> None:
         del fan_id, display_name  # cards re-resolve their labels on rebuild
         self._refresh_fan_cards()
+
+    def _rename_fan(self, fan_id: str) -> None:
+        """Prompt for a new name for a read-only fan card (DEC-227).
+
+        A card has no in-place editor, so this uses the same modal shape as the
+        Controls page's curve/profile renames. The rule itself lives in
+        ``AppState.apply_fan_rename`` — shared with the Sensors rail and the
+        Overview table, and testable without driving this dialog.
+        """
+        if not self._state:
+            return
+        current = self._state.fan_display_name(fan_id)
+        name, ok = QInputDialog.getText(self, "Rename Fan", "Fan name:", text=current)
+        if ok:
+            self._state.apply_fan_rename(fan_id, name)
 
     def _on_warnings_changed(self, count: int) -> None:
         del count  # the footer health rollup + the Logs page own warnings (DEC-222)

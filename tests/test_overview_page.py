@@ -234,6 +234,42 @@ def test_fan_table_pwm_only_synthesis(qtbot):
     assert page._fan_table.item(1, 1).text() == "hwmon (PWM-only)"
 
 
+def test_fan_row_carries_its_id_for_rename(qtbot):
+    """DEC-227: the table shows no ID column, so the id rides on the row's first
+    cell — that is the only way a right-click can find the fan it named."""
+    page, s = _page(qtbot)
+    s.set_hwmon_headers([HwmonHeader(id="hwmon:nct6798:pwm2", label="SYS", is_writable=True)])
+    page._on_fans([FanReading(id="openfan:ch00", source="openfan", rpm=1200, age_ms=500)])
+    assert page._row_to_fan_id(0) == "openfan:ch00"
+    assert page._row_to_fan_id(1) == "hwmon:nct6798:pwm2"  # PWM-only rows too
+    assert page._row_to_fan_id(99) == ""
+
+
+def test_fan_context_menu_offers_rename_and_reset(qtbot):
+    page, s = _page(qtbot)
+    # Through set_fans, not _on_fans directly: the alias-change repaint re-reads
+    # state.fans, which is how the live poll path populates it.
+    s.set_fans([FanReading(id="openfan:ch00", source="openfan", rpm=1200, age_ms=500)])
+
+    names = [a.objectName() for a in page.build_fan_menu("openfan:ch00").actions()]
+    assert names == ["Overview_Action_renameFan"]
+
+    s.apply_fan_rename("openfan:ch00", "Front Intake")
+    names = [a.objectName() for a in page.build_fan_menu("openfan:ch00").actions()]
+    assert "Overview_Action_resetFanName" in names
+    # The rename repainted the table without waiting for a poll.
+    assert page._fan_table.item(0, 0).text() == "Front Intake"
+
+    assert page.build_fan_menu("") is None
+
+
+def test_fan_row_shows_openfan_channel_label(qtbot):
+    """An unnamed OpenFan channel reads as a channel, not a raw daemon id."""
+    page, _ = _page(qtbot)
+    page._on_fans([FanReading(id="openfan:ch03", source="openfan", rpm=1200, age_ms=500)])
+    assert page._fan_table.item(0, 0).text() == "OpenFan CH3"
+
+
 def test_cards_render_from_status_and_caps(qtbot):
     page, _ = _page(qtbot)
     page._on_status(DaemonStatus(overall_status="ok", uptime_seconds=61))

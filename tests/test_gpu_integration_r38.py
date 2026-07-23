@@ -81,9 +81,10 @@ class TestGpuFanDisplayName:
         assert name == "My GPU"
 
     def test_non_gpu_fan_unchanged(self):
+        """A non-GPU fan never picks up GPU naming (it gets its own — DEC-227)."""
         state = _make_state()
         name = state.fan_display_name("openfan:ch00")
-        assert name == "openfan:ch00"
+        assert name == "OpenFan CH0"
 
     def test_hwmon_fan_unchanged(self):
         state = _make_state()

@@ -293,6 +293,11 @@ class DeviceDiscoveryVM:
 @dataclass(frozen=True)
 class FanRowVM:
     name: str
+    # DEC-227: stable fan/header id behind the row. The table shows no ID column,
+    # so without this the page has no way to map a right-clicked row back to the
+    # fan it names. Required, not defaulted — a row that cannot be identified
+    # should fail loudly at construction rather than silently refuse to rename.
+    fan_id: str
     source: str
     control_method: str
     control_method_tooltip: str
@@ -478,6 +483,7 @@ def build_fan_rows(
         rows.append(
             FanRowVM(
                 name=display_name(f.id),
+                fan_id=f.id,
                 source=f.source,
                 control_method=control_method,
                 control_method_tooltip=CONTROL_METHOD_TOOLTIPS.get(
@@ -505,7 +511,11 @@ def build_fan_rows(
             tip_parts.append(f"Chip: {h.chip_name}")
         rows.append(
             FanRowVM(
-                name=h.label or h.id,
+                # Resolved like any other fan row (DEC-227) rather than raw
+                # h.label: these headers are renamable too, and a rename that the
+                # row then refused to show would be the very bug this fixes.
+                name=display_name(h.id),
+                fan_id=h.id,
                 source="hwmon (PWM-only)",
                 control_method=control_method,
                 control_method_tooltip=CONTROL_METHOD_TOOLTIPS.get(

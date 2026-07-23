@@ -169,6 +169,13 @@ These belong to the daemon runtime/config:
   authoritative set is `MACHINE_SPECIFIC_KEYS` in `app_settings_service.py`;
   `fan_aliases`, `fan_zones`, and `hidden_chart_series` are kept portable. The
   full snapshot still lives in the diagnostics support bundle.
+  Because `fan_aliases` is portable it can travel to another machine, which is
+  why demo mode must never write to it — demo's synthetic fan ids collide exactly
+  with real ones (`openfan:ch00` …), so a demo-authored name would otherwise
+  overwrite a real fan's name and then be exported (DEC-227). `fan_aliases` is
+  authored from the Dashboard Sensors rail, the read-only fan cards and the
+  Overview fan table as well as the Fan Configuration Wizard; values are capped at
+  64 characters.
 - **Import merges, preserving local machine state:** imported values overlay the
   current settings, and machine-specific keys are stripped from the incoming
   data, so importing a shared (or legacy full) file never moves your window or
