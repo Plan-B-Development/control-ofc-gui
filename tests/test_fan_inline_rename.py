@@ -133,6 +133,10 @@ class TestFanFallbackName:
             ("openfan:chXX", "openfan:chXX"),
             ("openfan:ch", "openfan:ch"),
             ("openfan:other", "openfan:other"),
+            # isdigit() accepts these but int() rejects them — the channel parse
+            # must not raise on a path that runs once per fan per poll.
+            ("openfan:ch²", "openfan:ch²"),
+            ("openfan:ch½", "openfan:ch½"),
         ],
     )
     def test_openfan_channel_labels(self, fan_id, expected):
@@ -407,6 +411,71 @@ class TestFanCardRename:
         )
         qtbot.addWidget(card)
         assert card.build_rename_menu() is None
+
+
+# ── Dialog-driven surfaces (cards, Overview) ─────────────────────────
+
+
+class TestRenamePrompts:
+    """The two QInputDialog wrappers. The rule itself is covered above; what is
+    pinned here is the ``if ok:`` gate — Cancel must not rename."""
+
+    @staticmethod
+    def _answer(monkeypatch, text: str, accepted: bool) -> None:
+        from PySide6.QtWidgets import QInputDialog
+
+        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: (text, accepted))
+
+    def test_dashboard_cancel_does_not_rename(self, qtbot, monkeypatch):
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
+
+        state = AppState()
+        page = DashboardPage(state=state)
+        qtbot.addWidget(page)
+        self._answer(monkeypatch, "Typed But Cancelled", False)
+        page._rename_fan(OPENFAN)
+        assert state.fan_aliases == {}
+
+    def test_dashboard_accept_renames(self, qtbot, monkeypatch):
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
+
+        state = AppState()
+        page = DashboardPage(state=state)
+        qtbot.addWidget(page)
+        self._answer(monkeypatch, "Front Intake", True)
+        page._rename_fan(OPENFAN)
+        assert state.fan_aliases == {OPENFAN: "Front Intake"}
+
+    def test_dashboard_accepting_an_empty_name_clears(self, qtbot, monkeypatch):
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
+
+        state = AppState()
+        state.set_fan_alias(OPENFAN, "Old Name")
+        page = DashboardPage(state=state)
+        qtbot.addWidget(page)
+        self._answer(monkeypatch, "", True)
+        page._rename_fan(OPENFAN)
+        assert OPENFAN not in state.fan_aliases
+
+    def test_overview_cancel_does_not_rename(self, qtbot, monkeypatch):
+        from control_ofc.ui.pages.overview_page import OverviewPage
+
+        state = AppState()
+        page = OverviewPage(state=state)
+        qtbot.addWidget(page)
+        self._answer(monkeypatch, "Typed But Cancelled", False)
+        page._prompt_fan_rename(OPENFAN)
+        assert state.fan_aliases == {}
+
+    def test_overview_accept_renames(self, qtbot, monkeypatch):
+        from control_ofc.ui.pages.overview_page import OverviewPage
+
+        state = AppState()
+        page = OverviewPage(state=state)
+        qtbot.addWidget(page)
+        self._answer(monkeypatch, "Front Intake", True)
+        page._prompt_fan_rename(OPENFAN)
+        assert state.fan_aliases == {OPENFAN: "Front Intake"}
 
 
 # ── Demo persistence guard (data-loss regression) ────────────────────

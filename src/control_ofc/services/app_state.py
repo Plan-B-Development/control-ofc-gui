@@ -284,7 +284,11 @@ class AppState(QObject):
         # unnamed 0-RPM channel as one the user asked to keep visible.
         if fan_id.startswith(_OPENFAN_CH_PREFIX):
             channel = fan_id[len(_OPENFAN_CH_PREFIX) :]
-            if channel.isdigit():
+            # isdecimal, not isdigit: isdigit accepts superscripts and other
+            # Unicode digit forms that int() then rejects with a ValueError, on a
+            # path called once per fan per poll. The daemon only ever mints ASCII
+            # channel ids, so this is belt-and-braces rather than a live crash.
+            if channel.isdecimal():
                 return f"OpenFan CH{int(channel)}"
         for h in self.hwmon_headers:
             if h.id == fan_id:
