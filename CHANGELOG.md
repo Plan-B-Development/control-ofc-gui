@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.30.1] — 2026-07-24
+
+Corrects in-app hardware guidance that still pointed at pages and a button
+removed in the interface redesign. GUI-only, presentation layer; no contract,
+profile-schema or settings-schema change (`EXPECTED_API_VERSION` stays 1). Pairs
+with `control-ofc-daemon` (unchanged, ≥ v2.11.0).
+
+### Fixed
+- **Hardware troubleshooting advice now points at pages that exist.** The
+  driver- and chip-specific guidance on the System State page — shown for
+  dual-chip boards, missing secondary chips, and PWM-verify results — still
+  referred to the "Diagnostics page" and "Troubleshooting tab" that the interface
+  redesign replaced, and one remediation step told you to click a *Refresh
+  Hardware Diagnostics* button that no longer exists. Every reference now names
+  the **System State page**, and that step points at the **Rescan Hardware**
+  button in the footer. Wording only — the guidance itself was already correct.
+
 ## [2.30.0] — 2026-07-23
 
 Motherboard fans that showed up as `pwm1`, `pwm2`, … now get their real header

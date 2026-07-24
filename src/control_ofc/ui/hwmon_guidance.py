@@ -967,7 +967,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "AM4 400-series AORUS boards (X470 AORUS ULTRA GAMING, X470 "
             "AORUS GAMING 5/7 WIFI, B450 AORUS PRO/PRO-CF) pair the primary "
             "IT8686E with a secondary IT8792E for additional fan headers.",
-            "If the diagnostics page reports a missing chip, update "
+            "If the System State page reports a missing chip, update "
             "it87-dkms-git first — 2026-03+ builds default mmio=on and merge "
             "the ISA-bridge MMIO path that fixes secondary-chip enumeration "
             "(frankcrawford/it87 PR #95/#102). On older builds set "
@@ -989,7 +989,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "PRO/PRO WIFI/ULTRA, B550 VISION D) pair the primary IT8688E "
             "with a secondary IT8792E for additional fan headers. "
             "Single-chip variants (B550M AORUS PRO) ship only the IT8688E.",
-            "If the diagnostics page reports a missing secondary chip, "
+            "If the System State page reports a missing secondary chip, "
             "update it87-dkms-git first — 2026-03+ builds default mmio=on "
             "and merge the ISA-bridge MMIO path that fixes secondary-chip "
             "enumeration (frankcrawford/it87 PR #95/#102). On older builds "
@@ -1061,7 +1061,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "from DEC-105 only applies to SINGLE-chip boards where the "
             "chip ID 0xd450 (NCT6797D) is ambiguously claimed; on Taichi "
             "Lite each driver binds to its own physical chip.",
-            "If the diagnostics page does surface a (nct6687, nct6775) "
+            "If the System State page does surface a (nct6687, nct6775) "
             "collision banner on this board, it means only one nct6 chip "
             "enumerated — verify both chips appear in "
             "`cat /sys/class/hwmon/hwmon*/name` before changing module "
@@ -1183,7 +1183,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "asus_ec_sensors is sensor enrichment only — it never "
             "provides the PWM write path. Fan control on these boards "
             "still uses nct6798 / nct6799 via the mainline nct6775 "
-            "driver. If the diagnostics page lists no controllable "
+            "driver. If the System State page lists no controllable "
             "headers, check that nct6775 is loaded.",
             "Unlike the AMD side, ASUS Intel WMI sensor bugs (PRIME "
             "X470-PRO etc.) DO NOT apply here — asus_wmi_sensors is "
@@ -1267,7 +1267,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "XTREME) pair the primary IT8689E with a secondary "
             "IT87952E for additional fan headers — same dual-chip "
             "topology as the AMD X670E AORUS family.",
-            "If the diagnostics page reports a missing secondary chip, "
+            "If the System State page reports a missing secondary chip, "
             "update it87-dkms-git first (2026-03+ builds default mmio=on "
             "and fix secondary-chip enumeration and control via the "
             "ISA-bridge MMIO path — PR #95/#102). On older builds set "
@@ -1324,7 +1324,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "Some ASRock Z690 Taichi-class boards expose monitoring "
             "but not PWM writes via the in-kernel driver; if writes "
             "are silently ignored, follow the verify-result diagnosis "
-            "in the Diagnostics page.",
+            "in the System State page.",
         ],
     ),
 ]
@@ -1583,7 +1583,7 @@ def verification_guidance(
                 "PWM writes were accepted but fan speed did not change. On ASRock "
                 "boards, the in-kernel nct6683 driver often has incomplete write "
                 "support. Try an out-of-tree driver: nct6686d, asrock-nct6683, or "
-                "nct6687d (see Diagnostics guidance for links)."
+                "nct6687d (see the System State page for links)."
             )
         return (
             "PWM writes were accepted but the fan did not respond. This could mean "
@@ -1699,7 +1699,7 @@ def dual_chip_warning_html(
         f"&nbsp;&nbsp;3. Avoid running <code>sensors-detect</code> after boot "
         f"(it can leave the SuperIO bridge in a bad state).<br>"
         f"&nbsp;&nbsp;4. Reboot the machine.<br>"
-        f"&nbsp;&nbsp;5. Click <i>Refresh Hardware Diagnostics</i> to re-check.<br>"
+        f"&nbsp;&nbsp;5. Click <i>Rescan Hardware</i> (in the footer) to re-check.<br>"
         f"<i>⚠ {REMEDIATION_DISCLAIMER}</i><br><br>"
         f"<b>Still missing after reboot?</b> The frankcrawford/it87 "
         f'<a href="https://github.com/frankcrawford/it87/issues/70">issue #70</a> '
@@ -1760,6 +1760,6 @@ def dual_chip_verify_hint(
         "If you also have fan headers missing from the list (your board has "
         f"{len(expected_chips)} ITE chips but only "
         f"{len(expected_chips) - len(missing)} were enumerated), see the "
-        "dual-chip notice on the Troubleshooting tab — fixing the enumeration may also "
+        "dual-chip notice on the System State page — fixing the enumeration may also "
         "make this header behave."
     )

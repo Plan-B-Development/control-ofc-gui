@@ -85,11 +85,11 @@ _DOC: dict[str, tuple[str, str]] = {
 
 
 # ── Actions (deep-link / in-surface / tab-switch — never an inert string) ────
-# Opaque targets the Diagnostics page routes on:
+# Opaque targets the Hardware page routes on:
 #   "preferred_cpu" | "preferred_mb" → cross-page deep-link to Settings
 #   "superio"                        → in-surface scroll to the Super-I/O section
 #   "pwm_verify"                     → switch to the existing PWM-verify workflow
-#   "sensors"                        → switch to the Diagnostics ▸ Sensors tab
+#   "sensors"                        → switch to the Overview page (sensor table)
 def _action_for(code: str) -> ActionSpec:
     if code in ("cpu_sensor_missing", "cpu_default_low_confidence", "selected_cpu_sensor_missing"):
         return ActionSpec(ACTION_DEEP_LINK, "Pick a CPU sensor", "preferred_cpu")

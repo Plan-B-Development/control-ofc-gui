@@ -6,7 +6,8 @@ directly by the 1 Hz poll (`AppState` signals). Full parity with the Sensors tab
 hide/unhide, mirror-to-dashboard, coolant + preferred-sensor right-click, the
 Details dialog (double-click / right-click / Enter), the summary line, and the
 DEC-193 unavailable panel — all on the same shared services, so hiding/overriding
-here or on the (still-present) Diagnostics tab reflects on both.
+here reflects on every other live surface rendering the same sensors (and vice
+versa), via ``AppState`` signals.
 """
 
 from __future__ import annotations
@@ -125,8 +126,8 @@ class OverviewPage(QWidget):
             state.status_updated.connect(self._on_status)
             state.sensors_updated.connect(self._on_sensors)
             state.fans_updated.connect(self._on_fans)
-            # A classification override set on the Diagnostics Sensors tab (or
-            # here) re-renders this table so both surfaces stay in step.
+            # A classification override set from any sensor surface (here, or
+            # elsewhere) re-renders this table so every surface stays in step.
             state.sensor_class_override_changed.connect(lambda *_: self._render_sensors_table())
             # DEC-227: a rename from any surface repaints this table immediately
             # instead of leaving a stale name until the next poll. Bound method,
