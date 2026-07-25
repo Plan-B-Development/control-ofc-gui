@@ -51,9 +51,12 @@ jobs:
       matrix:
         # >=3.12 is the supported floor; 3.13 guards one version ahead. 3.14 is
         # the local dev version, added as a NON-BLOCKING (continue-on-error) leg
-        # until PySide6 cp314 wheels are confirmed green on the runner — the plain
-        # teardown SIGSEGV is a local-host GC race and CI is unaffected. Promote it
-        # to a blocking leg once it has been green for a few runs.
+        # until PySide6 cp314 wheels are confirmed green on the runner.
+        # NOTE: the PySide6/shiboken cyclic-GC teardown SIGSEGV is a KNOWN, OPEN
+        # flaky-CI defect — it has intermittently reddened the py3.12 leg and is
+        # NOT local-only (corrected 2026-07-25). A green run is not proof of a fix;
+        # it is tracked for its own investigation. Promote 3.14 to blocking only
+        # once cp314 is green for several runs AND that defect is resolved.
         python: ['3.12', '3.13']
         include:
           - python: '3.14'
