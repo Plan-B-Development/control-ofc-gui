@@ -46,3 +46,9 @@ AUDIT_*.md
 # Design authority + mockups driving the v2.22.0 redesign (DEC-208…216).
 # Working material, superseded by the shipped UI and screenshots/auto/.
 gui-redesign/
+
+# Curator working ledgers — local research notes, intended-untracked (superio-curator
+# skill). Gitignored 2026-07-25 (decruft E3) so `git add -A` can't sweep them into a
+# commit. Revert these two lines if they should ever be tracked.
+/RESEARCH_SOURCES.md
+/docs/linux-superio-knowledge-curator.md
