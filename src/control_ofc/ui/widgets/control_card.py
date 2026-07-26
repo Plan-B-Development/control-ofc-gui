@@ -107,6 +107,10 @@ class ControlCard(QFrame):
         )
         row1.addWidget(self._role_icon)
         self._name_label = QLabel(control.name or "Unnamed")
+        # DEC-231: control names come from the profile (untrusted) — render
+        # verbatim so stray markup can never be reinterpreted as rich text
+        # (matches fan_control_card + warnings_view).
+        self._name_label.setTextFormat(Qt.TextFormat.PlainText)
         self._name_label.setStyleSheet("font-weight: bold; background: transparent;")
         self._name_label.setObjectName(f"ControlCard_Label_{control.id}")
         row1.addWidget(self._name_label)
@@ -158,6 +162,9 @@ class ControlCard(QFrame):
         curve_name = self._curve_name(curves, control.curve_id)
         mode_text = "Manual" if control.mode == ControlMode.MANUAL else curve_name
         self._curve_label = QLabel(f"Curve: {mode_text}")
+        # DEC-231: the curve name is profile-authored (untrusted) — PlainText so
+        # stray markup is never reinterpreted as rich text.
+        self._curve_label.setTextFormat(Qt.TextFormat.PlainText)
         self._curve_label.setProperty("class", "CardMeta")
         self._curve_label.setStyleSheet("background: transparent;")
         self._curve_label.setObjectName(f"ControlCard_Label_curve_{control.id}")
@@ -445,6 +452,7 @@ class ControlCard(QFrame):
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(4)
             name = QLabel(self._display_name(member.member_id, member.member_label))
+            name.setTextFormat(Qt.TextFormat.PlainText)  # DEC-231: untrusted alias/label
             self._member_row_name[member.member_id] = name
             name.setProperty("class", "CardMeta")
             name.setStyleSheet("background: transparent;")

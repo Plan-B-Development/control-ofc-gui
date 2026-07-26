@@ -55,7 +55,7 @@ from control_ofc.api.models import (
     parse_status,
     parse_superio_report,
 )
-from control_ofc.constants import API_TIMEOUT_S, DEFAULT_SOCKET_PATH
+from control_ofc.constants import API_TIMEOUT_S, DEFAULT_SOCKET_PATH, VERIFY_TIMEOUT_S
 
 BASE_URL = "http://localhost"
 
@@ -351,7 +351,7 @@ class DaemonClient:
         under load is ~7.5 s, so we send a 12 s per-call timeout regardless of
         the global default. See DEC-098 / DEC-101 / DEC-165.
         """
-        data = self._post(f"/hwmon/{header_id}/verify", timeout=12.0)
+        data = self._post(f"/hwmon/{header_id}/verify", timeout=VERIFY_TIMEOUT_S)
         return parse_hwmon_verify_result(data)
 
     def active_profile(self) -> ActiveProfileInfo | None:
@@ -494,6 +494,6 @@ class DaemonClient:
         data = self._post(
             f"/gpu/{gpu_id}/fan/verify",
             json={},
-            timeout=12.0,
+            timeout=VERIFY_TIMEOUT_S,
         )
         return parse_gpu_verify_result(data)

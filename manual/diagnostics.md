@@ -91,7 +91,7 @@ Hover any cell for a tooltip explaining what the value means and, for read-only 
 
 ![System State page](../screenshots/auto/04_system_state.png)
 
-The **System State** page is the **Hardware Readiness** health report — it answers *"is my fan-control hardware healthy, and if not, how do I fix it?"*. It fetches `/diagnostics/hardware` automatically the first time you open the page (or on demand via **Refresh Hardware Diagnostics**).
+The **System State** page is the **Hardware Readiness** health report — it answers *"is my fan-control hardware healthy, and if not, how do I fix it?"*. It fetches `/diagnostics/hardware` automatically the first time you open the page (or on demand via the global footer's **Rescan Hardware** action).
 
 It leads with the answer and keeps the detail one click away:
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.30.2] — 2026-07-26
+
+Remediation from the 2026-07-26 full cross-stack audit (0 P0, no confirmed live bugs): test
+hardening, one behavioural fix, untrusted-label hardening, and doc/comment truth. GUI-only,
+presentation/tests/docs layer; no contract change (`EXPECTED_API_VERSION` stays 1). Pairs with
+`control-ofc-daemon` (patch v2.12.3, ≥ v2.11.0). DEC-231.
+
+### Fixed
+- **Transient hardware-readiness errors are now retryable, not dead-ends (DEC-231).** A `503
+  hardware_unavailable` from the daemon's hardware-readiness scan (a momentary busy / not-ready
+  state) now surfaces as the retryable "unavailable" state instead of a hard error.
+- **Untrusted profile strings render verbatim (DEC-231).** Control names, member aliases/labels,
+  curve names, and dialog titles now render as plain text, so stray markup in an imported profile
+  can never be reinterpreted as rich text (matching the existing fan-card / warnings convention).
+
+### Changed
+- **The safety-floor UI path is now regression-guarded (DEC-231).** The Controls member-edit
+  accept path — which reapplies the role-aware 30% CPU/pump minimum when membership changes — is
+  now covered by a mutation-verified test, alongside real behavioural coverage for several other
+  previously under-tested UI paths.
+- **Documentation truth (DEC-231).** Swept stale "Refresh Hardware Diagnostics" references to the
+  current footer **Rescan Hardware** action across the manual and docs, and corrected the
+  GPU-reset contract wording and the hwmon-label-resolver docstring.
+
 ## [2.30.1] — 2026-07-26
 
 Corrects in-app hardware guidance that still pointed at pages and a button
@@ -173,7 +197,8 @@ Fixes an accidental background leak that made text on the dashboard fan cards
 appear on a darker inset panel instead of flush on the card surface (DEC-225),
 and refreshes the fan-card metrics to sit flush with subtle 1px hairline
 dividers. GUI-only, presentation layer; no contract change
-(`EXPECTED_API_VERSION` stays 1). Pairs with `control-ofc-daemon` (unchanged).
+(`EXPECTED_API_VERSION` stays 1). Pairs with `control-ofc-daemon` (unchanged,
+≥ v2.11.0).
 
 ### Fixed
 - **App-wide `app_bg` background leak (DEC-225).** The global `QWidget`

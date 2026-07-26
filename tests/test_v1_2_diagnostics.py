@@ -511,23 +511,23 @@ class TestVerifyTimingConstantsDec101:
     """
 
     def test_http_timeout_exceeds_daemon_verify_wait_with_slack(self):
-        # The verify HTTP call is hard-coded to a 12 s per-call timeout so
-        # the global API_TIMEOUT_S can stay aggressive for fast endpoints.
-        # We assert the literal here so a future drift to <8 s is caught.
+        # The verify HTTP calls use the shared VERIFY_TIMEOUT_S constant (DEC-231,
+        # was a bare 12.0 literal) so the global API_TIMEOUT_S can stay aggressive
+        # for fast endpoints. Assert the constant's value so a future drift below
+        # the daemon's 6 s wait + slack is caught, and that verify_hwmon_pwm is
+        # actually wired to it.
         import inspect
 
         from control_ofc.api.client import DaemonClient
+        from control_ofc.constants import VERIFY_TIMEOUT_S
 
-        src = inspect.getsource(DaemonClient.verify_hwmon_pwm)
-        # Look for the explicit timeout=NN.N kwarg.
-        import re
-
-        m = re.search(r"timeout\s*=\s*(\d+(?:\.\d+)?)", src)
-        assert m is not None, "verify_hwmon_pwm must pass an explicit timeout"
-        timeout_value = float(m.group(1))
-        assert timeout_value >= 9.0, (
-            f"verify_hwmon_pwm timeout={timeout_value} s must be ≥ 9 s "
+        assert VERIFY_TIMEOUT_S >= 9.0, (
+            f"VERIFY_TIMEOUT_S={VERIFY_TIMEOUT_S} s must be ≥ 9 s "
             f"(daemon verify wait 6 s + ~3 s round-trip slack). DEC-101."
+        )
+        src = inspect.getsource(DaemonClient.verify_hwmon_pwm)
+        assert "timeout=VERIFY_TIMEOUT_S" in src, (
+            "verify_hwmon_pwm must pass timeout=VERIFY_TIMEOUT_S"
         )
 
 

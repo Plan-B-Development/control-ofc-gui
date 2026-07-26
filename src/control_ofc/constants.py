@@ -11,6 +11,11 @@ except PackageNotFoundError:
 # Daemon IPC
 DEFAULT_SOCKET_PATH = "/run/control-ofc/control-ofc.sock"
 API_TIMEOUT_S = 5.0
+# Per-call timeout for the hwmon/GPU fan-verify endpoints: the daemon sleeps
+# VERIFY_WAIT_SECONDS = 6 s between the test write and readback (DEC-101), and
+# the worst-case round-trip under load is ~7.5 s, so these calls need a longer
+# budget than API_TIMEOUT_S (DEC-231: was a bare 12.0 literal at two call sites).
+VERIFY_TIMEOUT_S = 12.0
 
 # Contract version this GUI is built against. Compared on the first
 # /capabilities response against the daemon's reported ``api_version``; a

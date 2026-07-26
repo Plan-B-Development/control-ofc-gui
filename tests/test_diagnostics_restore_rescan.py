@@ -49,18 +49,82 @@ def test_hwmon_rescan_empty_headers():
 # ── Worker signal surface ────────────────────────────────────────────
 
 
-def test_gpu_worker_has_reset_slot_and_signals():
+def test_do_reset_emits_reset_ok_on_success():
+    """DEC-231: exercise do_reset (was an existence-only ``callable`` check) — a
+    successful reset forwards the client result on reset_ok."""
     worker = _GpuVerifyWorker("/tmp/x.sock")
-    assert hasattr(worker, "reset_ok")
-    assert hasattr(worker, "reset_error")
-    assert callable(worker.do_reset)
+    result = MagicMock()
+    worker._client = MagicMock(reset_gpu_fan=MagicMock(return_value=result))
+    got = []
+    worker.reset_ok.connect(got.append)
+
+    worker.do_reset("0000:2d:00.0")
+
+    worker._client.reset_gpu_fan.assert_called_once_with("0000:2d:00.0")
+    assert got == [result]
 
 
-def test_hw_diag_worker_has_rescan_slot_and_signals():
+def test_do_reset_maps_timeout_to_unavailable():
+    from control_ofc.api.errors import DaemonTimeout
+
+    worker = _GpuVerifyWorker("/tmp/x.sock")
+    worker._client = MagicMock(reset_gpu_fan=MagicMock(side_effect=DaemonTimeout("slow")))
+    cats = []
+    worker.reset_error.connect(lambda cat, _msg: cats.append(cat))
+
+    worker.do_reset("gpu")
+
+    assert cats == ["unavailable"]
+
+
+def test_do_rescan_emits_rescan_ok_with_headers():
+    """DEC-231: exercise do_rescan (was an existence-only ``callable`` check)."""
     worker = _HwDiagWorker("/tmp/x.sock")
-    assert hasattr(worker, "rescan_ok")
-    assert hasattr(worker, "rescan_error")
-    assert callable(worker.do_rescan)
+    headers = [MagicMock()]
+    worker._client = MagicMock(hwmon_rescan=MagicMock(return_value=headers))
+    got = []
+    worker.rescan_ok.connect(got.append)
+
+    worker.do_rescan()
+
+    worker._client.hwmon_rescan.assert_called_once_with()
+    assert got == [headers]
+
+
+def test_do_rescan_maps_daemon_error_to_error_category():
+    from control_ofc.api.errors import DaemonError
+
+    worker = _HwDiagWorker("/tmp/x.sock")
+    worker._client = MagicMock(
+        hwmon_rescan=MagicMock(
+            side_effect=DaemonError(status=500, code="internal_error", message="boom")
+        )
+    )
+    errs = []
+    worker.rescan_error.connect(lambda cat, msg: errs.append((cat, msg)))
+
+    worker.do_rescan()
+
+    assert errs == [("error", "boom")]
+
+
+def test_do_reset_maps_daemon_error_to_error_category():
+    """do_reset has no 'unsupported' arm — a 404/other DaemonError is a real
+    error (the reset route predates every supported daemon)."""
+    from control_ofc.api.errors import DaemonError
+
+    worker = _GpuVerifyWorker("/tmp/x.sock")
+    worker._client = MagicMock(
+        reset_gpu_fan=MagicMock(
+            side_effect=DaemonError(status=500, code="internal_error", message="boom")
+        )
+    )
+    errs = []
+    worker.reset_error.connect(lambda cat, msg: errs.append((cat, msg)))
+
+    worker.do_reset("gpu")
+
+    assert errs == [("error", "boom")]
 
 
 # ── Demo stubs ───────────────────────────────────────────────────────

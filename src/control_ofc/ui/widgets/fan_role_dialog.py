@@ -238,6 +238,8 @@ class FanRoleDialog(ModalDialog):
             return holder
         for i, member in enumerate(members):
             chip = QLabel(self._display_name(member.member_id, member.member_label))
+            chip.setTextFormat(Qt.TextFormat.PlainText)  # DEC-231: untrusted alias/label
+            chip.setObjectName(f"FanRoleDialog_Chip_member_{member.member_id}")
             chip.setProperty("class", "CardMeta")
             chip.setToolTip(member.member_id)
             grid.addWidget(chip, i // 2, i % 2)
@@ -277,6 +279,8 @@ class FanRoleDialog(ModalDialog):
         for m in gpu_members:
             row = QHBoxLayout()
             label = QLabel(self._display_name(m.member_id, m.member_label))
+            label.setTextFormat(Qt.TextFormat.PlainText)  # DEC-231: untrusted alias/label
+            label.setObjectName(f"FanRoleDialog_Label_gpuMember_{m.member_id}")
             row.addWidget(label, 1)
             check = QCheckBox("Allow zero-RPM idle")
             check.setObjectName(f"FanRoleDialog_Check_zeroRpm_{m.member_id}")

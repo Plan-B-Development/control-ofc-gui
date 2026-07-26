@@ -290,3 +290,121 @@ def test_set_theme_does_not_raise(qtbot):
     page._on_fans([FanReading(id="openfan:ch00", source="openfan", rpm=1, age_ms=500)])
     page.set_theme(None)
     assert page._sensor_table.rowCount() == 1
+
+
+# ── DEC-231: sensor context-menu dispatcher (was untested — the effects were
+# tested via their methods, but the menu assembly that routes to them was not).
+# Driven deterministically: indexAt/row-resolution are patched so no live table
+# geometry is needed, and QMenu.exec is captured instead of shown.
+
+
+class _FakeIndex:
+    def __init__(self, row: int) -> None:
+        self._row = row
+
+    def row(self) -> int:
+        return self._row
+
+
+def _install_fake_menu(monkeypatch):
+    """Swap the QMenu the overview module builds with a non-blocking fake that
+    records the actions it was given (patching QMenu.exec on the class does not
+    intercept the PySide6 slot). Returns the list of menus created."""
+    from control_ofc.ui.pages import overview_page
+
+    created: list = []
+
+    class _FakeMenu:
+        def __init__(self, *_a, **_k):
+            self._actions: list = []
+            created.append(self)
+
+        def addAction(self, action):
+            self._actions.append(action)
+
+        def addSeparator(self):
+            return None
+
+        def actions(self):
+            return list(self._actions)
+
+        def exec(self, *_a):
+            return None
+
+    monkeypatch.setattr(overview_page, "QMenu", _FakeMenu)
+    return created
+
+
+def _action_names(menu) -> list:
+    return [a.objectName() for a in menu.actions()]
+
+
+def test_sensor_context_menu_visible_sensor_offers_detail_and_hide(qtbot, monkeypatch):
+    from PySide6.QtCore import QPoint
+
+    page, _ = _page(qtbot)
+    sensor = _sensor()
+    monkeypatch.setattr(page._sensor_table, "indexAt", lambda _pos: _FakeIndex(0))
+    monkeypatch.setattr(page, "_is_hidden_toggle_row", lambda _row: False)
+    monkeypatch.setattr(page, "_row_to_sensor", lambda _row: sensor)
+    monkeypatch.setattr(page, "_hidden_sensor_ids", lambda: set())
+    monkeypatch.setattr(page, "_sensor_overrides", lambda: {})
+    created = _install_fake_menu(monkeypatch)
+
+    page._on_sensor_context_menu(QPoint(1, 1))
+
+    # No client on this page → the preferred-sensor actions are omitted.
+    assert _action_names(created[-1]) == [
+        "Overview_Action_openDetail",
+        "Overview_Action_hideSensor",
+        "Overview_Action_treatAsCoolant",
+    ]
+
+
+def test_sensor_context_menu_hidden_sensor_offers_unhide(qtbot, monkeypatch):
+    from PySide6.QtCore import QPoint
+
+    page, _ = _page(qtbot)
+    sensor = _sensor()
+    monkeypatch.setattr(page._sensor_table, "indexAt", lambda _pos: _FakeIndex(0))
+    monkeypatch.setattr(page, "_is_hidden_toggle_row", lambda _row: False)
+    monkeypatch.setattr(page, "_row_to_sensor", lambda _row: sensor)
+    monkeypatch.setattr(page, "_hidden_sensor_ids", lambda: {sensor.id})
+    monkeypatch.setattr(page, "_sensor_overrides", lambda: {})
+    created = _install_fake_menu(monkeypatch)
+
+    page._on_sensor_context_menu(QPoint(1, 1))
+
+    assert _action_names(created[-1]) == [
+        "Overview_Action_openDetail",
+        "Overview_Action_unhideSensor",
+        "Overview_Action_treatAsCoolant",
+    ]
+
+
+def test_sensor_context_menu_negative_row_shows_nothing(qtbot, monkeypatch):
+    from PySide6.QtCore import QPoint
+
+    page, _ = _page(qtbot)
+    monkeypatch.setattr(page._sensor_table, "indexAt", lambda _pos: _FakeIndex(-1))
+    created = _install_fake_menu(monkeypatch)
+
+    page._on_sensor_context_menu(QPoint(1, 1))
+
+    assert created == []  # early return: no menu built
+
+
+def test_sensor_context_menu_row_with_no_sensor_shows_nothing(qtbot, monkeypatch):
+    # A valid (non-negative) row whose _row_to_sensor resolves to None (e.g. a
+    # spacer/placeholder row) must hit the `sensor is None` early exit.
+    from PySide6.QtCore import QPoint
+
+    page, _ = _page(qtbot)
+    monkeypatch.setattr(page._sensor_table, "indexAt", lambda _pos: _FakeIndex(0))
+    monkeypatch.setattr(page, "_is_hidden_toggle_row", lambda _row: False)
+    monkeypatch.setattr(page, "_row_to_sensor", lambda _row: None)
+    created = _install_fake_menu(monkeypatch)
+
+    page._on_sensor_context_menu(QPoint(1, 1))
+
+    assert created == []  # sensor-is-None early exit: no menu built

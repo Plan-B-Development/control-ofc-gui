@@ -304,6 +304,9 @@ class ControlsPage(QWidget):
         self._manual_intent: set[str] = set()
         self._override_thread: QThread | None = None
         self._override_worker: _OverrideWorker | None = None
+        # DEC-231: set by cleanup(); guards the queued take/renew result slots
+        # from mutating torn-down state if a result is delivered post-teardown.
+        self._is_shut_down = False
         if self._client is not None:
             self._override_worker = _OverrideWorker(self._client.socket_path)
             self._override_worker.take_result.connect(self._on_take_result)
@@ -545,6 +548,7 @@ class ControlsPage(QWidget):
         """Deterministically tear down the always-mounted curve editor's
         pyqtgraph scene (DEC-180 lineage) and the DEC-220 override worker thread.
         Idempotent — the editor latches and the thread teardown nulls itself."""
+        self._is_shut_down = True  # DEC-231: reject any post-cleanup queued result
         # Defence-in-depth: stop the override timers so no queued renew/flush
         # fires mid-teardown (the daemon deadman already covers correctness).
         self._override_renew_timer.stop()
@@ -1883,6 +1887,8 @@ class ControlsPage(QWidget):
 
     def _on_take_result(self, control_id: str, _pct: int, grant: object, error: object) -> None:
         """Main-thread handler for a completed override_take (DEC-220)."""
+        if self._is_shut_down:  # DEC-231: a result queued before cleanup()
+            return
         if error is not None:
             self._manual_intent.discard(control_id)
             self._log.warning(
@@ -1960,12 +1966,18 @@ class ControlsPage(QWidget):
         take is valid, so the rejection is a self-inflicted race and must be
         ignored, never treated as a lapse (else the card reverts while the daemon
         keeps the fan pinned until the deadman)."""
+        if self._is_shut_down:  # DEC-231: a result queued before cleanup()
+            return
         self._renew_in_flight.discard(control_id)
         if error is not None:
             if self._overrides.get(control_id) != sent_token:
-                # Superseded by our own re-pin — the newer token renews next cycle.
+                # DEC-231: the held token changed while this renew was in flight —
+                # a newer re-pin (renews next cycle) or a release. Either way it is
+                # not a lapse of a still-held override, so ignore the rejection.
                 self._log.debug(
-                    "Ignoring stale renew rejection on %s (self-superseded)", control_id
+                    "Ignoring stale renew rejection on %s "
+                    "(held token changed — re-pinned or released)",
+                    control_id,
                 )
                 return
             self._log.info("Override on %s lapsed (%s) — reverting card", control_id, error.code)

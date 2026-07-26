@@ -92,7 +92,7 @@ Three GUI features turn the concepts above into concrete answers, all on the **S
 
 - **Hardware Readiness** — names your board and Super I/O chip, says which driver each chip needs and whether it is loaded, counts writable headers, and flags BIOS interference and ACPI conflicts. Start here.
 - **Test PWM Control** — writes a known value to a header you choose, waits a few seconds, and reports what actually happened: control works, the BIOS reverted it, or the value was ignored. This is how you confirm a header is genuinely controllable instead of guessing.
-- **Rescan / Refresh Hardware Diagnostics** — re-checks the hardware after you load a driver or change a BIOS setting.
+- **Rescan Hardware** — re-checks the hardware after you load a driver or change a BIOS setting.
 
 [Hardware Troubleshooting](hardware-troubleshooting.md) explains how to read each part of these reports.
 

@@ -281,6 +281,19 @@ class _HardwareReadinessWorker(_SocketWorker):
                     "unsupported",
                     "This daemon version does not provide the combined hardware-readiness report.",
                 )
+            elif (
+                getattr(e, "status", None) == 503
+                or getattr(e, "code", "") == "hardware_unavailable"
+            ):
+                # DEC-231: 503 hardware_unavailable is a transient, retryable soft
+                # state (the daemon's hardware scan is momentarily busy / not
+                # ready), not a hard error — surface it as 'unavailable' so it
+                # reads as "try again", consistent with the timeout/daemon-down
+                # arms above, rather than a dead-end error.
+                self.fetch_error.emit(
+                    "unavailable",
+                    "Hardware readiness temporarily unavailable — try again shortly.",
+                )
             else:
                 self.fetch_error.emit("error", e.message)
         except (ConnectionError, OSError) as e:

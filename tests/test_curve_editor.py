@@ -596,6 +596,7 @@ class TestCurveEditorTeardown:
         ev = QMouseEvent(
             QEvent.Type.MouseButtonPress,
             QPointF(10.0, 10.0),
+            QPointF(10.0, 10.0),  # globalPos — non-deprecated 6-arg ctor (DEC-231)
             Qt.MouseButton.RightButton,
             Qt.MouseButton.RightButton,
             Qt.KeyboardModifier.NoModifier,

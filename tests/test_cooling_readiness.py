@@ -257,6 +257,29 @@ def test_worker_404_signals_unsupported():
     assert cats == ["unsupported"]
 
 
+def test_worker_503_hardware_unavailable_signals_unavailable():
+    """DEC-231: a 503 hardware_unavailable is a transient, retryable soft state —
+    surfaced as 'unavailable' (like the timeout/daemon-down arms), not a hard
+    'error'. Both trigger conditions (503 status, hardware_unavailable code) map
+    to 'unavailable'."""
+    from control_ofc.api.errors import DaemonError
+
+    def _category(err):
+        w = _worker(_WorkerClient(error=err))
+        cats = []
+        w.fetch_error.connect(lambda cat, _msg: cats.append(cat))
+        w.do_fetch()
+        return cats
+
+    assert _category(DaemonError(status=503, code="hardware_unavailable", message="x")) == [
+        "unavailable"
+    ]
+    assert _category(DaemonError(status=503, code="other", message="x")) == ["unavailable"]
+    assert _category(DaemonError(status=0, code="hardware_unavailable", message="x")) == [
+        "unavailable"
+    ]
+
+
 def test_worker_probe_uses_dedicated_signals():
     w = _worker(_WorkerClient(superio=SuperIoReport(arch_supported=True, chips=[_unbound_chip()])))
     got = []

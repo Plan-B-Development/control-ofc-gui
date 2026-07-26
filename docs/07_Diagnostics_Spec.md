@@ -386,8 +386,10 @@ top-to-bottom:
   cycle, and repeats the daemon's caveat that new fan-*control* hardware still
   requires a daemon restart; a successful rescan pushes the fresh header list
   through `AppState.set_hwmon_headers` and chains a `/diagnostics/hardware`
-  refetch), and *Refresh Hardware Diagnostics* (GUI-side refetch only). These
-  actions all live in the System State page's header action row.
+  refetch). *Rescan Hardware* is now the application's global-footer action
+  (DEC-216, relocated from the retired Diagnostics page); the separate
+  *Refresh Hardware Diagnostics* GUI-side refetch button was removed in the
+  same redesign — the footer rescan's chained refetch supersedes it.
 - **Verdict banner** (DEC-113) — always visible, traffic-light coloured.
 - **Blocking-alert stack** — module collisions, module conflicts, and the
   BIOS-interference headline (those that mean "do not write PWM until resolved"

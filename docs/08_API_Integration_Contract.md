@@ -863,7 +863,7 @@ the daemon's 105 °C `force_all` (and the no-sensor 40 % fallback) drives every 
 hwmon header directly, spinning a stalled pump back up regardless of standing identify-stops.
 
 ### GPU fan reset
-- `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM). **AMD GPUs only** — an `nvidia_gpu:` / `intel_gpu:` BDF returns `404 validation_error` (read-only fans).
+- `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM). **AMD GPUs only** — `gpu_id` is a bare PCI BDF; a BDF that resolves to an NVIDIA/Intel GPU (read-only fans) is not among the daemon's AMD GPUs, so it returns `404 validation_error` ("GPU not found").
   - GUI caller: the System State page's *Restore GPU Fan to Automatic* (DEC-147 — disabled
     while the **active profile** owns an `amd_gpu:` member, since the daemon is actively driving it).
 

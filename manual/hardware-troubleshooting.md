@@ -4,7 +4,7 @@ This page covers the **Hardware Readiness** report on the **System State** page 
 
 > **Quick navigation**
 > - The Hardware Readiness report lives on the **System State** page.
-> - Click **Refresh Hardware Diagnostics** in the page header to fetch current state from the daemon.
+> - Click **Rescan Hardware** in the global footer to fetch current state from the daemon.
 > - Click **Test PWM Control** to run a ~6-second write test against a selected motherboard header.
 > - Click **Test GPU Fan Control** to verify an AMD GPU fan actually responds (~6 s, no lease).
 
@@ -206,7 +206,7 @@ The fix, in order:
 2. Only on older (pre-2026-03) builds: create `/etc/modprobe.d/it87.conf` containing `options it87 mmio=on`.
 3. Avoid running `sensors-detect` after boot.
 4. Reboot.
-5. Click **Refresh Hardware Diagnostics** — the chips table should now list both ITE chips and `total_headers` should match what the board physically exposes.
+5. Click **Rescan Hardware** — the chips table should now list both ITE chips and `total_headers` should match what the board physically exposes.
 
 If the warning persists after these steps, see the upstream tracker thread at [frankcrawford/it87 issue #70](https://github.com/frankcrawford/it87/issues/70) for board-specific notes.
 

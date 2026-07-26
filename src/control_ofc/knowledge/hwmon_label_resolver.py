@@ -1,11 +1,15 @@
 """Hwmon header label resolver (A3).
 
-Three-tier resolution for the human-readable label of a motherboard PWM
+Multi-tier resolution for the human-readable label of a motherboard PWM
 header. Used when neither the user alias nor the daemon-supplied sysfs
 label produces a useful name — the it87 driver, in particular, does not
 expose ``pwmN_label`` / ``fanN_label`` files for most Gigabyte boards,
 so without this resolver the user sees ``pwm1`` etc. on the X870E AORUS
 MASTER instead of CPU_FAN / SYS_FAN1 / SYS_FAN2 …
+
+This is the **hwmon** slice of the global fan-name tier list in
+``docs/08_API_Integration_Contract.md`` (which also covers GPU-model and
+OpenFan-channel sources, DEC-227); the tiers below are the hwmon-only subset.
 
 Priority (callers should check 1 first):
 
@@ -578,13 +582,11 @@ def resolve_hwmon_header_label(
     ) or resolve_label_from_libsensors(chip_name, pwm_key, paths=sensors_paths)
     if label:
         return label
-    # Tier 4 — fallback table. Same fan/pwm preference for consistency.
+    # Tier 4 — fallback table. Its keys are exclusively ``pwm{N}`` (unlike the
+    # libsensors tier, communities never key this in-repo table by ``fan{N}``),
+    # so a ``fan{N}`` lookup here can never match — query ``pwm{N}`` only. If a
+    # future table entry is ever keyed by ``fan{N}``, restore the fan-first probe.
     label = resolve_label_from_fallback(
-        vendor=board_vendor,
-        board_name=board_name,
-        chip_name=chip_name,
-        sensor_name=fan_key,
-    ) or resolve_label_from_fallback(
         vendor=board_vendor,
         board_name=board_name,
         chip_name=chip_name,

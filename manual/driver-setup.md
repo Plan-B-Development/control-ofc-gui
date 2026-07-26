@@ -17,7 +17,7 @@ If you already know your way around DKMS and modprobe, the condensed reference l
 Many boards work out of the box with mainline kernel drivers. Check first:
 
 1. Start the GUI and open the **System State** page.
-2. Click **Refresh Hardware Diagnostics**.
+2. Click **Rescan Hardware**.
 3. Look at the **Hardware Readiness** summary line.
 
 If it reports your PWM headers with a non-zero **writable** count and no issues, you are done — no driver work needed. If it reports *"No hwmon chips detected"*, *"All PWM headers are read-only"*, or a chips-table row whose status says **"not loaded — install …"**, continue below.
@@ -111,7 +111,7 @@ Boot-time loading is already handled for you: the `control-ofc-daemon` package s
 Then verify end-to-end in the GUI:
 
 1. **Restart the daemon** so it adopts the new chip's PWM headers: `sudo systemctl restart control-ofc-daemon`. (A **Rescan Hardware** click on the **System State** page is enough when you only need the chip's *sensors* — fan-control headers are discovered at daemon startup only.)
-2. **System State → Refresh Hardware Diagnostics** — the chips table should show your chip as *loaded* and the header count should match what the board physically has.
+2. **System State → Rescan Hardware** — the chips table should show your chip as *loaded* and the header count should match what the board physically has.
 3. Run **Test PWM Control** on a *non-critical chassis fan* header (not CPU/pump). A **"PWM control is working correctly"** result is the finish line.
 4. If the test reports the BIOS reverting control, go to Step 5.
 

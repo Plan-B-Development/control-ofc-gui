@@ -60,6 +60,11 @@ class ModalDialog(QDialog):
         header.setObjectName("ModalDialog_Header")
         h_layout = QHBoxLayout(header)
         self._title = QLabel(title, header)
+        # DEC-231: dialog titles can embed profile/control names (untrusted, e.g.
+        # "Edit Fan Role: {control.name}") — render verbatim so markup is never
+        # reinterpreted as rich text. Closes the title for every ModalDialog.
+        self._title.setTextFormat(Qt.TextFormat.PlainText)
+        self._title.setObjectName("ModalDialog_Label_title")
         self._title.setProperty("class", "PageSubtitle")
         h_layout.addWidget(self._title)
         h_layout.addStretch(1)
