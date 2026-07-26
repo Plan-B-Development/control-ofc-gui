@@ -1,11 +1,12 @@
 # Changelog
 
-## [2.30.1] — 2026-07-24
+## [2.30.1] — 2026-07-26
 
 Corrects in-app hardware guidance that still pointed at pages and a button
-removed in the interface redesign. GUI-only, presentation layer; no contract,
-profile-schema or settings-schema change (`EXPECTED_API_VERSION` stays 1). Pairs
-with `control-ofc-daemon` (unchanged, ≥ v2.11.0).
+removed in the interface redesign, and fixes an intermittent test-suite/CI crash
+(DEC-230). GUI-only; no contract, profile-schema or settings-schema change
+(`EXPECTED_API_VERSION` stays 1). Pairs with `control-ofc-daemon` (unchanged,
+≥ v2.11.0).
 
 ### Fixed
 - **Hardware troubleshooting advice now points at pages that exist.** The
@@ -16,6 +17,20 @@ with `control-ofc-daemon` (unchanged, ≥ v2.11.0).
   Hardware Diagnostics* button that no longer exists. Every reference now names
   the **System State page**, and that step points at the **Rescan Hardware**
   button in the footer. Wording only — the guidance itself was already correct.
+
+### Internal
+- **Fixed the intermittent test-suite teardown crash (DEC-230).** The GUI test
+  suite could SIGSEGV at teardown — a shiboken use-after-free from Qt widgets that
+  pytest-qt left undestroyed and the garbage collector then finalized in an unsafe
+  order — which had begun to redden the Python 3.12 CI leg. An autouse fixture now
+  flushes Qt's `DeferredDelete` events at teardown so widget trees are destroyed
+  deterministically; the proven-ineffective `gc.disable()` / `COVERAGE_CORE=sysmon`
+  workaround is retired, and CI gains a blocking hostile-allocator canary as a
+  standing regression guard. Test-infrastructure and CI only — no change to the
+  shipped application.
+- Development tooling: the cross-repo parity check now also byte-guards
+  `role_classification.json` (the DEC-162 role-floor oracle), and the curator
+  working ledgers are gitignored.
 
 ## [2.30.0] — 2026-07-23
 
