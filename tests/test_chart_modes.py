@@ -11,8 +11,6 @@ from __future__ import annotations
 import time
 
 import pytest
-from PySide6.QtCore import QEvent
-from PySide6.QtWidgets import QApplication
 
 from control_ofc.api.models import (
     ConnectionState,
@@ -28,27 +26,6 @@ from control_ofc.services.series_selection import (
 )
 from control_ofc.ui.pages.dashboard_page import DashboardPage
 from control_ofc.ui.widgets.timeline_chart import _MAX_ANNOTATIONS, TimelineChart
-
-
-@pytest.fixture(autouse=True)
-def _drain_qt_deferred_deletes():
-    """Flush the Qt DeferredDelete queue after each test in this file.
-
-    Distinct from DEC-180 (which fixed the real *teardown-safety* bug — severing
-    outlive-the-widget signals + closing the scene synchronously): the source
-    teardown is safe here (a 120-chart create/cleanup stress loop survives). What
-    this guards is pure *accumulation*. These tests add many charts, each now
-    carrying extra child widgets (mode combo, reset button) and annotation items;
-    pytest-qt does not flush their deferred deletion between
-    tests, so they pile up until a queued delete fires during a much later,
-    unrelated test and segfaults under offscreen Qt/py3.14. Flushing here keeps
-    this file's churn from tipping that heap-timing race. Autouse → set up before
-    qtbot → finalised after it, so it runs once the test's widgets are closed."""
-    yield
-    app = QApplication.instance()
-    if app is not None:
-        app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-        app.processEvents()
 
 
 def _sensor(

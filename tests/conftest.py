@@ -171,6 +171,34 @@ class FakeDaemonClient:
 
 
 @pytest.fixture(autouse=True)
+def _flush_deferred_deletes():
+    """Destroy each test's Qt widget tree deterministically at teardown (DEC-230).
+
+    pytest-qt's cleanup calls ``close()`` + ``deleteLater()`` + ``processEvents()``
+    — but ``processEvents()`` does **not** dispatch ``DeferredDelete``, so the C++
+    widgets outlive their own test (a full-suite probe found ~5,100 leaked
+    top-level widgets, incl. 64 ``MainWindow``). Trapped in reference cycles, they
+    are finalized later by the cyclic GC in cycle-arbitrary order; when a parent
+    wrapper is freed before a child's, ``~QWidget -> deleteChildren()`` makes
+    shiboken's ``releaseWrapper`` dereference freed memory — the intermittent,
+    site-drifting SIGSEGV that reddened the py3.12 CI leg.
+
+    Flushing the posted ``DeferredDelete`` events here destroys those trees now,
+    top-down with wrappers consistent, instead of leaving them for the GC. This
+    fixture is defined **first** among the autouse fixtures so it is set up first
+    and therefore torn down last — after qtbot has posted the ``deleteLater()``
+    events this dispatches. Net-new test scaffolding; no production code changes.
+    """
+    yield
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is not None:
+        app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.fixture(autouse=True)
 def _neutralize_modals(monkeypatch):
     """Stop any modal dialog from blocking the test run.
 
