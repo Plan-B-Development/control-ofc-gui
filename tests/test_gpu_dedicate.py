@@ -216,19 +216,21 @@ def test_dedicate_gpu_button_visibility_tracks_capability(qtbot, app_state, prof
     page = ControlsPage(state=app_state, profile_service=profile_service)
     qtbot.addWidget(page)
 
+    # DEC-233: "Dedicate GPU Fan" is now an action in the "Set up ▾" menu, so its
+    # visibility is checked via the QAction rather than a header button.
     # No GPU → hidden.
     page._on_capabilities_updated(Capabilities())
-    assert page._dedicate_gpu_btn.isHidden()
+    assert page._dedicate_gpu_action.isVisible() is False
 
     # Present but read-only → hidden.
     page._on_capabilities_updated(Capabilities(amd_gpu=AmdGpuCapability(present=True)))
-    assert page._dedicate_gpu_btn.isHidden()
+    assert page._dedicate_gpu_action.isVisible() is False
 
     # Writable but no zero-RPM support → hidden (nothing to dedicate for).
     page._on_capabilities_updated(
         Capabilities(amd_gpu=AmdGpuCapability(present=True, fan_write_supported=True))
     )
-    assert page._dedicate_gpu_btn.isHidden()
+    assert page._dedicate_gpu_action.isVisible() is False
 
     # Present + writable + zero-RPM capable → shown.
     page._on_capabilities_updated(
@@ -238,7 +240,7 @@ def test_dedicate_gpu_button_visibility_tracks_capability(qtbot, app_state, prof
             )
         )
     )
-    assert not page._dedicate_gpu_btn.isHidden()
+    assert page._dedicate_gpu_action.isVisible() is True
 
 
 # ---------------------------------------------------------------------------

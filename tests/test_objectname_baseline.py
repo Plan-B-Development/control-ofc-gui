@@ -116,19 +116,26 @@ DASHBOARD_OBJECTNAMES = frozenset(
 
 CONTROLS_OBJECTNAMES = frozenset(
     {
+        # DEC-233: the contextual hardware-setup buttons became "Set up ▾" menu
+        # actions (Controls_Act_*); the header gained Revert + a Close-editor
+        # button + the edited-profile label; the Unassigned label became a button.
+        "Controls_Act_configureAio",
+        "Controls_Act_dedicateGpu",
+        "Controls_Act_fanWizard",
         "Controls_Btn_addCurve",
-        "Controls_Btn_configureAio",
-        "Controls_Btn_dedicateGpu",  # DEC-221: "Dedicate GPU Fan" action
-        "Controls_Btn_fanWizard",
+        "Controls_Btn_closeEditor",
         "Controls_Btn_manageProfiles",
         "Controls_Btn_newControl",
+        "Controls_Btn_revert",
         "Controls_Btn_save",
+        "Controls_Btn_setup",
         "Controls_Btn_testCurve",
+        "Controls_Btn_unassigned",
         "Controls_CurveEditor_main",
         "Controls_Divider_header",
+        "Controls_Label_editedProfile",
         "Controls_Label_editorPlaceholder",
         "Controls_Label_editorTitle",
-        "Controls_Label_unassigned",
         "Controls_Root",
         "Controls_Section_assignRoles",
         "Controls_Section_curveEditor",

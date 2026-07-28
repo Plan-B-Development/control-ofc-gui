@@ -66,6 +66,26 @@ def test_section_header(qtbot):
     assert header.objectName() == "SectionHeader_FanArray"
 
 
+def test_section_header_default_lead_is_bar(qtbot):
+    from PySide6.QtWidgets import QFrame
+
+    header = SectionHeader("Fan Array")
+    qtbot.addWidget(header)
+    assert isinstance(header._bar, QFrame)
+    assert header._bar.property("class") == "SectionBar"
+
+
+def test_section_header_step_badge(qtbot):
+    """DEC-233: a numbered step replaces the plain bar with a filled badge."""
+    from PySide6.QtWidgets import QLabel
+
+    header = SectionHeader("Assign Roles", step=1)
+    qtbot.addWidget(header)
+    assert isinstance(header._bar, QLabel)
+    assert header._bar.text() == "1"
+    assert header._bar.property("class") == "StepBadge"
+
+
 # ── dense table ──
 
 

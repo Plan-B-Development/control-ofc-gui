@@ -1,5 +1,38 @@
 # Changelog
 
+## [2.31.0] — 2026-07-28
+
+A Controls-page UX pass (from a `/frontend-design` request): you can now tell at a glance
+which curve is on the workbench, close what you're editing, revert unsaved edits, see which
+profile you're editing, and reach the fan-setup actions from one place. GUI-only,
+presentation layer; no contract change (`EXPECTED_API_VERSION` stays 1). Pairs with
+`control-ofc-daemon` ≥ v2.11.0. DEC-233.
+
+### Added
+- **The curve you're editing is highlighted (DEC-233).** Opening a curve in the editor now
+  lights its card with a bold accent border and glow — distinct from the thinner "assigned"
+  border — so it's always clear which curve you're shaping. The highlight follows you when
+  you switch curves and clears when you close the editor.
+- **Close the curve editor (DEC-233).** A **Close** button (and `Esc`) returns the editor to
+  its placeholder; the Test Curve and Close actions appear only while a curve is open.
+- **Revert unsaved changes (DEC-233).** A **Revert** button next to Save discards in-progress
+  edits and restores the profile's last saved version. It's enabled only when you have
+  unsaved changes.
+- **See which profile you're editing (DEC-233).** The Controls header now shows the name of
+  the profile your edits and Save apply to.
+- **Quick-assign unassigned fans (DEC-233).** The "Unassigned Fans" count is now a button:
+  it lists the fans no role controls and lets you add each writable one straight to an
+  existing role.
+
+### Changed
+- **"Save Profile" is now just "Save" (DEC-233).**
+- **Tidier Controls header (DEC-233).** The Auto-Connect Wizard and the contextual
+  Configure-AIO / Dedicate-GPU-Fan actions are grouped under a single **Set up** menu, so
+  Save and the unsaved-changes status stay prominent and the bar no longer crowds on narrow
+  windows.
+- **Numbered 1 → 2 → 3 workflow cue (DEC-233).** The Assign Roles / Link Logic / Curve Editor
+  section headers now carry step-number badges.
+
 ## [2.30.2] — 2026-07-26
 
 Remediation from the 2026-07-26 full cross-stack audit (0 P0, no confirmed live bugs): test

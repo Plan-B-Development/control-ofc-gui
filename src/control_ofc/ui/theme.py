@@ -817,6 +817,16 @@ def build_stylesheet(t: ThemeTokens) -> str:
         border-color: {t.accent_primary};
     }}
 
+    /* The curve card open in the editor pane (DEC-233): a bolder 2px accent
+       border + a faint accent-tinted fill, on top of the accent glow effect the
+       card applies in code. Placed after the active/selected rule so an assigned
+       curve that is also being edited reads unambiguously as "on the workbench".
+       The :hover keeps the tint so the fill does not flicker on mouse-over. */
+    .Card[editing="true"], .Card[editing="true"]:hover {{
+        border: 2px solid {t.accent_secondary};
+        background-color: {t.selected_bg};
+    }}
+
     /* Page titles */
     .PageTitle {{
         color: {t.text_primary};
@@ -1223,6 +1233,18 @@ def build_stylesheet(t: ThemeTokens) -> str:
     .SectionBar {{
         background-color: {t.accent_primary};
         border-radius: 1px;
+    }}
+    /* Numbered step badge (DEC-233): a filled accent disc carrying the step
+       number, replacing the plain bar on the Controls 1→2→3 workflow headers.
+       Dark-on-accent text (primary_btn_text) clears WCAG AA like the primary
+       button. */
+    .StepBadge {{
+        background-color: {t.accent_primary};
+        color: {t.primary_btn_text};
+        border-radius: 9px;
+        {hf}
+        font-size: {fs["small"]}pt;
+        font-weight: 700;
     }}
     .SectionHeader {{
         color: {t.text_secondary};

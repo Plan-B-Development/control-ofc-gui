@@ -183,6 +183,32 @@ class TestCurveCardContent:
         card.set_used_by([])
         assert card.property("active") is False
 
+    def test_set_editing_toggles_property_and_glow(self, qtbot, graph_curve):
+        """DEC-233: editing a curve lights its card — an ``editing`` QSS property
+        (2px border + tint) plus an accent drop-shadow glow effect."""
+        card = CurveCard(graph_curve)
+        qtbot.addWidget(card)
+        assert card.is_editing is False
+        assert card.graphicsEffect() is None
+        card.set_editing(True)
+        assert card.is_editing is True
+        assert card.property("editing") is True
+        assert card.graphicsEffect() is not None
+        card.set_editing(False)
+        assert card.is_editing is False
+        assert card.property("editing") is False
+        assert card.graphicsEffect() is None
+
+    def test_editing_is_independent_of_active(self, qtbot, graph_curve):
+        """DEC-233: a curve can be assigned (active) AND being edited at once — the
+        two highlight states are separate properties."""
+        card = CurveCard(graph_curve)
+        qtbot.addWidget(card)
+        card.set_used_by(["Intake"])
+        card.set_editing(True)
+        assert card.property("active") is True
+        assert card.property("editing") is True
+
     def test_unlink_action_emits_unlink_requested(self, qtbot, graph_curve):
         """DEC-214: the Actions ▸ Unlink entry emits ``unlink_requested(curve_id)``."""
         card = CurveCard(graph_curve)

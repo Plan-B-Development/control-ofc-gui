@@ -337,6 +337,13 @@ class ControlsPage(QWidget):
         # current-temp marker on page visibility — no pyqtgraph item churn while
         # the Controls page is hidden (the gaming-perf rule).
         self._page_visible = True
+        # DEC-233: the curve id currently open in the editor pane, so its card can
+        # be highlighted ("on the workbench") and the highlight re-applied after a
+        # curve-grid rebuild. None when the editor shows its placeholder.
+        self._editing_curve_id: str | None = None
+        # DEC-233: fan ids not controlled by any role (feeds the actionable
+        # "Unassigned Fans" button); recomputed from each fan poll.
+        self._unassigned_fan_ids: list[str] = []
 
         self.setObjectName("Controls_Root")
 
@@ -344,7 +351,7 @@ class ControlsPage(QWidget):
         main_layout.setContentsMargins(16, 12, 16, 12)
         main_layout.setSpacing(10)
 
-        # ─── Header: title + Auto-Connect Wizard + Save Profile + overflow ───
+        # ─── Header: title + edited-profile + manage · Set up / Revert / Save ───
         main_layout.addLayout(self._build_header())
 
         # ─── 3-pane layout (DEC-214): Assign Roles | Link Logic | Curve Editor ─
@@ -361,7 +368,9 @@ class ControlsPage(QWidget):
         p1_layout = QVBoxLayout(pane1)
         p1_layout.setContentsMargins(0, 0, 0, 0)
         p1_layout.setSpacing(6)
-        roles_header = SectionHeader("1. Assign Roles", object_name="Controls_Section_assignRoles")
+        roles_header = SectionHeader(
+            "Assign Roles", object_name="Controls_Section_assignRoles", step=1
+        )
         self._add_control_btn = make_button("+", "secondary", object_name="Controls_Btn_newControl")
         self._add_control_btn.setToolTip("Create a new fan role")
         self._add_control_btn.setFixedWidth(32)
@@ -383,13 +392,17 @@ class ControlsPage(QWidget):
         self._controls_scroll.setWidget(self._controls_flow)
         p1_layout.addWidget(self._controls_scroll, 1)
 
-        # Unassigned Fans dropzone (mockup) — a passive count pinned at the bottom
-        # (fed by _on_fan_rpm_updated via services/controls_view.unassigned_fans).
-        self._unassigned_label = QLabel("Unassigned Fans (0)")
-        self._unassigned_label.setObjectName("Controls_Label_unassigned")
-        self._unassigned_label.setProperty("class", "CardMeta")
-        self._unassigned_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        p1_layout.addWidget(self._unassigned_label)
+        # DEC-233: Unassigned Fans — an actionable button pinned at the bottom
+        # (fed by _on_fan_rpm_updated via services/controls_view.unassigned_fan_ids).
+        # Clicking lists the fans no role controls and offers to add each writable
+        # one to an existing role; disabled when every fan is assigned.
+        self._unassigned_btn = make_button(
+            "Unassigned Fans (0)", "ghost", object_name="Controls_Btn_unassigned"
+        )
+        self._unassigned_btn.setToolTip("Fans not controlled by any role — click to list or assign")
+        self._unassigned_btn.clicked.connect(self._on_unassigned_clicked)
+        self._unassigned_btn.setEnabled(False)
+        p1_layout.addWidget(self._unassigned_btn)
 
         self._splitter.addWidget(pane1)
 
@@ -409,7 +422,7 @@ class ControlsPage(QWidget):
         p2_layout = QVBoxLayout(pane2)
         p2_layout.setContentsMargins(0, 0, 0, 0)
         p2_layout.setSpacing(6)
-        link_header = SectionHeader("2. Link Logic", object_name="Controls_Section_linkLogic")
+        link_header = SectionHeader("Link Logic", object_name="Controls_Section_linkLogic", step=2)
         self._add_curve_btn = make_button("+", "secondary", object_name="Controls_Btn_addCurve")
         self._add_curve_btn.setToolTip("Add a new curve to the library")
         self._add_curve_btn.setFixedWidth(32)
@@ -437,17 +450,31 @@ class ControlsPage(QWidget):
         p3_layout = QVBoxLayout(pane3)
         p3_layout.setContentsMargins(0, 0, 0, 0)
         p3_layout.setSpacing(6)
-        editor_header = SectionHeader("3. Curve Editor", object_name="Controls_Section_curveEditor")
+        editor_header = SectionHeader(
+            "Curve Editor", object_name="Controls_Section_curveEditor", step=3
+        )
         self._editor_title = QLabel("Editing: \u2014")
         self._editor_title.setObjectName("Controls_Label_editorTitle")
         self._editor_title.setProperty("class", "CardMeta")
+        # DEC-231: the curve name is profile-authored (untrusted) \u2014 render verbatim.
+        self._editor_title.setTextFormat(Qt.TextFormat.PlainText)
         editor_header.add_trailing(self._editor_title)
         self._test_curve_btn = make_button(
             "Test Curve", "secondary", object_name="Controls_Btn_testCurve"
         )
         self._test_curve_btn.setToolTip("Show the curve's output at the current sensor temperature")
         self._test_curve_btn.clicked.connect(self._on_test_curve)
+        # DEC-233: Test + Close are contextual \u2014 shown only while a graph/stepped
+        # curve is loaded in the editor (composite curves edit in a modal dialog).
+        self._test_curve_btn.setVisible(False)
         editor_header.add_trailing(self._test_curve_btn)
+        self._close_editor_btn = make_button(
+            "Close", "ghost", object_name="Controls_Btn_closeEditor"
+        )
+        self._close_editor_btn.setToolTip("Close the curve editor (Esc)")
+        self._close_editor_btn.clicked.connect(self._close_editor)
+        self._close_editor_btn.setVisible(False)
+        editor_header.add_trailing(self._close_editor_btn)
         p3_layout.addWidget(editor_header)
 
         # Editor frame: the reused CurveEditor + a placeholder swapped in when no
@@ -499,6 +526,13 @@ class ControlsPage(QWidget):
         # ─── Keyboard shortcuts ──────────────────────────────────────
         save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
         save_shortcut.activated.connect(self._on_save_profile)
+        # DEC-233: Esc closes the curve editor, but only while focus is inside the
+        # editor pane (WidgetWithChildrenShortcut) so it never swallows Esc
+        # elsewhere on the page. A no-op when the editor already shows its
+        # placeholder.
+        close_editor_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self._editor_frame)
+        close_editor_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        close_editor_shortcut.activated.connect(self._close_editor)
 
         # ─── Populate ────────────────────────────────────────────────
         self._refresh_all()
@@ -572,11 +606,13 @@ class ControlsPage(QWidget):
     # ─── Header ──────────────────────────────────────────────────────
 
     def _build_header(self) -> QHBoxLayout:
-        """Header (DEC-214): page title + Auto-Connect Wizard + Save Profile +
-        an overflow "⋮" for profile management.
+        """Header (DEC-214/233): title + the profile being edited + a "⋮" manage
+        menu, then a right-aligned action cluster — "Set up ▾" (fan wizard / AIO /
+        GPU), Revert, Save, and the ``_unsaved_label`` status chip.
 
-        Profile *selection/activation* now lives in the sidebar (DEC-208); this
-        page keeps only Save + Manage + the shared ``_unsaved_label`` status chip.
+        Profile *selection/activation* lives in the sidebar (DEC-208); this page
+        shows the edited-profile name for orientation (DEC-233) and keeps
+        Save/Revert/Manage.
         """
         bar = QHBoxLayout()
         bar.setSpacing(8)
@@ -590,39 +626,58 @@ class ControlsPage(QWidget):
         divider.setFrameShape(QFrame.Shape.VLine)
         bar.addWidget(divider)
 
-        self._wizard_btn = make_button(
-            "Auto-Connect Wizard", "secondary", object_name="Controls_Btn_fanWizard"
-        )
-        self._wizard_btn.setToolTip("Identify and label your fans")
-        self._wizard_btn.clicked.connect(self._on_fan_wizard)
-        bar.addWidget(self._wizard_btn)
+        # DEC-233: which profile these edits + Save apply to. Selection is
+        # sidebar-owned (DEC-214); this is a read-only orientation label so the
+        # user always knows what Save writes to. Untrusted name → PlainText.
+        self._edited_profile_label = QLabel("")
+        self._edited_profile_label.setObjectName("Controls_Label_editedProfile")
+        self._edited_profile_label.setProperty("class", "CardMeta")
+        self._edited_profile_label.setTextFormat(Qt.TextFormat.PlainText)
+        bar.addWidget(self._edited_profile_label)
 
-        # DEC-157: one-click liquid-cooler setup. Hidden until an AIO is
-        # detected (see _on_capabilities_updated).
-        self._configure_aio_btn = make_button(
-            "Configure AIO", "secondary", object_name="Controls_Btn_configureAio"
-        )
-        self._configure_aio_btn.setToolTip(
+        manage_btn = make_button("⋮", "ghost", object_name="Controls_Btn_manageProfiles")
+        manage_btn.setToolTip("Create, rename, duplicate, or delete profiles")
+        manage_btn.setFixedWidth(32)
+        manage_btn.clicked.connect(self._on_manage_profiles)
+        bar.addWidget(manage_btn)
+
+        bar.addStretch()
+
+        # DEC-233: fold the contextual hardware-setup actions into one "Set up ▾"
+        # menu so Save + the unsaved-status chip stay prominent and the bar stops
+        # clipping on narrow windows. The AIO/GPU entries stay hidden until the
+        # matching hardware is detected (see _on_capabilities_updated).
+        self._setup_btn = make_button("Set up", "secondary", object_name="Controls_Btn_setup")
+        self._setup_btn.setToolTip("Hardware setup: identify fans, liquid cooler, GPU fan")
+        setup_menu = QMenu(self._setup_btn)
+        setup_menu.setToolTipsVisible(True)
+        self._wizard_action = setup_menu.addAction("Auto-Connect Wizard…", self._on_fan_wizard)
+        self._wizard_action.setObjectName("Controls_Act_fanWizard")
+        self._wizard_action.setToolTip("Identify and label your fans")
+        self._configure_aio_action = setup_menu.addAction("Configure AIO…", self._on_configure_aio)
+        self._configure_aio_action.setObjectName("Controls_Act_configureAio")
+        self._configure_aio_action.setToolTip(
             "One-click setup for a liquid cooler — a constant-speed pump and a radiator-fan group"
         )
-        self._configure_aio_btn.clicked.connect(self._on_configure_aio)
-        self._configure_aio_btn.setVisible(False)
-        bar.addWidget(self._configure_aio_btn)
-
-        # DEC-221: one-click "dedicate" a writable GPU fan to its own 0-RPM-capable
-        # curve. Hidden until a writable, zero-RPM-capable AMD GPU is detected
-        # (see _on_capabilities_updated).
-        self._dedicate_gpu_btn = make_button(
-            "Dedicate GPU Fan", "secondary", object_name="Controls_Btn_dedicateGpu"
-        )
-        self._dedicate_gpu_btn.setToolTip(
+        self._configure_aio_action.setVisible(False)
+        self._dedicate_gpu_action = setup_menu.addAction("Dedicate GPU Fan…", self._on_dedicate_gpu)
+        self._dedicate_gpu_action.setObjectName("Controls_Act_dedicateGpu")
+        self._dedicate_gpu_action.setToolTip(
             "Give the GPU fan its own curve so it can idle at 0 RPM when the GPU is cool"
         )
-        self._dedicate_gpu_btn.clicked.connect(self._on_dedicate_gpu)
-        self._dedicate_gpu_btn.setVisible(False)
-        bar.addWidget(self._dedicate_gpu_btn)
+        self._dedicate_gpu_action.setVisible(False)
+        self._setup_btn.setMenu(setup_menu)
+        bar.addWidget(self._setup_btn)
 
-        self._save_btn = make_button("Save Profile", "primary", object_name="Controls_Btn_save")
+        # DEC-233: discard unsaved edits, restoring the last saved profile.
+        # Enabled only while there are unsaved changes (see _set_unsaved).
+        self._revert_btn = make_button("Revert", "ghost", object_name="Controls_Btn_revert")
+        self._revert_btn.setToolTip("Discard unsaved changes and restore the last saved version")
+        self._revert_btn.clicked.connect(self._on_revert)
+        self._revert_btn.setEnabled(False)
+        bar.addWidget(self._revert_btn)
+
+        self._save_btn = make_button("Save", "primary", object_name="Controls_Btn_save")
         self._save_btn.setToolTip("Save profile changes (Ctrl+S)")
         self._save_btn.clicked.connect(self._on_save_profile)
         bar.addWidget(self._save_btn)
@@ -630,14 +685,6 @@ class ControlsPage(QWidget):
         self._unsaved_label = QLabel("")
         self._unsaved_label.setProperty("class", "WarningChip")
         bar.addWidget(self._unsaved_label)
-
-        bar.addStretch()
-
-        manage_btn = make_button("⋮", "ghost", object_name="Controls_Btn_manageProfiles")
-        manage_btn.setToolTip("Create, rename, duplicate, or delete profiles")
-        manage_btn.setFixedWidth(32)
-        manage_btn.clicked.connect(self._on_manage_profiles)
-        bar.addWidget(manage_btn)
 
         return bar
 
@@ -838,6 +885,50 @@ class ControlsPage(QWidget):
         self._log.info("Active profile %s reapplied to daemon", profile.id)
         return True
 
+    # ─── Revert (DEC-233) ────────────────────────────────────────────
+
+    def confirm_revert(self) -> bool:
+        """Ask whether to discard unsaved edits before reverting.
+
+        Isolated behind a method (like :meth:`confirm_discard_unsaved`) so tests
+        can drive the decision without spinning a real modal.
+        """
+        result = QMessageBox.question(
+            self,
+            "Revert changes?",
+            "Discard all unsaved changes and restore the last saved version of this profile?",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return result == QMessageBox.StandardButton.Discard
+
+    def _on_revert(self) -> None:
+        """Discard in-progress edits, restoring the profile's last-saved state.
+
+        Reloads the single profile from its store (daemon document when
+        published, else the local cache), replacing the in-memory copy the page
+        mutates, then rebuilds. A brand-new draft that was never saved has no
+        stored version to fall back to — that is surfaced, not silently dropped.
+        """
+        if not self._has_unsaved:
+            return
+        profile = self._get_current_profile()
+        if not profile:
+            return
+        if not self.confirm_revert():
+            return
+        reloaded = self._profile_service.reload_profile(profile.id)
+        if reloaded is None:
+            self._unsaved_label.setText("Nothing to revert — profile not yet saved")
+            set_chip_class(self._unsaved_label, "WarningChip")
+            return
+        # The editor may hold a now-stale curve object from the discarded edits.
+        self._close_editor()
+        self._refresh_all()
+        self._set_unsaved(False)
+        self._unsaved_label.setText("Reverted to last saved")
+        set_chip_class(self._unsaved_label, "InfoChip")
+
     def _on_connection_changed(self, conn: ConnectionState) -> None:
         """React to daemon connectivity (live mode only).
 
@@ -857,11 +948,16 @@ class ControlsPage(QWidget):
 
     def _refresh_all(self) -> None:
         profile = self._get_current_profile()
+        self._update_edited_profile_label(profile)  # DEC-233
         if not profile:
             return
         self._loaded_profile_id = profile.id
         self._refresh_controls_grid(profile)
         self._refresh_curves_grid(profile)
+
+    def _update_edited_profile_label(self, profile) -> None:
+        """Show which profile these edits + Save apply to (DEC-233)."""
+        self._edited_profile_label.setText(f"Editing: {profile.name}" if profile else "")
 
     # ─── Control cards grid ──────────────────────────────────────────
 
@@ -1397,6 +1493,18 @@ class ControlsPage(QWidget):
             role_names = [ctrl.name for ctrl in profile.controls if ctrl.curve_id == ccard.curve.id]
             ccard.set_used_by(role_names)
 
+        # DEC-233: re-apply the editing highlight after a rebuild so the card open
+        # in the editor stays "on the workbench". If that curve is gone (deleted,
+        # or a profile switch replaced the grid) close the editor fully, so its
+        # pane, title, and Test/Close actions can't strand on a curve that is no
+        # longer shown — leaving the editor open on another profile's curve would
+        # also mis-target Test Curve and Save. Idempotent; _on_delete_curve
+        # already closes before rebuilding, so the delete path is unaffected.
+        if self._editing_curve_id and self._editing_curve_id in self._curve_cards:
+            self._curve_cards[self._editing_curve_id].set_editing(True)
+        elif self._editing_curve_id is not None:
+            self._close_editor()
+
         has_curves = len(profile.curves) > 0
         self._curves_empty.setVisible(not has_curves)
         self._curves_scroll.setVisible(has_curves)
@@ -1552,12 +1660,34 @@ class ControlsPage(QWidget):
             # Always-mounted editor (DEC-214): swap the placeholder for the editor.
             self._editor_placeholder.hide()
             self._curve_editor.show()
+            # DEC-233: reveal the contextual header actions and light up the
+            # source card so it's unmistakable which curve is on the workbench.
+            self._test_curve_btn.setVisible(True)
+            self._close_editor_btn.setVisible(True)
+            self._set_curve_editing(curve.id)
 
     def _close_editor(self) -> None:
-        """Return the always-mounted editor to its placeholder state (DEC-214)."""
+        """Return the always-mounted editor to its placeholder state (DEC-214).
+
+        Also clears the DEC-233 editing highlight + contextual header actions. A
+        no-op when the editor already shows its placeholder (Esc / repeat click).
+        """
         self._curve_editor.hide()
         self._editor_placeholder.show()
         self._editor_title.setText("Editing: —")
+        self._test_curve_btn.setVisible(False)
+        self._close_editor_btn.setVisible(False)
+        self._set_curve_editing(None)
+
+    def _set_curve_editing(self, curve_id: str | None) -> None:
+        """Highlight exactly the curve card open in the editor pane (DEC-233).
+
+        Clears the highlight on every other card, so switching from editing one
+        graph curve to another moves the glow with it.
+        """
+        self._editing_curve_id = curve_id
+        for cid, card in self._curve_cards.items():
+            card.set_editing(cid == curve_id)
 
     def _on_test_curve(self) -> None:
         """Test Curve (DEC-214): surface the curve's output at the *current* sensor
@@ -1686,6 +1816,8 @@ class ControlsPage(QWidget):
         self._unsaved_label.setText("Unsaved changes" if unsaved else "")
         if unsaved:
             set_chip_class(self._unsaved_label, "WarningChip")
+        # DEC-233: Revert is meaningful only while there are edits to discard.
+        self._revert_btn.setEnabled(unsaved)
 
     def update_control_outputs(
         self,
@@ -1780,14 +1912,15 @@ class ControlsPage(QWidget):
             card.apply_card_size(base_pt, tier)
 
     def _on_capabilities_updated(self, caps) -> None:
-        # DEC-157: surface the Configure AIO action only when a liquid cooler is
-        # detected (idempotent — capabilities re-fire on every refresh).
+        # DEC-157/233: surface the Configure AIO entry (now a "Set up ▾" menu
+        # action) only when a liquid cooler is detected (idempotent — capabilities
+        # re-fire on every refresh).
         aio = getattr(caps, "aio_hwmon", None)
-        self._configure_aio_btn.setVisible(bool(getattr(aio, "present", False)))
-        # DEC-221: surface "Dedicate GPU Fan" only for a present, writable,
+        self._configure_aio_action.setVisible(bool(getattr(aio, "present", False)))
+        # DEC-221/233: surface "Dedicate GPU Fan" only for a present, writable,
         # zero-RPM-capable AMD GPU (idempotent — capabilities re-fire on refresh).
         gpu = getattr(caps, "amd_gpu", None)
-        self._dedicate_gpu_btn.setVisible(
+        self._dedicate_gpu_action.setVisible(
             bool(gpu)
             and bool(getattr(gpu, "present", False))
             and bool(getattr(gpu, "fan_write_supported", False))
@@ -2130,8 +2263,127 @@ class ControlsPage(QWidget):
             # DEC-214: per-member live RPM for the compact card member rows.
             card.set_member_rpms(member_rpm_map(ctrl, fan_map))
 
-        # DEC-214: refresh the "Unassigned Fans (N)" dropzone count.
+        # DEC-233: refresh the actionable "Unassigned Fans (N)" button.
         profile = self._get_current_profile()
         controls = profile.controls if profile else []
-        count = len(unassigned_fan_ids(fans, controls))
-        self._unassigned_label.setText(f"Unassigned Fans ({count})")
+        self._unassigned_fan_ids = unassigned_fan_ids(fans, controls)
+        self._update_unassigned_button()
+
+    # ─── Unassigned Fans (DEC-233) ───────────────────────────────────
+
+    def _update_unassigned_button(self) -> None:
+        """Reflect the current unassigned-fan count on the button."""
+        n = len(self._unassigned_fan_ids)
+        self._unassigned_btn.setText(f"Unassigned Fans ({n})" if n else "All fans assigned")
+        self._unassigned_btn.setEnabled(n > 0)
+
+    def _on_unassigned_clicked(self) -> None:
+        """Pop the unassigned-fans menu at the button (DEC-233)."""
+        menu = self._build_unassigned_menu()
+        if menu is None:
+            return
+        menu.exec(self._unassigned_btn.mapToGlobal(self._unassigned_btn.rect().topLeft()))
+
+    def _build_unassigned_menu(self) -> QMenu | None:
+        """Build the "Unassigned Fans" menu: list the fans no role controls,
+        offering to add each writable one to an existing role (DEC-233).
+
+        Read-only headers and GPU fans are listed but not offered for quick-assign
+        — GPU fans have their own dedicated flow. Returns ``None`` when there is
+        nothing to show. Split from :meth:`_on_unassigned_clicked` so the contents
+        are testable without spinning a modal menu.
+        """
+        if self._state is None or not self._unassigned_fan_ids:
+            return None
+        profile = self._get_current_profile()
+        controls = profile.controls if profile else []
+        menu = QMenu(self)
+        heading = menu.addAction("Fans not controlled by any role")
+        heading.setEnabled(False)
+        menu.addSeparator()
+        for fan_id in self._unassigned_fan_ids:
+            # Untrusted names → escape "&" so QMenu doesn't eat it as a mnemonic
+            # (matches collapsible_section.py). Not a rich-text/DEC-231 concern —
+            # menu text is never rendered as rich text.
+            name = (self._state.fan_display_name(fan_id) or fan_id).replace("&", "&&")
+            member = self._make_member_for_fan(fan_id)
+            if member is None:
+                # Not quick-assignable (read-only header, or a GPU fan).
+                entry = menu.addAction(f"{name}  (read-only)")
+                entry.setEnabled(False)
+                continue
+            if not controls:
+                entry = menu.addAction(f"{name} — create a role to assign")
+                entry.setEnabled(False)
+                continue
+            submenu = menu.addMenu(name)
+            for ctrl in controls:
+                submenu.addAction(
+                    f'Add to "{ctrl.name.replace("&", "&&")}"',
+                    lambda _checked=False, cid=ctrl.id, m=member: self._assign_member_to_control(
+                        cid, m
+                    ),
+                )
+        return menu
+
+    def _make_member_for_fan(self, fan_id: str):
+        """Build a ``ControlMember`` for a quick-assignable fan, else ``None``.
+
+        Quick-assign covers writable hwmon + OpenFan fans only; read-only headers
+        (DEC-102) and GPU fans (which use the dedicated zero-RPM flow) return
+        ``None``. Mirrors the member-building in :meth:`_on_edit_members`,
+        including the DEC-228/229 role-preserving label and the DEC-157 AIO tag.
+        """
+        if self._state is None:
+            return None
+        header_by_id = {h.id: h for h in self._state.hwmon_headers}
+        fan = next((f for f in self._state.fans if f.id == fan_id), None)
+        header = header_by_id.get(fan_id)
+        source = fan.source if fan is not None else ("hwmon" if header is not None else None)
+        if source is None or source in ("amd_gpu", "intel_gpu", "nvidia_gpu"):
+            return None
+        if source == "hwmon" and (header is None or not header.is_writable):
+            return None
+        from control_ofc.services.profile_service import ControlMember
+
+        label = self._state.fan_display_name(fan_id) or fan_id
+        fallback = self._state.fan_fallback_name(fan_id) if header is not None else ""
+        clean_label = _role_preserving_label(label, fallback, source)
+        # DEC-157/233: mirror _on_edit_members — an AIO header's role lives in this
+        # tag when its chip/label carry no cpu/pump/aio keyword, so quick-assign
+        # must keep it or the pump falls from the 30% floor to the 20% one (the
+        # daemon mirrors this label — DEC-162).
+        if header is not None and header.is_aio:
+            clean_label += " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
+        return ControlMember(source=source, member_id=fan_id, member_label=clean_label)
+
+    def _assign_member_to_control(self, control_id: str, member) -> None:
+        """Append a fan to an existing role from the Unassigned quick-assign menu."""
+        profile = self._get_current_profile()
+        if not profile:
+            return
+        control = next((c for c in profile.controls if c.id == control_id), None)
+        if control is None:
+            return
+        if any(m.member_id == member.member_id for m in control.members):
+            return  # already a member (raced with another assign)
+        control.members.append(member)
+        # Membership can shift the role (chassis ↔ CPU/pump), so reapply the
+        # role-aware floor before the next save (mirrors _on_edit_members).
+        if apply_role_floor(control):
+            self._log.info(
+                "Control '%s' minimum_pct raised to %.0f%% by role policy",
+                control.name,
+                control.minimum_pct,
+            )
+        card = self._control_cards.get(control_id)
+        if card:
+            card.update_control(control, profile.curves)
+        self._set_unsaved(True)
+        # Drop the just-assigned fan from the unassigned set + button immediately
+        # (the next poll would too, but this keeps the menu/count in step now).
+        if member.member_id in self._unassigned_fan_ids:
+            self._unassigned_fan_ids = [
+                fid for fid in self._unassigned_fan_ids if fid != member.member_id
+            ]
+            self._update_unassigned_button()

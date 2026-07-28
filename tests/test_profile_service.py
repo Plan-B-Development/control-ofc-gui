@@ -1190,3 +1190,79 @@ def test_default_seeding_on_readonly_config_degrades_not_crashes(tmp_path, monke
     assert all("read-only filesystem" in msg for _, msg in errors)
     # Defaults still usable in memory despite the failed persistence.
     assert svc.get_profile(svc.active_id) is not None
+
+
+def test_reload_profile_discards_in_memory_edits(tmp_path, monkeypatch):
+    """DEC-233: reload_profile re-reads the persisted profile, dropping unsaved
+    in-memory edits — backs the Controls page 'Revert'."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    svc = ProfileService()
+    svc.load()  # seeds + persists the default profiles locally
+    pid = svc.active_id
+    prof = svc.get_profile(pid)
+    before = len(prof.controls)
+    prof.controls.append(LogicalControl(id="tmp", name="Temp", mode=ControlMode.MANUAL))
+    reloaded = svc.reload_profile(pid)
+    assert reloaded is not None
+    assert len(reloaded.controls) == before
+    assert not any(c.id == "tmp" for c in reloaded.controls)
+    # The in-memory registry now points at the reloaded copy.
+    assert svc.get_profile(pid) is reloaded
+
+
+def test_reload_profile_unknown_returns_none(tmp_path, monkeypatch):
+    """DEC-233: a never-persisted / unknown id has no stored version to fall back
+    to — reload returns None rather than fabricating one."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    svc = ProfileService()
+    svc.load()
+    assert svc.reload_profile("does-not-exist") is None
+
+
+def test_reload_profile_prefers_daemon_document(tmp_path, monkeypatch):
+    """DEC-233/160: when a profile is daemon-published, reload_profile re-reads the
+    daemon document (store of record) and replaces the in-memory copy."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    svc = ProfileService()
+    svc.load()
+    pid = svc.active_id
+    stored = svc.get_profile(pid).to_dict()  # the "saved" daemon document
+    # A local in-memory edit not present in the daemon document.
+    svc.get_profile(pid).controls.append(
+        LogicalControl(id="tmp", name="T", mode=ControlMode.MANUAL)
+    )
+
+    class _Stub:
+        def get_profile(self, _id):
+            return stored
+
+    svc._client = _Stub()
+    svc._daemon_ids.add(pid)
+    reloaded = svc.reload_profile(pid)
+    assert reloaded is not None
+    assert not any(c.id == "tmp" for c in reloaded.controls)  # daemon doc wins
+    assert svc.get_profile(pid) is reloaded
+
+
+def test_reload_profile_falls_back_to_cache_on_daemon_error(tmp_path, monkeypatch):
+    """DEC-233: a daemon read that raises (incl. a non-dict body → AttributeError)
+    must fall back to the local mirror, not escape — the broadened except."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    svc = ProfileService()
+    svc.load()
+    pid = svc.active_id
+    before = len(svc.get_profile(pid).controls)
+    svc.get_profile(pid).controls.append(
+        LogicalControl(id="tmp", name="T", mode=ControlMode.MANUAL)
+    )
+
+    class _Stub:
+        def get_profile(self, _id):
+            raise RuntimeError("garbage daemon response")
+
+    svc._client = _Stub()
+    svc._daemon_ids.add(pid)
+    reloaded = svc.reload_profile(pid)  # must NOT raise
+    assert reloaded is not None
+    assert len(reloaded.controls) == before  # local cache = last saved
+    assert not any(c.id == "tmp" for c in reloaded.controls)

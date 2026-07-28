@@ -28,8 +28,12 @@ class TestHeaderContract:
     def test_header_keeps_save_wizard_manage(self, qtbot, app_state, profile_service):
         page = _page(qtbot, app_state, profile_service)
         assert page.findChild(QPushButton, "Controls_Btn_save") is not None
-        assert page.findChild(QPushButton, "Controls_Btn_fanWizard") is not None
         assert page.findChild(QPushButton, "Controls_Btn_manageProfiles") is not None
+        # DEC-233: the fan wizard moved into the "Set up ▾" menu as an action.
+        assert page.findChild(QPushButton, "Controls_Btn_setup") is not None
+        assert page._wizard_action is not None
+        # DEC-233: Save is renamed "Save" (was "Save Profile").
+        assert page.findChild(QPushButton, "Controls_Btn_save").text() == "Save"
 
     def test_profile_combo_and_activate_removed(self, qtbot, app_state, profile_service):
         """DEC-214: profile selection/activation moved to the sidebar."""

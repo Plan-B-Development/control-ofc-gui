@@ -11,6 +11,7 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -176,6 +177,12 @@ class CurveCard(QFrame):
         self.setProperty("class", "Card")
         self._curve = curve
         self._theme = default_dark_theme()
+        # DEC-233: highlight state while this curve is open in the editor pane.
+        # A 2px accent border + faint tint (QSS ``editing`` property) plus a soft
+        # accent glow (drop-shadow effect) — deliberately stronger than, and
+        # coexisting with, the thin "assigned" border so the user can always tell
+        # which card is on the workbench.
+        self._editing = False
         # Fixed width keeps the grid columns aligned; height is a floor so the
         # card grows to fit scaled text rather than clipping rows (DEC-128).
         self._card_size_tier = card_size
@@ -343,6 +350,41 @@ class CurveCard(QFrame):
         """Update theme and repaint the curve preview."""
         self._theme = tokens
         self._preview.set_theme(tokens)
+        if self._editing:
+            # Keep the editing glow in step with the new accent colour.
+            self._apply_editing_glow()
+
+    @property
+    def is_editing(self) -> bool:
+        """Whether this card is the one currently open in the editor (DEC-233)."""
+        return self._editing
+
+    def set_editing(self, editing: bool) -> None:
+        """Mark this card as the curve currently open in the editor pane (DEC-233).
+
+        Toggles the ``editing`` QSS property (2px accent border + faint tint) and
+        a soft accent drop-shadow glow. Idempotent, and distinct from the
+        ``active`` (assigned-to-a-role) border, so a card can be both at once.
+        """
+        if self._editing == editing:
+            return
+        self._editing = editing
+        self.setProperty("editing", editing)
+        if editing:
+            self._apply_editing_glow()
+        else:
+            self.setGraphicsEffect(None)
+        repolish(self)
+
+    def _apply_editing_glow(self) -> None:
+        """(Re)build the accent drop-shadow glow used for the editing state."""
+        glow = QGraphicsDropShadowEffect(self)
+        glow.setBlurRadius(22)
+        glow.setOffset(0, 0)
+        color = QColor(self._theme.accent_secondary)
+        color.setAlpha(190)
+        glow.setColor(color)
+        self.setGraphicsEffect(glow)
 
     def update_sensor_display(self, label: str, value_c: float | None = None) -> None:
         if value_c is not None:

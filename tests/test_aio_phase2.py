@@ -289,12 +289,13 @@ def test_configure_aio_button_visibility_tracks_capability(qtbot, app_state, pro
     page = ControlsPage(state=app_state, profile_service=profile_service)
     qtbot.addWidget(page)
 
+    # DEC-233: "Configure AIO" is now an action in the "Set up ▾" menu.
     page._on_capabilities_updated(Capabilities())
-    assert page._configure_aio_btn.isHidden()
+    assert page._configure_aio_action.isVisible() is False
     page._on_capabilities_updated(
         Capabilities(aio_hwmon=AioHwmonCapability(present=True, status="supported"))
     )
-    assert not page._configure_aio_btn.isHidden()
+    assert page._configure_aio_action.isVisible() is True
 
 
 def test_configure_aio_creates_pump_control(qtbot, app_state, profile_service, monkeypatch):

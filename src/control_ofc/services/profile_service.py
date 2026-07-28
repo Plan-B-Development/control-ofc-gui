@@ -1776,6 +1776,57 @@ class ProfileService(QObject):
     def get_profile(self, profile_id: str) -> Profile | None:
         return self._profiles.get(profile_id)
 
+    def reload_profile(self, profile_id: str) -> Profile | None:
+        """Re-read one profile from its store, discarding in-memory edits (DEC-233).
+
+        Backs the Controls page's "Revert" action. Prefers the daemon document
+        (the store of record — DEC-160) when the profile is published and a
+        client is set, falling back to the local cache on any daemon read
+        failure; with no client it reads the local cache directly. Replaces the
+        in-memory copy and returns the reloaded profile, or ``None`` (leaving the
+        in-memory copy untouched) when the profile has never been persisted or
+        every read fails — so an unsaved brand-new draft is never silently
+        dropped. Does not emit ``profiles_changed``; the caller refreshes its own
+        view.
+        """
+        # Daemon store of record, when this profile is published.
+        if self._client is not None and profile_id in self._daemon_ids:
+            try:
+                document = self._client.get_profile(profile_id)
+                profile = Profile.from_dict(document)
+            except (DaemonUnavailable, DaemonTimeout):
+                profile = None  # offline — fall back to the local mirror
+            except Exception as e:
+                # Daemon reached but the document errored / parsed badly — a 404
+                # after a server-side delete, or a non-dict body (`from_dict`
+                # raises AttributeError). Fall back to the local mirror rather than
+                # escaping. Broad, matching the sibling hydration parse above.
+                log.warning("Reload of profile %s from daemon failed: %s", profile_id, e)
+                profile = None
+            if profile is not None:
+                self._profiles[profile.id] = profile
+                try:
+                    self._write_local(profile)  # best-effort mirror; never abort the revert
+                except OSError as e:
+                    log.warning("Mirror write for reloaded profile %s failed: %s", profile_id, e)
+                return profile
+
+        # Local cache fallback (offline / no client / unpublished draft). The path
+        # build (containment check → ValueError for an unsafe id) and the read are
+        # both inside the guard so a bad id / malformed / unreadable file returns
+        # None cleanly rather than escaping.
+        try:
+            path = profile_file_path(profile_id)
+            if not path.exists():
+                return None
+            data = load_json_capped(path)
+            profile = Profile.from_dict(data)
+        except Exception as e:
+            log.warning("Reload of profile %s from local cache failed: %s", profile_id, e)
+            return None
+        self._profiles[profile.id] = profile
+        return profile
+
     def profile_path(self, profile_id: str) -> Path:
         """Return the filesystem path for a profile's JSON file.
 
