@@ -430,10 +430,12 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         ),
     ),
     # DEC-144: IT8665E (X399/TR4-era boards, e.g. ASUS ROG Zenith Extreme)
-    # is NOT in the mainline it87 enum — it needs the DKMS build. Current
-    # master (2026-03+) defaults mmio=on, and that default BREAKS IT8665E
-    # PWM writes (maintainer-confirmed broken legacy FEAT_MMIO path,
-    # frankcrawford/it87 issue #106, open). `mmio=off` is the remediation.
+    # is NOT in the mainline it87 enum — it needs the DKMS build. The 2026-03+
+    # master mmio=on default had BROKEN IT8665E PWM writes (maintainer-confirmed
+    # broken legacy FEAT_MMIO path, frankcrawford/it87 issue #106). Curator
+    # 2026-07-29: PR #120 (merged 2026-07-22) removes the MMIO path for IT8665E,
+    # so an updated DKMS build fixes it with no param; mmio=off is the fallback
+    # for older builds.
     ChipGuidance(
         chip_prefix="it8665",
         driver_name="it87",
@@ -441,19 +443,20 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_package="it87-dkms-git (AUR)",
         driver_url="https://github.com/frankcrawford/it87",
         known_issues=[
-            "2026-03+ DKMS builds default mmio=on, which BREAKS IT8665E fan "
-            "control: PWM writes are mangled (writing 180 stores ~4). "
-            "Maintainer-confirmed regression in the legacy FEAT_MMIO path "
-            "(frankcrawford/it87 issue #106 — open, no fix merged as of "
-            "2026-06).",
-            "Remediation: disable MMIO for this chip — create "
-            "/etc/modprobe.d/it87.conf with 'options it87 mmio=off' and "
-            "reboot.",
+            "The 2026-03+ mmio=on default BROKE IT8665E fan control: PWM writes "
+            "were mangled (writing 180 stored ~4), a maintainer-confirmed "
+            "regression in the legacy FEAT_MMIO path (frankcrawford/it87 "
+            "issue #106).",
+            "Fix: update the driver — frankcrawford/it87 PR #120 (merged "
+            "2026-07-22) removes the MMIO path for IT8665E, so rebuilding "
+            "it87-dkms-git fixes the fan with no kernel parameter. Fallback for "
+            "builds older than the merge: create /etc/modprobe.d/it87.conf with "
+            "'options it87 mmio=off' and reboot.",
         ],
         notes=(
             "ITE IT8665E — X399/TR4-era boards (e.g. ASUS ROG Zenith "
-            "Extreme). Requires the out-of-tree driver; run it with "
-            "mmio=off on current builds (issue #106)."
+            "Extreme). Requires the out-of-tree driver; update it to a build "
+            "≥ 2026-07-22 (PR #120) — older builds need mmio=off (issue #106)."
         ),
     ),
     # DEC-144: IT8622E is in the mainline it87 enum (verified against

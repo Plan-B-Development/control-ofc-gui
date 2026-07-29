@@ -748,10 +748,13 @@ since the 2026-03 builds ([PR #95](https://github.com/frankcrawford/it87/pull/95
 Gigabyte motherboards. If you are using an older version of the driver,
 ensure MMIO is enabled with `options it87 mmio=on`. Do not disable it
 unless you have a specific reason — the one documented reason is the
-**IT8665E** (X399-era, e.g. ASUS ROG Zenith Extreme): the MMIO default
-breaks its PWM writes
-([issue #106](https://github.com/frankcrawford/it87/issues/106)), and
-`options it87 mmio=off` is the remediation there.
+**IT8665E** (X399-era, e.g. ASUS ROG Zenith Extreme): the 2026-03+ MMIO
+default *broke* its PWM writes
+([issue #106](https://github.com/frankcrawford/it87/issues/106), closed),
+fixed at the driver level by [PR #120](https://github.com/frankcrawford/it87/pull/120)
+(merged 2026-07-22, removes the MMIO path for IT8665E) — so **update the DKMS
+build** (`it87-dkms-git`); `options it87 mmio=off` is the fallback for builds
+older than the merge.
 
 #### IT8689E manual control limitation
 
@@ -982,8 +985,10 @@ limitations.
    - For Gigabyte IT8689E (Rev 1): flatten the BIOS curve (set every
      vector's temperature to 90) — a partial stopgap (CPU-fan header
      only); the driver-side fix is pending (frankcrawford/it87 PR #114).
-   - For IT8665E (X399-era): current builds break PWM writes with MMIO
-     on — set `options it87 mmio=off` (frankcrawford/it87 issue #106).
+   - For IT8665E (X399-era): the 2026-03+ MMIO default broke PWM writes;
+     [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged
+     2026-07-22) fixes it — **update `it87-dkms-git`**; older builds need
+     `options it87 mmio=off` (frankcrawford/it87 issue #106, closed).
    - For ASRock: try nct6686d or asrock-nct6683 alternative drivers.
 
 4. **Fan control works for some headers but not others:**
@@ -1031,6 +1036,7 @@ for the full table and mitigation guidance.
   - PR #102 (ISA-bridge MMIO/H2RAM merge, 2026-04): https://github.com/frankcrawford/it87/pull/102
   - PR #110 (force_pwm parameter, open): https://github.com/frankcrawford/it87/pull/110
   - PR #114 (IT8689E/IT8696E manual PWM, open): https://github.com/frankcrawford/it87/pull/114
+  - PR #120 (remove MMIO path for IT8665E — fixes #106, merged 2026-07-22): https://github.com/frankcrawford/it87/pull/120
   - issue #64 (secondary-chip fan control, closed 2025-12): https://github.com/frankcrawford/it87/issues/64
   - issue #89 (X870E AORUS ELITE X3D dual-chip report, closed 2026-01-13): https://github.com/frankcrawford/it87/issues/89
   - issue #92 (B650 GAMING X AX V2 ACPI bind failure, closed 2026-02-23): https://github.com/frankcrawford/it87/issues/92
@@ -1038,7 +1044,7 @@ for the full table and mitigation guidance.
   - issue #96 (IT8689E Rev 1 — temps-to-90 partial stopgap): https://github.com/frankcrawford/it87/issues/96
   - issue #99 (IT8792 suspend/resume, open): https://github.com/frankcrawford/it87/issues/99
   - issue #103 (X870E AORUS MASTER label mapping): https://github.com/frankcrawford/it87/issues/103
-  - issue #106 (IT8665E mmio-default regression): https://github.com/frankcrawford/it87/issues/106
+  - issue #106 (IT8665E mmio-default regression, closed — fixed by PR #120): https://github.com/frankcrawford/it87/issues/106
   - issue #108 (`-Werror=unused-function` build failure): https://github.com/frankcrawford/it87/issues/108
 - Fred78290/nct6687d: https://github.com/Fred78290/nct6687d
 - s25g5d4/nct6686d: https://github.com/s25g5d4/nct6686d

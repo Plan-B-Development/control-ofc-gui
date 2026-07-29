@@ -43,6 +43,21 @@ class TestLookupChipGuidance:
         assert g is not None
         assert g.chip_prefix == "it8696"
 
+    def test_it8665_names_the_driver_update_as_the_fix(self):
+        # Curator 2026-07-29: frankcrawford/it87 PR #120 (merged 2026-07-22)
+        # removed the MMIO path for IT8665E, so "update the driver" is now the
+        # primary fix and mmio=off is only the older-build fallback — guard
+        # against a revert to "mmio=off is the remediation".
+        g = lookup_chip_guidance("it8665")
+        assert g is not None
+        assert g.driver_name == "it87"
+        assert g.in_mainline is False
+        blob = (" ".join(g.known_issues) + " " + g.notes).lower()
+        assert "pr #120" in blob  # names the merged driver-side fix
+        assert "update" in blob  # update-the-driver is the primary path
+        assert "mmio=off" in blob  # fallback still documented
+        assert "fallback" in blob  # ...and framed as a fallback, not the fix
+
     def test_it8720_matches_generic_it87(self):
         g = lookup_chip_guidance("it8720")
         assert g is not None
