@@ -100,3 +100,28 @@ def test_bundled_fonts_shipped_in_wheel():
     fonts_dir = REPO_ROOT / "src" / "control_ofc" / "ui" / "fonts"
     ttfs = list(fonts_dir.glob("*.ttf"))
     assert ttfs, f"no .ttf fonts found under {fonts_dir} — the package-data glob would ship nothing"
+
+
+def test_desktop_entry_declares_spec_version():
+    """The `.desktop` file must declare `Version` — the freedesktop Desktop
+    Entry *Specification* version, not the app version (audit 2026-07-29).
+
+    Without it the entry is spec-incomplete: `desktop-file-validate` and some
+    menu implementations treat the absent key as an unversioned legacy file.
+    It is deliberately NOT the application version — bumping it on a release
+    would be wrong, so this pins the value.
+    """
+    desktop = REPO_ROOT / "packaging" / "control-ofc-gui.desktop"
+    lines = [
+        ln.strip()
+        for ln in desktop.read_text().splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+    assert lines[0] == "[Desktop Entry]", "the group header must come first"
+    entries = dict(ln.split("=", 1) for ln in lines[1:] if "=" in ln)
+    assert entries.get("Version") == "1.0", (
+        "packaging/control-ofc-gui.desktop must declare Version=1.0 (the "
+        f"freedesktop spec version, not the app version); got {entries.get('Version')!r}"
+    )
+    # Guard the confusion directly: the app version must never leak in here.
+    assert entries["Exec"] == "control-ofc-gui"

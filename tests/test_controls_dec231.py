@@ -336,3 +336,78 @@ class TestOverrideResultGuardAfterCleanup:
         )
         # Without the guard the error path discards intent; the guard keeps it.
         assert page._manual_intent == {"c1"}
+
+
+class TestOverrideReleasedMidRenew:
+    """Releasing while a renew is in flight must not strand the fan.
+
+    The override worker is sequential, so a queued renew is sent BEFORE the
+    release. The daemon answers the renew with a fresh token, which supersedes
+    the one the release then carries — so the release is rejected (409
+    stale_fencing_token, suppressed) and the daemon keeps pinning the fan under
+    a token the GUI never recorded. The card meanwhile shows curve control, so
+    the fan ignores user intent until the ~15 s deadman expires.
+    """
+
+    def _capture_releases(self, page):
+        # Fencing tokens are monotonic ints (OverrideGrant.override_token), and
+        # _request_release is Signal(str, int) — a str token cannot cross it.
+        released: list[tuple[str, int]] = []
+        page._request_release.connect(lambda cid, tok: released.append((cid, tok)))
+        return released
+
+    def test_successful_renew_for_released_control_releases_the_orphan(
+        self, qtbot, app_state, profile_service
+    ):
+        page = _page(qtbot, app_state, profile_service)
+        released = self._capture_releases(page)
+
+        # The control was released while the renew was in flight, so it is no
+        # longer in _overrides. The renew then succeeds with a NEW token.
+        page._overrides = {}
+        page._on_renew_result("c1", 1, 2, None)
+
+        assert released == [("c1", 2)], "the orphaned token must be released immediately"
+        assert "c1" not in page._overrides
+
+    def test_renew_after_repin_does_not_release_the_new_pin(
+        self, qtbot, app_state, profile_service
+    ):
+        """A re-pin (slider drag) also makes the held token differ from the
+        renewed one — but there the user still wants control, so the newer pin
+        must be left alone."""
+        page = _page(qtbot, app_state, profile_service)
+        released = self._capture_releases(page)
+
+        page._overrides = {"c1": 3}  # newer token from a re-pin
+        page._on_renew_result("c1", 1, 2, None)
+
+        assert released == []
+        assert page._overrides == {"c1": 3}, "the re-pin token must not be clobbered"
+
+    def test_large_fencing_token_survives_the_signal(self, qtbot, app_state, profile_service):
+        """Tokens cross the worker signals as ``object``, not ``int``.
+
+        A queued cross-thread connection marshals through 32-bit
+        ``QMetaType::Int``, so a monotonic token past 2**31 would be truncated
+        (or rejected) — and a mangled token means the release silently fails
+        fencing and the fan stays pinned until the deadman.
+        """
+        page = _page(qtbot, app_state, profile_service)
+        released = self._capture_releases(page)
+
+        big = 2**31 + 7
+        page._overrides = {}
+        page._on_renew_result("c1", 1, big, None)
+
+        assert released == [("c1", big)], "the token must cross the signal unmangled"
+
+    def test_successful_renew_still_advances_a_held_token(self, qtbot, app_state, profile_service):
+        page = _page(qtbot, app_state, profile_service)
+        released = self._capture_releases(page)
+
+        page._overrides = {"c1": 1}
+        page._on_renew_result("c1", 1, 2, None)
+
+        assert released == []
+        assert page._overrides == {"c1": 2}

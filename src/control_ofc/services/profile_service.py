@@ -48,10 +48,35 @@ log = logging.getLogger(__name__)
 # validation and evaluation (audit P2-C). Generous — far above any real curve.
 MAX_CURVE_POINTS = 256
 
+# Upper bounds on a profile's collection sizes. Mirrors the daemon's
+# ``MAX_PROFILE_CURVES`` / ``MAX_PROFILE_CONTROLS`` (profile.rs) so a profile one
+# side accepts the other does too. These are recursion bounds, not taste limits:
+# Mix/Sync dependency walks recurse once per link, so a deep — but perfectly
+# ACYCLIC, hence cycle-check-passing — chain used to overflow the daemon's stack
+# and abort it. The GUI's own walks are iterative (see ``_mix_reaches``), so this
+# cap is about staying in lockstep with the daemon and refusing an absurd profile
+# at the parse boundary rather than surfacing it in the editor.
+MAX_PROFILE_CURVES = 256
+MAX_PROFILE_CONTROLS = 256
+
 
 def _is_finite(value: object) -> bool:
     """True only for a real, finite number (rejects NaN/inf, bool, non-numbers)."""
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _check_profile_size(raw_curves: object, raw_controls: object) -> None:
+    """Reject a profile whose collections exceed the daemon-mirrored caps.
+
+    Takes the *raw* payload values so a non-list (or absent) entry is simply
+    ignored here — shape errors belong to the per-item parsers.
+    """
+    if isinstance(raw_curves, list) and len(raw_curves) > MAX_PROFILE_CURVES:
+        raise ValueError(f"profile has too many curves: {len(raw_curves)} > {MAX_PROFILE_CURVES}")
+    if isinstance(raw_controls, list) and len(raw_controls) > MAX_PROFILE_CONTROLS:
+        raise ValueError(
+            f"profile has too many controls: {len(raw_controls)} > {MAX_PROFILE_CONTROLS}"
+        )
 
 
 def _require_finite(value: object, name: str) -> float:
@@ -63,6 +88,19 @@ def _require_finite(value: object, name: str) -> float:
     if not _is_finite(value):
         raise ValueError(f"{name!r} is non-finite or non-numeric: {value!r}")
     return value
+
+
+def _opt(data: dict, key: str, default: float) -> object:
+    """Optional-field read that treats an explicit JSON ``null`` as absent.
+
+    The daemon models the optional curve scalars as ``Option<f64>`` and accepts —
+    then stores verbatim — a document carrying ``"start_temp_c": null`` (its
+    guards are ``if let Some(v)``), so external tooling can legitimately hand the
+    GUI one. ``null`` therefore means "use the default", not "fail the whole
+    profile load". A present non-null value flows through unchanged, so the
+    caller's ``_require_finite`` still rejects NaN/inf/non-numeric garbage."""
+    value = data.get(key, default)
+    return default if value is None else value
 
 
 # ---------------------------------------------------------------------------
@@ -252,29 +290,33 @@ class CurveConfig:
             type=curve_type,
             sensor_id=data.get("sensor_id", ""),
             points=points,
-            start_temp_c=_require_finite(data.get("start_temp_c", 30.0), "start_temp_c"),
+            # The ten optional scalars are daemon-side ``Option<f64>``: ``_opt``
+            # maps an explicit JSON ``null`` to the default (matching the daemon,
+            # which stores such a document verbatim) while ``_require_finite``
+            # still rejects any present non-null garbage.
+            start_temp_c=_require_finite(_opt(data, "start_temp_c", 30.0), "start_temp_c"),
             start_output_pct=_require_finite(
-                data.get("start_output_pct", 20.0), "start_output_pct"
+                _opt(data, "start_output_pct", 20.0), "start_output_pct"
             ),
-            end_temp_c=_require_finite(data.get("end_temp_c", 80.0), "end_temp_c"),
-            end_output_pct=_require_finite(data.get("end_output_pct", 100.0), "end_output_pct"),
-            flat_output_pct=_require_finite(data.get("flat_output_pct", 50.0), "flat_output_pct"),
+            end_temp_c=_require_finite(_opt(data, "end_temp_c", 80.0), "end_temp_c"),
+            end_output_pct=_require_finite(_opt(data, "end_output_pct", 100.0), "end_output_pct"),
+            flat_output_pct=_require_finite(_opt(data, "flat_output_pct", 50.0), "flat_output_pct"),
             trigger_idle_temp_c=_require_finite(
-                data.get("trigger_idle_temp_c", 40.0), "trigger_idle_temp_c"
+                _opt(data, "trigger_idle_temp_c", 40.0), "trigger_idle_temp_c"
             ),
             trigger_load_temp_c=_require_finite(
-                data.get("trigger_load_temp_c", 60.0), "trigger_load_temp_c"
+                _opt(data, "trigger_load_temp_c", 60.0), "trigger_load_temp_c"
             ),
             trigger_idle_pct=_require_finite(
-                data.get("trigger_idle_pct", 30.0), "trigger_idle_pct"
+                _opt(data, "trigger_idle_pct", 30.0), "trigger_idle_pct"
             ),
             trigger_load_pct=_require_finite(
-                data.get("trigger_load_pct", 80.0), "trigger_load_pct"
+                _opt(data, "trigger_load_pct", 80.0), "trigger_load_pct"
             ),
             mix_function=data.get("mix_function", "max"),
             mix_curve_ids=list(data.get("mix_curve_ids", [])),
             sync_control_id=data.get("sync_control_id", ""),
-            sync_offset_pct=_require_finite(data.get("sync_offset_pct", 0.0), "sync_offset_pct"),
+            sync_offset_pct=_require_finite(_opt(data, "sync_offset_pct", 0.0), "sync_offset_pct"),
         )
 
 
@@ -591,6 +633,12 @@ class Profile:
         if raw_id is not None and (not isinstance(raw_id, str) or not _is_safe_profile_id(raw_id)):
             raise ValueError(f"unsafe profile id: {raw_id!r}")
 
+        # Collection-size caps, in lockstep with the daemon (see
+        # MAX_PROFILE_CURVES). Checked on the raw payload so it costs nothing to
+        # reject before building objects, and so BOTH construction paths below
+        # are covered. Callers surface this as a per-profile load error.
+        _check_profile_size(data.get("curves"), data.get("controls"))
+
         if version < 2 and "assignments" in data:
             profile = _migrate_v1_profile(data)
             # Apply the v4 floor pass to v1-migrated profiles too so the
@@ -697,19 +745,29 @@ def profile_file_path(profile_id: str) -> Path:
 
 def _mix_reaches(profile: Profile, start_curve_id: str, target_id: str) -> bool:
     """True when the Mix curve ``start_curve_id`` transitively includes
-    ``target_id`` through its ``mix_curve_ids`` children."""
-    seen: set[str] = set()
+    ``target_id`` through its ``mix_curve_ids`` children.
 
-    def visit(curve_id: str) -> bool:
+    Iterative by design: a long Mix chain is a legal acyclic graph, so the cycle
+    check never fires on it, and the recursive form raised ``RecursionError``
+    past ~1000 links — crashing the curve editor on open for a stored profile
+    that the daemon would happily hold (audit P3, companion to the daemon's
+    stack-overflow P1). An explicit stack has no depth limit.
+    """
+    seen: set[str] = set()
+    stack: list[str] = [start_curve_id]
+    while stack:
+        curve_id = stack.pop()
         if curve_id in seen:
-            return False
+            continue
         seen.add(curve_id)
         curve = profile.get_curve(curve_id)
         if curve is None or curve.type != CurveType.MIX:
-            return False
-        return any(child_id == target_id or visit(child_id) for child_id in curve.mix_curve_ids)
-
-    return visit(start_curve_id)
+            continue
+        for child_id in curve.mix_curve_ids:
+            if child_id == target_id:
+                return True
+            stack.append(child_id)
+    return False
 
 
 def mix_candidate_curves(profile: Profile, mix_curve_id: str) -> list[tuple[str, str]]:
@@ -741,15 +799,17 @@ def _control_sync_target(profile: Profile, control: LogicalControl) -> str | Non
 
 def _sync_reaches(profile: Profile, start_control_id: str, target_control_id: str) -> bool:
     """True when control ``start_control_id`` transitively mirrors
-    ``target_control_id`` by following Sync control→control edges."""
+    ``target_control_id`` by following Sync control→control edges.
+
+    Iterative for the same reason as :func:`_mix_reaches` — a Sync chain is
+    linear, so depth grows with the number of chained controls.
+    """
     by_id = {c.id: c for c in profile.controls}
     seen: set[str] = set()
-
-    def visit(control_id: str) -> bool:
-        if control_id in seen:
-            return False
-        seen.add(control_id)
-        control = by_id.get(control_id)
+    current = start_control_id
+    while current not in seen:
+        seen.add(current)
+        control = by_id.get(current)
         if control is None:
             return False
         dep = _control_sync_target(profile, control)
@@ -757,9 +817,8 @@ def _sync_reaches(profile: Profile, start_control_id: str, target_control_id: st
             return False
         if dep == target_control_id:
             return True
-        return visit(dep)
-
-    return visit(start_control_id)
+        current = dep
+    return False
 
 
 def sync_candidate_controls(profile: Profile, sync_curve_id: str) -> list[tuple[str, str]]:

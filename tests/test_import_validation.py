@@ -105,6 +105,49 @@ class TestProfileImportValidation:
         profile = Profile.from_dict(data)
         assert len(profile.curves[0].points) == MAX_CURVE_POINTS
 
+    def test_profile_with_too_many_curves_raises(self):
+        """Collection caps mirror the daemon's MAX_PROFILE_CURVES.
+
+        A deep Mix chain is a legal *acyclic* graph, so the cycle check never
+        fires on it; unbounded, it overflowed the daemon's stack and aborted it.
+        The GUI refuses the same shape at the parse boundary.
+        """
+        from control_ofc.services.profile_service import MAX_PROFILE_CURVES
+
+        data = {
+            "controls": [],
+            "curves": [
+                {"id": f"c{i}", "type": "flat", "points": []} for i in range(MAX_PROFILE_CURVES + 1)
+            ],
+        }
+        with pytest.raises(ValueError, match="too many curves"):
+            Profile.from_dict(data)
+
+    def test_profile_at_max_curves_accepted(self):
+        """The cap is inclusive — exactly MAX_PROFILE_CURVES still loads."""
+        from control_ofc.services.profile_service import MAX_PROFILE_CURVES
+
+        data = {
+            "controls": [],
+            "curves": [
+                {"id": f"c{i}", "type": "flat", "points": []} for i in range(MAX_PROFILE_CURVES)
+            ],
+        }
+        assert len(Profile.from_dict(data).curves) == MAX_PROFILE_CURVES
+
+    def test_profile_with_too_many_controls_raises(self):
+        from control_ofc.services.profile_service import MAX_PROFILE_CONTROLS
+
+        data = {
+            "curves": [],
+            "controls": [
+                {"id": f"ctl{i}", "name": f"ctl{i}", "mode": "curve", "curve_id": "c"}
+                for i in range(MAX_PROFILE_CONTROLS + 1)
+            ],
+        }
+        with pytest.raises(ValueError, match="too many controls"):
+            Profile.from_dict(data)
+
     @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
     def test_curve_with_nonfinite_point_raises(self, bad):
         """NaN/inf point values are rejected (would corrupt curve math) — P2-C.
@@ -242,6 +285,68 @@ class TestScalarFieldFiniteness:
             Profile.from_dict(
                 {"controls": [{"mode": "curve", "stop_pct": float("inf")}], "curves": []}
             )
+
+
+# The ten optional curve scalars the daemon models as ``Option<f64>``, with the
+# GUI-side defaults an absent (or explicitly-null) key must resolve to.
+_CURVE_OPTIONAL_DEFAULTS = {
+    "start_temp_c": 30.0,
+    "start_output_pct": 20.0,
+    "end_temp_c": 80.0,
+    "end_output_pct": 100.0,
+    "flat_output_pct": 50.0,
+    "trigger_idle_temp_c": 40.0,
+    "trigger_load_temp_c": 60.0,
+    "trigger_idle_pct": 30.0,
+    "trigger_load_pct": 80.0,
+    "sync_offset_pct": 0.0,
+}
+
+
+class TestCurveOptionalNullTolerance:
+    """Explicit JSON ``null`` on the optional curve scalars means "use the
+    default", matching the daemon's ``Option<f64>`` model — its ``if let
+    Some(v)`` guards accept such a document and store it verbatim, so external
+    tooling can legitimately hand the GUI one. Pre-fix,
+    ``data.get(key, default)`` returned ``None`` for a present-but-null key and
+    ``_require_finite`` then failed the whole profile load (an *absent* key
+    already worked)."""
+
+    @pytest.mark.parametrize("field,default", sorted(_CURVE_OPTIONAL_DEFAULTS.items()))
+    def test_explicit_null_loads_the_default(self, field, default):
+        from control_ofc.services.profile_service import CurveConfig
+
+        c = CurveConfig.from_dict({"id": "c1", "type": "graph", field: None})
+        assert getattr(c, field) == default
+
+    def test_null_field_via_json_document_loads(self):
+        """End-to-end through the real import entry point, with the ``null``
+        coming from an actual JSON parse (``json.loads`` maps null -> None)."""
+        import json
+
+        doc = json.loads(
+            '{"id": "p1", "name": "X", "version": 7, "controls": [],'
+            ' "curves": [{"id": "c1", "type": "linear", "start_temp_c": null,'
+            ' "end_temp_c": 70.0}]}'
+        )
+        p = Profile.from_dict(doc)
+        assert p.curves[0].start_temp_c == 30.0  # null -> default
+        assert p.curves[0].end_temp_c == 70.0  # explicit value still honoured
+
+    @pytest.mark.parametrize("bad", _NONFINITE)
+    def test_null_tolerance_does_not_weaken_nonfinite_rejection(self, bad):
+        """Only real ``null`` is tolerated — NaN/inf/1e400/strings still raise."""
+        from control_ofc.services.profile_service import CurveConfig
+
+        with pytest.raises(ValueError, match="non-finite"):
+            CurveConfig.from_dict({"id": "c1", "type": "linear", "start_temp_c": bad})
+
+    def test_string_null_still_rejected(self):
+        """The *string* "null" is garbage, not a JSON null."""
+        from control_ofc.services.profile_service import CurveConfig
+
+        with pytest.raises(ValueError, match="non-finite"):
+            CurveConfig.from_dict({"id": "c1", "type": "flat", "flat_output_pct": "null"})
 
 
 # ---------------------------------------------------------------------------

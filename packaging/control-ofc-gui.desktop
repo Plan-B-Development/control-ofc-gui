@@ -1,4 +1,7 @@
 [Desktop Entry]
+# Version of the freedesktop Desktop Entry Specification this file targets —
+# NOT the application version.
+Version=1.0
 Type=Application
 Name=Control-OFC
 Comment=Desktop fan control GUI for the Control-OFC daemon

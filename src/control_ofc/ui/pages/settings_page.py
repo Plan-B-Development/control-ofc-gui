@@ -337,12 +337,12 @@ class SettingsPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel(label_text))
         path_label.setMinimumWidth(250)
-        # Use the *active* theme so the dir-picker label tint follows light
-        # vs dark theme changes — pre-DEC-109 this was pinned to the default
-        # dark token and looked wrong under any other theme.
-        from control_ofc.ui.theme import active_theme
-
-        path_label.setStyleSheet(f"color: {active_theme().text_muted};")
+        # Scoped QSS class, not an inline token f-string: the f-string variant
+        # froze the colour at construction time, and SettingsPage is not in the
+        # MainWindow set_theme fan-out — so a live dark→light switch left the
+        # path labels at the previous theme's muted tint. The .MutedLabel rule
+        # re-resolves from the freshly applied stylesheet on every theme change.
+        path_label.setProperty("class", "MutedLabel")
         row.addWidget(path_label, 1)
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(browse_callback)

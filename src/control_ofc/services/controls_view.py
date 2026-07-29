@@ -15,9 +15,17 @@ from collections.abc import Iterable, Sequence
 from control_ofc.knowledge.sensor_knowledge import classify_sensor_with_overrides
 from control_ofc.services.profile_service import (
     CONTROL_ROLE_GPU,
+    _label_indicates_cpu_or_pump,
     control_minimum_pct,
     infer_member_role,
 )
+from control_ofc.ui.fan_presence import (
+    PRESENCE_BADGE,
+    PRESENCE_TOOLTIP,
+    FanPresence,
+    classify_fan_presence,
+)
+from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 
 # The renew timer never fires slower than this floor, so the daemon deadman is
 # honoured even for a grant advising a sub-second cadence.
@@ -130,6 +138,254 @@ def sensor_combo_label(s, overrides: dict) -> str:
     )
     star = "★ " if preferred else ""
     return f"{star}{s.label} ({s.kind}){val_text}"
+
+
+def role_preserving_label(display_name: str, fallback_label: str, source: str) -> str:
+    """Pick what to persist as ``ControlMember.member_label`` (DEC-228).
+
+    ``member_label`` is not only a name: both ``infer_member_role`` and the
+    daemon's ``member_is_pump_or_cpu`` match "cpu"/"pump"/"aio" against it to
+    apply the DEC-095/162 30% CPU/pump floor, and the daemon's classifier mirrors
+    the GUI's rather than detecting pumps independently — so whatever is written
+    here sets the floor on *both* sides.
+
+    Neither candidate is reliably the safer one, so the rule is simply **never
+    lower the inferred role**:
+
+    * the user's alias can carry the role where the hardware does not — the
+      daemon synthesises ``"pwm7"`` for any header with no
+      ``pwmN_label``/``fanN_label`` (`read_label`), so where nothing else knows
+      the header the alias is the only way to say "this is the pump";
+    * the hardware-side label can carry it where the alias does not — a header
+      labelled ``CPU_OPT`` that the user renamed to "My Fan".
+
+    ``fallback_label`` is ``AppState.fan_fallback_name`` — the *resolved* name
+    (sysfs label, else ``/etc/sensors.d``, else the board table), empty for a
+    non-hwmon member. Comparing against the resolved name rather than the raw
+    ``HwmonHeader.label`` is what makes this work on boards whose chip publishes
+    no labels at all (DEC-229): there the raw label is the placeholder ``pwm1``,
+    which carries no role, while the board table answers ``CPU_FAN``, which does.
+
+    Display is unaffected either way: every member surface resolves through
+    ``AppState.member_display_name``, which prefers the live alias over this cache.
+    """
+    if source != "hwmon" or not fallback_label:
+        return display_name
+    if _label_indicates_cpu_or_pump(fallback_label) and not _label_indicates_cpu_or_pump(
+        display_name
+    ):
+        return fallback_label
+    return display_name
+
+
+def _aio_tag_for(label: str) -> str:
+    """The ``(AIO pump)``/``(AIO radiator)`` suffix for a liquid-cooler header
+    (DEC-157). Role-bearing, so it is appended to the persisted label too."""
+    return " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
+
+
+def build_member_candidates(
+    fans,
+    headers,
+    *,
+    gpu_writable: bool,
+    display_name,
+    fallback_name,
+) -> list[dict]:
+    """Rows for the member-picker: every fan output that may be controlled.
+
+    Each row carries a user-facing ``label`` (badges, AIO tag, ``(read-only)``)
+    and a separate ``clean_label`` — what would be persisted as
+    ``ControlMember.member_label``, which is a **safety input**, not decoration:
+    it drives the DEC-095/162 30% CPU/pump floor on both sides of the API. See
+    :func:`role_preserving_label`.
+
+    Exclusions, all deliberate:
+
+    * hwmon fans whose header is ``is_writable=False`` (DEC-102) — assigning one
+      produced a 1 Hz ``EACCES`` storm. Daemon discovery drops these too; this is
+      defence-in-depth for an older daemon mid-upgrade.
+    * Intel and NVIDIA discrete GPU fans (DEC-121/DEC-204) — no kernel write path
+      at all, and unlike an AMD read-only GPU (a fixable ``ppfeaturemask`` state)
+      that is permanent. Their temperature sensors stay available as curve sensors.
+
+    ``display_name``/``fallback_name`` are the ``AppState`` resolvers, injected so
+    this stays headless. An AMD GPU is still listed when ``gpu_writable`` is False
+    — flagged ``(read-only)`` rather than hidden, because that state is fixable.
+    """
+    header_by_id = {h.id: h for h in headers}
+    available: list[dict] = []
+
+    for fan in fans:
+        if fan.source == "hwmon":
+            h = header_by_id.get(fan.id)
+            if h is not None and not h.is_writable:
+                continue
+        if fan.source in ("intel_gpu", "nvidia_gpu"):
+            continue
+
+        label = display_name(fan.id)
+        # Empty for a fan with no header, so a raw daemon id can never be
+        # mistaken for a role-bearing name (DEC-229).
+        fallback = fallback_name(fan.id) if header_by_id.get(fan.id) is not None else ""
+        clean_label = role_preserving_label(label, fallback, fan.source)
+
+        if fan.source == "amd_gpu" and not gpu_writable:
+            label = f"{label} (read-only)"
+        # Surface "no fan detected" / PWM-only states so users don't assign
+        # curves to empty headers.
+        presence = classify_fan_presence(fan, header_by_id.get(fan.id))
+        badge = PRESENCE_BADGE.get(presence, "")
+        if badge and "(read-only)" not in label:
+            label = f"{label} ({badge})"
+
+        h_aio = header_by_id.get(fan.id)
+        if fan.source == "hwmon" and h_aio is not None and h_aio.is_aio:
+            aio_tag = _aio_tag_for(label)
+            label += aio_tag
+            clean_label += aio_tag  # role-bearing — see above
+
+        entry = {
+            "id": fan.id,
+            "source": fan.source,
+            "label": label,
+            "clean_label": clean_label,
+            "rpm": fan.rpm,  # DEC-214: live RPM (None → "no fan", never invented)
+        }
+        tip = PRESENCE_TOOLTIP.get(presence, "") if presence != FanPresence.PRESENT else ""
+        if tip:
+            entry["tooltip"] = tip
+        available.append(entry)
+
+    for header in headers:
+        # Read-only headers are dropped entirely rather than labelled: the old
+        # "(read-only)" suffix still allowed assignment, and profiles that bound
+        # them produced 1 Hz 503/EACCES storms (DEC-102). They stay visible on
+        # the hardware surfaces for awareness.
+        if not header.is_writable:
+            continue
+        if any(a["id"] == header.id for a in available):
+            continue
+
+        label = display_name(header.id) or header.id
+        clean_label = role_preserving_label(label, fallback_name(header.id), "hwmon")
+        presence = classify_fan_presence(None, header)
+        if PRESENCE_BADGE.get(presence):
+            label = f"{label} ({PRESENCE_BADGE[presence]})"
+        if header.is_aio:
+            aio_tag = _aio_tag_for(label)
+            label += aio_tag
+            clean_label += aio_tag  # role-bearing — see above
+
+        tip_parts = [f"ID: {header.id}"]
+        if header.chip_name:
+            tip_parts.append(f"Chip: {header.chip_name}")
+            g = lookup_chip_guidance(header.chip_name)
+            if g:
+                st = "mainline" if g.in_mainline else g.driver_package
+                tip_parts.append(f"Driver: {g.driver_name} ({st})")
+        if presence != FanPresence.PRESENT:
+            tip_parts.append(PRESENCE_TOOLTIP.get(presence, ""))
+
+        available.append(
+            {
+                "id": header.id,
+                "source": "hwmon",
+                "label": label,
+                "clean_label": clean_label,
+                "rpm": None,  # header with no live fan reading → "no fan"
+                "tooltip": "\n".join(p for p in tip_parts if p),
+            }
+        )
+
+    return available
+
+
+def assigned_elsewhere_map(controls, exclude_control_id: str) -> dict[str, str]:
+    """``member_id`` → owning control name, for every control *except* the one
+    being edited. Membership is exclusive, so the picker greys these out."""
+    return {
+        m.member_id: ctrl.name
+        for ctrl in controls
+        if ctrl.id != exclude_control_id
+        for m in ctrl.members
+    }
+
+
+def build_radiator_candidates(
+    fans,
+    headers,
+    *,
+    pump_id: str | None,
+    preselect_ids: set,
+    display_name,
+) -> list[dict]:
+    """Rows for the AIO wizard's radiator picker (DEC-157): writable hwmon +
+    OpenFan outputs, minus the pump itself.
+
+    ``preselect`` ticks a row that the detector already matched, that the header
+    reports as liquid-cooled, or whose name says "radiator". GPU fans of every
+    vendor are excluded — a GPU fan is never an AIO radiator fan.
+    """
+    header_by_id = {h.id: h for h in headers}
+    candidates: list[dict] = []
+    seen: set[str] = set()
+
+    for fan in fans:
+        if fan.source in ("amd_gpu", "intel_gpu", "nvidia_gpu"):
+            continue
+        if fan.source == "hwmon":
+            h = header_by_id.get(fan.id)
+            if h is None or not h.is_writable:
+                continue
+        if fan.id == pump_id or fan.id in seen:
+            continue
+        seen.add(fan.id)
+        label = display_name(fan.id)
+        candidates.append(
+            {
+                "id": fan.id,
+                "source": fan.source,
+                "label": label,
+                "preselect": fan.id in preselect_ids or "radiator" in label.lower(),
+            }
+        )
+
+    for header in headers:
+        if not header.is_writable or header.id == pump_id or header.id in seen:
+            continue
+        # Resolved, not raw ``header.label`` (DEC-229) — matches the fan branch
+        # and keeps a placeholder "pwm1" out of the radiator picker.
+        label = display_name(header.id) or header.id
+        candidates.append(
+            {
+                "id": header.id,
+                "source": "hwmon",
+                "label": label,
+                "preselect": header.id in preselect_ids
+                or header.is_aio
+                or "radiator" in label.lower(),
+            }
+        )
+
+    return candidates
+
+
+def build_sensor_choices(sensors, overrides: dict) -> list[dict]:
+    """AIO wizard sensor rows, flagging coolant + CPU sensors as ``preferred``
+    (the recommended bindings for a radiator curve, DEC-157)."""
+    choices: list[dict] = []
+    for s in sensors:
+        cls = classify_sensor_with_overrides(
+            s.id, chip_name=s.chip_name, label=s.label, overrides=overrides
+        )
+        preferred = cls.source_class in (
+            "coolant",
+            "coolant_in",
+            "coolant_out",
+        ) or s.kind in ("cpu_temp", "CpuTemp")
+        choices.append({"id": s.id, "label": s.label, "preferred": preferred})
+    return choices
 
 
 def parse_stored_card_size(raw) -> tuple[int, int] | None:

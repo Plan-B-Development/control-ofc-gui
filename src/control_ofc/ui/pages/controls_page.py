@@ -30,9 +30,12 @@ from PySide6.QtWidgets import (
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import ConnectionState, DaemonStatus
-from control_ofc.knowledge.sensor_knowledge import classify_sensor_with_overrides
 from control_ofc.services.app_state import AppState
 from control_ofc.services.controls_view import (
+    assigned_elsewhere_map,
+    build_member_candidates,
+    build_radiator_candidates,
+    build_sensor_choices,
     curve_min_output_floor,
     divergent_gpu_output,
     member_rpm_map,
@@ -43,6 +46,12 @@ from control_ofc.services.controls_view import (
     sensor_combo_label,
     unassigned_fan_ids,
 )
+from control_ofc.services.controls_view import (
+    # Re-exported under its historical private name: this is a safety-relevant
+    # helper (it decides the persisted member_label, hence the 30% CPU/pump
+    # floor) with regression tests that import it from this module.
+    role_preserving_label as _role_preserving_label,
+)
 from control_ofc.services.profile_service import (
     ControlMode,
     CurveConfig,
@@ -50,20 +59,12 @@ from control_ofc.services.profile_service import (
     CurveType,
     LogicalControl,
     ProfileService,
-    _label_indicates_cpu_or_pump,
     apply_role_floor,
     mix_candidate_curves,
     sync_candidate_controls,
 )
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import SectionHeader
-from control_ofc.ui.fan_presence import (
-    PRESENCE_BADGE,
-    PRESENCE_TOOLTIP,
-    FanPresence,
-    classify_fan_presence,
-)
-from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
 from control_ofc.ui.qt_util import repolish, set_chip_class, style_splitter
 from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE
 from control_ofc.ui.widgets.control_card import ControlCard
@@ -126,7 +127,7 @@ class _OverrideWorker(QObject):
         except DaemonError as exc:
             self.take_result.emit(control_id, pct, None, exc)
 
-    @Slot(str, int)
+    @Slot(str, object)
     def renew(self, control_id: str, token: int) -> None:
         try:
             result = self._get_client().override_renew(
@@ -151,7 +152,7 @@ class _OverrideWorker(QObject):
                 DaemonError(code="internal_error", message=str(exc), status=0),
             )
 
-    @Slot(str, int)
+    @Slot(str, object)
     def release(self, control_id: str, token: int) -> None:
         # Fire-and-forget: on failure the daemon deadman reverts the override.
         with contextlib.suppress(DaemonError):
@@ -165,44 +166,6 @@ class _OverrideWorker(QObject):
             self._client = None
 
 
-def _role_preserving_label(display_name: str, fallback_label: str, source: str) -> str:
-    """Pick what to persist as ``ControlMember.member_label`` (DEC-228).
-
-    ``member_label`` is not only a name: both ``infer_member_role`` and the
-    daemon's ``member_is_pump_or_cpu`` match "cpu"/"pump"/"aio" against it to
-    apply the DEC-095/162 30% CPU/pump floor, and the daemon's classifier mirrors
-    the GUI's rather than detecting pumps independently — so whatever is written
-    here sets the floor on *both* sides.
-
-    Neither candidate is reliably the safer one, so the rule is simply **never
-    lower the inferred role**:
-
-    * the user's alias can carry the role where the hardware does not — the
-      daemon synthesises ``"pwm7"`` for any header with no
-      ``pwmN_label``/``fanN_label`` (`read_label`), so where nothing else knows
-      the header the alias is the only way to say "this is the pump";
-    * the hardware-side label can carry it where the alias does not — a header
-      labelled ``CPU_OPT`` that the user renamed to "My Fan".
-
-    ``fallback_label`` is ``AppState.fan_fallback_name`` — the *resolved* name
-    (sysfs label, else ``/etc/sensors.d``, else the board table), empty for a
-    non-hwmon member. Comparing against the resolved name rather than the raw
-    ``HwmonHeader.label`` is what makes this work on boards whose chip publishes
-    no labels at all (DEC-229): there the raw label is the placeholder ``pwm1``,
-    which carries no role, while the board table answers ``CPU_FAN``, which does.
-
-    Display is unaffected either way: every member surface resolves through
-    ``AppState.member_display_name``, which prefers the live alias over this cache.
-    """
-    if source != "hwmon" or not fallback_label:
-        return display_name
-    if _label_indicates_cpu_or_pump(fallback_label) and not _label_indicates_cpu_or_pump(
-        display_name
-    ):
-        return fallback_label
-    return display_name
-
-
 class ControlsPage(QWidget):
     """FanControl-style controls: profile bar, control cards grid, curve cards grid."""
 
@@ -211,9 +174,13 @@ class ControlsPage(QWidget):
     # DEC-220: dispatch manual-override HTTP calls to the off-thread worker.
     # Queued to the worker thread; results return via the worker's *_result
     # signals, handled on the main thread.
-    _request_take = Signal(str, int)  # control_id, pct
-    _request_renew = Signal(str, int)  # control_id, token
-    _request_release = Signal(str, int)  # control_id, token
+    _request_take = Signal(str, int)  # control_id, pct (a real 0-100 int)
+    # Fencing tokens cross as ``object``, not ``int``: a queued cross-thread
+    # connection marshals a Python int through 32-bit ``QMetaType::Int``, which
+    # would silently truncate a monotonic token past 2^31. ``object`` passes the
+    # Python value through untouched, and matches ``renew_result`` above.
+    _request_renew = Signal(str, object)  # control_id, token
+    _request_release = Signal(str, object)  # control_id, token
 
     _log = logging.getLogger(__name__)
     # Manual-override (DEC-163) GUI timing. The renew cadence follows each
@@ -1046,58 +1013,14 @@ class ControlsPage(QWidget):
         pump_id = det.pump_member.member_id if det.pump_member else None
         preselect_ids = {m.member_id for m in det.radiator_members}
 
-        # Candidate radiator fans: writable hwmon + OpenFan fans, minus the pump.
-        candidates: list[dict] = []
-        header_by_id = {h.id: h for h in self._state.hwmon_headers}
-        seen: set[str] = set()
-        for fan in self._state.fans:
-            if fan.source in ("amd_gpu", "intel_gpu", "nvidia_gpu"):
-                continue
-            if fan.source == "hwmon":
-                h = header_by_id.get(fan.id)
-                if h is None or not h.is_writable:
-                    continue
-            if fan.id == pump_id or fan.id in seen:
-                continue
-            seen.add(fan.id)
-            label = self._state.fan_display_name(fan.id)
-            candidates.append(
-                {
-                    "id": fan.id,
-                    "source": fan.source,
-                    "label": label,
-                    "preselect": fan.id in preselect_ids or "radiator" in label.lower(),
-                }
-            )
-        for header in self._state.hwmon_headers:
-            if not header.is_writable or header.id == pump_id or header.id in seen:
-                continue
-            # Resolved, not raw h.label (DEC-229) — matches the fan branch above
-            # and keeps a placeholder "pwm1" out of the radiator picker.
-            label = self._state.fan_display_name(header.id) or header.id
-            candidates.append(
-                {
-                    "id": header.id,
-                    "source": "hwmon",
-                    "label": label,
-                    "preselect": header.id in preselect_ids
-                    or header.is_aio
-                    or "radiator" in label.lower(),
-                }
-            )
-
-        # Sensor choices, with coolant + CPU flagged preferred.
-        sensor_choices: list[dict] = []
-        for s in self._state.sensors:
-            cls = classify_sensor_with_overrides(
-                s.id, chip_name=s.chip_name, label=s.label, overrides=overrides
-            )
-            preferred = cls.source_class in (
-                "coolant",
-                "coolant_in",
-                "coolant_out",
-            ) or s.kind in ("cpu_temp", "CpuTemp")
-            sensor_choices.append({"id": s.id, "label": s.label, "preferred": preferred})
+        candidates = build_radiator_candidates(
+            self._state.fans,
+            self._state.hwmon_headers,
+            pump_id=pump_id,
+            preselect_ids=preselect_ids,
+            display_name=self._state.fan_display_name,
+        )
+        sensor_choices = build_sensor_choices(self._state.sensors, overrides)
 
         dlg = AioConfigDialog(
             pump_label=det.pump_member.member_label if det.pump_member else None,
@@ -1313,124 +1236,18 @@ class ControlsPage(QWidget):
 
         available: list[dict] = []
         if self._state:
-            gpu_writable = (
-                self._state.capabilities is not None
-                and self._state.capabilities.amd_gpu.fan_write_supported
+            available = build_member_candidates(
+                self._state.fans,
+                self._state.hwmon_headers,
+                gpu_writable=(
+                    self._state.capabilities is not None
+                    and self._state.capabilities.amd_gpu.fan_write_supported
+                ),
+                display_name=self._state.fan_display_name,
+                fallback_name=self._state.fan_fallback_name,
             )
-            header_by_id = {h.id: h for h in self._state.hwmon_headers}
 
-            for fan in self._state.fans:
-                # DEC-102: drop hwmon-source fans whose header is read-only.
-                # Pre-DEC-102 a read-only header could be assigned to a
-                # control and produce a 1 Hz EACCES storm. Daemon discovery
-                # also drops these (Option A); this is defense-in-depth so
-                # an older daemon still under upgrade cannot offer them.
-                if fan.source == "hwmon":
-                    h = header_by_id.get(fan.id)
-                    if h is not None and not h.is_writable:
-                        continue
-                # DEC-121/DEC-204: Intel and NVIDIA discrete GPU fans have no
-                # kernel write path (firmware-managed / read-only telemetry).
-                # Never offer them as controllable members. Unlike an AMD
-                # read-only GPU (a fixable ppfeaturemask state), this is
-                # permanent. The GPU's temperature sensors remain available as
-                # curve sensors.
-                if fan.source in ("intel_gpu", "nvidia_gpu"):
-                    continue
-                label = self._state.fan_display_name(fan.id)
-                # DEC-228: what gets persisted as member_label — deliberately NOT
-                # the display name. member_label is not only a name: both
-                # infer_member_role and the daemon's member_is_pump_or_cpu match
-                # "cpu"/"pump"/"aio" against it to apply the DEC-095/162 30%
-                # CPU/pump floor. A user alias ("My Fan") can lack those words
-                # where the sysfs label ("CPU_OPT") carries them, so for hwmon
-                # members the hardware-truthful label is what gets stored;
-                # otherwise renaming a CPU header would quietly drop a new
-                # control to the 20% chassis floor. Display is unaffected — every
-                # member surface resolves through AppState.member_display_name,
-                # which prefers the live alias over this cache.
-                # Resolved fallback, not the raw header label — see DEC-229 in
-                # _role_preserving_label. Empty when this fan has no header, so
-                # a raw daemon id can never be mistaken for a role-bearing name.
-                fallback = (
-                    self._state.fan_fallback_name(fan.id)
-                    if header_by_id.get(fan.id) is not None
-                    else ""
-                )
-                clean_label = _role_preserving_label(label, fallback, fan.source)
-                if fan.source == "amd_gpu" and not gpu_writable:
-                    label = f"{label} (read-only)"
-                # A2: surface "no fan detected" / PWM-only states in the picker
-                # so users don't accidentally assign curves to empty headers.
-                presence = classify_fan_presence(fan, header_by_id.get(fan.id))
-                badge = PRESENCE_BADGE.get(presence, "")
-                if badge and "(read-only)" not in label:
-                    label = f"{label} ({badge})"
-                # DEC-157: tag liquid-cooler headers so AIO members are obvious.
-                h_aio = header_by_id.get(fan.id)
-                if fan.source == "hwmon" and h_aio is not None and h_aio.is_aio:
-                    aio_tag = " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
-                    label += aio_tag
-                    clean_label += aio_tag  # role-bearing — see above
-                tip = PRESENCE_TOOLTIP.get(presence, "") if presence != FanPresence.PRESENT else ""
-                entry = {
-                    "id": fan.id,
-                    "source": fan.source,
-                    "label": label,
-                    "clean_label": clean_label,
-                    "rpm": fan.rpm,  # DEC-214: live RPM (None → "no fan", never invented)
-                }
-                if tip:
-                    entry["tooltip"] = tip
-                available.append(entry)
-
-            for header in self._state.hwmon_headers:
-                # DEC-102: drop read-only hwmon headers from the picker
-                # entirely. The previous "(read-only)" suffix labelled the
-                # header but still allowed assignment; users (or imported
-                # profiles) bound them to controls and the control loop
-                # then produced 1 Hz 503/EACCES storms. Read-only headers
-                # remain visible in Diagnostics → Fans for awareness.
-                if not header.is_writable:
-                    continue
-                if not any(a["id"] == header.id for a in available):
-                    label = self._state.fan_display_name(header.id) or header.id
-                    clean_label = _role_preserving_label(
-                        label, self._state.fan_fallback_name(header.id), "hwmon"
-                    )
-                    presence = classify_fan_presence(None, header)
-                    if PRESENCE_BADGE.get(presence):
-                        label = f"{label} ({PRESENCE_BADGE[presence]})"
-                    if header.is_aio:
-                        aio_tag = " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
-                        label += aio_tag
-                        clean_label += aio_tag  # role-bearing — see above
-                    tip_parts = [f"ID: {header.id}"]
-                    if header.chip_name:
-                        tip_parts.append(f"Chip: {header.chip_name}")
-                        g = lookup_chip_guidance(header.chip_name)
-                        if g:
-                            st = "mainline" if g.in_mainline else g.driver_package
-                            tip_parts.append(f"Driver: {g.driver_name} ({st})")
-                    if presence != FanPresence.PRESENT:
-                        tip_parts.append(PRESENCE_TOOLTIP.get(presence, ""))
-                    available.append(
-                        {
-                            "id": header.id,
-                            "source": "hwmon",
-                            "label": label,
-                            "clean_label": clean_label,
-                            "rpm": None,  # header with no live fan reading → "no fan"
-                            "tooltip": "\n".join(p for p in tip_parts if p),
-                        }
-                    )
-
-        # Build assigned_elsewhere map for exclusive membership
-        assigned_elsewhere: dict[str, str] = {}
-        for other_ctrl in profile.controls:
-            if other_ctrl.id != control_id:
-                for m in other_ctrl.members:
-                    assigned_elsewhere[m.member_id] = other_ctrl.name
+        assigned_elsewhere = assigned_elsewhere_map(profile.controls, control_id)
 
         from control_ofc.ui.widgets.member_editor import MemberEditorDialog
 
@@ -2143,6 +1960,21 @@ class ControlsPage(QWidget):
         # concurrent re-pin may have installed a newer token we must not clobber.
         if self._overrides.get(control_id) == sent_token:
             self._overrides[control_id] = new_token
+        elif control_id not in self._overrides:
+            # The user released while this renew was in flight. The worker is
+            # sequential, so it sent the renew FIRST — the daemon issued
+            # ``new_token`` and superseded the one our release then carried, so
+            # that release was rejected (409 stale_fencing_token, suppressed) and
+            # the daemon is still pinning the fan under a token we would
+            # otherwise never record. Release the orphan now instead of leaving
+            # the fan overridden until the deadman expires (~15 s) while the card
+            # already shows curve control. Mirrors the same orphan handling in
+            # ``_on_take_result``.
+            self._log.debug(
+                "Releasing orphaned override token on %s (released mid-renew)",
+                control_id,
+            )
+            self._request_release.emit(control_id, new_token)
 
     def _flush_override_values(self) -> None:
         """Apply the latest debounced slider value as a re-pin (which supersedes

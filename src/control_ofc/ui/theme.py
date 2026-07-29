@@ -889,6 +889,13 @@ def build_stylesheet(t: ThemeTokens) -> str:
         font-size: {fs["small"]}pt;
     }}
 
+    /* De-emphasised inline text (settings dir-picker paths). A scoped class —
+       not an inline token f-string — so the tint re-resolves from the freshly
+       generated stylesheet on every live theme change. */
+    .MutedLabel {{
+        color: {t.text_muted};
+    }}
+
     /* Hairline rule between the dashboard fan-card metric columns (DEC-225): a
        1px vertical line in the card's own border tone, so the RPM/SPEED/TEMP
        trio stays scannable without an inset panel of a different colour. */

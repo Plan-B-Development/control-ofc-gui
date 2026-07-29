@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -278,45 +279,152 @@ class TestThemeRoundtrip:
 # Hardcoded color lint
 # ---------------------------------------------------------------------------
 
-# Pattern: hex color literal (#RRGGBB or #RRGGBBAA) outside of theme.py defaults
-_HEX_PATTERN = re.compile(r'(?<!")#[0-9a-fA-F]{6,8}(?!")')
+# Hex colour literal: ``#`` + 3-8 hex chars ending at a word boundary.
+# Deliberately NO quote lookarounds: the retired pattern
+# ``r'(?<!")#[0-9a-fA-F]{6,8}(?!")'`` excluded any hex adjacent to a quote —
+# which is exactly the shape a real violation takes (``QColor("#ff0000")``,
+# ``BG = "#101014"`` and ``setStyleSheet("color: #ff0000")`` all went unseen),
+# and its ``{6,8}`` floor also missed 3/4-digit CSS shorthands like ``#fff``.
+# False positives are suppressed structurally instead (see the helpers below).
+_HEX_PATTERN = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+
+_HEX_LETTERS = frozenset("abcdefABCDEF")
+
+
+def _iter_code_strings(tree: ast.AST):
+    """Yield ``(lineno, value)`` for every string literal that is *code* —
+    i.e. every string constant except docstrings.
+
+    In Python a ``#`` outside a string literal always starts a comment, and
+    comments never reach the AST — so scanning non-docstring string constants
+    (f-string literal chunks included, via their ``Constant`` parts) covers
+    every place a functioning hex colour can live while structurally dropping
+    comment/docstring prose."""
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                docstrings.add(id(body[0].value))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+        ):
+            yield node.lineno, node.value
+
+
+def _is_colour_shaped(match: str) -> bool:
+    """True when *match* (``#`` + hex chars) is a renderable colour literal.
+
+    3/4-digit matches made only of decimal digits are prose references — the
+    hwmon guidance strings cite "PR #114" / "issue #106" and HTML entities like
+    ``&#8226;`` — so those require at least one hex *letter* (keeping ``#fff``
+    and ``#f00c`` caught). 6/8-digit matches are always colour-shaped: an
+    all-decimal ``#101014`` is a real colour. 5/7 hex digits is not a valid
+    CSS/Qt colour form at all."""
+    digits = match[1:]
+    if len(digits) in (6, 8):
+        return True
+    if len(digits) in (3, 4):
+        return any(c in _HEX_LETTERS for c in digits)
+    return False
+
+
+def _find_hex_violations(source: str) -> list[str]:
+    """All hardcoded hex colours in *source*, as ``"line: match"`` strings."""
+    violations = []
+    for lineno, value in _iter_code_strings(ast.parse(source)):
+        for m in _HEX_PATTERN.finditer(value):
+            if _is_colour_shaped(m.group(0)):
+                # Line of the match within a (real-newline) multi-line literal.
+                line = lineno + value.count("\n", 0, m.start())
+                violations.append(f"{line}: {m.group(0)}")
+    return violations
 
 
 class TestNoHardcodedColors:
     def test_no_hardcoded_hex_in_widget_code(self):
-        """Widget and page code must not contain hardcoded hex colours."""
+        """Widget, page, and service code must not contain hardcoded hex colours."""
         src_dir = Path(__file__).parent.parent / "src" / "control_ofc"
         violations = []
 
-        # Directories to check (widgets, pages, services — NOT theme.py itself)
+        # Recursive over the whole UI tree — pages, widgets, components, and any
+        # future ui/<subpackage>/ are scanned automatically — plus the Qt-free
+        # view-model layer in services/.
         check_dirs = [
-            src_dir / "ui" / "pages",
-            src_dir / "ui" / "widgets",
-            src_dir / "ui" / "components",  # DEC-208 redesign component library
-            src_dir / "ui",  # sidebar, status_banner, splash, about_dialog, branding
+            src_dir / "ui",
+            src_dir / "services",
         ]
-        # theme_editor.py is allowed to have hex in swatch styling
+        # theme.py owns the tokens; theme_editor.py styles swatches from them.
         allowed_files = {"theme_editor.py", "theme.py"}
 
         for check_dir in check_dirs:
-            if not check_dir.exists():
-                continue
-            for py_file in check_dir.glob("*.py"):
+            assert check_dir.exists(), f"scanned directory vanished: {check_dir}"
+            for py_file in sorted(check_dir.rglob("*.py")):
                 if py_file.name in allowed_files:
                     continue
-                content = py_file.read_text()
-                for line_no, line in enumerate(content.splitlines(), 1):
-                    # Skip comments
-                    stripped = line.lstrip()
-                    if stripped.startswith("#"):
-                        continue
-                    matches = _HEX_PATTERN.findall(line)
-                    if matches:
-                        violations.append(f"{py_file.name}:{line_no}: {matches}")
+                for violation in _find_hex_violations(py_file.read_text()):
+                    violations.append(f"{py_file.relative_to(src_dir)}:{violation}")
 
         assert not violations, "Hardcoded hex colours found in widget/page code:\n" + "\n".join(
             violations
         )
+
+
+class TestHexGuardSelfTest:
+    """The old guard's quote lookarounds excluded exactly the shape a real
+    violation takes, so it could not flag anything realistic — and nothing
+    noticed, because a lint that finds 0 violations looks identical to one that
+    cannot. These pin the detector itself so it cannot silently rot again."""
+
+    @pytest.mark.parametrize(
+        "snippet",
+        [
+            'c = QColor("#ff0000")',
+            'BG = "#101014"',  # all-decimal 6-digit is still a colour
+            'w.setStyleSheet("color: #ff0000")',
+            'w.setStyleSheet(f"color: #ff0000; background: {tok};")',  # f-string chunk
+            'w.setStyleSheet("QFrame { background: #fff; }")',  # 3-digit shorthand
+            'EDGE = "#ff0000cc"',  # 8-digit #RRGGBBAA
+            'TINT = "#0f0a"',  # 4-digit #RGBA shorthand
+            'PALETTE = ["#123abc", "#abc123"]',
+            'QSS = """\n.Card {\n  color: #ff0000;\n}\n"""',  # multi-line literal
+        ],
+    )
+    def test_catches_previously_missed_forms(self, snippet):
+        assert _find_hex_violations(snippet), f"guard missed: {snippet!r}"
+
+    def test_reports_the_line_inside_a_multiline_literal(self):
+        snippet = 'QSS = """\n.Card {\n  color: #ff0000;\n}\n"""'
+        assert _find_hex_violations(snippet) == ["3: #ff0000"]
+
+    @pytest.mark.parametrize(
+        "snippet",
+        [
+            "x = 1  # legacy tint was #ff0000",  # trailing comment
+            "# full-line comment mentioning #ff0000",
+            '"""Module docstring citing #ff0000."""',
+            'def f():\n    """Docstring citing #ff0000."""\n    return 1',
+            'class C:\n    """Class docstring citing #ff0000."""',
+            # Decimal 3/4-digit prose in *data* strings (hwmon_guidance.py style):
+            'MSG = "fixed by frankcrawford/it87 PR #114 and issue #106"',
+            'ROCM = "see ROCm issue #6101 for the SMU regression"',
+            'BULLET = "&#8226;&nbsp;"',  # HTML entity
+            'tinted = f"color: {tokens.text_muted};"',  # token-driven, no literal
+            'BAD_SHAPE_5 = "#12abc"',  # 5 digits — not a renderable colour form
+            'BAD_SHAPE_7 = "#1234abc"',  # 7 digits — not a renderable colour form
+            'LONG_RUN = "#123456789abc"',  # >8 hex chars — an id, not a colour
+        ],
+    )
+    def test_ignores_prose_comments_and_docstrings(self, snippet):
+        assert _find_hex_violations(snippet) == [], f"false positive on: {snippet!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -784,6 +892,71 @@ class TestThemeSwitchAppliesPalette:
         win._on_theme_changed(switched)
 
         assert app.palette().color(QPalette.ColorRole.Window).name() == "#0b0c0d"
+
+
+class TestSettingsPathLabelsFollowTheme:
+    """The Settings dir-picker path labels were tinted with an inline token
+    f-string, which freezes the colour at construction — and SettingsPage is
+    not in the MainWindow ``set_theme`` fan-out, so a live dark→light switch
+    left them at the old theme's muted tint. They now carry the scoped
+    ``.MutedLabel`` QSS class, which re-resolves from the freshly applied
+    stylesheet on every theme change."""
+
+    def test_muted_label_rule_is_token_driven(self):
+        t = default_dark_theme()
+        block = TestBackgroundLeakGuard._block(build_stylesheet(t), ".MutedLabel")
+        assert block, ".MutedLabel rule missing"
+        assert t.text_muted in block
+
+    def test_dir_picker_label_recolours_on_live_theme_switch(
+        self, qtbot, restore_app_theme, monkeypatch, tmp_path
+    ):
+        """Outcome assertion: the label's *effective* colour (the palette the
+        QSS engine resolves for it) must track the active theme's text_muted —
+        first under the dark default, then after a live switch to a theme with
+        a different muted tint."""
+        from PySide6.QtGui import QPalette
+
+        from control_ofc.paths import set_path_overrides
+        from control_ofc.services.app_settings_service import AppSettingsService
+        from control_ofc.ui.pages.settings_page import SettingsPage
+        from control_ofc.ui.theme import apply_theme
+
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        set_path_overrides()  # clear any leaked global directory overrides
+        svc = AppSettingsService()
+        svc.load()
+
+        dark = default_dark_theme()
+        apply_theme(dark)
+        page = SettingsPage(settings_service=svc)
+        qtbot.addWidget(page)
+
+        for label in (
+            page._profiles_dir_label,
+            page._themes_dir_label,
+            page._export_dir_label,
+        ):
+            label.ensurePolished()
+            assert (
+                label.palette().color(QPalette.ColorRole.WindowText).name()
+                == dark.text_muted.lower()
+            ), label.objectName()
+
+        switched = default_dark_theme()
+        switched.name = "Muted Probe"
+        switched.text_muted = "#123456"
+        apply_theme(switched)
+
+        for label in (
+            page._profiles_dir_label,
+            page._themes_dir_label,
+            page._export_dir_label,
+        ):
+            label.ensurePolished()
+            assert label.palette().color(QPalette.ColorRole.WindowText).name() == "#123456", (
+                label.objectName()
+            )
 
 
 class TestReadOnlyPaneStyling:

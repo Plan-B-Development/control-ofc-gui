@@ -105,6 +105,68 @@ class TestPerCurveGraphOwnership:
         assert c1.points != c2.points
 
 
+class TestDeepDependencyChains:
+    """The composite-dependency walks are iterative, so depth cannot crash them.
+
+    A long Mix/Sync chain is a legal ACYCLIC graph — the cycle check never fires
+    on it. The recursive form raised ``RecursionError`` past ~1000 links, which
+    crashed the curve editor on open for a profile the daemon would happily hold
+    (audit P3, companion to the daemon's stack-overflow P1). These chains are
+    built in memory on purpose: they exceed the parse-boundary caps, so they pin
+    the walk itself rather than the caps.
+    """
+
+    def test_mix_walk_survives_a_chain_deeper_than_the_recursion_limit(self):
+        from control_ofc.services.profile_service import _mix_reaches
+
+        # Comfortably past CPython's default 1000-frame limit. The walk is
+        # exercised directly rather than through ``mix_candidate_curves``:
+        # that helper is O(curves) walks and ``Profile.get_curve`` is a linear
+        # scan, so driving a chain this long through it is quadratic-plus and
+        # would measure scan cost, not recursion depth.
+        chain = 1_500
+        curves = [
+            CurveConfig(
+                id=f"c{i}",
+                name=f"c{i}",
+                type=CurveType.MIX,
+                mix_curve_ids=[f"c{i + 1}"],
+            )
+            for i in range(chain)
+        ]
+        curves.append(CurveConfig(id=f"c{chain}", name="tail", type=CurveType.FLAT))
+        profile = Profile(id="deep", name="Deep", curves=curves)
+
+        # The head transitively reaches the tail through every link.
+        assert _mix_reaches(profile, "c0", f"c{chain}") is True
+        # A target that is not on the chain terminates cleanly.
+        assert _mix_reaches(profile, "c0", "nope") is False
+
+    def test_sync_walk_survives_a_chain_deeper_than_the_recursion_limit(self):
+        from control_ofc.services.profile_service import _sync_reaches
+
+        chain = 1_500
+        curves = [
+            CurveConfig(
+                id=f"s{i}",
+                name=f"s{i}",
+                type=CurveType.SYNC,
+                sync_control_id=f"ctl{i + 1}",
+            )
+            for i in range(chain)
+        ]
+        controls = [
+            LogicalControl(id=f"ctl{i}", name=f"ctl{i}", mode=ControlMode.CURVE, curve_id=f"s{i}")
+            for i in range(chain)
+        ]
+        profile = Profile(id="deep", name="Deep", curves=curves, controls=controls)
+
+        # The head mirrors the tail through the whole chain.
+        assert _sync_reaches(profile, "ctl0", f"ctl{chain - 1}") is True
+        # And a target that is not on the chain terminates cleanly.
+        assert _sync_reaches(profile, "ctl0", "nope") is False
+
+
 class TestPersistenceRoundtrip:
     """Save/load preserves per-curve sensor and points."""
 
