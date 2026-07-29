@@ -320,20 +320,30 @@ def _iter_code_strings(tree: ast.AST):
             yield node.lineno, node.value
 
 
-def _is_colour_shaped(match: str) -> bool:
+#: A CSS/Qt colour keyword anywhere in the enclosing string literal. Used to
+#: rescue all-decimal shorthands (``#000``) from the prose exemption below.
+_CSS_CTX = re.compile(r"(?i)color|background|border|solid|rgba?\(")
+
+
+def _is_colour_shaped(match: str, enclosing: str = "") -> bool:
     """True when *match* (``#`` + hex chars) is a renderable colour literal.
 
-    3/4-digit matches made only of decimal digits are prose references — the
-    hwmon guidance strings cite "PR #114" / "issue #106" and HTML entities like
-    ``&#8226;`` — so those require at least one hex *letter* (keeping ``#fff``
-    and ``#f00c`` caught). 6/8-digit matches are always colour-shaped: an
-    all-decimal ``#101014`` is a real colour. 5/7 hex digits is not a valid
-    CSS/Qt colour form at all."""
+    3/4-digit matches made only of decimal digits are usually prose references —
+    the hwmon guidance strings cite "PR #114" / "issue #106" and HTML entities
+    like ``&#8226;`` — so those require at least one hex *letter* (keeping
+    ``#fff`` and ``#f00c`` caught)... **unless** the enclosing string looks like
+    CSS, which rescues ``#000``/``#111``. Without that rescue the guard was blind
+    to pure black, the single most likely hardcoded value and exactly the
+    "hard black on a dark surface" antipattern the visual rules ban.
+
+    6/8-digit matches are always colour-shaped: an all-decimal ``#101014`` is a
+    real colour. 5/7 hex digits is not a valid CSS/Qt colour form at all.
+    """
     digits = match[1:]
     if len(digits) in (6, 8):
         return True
     if len(digits) in (3, 4):
-        return any(c in _HEX_LETTERS for c in digits)
+        return any(c in _HEX_LETTERS for c in digits) or bool(_CSS_CTX.search(enclosing))
     return False
 
 
@@ -342,7 +352,7 @@ def _find_hex_violations(source: str) -> list[str]:
     violations = []
     for lineno, value in _iter_code_strings(ast.parse(source)):
         for m in _HEX_PATTERN.finditer(value):
-            if _is_colour_shaped(m.group(0)):
+            if _is_colour_shaped(m.group(0), value):
                 # Line of the match within a (real-newline) multi-line literal.
                 line = lineno + value.count("\n", 0, m.start())
                 violations.append(f"{line}: {m.group(0)}")
@@ -363,12 +373,14 @@ class TestNoHardcodedColors:
             src_dir / "services",
         ]
         # theme.py owns the tokens; theme_editor.py styles swatches from them.
-        allowed_files = {"theme_editor.py", "theme.py"}
+        # Matched on the path, not the bare name: under a recursive walk a future
+        # services/theme.py would otherwise be silently exempted.
+        allowed_files = {"ui/theme.py", "ui/widgets/theme_editor.py"}
 
         for check_dir in check_dirs:
             assert check_dir.exists(), f"scanned directory vanished: {check_dir}"
             for py_file in sorted(check_dir.rglob("*.py")):
-                if py_file.name in allowed_files:
+                if py_file.relative_to(src_dir).as_posix() in allowed_files:
                     continue
                 for violation in _find_hex_violations(py_file.read_text()):
                     violations.append(f"{py_file.relative_to(src_dir)}:{violation}")
@@ -424,6 +436,33 @@ class TestHexGuardSelfTest:
         ],
     )
     def test_ignores_prose_comments_and_docstrings(self, snippet):
+        assert _find_hex_violations(snippet) == [], f"false positive on: {snippet!r}"
+
+    @pytest.mark.parametrize(
+        "snippet",
+        [
+            'w.setStyleSheet("background: #000")',
+            'w.setStyleSheet("border: 1px solid #111")',
+            'QSS = "QFrame { background-color: #000; }"',
+            'TINT = "color: #0009"',  # 4-digit all-decimal, CSS context
+        ],
+    )
+    def test_catches_all_decimal_shorthand_in_css_context(self, snippet):
+        """All-decimal 3/4-digit shorthands are exempted as prose ("PR #114"),
+        which used to let ``#000`` — the likeliest hardcoded value of all —
+        through. A CSS keyword in the same literal rescues them."""
+        assert _find_hex_violations(snippet), f"guard missed: {snippet!r}"
+
+    @pytest.mark.parametrize(
+        "snippet",
+        [
+            'MSG = "tracked in PR #120 and issue #106"',
+            'NOTE = "kernel bug #4498 affects this chip"',
+        ],
+    )
+    def test_css_rescue_does_not_flag_prose_without_css_words(self, snippet):
+        """The rescue must stay scoped — prose issue numbers carry no CSS
+        keyword, so they are still exempt."""
         assert _find_hex_violations(snippet) == [], f"false positive on: {snippet!r}"
 
 

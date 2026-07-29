@@ -178,7 +178,7 @@ def role_preserving_label(display_name: str, fallback_label: str, source: str) -
     return display_name
 
 
-def _aio_tag_for(label: str) -> str:
+def aio_tag_for(label: str) -> str:
     """The ``(AIO pump)``/``(AIO radiator)`` suffix for a liquid-cooler header
     (DEC-157). Role-bearing, so it is appended to the persisted label too."""
     return " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
@@ -241,7 +241,7 @@ def build_member_candidates(
 
         h_aio = header_by_id.get(fan.id)
         if fan.source == "hwmon" and h_aio is not None and h_aio.is_aio:
-            aio_tag = _aio_tag_for(label)
+            aio_tag = aio_tag_for(label)
             label += aio_tag
             clean_label += aio_tag  # role-bearing — see above
 
@@ -273,7 +273,7 @@ def build_member_candidates(
         if PRESENCE_BADGE.get(presence):
             label = f"{label} ({PRESENCE_BADGE[presence]})"
         if header.is_aio:
-            aio_tag = _aio_tag_for(label)
+            aio_tag = aio_tag_for(label)
             label += aio_tag
             clean_label += aio_tag  # role-bearing — see above
 

@@ -148,6 +148,56 @@ class TestProfileImportValidation:
         with pytest.raises(ValueError, match="too many controls"):
             Profile.from_dict(data)
 
+    def test_v1_profile_with_too_many_assignments_raises(self):
+        """The v1 branch must not slip past the collection caps.
+
+        A v1 document carries ``assignments``, not ``curves``/``controls``, so a
+        size check that inspected only the latter two was a NO-OP here — and
+        ``_migrate_v1_profile`` then builds one curve AND one control per
+        assignment directly, bypassing both caps and ``MAX_CURVE_POINTS``.
+        Bounded only by the 4 MB import cap, a crafted legacy bundle could
+        inflate to millions of dataclasses and hang the GUI.
+        """
+        from control_ofc.services.profile_service import (
+            MAX_PROFILE_CONTROLS,
+            MAX_PROFILE_CURVES,
+        )
+
+        over = min(MAX_PROFILE_CURVES, MAX_PROFILE_CONTROLS) + 1
+        data = {
+            "version": 1,
+            "assignments": [{"curve": {"points": []}} for _ in range(over)],
+        }
+        with pytest.raises(ValueError, match="too many assignments"):
+            Profile.from_dict(data)
+
+    def test_v1_profile_at_max_assignments_accepted(self):
+        from control_ofc.services.profile_service import (
+            MAX_PROFILE_CONTROLS,
+            MAX_PROFILE_CURVES,
+        )
+
+        at_cap = min(MAX_PROFILE_CURVES, MAX_PROFILE_CONTROLS)
+        data = {
+            "version": 1,
+            "assignments": [{"curve": {"points": []}} for _ in range(at_cap)],
+        }
+        assert len(Profile.from_dict(data).curves) == at_cap
+
+    def test_profile_at_max_controls_accepted(self):
+        """Boundary twin of the curves case — a `>` slipping to `>=` would
+        reject a profile sitting exactly on the cap."""
+        from control_ofc.services.profile_service import MAX_PROFILE_CONTROLS
+
+        data = {
+            "curves": [],
+            "controls": [
+                {"id": f"ctl{i}", "name": f"ctl{i}", "mode": "curve", "curve_id": "c"}
+                for i in range(MAX_PROFILE_CONTROLS)
+            ],
+        }
+        assert len(Profile.from_dict(data).controls) == MAX_PROFILE_CONTROLS
+
     @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
     def test_curve_with_nonfinite_point_raises(self, bad):
         """NaN/inf point values are rejected (would corrupt curve math) — P2-C.

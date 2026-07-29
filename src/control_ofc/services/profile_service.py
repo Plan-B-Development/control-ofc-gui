@@ -65,17 +65,33 @@ def _is_finite(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _check_profile_size(raw_curves: object, raw_controls: object) -> None:
+def _check_profile_size(data: dict) -> None:
     """Reject a profile whose collections exceed the daemon-mirrored caps.
 
-    Takes the *raw* payload values so a non-list (or absent) entry is simply
-    ignored here — shape errors belong to the per-item parsers.
+    Reads the *raw* payload so a non-list (or absent) entry is simply ignored
+    here — shape errors belong to the per-item parsers.
+
+    ``assignments`` is checked too, and that is not cosmetic: a v1 document
+    carries neither ``curves`` nor ``controls``, so checking only those two made
+    this a no-op for the v1 branch — and ``_migrate_v1_profile`` then builds one
+    curve *and* one control per assignment directly, bypassing both these caps
+    and ``MAX_CURVE_POINTS``. Bounded only by the 4 MB import cap, a crafted
+    legacy bundle could inflate to millions of dataclasses and hang the GUI.
     """
-    if isinstance(raw_curves, list) and len(raw_curves) > MAX_PROFILE_CURVES:
-        raise ValueError(f"profile has too many curves: {len(raw_curves)} > {MAX_PROFILE_CURVES}")
-    if isinstance(raw_controls, list) and len(raw_controls) > MAX_PROFILE_CONTROLS:
+    if isinstance(data.get("curves"), list) and len(data["curves"]) > MAX_PROFILE_CURVES:
         raise ValueError(
-            f"profile has too many controls: {len(raw_controls)} > {MAX_PROFILE_CONTROLS}"
+            f"profile has too many curves: {len(data['curves'])} > {MAX_PROFILE_CURVES}"
+        )
+    if isinstance(data.get("controls"), list) and len(data["controls"]) > MAX_PROFILE_CONTROLS:
+        raise ValueError(
+            f"profile has too many controls: {len(data['controls'])} > {MAX_PROFILE_CONTROLS}"
+        )
+    # One assignment migrates to one control AND one curve, so the tighter of the
+    # two caps applies.
+    max_assignments = min(MAX_PROFILE_CURVES, MAX_PROFILE_CONTROLS)
+    if isinstance(data.get("assignments"), list) and len(data["assignments"]) > max_assignments:
+        raise ValueError(
+            f"profile has too many assignments: {len(data['assignments'])} > {max_assignments}"
         )
 
 
@@ -635,9 +651,10 @@ class Profile:
 
         # Collection-size caps, in lockstep with the daemon (see
         # MAX_PROFILE_CURVES). Checked on the raw payload so it costs nothing to
-        # reject before building objects, and so BOTH construction paths below
-        # are covered. Callers surface this as a per-profile load error.
-        _check_profile_size(data.get("curves"), data.get("controls"))
+        # reject before building objects, and so both construction paths below
+        # are covered — including the v1 branch, which carries `assignments`
+        # rather than curves/controls. Callers surface this as a load error.
+        _check_profile_size(data)
 
         if version < 2 and "assignments" in data:
             profile = _migrate_v1_profile(data)

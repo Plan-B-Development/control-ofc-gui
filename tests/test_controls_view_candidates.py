@@ -72,6 +72,20 @@ class TestBuildMemberCandidates:
         assert len(rows) == 1
         assert "(read-only)" in rows[0]["label"]
 
+    def test_writable_amd_gpu_is_offered_unflagged(self):
+        """Twin of the read-only case — the suffix must be conditional, not
+        unconditional."""
+        rows = build_member_candidates(
+            [_fan("gpu", source="amd_gpu")],
+            [],
+            gpu_writable=True,
+            display_name=_names({"gpu": "9070XT Fan"}),
+            fallback_name=_names({}),
+        )
+        assert len(rows) == 1
+        assert "(read-only)" not in rows[0]["label"]
+        assert rows[0]["clean_label"] == "9070XT Fan"
+
     def test_clean_label_keeps_the_role_a_user_alias_hides(self):
         """SAFETY (DEC-228): the persisted member_label sets the 30% CPU/pump
         floor on both sides. Renaming a CPU header must not silently drop the
@@ -226,6 +240,20 @@ class TestBuildSensorChoices:
         by_id = {r["id"]: r for r in rows}
         assert by_id["s1"]["preferred"] is True
         assert by_id["s2"]["preferred"] is False
+
+    def test_coolant_sensor_is_preferred_via_class_override(self):
+        """The second, independent route to `preferred` — classification rather
+        than `kind`. It is the one that matters for AIO radiator curves."""
+
+        class _S:
+            def __init__(self, sid, label, kind, chip="chip"):
+                self.id, self.label, self.kind, self.chip_name = sid, label, kind, chip
+
+        rows = build_sensor_choices(
+            [_S("s1", "Coolant", "other")],
+            overrides={"s1": "coolant"},
+        )
+        assert rows[0]["preferred"] is True
 
 
 class TestRolePreservingLabelAtItsNewHome:

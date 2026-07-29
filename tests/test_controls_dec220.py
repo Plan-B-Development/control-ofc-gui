@@ -156,6 +156,45 @@ def test_override_renew_success_advances_token_over_the_worker_thread(
         page.cleanup()
 
 
+def test_large_fencing_token_crosses_the_worker_thread_intact(
+    qtbot, app_state, profile_service, monkeypatch
+):
+    """A token past 2**31 must reach the worker unmangled.
+
+    `_request_renew`/`_request_release` are `Signal(str, object)`. Were they
+    `Signal(str, int)`, PySide6 would marshal through 32-bit `QMetaType::Int` on
+    this QueuedConnection and silently wrap 2**31+7 to -2147483641 (a
+    RuntimeWarning, not an exception) — the daemon would then reject the renew as
+    a stale token and the card would revert while the fan stayed pinned.
+
+    This exercises the real thread boundary; the DEC-231 unit tests call the
+    result handler directly and so cannot observe the marshalling at all.
+    """
+    monkeypatch.setattr(ControlsPage, "_OVERRIDE_USE_THREAD", True)
+    big = 2**31 + 7
+
+    mock_client = MagicMock()
+    mock_client.override_take.return_value = _grant(token=big)
+    mock_client.override_renew.return_value = SimpleNamespace(override_token=big)
+    monkeypatch.setattr(
+        "control_ofc.ui.pages.controls_page.DaemonClient", lambda socket_path: mock_client
+    )
+
+    page = _live_page(qtbot, app_state, profile_service, mock_client)
+    try:
+        page._take_override("lc1", 50)
+        qtbot.waitUntil(lambda: page._overrides.get("lc1") == big, timeout=2000)
+
+        page._renew_overrides()
+        qtbot.waitUntil(lambda: mock_client.override_renew.called, timeout=2000)
+
+        # The token the WORKER received, after crossing the queued connection.
+        sent_token = mock_client.override_renew.call_args[0][1]
+        assert sent_token == big, f"token mangled crossing the thread: {sent_token}"
+    finally:
+        page.cleanup()
+
+
 def test_override_renew_rejection_reverts_card_over_the_worker_thread(
     qtbot, app_state, profile_service, monkeypatch
 ):

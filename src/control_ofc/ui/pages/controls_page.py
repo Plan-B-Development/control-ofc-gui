@@ -32,6 +32,7 @@ from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import ConnectionState, DaemonStatus
 from control_ofc.services.app_state import AppState
 from control_ofc.services.controls_view import (
+    aio_tag_for,
     assigned_elsewhere_map,
     build_member_candidates,
     build_radiator_candidates,
@@ -1962,14 +1963,21 @@ class ControlsPage(QWidget):
             self._overrides[control_id] = new_token
         elif control_id not in self._overrides:
             # The user released while this renew was in flight. The worker is
-            # sequential, so it sent the renew FIRST — the daemon issued
-            # ``new_token`` and superseded the one our release then carried, so
-            # that release was rejected (409 stale_fencing_token, suppressed) and
-            # the daemon is still pinning the fan under a token we would
-            # otherwise never record. Release the orphan now instead of leaving
-            # the fan overridden until the deadman expires (~15 s) while the card
-            # already shows curve control. Mirrors the same orphan handling in
-            # ``_on_take_result``.
+            # sequential, so the renew went out FIRST and its answer lands here
+            # after we already forgot the control.
+            #
+            # DEFENSIVE, not a live bug fix: today the daemon's `renew_override`
+            # returns the SAME token it was given (it only extends expires_at —
+            # see control_override.rs), so the release we already queued carries a
+            # token that is still current and succeeds. But nothing in the API
+            # contract promises that; the moment renew rotates the token — the
+            # usual shape for a fencing scheme — the queued release would carry a
+            # superseded one, be rejected (409 stale_fencing_token, suppressed),
+            # and the daemon would keep pinning the fan under a token we never
+            # recorded, until the ~15 s deadman, while the card already shows
+            # curve control. Releasing whatever token came back costs one
+            # idempotent call and closes that door in advance. Mirrors the orphan
+            # handling in ``_on_take_result``.
             self._log.debug(
                 "Releasing orphaned override token on %s (released mid-renew)",
                 control_id,
@@ -2202,7 +2210,7 @@ class ControlsPage(QWidget):
         # must keep it or the pump falls from the 30% floor to the 20% one (the
         # daemon mirrors this label — DEC-162).
         if header is not None and header.is_aio:
-            clean_label += " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
+            clean_label += aio_tag_for(label)
         return ControlMember(source=source, member_id=fan_id, member_label=clean_label)
 
     def _assign_member_to_control(self, control_id: str, member) -> None:

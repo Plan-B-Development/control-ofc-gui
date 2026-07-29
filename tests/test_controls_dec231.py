@@ -350,8 +350,9 @@ class TestOverrideReleasedMidRenew:
     """
 
     def _capture_releases(self, page):
-        # Fencing tokens are monotonic ints (OverrideGrant.override_token), and
-        # _request_release is Signal(str, int) — a str token cannot cross it.
+        # Fencing tokens are monotonic ints (OverrideGrant.override_token).
+        # _request_release is Signal(str, object) so a large token survives the
+        # queued connection; a str still cannot cross it meaningfully.
         released: list[tuple[str, int]] = []
         page._request_release.connect(lambda cid, tok: released.append((cid, tok)))
         return released
@@ -369,6 +370,27 @@ class TestOverrideReleasedMidRenew:
 
         assert released == [("c1", 2)], "the orphaned token must be released immediately"
         assert "c1" not in page._overrides
+
+    def test_release_then_immediate_retake_still_orphans_the_stale_token(
+        self, qtbot, app_state, profile_service
+    ):
+        """Release + immediate re-take: `_overrides` is empty but `_manual_intent`
+        holds the control, so the orphan branch still fires.
+
+        That is intentional. The re-take's own grant lands via `_on_take_result`
+        and installs a strictly newer token, so this release carries an older one
+        and the daemon rejects it on the fence — harmless. Emitting it is the
+        safe side of the trade: skipping it would strand the fan if the re-take
+        failed.
+        """
+        page = _page(qtbot, app_state, profile_service)
+        released = self._capture_releases(page)
+
+        page._overrides = {}
+        page._manual_intent = {"c1"}  # re-take in flight
+        page._on_renew_result("c1", 1, 2, None)
+
+        assert released == [("c1", 2)]
 
     def test_renew_after_repin_does_not_release_the_new_pin(
         self, qtbot, app_state, profile_service
