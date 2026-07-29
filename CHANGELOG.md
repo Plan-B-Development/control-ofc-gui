@@ -1,5 +1,56 @@
 # Changelog
 
+## [2.33.0] — 2026-07-30
+
+Hardening release from the 2026-07-29 full cross-stack audit. The headline is a
+denial-of-service fix in the paired daemon (v2.13.0) that this GUI mirrors at its own
+parse boundary; the rest is a correctness and test-quality sweep. No wire, schema, or
+API change (`EXPECTED_API_VERSION` stays 1) and **no new daemon requirement** — the
+`GET /capabilities` payload is untouched, so this still pairs with
+`control-ofc-daemon` ≥ v2.11.0. DEC-237.
+
+### Fixed
+- **Deep Mix/Sync curve chains no longer crash the curve editor.** A long chain of
+  composite curves is a legal *acyclic* graph, so the cycle check never fired on it —
+  but the dependency walks recursed once per link and raised `RecursionError` past
+  ~1000, taking down the editor on open for a profile the daemon would happily hold.
+  `_mix_reaches` and `_sync_reaches` are now iterative, so depth cannot break them at
+  all. The paired daemon fix (v2.13.0) closes the far more serious form of this: there
+  the same shape overflowed the stack and aborted the fan-control daemon outright.
+- **Profiles are now size-capped at load (256 curves / 256 controls),** mirroring the
+  daemon so a profile one side accepts the other does too. Includes the v1-migration
+  path, which carries `assignments` rather than curves/controls and previously slipped
+  past the check entirely — a crafted legacy bundle could inflate to millions of
+  objects and hang the GUI on import.
+- **Settings directory paths kept their dark-theme colour after switching to a light
+  theme.** The Settings page had no theme-refresh path at all, so an inline colour
+  froze at construction; it now uses a themed style class and repaints live.
+- **A profile written by external tooling could be un-loadable.** Ten optional curve
+  fields rejected an explicit JSON `null`, which the daemon accepts and stores
+  verbatim. `null` now means "use the default"; NaN, infinity, and non-numbers are
+  still rejected.
+- Manual-override fencing tokens now cross the worker-thread boundary as Python
+  objects rather than 32-bit ints, which silently wrapped past 2³¹.
+- Releasing a manual override while a renewal is in flight now releases whatever token
+  the daemon returns, instead of discarding it. Defensive: today's daemon returns the
+  same token so nothing is stranded, but the API does not promise that, and a rotating
+  token would leave the fan pinned until the deadman while the card showed automatic.
+
+### Changed
+- The Controls page's fan-candidate logic moved into the headless view layer
+  (`services/controls_view.py`), making it directly unit-testable. This code decides
+  the persisted member label, which drives the 30% CPU/pump safety floor on both sides
+  of the API — it previously could only be exercised by constructing a page and
+  driving a modal dialog. Behaviour is unchanged (verified by differential fuzzing).
+- The desktop entry declares the freedesktop specification version.
+
+### Fixed (developer-facing)
+- **The hardcoded-colour lint could not actually catch a hardcoded colour.** Its
+  pattern excluded exactly the form a violation takes, so `QColor("#ff0000")` and
+  `BG = "#101014"` both passed — and a lint finding zero violations looks identical to
+  one that cannot find any. Rebuilt, now scans the whole UI tree plus the view layer,
+  and ships self-tests. No real violation existed in the codebase.
+
 ## [2.32.2] — 2026-07-29
 
 Audit-remediation patch (2026-07-29 GUI code audit — no P0/P1 found). One
