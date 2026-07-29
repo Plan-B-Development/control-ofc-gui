@@ -968,7 +968,9 @@ def format_sensor_tooltip(
     if classification.notes:
         lines.append("")
         for note in classification.notes[:3]:  # Cap at 3 notes for readability
-            lines.append(f"• {note}")
+            # A note can embed the raw daemon chip_name (unknown-driver fallback),
+            # so escape it too — same as the Driver/ID lines above (security P3).
+            lines.append(f"• {escape(note, quote=False)}")
 
     if sensor_id:
         lines.append(f"\nID: {escape(sensor_id, quote=False)}")

@@ -436,8 +436,8 @@ class ControlCard(ResizableGridCard):
         if not self._manual_btn.isChecked():
             return
         self._manual_slider.blockSignals(True)
-        self._manual_slider.setValue(pct)
-        self._manual_slider.blockSignals(False)
+        self._manual_slider.setValue(int(pct))  # coerce: a non-conforming daemon
+        self._manual_slider.blockSignals(False)  # could send a non-int (security P3)
         self._manual_pct_label.setText(f"{self._manual_slider.value()}%")
 
     def clear_manual(self) -> None:
@@ -503,6 +503,11 @@ class ControlCard(ResizableGridCard):
         self._curve_label.setText(f"Curve: {mode_text}")
         self._update_no_members_state(control)
         self._update_min_pwm_badge(control)
+        # P2-1 belt-and-suspenders (gui-finesse P3): if a floor change ever arrived
+        # in place rather than via a card rebuild, keep the manual slider's minimum
+        # in step so it can't request/show a now-sub-floor value.
+        if self._manual_btn.isChecked():
+            self._manual_slider.setMinimum(round(self._effective_floor()))
         if self._user_size is not None:
             # Content may have grown (e.g. more members): re-clamp the user
             # override so a previously-valid size can't start clipping rows.
