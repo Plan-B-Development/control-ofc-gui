@@ -183,7 +183,7 @@ def main() -> None:
         export_dir=s.export_default_dir,
     )
 
-    # Install bundled presets (Solar Light, Noctua Dark) on first run so they
+    # Install bundled presets (Classic Blue, Solar Light, Noctua Dark) on first run so they
     # show up in the Settings → Theme selector. Existing files are left alone
     # so a user who has edited a preset doesn't lose their changes.
     installed = ensure_bundled_themes_installed(themes_dir())

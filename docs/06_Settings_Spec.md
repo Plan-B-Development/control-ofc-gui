@@ -34,11 +34,13 @@ Implemented settings:
 persistence (`daemon_state.json`), so a GUI-side toggle controlled nothing (DEC-138).
 
 *Persisted but not surfaced as page controls:* a few `AppSettings` keys are
-written by behaviour elsewhere rather than by a Settings widget. `fan_zones`,
-`fan_zone_order`, `fan_zones_collapsed` (Dashboard fan-zone layout, DEC-176/187)
-and `card_sensor_bindings` are **dormant since DEC-222** — the Dashboard surfaces
-that wrote them were removed, and the keys are retained unread so no settings-schema
-migration is needed and no saved zone assignments are lost. `show_aio_pump_info` (the one-time "constant-speed pump" info popup, DEC-157,
+written by behaviour elsewhere rather than by a Settings widget. `fan_zones`
+(Dashboard fan-zone layout, DEC-176/187) is **dormant since DEC-222** — the
+Dashboard surfaces that wrote it were removed, and the key is retained unread so
+no settings-schema migration is needed and no saved zone assignments are lost.
+(Its companions `fan_zone_order`, `fan_zones_collapsed`, `card_sensor_bindings`
+and `show_hardware_guidance` were **fully dropped in DEC-224 (v3)** as
+written-never-read keys.) `show_aio_pump_info` (the one-time "constant-speed pump" info popup, DEC-157,
 flips to `false` once dismissed). They still round-trip through
 `AppSettings.from_dict`/`to_dict` and the import/export trust boundary.
 
@@ -53,13 +55,14 @@ V1 requirements:
 
 ~~Do not build a full advanced theme editor in V1.~~ Full theme editor implemented (`ThemeEditorWidget`) with per-token color editing, grouped controls, contrast warnings, and live preview.
 
-**Bundled presets (DEC-109):** the GUI ships two presets in
-`src/control_ofc/ui/presets/` that are copied into `themes_dir()` on
-first run:
+**Bundled presets (DEC-109):** the GUI ships three preset JSON files in
+`src/control_ofc/ui/presets/` — `classic_blue.json`, `noctua_dark.json`,
+`solar_light.json` — copied into `themes_dir()` on first run. (The built-in
+**Default Dark** palette needs no JSON — it is defined in `ThemeTokens`
+defaults, tightened in 1.14.0 to pass WCAG AA on every contrast pair the
+checker evaluates.)
 
-- **Default Dark** — the built-in dark palette (no JSON, defined in
-  `ThemeTokens` defaults). Tightened in 1.14.0 to pass WCAG AA on
-  every contrast pair the checker now evaluates.
+- **Classic Blue** — cool-blue accent on a dark charcoal base.
 - **Solar Light** — neutral GitHub-style light theme.
 - **Noctua Dark** — Noctua beige/brown on near-black charcoal,
   inspired by the iconic NF-A14 colour scheme. Primary button text is
@@ -163,9 +166,9 @@ These belong to the daemon runtime/config:
 - **Export is portable (DEC-140):** the Settings page's Sync & Backup Export file carries only
   shareable preferences plus all profiles/themes. Machine/session state and
   hardware-id-keyed maps (`window_geometry`, `last_page_index`, data-dir
-  overrides, `series_colors`, `card_sensor_bindings`, `controls_card_sizes`,
-  `fan_zone_order`, `diagnostics_hidden_sensor_ids`, `sensor_class_overrides`,
-  `acknowledged_kernel_warnings`, `daemon_import_prompted`) are excluded — the
+  overrides, `series_colors`, `controls_card_sizes`,
+  `diagnostics_hidden_sensor_ids`, `sensor_class_overrides`,
+  `acknowledged_kernel_warnings`, `fan_aliases_seeded`, `daemon_import_prompted`) are excluded — the
   authoritative set is `MACHINE_SPECIFIC_KEYS` in `app_settings_service.py`;
   `fan_aliases`, `fan_zones`, and `hidden_chart_series` are kept portable. The
   full snapshot still lives in the diagnostics support bundle.

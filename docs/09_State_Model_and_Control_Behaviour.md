@@ -16,10 +16,12 @@ The application should explicitly model these state axes:
 - disconnected
 
 ### Operation mode
+The `OperationMode` enum (the status-banner **Mode**) has three values:
 - automatic (the daemon engine is controlling)
-- manual_override (an expiring daemon override is pinning one or more controls — DEC-163)
 - read_only (the **control gate** is engaged: the daemon is pre-2.0 / does not advertise `control.autonomous_control`, so the GUI offers no control)
 - demo
+
+A manual override is **not** a fourth mode — while one is active the banner still reads *Automatic*; the override is a per-control overlay tracked under **Control authority** below (DEC-163).
 
 ### Control authority
 - daemon autonomous — daemon advertises `control.autonomous_control`; it evaluates and writes
@@ -51,7 +53,7 @@ The daemon's `profile_engine` carries the behaviour that used to live in the GUI
 - applies the tuning pipeline (offset, step-rate, start/stop) and per-member floors (GPU 0 %, DEC-119; pump/CPU ≥ 30 %, DEC-162)
 - coalesces writes (identical PWM skips sysfs; `pwm_enable` written once per lease — DEC-073; GPU PMFW uses a 5 % threshold — DEC-070)
 - manages the hwmon lease internally
-- enforces the 105 / 80 / 60 °C thermal ladder, which supersedes overrides and curves
+- enforces the 105 / 80 °C thermal ladder (recover at 60 %), which supersedes overrides and curves
 
 The GUI and daemon evaluators are pinned together by the shared `parity_vectors.json` golden-vector oracle (DEC-126). Post-cutover the GUI keeps only the **stateless** `curve_eval` tier of that oracle (it still has `CurveConfig.interpolate()` for demo and card previews); the daemon owns the full oracle including the stateful tuning sequence.
 
@@ -100,7 +102,7 @@ What lives where as of 2.0.0:
 - **all runtime control** — curve evaluation (always, not only headless), hysteresis, tuning, write coalescing, and every PWM write to every backend (DEC-159, DEC-165)
 - **profile storage + CRUD/validate** — `/var/lib/control-ofc/profiles/`, `GET/POST/PUT/DELETE /profiles`, `?validate_only` (DEC-160); activation via `POST /profile/activate`
 - the **hwmon lease** lifecycle (internal)
-- the **105 / 80 / 60 °C thermal ladder** and the no-CPU-sensor fallback
+- the **105 / 80 °C thermal ladder** (recover at 60 %) and the no-CPU-sensor fallback
 - **manual override** (DEC-163) and **fan identify** (DEC-166), each with a daemon-clock deadman
 - **role-floor enforcement** — validate-time reject + eval-time clamp (DEC-162); GPU per-member floor (DEC-119)
 - hardware rescan — `POST /hwmon/rescan`

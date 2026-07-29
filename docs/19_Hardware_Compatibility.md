@@ -226,7 +226,7 @@ or frankcrawford/it87 DMI table).
 |---|---|---|---|
 | **LGA1700 600-series** (Z690 / B660 / H670) | ASUS (ROG MAXIMUS Z690 FORMULA, ROG STRIX Z690-A/E GAMING WIFI, TUF GAMING Z690-PLUS) | NCT6798D + `asus_ec_sensors` enrichment on allowlisted ROG boards | mainline `nct6775` for PWM; `asus_ec_sensors` for sensor enrichment |
 | | MSI (MAG Z690 TOMAHAWK, MPG Z690 EDGE) | NCT6687D (plain — **no `msi_alt1` needed**; selected via the driver's DMI table, not a distinct published chip ID) | out-of-tree `nct6687d-dkms-git` (auto-detected register layout) |
-| | Gigabyte Z690 AORUS (PRO, ELITE AX, MASTER, XTREME) | **IT8689E + IT87952E** (dual-chip) | out-of-tree `it87-dkms-git`; 2026-03+ builds default MMIO on (older builds need `mmio=on`) |
+| | Gigabyte Z690 AORUS PRO (siblings ELITE AX / MASTER / XTREME share the layout) | **IT8689E + IT87952E** (dual-chip) | out-of-tree `it87-dkms-git`; 2026-03+ builds default MMIO on (older builds need `mmio=on`) |
 | | ASRock (Z690 Steel Legend, Z690 Taichi, **Z690 Extreme** — upstream lm-sensors config) | NCT6798D (Z690 Extreme reports NCT6796D-E as `nct6798-isa-02a0`) | mainline `nct6775` |
 | **LGA1700 700-series** (Z790 / B760 / H770) | ASUS (ROG STRIX Z790-E/-H/-I GAMING WIFI II — kernel `asus_ec_sensors` allowlist) | NCT6798D + `asus_ec_sensors` enrichment | mainline `nct6775` + sensor enrichment |
 | | MSI (MAG Z790 TOMAHAWK WIFI, MPG Z790 EDGE WIFI, MEG Z790 ACE) | NCT6687D (plain — same register layout as Z690) | out-of-tree `nct6687d-dkms-git`; no `msi_alt1` |
@@ -518,9 +518,12 @@ driver bind to those ports, even though the ACPI claim is cosmetic (the
 BIOS firmware doesn't actively use the ports at runtime).
 
 Common conflict ranges:
-- `0x0290–0x0299` — Nuvoton NCT6775 and ITE IT87
+- `0x0290–0x0299` — Nuvoton NCT6775
+- `0x0290–0x029F` — ITE IT87
 - `0x04E0–0x04EF` — Nuvoton NCT6775 (secondary)
 - `0x0A20–0x0A2F` — ITE IT87 (alternate)
+- `0x0A40–0x0A4F` — ITE IT87 (secondary dual-chip)
+- `0x0A60–0x0A6F` — ITE IT87 (secondary dual-chip)
 
 The daemon detects these by comparing `/proc/ioports` ACPI entries against
 known SIO I/O ranges.

@@ -76,9 +76,10 @@ ls -la /dev/serial/by-id/
 | `--profile-file <path>` | Load a profile from an absolute file path |
 
 ### Profile search paths
-When using `--profile <name>`, the daemon searches (in order):
-1. `/etc/control-ofc/profiles/<name>.json`
-2. `$XDG_CONFIG_HOME/control-ofc/profiles/<name>.json` (default: `~/.config/control-ofc/profiles/`)
+When using `--profile <name>`, the daemon searches (highest priority first):
+1. `/var/lib/control-ofc/profiles/<name>.json` — the daemon-owned **store of record**, prepended at startup so CRUD-created profiles are always found first (DEC-160)
+2. `/etc/control-ofc/profiles/<name>.json`
+3. `$XDG_CONFIG_HOME/control-ofc/profiles/<name>.json` (default: `~/.config/control-ofc/profiles/`)
 
 ---
 

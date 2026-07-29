@@ -141,9 +141,11 @@ AMD companion guide to Intel ROG boards.
 - If headers appear read-only, check that "Q-Fan Tuning" / "Fan Tuning"
   is set to **Manual** rather than **Auto** / **PWM** / **DC**.
 - ACPI I/O port 0x0290-0x0299 conflicts can prevent the `nct6775` driver
-  binding. Newer kernels (5.17+) mitigate this with ACPI mutex-based
-  access; on older kernels, add `acpi_enforce_resources=lax` to boot
-  parameters.
+  binding. Since Linux 5.16 the driver can read supported ASUS boards
+  through an ASUS WMI access path (`access_asuswmi`) that sidesteps the
+  port reservation (a WMI sensor-read path, not an "ACPI mutex" — the
+  separately-proposed ACPI-mutex patch was never merged); on older
+  kernels, add `acpi_enforce_resources=lax` to boot parameters.
 
 ### ASUS LGA1851 (Z890)
 

@@ -77,7 +77,7 @@ src/control_ofc/
 ├── api/            # Daemon HTTP client and typed models
 ├── services/       # AppState, PollingService, ProfileService (daemon owns control — no GUI control loop)
 ├── ui/
-│   ├── pages/      # Dashboard, Controls, Settings, Diagnostics
+│   ├── pages/      # Dashboard, Controls, Overview, System State, Hardware, Logs, Settings, Theme
 │   └── widgets/    # Reusable components (cards, charts, editors)
 └── main.py         # Entry point and arg parsing
 ```

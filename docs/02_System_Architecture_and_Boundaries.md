@@ -182,7 +182,6 @@ control_ofc/
       fan_wizard.py            # fan-identify wizard (daemon identify API — DEC-166)
       timeline_chart.py
       sensor_series_panel.py
-      series_chooser_dialog.py
       sensor_detail_dialog.py
       error_banner.py
       readiness_report.py
