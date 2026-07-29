@@ -15,6 +15,9 @@ from control_ofc.api.models import (
     FanReading,
     GpuFanResetResult,
     OperationMode,
+    OverrideGrant,
+    OverrideReleaseResult,
+    OverrideRenewResult,
     SensorHistory,
     SensorReading,
 )
@@ -74,7 +77,13 @@ class FakeDaemonClient:
         self._errors.clear()
 
     def simulate_unavailable(self) -> None:
-        """Set every method to persistently raise DaemonUnavailable."""
+        """Set every method to persistently raise DaemonUnavailable.
+
+        Covers the live-intent override endpoints too (DEC-163): a genuine
+        "daemon is down" simulation must make ``override_take``/``renew``/
+        ``release`` fail the same way the read endpoints do, so a Controls-page
+        override flow driven off this fake exercises the rejection path.
+        """
         exc = DaemonUnavailable()
         for name in (
             "capabilities",
@@ -84,6 +93,9 @@ class FakeDaemonClient:
             "hwmon_headers",
             "hwmon_rescan",
             "sensor_history",
+            "override_take",
+            "override_renew",
+            "override_release",
         ):
             self._errors[name] = _PersistentError(exc)
 
@@ -163,6 +175,49 @@ class FakeDaemonClient:
         self._record("reset_gpu_fan", gpu_id)
         self._maybe_raise("reset_gpu_fan")
         return GpuFanResetResult(gpu_id=gpu_id, reset=True)
+
+    # -- live manual-override intent (DEC-163) --
+
+    def override_take(
+        self,
+        control_id: str,
+        pwm_percent: int,
+        *,
+        ttl_secs: int | None = None,
+        timeout: float | None = None,
+    ) -> OverrideGrant:
+        del ttl_secs, timeout
+        self._record("override_take", control_id, pwm_percent)
+        self._maybe_raise("override_take")
+        return OverrideGrant(
+            control_id=control_id,
+            override_token=1,
+            pwm_percent=pwm_percent,
+            ttl_secs=15,
+            renew_secs=5,
+            expires_in_secs=15,
+        )
+
+    def override_renew(
+        self, control_id: str, override_token: int, *, timeout: float | None = None
+    ) -> OverrideRenewResult:
+        del timeout
+        self._record("override_renew", control_id, override_token)
+        self._maybe_raise("override_renew")
+        return OverrideRenewResult(
+            control_id=control_id,
+            override_token=override_token,
+            ttl_secs=15,
+            expires_in_secs=15,
+        )
+
+    def override_release(
+        self, control_id: str, override_token: int, *, timeout: float | None = None
+    ) -> OverrideReleaseResult:
+        del timeout
+        self._record("override_release", control_id, override_token)
+        self._maybe_raise("override_release")
+        return OverrideReleaseResult(control_id=control_id, released=True)
 
 
 # ---------------------------------------------------------------------------

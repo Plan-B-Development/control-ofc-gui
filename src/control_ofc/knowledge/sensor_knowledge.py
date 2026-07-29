@@ -21,6 +21,7 @@ Classification is based on verified Linux kernel documentation:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from html import escape
 
 
 @dataclass(frozen=True)
@@ -933,10 +934,17 @@ def format_sensor_tooltip(
     session_max: float | None = None,
     rate_c_per_s: float | None = None,
 ) -> str:
-    """Build a multi-line tooltip for a sensor in the series panel."""
+    """Build a multi-line tooltip for a sensor in the series panel.
+
+    Daemon-derived fields are ``html.escape``-d: Qt tooltips auto-detect rich
+    text (``Qt.mightBeRichText``), so a stray ``'<...>'`` in a daemon string
+    would be reinterpreted as markup. ``display_description`` embeds the raw
+    daemon label in most branches, hence it is escaped too. ``quote=False``
+    keeps apostrophes literal so plain-text tooltips read normally (DEC-106).
+    """
     lines: list[str] = []
 
-    lines.append(classification.display_description)
+    lines.append(escape(classification.display_description, quote=False))
 
     if session_min is not None and session_max is not None:
         lines.append(f"Session: {session_min:.1f}°C - {session_max:.1f}°C")
@@ -946,7 +954,7 @@ def format_sensor_tooltip(
         lines.append(f"Rate: {direction}{rate_c_per_s:.1f}°C/s")
 
     if chip_name:
-        lines.append(f"Driver: {chip_name}")
+        lines.append(f"Driver: {escape(chip_name, quote=False)}")
 
     confidence_labels = {
         "high": "High",
@@ -963,6 +971,6 @@ def format_sensor_tooltip(
             lines.append(f"• {note}")
 
     if sensor_id:
-        lines.append(f"\nID: {sensor_id}")
+        lines.append(f"\nID: {escape(sensor_id, quote=False)}")
 
     return "\n".join(lines)

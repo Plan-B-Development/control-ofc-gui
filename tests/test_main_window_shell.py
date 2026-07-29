@@ -13,6 +13,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
+from control_ofc.api.models import DaemonStatus
 from control_ofc.constants import (
     PAGE_HARDWARE,
     PAGE_LOGS,
@@ -143,6 +144,25 @@ def test_warning_count_propagates_to_ribbon_and_footer(window, app_state):
     app_state.clear_warnings()
     assert window.status_ribbon._alert_badge.isHidden() is True
     assert window.footer._health_label.text() == "All systems nominal"
+
+
+def test_thermal_state_propagates_to_ribbon(window, app_state):
+    """Audit 2026-07-29 4.1: ``AppState.status_updated`` must drive the ribbon
+    thermal pill through the live MainWindow wiring (``_on_status_for_ribbon``).
+    The setter is unit-tested in isolation; this pins the cross-component chain
+    end to end. ``isHidden()`` is used so the assertions don't depend on the
+    never-shown window's ancestor visibility."""
+    ribbon = window.status_ribbon
+
+    app_state.set_status(DaemonStatus(thermal_state="emergency"))
+    assert ribbon._thermal_pill.isHidden() is False
+    assert ribbon._thermal_pill.text() == "THERMAL: EMERGENCY"  # pill upper-cases
+    assert ribbon._thermal_pill.state() == "critical"
+
+    # A benign state repaints the same pill (not just first-show).
+    app_state.set_status(DaemonStatus(thermal_state="normal"))
+    assert ribbon._thermal_pill.text() == "THERMAL OK"
+    assert ribbon._thermal_pill.state() == "ok"
 
 
 def test_close_stops_the_poll_age_ticker(qtbot):

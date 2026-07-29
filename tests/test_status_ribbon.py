@@ -46,6 +46,24 @@ def test_ribbon_thermal_state_shows_and_hides(qtbot):
     assert ribbon._thermal_pill.isHidden()
 
 
+def test_ribbon_thermal_pill_text_reflects_state(qtbot):
+    """Audit 2026-07-29 4.1: the pill label + state must track the thermal state,
+    not just its visibility (the wiring was exercised but the pill contents were
+    never asserted)."""
+    ribbon = StatusRibbon()
+    qtbot.addWidget(ribbon)
+    # StatusPill renders its label upper-cased.
+    ribbon.set_thermal_state("normal")
+    assert ribbon._thermal_pill.text() == "THERMAL OK"
+    assert ribbon._thermal_pill.state() == "ok"
+    ribbon.set_thermal_state("recovery")
+    assert ribbon._thermal_pill.text() == "THERMAL: RECOVERY"
+    assert ribbon._thermal_pill.state() == "warning"
+    ribbon.set_thermal_state("emergency")
+    assert ribbon._thermal_pill.text() == "THERMAL: EMERGENCY"
+    assert ribbon._thermal_pill.state() == "critical"
+
+
 def test_ribbon_uptime(qtbot):
     ribbon = StatusRibbon()
     qtbot.addWidget(ribbon)

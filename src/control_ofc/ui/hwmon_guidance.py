@@ -1669,7 +1669,7 @@ def dual_chip_warning_html(
     if board_name.strip():
         heading = (
             f"<b>Dual-chip board detected — missing PWM headers</b><br>"
-            f"This board ({board_name}) is expected to expose {expected_count} ITE "
+            f"This board ({escape(board_name)}) is expected to expose {expected_count} ITE "
             f"Super-IO chips, but the kernel only enumerated {detected_count}: "
         )
     else:
@@ -1679,8 +1679,10 @@ def dual_chip_warning_html(
             f"but the kernel only enumerated {detected_count}: "
         )
 
-    expected_pretty = ", ".join(f"<b>{_pretty_chip(c)}</b>" for c in expected_chips)
-    missing_pretty = ", ".join(f"<b>{_pretty_chip(c)}</b>" for c in missing)
+    # _pretty_chip echoes the raw (daemon-supplied) chip name for anything not in
+    # the pretty-name table, so escape its output before it lands in rich text.
+    expected_pretty = ", ".join(f"<b>{escape(_pretty_chip(c))}</b>" for c in expected_chips)
+    missing_pretty = ", ".join(f"<b>{escape(_pretty_chip(c))}</b>" for c in missing)
     chip_summary = (
         f"expected {expected_pretty}; missing {missing_pretty}.<br><br>"
         f"<b>Most likely cause:</b> an outdated it87 driver build, or the "

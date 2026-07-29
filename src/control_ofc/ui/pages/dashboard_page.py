@@ -160,6 +160,15 @@ class DashboardPage(QWidget):
         self._chart_active_interval = 1000  # 1Hz when active
         self._chart_background_interval = 5000  # 0.2Hz when app unfocused
 
+        # Owned single-shot timer that restores the Apply button caption after a
+        # transient "Applied!"/"Failed" state. Owned (not QTimer.singleShot) so
+        # cleanup() can cancel a pending fire — an uncancellable singleShot could
+        # otherwise reach _reset_apply_btn on an already-torn-down widget.
+        self._reset_apply_timer = QTimer(self)
+        self._reset_apply_timer.setSingleShot(True)
+        self._reset_apply_timer.setInterval(1500)
+        self._reset_apply_timer.timeout.connect(self._reset_apply_btn)
+
         # Throttle chart when app loses focus (reduces compositor work while gaming)
         app = QApplication.instance()
         if app:
@@ -318,10 +327,14 @@ class DashboardPage(QWidget):
 
         self._sub_openfan_label = QLabel("OpenFan: unknown")
         self._sub_openfan_label.setObjectName("Dashboard_Label_subOpenfan")
+        # The subsystem status + reason are daemon-supplied; render verbatim so
+        # a stray '<...>' in a reason string can't be reinterpreted as rich text.
+        self._sub_openfan_label.setTextFormat(Qt.TextFormat.PlainText)
         sub_layout.addWidget(self._sub_openfan_label)
 
         self._sub_hwmon_label = QLabel("hwmon: unknown")
         self._sub_hwmon_label.setObjectName("Dashboard_Label_subHwmon")
+        self._sub_hwmon_label.setTextFormat(Qt.TextFormat.PlainText)
         sub_layout.addWidget(self._sub_hwmon_label)
 
         layout.addWidget(self._subsystem_frame, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -730,6 +743,7 @@ class DashboardPage(QWidget):
     def cleanup(self) -> None:
         """Release chart resources before app shutdown. Idempotent."""
         self._chart_timer.stop()
+        self._reset_apply_timer.stop()
         self._chart.cleanup()
 
     def closeEvent(self, event) -> None:
@@ -928,7 +942,7 @@ class DashboardPage(QWidget):
             self._revert_profile_combo(prev_active_id)
             self._apply_btn.setText("Failed")
             self._apply_btn.setEnabled(False)
-            QTimer.singleShot(1500, self._reset_apply_btn)
+            self._reset_apply_timer.start()
             return
 
         # Mirror the new active into AppState so the whole UI reflects it.
@@ -939,7 +953,7 @@ class DashboardPage(QWidget):
         # GUI no longer forces a local control-loop re-evaluation.
         self._apply_btn.setText("Applied!")
         self._apply_btn.setEnabled(False)
-        QTimer.singleShot(1500, self._reset_apply_btn)
+        self._reset_apply_timer.start()
 
     def _revert_profile_combo(self, profile_id: str) -> None:
         """Re-select ``profile_id`` in the combo, blocking signals so the

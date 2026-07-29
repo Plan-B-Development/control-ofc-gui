@@ -1908,6 +1908,9 @@ class ControlsPage(QWidget):
         base_pt = tokens.base_font_size_pt
         tier = self._card_size_tier()
         for card in self._control_cards.values():
+            # Re-apply the card's inline-styled accents (link nub + role dot) so
+            # a live theme switch repaints them, not just resizes the card.
+            card.set_theme(tokens)
             card.apply_card_size(base_pt, tier)
         for card in self._curve_cards.values():
             card.set_theme(tokens)
@@ -1995,7 +1998,11 @@ class ControlsPage(QWidget):
         ``_OVERRIDE_RENEW_FALLBACK_MS``; the floor stays 1000 ms.
         """
         interval = renew_interval_ms(self._override_renew_secs, self._OVERRIDE_RENEW_FALLBACK_MS)
-        if interval is not None:
+        # Qt6 `setInterval` on a running timer restarts the countdown, so calling
+        # it every recompute (the cadence is unchanged across most polls) could
+        # repeatedly reset an about-to-fire renew and let a short-TTL grant lapse.
+        # Only re-arm when the cadence genuinely changes.
+        if interval is not None and interval != self._override_renew_timer.interval():
             self._override_renew_timer.setInterval(interval)
 
     def _surface_override_rejection(self, control_id: str, exc: DaemonError) -> None:

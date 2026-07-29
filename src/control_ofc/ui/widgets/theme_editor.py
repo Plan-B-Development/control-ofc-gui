@@ -22,7 +22,12 @@ from PySide6.QtWidgets import (
 from control_ofc.colors import is_valid_color
 from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.qt_util import repolish
-from control_ofc.ui.theme import ThemeTokens, check_contrast_warnings, default_dark_theme
+from control_ofc.ui.theme import (
+    ThemeTokens,
+    active_theme,
+    check_contrast_warnings,
+    default_dark_theme,
+)
 
 # Token display groups and their human-readable descriptions
 _TOKEN_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
@@ -144,9 +149,11 @@ class ColorSwatch(QPushButton):
         self._update_style()
 
     def _update_style(self) -> None:
+        # Swatch outline follows the active theme's border token rather than a
+        # hardcoded grey, so it stays legible in every theme.
         self.setStyleSheet(
             f"background-color: {self._color}; "
-            f"border: 1px solid #666; border-radius: 3px; "
+            f"border: 1px solid {active_theme().border_default}; border-radius: 3px; "
             f"min-width: 30px; max-width: 30px;"
         )
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from html import escape
 
 from control_ofc.api.models import (
     Capabilities,
@@ -213,8 +214,15 @@ def fan_row_tooltip(
     caps: Capabilities | None,
     presence: FanPresence | None = None,
 ) -> str:
-    """Multi-line fan-row tooltip (chip/driver + control-method context)."""
-    parts = [f"ID: {fan.id}", f"Source: {fan.source}"]
+    """Multi-line fan-row tooltip (chip/driver + control-method context).
+
+    Daemon-supplied fields (``id``/``source``/``chip_name``/GPU labels) are
+    ``html.escape``-d because Qt tooltips auto-detect rich text
+    (``Qt.mightBeRichText``): a stray ``'<...>'`` in a daemon string would
+    otherwise be reinterpreted as markup. ``quote=False`` keeps apostrophes
+    literal so plain-text tooltips read normally (DEC-106).
+    """
+    parts = [f"ID: {escape(fan.id, quote=False)}", f"Source: {escape(fan.source, quote=False)}"]
     parts.append(f"Control method: {fan_control_method(fan, headers, caps)}")
     if presence is not None and presence not in (FanPresence.PRESENT, FanPresence.UNKNOWN):
         parts.append(f"Presence: {PRESENCE_BADGE[presence]}")
@@ -225,7 +233,7 @@ def fan_row_tooltip(
         header = next((h for h in headers if h.id == fan.id), None)
         if header:
             if header.chip_name:
-                parts.append(f"Chip: {header.chip_name}")
+                parts.append(f"Chip: {escape(header.chip_name, quote=False)}")
             g = lookup_chip_guidance(header.chip_name) if header.chip_name else None
             if g:
                 status = "mainline" if g.in_mainline else g.driver_package
@@ -236,22 +244,22 @@ def fan_row_tooltip(
     elif fan.source == "amd_gpu":
         if caps and caps.amd_gpu.present:
             gpu = caps.amd_gpu
-            parts.append(f"GPU: {gpu.display_label}")
+            parts.append(f"GPU: {escape(gpu.display_label, quote=False)}")
             if gpu.pci_id:
-                parts.append(f"PCI: {gpu.pci_id}")
+                parts.append(f"PCI: {escape(gpu.pci_id, quote=False)}")
     elif fan.source == "intel_gpu":
         if caps and caps.intel_gpu.present:
             igpu = caps.intel_gpu
-            parts.append(f"GPU: {igpu.display_label}")
+            parts.append(f"GPU: {escape(igpu.display_label, quote=False)}")
             if igpu.pci_id:
-                parts.append(f"PCI: {igpu.pci_id}")
+                parts.append(f"PCI: {escape(igpu.pci_id, quote=False)}")
             parts.append("Fan: read-only (firmware-managed)")
     elif fan.source == "nvidia_gpu":
         if caps and caps.nvidia_gpu.present:
             ngpu = caps.nvidia_gpu
-            parts.append(f"GPU: {ngpu.display_label}")
+            parts.append(f"GPU: {escape(ngpu.display_label, quote=False)}")
             if ngpu.pci_id:
-                parts.append(f"PCI: {ngpu.pci_id}")
+                parts.append(f"PCI: {escape(ngpu.pci_id, quote=False)}")
             ngpu_fan = {"read_only": "read-only", "none": "no fan control"}.get(
                 ngpu.fan_control_method, "read-only"
             )
@@ -570,7 +578,7 @@ def build_sensor_rows(
             session_max=s.session_max_c,
             rate_c_per_s=s.rate_c_per_s,
         )
-        tooltip += f"\nSource: {s.source or '—'}"
+        tooltip += f"\nSource: {escape(s.source, quote=False) if s.source else '—'}"
         rows.append(
             SensorRowVM(
                 label=prefix + (s.label or s.id),

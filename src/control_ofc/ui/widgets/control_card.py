@@ -326,6 +326,20 @@ class ControlCard(ResizableGridCard):
         self.setProperty("selected", selected)
         repolish(self)
 
+    def set_theme(self, tokens) -> None:
+        """Re-apply the inline-styled accents after a live theme switch.
+
+        The link nub (accent) and the role dot are painted with inline
+        stylesheets (not QSS ``.class`` rules), so an ``apply_theme`` palette
+        swap does not repaint them — the Controls page's theme fan-out calls
+        this to refresh both. Card sizing is re-applied separately by the page
+        (``apply_card_size``); the P2-1 manual-floor slider state is untouched.
+        """
+        self._role_icon.setStyleSheet(
+            f"color: {self._role_color(self._control)}; background: transparent;"
+        )
+        self._link_nub.setStyleSheet(f"background: {tokens.accent_primary}; border-radius: 1px;")
+
     def _role_color(self, control: LogicalControl) -> str:
         """A role-derived accent colour for the card's icon dot (mockup uses a
         distinct icon per role; we colour-code instead of depending on an icon
@@ -353,22 +367,29 @@ class ControlCard(ResizableGridCard):
         self._member_row_rpm = {}
         self._member_row_name = {}
         for member in control.members:
+            # Unique per-member objectNames (control id + member id) so tests and
+            # tooling can address an individual member row / name / RPM cell
+            # (CLAUDE.md objectName-uniqueness rule).
+            mid = member.member_id
             row = QWidget()
+            row.setObjectName(f"ControlCard_MemberRow_{control.id}_{mid}")
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(4)
-            name = QLabel(self._display_name(member.member_id, member.member_label))
+            name = QLabel(self._display_name(mid, member.member_label))
+            name.setObjectName(f"ControlCard_MemberName_{control.id}_{mid}")
             name.setTextFormat(Qt.TextFormat.PlainText)  # DEC-231: untrusted alias/label
-            self._member_row_name[member.member_id] = name
+            self._member_row_name[mid] = name
             name.setProperty("class", "CardMeta")
             name.setStyleSheet("background: transparent;")
             row_layout.addWidget(name, 1)
             rpm = QLabel("")
+            rpm.setObjectName(f"ControlCard_MemberRpm_{control.id}_{mid}")
             rpm.setProperty("class", "CardMeta")
             rpm.setStyleSheet("background: transparent;")
             row_layout.addWidget(rpm)
             self._member_rows_layout.addWidget(row)
-            self._member_row_rpm[member.member_id] = rpm
+            self._member_row_rpm[mid] = rpm
         self._member_rows.setVisible(bool(control.members))
 
     def _apply_chip(self, text: str, cls: str) -> None:

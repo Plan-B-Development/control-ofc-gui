@@ -5,6 +5,7 @@ Stores the last 2 hours of sensor and fan readings in memory.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -31,27 +32,39 @@ class HistoryStore:
         self._series: dict[str, deque[TimestampedReading]] = {}
         # Per-key counter bumped by non-append-only mutations (see generation()).
         self._generation: dict[str, int] = {}
+        # `prefill_sensor` runs on the polling worker thread (polling.py) while
+        # `record_sensors`/`record_fans` run on the GUI thread (main.py) — an
+        # unsynchronised compound read-modify-write on `_series` could drop a
+        # startup chart point or tear a deque mid-iteration. Every public method
+        # that touches `_series`/`_generation` holds this lock; the private
+        # `_append`/`_prune` helpers assume it is already held (non-reentrant, so
+        # they must never re-acquire it).
+        self._lock = threading.Lock()
 
     def record_sensors(self, sensors: list[SensorReading]) -> None:
         now = time.monotonic()
-        for s in sensors:
-            self._append(f"sensor:{s.id}", now, s.value_c)
+        with self._lock:
+            for s in sensors:
+                self._append(f"sensor:{s.id}", now, s.value_c)
 
     def record_fans(self, fans: list[FanReading]) -> None:
         now = time.monotonic()
-        for f in fans:
-            if f.rpm is not None:
-                self._append(f"fan:{f.id}:rpm", now, float(f.rpm))
+        with self._lock:
+            for f in fans:
+                if f.rpm is not None:
+                    self._append(f"fan:{f.id}:rpm", now, float(f.rpm))
 
     def get_series(self, key: str) -> list[TimestampedReading]:
         """Return the time series for a given key, pruned to max_age."""
-        if key not in self._series:
-            return []
-        self._prune(key)
-        return list(self._series[key])
+        with self._lock:
+            if key not in self._series:
+                return []
+            self._prune(key)
+            return list(self._series.get(key, ()))
 
     def series_keys(self) -> list[str]:
-        return list(self._series.keys())
+        with self._lock:
+            return list(self._series.keys())
 
     def generation(self, key: str) -> int:
         """Monotonic per-key counter bumped by any NON-append-only mutation
@@ -63,7 +76,8 @@ class HistoryStore:
         NOT bump it: pruned entries are strictly older than any cached tail,
         so a windowed consumer never misses data from them.
         """
-        return self._generation.get(key, 0)
+        with self._lock:
+            return self._generation.get(key, 0)
 
     def readings_since(self, key: str, after_ts: float) -> list[TimestampedReading]:
         """Readings with ``timestamp`` strictly greater than *after_ts*,
@@ -75,14 +89,15 @@ class HistoryStore:
         across calls — guaranteed today (one ``time.monotonic()`` stamp per
         1 Hz record pass; prefill dedupes exact timestamps and bumps the
         generation anyway)."""
-        series = self._series.get(key)
-        if not series:
-            return []
-        out: list[TimestampedReading] = []
-        for r in reversed(series):
-            if r.timestamp <= after_ts:
-                break
-            out.append(r)
+        with self._lock:
+            series = self._series.get(key)
+            if not series:
+                return []
+            out: list[TimestampedReading] = []
+            for r in reversed(series):
+                if r.timestamp <= after_ts:
+                    break
+                out.append(r)
         out.reverse()
         return out
 
@@ -107,27 +122,29 @@ class HistoryStore:
         key = f"sensor:{sensor_id}"
         now_mono = time.monotonic()
         now_wall_ms = int(time.time() * 1000)
-        incoming = (
+        incoming = [
             TimestampedReading(timestamp=now_mono - ((now_wall_ms - p.ts) / 1000.0), value=p.v)
             for p in points
-        )
-        existing = self._series.get(key)
-        merged: list[TimestampedReading] = list(existing) if existing else []
-        merged.extend(incoming)
-        merged.sort(key=lambda r: r.timestamp)
-        deduped: deque[TimestampedReading] = deque()
-        for r in merged:
-            if deduped and r.timestamp == deduped[-1].timestamp:
-                continue
-            deduped.append(r)
-        self._series[key] = deduped
-        self._generation[key] = self._generation.get(key, 0) + 1
-        self._prune(key)
+        ]
+        with self._lock:
+            existing = self._series.get(key)
+            merged: list[TimestampedReading] = list(existing) if existing else []
+            merged.extend(incoming)
+            merged.sort(key=lambda r: r.timestamp)
+            deduped: deque[TimestampedReading] = deque()
+            for r in merged:
+                if deduped and r.timestamp == deduped[-1].timestamp:
+                    continue
+                deduped.append(r)
+            self._series[key] = deduped
+            self._generation[key] = self._generation.get(key, 0) + 1
+            self._prune(key)
 
     def clear(self) -> None:
-        for key in self._series:
-            self._generation[key] = self._generation.get(key, 0) + 1
-        self._series.clear()
+        with self._lock:
+            for key in self._series:
+                self._generation[key] = self._generation.get(key, 0) + 1
+            self._series.clear()
 
     def _append(self, key: str, timestamp: float, value: float) -> None:
         if key not in self._series:

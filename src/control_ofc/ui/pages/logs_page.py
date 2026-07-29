@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.services.diagnostics_service import JOURNAL_TIMEOUT_S, DiagnosticsService
 from control_ofc.services.logs_view import LogRowVM, build_log_row, build_log_rows, filter_log_rows
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
@@ -574,8 +574,19 @@ class LogsPage(QWidget):
             QObject.disconnect(self._journal_worker, None, None, None)
         if self._journal_thread is not None:
             self._journal_thread.quit()
-            if not self._journal_thread.wait(2000):
-                log.warning("Logs journal thread did not stop within 2s, terminating")
+            # A fetch in flight blocks in subprocess.run for up to
+            # JOURNAL_TIMEOUT_S (which then kills the journalctl child); the
+            # queued quit() is only processed once do_fetch returns. Waiting the
+            # full subprocess budget + margin lets the worker join cleanly on the
+            # normal path — the old 2 s wait fell short of the 5 s timeout and
+            # forced terminate(), orphaning the child. terminate() stays only as
+            # a last-resort backstop.
+            join_ms = int(JOURNAL_TIMEOUT_S * 1000) + 1500
+            if not self._journal_thread.wait(join_ms):
+                log.warning(
+                    "Logs journal thread did not stop within %.1fs, terminating",
+                    join_ms / 1000,
+                )
                 self._journal_thread.terminate()
                 self._journal_thread.wait(1000)
         self._journal_worker = None

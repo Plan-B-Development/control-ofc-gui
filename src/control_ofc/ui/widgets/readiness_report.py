@@ -65,8 +65,15 @@ def _link(url: str, title: str) -> str:
     inline ``QLabel`` and the pop-out ``QTextBrowser`` inherit the app-wide
     stylesheet, which overrides the palette Link role — inline style is the
     only reliably-applied path for readable link contrast.
+
+    ``url``/``title`` are GUI-authored today, so escaping is a no-op for the
+    live callers; it is defence-in-depth so a future daemon-derived link can
+    never break out of the ``href`` attribute or inject markup (DEC-106).
     """
-    return f'<a href="{url}" style="color:{active_theme().status_info}">{title}</a>'
+    return (
+        f'<a href="{escape(url, quote=True)}" '
+        f'style="color:{active_theme().status_info}">{escape(title)}</a>'
+    )
 
 
 def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
