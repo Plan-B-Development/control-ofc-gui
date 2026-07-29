@@ -45,6 +45,23 @@ def test_status_pill_object_name_param(qtbot):
     assert named.objectName() == "Foo_Pill_bar"
 
 
+def test_status_pill_unique_names_are_separately_findable(qtbot):
+    # The point of the param: two pills under one parent are each reachable by
+    # name — a hardcoded name collides and findChild returns only the first.
+    # Mirrors the hardware_page per-item pills.
+    from PySide6.QtWidgets import QVBoxLayout
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    lay = QVBoxLayout(parent)
+    a = StatusPill("a", "ok", object_name="Foo_Pill_a")
+    b = StatusPill("b", "warning", object_name="Foo_Pill_b")
+    lay.addWidget(a)
+    lay.addWidget(b)
+    assert parent.findChild(StatusPill, "Foo_Pill_a") is a
+    assert parent.findChild(StatusPill, "Foo_Pill_b") is b
+
+
 # ── buttons ──
 
 

@@ -219,3 +219,24 @@ class TestCurveCardContent:
         with qtbot.waitSignal(card.unlink_requested) as blocker:
             unlink.trigger()
         assert blocker.args == [graph_curve.id]
+
+
+def test_curve_card_grip_resize_carries_curve_id(qtbot, graph_curve):
+    """DEC-235: the extracted ResizableGridCard base stores ``curve.id`` as its
+    ``_item_id``, so the grip's resize signal must carry ``curve.id`` — a wrong id
+    in ``_init_grid_card`` would silently break the Controls page's id-keyed size
+    persistence, and no ControlCard-only test would catch it."""
+    from dataclasses import replace
+
+    card = CurveCard(graph_curve)
+    qtbot.addWidget(card)
+    seen: list[str] = []
+    card.resized.connect(lambda cid, w, h: seen.append(cid))
+    card._grip.resize_finished.emit(360, 320)
+    assert seen == [graph_curve.id]
+    # update_curve keeps the item id live (parity: the pre-refactor code read
+    # self._curve.id at emit time, so a same-id update must not change the id).
+    card.update_curve(replace(graph_curve, name="Renamed"))
+    seen.clear()
+    card._grip.resize_finished.emit(360, 320)
+    assert seen == [graph_curve.id]

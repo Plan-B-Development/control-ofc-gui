@@ -78,21 +78,26 @@ def test_clear_user_size_restores_theme_floor(qtbot):
     assert card.maximumHeight() == _QWIDGETSIZE_MAX  # floor restored, no fixed max
 
 
-def test_grip_release_emits_resized_with_item_id(qtbot):
+def test_grip_release_signal_emits_resized_with_item_id(qtbot):
+    # Fire the grip's OWN signal, not the handler, so the _init_grid_card wiring
+    # (resize_finished -> _on_grip_resized -> resized) is exercised — a dropped or
+    # reversed connect() would be invisible if we only called the handler.
     card = _StubCard("ctl-9")
     qtbot.addWidget(card)
     seen: list[tuple] = []
     card.resized.connect(lambda cid, w, h: seen.append((cid, w, h)))
-    card._on_grip_resized(320, 288)
+    card._grip.resize_finished.emit(320, 288)
     assert seen == [("ctl-9", 320, 288)]
 
 
-def test_grip_reset_emits_size_reset_and_clears_override(qtbot):
+def test_grip_reset_signal_emits_size_reset_and_clears_override(qtbot):
+    # Fire reset_requested so the reset_requested -> _on_grip_reset -> size_reset
+    # connection is exercised (not just the handler body).
     card = _StubCard("ctl-9")
     qtbot.addWidget(card)
     card.set_user_size(400, 400)
     seen: list[str] = []
     card.size_reset.connect(seen.append)
-    card._on_grip_reset()
+    card._grip.reset_requested.emit()
     assert seen == ["ctl-9"]
     assert card.user_size is None

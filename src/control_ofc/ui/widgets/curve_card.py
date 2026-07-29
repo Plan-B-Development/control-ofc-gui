@@ -322,6 +322,7 @@ class CurveCard(ResizableGridCard):
 
     def update_curve(self, curve: CurveConfig) -> None:
         self._curve = curve
+        self._item_id = curve.id  # keep the base's item id live (DEC-235 parity)
         self._name_label.setText(curve.name or "Unnamed")
         self._name_label.setToolTip(curve.name or "Unnamed")
         if curve.sensor_id:

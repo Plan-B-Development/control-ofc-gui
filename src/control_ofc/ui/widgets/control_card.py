@@ -445,6 +445,11 @@ class ControlCard(ResizableGridCard):
 
     def update_control(self, control: LogicalControl, curves: list[CurveConfig]) -> None:
         self._control = control
+        # Keep the base's item id live (DEC-235): callers always update a card
+        # with a same-id control, but re-setting keeps resized/size_reset correct
+        # even if a card were ever recycled across ids (the pre-refactor code read
+        # self._control.id live at emit time).
+        self._item_id = control.id
         self._name_label.setText(control.name or "Unnamed")
         self._members_label.setText(self._members_text(control))
         self._role_icon.setStyleSheet(
