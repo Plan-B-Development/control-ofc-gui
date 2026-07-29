@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QScrollArea,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -39,7 +40,7 @@ from control_ofc.services.system_state_view import (
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.hwmon_guidance import dual_chip_verify_hint, verification_guidance
 from control_ofc.ui.pages.diagnostics_workers import _GpuVerifyWorker, _HwDiagWorker, _VerifyWorker
-from control_ofc.ui.qt_util import set_chip_class
+from control_ofc.ui.qt_util import set_chip_class, style_splitter
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.readiness_report import (
     ReadinessReportDialog,
@@ -171,7 +172,11 @@ class SystemStatePage(QWidget):
         self._health_card = HealthCard()
         self._interference_card = InterferenceCard()
         self._safety_card = SafetyCard()
-        row1 = QHBoxLayout()
+        overview_pane = QWidget()
+        overview_pane.setObjectName("SystemState_Pane_healthOverview")
+        overview_pane.setMinimumHeight(190)
+        row1 = QHBoxLayout(overview_pane)
+        row1.setContentsMargins(0, 0, 0, 0)
         row1.setSpacing(12)
         row1.addWidget(self._health_card, 2)
         right = QVBoxLayout()
@@ -182,11 +187,26 @@ class SystemStatePage(QWidget):
         right_holder = QWidget()
         right_holder.setLayout(right)
         row1.addWidget(right_holder, 1)
-        layout.addLayout(row1)
 
         # Row 2: hardware registry.
         self._registry_card = RegistryCard()
-        layout.addWidget(self._registry_card)
+        self._registry_card.setMinimumHeight(150)
+
+        # Health overview ↕ hardware registry share height through a drag handle
+        # (DEC-234). The handle is inside the scroll area, so the page keeps its
+        # whole-page scroll: the splitter is content-sized (no stretch), so a
+        # tall health card grows it past the floor and the page scrolls rather
+        # than clipping the issue list, while the registry table scrolls inside
+        # its own pane. Advanced actions stay fixed below.
+        self._sections_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._sections_splitter.setObjectName("SystemState_Splitter_sections")
+        self._sections_splitter.setChildrenCollapsible(False)
+        self._sections_splitter.setMinimumHeight(480)
+        self._sections_splitter.addWidget(overview_pane)
+        self._sections_splitter.addWidget(self._registry_card)
+        self._sections_splitter.setSizes([280, 200])
+        style_splitter(self._sections_splitter)
+        layout.addWidget(self._sections_splitter)
 
         # Advanced actions (preserved PWM/GPU verify + open report).
         layout.addWidget(self._build_advanced_section())

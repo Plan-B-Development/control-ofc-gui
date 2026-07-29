@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.32.0] — 2026-07-29
+
+A `/frontend-design` pass on section resize handles. Every page now uses one shared,
+discoverable resize handle (a hairline that lights up in the accent on hover, in a
+comfortable grab zone), and three pages gained the section splits you asked for.
+GUI-only, presentation layer; no contract change (`EXPECTED_API_VERSION` stays 1).
+Pairs with `control-ofc-daemon` ≥ v2.11.0. DEC-234.
+
+### Added
+- **Resize Fan Status vs Sensor Intelligence on Overview (DEC-234).** A drag handle
+  between the two tables lets you grow one and shrink the other. The Daemon and Device
+  Discovery cards above stay fixed. The page keeps its whole-page scroll.
+- **Resize the health overview vs the hardware registry on System State (DEC-234).** A
+  drag handle between them; the registry table scrolls inside its pane, and a long
+  health-issue list still grows the page rather than being clipped. Advanced actions
+  stay fixed below.
+- **Resize the event table vs the diagnostic-snapshot cards on Logs (DEC-234).** A new
+  vertical handle in the left column: pull it down to shrink the event table and grow
+  the Daemon/Controller/GPU/Journal cards so more of a snapshot is readable at once.
+
+### Changed
+- **One consistent resize handle everywhere (DEC-234).** Every `QSplitter` — the new
+  Overview/System State/Logs handles plus the existing Dashboard, Controls, and Logs
+  ones — now shares a single treatment via `ui.qt_util.style_splitter` and a
+  `QSplitter::handle` theme rule: a quiet 1px hairline at rest (matching the app's
+  divider language) that brightens to the brand accent on hover, inside an 8px grab
+  zone. Previously handles used Qt's near-invisible default and were styled ad hoc.
+
 ## [2.31.0] — 2026-07-28
 
 A Controls-page UX pass (from a `/frontend-design` request): you can now tell at a glance

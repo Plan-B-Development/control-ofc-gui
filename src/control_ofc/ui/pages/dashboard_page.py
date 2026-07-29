@@ -50,7 +50,7 @@ from control_ofc.services.series_selection import (
 )
 from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.fan_display import filter_displayable_fans
-from control_ofc.ui.qt_util import block_signals, repolish, set_chip_class
+from control_ofc.ui.qt_util import block_signals, repolish, set_chip_class, style_splitter
 from control_ofc.ui.status_banner import MODE_LABELS
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.dashboard_inspector import DashboardInspector
@@ -416,6 +416,8 @@ class DashboardPage(QWidget):
         self._v_splitter.setObjectName("Dashboard_Splitter_vertical")
         self._h_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._h_splitter.setObjectName("Dashboard_Splitter_horizontal")
+        style_splitter(self._v_splitter)  # shared resize-handle convention (DEC-234)
+        style_splitter(self._h_splitter)
 
         # ── Telemetry Stage (v_splitter top): header + legend + the chart ──
         telemetry_stage = QWidget()

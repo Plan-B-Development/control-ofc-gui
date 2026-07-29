@@ -64,7 +64,7 @@ from control_ofc.ui.fan_presence import (
     classify_fan_presence,
 )
 from control_ofc.ui.hwmon_guidance import lookup_chip_guidance
-from control_ofc.ui.qt_util import repolish, set_chip_class
+from control_ofc.ui.qt_util import repolish, set_chip_class, style_splitter
 from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
@@ -361,6 +361,7 @@ class ControlsPage(QWidget):
         # vertical layout so the existence/count/collapsible tests stay green.
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.setObjectName("Controls_Splitter_sections")
+        style_splitter(self._splitter)  # shared resize-handle convention (DEC-234)
 
         # ── Pane 1: Assign Roles ──
         pane1 = QWidget()
@@ -415,6 +416,7 @@ class ControlsPage(QWidget):
         # Inner horizontal splitter: Link Logic | Curve Editor.
         self._curves_editor_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._curves_editor_splitter.setObjectName("Controls_Splitter_curvesEditor")
+        style_splitter(self._curves_editor_splitter)  # shared handle convention (DEC-234)
 
         # Pane 2: Link Logic (curve cards)
         pane2 = QWidget()

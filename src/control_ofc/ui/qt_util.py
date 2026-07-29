@@ -9,7 +9,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from PySide6.QtCore import QObject
-    from PySide6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QSplitter, QWidget
+
+# Shared resize-handle width, in px (DEC-234). This is the grab zone, wider than
+# the ~2px hairline the QSplitter::handle QSS paints inside it — comfortable to
+# hit without a chunky gripper bar.
+SPLITTER_HANDLE_WIDTH = 8
 
 
 @contextmanager
@@ -43,3 +48,15 @@ def set_chip_class(widget: QWidget, css_class: str, *, skip_if_unchanged: bool =
         return
     widget.setProperty("class", css_class)
     repolish(widget)
+
+
+def style_splitter(splitter: QSplitter) -> None:
+    """Apply the shared resize-handle convention to *splitter* (DEC-234).
+
+    Every ``QSplitter`` in the app is run through this so handles look and grab
+    the same on every page. It sets a comfortable grab width; the visible
+    hairline and accent-on-hover come from the ``QSplitter::handle`` rules in
+    ``theme.build_stylesheet``. Before DEC-234 handles used Qt's near-invisible
+    default at each page's whim — the inconsistency this normalises.
+    """
+    splitter.setHandleWidth(SPLITTER_HANDLE_WIDTH)

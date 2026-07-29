@@ -51,6 +51,7 @@ from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card, SectionHeader
 from control_ofc.ui.components.tables import apply_dense_table
+from control_ofc.ui.qt_util import style_splitter
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.warnings_view import WarningsView
 
@@ -137,6 +138,7 @@ class LogsPage(QWidget):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([820, 320])
+        style_splitter(splitter)
         outer.addWidget(splitter, 1)
 
     def _build_right_column(self) -> QWidget:
@@ -167,6 +169,7 @@ class LogsPage(QWidget):
         column.setStretchFactor(0, 1)
         column.setStretchFactor(1, 1)
         column.setSizes([300, 380])
+        style_splitter(column)
         return column
 
     def _build_toolbar(self) -> QHBoxLayout:
@@ -210,7 +213,15 @@ class LogsPage(QWidget):
         pane = QWidget()
         layout = QVBoxLayout(pane)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(0)
+
+        # Event table ↕ diagnostic-snapshot cards share this column's height
+        # through a drag handle (DEC-234): pull it down to shrink the table and
+        # grow the cards so more of a snapshot / journal is readable at once.
+        # Both panes scroll internally, so the split can fill the column.
+        column = QSplitter(Qt.Orientation.Vertical)
+        column.setObjectName("Logs_Splitter_leftColumn")
+        column.setChildrenCollapsible(False)
 
         self._table = QTableWidget(0, len(_LOG_COLS))
         self._table.setObjectName("Logs_Table_events")
@@ -219,6 +230,7 @@ class LogsPage(QWidget):
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setMinimumHeight(150)
         _mono(self._table)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(_COL_TIME, QHeaderView.ResizeMode.ResizeToContents)
@@ -228,12 +240,27 @@ class LogsPage(QWidget):
         header.setSectionResizeMode(_COL_SOURCE, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(_COL_MESSAGE, QHeaderView.ResizeMode.Stretch)
         self._table.setColumnWidth(_COL_LEVEL, 92)
-        layout.addWidget(self._table, 1)
+        column.addWidget(self._table)
 
-        layout.addWidget(
+        snapshots = QWidget()
+        snapshots.setObjectName("Logs_Pane_snapshots")
+        snapshots.setMinimumHeight(140)
+        snap_layout = QVBoxLayout(snapshots)
+        snap_layout.setContentsMargins(0, 8, 0, 0)
+        snap_layout.setSpacing(10)
+        snap_layout.addWidget(
             SectionHeader("Diagnostic Snapshots", object_name="Logs_SectionHeader_snapshots")
         )
-        layout.addLayout(self._build_snapshot_cards())
+        # Stretch the cards row so growing this pane grows the previews (the goal:
+        # read more of a snapshot without opening the full bundle).
+        snap_layout.addLayout(self._build_snapshot_cards(), 1)
+        column.addWidget(snapshots)
+
+        column.setStretchFactor(0, 1)
+        column.setStretchFactor(1, 0)
+        column.setSizes([420, 190])
+        style_splitter(column)
+        layout.addWidget(column, 1)
         return pane
 
     def _build_snapshot_cards(self) -> QHBoxLayout:

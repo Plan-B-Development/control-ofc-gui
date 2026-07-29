@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QScrollArea,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -42,7 +43,7 @@ from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card, SectionHeader
 from control_ofc.ui.components.tables import apply_dense_table
-from control_ofc.ui.qt_util import set_chip_class
+from control_ofc.ui.qt_util import set_chip_class, style_splitter
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.sensor_detail_dialog import SensorDetailDialog
 
@@ -153,9 +154,38 @@ class OverviewPage(QWidget):
         layout.setSpacing(12)
         scroll.setWidget(body)
 
+        # Top cards row (Daemon health + Device discovery) stays fixed above the
+        # resize handle — untouched by the drag (DEC-234).
         layout.addLayout(self._build_cards_row())
 
-        layout.addWidget(SectionHeader("Fan Status", object_name="Overview_SectionHeader_fans"))
+        # Fan Status ↕ Sensor Intelligence share the remaining height through a
+        # drag handle; each table scrolls inside its own pane. The handle lives
+        # inside the scroll area, so the page keeps its whole-page scroll — a
+        # short window still scrolls rather than clipping, and the handle only
+        # retrades height between the two tables.
+        self._sections_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._sections_splitter.setObjectName("Overview_Splitter_sections")
+        self._sections_splitter.setChildrenCollapsible(False)
+        # A floor keeps the band usable and gives the handle drag slack on short
+        # windows; sizeHint can still grow past it, so a tall window scrolls the
+        # whole page rather than the splitter filling it (matches the page's
+        # existing top-aligned, scroll-when-tall behaviour).
+        self._sections_splitter.setMinimumHeight(420)
+        self._sections_splitter.addWidget(self._build_fan_pane())
+        self._sections_splitter.addWidget(self._build_sensor_pane())
+        self._sections_splitter.setSizes([210, 210])
+        style_splitter(self._sections_splitter)
+        layout.addWidget(self._sections_splitter)
+        layout.addStretch(1)
+
+    def _build_fan_pane(self) -> QWidget:
+        pane = QWidget()
+        pane.setObjectName("Overview_Pane_fans")
+        pane.setMinimumHeight(140)
+        v = QVBoxLayout(pane)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        v.addWidget(SectionHeader("Fan Status", object_name="Overview_SectionHeader_fans"))
         self._fan_table = QTableWidget(0, len(_FAN_COLS))
         self._fan_table.setObjectName("Overview_Table_fans")
         self._fan_table.setHorizontalHeaderLabels(_FAN_COLS)
@@ -163,7 +193,16 @@ class OverviewPage(QWidget):
         self._fan_table.horizontalHeader().setStretchLastSection(True)
         self._fan_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._fan_table.customContextMenuRequested.connect(self._on_fan_context_menu)
-        layout.addWidget(self._fan_table)
+        v.addWidget(self._fan_table, 1)
+        return pane
+
+    def _build_sensor_pane(self) -> QWidget:
+        pane = QWidget()
+        pane.setObjectName("Overview_Pane_sensors")
+        pane.setMinimumHeight(140)
+        v = QVBoxLayout(pane)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
 
         sensor_header = SectionHeader(
             "Sensor Intelligence", object_name="Overview_SectionHeader_sensors"
@@ -182,7 +221,7 @@ class OverviewPage(QWidget):
         if self._series_selection is None:
             self._mirror_btn.hide()
         sensor_header.add_trailing(self._mirror_btn)
-        layout.addWidget(sensor_header)
+        v.addWidget(sensor_header)
 
         self._sensor_table = _KeyTable(0, len(_SENSOR_COLS))
         self._sensor_table.setObjectName("Overview_Table_sensors")
@@ -197,15 +236,15 @@ class OverviewPage(QWidget):
         self._sensor_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Interactive
         )
-        layout.addWidget(self._sensor_table)
+        v.addWidget(self._sensor_table, 1)
 
         self._unavailable_label = QLabel("")
         self._unavailable_label.setObjectName("Overview_Label_unavailableSensors")
         self._unavailable_label.setProperty("class", "CardMeta")
         self._unavailable_label.setWordWrap(True)
         self._unavailable_label.setVisible(False)
-        layout.addWidget(self._unavailable_label)
-        layout.addStretch(1)
+        v.addWidget(self._unavailable_label)
+        return pane
 
     def _build_cards_row(self) -> QHBoxLayout:
         row = QHBoxLayout()

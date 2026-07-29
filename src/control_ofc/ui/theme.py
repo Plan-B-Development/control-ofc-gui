@@ -1003,6 +1003,26 @@ def build_stylesheet(t: ThemeTokens) -> str:
         border-radius: 8px;
     }}
 
+    /* Splitters — one shared resize handle on every page (DEC-234). A quiet
+       hairline at rest (the same divider language as .CardDivider / gridlines),
+       brightening to the brand accent on hover so the drag affordance is
+       discoverable. The grab zone is wider than the painted line via
+       setHandleWidth() (ui.qt_util.style_splitter); the margins here thin the
+       paint to a centred ~2px hairline. */
+    QSplitter::handle {{
+        background-color: {t.border_default};
+    }}
+    QSplitter::handle:horizontal {{
+        margin: 2px 3px;
+    }}
+    QSplitter::handle:vertical {{
+        margin: 3px 2px;
+    }}
+    QSplitter::handle:horizontal:hover,
+    QSplitter::handle:vertical:hover {{
+        background-color: {t.accent_primary};
+    }}
+
     /* Line edits and spin boxes */
     QLineEdit, QSpinBox, QDoubleSpinBox {{
         background-color: {t.input_bg};
