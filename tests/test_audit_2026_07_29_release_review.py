@@ -52,11 +52,13 @@ def test_sensor_tooltip_escapes_the_notes_path():
 
 
 def test_reflect_manual_applied_coerces_a_non_int_grant(qtbot):
-    # A non-conforming daemon could send pwm_percent as a float; setValue needs an
-    # int. The coercion prevents a TypeError in the _on_take_result slot (security P3).
+    # A non-conforming daemon could send pwm_percent as a str; QSlider.setValue
+    # needs an int. PySide6 accepts a Python float natively, so a str is the real
+    # trigger — the int() coercion prevents a TypeError in the _on_take_result slot
+    # (security P3; a float arg would pass even without the fix — test-tests catch).
     card = _floored_card(qtbot)
     card._manual_btn.setChecked(True)
-    card.reflect_manual_applied(30.0)  # a float — must not raise
+    card.reflect_manual_applied("30")  # a str — must not raise (int-coerced)
     assert card._manual_slider.value() == 30
 
 

@@ -47,6 +47,21 @@ def test_clear():
     assert store.get_series("sensor:cpu") == []
 
 
+def test_get_series_on_fully_aged_out_key_returns_empty(monkeypatch):
+    # Prune-to-empty (DEC-236 hardening): once every entry ages past max_age,
+    # _prune pops the key, so get_series must return [] — not KeyError — for a
+    # series that just aged out (the other prune tests always leave >=1 entry).
+    import control_ofc.services.history_store as hs
+
+    store = HistoryStore(max_age_s=2)
+    store.record_sensors([SensorReading(id="cpu", value_c=40.0)])
+    assert len(store.get_series("sensor:cpu")) == 1
+    # Advance the monotonic clock well past max_age so every point is now stale.
+    future = time.monotonic() + 100
+    monkeypatch.setattr(hs.time, "monotonic", lambda: future)
+    assert store.get_series("sensor:cpu") == []
+
+
 def test_series_keys():
     store = HistoryStore()
     store.record_sensors([SensorReading(id="a"), SensorReading(id="b")])

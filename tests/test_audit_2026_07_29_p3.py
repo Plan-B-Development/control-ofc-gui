@@ -96,6 +96,11 @@ class TestSecurityEscape:
         assert "<i>id" not in tip
         assert "nct<b>" not in tip
         assert "&lt;script&gt;" in tip
+        # Positive asserts so deleting the chip_name / sensor_id embedding lines
+        # can't pass for the wrong reason (test-tests survivor — the negative-only
+        # checks above hold vacuously if the field is simply dropped).
+        assert "nct&lt;b&gt;" in tip
+        assert "&lt;i&gt;id" in tip
 
     def test_build_sensor_rows_escapes_source(self):
         """Finding 1.2: the appended `Source:` line carries the daemon source."""
