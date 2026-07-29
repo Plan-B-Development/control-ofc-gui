@@ -2048,6 +2048,13 @@ class ControlsPage(QWidget):
         self._recompute_renew_interval()
         if not self._override_renew_timer.isActive():
             self._override_renew_timer.start()
+        # P2-1: reflect the value the daemon actually applied (floor/thermal-
+        # clamped) onto the card so its slider/label can't claim a speed the fan
+        # isn't running. With the slider already floor-clamped this usually equals
+        # the request; it corrects any residual daemon clamp.
+        card = self._control_cards.get(control_id)
+        if card is not None:
+            card.reflect_manual_applied(grant.pwm_percent)
 
     def _release_override(self, control_id: str) -> None:
         """Release a held override; the daemon reverts the control to its curve."""

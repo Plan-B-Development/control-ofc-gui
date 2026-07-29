@@ -190,3 +190,28 @@ def test_override_renew_rejection_reverts_card_over_the_worker_thread(
         assert not card._manual_btn.isChecked()
     finally:
         page.cleanup()
+
+
+def test_take_result_reflects_granted_pwm_on_the_card(qtbot, app_state, profile_service):
+    """P2-1: `_on_take_result` reflects the daemon-applied `grant.pwm_percent`
+    (a floor/thermal-clamped value) onto the card, not the raw request — so the
+    card's slider/label can't claim a speed the fan isn't running."""
+    page = _live_page(qtbot, app_state, profile_service, MagicMock())
+    try:
+        card = page._control_cards["lc1"]
+        # Put the card in manual + register intent WITHOUT dispatching a take
+        # (blockSignals avoids the page's take flow, which a MagicMock can't serve).
+        card._manual_btn.blockSignals(True)
+        card._manual_btn.setChecked(True)
+        card._manual_btn.blockSignals(False)
+        page._manual_intent.add("lc1")
+
+        grant = OverrideGrant(
+            control_id="lc1", override_token=7, pwm_percent=30, renew_secs=5, ttl_secs=15
+        )
+        page._on_take_result("lc1", 10, grant, None)  # requested 10, daemon granted 30
+
+        assert card._manual_slider.value() == 30
+        assert card._manual_pct_label.text() == "30%"
+    finally:
+        page.cleanup()

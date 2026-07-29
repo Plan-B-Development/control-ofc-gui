@@ -382,8 +382,13 @@ class ControlCard(ResizableGridCard):
             # DEC-169: taking manual ownership supersedes any foreign-override
             # display — the user's own (fenced, renewable) override now wins.
             self._external_pct = None
+            # P2-1: clamp the slider to the daemon-enforced floor so the user can
+            # neither request nor see a value the daemon would floor-clamp away
+            # (a 10% request on a 30%-floor pump ran at 30% but displayed "10%").
+            self._manual_slider.setMinimum(round(self._effective_floor()))
         if checked and self._last_output_pct is not None:
-            # Start manual at the current speed so the fan doesn't jump.
+            # Start manual at the current speed so the fan doesn't jump (clamped
+            # up to the floor by the setMinimum above).
             self._manual_slider.blockSignals(True)
             self._manual_slider.setValue(round(self._last_output_pct))
             self._manual_slider.blockSignals(False)
@@ -398,6 +403,21 @@ class ControlCard(ResizableGridCard):
         self._manual_pct_label.setText(f"{value}%")
         if self._manual_btn.isChecked():
             self.manual_value_changed.emit(self._control.id, value)
+
+    def reflect_manual_applied(self, pct: int) -> None:
+        """Show the value the daemon actually applied to the manual override.
+
+        The daemon floor-clamps (and may thermal-clamp) the requested value; this
+        makes the slider + label reflect the *granted* value rather than the raw
+        request, so the card can never claim a speed the fan isn't running (P2-1).
+        No-op unless manual is active; blocks signals so it doesn't re-emit an
+        override, and setValue clamps into the slider's [floor, 100] range."""
+        if not self._manual_btn.isChecked():
+            return
+        self._manual_slider.blockSignals(True)
+        self._manual_slider.setValue(pct)
+        self._manual_slider.blockSignals(False)
+        self._manual_pct_label.setText(f"{self._manual_slider.value()}%")
 
     def clear_manual(self) -> None:
         """Programmatically exit Manual without emitting ``manual_toggled``.
@@ -513,13 +533,20 @@ class ControlCard(ResizableGridCard):
             self._status_chip.setText("No members")
             set_chip_class(self._status_chip, "PageSubtitle")
 
+    def _effective_floor(self) -> float:
+        """The role-derived minimum PWM the daemon floor-clamps to (DEC-095/162):
+        the larger of the user-set floor and the role-derived floor. Drives both
+        the Min badge and the manual slider's minimum, so the slider can never
+        request — or display — a value the daemon would clamp away (P2-1)."""
+        return max(self._control.minimum_pct, control_minimum_pct(self._control.members))
+
     def _update_min_pwm_badge(self, control: LogicalControl) -> None:
         """Refresh the inline minimum-PWM badge from the control's effective floor."""
         # Show the larger of the user-set floor and the role-derived floor so
         # the user sees the clamp that actually applies. Hide entirely when
         # there is no floor (0%), so chassis-only roles authored before v4
         # don't display a misleading "Min: 0%".
-        effective = max(control.minimum_pct, control_minimum_pct(control.members))
+        effective = self._effective_floor()
         if effective <= 0.0:
             self._min_pwm_label.setText("")
             self._min_pwm_label.setToolTip("")

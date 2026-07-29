@@ -317,6 +317,14 @@ class PollingService(QObject):
 
     def shutdown(self) -> None:
         self.stop()
+        # Close the client BEFORE joining the thread: an in-flight poll is a
+        # synchronous blocking call, and closing the client is the only way to
+        # interrupt it so quit()/wait() can join promptly (the worker slots absorb
+        # the resulting connection error). Audit 2026-07-29 F-1 proposed reordering
+        # this to close-after-join to match ControlsPage, but that hangs the join
+        # for a blocking call — ControlsPage's override calls are short enough to
+        # join without the close; these are not (verified: the reorder deadlocked
+        # test_v1_2_diagnostics' in-flight-verify teardown test).
         self._worker.shutdown()
         self._thread.quit()
         if not self._thread.wait(2000):

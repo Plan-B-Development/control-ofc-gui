@@ -624,6 +624,11 @@ class HardwarePage(QWidget):
         return ok
 
     def _teardown_worker(self, worker: QObject | None, thread: QThread | None, label: str) -> None:
+        # Close the client (worker.shutdown) BEFORE joining the thread — the verify
+        # worker blocks synchronously and closing the client is the only way to
+        # interrupt it so quit()/wait() can join (the slot absorbs the resulting
+        # connection error). Audit F-1's close-after-join reorder hangs a blocking
+        # join; kept close-first deliberately (mirrors system_state_page).
         if worker is not None:
             QObject.disconnect(worker, None, None, None)
             worker.shutdown()

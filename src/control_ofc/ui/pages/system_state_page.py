@@ -458,6 +458,12 @@ class SystemStatePage(QWidget):
         return ok
 
     def _teardown_worker(self, worker: QObject | None, thread: QThread | None, label: str) -> None:
+        # Close the client (worker.shutdown) BEFORE joining the thread: the verify
+        # worker blocks synchronously in POST /hwmon/{id}/verify, and closing the
+        # client is the only way to interrupt it so quit()/wait() can join (the
+        # do_verify slot absorbs the resulting connection error). Audit F-1
+        # proposed close-after-join to match ControlsPage, but that hangs the join
+        # for a blocking call — proven by test_v1_2_diagnostics' in-flight test.
         if worker is not None:
             QObject.disconnect(worker, None, None, None)
             worker.shutdown()
