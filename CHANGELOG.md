@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.32.2] — 2026-07-29
+
+Audit-remediation patch (2026-07-29 GUI code audit — no P0/P1 found). One
+safety-adjacent behaviour fix plus a hardening sweep. GUI-only; no contract change
+(`EXPECTED_API_VERSION` stays 1). Pairs with `control-ofc-daemon` ≥ v2.11.0. DEC-236.
+
+### Fixed
+- **Manual override now shows the speed the fan is actually running (DEC-236).** On a
+  CPU/pump control (30% floor), dragging the manual slider to 10% used to display "10%"
+  while the daemon floor-clamped the override and the fan ran at 30% — right beside the
+  card's own "Min: 30%" badge. The slider is now clamped to the effective floor and
+  reflects the value the daemon actually applied, so it can't misreport the fan.
+
+### Changed (hardening)
+- **Escape discipline (DEC-236).** Untrusted daemon strings (board name, chip/sensor
+  labels, fan source, subsystem reason) are now escaped / plain-texted at the few
+  rich-text labels and tooltips that previously rendered them verbatim.
+- **Thread-safety + teardown robustness (DEC-236).** The in-memory history store is now
+  lock-guarded across its poll-worker/GUI-thread access; the Logs journal fetch joins
+  cleanly instead of orphaning its `journalctl` child; the override-renew timer no longer
+  resets an about-to-fire countdown; the dashboard's Apply-button reset uses a cancellable
+  timer.
+- **Live-theme + objectName finesse (DEC-236).** Control-card accents repaint on a theme
+  switch; member rows and a theme swatch gained unique objectNames / token-driven styling.
+
 ## [2.32.1] — 2026-07-29
 
 Internal GUI standardisation and reuse — **no behaviour change** (from a `/meta-audit`
