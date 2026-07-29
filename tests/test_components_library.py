@@ -33,6 +33,18 @@ def test_status_pill_is_uppercase_and_tracks_state(qtbot):
     assert pill.property("class") == "Pill_critical"
 
 
+def test_status_pill_object_name_param(qtbot):
+    # Matches the make_button/RadialGauge/SectionHeader convention: default keeps
+    # the shared name; a caller with a meaningful single instance sets a unique
+    # one so reused pills don't collide on a hardcoded objectName.
+    default = StatusPill("x", "ok")
+    qtbot.addWidget(default)
+    assert default.objectName() == "StatusPill"
+    named = StatusPill("x", "ok", object_name="Foo_Pill_bar")
+    qtbot.addWidget(named)
+    assert named.objectName() == "Foo_Pill_bar"
+
+
 # ── buttons ──
 
 

@@ -92,10 +92,17 @@ class PulsingLed(QWidget):
     """
 
     def __init__(
-        self, color_role: str = "ok", diameter: int = 10, parent: QWidget | None = None
+        self,
+        color_role: str = "ok",
+        diameter: int = 10,
+        parent: QWidget | None = None,
+        *,
+        object_name: str | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setObjectName("PulsingLed")
+        # Settable objectName (matches the shared-component convention) so two
+        # LEDs on one page don't collide on a hardcoded name.
+        self.setObjectName(object_name or "PulsingLed")
         self._role = color_role if color_role in _ROLE_TOKENS else "ok"
         self._diameter = diameter
         self._intensity = 1.0

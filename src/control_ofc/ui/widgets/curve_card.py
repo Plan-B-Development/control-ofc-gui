@@ -10,7 +10,6 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
-    QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
@@ -24,16 +23,8 @@ from PySide6.QtWidgets import (
 from control_ofc.services.profile_service import CurveConfig, CurveType
 from control_ofc.ui.qt_util import repolish
 from control_ofc.ui.theme import active_theme, default_dark_theme
-from control_ofc.ui.widgets.card_metrics import (
-    DEFAULT_CARD_SIZE,
-    MIN_USER_CARD_WIDTH_PX,
-    card_dimensions,
-)
-from control_ofc.ui.widgets.card_resize import CardResizeGrip, snap_size
-
-# QWIDGETSIZE_MAX — not exported by this PySide6 build; used to undo a fixed
-# height when a user size override is cleared (DEC-129).
-_QWIDGETSIZE_MAX = 16777215
+from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE
+from control_ofc.ui.widgets.resizable_grid_card import ResizableGridCard
 
 
 class CurvePreview(QWidget):
@@ -151,7 +142,7 @@ class CurvePreview(QWidget):
         painter.end()
 
 
-class CurveCard(QFrame):
+class CurveCard(ResizableGridCard):
     """Compact curve card with preview, metadata, and actions."""
 
     edit_requested = Signal(str)
@@ -160,11 +151,8 @@ class CurveCard(QFrame):
     duplicate_requested = Signal(str)
     # DEC-214 "Link Logic": detach this curve from the role(s) using it.
     unlink_requested = Signal(str)
-    # DEC-129 per-card user resize: resized fires on grip release with the
-    # snapped size actually applied; size_reset fires on grip double-click
-    # after the card has restored its theme-derived default.
-    resized = Signal(str, int, int)  # curve_id, width, height
-    size_reset = Signal(str)  # curve_id
+    # resized / size_reset (per-card user resize, DEC-129) are inherited from
+    # ResizableGridCard.
 
     def __init__(
         self,
@@ -173,8 +161,7 @@ class CurveCard(QFrame):
         user_size: tuple[int, int] | None = None,
         parent=None,
     ) -> None:
-        super().__init__(parent)
-        self.setProperty("class", "Card")
+        super().__init__(parent)  # Card base sets class="Card"
         self._curve = curve
         self._theme = default_dark_theme()
         # DEC-233: highlight state while this curve is open in the editor pane.
@@ -183,17 +170,8 @@ class CurveCard(QFrame):
         # coexisting with, the thin "assigned" border so the user can always tell
         # which card is on the workbench.
         self._editing = False
-        # Fixed width keeps the grid columns aligned; height is a floor so the
-        # card grows to fit scaled text rather than clipping rows (DEC-128).
-        self._card_size_tier = card_size
-        # DEC-129: persisted per-card override; None = theme-derived sizing.
-        self._user_size: tuple[int, int] | None = None
-        # Grip exists before the first resizeEvent (any setFixedWidth below
-        # triggers one) so resizeEvent can always reposition it.
-        self._grip = CardResizeGrip(self)
-        self._grip.setObjectName(f"CurveCard_Grip_{curve.id}")
-        self._grip.resize_finished.connect(self._on_grip_resized)
-        self._grip.reset_requested.connect(self._on_grip_reset)
+        # Sizing (DEC-128 floor) + the DEC-129 resize grip live in the base.
+        self._init_grid_card(curve.id, f"CurveCard_Grip_{curve.id}")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -266,85 +244,9 @@ class CurveCard(QFrame):
     def curve(self) -> CurveConfig:
         return self._curve
 
-    @property
-    def user_size(self) -> tuple[int, int] | None:
-        """The persisted per-card size override, or None for theme sizing."""
-        return self._user_size
-
-    def apply_card_size(
-        self,
-        base_pt: int,
-        tier: str = DEFAULT_CARD_SIZE,
-        user_size: tuple[int, int] | None = None,
-    ) -> None:
-        """Size the card from the theme base font size and a density tier.
-
-        Without a user override: width is fixed so the flow grid stays
-        column-aligned; height is a minimum floor (no maximum), so scaled-up
-        text grows the card instead of clipping the preview/footer (DEC-128).
-
-        With a user override (DEC-129): both dimensions are fixed to the
-        snapped override, re-clamped to the current content minimum at every
-        re-apply — so a theme/tier change clamps the override but never
-        clears it. Passing ``user_size=None`` keeps any existing override;
-        clearing is explicit via :meth:`clear_user_size`.
-        """
-        self._card_size_tier = tier
-        if user_size is not None:
-            self._user_size = self._snap_to_content(*user_size)
-        if self._user_size is not None:
-            width, height = self._snap_to_content(*self._user_size)
-            self.setFixedWidth(width)
-            self.setFixedHeight(height)
-        else:
-            width, height = card_dimensions(base_pt, tier)
-            self.setFixedWidth(width)
-            # Undo a previous override's fixed height before re-flooring.
-            self.setMaximumHeight(_QWIDGETSIZE_MAX)
-            self.setMinimumHeight(height)
-        self.updateGeometry()
-
-    def set_user_size(self, width: int, height: int) -> tuple[int, int]:
-        """Apply a live user resize (grip drag), snapped and clamped.
-
-        Returns the size actually applied so the grip can report it on
-        release.
-        """
-        applied = self._snap_to_content(width, height)
-        self._user_size = applied
-        self.setFixedWidth(applied[0])
-        self.setFixedHeight(applied[1])
-        self.updateGeometry()
-        return applied
-
-    def clear_user_size(self) -> None:
-        """Drop the per-card override and restore theme-derived sizing."""
-        self._user_size = None
-        self.apply_card_size(active_theme().base_font_size_pt, self._card_size_tier)
-
-    def _snap_to_content(self, width: int, height: int) -> tuple[int, int]:
-        """Snap to the shared lattice, clamped so rows can never clip."""
-        return snap_size(
-            width,
-            height,
-            MIN_USER_CARD_WIDTH_PX,
-            self.layout().minimumSize().height(),
-        )
-
-    def _on_grip_resized(self, width: int, height: int) -> None:
-        self.resized.emit(self._curve.id, width, height)
-
-    def _on_grip_reset(self) -> None:
-        self.clear_user_size()
-        self.size_reset.emit(self._curve.id)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        # Keep the resize grip pinned to the bottom-right corner, above the
-        # card content (it floats outside the layout). The preview repaints
-        # itself at the new size — no re-render hook needed here (DEC-129).
-        self._grip.move(self.width() - self._grip.width(), self.height() - self._grip.height())
-        self._grip.raise_()
+    # Sizing + grip API (apply_card_size / set_user_size / clear_user_size /
+    # user_size / _on_grip_* / resizeEvent grip positioning) is inherited from
+    # ResizableGridCard — CurveCard adds no extra resize logic.
 
     def set_theme(self, tokens) -> None:
         """Update theme and repaint the curve preview."""

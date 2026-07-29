@@ -360,7 +360,13 @@ class HardwarePage(QWidget):
                 self._actions_layout.addWidget(self._make_action_card(vm))
         _clear_layout(self._summary_bar_layout)
         for seg in summary.segments:
-            self._summary_bar_layout.addWidget(StatusPill(f"{seg.count} {seg.label}", seg.state))
+            self._summary_bar_layout.addWidget(
+                StatusPill(
+                    f"{seg.count} {seg.label}",
+                    seg.state,
+                    object_name=f"Hardware_Pill_summary_{seg.label}",
+                )
+            )
         self._summary_bar_layout.addStretch(1)
 
     def _make_action_card(self, vm) -> QWidget:
@@ -390,7 +396,13 @@ class HardwarePage(QWidget):
             chip_row = QHBoxLayout()
             chip_row.setSpacing(6)
             for chip in vm.impact_chips:
-                chip_row.addWidget(StatusPill(chip.label, chip.state))
+                chip_row.addWidget(
+                    StatusPill(
+                        chip.label,
+                        chip.state,
+                        object_name=f"Hardware_Pill_chip_{vm.code}_{chip.label}",
+                    )
+                )
             chip_row.addStretch(1)
             col.addLayout(chip_row)
 
@@ -506,7 +518,11 @@ class HardwarePage(QWidget):
             cl.addWidget(copy)
             section.add_widget(cmd_holder)
         if row.mainline_text:
-            ml = StatusPill(row.mainline_text, row.mainline_state)
+            ml = StatusPill(
+                row.mainline_text,
+                row.mainline_state,
+                object_name=f"Hardware_Pill_mainline_{row.chip}",
+            )
             section.add_widget(ml)
         for note in row.risk_notes:
             rn = QLabel(f"⚠ {note}")

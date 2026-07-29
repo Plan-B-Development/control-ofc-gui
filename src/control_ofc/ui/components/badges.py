@@ -33,10 +33,18 @@ class StatusPill(QLabel):
     """An uppercase filled status badge whose colour follows *state*."""
 
     def __init__(
-        self, text: str = "", state: str = "neutral", parent: QWidget | None = None
+        self,
+        text: str = "",
+        state: str = "neutral",
+        parent: QWidget | None = None,
+        *,
+        object_name: str | None = None,
     ) -> None:
         super().__init__(text.upper(), parent)
-        self.setObjectName("StatusPill")
+        # A settable objectName (matches SectionHeader/RadialGauge/make_button):
+        # a fixed one collides wherever the pill is reused and breaks findChild
+        # tests. Callers with a meaningful, single instance should pass one.
+        self.setObjectName(object_name or "StatusPill")
         self._state = state
         set_chip_class(self, pill_class_for(state))
 

@@ -13,6 +13,17 @@ from PySide6.QtCore import Qt
 from control_ofc.ui.components.glow import PulsingLed, animation_controller
 
 
+def test_pulsing_led_object_name_param(qtbot):
+    # Default keeps the shared name; a caller sets a unique one so two LEDs on
+    # one page don't collide (matches the shared-component convention).
+    default = PulsingLed("ok")
+    qtbot.addWidget(default)
+    assert default.objectName() == "PulsingLed"
+    named = PulsingLed("ok", object_name="Foo_Led_bar")
+    qtbot.addWidget(named)
+    assert named.objectName() == "Foo_Led_bar"
+
+
 def test_pulsing_led_runs_when_active_and_visible(qtbot):
     led = PulsingLed(color_role="ok")
     qtbot.addWidget(led)

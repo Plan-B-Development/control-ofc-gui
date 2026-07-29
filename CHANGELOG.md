@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.32.1] — 2026-07-29
+
+Internal GUI standardisation and reuse — **no behaviour change** (from a `/meta-audit`
+follow-up). GUI-only; no contract change (`EXPECTED_API_VERSION` stays 1). Pairs with
+`control-ofc-daemon` ≥ v2.11.0. DEC-235.
+
+### Changed
+- **Shared `ResizableGridCard` base for the Controls-page cards (DEC-235).** `ControlCard`
+  and `CurveCard` now share one base for their DEC-128/129 floor-sizing + resize-grip
+  machinery instead of each carrying a near-identical ~150-line copy, and are proper
+  `Card` subclasses. Nothing visible changes — the cards size, floor, and resize exactly
+  as before.
+- **Settable `object_name` on `StatusPill` and `PulsingLed` (DEC-235).** The shared badge
+  and LED primitives now accept an `object_name` (matching `make_button` / `RadialGauge` /
+  `SectionHeader`), so reused instances get unique objectNames instead of colliding on a
+  hardcoded one. Fixed three real collisions among the Hardware page's per-item pills.
+
 ## [2.32.0] — 2026-07-29
 
 A `/frontend-design` pass on section resize handles. Every page now uses one shared,
