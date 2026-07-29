@@ -195,9 +195,12 @@ class SystemStatePage(QWidget):
         # Health overview ↕ hardware registry share height through a drag handle
         # (DEC-234). The handle is inside the scroll area, so the page keeps its
         # whole-page scroll: the splitter is content-sized (no stretch), so a
-        # tall health card grows it past the floor and the page scrolls rather
-        # than clipping the issue list, while the registry table scrolls inside
-        # its own pane. Advanced actions stay fixed below.
+        # taller health card grows the band past its floor and the page scrolls
+        # (rather than the splitter filling the viewport and clipping). The
+        # registry table scrolls inside its own pane; advanced actions stay fixed
+        # below. Caveat: a QSplitter divides its total by proportion, not by child
+        # sizeHint, so a pathologically long issue list can still clip — health
+        # issues are a bounded handful in practice, so this holds for real data.
         self._sections_splitter = QSplitter(Qt.Orientation.Vertical)
         self._sections_splitter.setObjectName("SystemState_Splitter_sections")
         self._sections_splitter.setChildrenCollapsible(False)

@@ -45,6 +45,10 @@ def test_stylesheet_defines_shared_splitter_handle():
     assert "QSplitter::handle {" in css
     assert "QSplitter::handle:horizontal" in css
     assert "QSplitter::handle:vertical" in css
+    # Margins thin the 8px grab zone to a centred ~2px hairline per orientation;
+    # dropping them would paint the full stripe instead of a divider.
+    assert "margin: 2px 3px" in css  # horizontal splitter → vertical hairline
+    assert "margin: 3px 2px" in css  # vertical splitter → horizontal hairline
     # Idle = the divider token; hover = the brand accent.
     t = default_dark_theme()
     idle = css[css.index("QSplitter::handle {") : css.index("QSplitter::handle:horizontal")]
@@ -82,7 +86,11 @@ def _build_paged_splitters(qtbot):
 def test_every_splitter_uses_shared_handle_width(qtbot):
     """The heart of the consistency fix: no page may skip style_splitter."""
     pages, splitters = _build_paged_splitters(qtbot)  # keep `pages` alive below
-    assert splitters  # sanity: we actually built some splitters
+    # Explicit count (Dashboard 2 + Controls 2 + Logs 3 + Overview 1 + System
+    # State 1) so a future page that gains a splitter without being added to
+    # _build_paged_splitters — or a dropped splitter — fails loudly instead of
+    # silently escaping this consistency check.
+    assert len(splitters) == 9, [f"{n}/{s.objectName()}" for n, s in splitters]
     for name, sp in splitters:
         assert sp.handleWidth() == SPLITTER_HANDLE_WIDTH, (
             f"{name}/{sp.objectName() or '<unnamed>'} handleWidth={sp.handleWidth()}"
@@ -110,6 +118,9 @@ def test_overview_sections_splitter(qtbot):
     # Both panes floor at a usable height so the handle retrades a bounded band.
     assert fan_pane.minimumHeight() >= 100
     assert sensor_pane.minimumHeight() >= 100
+    # Order is load-bearing: Fan Status on top, Sensor Intelligence below.
+    assert sp.widget(0) is fan_pane
+    assert sp.widget(1) is sensor_pane
 
 
 def test_overview_top_cards_stay_out_of_the_splitter(qtbot):
@@ -139,10 +150,18 @@ def test_system_state_sections_splitter(qtbot):
     assert not sp.childrenCollapsible()
 
     overview_pane = page.findChild(QWidget, "SystemState_Pane_healthOverview")
-    assert overview_pane is not None
+    registry = page.findChild(QWidget, "SystemState_Card_registry")
+    assert overview_pane is not None and registry is not None
     # Health card lives in the top pane; registry is the other splitter child.
     assert overview_pane.findChild(QWidget, "SystemState_Card_health") is not None
-    assert sp.findChild(QWidget, "SystemState_Card_registry") is not None
+    # Child ORDER is load-bearing (health overview above the registry) — a
+    # subtree findChild would still pass if the two addWidget calls were swapped.
+    assert sp.widget(0) is overview_pane
+    assert sp.widget(1) is registry
+    # Floors keep a shrunk pane usable (the registry table scrolls internally, so
+    # without its floor the pane collapses to the table's tiny natural minimum).
+    assert overview_pane.minimumHeight() >= 150
+    assert registry.minimumHeight() >= 120
 
 
 def test_system_state_advanced_actions_stay_out_of_the_splitter(qtbot):
@@ -167,17 +186,25 @@ def test_logs_left_column_splitter(qtbot):
     assert sp.count() == 2
     assert not sp.childrenCollapsible()
 
-    # Event table above; snapshot cards below.
-    assert sp.findChild(QTableWidget, "Logs_Table_events") is not None
+    # Event table above; snapshot cards below — order is load-bearing.
+    table = sp.findChild(QTableWidget, "Logs_Table_events")
     snap = page.findChild(QWidget, "Logs_Pane_snapshots")
-    assert snap is not None
+    assert table is not None and snap is not None
+    assert sp.widget(0) is table
+    assert sp.widget(1) is snap
     # A snapshot preview (which grows as the pane grows) lives in the lower pane.
     assert snap.findChild(QPlainTextEdit, "Logs_Text_daemonStatus") is not None
+    # Floors keep both usable when the handle is dragged toward one end.
+    assert table.minimumHeight() >= 120
+    assert snap.minimumHeight() >= 120
 
 
 def test_logs_keeps_its_existing_splitters(qtbot):
     """The horizontal (events|inspector) and right-column handles still exist."""
     page = LogsPage(DiagnosticsService(AppState()))
     qtbot.addWidget(page)
-    assert page.findChild(QSplitter, "Logs_Splitter") is not None
-    assert page.findChild(QSplitter, "Logs_Splitter_rightColumn") is not None
+    main = page.findChild(QSplitter, "Logs_Splitter")
+    right = page.findChild(QSplitter, "Logs_Splitter_rightColumn")
+    assert main is not None and right is not None
+    assert main.orientation() == Qt.Orientation.Horizontal
+    assert right.orientation() == Qt.Orientation.Vertical
