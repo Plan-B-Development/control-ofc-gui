@@ -1,4 +1,4 @@
-"""Shared card sizing for Controls page cards.
+"""Shared card sizing for Controls page cards and the Dashboard fan tile.
 
 Both CurveCard and ControlCard derive their dimensions from here so the two
 grids stay column-aligned. Sizing is **content-aware**, not a fixed pixel box
@@ -81,3 +81,28 @@ def card_dimensions(base_pt: int, tier: str = DEFAULT_CARD_SIZE) -> tuple[int, i
     width = round((_BASE_WIDTH + (base_pt - _REF_PT) * _WIDTH_PER_PT) * scale)
     height = round((_BASE_HEIGHT + (base_pt - _REF_PT) * _HEIGHT_PER_PT) * scale)
     return width, height
+
+
+# DEC-238: the Dashboard fan tile. Narrower than a Controls card — it carries a
+# title, a fan count, three readings and a curve band, not an editor — and it
+# takes a *fixed* width so the flow grid forms tidy columns instead of the ragged
+# run content-sized hints produced (measured 267/267/267/251 for four tiles).
+#
+# Calibrated by rendering the tile at 7/10/16pt against its worst-case content
+# ("10000" RPM / "100%" / "-40°C", the longest state chip, and a name long
+# enough to elide). The binding row is the metric triple, whose values scale at
+# the 1.5x `card_value` role — hence a per-point term steeper than the Controls
+# cards': at 13px/pt the readings clipped at 16pt. The name elides rather than
+# clipping, so it never drives the width.
+_TILE_BASE_WIDTH = 235
+_TILE_WIDTH_PER_PT = 17
+
+
+def fan_tile_width(base_pt: int) -> int:
+    """Return the fixed width for a Dashboard fan tile at *base_pt*."""
+    try:
+        base_pt = int(base_pt)
+    except (TypeError, ValueError):
+        base_pt = _REF_PT
+    base_pt = max(_MIN_PT, min(_MAX_PT, base_pt))
+    return _TILE_BASE_WIDTH + (base_pt - _REF_PT) * _TILE_WIDTH_PER_PT

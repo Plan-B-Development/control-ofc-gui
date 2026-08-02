@@ -1,5 +1,49 @@
 # Changelog
 
+## [2.34.0] — 2026-08-02
+
+A density pass on the Dashboard fan cards. They say exactly what they said before, in
+just over half the space. No wire, schema, or API change (`EXPECTED_API_VERSION` stays 1)
+and no new daemon requirement — still pairs with `control-ofc-daemon` ≥ v2.11.0. DEC-238.
+
+### Changed
+- **Dashboard fan cards are 267 × 244 → 235 × 138 at the default text size (−47% area).**
+  Four fit a row instead of three, and two rows are visible without scrolling. The cards
+  were charging their inner padding twice — the card style already reserved 12 px and the
+  card's own layout added another 12 — putting 25 px between the border and the text.
+  That is now paid once, at 11 px.
+- **The RPM / SPEED / TEMP readings are smaller** (1.5× the base text size, down from
+  2.2×). At the old size three of them in one small card outweighed the control's own
+  name, which sat at normal size beside them.
+- **The curve preview is now a band along the bottom edge of the card** rather than a
+  chart floating in the middle. Cards whose curve reads as text ("35°C→80°C: 30%→100%")
+  or that have no curve at all used to reserve the same tall block and show nothing in
+  it; every card is now the same height whichever it is showing.
+- **Edit moved up beside the card's name** as a borderless button, freeing the row it used
+  to occupy on its own. It is still a real button — keyboard-reachable, always visible,
+  and now with a visible focus outline.
+- **The status chip (Auto / Override active / Stall …) moved down beside the fan count**,
+  which was a nearly empty row. This keeps long names readable: with the chip and Edit
+  both beside it, "Unassigned" was being truncated to "Unas…".
+- **Cards are all one width**, so the grid forms real columns and the divider rules
+  between the three readings line up across every card. A name too long for the card now
+  truncates with a "…" and shows in full on hover, instead of stretching that one card
+  wider than its neighbours.
+- **Measured fan duty now reads `DUTY` above `37%`** instead of `SPEED` above `37% duty`.
+  Same distinction, said in the column header — measured duty is still never presented as
+  a speed the daemon commanded.
+
+### Fixed
+- **Tooltips showed raw HTML entities.** A control or fan named `CPU & AIO` had its tooltip
+  render as `CPU &amp; AIO`. Affects the fan card's Edit tooltip, which has behaved this way
+  since the cards were introduced.
+- Curve summaries that are too long for their preview now end in "…" instead of being cut
+  mid-character, where a clipped number could be misread as a real value. Affects the long
+  Trigger summary on the Controls page as well as the Dashboard.
+- Borderless buttons had no visible keyboard-focus indicator anywhere in the app.
+- Read-only fan cards (GPUs) truncated long model names further than they needed to,
+  cutting the model number that tells two cards apart.
+
 ## [2.33.0] — 2026-07-30
 
 Hardening release from the 2026-07-29 full cross-stack audit. The headline is a

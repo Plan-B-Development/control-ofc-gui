@@ -29,6 +29,7 @@ from control_ofc.ui.widgets.card_metrics import (
     CARD_SIZE_LARGE,
     DEFAULT_CARD_SIZE,
     card_dimensions,
+    fan_tile_width,
 )
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
@@ -221,3 +222,28 @@ class TestSectionsSplitter5050:
         # Assign Roles (1) : curves = Link Logic + Editor (3) — curves wider,
         # divider still user-draggable.
         assert sizes[1] > sizes[0]
+
+
+class TestFanTileWidth:
+    """DEC-238: the Dashboard fan tile takes a fixed, font-derived width."""
+
+    def test_reference_width_at_the_reference_font(self):
+        assert fan_tile_width(10) == 235
+
+    def test_width_tracks_the_theme_font_size(self):
+        assert fan_tile_width(16) > fan_tile_width(10) > fan_tile_width(7)
+
+    def test_clamped_to_the_theme_font_range(self):
+        """base_font_size_pt is 7-16; anything outside is a caller bug, not a
+        licence to emit a 40px or 900px tile."""
+        assert fan_tile_width(1) == fan_tile_width(7)
+        assert fan_tile_width(99) == fan_tile_width(16)
+
+    def test_non_numeric_falls_back_to_the_reference(self):
+        assert fan_tile_width(None) == fan_tile_width(10)
+        assert fan_tile_width("big") == fan_tile_width(10)
+
+    def test_tile_is_narrower_than_a_controls_card(self):
+        """The tile carries three readings and a band, not an editor — if it ever
+        grows past a Controls card the density pass has been undone."""
+        assert fan_tile_width(10) < card_dimensions(10, CARD_SIZE_COMFORTABLE)[0]

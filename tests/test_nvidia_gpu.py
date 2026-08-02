@@ -297,19 +297,25 @@ class TestDutyPct:
         vm = build_fan_card_vms([fan], active_profile=None, overrides=[])[0]
         card = FanControlCard(vm)
         qtbot.addWidget(card)
-        # Measured duty is labelled "duty" so it is never read as commanded PWM.
-        assert card._speed_value.text() == "55% duty"
+        # Measured duty is labelled so it is never read as commanded PWM. DEC-238
+        # moved the qualifier from the value into the column caption — the header
+        # is what names the quantity — so pin both halves: a caption still
+        # reading "SPEED" here would present measured duty as commanded PWM.
+        assert card._speed_caption.text() == "DUTY"
+        assert card._speed_value.text() == "55%"
         assert card._rpm_value.text() == "1400"
 
     def test_card_shows_zero_duty(self, qtbot):
-        # Guard the 0-vs-None falsy trap: duty_pct=0 must render "0% duty", not be
-        # dropped as if absent (the card gates on `is not None`, not truthiness). A
-        # genuinely-stopped NVIDIA fan reads 0 and must still show a duty value.
+        # Guard the 0-vs-None falsy trap: duty_pct=0 must render as a real 0 under
+        # a DUTY caption, not be dropped as if absent (the card gates on
+        # `is not None`, not truthiness). A genuinely-stopped NVIDIA fan reads 0
+        # and must still show a duty value.
         fan = FanReading(id="nvidia_gpu:0000:01:00.0", source="nvidia_gpu", rpm=0, duty_pct=0)
         vm = build_fan_card_vms([fan], active_profile=None, overrides=[])[0]
         card = FanControlCard(vm)
         qtbot.addWidget(card)
-        assert card._speed_value.text() == "0% duty"
+        assert card._speed_caption.text() == "DUTY"
+        assert card._speed_value.text() == "0%"
 
     def test_commanded_pwm_wins_over_duty(self, qtbot):
         # Precedence contract: when both are present, the daemon-commanded PWM
@@ -443,7 +449,8 @@ class TestDashboardGpuCard:
         qtbot.addWidget(card)
         assert vm.is_read_only is True
         assert card._name.text() == "NVIDIA GeForce RTX 4080 Fan"
-        assert card._speed_value.text() == "42% duty"
+        assert card._speed_caption.text() == "DUTY"
+        assert card._speed_value.text() == "42%"
 
 
 # ---------------------------------------------------------------------------

@@ -89,6 +89,16 @@ class CurvePreview(QWidget):
             return f"Mirror control {sign}{curve.sync_offset_pct:.0f}%"
         return ""
 
+    def painted_summary_text(self) -> str:
+        """``summary_text`` as it is actually painted at the current width.
+
+        Split out so the elision is assertable headlessly, without diffing pixels.
+        """
+        text = self.summary_text()
+        if not text:
+            return ""
+        return self.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, self.width())
+
     def sizeHint(self) -> QSize:
         # Constant per font — never derived from what was last painted, so
         # the old render→hint→grant→render ratchet cannot recur.
@@ -103,8 +113,12 @@ class CurvePreview(QWidget):
         text = self.summary_text()
         if text:
             # Linear/flat: centered one-line summary in the muted card tone.
+            # Elided, not clipped (DEC-238): drawText clips mid-glyph when the
+            # summary outruns the width, which the long Trigger form
+            # ("Idle 30% <40° / Load 100% >70°") can do in a narrow preview. An
+            # ellipsis says "there is more"; half a digit reads as a real value.
             painter.setPen(QPen(QColor(self._theme.text_secondary)))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, text)
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.painted_summary_text())
             painter.end()
             return
 

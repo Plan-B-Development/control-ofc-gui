@@ -171,7 +171,12 @@ def font_sizes(base: int) -> dict[str, int]:
     - body: default text, buttons (1.0x)
     - card_title: card name labels (1.1x)
     - small: card metadata, status chips (0.9x)
-    - card_value: dashboard summary card reading (2.2x)
+    - card_value: the RPM/SPEED/TEMP readings on a dashboard fan tile (1.5x)
+
+    ``card_value`` was 2.2x — a hero-KPI size — until DEC-238. Three of them sit
+    side by side in a ~235px tile, so at 2.2x the numbers outweighed the control
+    name they belong to (10pt name vs 22pt value) and forced a 57px metrics row.
+    1.5x keeps them the tile's dominant reading without dictating its height.
     """
     return {
         "title": round(base * 1.6),
@@ -179,7 +184,7 @@ def font_sizes(base: int) -> dict[str, int]:
         "body": base,
         "card_title": round(base * 1.1),
         "small": round(base * 0.9),
-        "card_value": round(base * 2.2),
+        "card_value": round(base * 1.5),
     }
 
 
@@ -811,6 +816,48 @@ def build_stylesheet(t: ThemeTokens) -> str:
         background-color: {t.surface_3};
     }}
 
+    /* Dashboard fan tile (DEC-238). A small status tile, not a page-level card:
+       it drops .Card's 12px padding to zero and owns its inset in the layout
+       instead, so the curve band can run full-bleed to the inner border while
+       the text rows stay inset. The radius steps 8->6 to stay optically crisp
+       at tile scale.
+
+       An *attribute* selector, not a second class name: a bare tile class would
+       tie with .Card on specificity and the winner would depend on rule order,
+       whereas class+attribute beats plain .Card outright. Only FanControlCard
+       sets density="tile", so every other card on every page is untouched. */
+    .Card[density="tile"] {{
+        padding: 0px;
+        border-radius: 6px;
+    }}
+
+    /* The tile's title-row Edit button. Overrides the roomier `.Card QPushButton`
+       inset (class+attribute+type > class+type) so the button fits the title row
+       instead of setting its height. It also takes the primary text colour: as a
+       ghost it is borderless, and at the secondary tone it was the same colour
+       and weight as the .CardMeta fan count one row below, so the tile's only
+       action did not read as a control at rest. */
+    .Card[density="tile"] QPushButton {{
+        padding: 1px 6px;
+    }}
+
+    .Card[density="tile"] QPushButton[variant="ghost"] {{
+        color: {t.text_primary};
+    }}
+
+    /* The tile's state chip shares a row with the .CardMeta fan count (DEC-238),
+       and chips are otherwise body-sized — which left one row carrying two type
+       sizes at opposite ends. Scoped to the tile so chips everywhere else keep
+       the size they were designed at; the size still comes from the theme's
+       `small` role, never a literal. */
+    .Card[density="tile"] .SuccessChip,
+    .Card[density="tile"] .WarningChip,
+    .Card[density="tile"] .CriticalChip,
+    .Card[density="tile"] .CautionChip,
+    .Card[density="tile"] .InfoChip {{
+        font-size: {fs["small"]}pt;
+    }}
+
     /* The current/highlighted card (DEC-214): the selected Fan-Role card and the
        ACTIVE/assigned curve card take a solid accent border (mockup treatment). */
     .Card[active="true"], .Card[selected="true"] {{
@@ -1342,6 +1389,21 @@ def build_stylesheet(t: ThemeTokens) -> str:
     QPushButton[variant="ghost"]:hover {{
         color: {t.text_primary};
         background-color: {t.hover_bg};
+    }}
+
+    /* Keyboard focus for the ghost variant (DEC-238). Ghost is transparent fill
+       *and* transparent border, and a QSS-styled button loses Qt's native focus
+       rect — so without this a tab-focused ghost button is invisible (WCAG
+       2.4.7). Reuses the button's own transparent border, no layout shift.
+
+       Deliberately *not* accent_primary: accent is this app's primary-action
+       language (`[variant="primary"]` fills with it), and ghost is what the
+       modal footers use for Cancel/Discard. Focus landing on a dialog's Cancel
+       would have outlined it in accent right beside a filled-accent Save — two
+       primary-looking buttons, one of them the dismiss. */
+    QPushButton[variant="ghost"]:focus {{
+        border: 1px solid {t.text_primary};
+        color: {t.text_primary};
     }}
     QPushButton[variant="danger"] {{
         background-color: transparent;

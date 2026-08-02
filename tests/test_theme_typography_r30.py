@@ -25,7 +25,10 @@ class TestFontSizesComputation:
         assert fs["section"] == 13  # 10 * 1.3
         assert fs["small"] == 9  # 10 * 0.9
         assert fs["card_title"] == 11  # 10 * 1.1
-        assert fs["card_value"] == 22  # 10 * 2.2
+        # DEC-238: 1.5x, not the old 2.2x hero size. Three of these sit side by
+        # side in a ~235px fan tile; at 2.2x they outweighed the control name
+        # they belong to and set the tile's height.
+        assert fs["card_value"] == 15  # 10 * 1.5
 
     def test_larger_base_scales_proportionally(self):
         fs = font_sizes(14)

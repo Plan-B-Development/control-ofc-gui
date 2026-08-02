@@ -60,6 +60,42 @@ class TestPreview:
         qtbot.addWidget(card)
         assert "Flat: 50%" in card._preview.summary_text()
 
+    def test_long_summary_elides_rather_than_clipping(self, qtbot, flat_curve):
+        """DEC-238: ``drawText`` cuts mid-glyph when the summary outruns the
+        width — and half a digit reads as a real value. The Trigger form is the
+        long one, and the dashboard tile renders summaries in a narrow band."""
+        curve = CurveConfig(
+            id="t1",
+            name="Trig",
+            type=CurveType.TRIGGER,
+            trigger_idle_pct=30.0,
+            trigger_idle_temp_c=40.0,
+            trigger_load_pct=100.0,
+            trigger_load_temp_c=70.0,
+        )
+        card = CurveCard(curve)
+        qtbot.addWidget(card)
+        card._preview.setFixedWidth(50)
+        card.show()
+        painted = card._preview.painted_summary_text()
+        assert painted.endswith("…")
+        assert painted != card._preview.summary_text()
+        # The full text is still what the widget knows — only the paint is short.
+        assert card._preview.summary_text().startswith("Idle 30%")
+
+    def test_summary_that_fits_is_painted_whole(self, qtbot, flat_curve):
+        card = CurveCard(flat_curve)
+        qtbot.addWidget(card)
+        card._preview.setFixedWidth(400)
+        card.show()
+        assert card._preview.painted_summary_text() == card._preview.summary_text()
+
+    def test_graph_curve_paints_no_summary_text(self, qtbot, graph_curve):
+        """Elision must not invent text for the curves that paint a polyline."""
+        card = CurveCard(graph_curve)
+        qtbot.addWidget(card)
+        assert card._preview.painted_summary_text() == ""
+
     def test_stepped_preview_renders_staircase(self, qtbot, stepped_curve):
         # Stepped paints a staircase polyline like a graph (no text summary).
         card = CurveCard(stepped_curve)

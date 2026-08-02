@@ -53,15 +53,20 @@ granularity is forced by the API: live intent is `POST /control/{id}/override`
 surface a per-fan card could reflect or act on.
 
 Each card shows:
-- the control name and a **read-only state chip** — Auto / Override active / Low RPM /
-  Stale / Stall / Offline (text always paired with colour, WCAG 1.4.1)
-- how many fans it covers, so the blast radius of anything done to it is explicit
+- the control name, with **Edit** beside it (DEC-238) — a ghost button opening the
+  Controls page focused on that control
+- a **read-only state chip** — Auto / Override active / Low RPM / Stale / Stall /
+  Offline (text always paired with colour, WCAG 1.4.1) — alongside how many fans the
+  control covers, so the blast radius of anything done to it is explicit
 - **RPM / SPEED / TEMP** — means across reporting members; `—` where unknown, never a
-  fabricated 0. SPEED prefers the daemon-commanded PWM and falls back to a labelled
-  firmware-measured `duty` (DEC-204)
-- a lightweight **curve preview** of the control's own curve (or a placeholder saying
-  why there is none)
-- **Edit**, which opens the Controls page focused on that control
+  fabricated 0. SPEED prefers the daemon-commanded PWM; where only a firmware-measured
+  `duty` exists the **column caption** reads `DUTY` instead of `SPEED`, so a measurement
+  is never presented as a value the daemon commanded (DEC-204, relabelled in DEC-238)
+- a lightweight **curve preview** of the control's own curve, as a full-bleed band along
+  the card's bottom edge (or a placeholder saying why there is none). The band and the
+  placeholder share one layout slot, so every card is the same height whichever is
+  showing — a card whose curve renders as a text summary reserves no more room than one
+  that paints a sparkline
 
 Two pseudo-cards cover what a control-keyed view would otherwise miss:
 - **Unassigned** — controllable fans no control claims, pooled into one card. With no
@@ -74,6 +79,11 @@ Two pseudo-cards cover what a control-keyed view would otherwise miss:
 Cards are **read-only by design**. The override take/renew/release session — deadman,
 monotonic fencing, threaded dispatch (DEC-163/DEC-220) — is owned by the Controls
 page; a second session here would race it for the same control.
+
+Cards take a **fixed, font-derived width** (`card_metrics.fan_tile_width`) so the flow
+grid forms real columns, and opt out of `.Card`'s QSS padding via `density="tile"` so the
+inset is charged once rather than by both the stylesheet and the layout (DEC-238). Names
+too long for that width elide with a tooltip rather than widening one card.
 
 ### Thermal Sensors rail (DEC-182/184, bottom-right)
 The grouped **Sensors** tree (device grouping, per-series checkboxes, colour swatches,
