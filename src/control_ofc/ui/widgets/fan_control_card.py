@@ -78,11 +78,19 @@ def _safe_tooltip(text: str) -> str:
     in fan names ("Front & Top"); ``<`` is not, so the failure mode is the
     ordinary case, not the adversarial one.
 
-    The ``<html>`` wrapper makes Qt parse it, which both decodes the entities
-    back to the literal characters and keeps the escaping doing its real job —
-    untrusted profile/alias text can still never be interpreted as markup.
+    The wrapper makes Qt parse it, which both decodes the entities back to the
+    literal characters and keeps the escaping doing its real job — untrusted
+    profile/alias text can still never be interpreted as markup.
+
+    ``white-space: pre`` is not decoration. Two things break without it, both
+    measured: ``QTipLabel`` sets ``setWordWrap(mightBeRichText(text))``, so the
+    rich-text path alone re-shapes a 442x40 single-line tooltip into a 145x94
+    wrapped block — ruinous for a tooltip whose whole job is to show a name the
+    tile had to elide; and the HTML parser collapses runs of whitespace, so an
+    alias reading ``Front  Double  Space`` would come back single-spaced from the
+    one surface that is supposed to reproduce it verbatim.
     """
-    return f"<html>{escape(text)}</html>"
+    return f'<html><body style="white-space: pre">{escape(text)}</body></html>'
 
 
 def _card_slug(control_id: str) -> str:

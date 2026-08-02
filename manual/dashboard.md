@@ -44,12 +44,12 @@ Each card shows:
 
 | Field | Meaning |
 |-------|---------|
-| **State chip** | Auto (the curve is driving it), Override active, Low RPM, Stale, Stall, or Offline |
+| **State chip** | Auto (the curve is driving it), Override active, Low RPM, Stale, Stall, or Offline — beside the fan count |
 | **RPM** | Hardware-measured speed, averaged across the control's fans |
-| **SPEED** | Last commanded speed. For a read-only GPU that reports no commanded value, this shows the firmware's *measured* duty instead, labelled "duty" so the two are never confused |
+| **SPEED** | Last commanded speed. For a read-only GPU that reports no commanded value, the column is headed **DUTY** instead and shows the firmware's *measured* duty, so a measurement is never read as a speed the daemon commanded |
 | **TEMP** | The temperature driving this control's curve |
-| **Curve preview** | A small sketch of the control's own curve |
-| **Edit** | Opens the **Controls** page focused on this control |
+| **Curve preview** | A sketch of the control's own curve, as a band along the bottom of the card |
+| **Edit** | Beside the card's name; opens the **Controls** page focused on this control |
 
 A dash (`—`) means the value is genuinely unknown — it is never shown as a real `0`.
 

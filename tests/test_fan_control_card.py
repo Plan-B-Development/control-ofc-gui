@@ -353,7 +353,18 @@ class TestTileDensity:
         assert plain.contentsMargins().left() == 13
 
     def test_tile_height_stays_off_the_old_budget(self, qtbot):
-        """A backstop on the whole composition — the old card was 244px."""
+        """A backstop on the whole composition.
+
+        The bound is calibrated **unstyled**, which is how the suite runs: the
+        full pre-DEC-238 structure (Edit in its own row + a stretch-taking
+        CurvePreview) measures 188px here, against ~139 now. The 244px figure in
+        the ADR is the *styled* number and does not apply to this assertion.
+
+        It is a backstop for a wholesale revert only — a partial one (just the
+        Edit row back, or just the band back) lands near 150-155 and clears this.
+        Those are caught individually by ``test_edit_is_a_ghost_button_beside_the_name``
+        and ``test_curve_and_placeholder_tiles_are_the_same_height``.
+        """
         card = FanControlCard(_vm())
         qtbot.addWidget(card)
         card.show()
@@ -395,7 +406,9 @@ class TestTileDensity:
         qtbot.addWidget(read_only)
         normal.show()
         read_only.show()
-        assert read_only.width() == normal.width()  # same tile, same grid column
+        # Only the name width is asserted: both tiles are setFixedWidth to the
+        # same value unconditionally, so comparing tile widths here would restate
+        # test_tiles_share_one_width and could not fail for this regression.
         assert read_only._name.width() > normal._name.width()
 
     def test_tiles_share_one_width(self, qtbot):
@@ -458,6 +471,24 @@ class TestTitleRow:
         # Same row as the name, not a row of its own below the card body.
         assert card._edit_btn.y() == card._name.y()
         assert card._edit_btn.x() > card._name.x()
+
+    def test_edit_reads_as_an_action_not_as_body_text(self, qtbot):
+        """A ghost button is borderless, so colour is the only thing separating
+        the tile's one action from the muted metadata beside it. At the secondary
+        tone Edit was the same colour and weight as the fan count one row below
+        and did not read as a control at all.
+
+        Widget-scoped stylesheet, as in the padding guard — the suite installs no
+        app sheet, so an unstyled palette check would pass either way."""
+        tokens = default_dark_theme()
+        card = FanControlCard(_vm())
+        qtbot.addWidget(card)
+        card.setStyleSheet(build_stylesheet(tokens))
+        card.show()
+        edit_colour = card._edit_btn.palette().color(card._edit_btn.foregroundRole()).name()
+        count_colour = card._count.palette().color(card._count.foregroundRole()).name()
+        assert edit_colour.lower() == tokens.text_primary.lower()
+        assert edit_colour.lower() != count_colour.lower()
 
     def test_edit_still_emits_from_the_title_row(self, qtbot):
         """The relocation must not have cost the deep-link."""
@@ -525,6 +556,26 @@ class TestTitleRow:
         for tip in (card._name.toolTip(), card._edit_btn.toolTip()):
             assert "&amp;amp;" not in tip
             assert QtGui_Qt.mightBeRichText(tip), f"would render as plain text: {tip!r}"
+
+    def test_tooltip_stays_one_line_and_keeps_its_whitespace(self, qtbot):
+        """The rich-text path is what makes the escape decode, but Qt ties word
+        wrap to it (``QTipLabel`` calls ``setWordWrap(mightBeRichText(text))``)
+        and its parser collapses whitespace. Unguarded, the fix for the entity
+        leak reshaped a 442x40 tooltip into a 145x94 block and single-spaced any
+        name with a double space — in the one surface meant to reproduce a name
+        the tile had to elide."""
+        from PySide6.QtGui import QTextDocument
+
+        spaced = "Front  Double  Space"
+        card = FanControlCard(_vm(label=spaced))
+        qtbot.addWidget(card)
+        card.show()
+        card.update_vm(_vm(label=spaced))
+        tip = card._edit_btn.toolTip()  # always set, unlike the name's
+        assert "white-space" in tip, "no wrap/whitespace guard on the tooltip"
+        doc = QTextDocument()
+        doc.setHtml(tip)
+        assert spaced in doc.toPlainText(), f"whitespace collapsed: {doc.toPlainText()!r}"
 
 
 class TestSpeedCaption:

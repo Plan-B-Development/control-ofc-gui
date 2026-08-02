@@ -72,13 +72,38 @@ def test_elide_mode_is_honoured(qtbot):
     assert not label.elided_text().endswith("…")
 
 
-def test_paints_without_error(qtbot):
-    """paintEvent is overridden; exercise it rather than trusting it compiles."""
-    label = ElidedLabel(LONG)
-    qtbot.addWidget(label)
-    label.setFixedWidth(60)
-    label.show()
-    label.grab()  # forces a real paint through the override
+def _painted_pixels(label) -> int:
+    """Count non-background pixels in a grab — i.e. how much ink the paint laid."""
+    image = label.grab().toImage()
+    background = image.pixelColor(0, 0).rgb()
+    return sum(
+        image.pixelColor(x, y).rgb() != background
+        for x in range(image.width())
+        for y in range(image.height())
+    )
+
+
+def test_text_is_actually_painted(qtbot):
+    """The override replaces QLabel's paint entirely, so something has to prove
+    it still draws. Asserting on ink, not on "grab() did not raise": an empty
+    paintEvent satisfies a smoke test and renders a blank label."""
+    with_text = ElidedLabel("XXXX")
+    blank = ElidedLabel("")
+    for label in (with_text, blank):
+        qtbot.addWidget(label)
+        label.resize(60, 24)
+        label.show()
+    assert _painted_pixels(blank) == 0
+    assert _painted_pixels(with_text) > 0
+
+    # And the *elided* string is what reaches the canvas, not the full one:
+    # a long name must not paint wider than a short one at the same width.
+    long_label = ElidedLabel(LONG)
+    qtbot.addWidget(long_label)
+    long_label.resize(60, 24)
+    long_label.show()
+    assert long_label.elided_text() != LONG
+    assert _painted_pixels(long_label) > 0
 
 
 def test_stylesheet_box_survives_the_custom_paint(qtbot):

@@ -63,6 +63,31 @@ class TestFanCardStyling:
         ):
             assert cls in qss, cls
 
+    def test_ghost_buttons_have_a_visible_focus_indicator(self):
+        """WCAG 2.4.7. The ghost variant is transparent fill *and* transparent
+        border, and a QSS-styled button loses Qt's native focus rect — so without
+        an explicit rule a tab-focused ghost button is invisible. That is the
+        Dashboard tile's only action, and the Cancel/Discard button on every
+        modal footer."""
+        qss = build_stylesheet(default_dark_theme())
+        assert 'QPushButton[variant="ghost"]:focus' in qss
+        rule = qss.split('QPushButton[variant="ghost"]:focus')[1].split("}")[0]
+        assert "border" in rule, "focus rule sets no border — nothing would be visible"
+        tokens = default_dark_theme()
+        # Not the accent: accent is the primary-action language, and focus landing
+        # on a modal's ghost Cancel would then match its filled-accent Save.
+        assert tokens.accent_primary not in rule
+        assert tokens.text_primary in rule
+
+    def test_fan_tile_density_rules_are_scoped_to_the_tile(self):
+        """DEC-238's density rules must never leak to page-level cards, which
+        want the roomier inset. Scoping is by attribute selector so it also beats
+        plain `.Card` regardless of rule order."""
+        qss = build_stylesheet(default_dark_theme())
+        assert '.Card[density="tile"]' in qss
+        # The bare .Card padding must survive alongside it.
+        assert "padding: 12px" in qss
+
     def test_retired_fan_zone_classes_are_gone(self):
         """The zone/tile rules had no other consumer; leaving them would be dead
         QSS shipped to every user."""
