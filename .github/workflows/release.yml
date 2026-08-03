@@ -2,10 +2,16 @@ name: Release
 
 # Fires when a release tag (vX.Y.Z) is pushed. Three jobs run off the one tag:
 #
-#   github-release — create the GitHub Release, body extracted from CHANGELOG.md
-#                    so every release has consistent, version-matched notes.
-#   build-test     — build the Arch package in a clean container. Gates the AUR
-#                    push: a PKGBUILD that does not build is never published.
+#   github-release — create the GitHub Release: body extracted from CHANGELOG.md
+#                    so every release has consistent, version-matched notes, plus
+#                    the clean-room .pkg.tar.zst attached as an asset and a
+#                    keyless Sigstore provenance attestation over it. Runs after
+#                    build-test, so the asset is always the exact artifact CI
+#                    verified and an unbuildable PKGBUILD yields no Release.
+#   build-test     — build the Arch package in a clean container. Gates both the
+#                    AUR push and the Release: a PKGBUILD that does not build is
+#                    never published. Uploads the built package as a workflow
+#                    artifact for github-release to attach.
 #   aur-publish    — push PKGBUILD + a freshly generated .SRCINFO to the AUR.
 #                    Checksums are recomputed in-CI (updpkgsums) against the live
 #                    tag tarball, so the in-repo sha256sums no longer has to be
@@ -33,6 +39,14 @@ name: Release
 # rebuilds and republishes any already-tagged version indefinitely. The manual
 # path deliberately skips github-release: that Release already exists, and
 # recreating it is either a no-op or a duplicate.
+#
+# Why the Release carries the package (DEC-239): the AUR goes read-only for
+# maintenance without notice — the 2026-08-02 freeze that stranded v2.34.0 took
+# the *entire* AUR down to 2 accepted pushes in a day, ours not among them. This
+# job was already building a clean-room .pkg.tar.zst and throwing it away, so
+# attaching it costs nothing and makes `pacman -U` a complete install path that
+# depends on GitHub alone. The attestation makes that binary verifiable
+# (`gh attestation verify`), which matters more once installs happen by URL.
 
 on:
   push:
@@ -55,8 +69,14 @@ jobs:
     # Tag pushes only. A manual run is for resuming the AUR leg of a release
     # whose Release object already exists.
     if: github.event_name == 'push'
+    # Gate on the clean-room build: the attached asset must be the artifact CI
+    # actually verified, and an unbuildable PKGBUILD must not yield a Release.
+    # This costs the Release the build's wall-clock, which is the right trade.
+    needs: build-test
     permissions:
-      contents: write
+      contents: write # create the Release and upload its assets
+      id-token: write # keyless Sigstore signing for the attestation
+      attestations: write # record the provenance statement
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
@@ -86,11 +106,27 @@ jobs:
           echo "Release notes for ${version}:"
           cat release-notes.md
 
+      - name: Download the clean-room package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: arch-package
+          path: dist
+
+      # Provenance is generated here rather than in build-test purely to keep
+      # the attestation permissions on one job; the statement still names this
+      # workflow run as the builder, which is what `gh attestation verify`
+      # checks. Keyless Sigstore — no key material to manage or rotate.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: dist/*.pkg.tar.zst
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           body_path: release-notes.md
+          files: dist/*.pkg.tar.zst
 
   build-test:
     name: Build package (clean room)
@@ -137,6 +173,38 @@ jobs:
             echo "::group::namcap PKGBUILD"; namcap PKGBUILD || true; echo "::endgroup::"
             echo "::group::namcap package"; namcap ./*.pkg.tar.zst || true; echo "::endgroup::"
           '
+
+      # The package built above is what gets attached to the Release, so a
+      # user installing by URL runs the same bytes CI verified. A -debug-
+      # package (produced when makepkg.conf carries OPTIONS=(debug)) is build
+      # scaffolding, not something to install, so it is filtered out here
+      # rather than silently shipped alongside the real one.
+      - name: Collect the built package
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          install -d dist
+          found=0
+          for pkg in /home/builder/build/*.pkg.tar.zst; do
+            case "${pkg##*/}" in
+              *-debug-*) echo "skipping debug package: ${pkg##*/}"; continue ;;
+            esac
+            cp "$pkg" dist/
+            found=$((found + 1))
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::makepkg reported success but produced no installable .pkg.tar.zst"
+            exit 1
+          fi
+          ls -l dist/
+
+      - name: Upload the built package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: arch-package
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7
 
   aur-publish:
     name: Publish to AUR

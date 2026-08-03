@@ -28,6 +28,10 @@ dev = [
     "pip-audit>=2.7",
     # 3.x reads scope from [tool.mutmut]; the old 2.5 `--paths-to-mutate` CLI is gone.
     "mutmut>=3.5",
+    # tests/test_packaging_dependencies.py parses .github/workflows/release.yml to
+    # guard the release-asset wiring. Declared explicitly rather than leaned on as
+    # a transitive of pip-audit/mutmut — that is precisely the DEC-103 mistake.
+    "pyyaml>=6",
 ]
 
 [project.scripts]

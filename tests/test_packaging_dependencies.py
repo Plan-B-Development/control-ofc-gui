@@ -19,9 +19,12 @@ import re
 import tomllib
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 PKGBUILD = REPO_ROOT / "packaging" / "PKGBUILD"
+RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 
 _DEC103_HINT = (
     "colorama is required transitively by pyqtgraph (see "
@@ -125,3 +128,118 @@ def test_desktop_entry_declares_spec_version():
     )
     # Guard the confusion directly: the app version must never leak in here.
     assert entries["Exec"] == "control-ofc-gui"
+
+
+# --------------------------------------------------------------------------
+# DEC-239 — the GitHub Release carries the clean-room package as an asset, so
+# `pacman -U` is a complete install path when the AUR is read-only (the
+# 2026-08-02 freeze stranded v2.34.0 for over a day). These guard the wiring:
+# each failure mode below produces a *green* release that silently ships no
+# usable asset, which is exactly the kind of thing nobody notices until the
+# AUR is down and the fallback is needed.
+# --------------------------------------------------------------------------
+
+
+def _release_workflow() -> dict:
+    return yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def _steps(job: dict) -> list[dict]:
+    return job.get("steps", [])
+
+
+def _step_using(job: dict, action_prefix: str) -> dict | None:
+    for step in _steps(job):
+        if step.get("uses", "").startswith(action_prefix):
+            return step
+    return None
+
+
+def test_release_artifact_name_matches_between_upload_and_download():
+    """The artifact name must agree across jobs, or the Release ships no package.
+
+    build-test uploads the built package under a name that github-release
+    downloads by name. A typo on either side does not fail the build — the
+    download step errors only at release time, and any drift here means the
+    `files:` glob resolves to nothing.
+    """
+    jobs = _release_workflow()["jobs"]
+    upload = _step_using(jobs["build-test"], "actions/upload-artifact")
+    download = _step_using(jobs["github-release"], "actions/download-artifact")
+
+    assert upload is not None, "build-test must upload the built package as an artifact (DEC-239)"
+    assert download is not None, "github-release must download the built package (DEC-239)"
+    assert upload["with"]["name"] == download["with"]["name"], (
+        "artifact name drift between build-test upload "
+        f"({upload['with']['name']!r}) and github-release download "
+        f"({download['with']['name']!r}) — the Release would carry no package."
+    )
+
+
+def test_release_attaches_package_files():
+    """The Release step must attach the package, not just create an empty Release."""
+    jobs = _release_workflow()["jobs"]
+    release_step = _step_using(jobs["github-release"], "softprops/action-gh-release")
+    assert release_step is not None, "github-release must create the GitHub Release"
+    files = release_step["with"].get("files")
+    assert files and "pkg.tar.zst" in files, (
+        "the Release step must attach the built *.pkg.tar.zst (DEC-239); "
+        f"got files={files!r}. Without it the AUR-free install path in README.md "
+        "is a dead link."
+    )
+
+
+def test_github_release_gates_on_clean_room_build():
+    """github-release must need build-test.
+
+    Two things depend on this. Ordering: without it the two jobs race and the
+    download can run before the package exists. Integrity: the attached asset
+    must be the artifact the clean-room build actually verified, and an
+    unbuildable PKGBUILD must not produce a Release at all.
+    """
+    jobs = _release_workflow()["jobs"]
+    needs = jobs["github-release"].get("needs")
+    needs = [needs] if isinstance(needs, str) else (needs or [])
+    assert "build-test" in needs, (
+        "github-release must declare `needs: build-test` (DEC-239) — otherwise it "
+        f"races the build and can publish an unverified or missing asset; got needs={needs!r}"
+    )
+
+
+def test_release_attests_build_provenance_with_required_permissions():
+    """Provenance signing needs both the attest step and its two permissions.
+
+    `actions/attest-build-provenance` fails at runtime without `id-token: write`
+    (keyless Sigstore) and `attestations: write`. Dropping either turns the
+    documented `gh attestation verify` command in README.md into a lie.
+    """
+    job = _release_workflow()["jobs"]["github-release"]
+    attest = _step_using(job, "actions/attest-build-provenance")
+    assert attest is not None, "github-release must attest the package's build provenance (DEC-239)"
+    assert "pkg.tar.zst" in attest["with"]["subject-path"], (
+        f"attestation must cover the package; got {attest['with']['subject-path']!r}"
+    )
+
+    perms = job.get("permissions", {})
+    for required in ("id-token", "attestations", "contents"):
+        assert perms.get(required) == "write", (
+            f"github-release needs `{required}: write` for provenance attestation "
+            f"(DEC-239); got permissions={perms!r}"
+        )
+
+
+def test_release_actions_are_pinned_to_a_sha():
+    """Every third-party action stays pinned to a full commit SHA.
+
+    A mutable tag on a step that holds `contents: write` and `id-token: write`
+    is a supply-chain hole — an upstream tag move would run unreviewed code with
+    permission to sign artifacts and publish Releases under this repo's name.
+    """
+    jobs = _release_workflow()["jobs"]
+    unpinned = [
+        step["uses"]
+        for job in jobs.values()
+        for step in _steps(job)
+        if "uses" in step and not re.search(r"@[0-9a-f]{40}$", step["uses"])
+    ]
+    assert not unpinned, f"release.yml actions must be pinned to a 40-char SHA; got {unpinned!r}"

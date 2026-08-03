@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Every GitHub Release now carries the clean-room-built Arch package as a downloadable
+  asset, with a keyless Sigstore build-provenance attestation over it.** The AUR is a
+  third-party service that goes read-only for maintenance without notice: the 2026-08-02
+  freeze took the *entire* AUR down to two accepted pushes in a day and left v2.34.0
+  stranded for over 24 hours with every step this repo owns having passed. `pacman -U` on
+  the Release asset is now a complete install path that depends on GitHub alone, and
+  `gh attestation verify` proves the bytes came from this repo's CI. The package was
+  already being built in the clean room and thrown away, so attaching it costs nothing.
+  DEC-239.
+- **The README documents the AUR-free install paths** — prebuilt packages from the
+  Releases (daemon + GUI in a single `pacman -U` transaction), provenance verification,
+  and building from the in-repo `PKGBUILD` with `updpkgsums && makepkg -si`.
+
+### Changed
+- **The GitHub Release is now gated on the clean-room package build.** The two jobs
+  previously ran in parallel, so a tag whose `PKGBUILD` did not build still produced a
+  Release. The attached asset is now always the exact artifact CI verified.
+
 ## [2.34.0] — 2026-08-02
 
 A density pass on the Dashboard fan cards. They say exactly what they said before, in
