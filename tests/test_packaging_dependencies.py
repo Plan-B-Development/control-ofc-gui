@@ -243,3 +243,54 @@ def test_release_actions_are_pinned_to_a_sha():
         if "uses" in step and not re.search(r"@[0-9a-f]{40}$", step["uses"])
     ]
     assert not unpinned, f"release.yml actions must be pinned to a 40-char SHA; got {unpinned!r}"
+
+
+# --------------------------------------------------------------------------
+# DEC-240 — the AUR is retired as a publishing channel. `aur-publish` is kept
+# in the workflow but gated to a manual `workflow_dispatch`, so a release is
+# never reddened by a third party being down. Both guards below protect the
+# *silent* failure modes of that change.
+# --------------------------------------------------------------------------
+
+
+def test_aur_publish_never_runs_on_a_tag_push():
+    """`aur-publish` must stay gated to a manual dispatch (DEC-240).
+
+    Dropping the `if:` restores the pre-DEC-240 behaviour where an upstream AUR
+    outage turns an otherwise-complete release red — the exact failure that
+    burned four release attempts on v2.34.0. Nothing else in the workflow fails
+    if this condition is removed, so only this test catches it.
+    """
+    job = _release_workflow()["jobs"]["aur-publish"]
+    assert job.get("if") == "github.event_name == 'workflow_dispatch'", (
+        "aur-publish must be gated to `if: github.event_name == 'workflow_dispatch'` "
+        f"(DEC-240) so it never runs on a tag push; got if={job.get('if')!r}"
+    )
+
+
+def test_version_guards_run_on_the_tag_push_path():
+    """The pkgver / pyproject version guards must live in `build-test`.
+
+    They originally sat in `aur-publish`. Because that job no longer runs on a
+    tag push (DEC-240), leaving them there would let a forgotten version bump
+    produce a GitHub Release whose attached package disagrees with its own tag —
+    green, published, and wrong. `build-test` runs on both paths and gates
+    `github-release`, so the guards belong there.
+    """
+    jobs = _release_workflow()["jobs"]
+    build_test = jobs["build-test"]
+    scripts = "\n".join(step.get("run", "") for step in _steps(build_test))
+
+    assert "packaging/PKGBUILD" in scripts and "pkgver=" in scripts, (
+        "build-test must verify packaging/PKGBUILD pkgver against the tag (DEC-240) — "
+        "it is the only job on the tag-push path that can catch a missed bump"
+    )
+    assert "pyproject.toml" in scripts, (
+        "build-test must verify pyproject.toml's version against the tag (DEC-240)"
+    )
+    # The guards compare against the tag, so the job must expose it.
+    assert "RELEASE_TAG" in build_test.get("env", {}), (
+        "build-test must set RELEASE_TAG in its env for the version guards to "
+        f"compare against; got env={build_test.get('env')!r}"
+    )
+    assert "RELEASE_TAG" in scripts, "the version guards must compare against RELEASE_TAG"

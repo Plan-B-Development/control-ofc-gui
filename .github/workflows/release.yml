@@ -1,52 +1,44 @@
 name: Release
 
-# Fires when a release tag (vX.Y.Z) is pushed. Three jobs run off the one tag:
+# Fires when a release tag (vX.Y.Z) is pushed. A tag push runs two jobs:
 #
+#   build-test     — verify the version metadata matches the tag, then build the
+#                    Arch package in a clean container. Gates the Release: a
+#                    PKGBUILD that does not build, or a version bump that was
+#                    forgotten, is never published. Uploads the built package as
+#                    a workflow artifact for github-release to attach.
 #   github-release — create the GitHub Release: body extracted from CHANGELOG.md
 #                    so every release has consistent, version-matched notes, plus
 #                    the clean-room .pkg.tar.zst attached as an asset and a
 #                    keyless Sigstore provenance attestation over it. Runs after
 #                    build-test, so the asset is always the exact artifact CI
 #                    verified and an unbuildable PKGBUILD yields no Release.
-#   build-test     — build the Arch package in a clean container. Gates both the
-#                    AUR push and the Release: a PKGBUILD that does not build is
-#                    never published. Uploads the built package as a workflow
-#                    artifact for github-release to attach.
-#   aur-publish    — push PKGBUILD + a freshly generated .SRCINFO to the AUR.
-#                    Checksums are recomputed in-CI (updpkgsums) against the live
-#                    tag tarball, so the in-repo sha256sums no longer has to be
-#                    correct at tag time — this removes the old chicken-and-egg
-#                    "fix: update PKGBUILD checksum" follow-up commit entirely.
-#
-# One-time setup (already done for this repo): an SSH keypair whose public half
-# is on the AUR account and whose private half is the `AUR_SSH_PRIVATE_KEY`
-# repository secret.
 #
 # Release flow:
 #   1. bump packaging/PKGBUILD pkgver (+ pkgrel=1) and pyproject version
 #   2. add a "## [X.Y.Z]" section to CHANGELOG.md
 #   3. commit on main
 #   4. git tag vX.Y.Z && git push origin main vX.Y.Z
-# The tag push does the rest. scripts/release-aur.sh remains as a manual
-# break-glass fallback if CI is unavailable.
+# The tag push does the rest.
 #
-# Resuming a half-published release (added after v2.34.0, when four consecutive
-# attempts died on an upstream "The AUR is down due to maintenance"): the AUR is
-# the only leg that depends on a third party being up, so it is the one that can
-# be left outstanding for hours. "Re-run failed jobs" on the original run is the
-# quickest fix, but GitHub only allows that for 30 days and a retag invalidates
-# it — so this workflow also accepts a manual run with a tag input, which
-# rebuilds and republishes any already-tagged version indefinitely. The manual
-# path deliberately skips github-release: that Release already exists, and
-# recreating it is either a no-op or a duplicate.
+# The AUR is NOT part of a tag push (DEC-240). The third job below, aur-publish,
+# runs on a manual `workflow_dispatch` only. The AUR is offline indefinitely as a
+# publishing target for this project, and a leg that depends on a third party
+# being up is a leg that reddens releases which are otherwise complete — the
+# 2026-08-02 freeze that stranded v2.34.0 took the *entire* AUR down to 2
+# accepted pushes in a day, ours not among them. GitHub alone now carries a
+# release: DEC-239 already made the attached clean-room package a complete
+# `pacman -U` install path, so nothing is lost by dropping the AUR from the
+# automatic path.
 #
-# Why the Release carries the package (DEC-239): the AUR goes read-only for
-# maintenance without notice — the 2026-08-02 freeze that stranded v2.34.0 took
-# the *entire* AUR down to 2 accepted pushes in a day, ours not among them. This
-# job was already building a clean-room .pkg.tar.zst and throwing it away, so
-# attaching it costs nothing and makes `pacman -U` a complete install path that
-# depends on GitHub alone. The attestation makes that binary verifiable
-# (`gh attestation verify`), which matters more once installs happen by URL.
+# The job is kept rather than deleted so that publishing can resume with one
+# `gh workflow run release.yml -f tag=vX.Y.Z` if the AUR ever becomes viable
+# again — no workflow archaeology, and the clean-room build still gates it. Its
+# credentials (the `AUR_SSH_PRIVATE_KEY` repository secret, whose public half is
+# on the AUR account) are left in place for the same reason.
+#
+# Note that `scripts/release-aur.sh` also still exists as a local break-glass
+# path; it is gitignored local-only tooling and is not part of any CI flow.
 
 on:
   push:
@@ -55,7 +47,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to (re)publish to the AUR, e.g. v2.34.0'
+        description: 'Already-tagged release to publish to the AUR, e.g. v2.35.0. The AUR leg is manual-only (DEC-240); this is the only way to run it.'
         required: true
         type: string
 
@@ -66,8 +58,8 @@ jobs:
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
-    # Tag pushes only. A manual run is for resuming the AUR leg of a release
-    # whose Release object already exists.
+    # Tag pushes only. A manual run publishes an already-tagged version to the
+    # AUR, and that Release object already exists.
     if: github.event_name == 'push'
     # Gate on the clean-room build: the attached asset must be the artifact CI
     # actually verified, and an unbuildable PKGBUILD must not yield a Release.
@@ -134,6 +126,8 @@ jobs:
     container: archlinux:latest
     # Runs on the manual path too: it is the gate that keeps an unbuildable
     # PKGBUILD off the AUR, and a resume must not be a way around it.
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Install build prerequisites
         run: |
@@ -145,6 +139,34 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.tag || github.ref_name }}
+
+      # These two guards used to live in aur-publish. They moved here when the
+      # AUR left the automatic path (DEC-240): aur-publish no longer runs on a
+      # tag push, so leaving them there would have let a forgotten version bump
+      # produce a Release whose asset disagrees with its own tag. In build-test
+      # they run on both paths and, because build-test gates github-release,
+      # they now block the Release itself rather than only the AUR push.
+      - name: Verify PKGBUILD pkgver matches tag
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          pkgbuild_ver="$(grep -E '^pkgver=' packaging/PKGBUILD | cut -d= -f2)"
+          if [[ "$pkgbuild_ver" != "$version" ]]; then
+            echo "::error file=packaging/PKGBUILD::pkgver is '$pkgbuild_ver' but tag is 'v${version}'. Bump packaging/PKGBUILD before tagging."
+            exit 1
+          fi
+          echo "PKGBUILD pkgver matches tag: $pkgbuild_ver"
+
+      - name: Verify pyproject version matches tag
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          pyproject_ver="$(grep '^version' pyproject.toml | cut -d'"' -f2)"
+          if [[ "$pyproject_ver" != "$version" ]]; then
+            echo "::error file=pyproject.toml::version is '$pyproject_ver' but tag is 'v${version}'. Bump pyproject.toml before tagging."
+            exit 1
+          fi
+          echo "pyproject version matches tag: $pyproject_ver"
 
       - name: Build package as unprivileged user
         run: |
@@ -206,9 +228,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Manual-only since DEC-240 — the AUR is offline indefinitely as a publishing
+  # target for this project, so it no longer runs on a tag push and can no
+  # longer redden an otherwise-complete release. Kept, not deleted, so that
+  # `gh workflow run release.yml -f tag=vX.Y.Z` can resume publishing if that
+  # ever changes. The version guards this job used to own now live in
+  # build-test, which still gates it.
   aur-publish:
-    name: Publish to AUR
+    name: Publish to AUR (manual only)
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
     needs: build-test
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -217,28 +246,6 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-
-      - name: Verify PKGBUILD pkgver matches tag
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          pkgbuild_ver="$(grep -E '^pkgver=' packaging/PKGBUILD | cut -d= -f2)"
-          if [[ "$pkgbuild_ver" != "$version" ]]; then
-            echo "::error file=packaging/PKGBUILD::pkgver is '$pkgbuild_ver' but tag is 'v${version}'. Bump packaging/PKGBUILD before tagging."
-            exit 1
-          fi
-          echo "PKGBUILD pkgver matches tag: $pkgbuild_ver"
-
-      - name: Verify pyproject version matches tag
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          pyproject_ver="$(grep '^version' pyproject.toml | cut -d'"' -f2)"
-          if [[ "$pyproject_ver" != "$version" ]]; then
-            echo "::error file=pyproject.toml::version is '$pyproject_ver' but tag is 'v${version}'. Bump pyproject.toml before tagging."
-            exit 1
-          fi
-          echo "pyproject version matches tag: $pyproject_ver"
 
       # Upstream-outage guard. Added after v2.34.0, where four consecutive
       # attempts died on `The AUR is down due to maintenance` — every step this
@@ -286,7 +293,7 @@ jobs:
           rm -rf "$ssh_dir"
 
           if printf '%s' "$last" | grep -q "down due to maintenance"; then
-            echo "::error::Upstream AUR maintenance, not a fault in this repo. The tag, GitHub Release and clean-room package build all succeeded; only the AUR push is outstanding. Nothing here needs changing — no retag, no checksum edit. Re-run this job when the AUR is back (check: git ls-remote ssh://aur@aur.archlinux.org/${pkg}.git), or start this workflow manually with tag=${RELEASE_TAG}."
+            echo "::error::Upstream AUR maintenance, not a fault in this repo. This job is manual-only (DEC-240) and the release ${RELEASE_TAG} itself is already complete — its GitHub Release and clean-room package are published and unaffected. Nothing here needs changing: no retag, no checksum edit. Re-run this workflow with tag=${RELEASE_TAG} once the AUR is back (check: git ls-remote ssh://aur@aur.archlinux.org/${pkg}.git)."
           else
             echo "::error::AUR SSH endpoint unreachable after ${n} probes, and the failure is NOT the maintenance banner. Check the AUR_SSH_PRIVATE_KEY secret and the host keys before re-running."
           fi
