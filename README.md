@@ -1,6 +1,6 @@
 # Control-OFC GUI
 
-**Latest release:** v2.35.0 — 2026-08-04. Pairs with `control-ofc-daemon` ≥ v2.11.0. See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
+**Latest release:** v2.36.0 — 2026-08-04. Pairs with `control-ofc-daemon` ≥ v2.11.0. See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 Desktop fan control interface for Linux. Communicates with the [`control-ofc-daemon`](https://github.com/Plan-B-Development/control-ofc-daemon) service to monitor temperatures, manage fan speeds, and apply custom fan curves.
 
@@ -44,9 +44,34 @@ Just curious, or have no hardware yet? Explore the whole app with **demo mode** 
 
 ## Install
 
-**Prebuilt package (recommended):** every release attaches the same
-clean-room-built package the CI pipeline verifies, so this is a complete install
-path that needs nothing but GitHub:
+**Signed pacman repository (recommended).** Set it up once; both packages then
+upgrade with your normal `sudo pacman -Syu`. Arch / x86_64.
+
+```bash
+# 1. trust the signing key
+curl -fsSL https://raw.githubusercontent.com/Plan-B-Development/pacman-repo/main/keys/control-ofc.gpg \
+  | sudo pacman-key --add -
+sudo pacman-key --lsign-key 4AAD6D2DE40D0D10773BF770BC27C5EB2831FCDA
+
+# 2. add the repository
+sudo tee -a /etc/pacman.conf <<'EOF'
+
+[control-ofc]
+SigLevel = Required
+Server = https://github.com/Plan-B-Development/pacman-repo/releases/download/repo
+EOF
+
+# 3. install — the daemon comes along as a dependency
+sudo pacman -Sy control-ofc-gui
+sudo systemctl enable --now control-ofc-daemon
+```
+
+`SigLevel = Required` means pacman refuses any package or database not signed by
+that key. Details, upgrade and removal instructions:
+[Plan-B-Development/pacman-repo](https://github.com/Plan-B-Development/pacman-repo).
+
+**One-off install without touching `pacman.conf`:** every release also attaches
+the same clean-room-built package the CI pipeline verifies.
 
 ```bash
 # Both packages in one transaction — the GUI depends on the daemon
@@ -55,8 +80,9 @@ gh release download --repo Plan-B-Development/control-ofc-gui    --pattern '*.pk
 sudo pacman -U ./control-ofc-daemon-*.pkg.tar.zst ./control-ofc-gui-*.pkg.tar.zst
 ```
 
-Each package carries a keyless [Sigstore](https://www.sigstore.dev/) build
-provenance attestation. Verify before installing:
+Upgrading then means repeating those commands — which is the chore the
+repository above exists to remove. Each package additionally carries a keyless
+[Sigstore](https://www.sigstore.dev/) build provenance attestation:
 
 ```bash
 gh attestation verify ./control-ofc-gui-*.pkg.tar.zst \

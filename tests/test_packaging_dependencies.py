@@ -294,3 +294,63 @@ def test_version_guards_run_on_the_tag_push_path():
         f"compare against; got env={build_test.get('env')!r}"
     )
     assert "RELEASE_TAG" in scripts, "the version guards must compare against RELEASE_TAG"
+
+
+# --------------------------------------------------------------------------
+# DEC-241 — the [control-ofc] pacman repository is what makes `pacman -Syu`
+# upgrade this package. `notify-repo` is the only thing that tells it a new
+# release exists. Every failure below is SILENT: the release goes green, the
+# Release object is correct, and users simply never receive the update.
+# --------------------------------------------------------------------------
+
+
+def test_notify_repo_runs_on_a_tag_push():
+    """The pacman repository must be told about a release, on the tag path."""
+    jobs = _release_workflow()["jobs"]
+    assert "notify-repo" in jobs, (
+        "release.yml must have a `notify-repo` job (DEC-241) — without it a release "
+        "reaches GitHub and never propagates to the pacman repository"
+    )
+    assert jobs["notify-repo"].get("if") == "github.event_name == 'push'", (
+        "notify-repo must be gated to tag pushes so the manual AUR path does not "
+        f"also trigger a rebuild; got if={jobs['notify-repo'].get('if')!r}"
+    )
+
+
+def test_notify_repo_waits_for_the_release_to_exist():
+    """`needs: github-release` is correctness, not ordering aesthetics.
+
+    The assembler downloads `*.pkg.tar.zst` from this repo's *latest* Release.
+    If notify-repo fires before github-release has created it, the rebuild picks
+    up the PREVIOUS version and republishes it as current — a stale package
+    served to every user, with a fully green release run.
+    """
+    needs = _release_workflow()["jobs"]["notify-repo"].get("needs")
+    needs = [needs] if isinstance(needs, str) else (needs or [])
+    assert "github-release" in needs, (
+        "notify-repo must declare `needs: github-release` (DEC-241) — firing early "
+        f"rebuilds the pacman repo around the previous version; got needs={needs!r}"
+    )
+
+
+def test_notify_repo_targets_the_pacman_repo_with_a_cross_repo_token():
+    """Endpoint and credential must both be right, and neither fails loudly.
+
+    The ambient GITHUB_TOKEN cannot dispatch to another repository, so a swap to
+    `github.token` yields a 404 that looks like a typo. A changed endpoint fails
+    the same way.
+    """
+    step = _release_workflow()["jobs"]["notify-repo"]["steps"][0]
+    run, env = step.get("run", ""), str(step.get("env", {}))
+
+    assert "repos/Plan-B-Development/pacman-repo/dispatches" in run, (
+        "notify-repo must POST to the pacman-repo dispatches endpoint (DEC-241)"
+    )
+    assert "package-released" in run, (
+        "the dispatch event_type must be `package-released` — publish.yml listens "
+        "for exactly that type and ignores anything else"
+    )
+    assert "PACMAN_REPO_TOKEN" in env, (
+        "notify-repo must authenticate with the cross-repo PACMAN_REPO_TOKEN; the "
+        f"ambient GITHUB_TOKEN cannot dispatch across repositories. got env={env!r}"
+    )

@@ -228,6 +228,43 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Tells the pacman repository to rebuild itself from the release just
+  # published (DEC-241). That repository is what makes `pacman -Syu` upgrade
+  # this package, so without this job a release reaches GitHub and stops there.
+  #
+  # `needs: github-release` is load-bearing, not cosmetic ordering: the
+  # assembler downloads `*.pkg.tar.zst` from this repo's LATEST release. Firing
+  # before that Release exists would rebuild the repository around the PREVIOUS
+  # version and silently publish a stale package as if it were current.
+  #
+  # Gated to tag pushes so the manual AUR path (workflow_dispatch) does not also
+  # trigger a rebuild. Uses PACMAN_REPO_TOKEN — a fine-grained PAT scoped to
+  # pacman-repo — because the ambient GITHUB_TOKEN cannot dispatch cross-repo.
+  notify-repo:
+    name: Notify pacman repository
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    needs: github-release
+    steps:
+      - name: Trigger a repository rebuild
+        env:
+          GH_TOKEN: ${{ secrets.PACMAN_REPO_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            repos/Plan-B-Development/pacman-repo/dispatches \
+            --input - <<EOF
+          {
+            "event_type": "package-released",
+            "client_payload": {
+              "package": "control-ofc-gui",
+              "tag": "${RELEASE_TAG}"
+            }
+          }
+          EOF
+          echo "Requested a pacman-repo rebuild for ${RELEASE_TAG}."
+
   # Manual-only since DEC-240 — the AUR is offline indefinitely as a publishing
   # target for this project, so it no longer runs on a tag push and can no
   # longer redden an otherwise-complete release. Kept, not deleted, so that

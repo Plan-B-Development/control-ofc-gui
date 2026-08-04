@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [2.36.0] — 2026-08-04
+
+**`sudo pacman -Syu` upgrades Control-OFC again.** DEC-240 retired the AUR and left
+`pacman -U` from a GitHub Release as the only path, which meant upgrading was a manual
+chore. This release adds a signed pacman repository served from GitHub, restoring
+one-command upgrades without depending on the AUR. No GUI code changed; no wire,
+schema, or API change (`EXPECTED_API_VERSION` stays 1); still pairs with
+`control-ofc-daemon` ≥ v2.11.0. DEC-241.
+
+### Added
+- **A signed pacman repository — [`Plan-B-Development/pacman-repo`](https://github.com/Plan-B-Development/pacman-repo).**
+  Trust one key, add one `pacman.conf` stanza, and both packages then upgrade with your
+  normal `sudo pacman -Syu`. Every package and the repository database are GPG-signed
+  and served with `SigLevel = Required`, so pacman refuses anything not signed by the
+  project key — a stronger guarantee than the AUR offered, where `makepkg` built from
+  whatever the PKGBUILD fetched.
+- **`notify-repo` release job.** On a tag push, once the GitHub Release exists, the
+  release workflow tells the repository to rebuild itself from it. It declares
+  `needs: github-release` deliberately: the assembler pulls from the *latest* Release,
+  so firing early would rebuild the repository around the previous version and serve a
+  stale package as current.
+- **Three regression tests** pinning that wiring — the job's existence, its
+  `needs: github-release` ordering, its tag-push gating, the dispatch endpoint, and the
+  use of the cross-repo token rather than the ambient `GITHUB_TOKEN`. Every one of those
+  failures is silent: the release goes green, the Release object is correct, and users
+  simply never receive the update.
+
+### Changed
+- **The README leads with the repository install.** The one-off `pacman -U` path
+  remains documented as the no-`pacman.conf` alternative, and the DEC-240 note that the
+  AUR package is frozen at v2.34.0 still stands.
+
 ## [2.35.0] — 2026-08-04
 
 **The AUR is retired as a publishing channel — GitHub is now the sole release target.**
