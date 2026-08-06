@@ -168,10 +168,14 @@ and owns its own schema-version handling. There is no separate
 Use pyqtgraph for live sensor/RPM charts and keep chart wrappers modular so the chart implementation can be swapped later if needed.
 
 ## Packaging direction
-Ship as an AUR package — `packaging/PKGBUILD` builds the Python wheel,
-installs the systemd unit, desktop entry, manpage, and bash completion.
-The companion daemon ships from `control-ofc-daemon/packaging/PKGBUILD`
-and both AUR sources live under `/home/mitch/Development/aur/`.
+Ship through the signed `[control-ofc]` pacman repository (DEC-241) —
+`packaging/PKGBUILD` builds the Python wheel and installs the desktop entry,
+manpage, and shell completions. The GUI package ships **no** systemd unit; the
+companion daemon owns the service and ships from
+`control-ofc-daemon/packaging/PKGBUILD`. Each release additionally attaches its
+clean-room-built package with a keyless Sigstore provenance attestation
+(DEC-239), which is a complete `pacman -U` install path on its own. The AUR was
+retired as a publishing channel (DEC-240).
 
 ## Testing focus areas
 - disconnected startup

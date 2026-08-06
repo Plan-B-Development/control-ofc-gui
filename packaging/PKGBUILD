@@ -21,8 +21,13 @@ depends=('control-ofc-daemon>=2.11.0' 'python' 'pyside6' 'python-httpx'
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools' 'scdoc')
 install=control-ofc-gui.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-# sha256sums are CI-maintained (updpkgsums runs at tag time); a manual makepkg needs 'updpkgsums' first.
-sha256sums=('4bdabaf0d5700863f8495735b543e9f4f4cb2f9117fdf1963cf3ece756988ab3')
+# Self-referential by construction: the tarball GitHub generates for the tag
+# CONTAINS this file, so any sha256 written here changes the tree, the tag, and
+# therefore the hash it claims to pin. SKIP is the only honest value. Integrity
+# of the published package comes from the GPG signature + Sigstore attestation
+# on the pacman-repo asset, not from this line. (The value that sat here was
+# frozen at v1.26.0 and had failed `makepkg` closed ever since.)
+sha256sums=('SKIP')
 
 build() {
     cd "$pkgname-$pkgver"

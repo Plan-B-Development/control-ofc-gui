@@ -22,12 +22,28 @@ You are done when all of these are true:
 
 ## Step 1 — Install the daemon and GUI
 
+Add the signed `[control-ofc]` pacman repository once, then install. The GUI pulls `control-ofc-daemon` in as a dependency, and both packages upgrade with your normal `sudo pacman -Syu` from then on.
+
 ```bash
-paru -S control-ofc-gui          # pulls control-ofc-daemon as a dependency
+# trust the signing key
+curl -fsSL https://raw.githubusercontent.com/Plan-B-Development/pacman-repo/main/keys/control-ofc.gpg \
+  | sudo pacman-key --add -
+sudo pacman-key --lsign-key 4AAD6D2DE40D0D10773BF770BC27C5EB2831FCDA
+
+# add the repository
+sudo tee -a /etc/pacman.conf <<'EOF'
+
+[control-ofc]
+SigLevel = Required
+Server = https://github.com/Plan-B-Development/pacman-repo/releases/download/repo
+EOF
+
+# install
+sudo pacman -Sy control-ofc-gui
 sudo systemctl enable --now control-ofc-daemon
 ```
 
-First-time AUR notes (the paru review pager, installing from source) are in [Getting Started](getting-started.md). The daemon's own prerequisites table lives in the [daemon README](https://github.com/Plan-B-Development/control-ofc-daemon#prerequisites).
+The one-off `pacman -U` alternative, the from-source path, and the note on the frozen AUR package are in [Getting Started](getting-started.md). The daemon's own prerequisites table lives in the [daemon README](https://github.com/Plan-B-Development/control-ofc-daemon#prerequisites).
 
 ## Step 2 — Verify sensors first
 

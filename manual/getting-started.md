@@ -43,20 +43,54 @@ troubleshooting.
 
 ## Installation
 
-### Arch Linux (AUR)
+### Arch Linux — signed pacman repository (recommended)
+
+Set it up once; both packages then upgrade with your normal `sudo pacman -Syu`.
 
 ```bash
-paru -S control-ofc-gui
+# 1. trust the signing key
+curl -fsSL https://raw.githubusercontent.com/Plan-B-Development/pacman-repo/main/keys/control-ofc.gpg \
+  | sudo pacman-key --add -
+sudo pacman-key --lsign-key 4AAD6D2DE40D0D10773BF770BC27C5EB2831FCDA
+
+# 2. add the repository
+sudo tee -a /etc/pacman.conf <<'EOF'
+
+[control-ofc]
+SigLevel = Required
+Server = https://github.com/Plan-B-Development/pacman-repo/releases/download/repo
+EOF
+
+# 3. install — the daemon comes along as a dependency
+sudo pacman -Sy control-ofc-gui
+sudo systemctl enable --now control-ofc-daemon
 ```
 
-(Any AUR helper works — `yay -S control-ofc-gui` does the same thing.)
+`SigLevel = Required` means pacman refuses any package or database not signed by
+that key. Details, upgrade and removal instructions:
+[Plan-B-Development/pacman-repo](https://github.com/Plan-B-Development/pacman-repo).
 
-> **Tip — first-time AUR install UX:** paru pages the `PKGBUILD` and `.install`
-> through `less` and asks you to confirm before building. That is paru's
-> default security review (press `q` to exit the pager, then `y` to proceed),
-> not specific to this package. To install non-interactively, pass
-> `--skipreview` to paru (`paru -S --skipreview control-ofc-gui`), or add
-> `SkipReview` to the `[options]` section of `~/.config/paru/paru.conf`.
+### One-off install, without touching `pacman.conf`
+
+Every release also attaches the same clean-room-built package the CI pipeline
+verifies:
+
+```bash
+gh release download --repo Plan-B-Development/control-ofc-daemon --pattern '*.pkg.tar.zst'
+gh release download --repo Plan-B-Development/control-ofc-gui    --pattern '*.pkg.tar.zst'
+sudo pacman -U ./control-ofc-daemon-*.pkg.tar.zst ./control-ofc-gui-*.pkg.tar.zst
+```
+
+Upgrading then means repeating those commands — which is the chore the
+repository above exists to remove.
+
+> **The AUR package is no longer updated.** `control-ofc-gui` was published to
+> the AUR through v2.34.0 and is frozen there. If you installed with
+> `paru -S control-ofc-gui`, either path above upgrades it in place — it is the
+> same package name, so pacman simply replaces the AUR copy. This applies to
+> *this* package only; the out-of-tree DKMS drivers on the
+> [Driver Setup](driver-setup.md) page are separate third-party AUR packages
+> and are still installed from the AUR.
 
 ### From Source
 

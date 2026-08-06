@@ -1,6 +1,7 @@
 name: Release
 
-# Fires when a release tag (vX.Y.Z) is pushed. A tag push runs two jobs:
+# Fires when a release tag (vX.Y.Z) is pushed. A tag push runs three jobs, in
+# this order (build-test -> github-release -> notify-repo):
 #
 #   build-test     — verify the version metadata matches the tag, then build the
 #                    Arch package in a clean container. Gates the Release: a
@@ -13,6 +14,14 @@ name: Release
 #                    keyless Sigstore provenance attestation over it. Runs after
 #                    build-test, so the asset is always the exact artifact CI
 #                    verified and an unbuildable PKGBUILD yields no Release.
+#   notify-repo    — repository_dispatch to Plan-B-Development/pacman-repo so it
+#                    reassembles the signed [control-ofc] database against this
+#                    new Release. This is what makes `pacman -Syu` see the
+#                    version (DEC-241); a green build-test + github-release with
+#                    a red notify-repo is a release users cannot upgrade to.
+#                    Needs the PACMAN_REPO_TOKEN secret — the only cross-repo
+#                    credential in this workflow, and the only job here that can
+#                    fail for a reason unrelated to the code being released.
 #
 # Release flow:
 #   1. bump packaging/PKGBUILD pkgver (+ pkgrel=1) and pyproject version
@@ -21,7 +30,7 @@ name: Release
 #   4. git tag vX.Y.Z && git push origin main vX.Y.Z
 # The tag push does the rest.
 #
-# The AUR is NOT part of a tag push (DEC-240). The third job below, aur-publish,
+# The AUR is NOT part of a tag push (DEC-240). The fourth job below, aur-publish,
 # runs on a manual `workflow_dispatch` only. The AUR is offline indefinitely as a
 # publishing target for this project, and a leg that depends on a third party
 # being up is a leg that reddens releases which are otherwise complete — the
