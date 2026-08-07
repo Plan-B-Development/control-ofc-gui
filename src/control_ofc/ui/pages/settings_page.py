@@ -850,13 +850,13 @@ class SettingsPage(QWidget):
         try:
             poll = cfg.get("polling.poll_interval_ms")
             if poll is not None and isinstance(poll.value, int):
-                self._poll_interval_spin.setValue(poll.value)
+                self._show_spin_value(self._poll_interval_spin, poll.value)
             port = cfg.get("serial.port")
             if port is not None:
                 self._serial_port_edit.setText("" if port.value is None else str(port.value))
             timeout = cfg.get("serial.timeout_ms")
             if timeout is not None and isinstance(timeout.value, int):
-                self._serial_timeout_spin.setValue(timeout.value)
+                self._show_spin_value(self._serial_timeout_spin, timeout.value)
             probe = cfg.get("detection.allow_port_probe")
             if probe is not None:
                 self._port_probe_toggle.setChecked(bool(probe.value))
@@ -902,6 +902,23 @@ class SettingsPage(QWidget):
             f"Socket: {self._daemon_value(cfg, 'ipc.socket_path')} · "
             f"State directory: {self._daemon_value(cfg, 'state.state_dir')}"
         )
+
+    @staticmethod
+    def _show_spin_value(spin: QSpinBox, value: int) -> None:
+        """Display the daemon's value even when it sits outside the API's range.
+
+        `daemon.toml` has no upper bound on the interval keys, so an operator may
+        legitimately be running a value this control refuses to *accept*. Letting
+        Qt clamp it would make the card display a number the daemon is not
+        running — exactly the dishonesty this card exists to remove — and would
+        then make a focus-out write the clamp back, silently shadowing the
+        operator's file with a value nobody chose.
+        """
+        if value > spin.maximum():
+            spin.setMaximum(value)
+        if value < spin.minimum():
+            spin.setMinimum(value)
+        spin.setValue(value)
 
     @staticmethod
     def _daemon_value(cfg, key: str) -> str:

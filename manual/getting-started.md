@@ -62,7 +62,7 @@ Server = https://github.com/Plan-B-Development/pacman-repo/releases/download/rep
 EOF
 
 # 3. install — the daemon comes along as a dependency
-sudo pacman -Sy control-ofc-gui
+sudo pacman -Syu control-ofc-gui
 sudo systemctl enable --now control-ofc-daemon
 ```
 

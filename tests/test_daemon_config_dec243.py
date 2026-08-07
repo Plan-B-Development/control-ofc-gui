@@ -220,6 +220,31 @@ class TestRendering:
         p._refresh_daemon_config()
         assert p._startup_delay_spin.value() == 10, "after the read it must show daemon truth"
 
+    def test_out_of_api_range_daemon_value_is_shown_not_clamped(
+        self, qapp, app_state, settings_service
+    ):
+        """REGRESSION: daemon.toml has no upper bound; the API does.
+
+        An admin may legitimately run poll_interval_ms = 3000. Letting the spin
+        clamp it to its API maximum would display a number the daemon is not
+        running — the exact dishonesty this card exists to remove — and would
+        then make a focus-out write the clamp back, silently shadowing the
+        admin's file.
+        """
+        cfg = _default_config()
+        cfg.keys[0] = _key(
+            "polling.poll_interval_ms", 3000, source="admin", mutable=True, requires_restart=True
+        )
+        client = _ConfigClient(cfg)
+        p = SettingsPage(state=app_state, settings_service=settings_service, client=client)
+        p._refresh_daemon_config()
+
+        assert p._poll_interval_spin.value() == 3000, "must show what the daemon runs"
+
+        client.writes.clear()
+        p._poll_interval_spin.editingFinished.emit()
+        assert client.writes == [], "focus-out must not write a clamped value back"
+
     def test_read_only_paths_are_displayed(self, page):
         p, _client = page
         text = p._daemon_paths_label.text()

@@ -195,8 +195,10 @@ jobs:
           #                  dep outside the base image is the AUR package
           #                  control-ofc-daemon, which pacman cannot resolve and
           #                  which building the wheel does not need.
-          # --skipchecksums: the in-repo sha256sums is (re)computed at publish
-          #                  time by updpkgsums; here we only prove it builds.
+          # --skipchecksums: the in-repo sha256sums is permanently SKIP by
+          #                  construction (DEC-242) — the tag archive contains
+          #                  the PKGBUILD, so no sum can pin it. Nothing on the
+          #                  tag path runs updpkgsums; here we only prove it builds.
           runuser -u builder -- bash -lc '
             set -euo pipefail
             cd /home/builder/build

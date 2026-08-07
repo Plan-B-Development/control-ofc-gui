@@ -305,7 +305,7 @@ class DaemonClient:
         return parse_daemon_config(self._get("/config"))
 
     def set_poll_interval(self, poll_interval_ms: int) -> ConfigWriteResult:
-        """POST /config/poll-interval — 250..10000 ms. Takes effect on restart."""
+        """POST /config/poll-interval — 250..2000 ms. Takes effect on restart."""
         return parse_config_write(
             self._post("/config/poll-interval", json={"poll_interval_ms": poll_interval_ms})
         )
@@ -316,7 +316,7 @@ class DaemonClient:
         return parse_config_write(self._post("/config/serial-port", json={"port": port}))
 
     def set_serial_timeout(self, timeout_ms: int) -> ConfigWriteResult:
-        """POST /config/serial-timeout — 50..5000 ms. Takes effect on restart."""
+        """POST /config/serial-timeout — 50..1000 ms. Takes effect on restart."""
         return parse_config_write(
             self._post("/config/serial-timeout", json={"timeout_ms": timeout_ms})
         )
