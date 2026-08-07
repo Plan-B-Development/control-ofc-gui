@@ -104,11 +104,15 @@ def test_implicit_fields_carry_a_justification():
 
 
 # ── Behaviour: the cards must do the thing, through the right layer ────
-# The realisation test above only proves the widgets exist. These assert the
-# wiring, and specifically that the mirrored surfaces do NOT write settings
-# directly — the in-context affordances persist through AppState signals, and a
-# second writer bypassing that is how demo-mode data corrupts real hardware
-# names (MainWindow._demo_blocks_persist).
+# The realisation test above only proves the widgets exist. These drive the real
+# buttons (`.click()`, not the private handler) so a lost `.clicked.connect()` is
+# caught — an unwired button is a total, silent failure of a feature whose entire
+# purpose is making orphaned settings reachable.
+#
+# They also assert that the mirrored surfaces do NOT write settings directly: the
+# in-context affordances persist through AppState signals, and a second writer
+# bypassing that is how demo-mode data corrupts real hardware names
+# (MainWindow._demo_blocks_persist).
 
 
 @pytest.fixture()
@@ -224,7 +228,7 @@ class TestFanAliasMirror:
         state.set_fan_alias("hwmon:nct6798:pwm1", "CPU")
         page._refresh_fan_aliases()
 
-        page._reset_fan_aliases()
+        page._reset_aliases_btn.click()
         assert state.fan_aliases == {}
 
 
@@ -235,17 +239,25 @@ class TestSensorAndSeriesResets:
         page._refresh_reset_buttons()
         assert "(2)" in page._unhide_sensors_btn.text()
 
-        page._unhide_all_sensors()
+        page._unhide_sensors_btn.click()
         assert svc.settings.diagnostics_hidden_sensor_ids == []
         assert not page._unhide_sensors_btn.isEnabled()
 
     def test_reset_sensor_classes_routes_through_appstate(self, page_with_fans):
-        page, state, _svc, _sel = page_with_fans
+        page, state, svc, _sel = page_with_fans
+        # Both layers, because that is what the running app looks like: the
+        # override lives in AppState, and MainWindow mirrors it into settings via
+        # sensor_class_override_changed. The button's enabled state reads the
+        # settings copy; the reset acts on AppState.
         state.set_sensor_class_override("sensor:x", "coolant")
+        svc.update(sensor_class_overrides={"sensor:x": "coolant"})
+        page._refresh_reset_buttons()
+        assert page._reset_classes_btn.isEnabled()
+
         emitted: list[tuple[str, str]] = []
         state.sensor_class_override_changed.connect(lambda sid, cls: emitted.append((sid, cls)))
 
-        page._reset_sensor_classes()
+        page._reset_classes_btn.click()
         assert state.sensor_class_overrides == {}
         assert emitted == [("sensor:x", "")], "Overview must be told to re-render"
 
@@ -255,7 +267,7 @@ class TestSensorAndSeriesResets:
         page._refresh_reset_buttons()
         assert "(1)" in page._reset_colors_btn.text()
 
-        page._reset_series_colors()
+        page._reset_colors_btn.click()
         assert svc.settings.series_colors == {}
 
     def test_show_all_series_uses_the_live_model(self, page_with_fans):
@@ -267,7 +279,7 @@ class TestSensorAndSeriesResets:
 
         fired: list[int] = []
         selection.selection_changed.connect(lambda: fired.append(1))
-        page._show_all_series()
+        page._show_series_btn.click()
 
         assert selection.to_dict()["hidden_keys"] == []
         assert fired, "selection_changed must fire — it is what persists the change"
@@ -291,23 +303,23 @@ class TestPromptsAndDismissals:
         page._refresh_reset_buttons()
         assert "(2)" in page._clear_kernel_warnings_btn.text()
 
-        page._clear_kernel_warnings()
+        page._clear_kernel_warnings_btn.click()
         assert svc.settings.acknowledged_kernel_warnings == []
 
     @pytest.mark.parametrize(
-        "field,action",
+        "field,button",
         [
-            ("daemon_import_prompted", "_reoffer_profile_import"),
-            ("fan_aliases_seeded", "_reseed_fan_aliases"),
-            ("chart_series_seeded", "_reseed_chart_series"),
+            ("daemon_import_prompted", "_reoffer_import_btn"),
+            ("fan_aliases_seeded", "_reseed_aliases_btn"),
+            ("chart_series_seeded", "_reseed_series_btn"),
         ],
     )
-    def test_one_time_latches_can_be_re_armed(self, page_with_fans, field, action):
+    def test_one_time_latches_can_be_re_armed(self, page_with_fans, field, button):
         page, _state, svc, _sel = page_with_fans
         svc.update(**{field: True})
         page._refresh_reset_buttons()
 
-        getattr(page, action)()
+        getattr(page, button).click()
         assert getattr(svc.settings, field) is False
 
     @pytest.mark.parametrize(
@@ -333,6 +345,6 @@ class TestCardLayoutReset:
         page._refresh_reset_buttons()
         assert "(1)" in page._reset_card_sizes_btn.text()
 
-        page._reset_card_sizes()
+        page._reset_card_sizes_btn.click()
         assert svc.settings.controls_card_sizes == {}
         assert not page._reset_card_sizes_btn.isEnabled()

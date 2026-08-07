@@ -186,6 +186,22 @@ def test_context_menu_non_404_error_keeps_feature(qtbot):
 # `_set_preferred_sensor` must leave the operator able to tell what happened.
 
 
+def test_pref_result_label_is_in_the_page_tree(qtbot):
+    """An attribute is not a widget the user can see.
+
+    Every other test here reads `page._pref_result_label` off the attribute, so
+    dropping its `addWidget` would leave them all green while the label became a
+    parentless floating top-level — and the whole point of DEC-237's fix is that
+    the user SEES the line, because before it every failure looked like success.
+    """
+    from PySide6.QtWidgets import QWidget
+
+    page = _overview_page(qtbot, _StubClient())
+    found = page.findChild(QWidget, "Overview_Label_prefResult")
+    assert found is not None, "the result label must be in the page's widget tree"
+    assert found is page._pref_result_label
+
+
 def test_pref_result_hidden_until_an_action_occurs(qtbot):
     page = _overview_page(qtbot, _StubClient())
     assert page._pref_result_label.text() == ""

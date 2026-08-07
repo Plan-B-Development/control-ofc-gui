@@ -195,3 +195,60 @@ class TestInventoryAndPreferredSensors:
         client._post.assert_called_once_with(
             "/config/preferred-mb-sensor", json={"sensor_id": "hwmon:x:SYSTIN"}
         )
+
+
+class TestDaemonConfigRoutes:
+    """DEC-243: the six config methods must hit the right routes with the right payloads.
+
+    Every other DEC-243 GUI test uses a stub client that never sees a URL. A route
+    typo (`/config/serial_port`) or a payload-key typo would therefore ship — and
+    it presents to the user as *"This daemon is too old to report its
+    configuration"*, because `_refresh_daemon_config` reads any 404 as a version
+    gap and latches the card off permanently. A silent, misleading, unrecoverable
+    stand-down from one wrong character.
+    """
+
+    def _client(self, response=None):
+        from control_ofc.api.client import DaemonClient
+
+        client = DaemonClient.__new__(DaemonClient)
+        client._post = MagicMock(return_value=response or {"updated": True})
+        client._get = MagicMock(return_value={"api_version": 1, "keys": []})
+        return client
+
+    def test_get_daemon_config_route(self):
+        client = self._client()
+        client.get_daemon_config()
+        client._get.assert_called_once_with("/config")
+
+    def test_set_poll_interval_payload(self):
+        client = self._client()
+        client.set_poll_interval(1500)
+        client._post.assert_called_once_with(
+            "/config/poll-interval", json={"poll_interval_ms": 1500}
+        )
+
+    def test_set_serial_port_payload(self):
+        client = self._client()
+        client.set_serial_port("/dev/ttyACM0")
+        client._post.assert_called_once_with("/config/serial-port", json={"port": "/dev/ttyACM0"})
+
+    def test_set_serial_port_null_clears(self):
+        client = self._client()
+        client.set_serial_port(None)
+        client._post.assert_called_once_with("/config/serial-port", json={"port": None})
+
+    def test_set_serial_timeout_payload(self):
+        client = self._client()
+        client.set_serial_timeout(750)
+        client._post.assert_called_once_with("/config/serial-timeout", json={"timeout_ms": 750})
+
+    def test_set_allow_port_probe_payload(self):
+        client = self._client()
+        client.set_allow_port_probe(True)
+        client._post.assert_called_once_with("/config/allow-port-probe", json={"enabled": True})
+
+    def test_set_nvidia_telemetry_payload(self):
+        client = self._client()
+        client.set_nvidia_telemetry(False)
+        client._post.assert_called_once_with("/config/nvidia-telemetry", json={"enabled": False})

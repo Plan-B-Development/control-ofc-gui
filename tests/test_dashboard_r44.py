@@ -85,8 +85,13 @@ class TestSensorPanelColourSwatch:
         qtbot.addWidget(chart)
         panel.set_chart(chart, settings_service)
 
-        # Poison the map with a value the coercion layer must reject.
+        # Poison the map with a value the coercion layer must reject...
         settings_service.settings.series_colors["sensor:bogus"] = "javascript:alert(1)"
+        # ...and seed a VALID neighbour. Without this the test cannot tell
+        # "merge then validate" from "replace everything": swapping the merge for
+        # `merged = {}` destroys every other user-chosen colour on each pick and
+        # still satisfies both original assertions.
+        settings_service.settings.series_colors["sensor:gpu0"] = "#123456"
 
         item = QTreeWidgetItem(["CPU", "", ""])
         item.setData(0, Qt.ItemDataRole.UserRole, "sensor:cpu0")
@@ -98,6 +103,9 @@ class TestSensorPanelColourSwatch:
         stored = settings_service.settings.series_colors
         assert stored["sensor:cpu0"] == "#abcdef"
         assert "sensor:bogus" not in stored, "invalid entry survived — update() was bypassed"
+        assert stored.get("sensor:gpu0") == "#123456", (
+            "picking one colour must not discard the others — the write must merge"
+        )
 
     def test_color_pick_without_settings_service_is_safe(self, qtbot, app_state, monkeypatch):
         """set_chart() leaves settings_service None by default — must not raise."""
