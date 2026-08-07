@@ -4,49 +4,18 @@
 
 ## [2.38.0] — 2026-08-07
 
-**Settings shows what the daemon is actually configured with.** Phase 2 of the
-settings-coverage work started in 2.37.0. The daemon's configuration was previously
+**Settings becomes a complete map of what can be configured — including the daemon.**
+Fourteen of the twenty-nine stored GUI preferences had no presence on the Settings page
+at all, some reachable only through a context menu or an unlabelled table cell, one
+dismissible with no way to bring it back. Separately, the daemon's own configuration was
 invisible and half of it was write-only: the GUI could set the startup delay but never
-read it back, so it kept a local guess. Against a daemon already set to 10 seconds, a
-fresh GUI displayed 0. Requires `control-ofc-daemon` ≥ v2.16.0 for the new card; older
-daemons keep working and the card stands down rather than showing invented values. No
-wire or schema change (`EXPECTED_API_VERSION` stays 1). DEC-243.
+read it back, so against a daemon already set to 10 seconds a fresh GUI displayed 0.
+This release gives every preference a home, adds the test that stops the gap reopening,
+and adds a card that shows what the daemon is actually running.
 
-### Added
-- **Daemon Configuration card.** Every daemon setting with the value in effect, where it
-  came from (the daemon's own runtime config, `daemon.toml`, or a built-in default), and
-  whether a saved change is still waiting on a restart. Poll interval, serial port and
-  timeout, and the two hardware-detection opt-ins are editable; the socket path and state
-  directory are shown but deliberately not, because a wrong value there would lock the
-  application out of the daemon or strand its stored data.
-- **A restart banner with the exact command to run.** Almost every daemon setting only
-  applies at startup, so saving one is not the same as it taking effect. The daemon
-  reports which keys are waiting, per key — the GUI does not guess from what it sent, so
-  the state survives closing the application and is right even when someone edits the
-  config by hand.
-- **Honest reporting for the two opt-in features.** The Super-I/O probe and NVIDIA
-  telemetry each need a system file installed by an administrator *as well as* the
-  setting. The card shows what is still missing and never presents the feature as on
-  when only half the requirement is met.
-
-### Fixed
-- **The daemon startup delay is read from the daemon instead of guessed.** It was stored
-  locally and pushed on save, so it could show 0 while the daemon ran with 10.
-
-### Changed
-- The Operations Guide gains the `[detection]` config section, the `--config` and
-  `--allow-non-root` arguments, the `CONTROL_OFC_CONFIG` and `HOME` variables, and a
-  table of which settings can be changed without editing a file by hand. The Settings
-  spec records why the socket path and state directory stay read-only.
-
-## [2.37.0] — 2026-08-07
-
-**Settings is a complete map of what can be configured.** Fourteen of the twenty-nine
-stored preferences had no presence on the Settings page at all — some reachable only
-through a context menu or an unlabelled table cell, one dismissible with no way to bring
-it back. This release gives every one of them a home and adds the test that stops the gap
-reopening. GUI-only; no wire, schema, or API change (`EXPECTED_API_VERSION` stays 1);
-still pairs with `control-ofc-daemon` ≥ v2.11.0. DEC-237.
+Requires `control-ofc-daemon` ≥ v2.16.0 for the Daemon Configuration card; older daemons
+keep working and the card stands down rather than showing invented values. No wire or
+schema change (`EXPECTED_API_VERSION` stays 1). DEC-237, DEC-243.
 
 ### Added
 - **Fan Names card** — the full list of fan names in one place, including names for
@@ -62,6 +31,21 @@ still pairs with `control-ofc-daemon` ≥ v2.11.0. DEC-237.
   chart-series seeding.
 - **Card Layout card** — reset every Controls-page card size at once. Resetting a single
   card by double-clicking its grip is unchanged.
+- **Daemon Configuration card.** Every daemon setting with the value in effect, where it
+  came from (the daemon's own runtime config, `daemon.toml`, or a built-in default), and
+  whether a saved change is still waiting on a restart. Poll interval, serial port and
+  timeout, and the two hardware-detection opt-ins are editable; the socket path and state
+  directory are shown but deliberately not, because a wrong value there would lock the
+  application out of the daemon or strand its stored data.
+- **A restart banner with the exact command to run.** Almost every daemon setting only
+  applies at startup, so saving one is not the same as it taking effect. The daemon
+  reports which keys are waiting, per key — the GUI does not guess from what it sent, so
+  the state survives closing the application and is right even when someone edits the
+  config by hand.
+- **Honest reporting for the two opt-in features.** The Super-I/O probe and NVIDIA
+  telemetry each need a system file installed by an administrator *as well as* the
+  setting. The card shows what is still missing and never presents the feature as on
+  when only half the requirement is met.
 - **A settings-coverage test.** Every `AppSettings` field must be classified as a Settings
   control, a Theme-page control, or an explicitly-justified implicit field, *and* each
   declared control must resolve to a real widget on a constructed page. A new preference
@@ -80,11 +64,24 @@ still pairs with `control-ofc-daemon` ≥ v2.11.0. DEC-237.
 - **Chart series colours persist through the settings validation layer.** The colour
   picker mutated the stored map in place and then saved, writing past the coercion that
   every other settings write goes through (DEC-137).
+- **The daemon startup delay is read from the daemon instead of guessed.** It was stored
+  locally and pushed on save, so it could show 0 while the daemon ran with 10.
+- **Tabbing through the Daemon Configuration card no longer changes anything.** Qt reports
+  "editing finished" on focus-out whether or not you edited, so the card would have written
+  every field back to the daemon — silently overriding an administrator's config file with
+  values nobody chose.
+- **A momentary daemon hiccup no longer disables the card for the rest of the session.**
+  It now retries the next time you open Settings; only a daemon that is genuinely too old
+  makes it stand down permanently.
 
 ### Changed
 - **Path Management discloses the daemon registration it performs.** The GUI registers
   its profiles directory with the daemon on connect and on every reconnect; that write
   now appears in the interface instead of only in the logs.
+- The Operations Guide gains the `[detection]` config section, the `--config` and
+  `--allow-non-root` arguments, the `CONTROL_OFC_CONFIG` and `HOME` variables, and a
+  table of which settings can be changed without editing a file by hand. The Settings
+  spec records why the socket path and state directory stay read-only.
 
 ## [2.36.0] — 2026-08-04
 

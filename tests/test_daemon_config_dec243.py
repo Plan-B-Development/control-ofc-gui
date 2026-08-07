@@ -173,10 +173,23 @@ class TestParsing:
         cfg = parse_daemon_config({"keys": [{"key": "a.b", "value": 1, "invented_later": "boom"}]})
         assert cfg.get("a.b").value == 1
 
-    def test_missing_running_value_falls_back_to_value(self):
-        """The daemon omits running_value when it equals value."""
-        entry = DaemonConfigKey(key="a.b", value=7)
-        assert entry.effective_running_value == 7
+    def test_null_running_value_is_not_treated_as_absent(self):
+        """REGRESSION: `running_value: null` must not read as "same as value".
+
+        The daemon used to omit running_value when equal to value, and the GUI
+        fell back to `value` on None. For `serial.port` — the one nullable key —
+        a genuine null then rendered as the FILE's port, so the card claimed the
+        daemon was running a port it had never been given. The daemon now always
+        sends the field and None means exactly one thing: not set.
+        """
+        unset = DaemonConfigKey(key="serial.port", value="/dev/ttyACM0", running_value=None)
+        assert unset.running_display == "not set"
+        assert unset.running_display != str(unset.value)
+
+        running = DaemonConfigKey(
+            key="serial.port", value="/dev/ttyACM1", running_value="/dev/ttyACM0"
+        )
+        assert running.running_display == "/dev/ttyACM0"
 
     def test_empty_payload_is_safe(self):
         cfg = parse_daemon_config({})
@@ -240,6 +253,11 @@ class TestRestartPending:
 
         assert not p._daemon_restart_banner.isHidden()
         assert "systemctl restart control-ofc-daemon" in p._daemon_restart_banner.text()
+        # Name the key, not just a count: not every pending key has a row on this
+        # card (startup.delay_secs lives on Operational Behavior), so a bare
+        # count can read as "1 change pending" with nothing on screen explaining
+        # which one.
+        assert "polling.poll_interval_ms" in p._daemon_restart_banner.text()
 
     def test_row_note_states_what_the_daemon_is_actually_running(
         self, qapp, app_state, settings_service
@@ -306,12 +324,32 @@ class TestPrivilegeGatedOptIns:
 class TestWrites:
     def test_spin_change_posts(self, page):
         p, client = page
-        p._poll_interval_spin.setValue(2500)
+        p._poll_interval_spin.setValue(1500)
         p._poll_interval_spin.editingFinished.emit()
-        assert ("polling.poll_interval_ms", 2500) in client.writes
+        assert ("polling.poll_interval_ms", 1500) in client.writes
 
-    def test_blank_serial_port_clears_the_override(self, page):
+    def test_focus_out_without_an_edit_does_not_post(self, page):
+        """REGRESSION: editingFinished fires on focus-out regardless of edits.
+
+        Without a guard, merely tabbing through the card POSTs every field,
+        writing them into runtime.toml and permanently shadowing the operator's
+        daemon.toml with values they never chose.
+        """
         p, client = page
+        client.writes.clear()
+        p._poll_interval_spin.editingFinished.emit()
+        p._serial_timeout_spin.editingFinished.emit()
+        p._write_serial_port()
+        assert client.writes == []
+
+    def test_blank_serial_port_clears_a_set_override(self, qapp, app_state, settings_service):
+        """Blanking a port that WAS set clears it; blanking an already-unset one is a no-op."""
+        cfg = _default_config()
+        cfg.keys[1] = _key("serial.port", "/dev/ttyACM0", mutable=True, requires_restart=True)
+        client = _ConfigClient(cfg)
+        p = SettingsPage(state=app_state, settings_service=settings_service, client=client)
+        p._refresh_daemon_config()
+
         p._serial_port_edit.setText("   ")
         p._write_serial_port()
         assert ("serial.port", None) in client.writes
@@ -333,7 +371,7 @@ class TestWrites:
         p = SettingsPage(state=app_state, settings_service=settings_service, client=client)
         p._refresh_daemon_config()
 
-        p._poll_interval_spin.setValue(9999)
+        p._poll_interval_spin.setValue(1750)
         p._poll_interval_spin.editingFinished.emit()
 
         assert "out of range" in p._daemon_cfg_result.text()
@@ -393,7 +431,9 @@ class TestVersionGate:
         p = SettingsPage(state=app_state, settings_service=settings_service, client=client)
         p._refresh_daemon_config()
         client.writes.clear()
-        p._write_daemon_key("serial.port", lambda c: c.set_serial_port("/dev/ttyACM0"))
+        p._write_daemon_key(
+            "serial.port", "/dev/ttyACM0", lambda c: c.set_serial_port("/dev/ttyACM0")
+        )
         assert client.writes == []
 
     def test_no_client_is_safe(self, qapp, app_state, settings_service):

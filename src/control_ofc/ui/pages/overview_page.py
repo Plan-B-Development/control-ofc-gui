@@ -250,6 +250,8 @@ class OverviewPage(QWidget):
         # unreachable write looked identical to a successful one.
         self._pref_result_label = QLabel("")
         self._pref_result_label.setObjectName("Overview_Label_prefResult")
+        # DEC-231: carries daemon-supplied error text.
+        self._pref_result_label.setTextFormat(Qt.TextFormat.PlainText)
         self._pref_result_label.setWordWrap(True)
         self._pref_result_label.setVisible(False)
         v.addWidget(self._pref_result_label)

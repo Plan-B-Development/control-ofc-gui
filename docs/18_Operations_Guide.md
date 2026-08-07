@@ -93,17 +93,18 @@ persisted change is not yet in effect (`restart_pending`). The GUI's
 |---|---|---|
 | `profiles.search_dirs` | `POST /config/profile-search-dirs` | Additive; also re-applied on SIGHUP |
 | `startup.delay_secs` | `POST /config/startup-delay` | 0–30 |
-| `polling.poll_interval_ms` | `POST /config/poll-interval` | 250–10000 |
-| `serial.port` | `POST /config/serial-port` | Must be under `/dev/`; `null` = auto-detect |
-| `serial.timeout_ms` | `POST /config/serial-timeout` | 50–5000 |
+| `polling.poll_interval_ms` | `POST /config/poll-interval` | 250–2000 via the API (the admin file allows more; the API ceiling bounds thermal-safety reaction latency) |
+| `serial.port` | `POST /config/serial-port` | Must match the serial allowlist (`/dev/tty{S,USB,ACM,AMA}*`, `/dev/serial/*`), ≤256 chars; `null` = auto-detect. A port that fails to open falls back to auto-detection |
+| `serial.timeout_ms` | `POST /config/serial-timeout` | 50–1000 via the API (bounds emergency write latency) |
 | `detection.allow_port_probe` | `POST /config/allow-port-probe` | **Also needs the drop-in** |
 | `detection.enable_nvidia_telemetry` | `POST /config/nvidia-telemetry` | **Also needs the drop-in** |
 | `ipc.socket_path` | **No — read-only** | A bad value locks every client out of the daemon |
 | `state.state_dir` | **No — read-only** | Moving it orphans `runtime.toml` and the profile store |
 
-**Everything except the profile search dirs takes effect only on restart.** SIGHUP
-re-reads both files but re-applies only `profiles.search_dirs` to the running
-process; the rest are consumed once at startup:
+**Everything except the profile search dirs takes effect only on restart.** The
+search dirs apply immediately (both via their API and on SIGHUP), which is why
+`GET /config` reports them with `requires_restart: false`; every other key is
+consumed once at startup:
 ```bash
 sudo systemctl restart control-ofc-daemon
 ```

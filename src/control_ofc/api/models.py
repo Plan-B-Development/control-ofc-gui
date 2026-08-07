@@ -1067,9 +1067,16 @@ class DaemonConfigKey:
     requires_privilege: str | None = None
 
     @property
-    def effective_running_value(self) -> object:
-        """What the daemon is running now (the daemon omits it when identical)."""
-        return self.value if self.running_value is None else self.running_value
+    def running_display(self) -> str:
+        """Human-readable rendering of what the daemon is actually running.
+
+        ``running_value`` is always sent by the daemon and ``None`` means the key
+        is genuinely unset (only ``serial.port`` can be null today). It must NOT
+        fall back to ``value`` on ``None`` — that is precisely the bug this
+        replaced, where a null running value read as "same as the file" and the
+        card claimed the daemon was running a port it had never been given.
+        """
+        return "not set" if self.running_value is None else str(self.running_value)
 
 
 @dataclass

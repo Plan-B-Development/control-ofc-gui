@@ -168,6 +168,10 @@ class SettingsPage(QWidget):
         self._daemon_config_unsupported = False
         self._populating_daemon_cfg = False
         self._daemon_cfg_loaded = False
+        # Last values the daemon reported, keyed by config key. The write
+        # guard compares against these so a focus-out cannot re-POST an
+        # untouched field (see _write_daemon_key).
+        self._daemon_cfg_rendered: dict[str, object] = {}
         self._port_probe_reason = ""
         # Phase 4 (DEC-200): preferred-sensor selector state. ``_populating_prefs``
         # suppresses the change→POST while the combos are filled programmatically;
@@ -206,18 +210,22 @@ class SettingsPage(QWidget):
         cols.setSpacing(16)
         col1 = QVBoxLayout()
         col1.setSpacing(16)
+        # Column split is GUI-owned preferences (left) vs paths, daemon-facing
+        # and backup (right). That also keeps the two balanced: putting three of
+        # the five new cards on the right left it roughly twice the height of the
+        # left, i.e. a screen of dead space under col1's stretch.
         col1.addWidget(self._build_general_startup_card())
         col1.addWidget(self._build_operational_card())
         col1.addWidget(self._build_fan_aliases_card())
+        col1.addWidget(self._build_sensors_series_card())
+        col1.addWidget(self._build_prompts_card())
         col1.addWidget(self._build_card_layout_card())
         col1.addStretch()
         col2 = QVBoxLayout()
         col2.setSpacing(16)
         col2.addWidget(self._build_path_management_card())
         col2.addWidget(self._build_preferred_sensors_group())
-        col2.addWidget(self._build_sensors_series_card())
         col2.addWidget(self._build_daemon_config_card())
-        col2.addWidget(self._build_prompts_card())
         col2.addWidget(self._build_sync_backup_card())
         col2.addStretch()
         cols.addLayout(col1, 1)
@@ -686,6 +694,7 @@ class SettingsPage(QWidget):
 
         self._daemon_restart_banner = QLabel("")
         self._daemon_restart_banner.setObjectName("Settings_Label_daemonRestartBanner")
+        self._daemon_restart_banner.setTextFormat(Qt.TextFormat.PlainText)  # DEC-231
         self._daemon_restart_banner.setWordWrap(True)
         self._daemon_restart_banner.setVisible(False)
         self._daemon_restart_banner.setTextInteractionFlags(
@@ -695,12 +704,13 @@ class SettingsPage(QWidget):
 
         self._poll_interval_spin = QSpinBox()
         self._poll_interval_spin.setObjectName("Settings_Spin_pollInterval")
-        self._poll_interval_spin.setRange(250, 10000)
+        self._poll_interval_spin.setRange(250, 2000)
         self._poll_interval_spin.setSingleStep(250)
         self._poll_interval_spin.setSuffix(" ms")
         self._poll_interval_spin.editingFinished.connect(
             lambda: self._write_daemon_key(
                 "polling.poll_interval_ms",
+                self._poll_interval_spin.value(),
                 lambda c: c.set_poll_interval(self._poll_interval_spin.value()),
             )
         )
@@ -713,12 +723,13 @@ class SettingsPage(QWidget):
 
         self._serial_timeout_spin = QSpinBox()
         self._serial_timeout_spin.setObjectName("Settings_Spin_serialTimeout")
-        self._serial_timeout_spin.setRange(50, 5000)
+        self._serial_timeout_spin.setRange(50, 1000)
         self._serial_timeout_spin.setSingleStep(50)
         self._serial_timeout_spin.setSuffix(" ms")
         self._serial_timeout_spin.editingFinished.connect(
             lambda: self._write_daemon_key(
                 "serial.timeout_ms",
+                self._serial_timeout_spin.value(),
                 lambda c: c.set_serial_timeout(self._serial_timeout_spin.value()),
             )
         )
@@ -727,7 +738,7 @@ class SettingsPage(QWidget):
         self._port_probe_toggle.setObjectName("Settings_Check_allowPortProbe")
         self._port_probe_toggle.toggled.connect(
             lambda on: self._write_daemon_key(
-                "detection.allow_port_probe", lambda c: c.set_allow_port_probe(on)
+                "detection.allow_port_probe", on, lambda c: c.set_allow_port_probe(on)
             )
         )
 
@@ -735,7 +746,7 @@ class SettingsPage(QWidget):
         self._nvidia_toggle.setObjectName("Settings_Check_nvidiaTelemetry")
         self._nvidia_toggle.toggled.connect(
             lambda on: self._write_daemon_key(
-                "detection.enable_nvidia_telemetry", lambda c: c.set_nvidia_telemetry(on)
+                "detection.enable_nvidia_telemetry", on, lambda c: c.set_nvidia_telemetry(on)
             )
         )
 
@@ -752,6 +763,10 @@ class SettingsPage(QWidget):
             v.addLayout(self._setting_row(title, subtitle, controls[key]))
             note = QLabel("")
             note.setObjectName(f"Settings_Label_daemonNote_{key.replace('.', '_')}")
+            # DEC-231: interpolates daemon-supplied strings, one of which
+            # (running_value) another local user can set. AutoText would let
+            # Qt.mightBeRichText() render it as HTML.
+            note.setTextFormat(Qt.TextFormat.PlainText)
             note.setWordWrap(True)
             note.setProperty("class", "CardMeta")
             note.setVisible(False)
@@ -763,6 +778,7 @@ class SettingsPage(QWidget):
         # and the daemon-owned profile store. Shown so they stay diagnosable.
         self._daemon_paths_label = QLabel("")
         self._daemon_paths_label.setObjectName("Settings_Label_daemonPaths")
+        self._daemon_paths_label.setTextFormat(Qt.TextFormat.PlainText)  # DEC-231
         self._daemon_paths_label.setWordWrap(True)
         self._daemon_paths_label.setProperty("class", "CardMeta")
         self._daemon_paths_label.setTextInteractionFlags(
@@ -772,6 +788,7 @@ class SettingsPage(QWidget):
 
         self._daemon_cfg_result = QLabel("")
         self._daemon_cfg_result.setObjectName("Settings_Label_daemonCfgResult")
+        self._daemon_cfg_result.setTextFormat(Qt.TextFormat.PlainText)  # DEC-231
         self._daemon_cfg_result.setWordWrap(True)
         self._daemon_cfg_result.setVisible(False)
         v.addWidget(self._daemon_cfg_result)
@@ -814,6 +831,13 @@ class SettingsPage(QWidget):
             return
 
         self._daemon_config = cfg
+        # Latch only on a real answer. Setting this before the call (as it was)
+        # meant a single timeout or a daemon restart during the user's first
+        # visit disabled the card for the whole session, with no way back: the
+        # controls are disabled, so no signal can trigger another fetch. The
+        # 404 branch above latches separately and permanently, which is correct
+        # — a daemon does not gain the endpoint without restarting.
+        self._daemon_cfg_loaded = True
         self._set_daemon_config_available(True)
         self._render_daemon_config(cfg)
 
@@ -845,6 +869,14 @@ class SettingsPage(QWidget):
             delay = cfg.get("startup.delay_secs")
             if delay is not None and isinstance(delay.value, int):
                 self._startup_delay_spin.setValue(delay.value)
+
+            # Snapshot what the daemon reported for the editable keys, so the
+            # write guard can tell a real edit from a focus-out.
+            self._daemon_cfg_rendered = {
+                key: entry.value
+                for key, _title, _sub in self._DAEMON_ROWS
+                if (entry := cfg.get(key)) is not None
+            }
         finally:
             self._populating_daemon_cfg = False
 
@@ -852,9 +884,13 @@ class SettingsPage(QWidget):
             self._render_daemon_row_note(cfg.get(key), self._daemon_row_notes[key])
 
         if cfg.restart_pending:
+            # Name the keys rather than showing a bare count. Not every pending
+            # key has a row on this card — `startup.delay_secs` lives on the
+            # Operational Behavior card — so a count alone can read as "1 change
+            # pending" with nothing on screen to explain which.
             pending = [k.key for k in cfg.keys if k.restart_pending]
             self._daemon_restart_banner.setText(
-                f"{len(pending)} change(s) saved but not yet in effect. "
+                f"Saved but not yet in effect: {', '.join(pending)}. "
                 "Restart the daemon to apply:  sudo systemctl restart control-ofc-daemon"
             )
             set_chip_class(self._daemon_restart_banner, "CautionChip", skip_if_unchanged=True)
@@ -883,7 +919,7 @@ class SettingsPage(QWidget):
         elif entry.source == "admin":
             parts.append("set in daemon.toml")
         if entry.restart_pending:
-            parts.append(f"restart required — daemon is running {entry.effective_running_value}")
+            parts.append(f"restart required — daemon is running {entry.running_display}")
         if entry.requires_privilege:
             # Never let the toggle alone read as "the feature is on".
             parts.append(entry.requires_privilege)
@@ -914,13 +950,26 @@ class SettingsPage(QWidget):
 
     def _write_serial_port(self) -> None:
         text = self._serial_port_edit.text().strip()
-        self._write_daemon_key("serial.port", lambda c: c.set_serial_port(text or None))
+        self._write_daemon_key(
+            "serial.port", text or None, lambda c: c.set_serial_port(text or None)
+        )
 
-    def _write_daemon_key(self, key: str, call) -> None:
-        """POST one daemon config key, then re-read so the card shows daemon truth."""
+    def _write_daemon_key(self, key: str, value: object, call) -> None:
+        """POST one daemon config key, then re-read so the card shows daemon truth.
+
+        Skips the write when *value* already matches what the daemon reported.
+        `QSpinBox.editingFinished` and `QLineEdit.editingFinished` fire on
+        focus-out whether or not anything was edited, so without this guard
+        merely tabbing through the card would POST every field — writing them
+        into runtime.toml, flipping their `source` to "runtime", and thereby
+        permanently shadowing the operator's daemon.toml with values they never
+        chose. Silent config mutation as a side effect of looking at a page.
+        """
         if self._populating_daemon_cfg or self._client is None:
             return
         if self._daemon_config_unsupported:
+            return
+        if key in self._daemon_cfg_rendered and self._daemon_cfg_rendered[key] == value:
             return
         try:
             result = call(self._client)
@@ -1345,8 +1394,9 @@ class SettingsPage(QWidget):
         if not self._prefs_loaded and self._client is not None:
             self._refresh_preferred_sensors()
         # Daemon config is likewise fetched on first arrival, not at startup.
+        # `_refresh_daemon_config` owns the latch and sets it only on success,
+        # so a transient failure retries on the next visit.
         if not self._daemon_cfg_loaded and self._client is not None:
-            self._daemon_cfg_loaded = True
             self._refresh_port_probe_availability()
             self._refresh_daemon_config()
         # The mirrored surfaces reflect state owned elsewhere (fans arrive by

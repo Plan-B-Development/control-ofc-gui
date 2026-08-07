@@ -1111,8 +1111,12 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
   - `key` — dotted path (`startup.delay_secs`)
   - `value` — the **on-disk effective** value: `daemon.toml` with the
     `runtime.toml` overlay applied, i.e. what a restart would produce
-  - `running_value` — what this daemon process actually started with. **Omitted
-    when identical to `value`**; clients treat absent as "same".
+  - `running_value` — what this daemon process actually started with. **Always
+    present.** It was briefly omitted-when-equal, but that is unrepresentable for
+    a nullable key: `serial.port` is `Option<String>`, so a genuine null
+    serialises as `"running_value": null` and a client applying an
+    absent-means-same rule reports the *file's* port as the one in use. Always
+    sending it makes `null` mean exactly one thing — not set.
   - `source` — `runtime` | `admin` | `default`. `runtime` means a `POST /config/*`
     write is shadowing the admin file — the one case where an operator's
     `daemon.toml` edit appears to do nothing.
@@ -1137,15 +1141,26 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
 - **Extended writes (daemon ≥ 2.16.0, DEC-243).** All persist to `runtime.toml`,
   all are start-only, all return `503 persistence_failed` on a write error, and
   each response carries `{"updated", "key", "value", "note"}`:
-  - `POST /config/poll-interval` — `{"poll_interval_ms": 250..10000}`. The floor
-    is deliberate: the control loop, serial I/O and sysfs writes all run on this
-    cadence, so a tiny value is a self-inflicted DoS on the hardware the daemon
-    exists to protect.
-  - `POST /config/serial-port` — `{"port": string | null}`. **Confined to
-    `/dev/`, no `..`** — the daemon opens this path as root, so an unconfined
-    value would let an unprivileged caller aim it anywhere. `null` clears the
-    override and returns to auto-detection.
-  - `POST /config/serial-timeout` — `{"timeout_ms": 50..5000}`.
+  - `POST /config/poll-interval` — `{"poll_interval_ms": 250..2000}`. Both bounds
+    are deliberate. The floor: the control loop, serial I/O and sysfs writes all
+    run on this cadence, so a tiny value is a self-inflicted DoS on the hardware
+    the daemon exists to protect. **The ceiling is [SAFETY]**: this drives the
+    sensor poll loop, and the thermal-safety leg reads the cache with no age
+    filter, so it bounds how stale a temperature the 105 °C rule can act on. The
+    admin file accepts a wider range; the API does not, because the API is
+    reachable by any local user (0666 socket).
+  - `POST /config/serial-port` — `{"port": string | null}`. **Validated against
+    the serial transport's own allowlist** (`/dev/tty{S,USB,ACM,AMA}*`,
+    `/dev/serial/*`; no `..`, no NUL) and capped at 256 characters — the daemon
+    opens this path as root and the endpoint is unprivileged-reachable. A second,
+    looser copy of this check previously accepted `/dev/shm/...`. `null` clears
+    the override and returns to auto-detection. Note the daemon **falls back to
+    auto-detection when a configured port cannot be opened**, so a bad value
+    cannot durably remove OpenFan control (and with it the 105 °C emergency's
+    only path to those fans).
+  - `POST /config/serial-timeout` — `{"timeout_ms": 50..1000}`. **The ceiling is
+    [SAFETY]**: an emergency `force_all` awaits the OpenFan backend before the
+    hwmon one, costing up to `channels × timeout` on a wedged link.
   - `POST /config/allow-port-probe` / `POST /config/nvidia-telemetry` —
     `{"enabled": bool}`. On success with `enabled: true` the response adds
     `requires_privilege`, because the systemd drop-in is the other half of the
