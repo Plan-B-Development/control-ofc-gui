@@ -56,9 +56,57 @@ delay_secs = 0  # seconds to wait before device detection after boot (0-30)
 # systemd service). The daemon also *prepends* its own store dir
 # (/var/lib/control-ofc/profiles/) at startup. Add more via the API.
 search_dirs = ["/etc/control-ofc/profiles", "/root/.config/control-ofc/profiles"]
+
+[detection]
+# Both are opt-in and default false, and both need a root-installed systemd
+# drop-in as well as the flag — the flag alone does NOT enable the feature.
+allow_port_probe = false        # active Super-I/O /dev/port probe (DEC-203);
+                                # also needs superio-port-probe.conf.example
+                                # (CAP_SYS_RAWIO)
+enable_nvidia_telemetry = false # read-only NVML telemetry (DEC-204);
+                                # also needs nvidia-telemetry.conf.example
+                                # (/dev/nvidia* rw). Experimental.
 ```
 
 All fields are optional — defaults are shown above.
+
+### Two config files — `daemon.toml` vs `runtime.toml` (ADR-002)
+
+`/etc/control-ofc/daemon.toml` is **admin-owned**; the daemon never writes it, so
+your comments and edits survive. `{state_dir}/runtime.toml` (default
+`/var/lib/control-ofc/runtime.toml`) is **daemon-owned**, written only by
+`POST /config/*`, and **overlays** the admin file — runtime wins for any key
+present in both. This mirrors NetworkManager's admin-conf + intern-conf split.
+
+If a runtime value is shadowing a `daemon.toml` edit you made, the daemon says so
+once at startup in an `info` log, and `GET /config` reports `source: "runtime"`
+for that key.
+
+### Which keys can be changed without editing a file (DEC-243)
+
+`GET /config` returns every key with its effective value, its `source`
+(`runtime` / `admin` / `default`), whether it is `mutable`, and whether a
+persisted change is not yet in effect (`restart_pending`). The GUI's
+**Settings ▸ Daemon Configuration** card is a view of exactly this.
+
+| Key | Mutable via API | Notes |
+|---|---|---|
+| `profiles.search_dirs` | `POST /config/profile-search-dirs` | Additive; also re-applied on SIGHUP |
+| `startup.delay_secs` | `POST /config/startup-delay` | 0–30 |
+| `polling.poll_interval_ms` | `POST /config/poll-interval` | 250–10000 |
+| `serial.port` | `POST /config/serial-port` | Must be under `/dev/`; `null` = auto-detect |
+| `serial.timeout_ms` | `POST /config/serial-timeout` | 50–5000 |
+| `detection.allow_port_probe` | `POST /config/allow-port-probe` | **Also needs the drop-in** |
+| `detection.enable_nvidia_telemetry` | `POST /config/nvidia-telemetry` | **Also needs the drop-in** |
+| `ipc.socket_path` | **No — read-only** | A bad value locks every client out of the daemon |
+| `state.state_dir` | **No — read-only** | Moving it orphans `runtime.toml` and the profile store |
+
+**Everything except the profile search dirs takes effect only on restart.** SIGHUP
+re-reads both files but re-applies only `profiles.search_dirs` to the running
+process; the rest are consumed once at startup:
+```bash
+sudo systemctl restart control-ofc-daemon
+```
 
 ### Serial device path
 **Use stable `/dev/serial/by-id/` paths** instead of `/dev/ttyACM0`. The unstable path changes after USB re-enumeration (reboot, unplug/replug). Find your stable path:
@@ -72,8 +120,10 @@ ls -la /dev/serial/by-id/
 
 | Argument | Description |
 |----------|-------------|
+| `--config <path>` | Path to `daemon.toml`. Takes precedence over `$CONTROL_OFC_CONFIG` and the default location |
 | `--profile <name>` | Load a named profile from search paths on startup |
 | `--profile-file <path>` | Load a profile from an absolute file path |
+| `--allow-non-root` | Permit startup as a non-root user. Hardware writes that need root will fail — for development and inspection, not normal operation |
 
 ### Profile search paths
 When using `--profile <name>`, the daemon searches (highest priority first):
@@ -88,7 +138,9 @@ When using `--profile <name>`, the daemon searches (highest priority first):
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `RUST_LOG` | Logging level (`error`, `warn`, `info`, `debug`, `trace`) | `info` (set in systemd service) |
+| `CONTROL_OFC_CONFIG` | Path to `daemon.toml`. Overridden by `--config` | `/etc/control-ofc/daemon.toml` |
 | `OPENFAN_PROFILE` | Profile name to load at startup (fallback if no `--profile` CLI arg) | none |
+| `HOME` | Used to derive the home-relative profile search dir when `XDG_CONFIG_HOME` is unset | unset under systemd → `/root` |
 | `XDG_CONFIG_HOME` | Override config directory for profile search | `~/.config` |
 
 ---

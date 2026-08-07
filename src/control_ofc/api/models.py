@@ -1039,6 +1039,68 @@ class PreferredSensorResult:
 
 
 # ---------------------------------------------------------------------------
+# Daemon configuration (DEC-243) — GET /config + the extended POST /config/*
+#
+# The daemon is authoritative for every value here. Before this endpoint the
+# writable knobs were write-only, so the GUI kept a local mirror and pushed it on
+# save: a fresh GUI against a daemon set to 10 s displayed 0 s. `value` is what
+# the files say (what a restart would give); `running_value` is what the daemon
+# process actually started with. Never conflate them — `restart_pending` is the
+# daemon's own verdict and must not be re-derived GUI-side.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DaemonConfigKey:
+    """One configuration key as reported by GET /config."""
+
+    key: str = ""
+    value: object = None
+    running_value: object = None
+    source: str = "default"  # "runtime" | "admin" | "default"
+    mutable: bool = False
+    requires_restart: bool = False
+    restart_pending: bool = False
+    # Set when a config write alone cannot enable the feature — currently the two
+    # [detection] opt-ins, each of which also needs a root systemd drop-in. The
+    # UI must not present such a key as "on" merely because the flag is set.
+    requires_privilege: str | None = None
+
+    @property
+    def effective_running_value(self) -> object:
+        """What the daemon is running now (the daemon omits it when identical)."""
+        return self.value if self.running_value is None else self.running_value
+
+
+@dataclass
+class DaemonConfig:
+    """Response from GET /config."""
+
+    api_version: int = 0
+    admin_config_path: str = ""
+    runtime_config_path: str = ""
+    restart_pending: bool = False
+    keys: list[DaemonConfigKey] = field(default_factory=list)
+
+    def get(self, key: str) -> DaemonConfigKey | None:
+        for k in self.keys:
+            if k.key == key:
+                return k
+        return None
+
+
+@dataclass
+class ConfigWriteResult:
+    """Response from the DEC-243 POST /config/* routes."""
+
+    updated: bool = False
+    key: str = ""
+    value: object = None
+    note: str = ""
+    requires_privilege: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Super-I/O detection (Phase 3 — DEC-202)
 #
 # Daemon-authoritative, additive, read-only: GET /inventory/superio. The daemon
@@ -1561,6 +1623,33 @@ def parse_preferred_sensor(data: dict) -> PreferredSensorResult:
         updated=bool(data.get("updated", False)),
         role=str(data.get("role", "")),
         preferred_sensor=data.get("preferred_sensor"),
+    )
+
+
+def parse_daemon_config(data: dict) -> DaemonConfig:
+    """Parse GET /config (DEC-243). Tolerant: unknown keys are ignored and a
+    malformed entry is dropped rather than failing the whole read."""
+    keys: list[DaemonConfigKey] = []
+    for raw in data.get("keys", []):
+        if not isinstance(raw, dict) or not isinstance(raw.get("key"), str):
+            continue
+        keys.append(DaemonConfigKey(**_filter_fields(DaemonConfigKey, raw)))
+    return DaemonConfig(
+        api_version=int(data.get("api_version", 0) or 0),
+        admin_config_path=str(data.get("admin_config_path", "")),
+        runtime_config_path=str(data.get("runtime_config_path", "")),
+        restart_pending=bool(data.get("restart_pending", False)),
+        keys=keys,
+    )
+
+
+def parse_config_write(data: dict) -> ConfigWriteResult:
+    return ConfigWriteResult(
+        updated=bool(data.get("updated", False)),
+        key=str(data.get("key", "")),
+        value=data.get("value"),
+        note=str(data.get("note", "")),
+        requires_privilege=data.get("requires_privilege"),
     )
 
 

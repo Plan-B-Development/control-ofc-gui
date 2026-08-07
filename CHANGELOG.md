@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+## [2.38.0] — 2026-08-07
+
+**Settings shows what the daemon is actually configured with.** Phase 2 of the
+settings-coverage work started in 2.37.0. The daemon's configuration was previously
+invisible and half of it was write-only: the GUI could set the startup delay but never
+read it back, so it kept a local guess. Against a daemon already set to 10 seconds, a
+fresh GUI displayed 0. Requires `control-ofc-daemon` ≥ v2.16.0 for the new card; older
+daemons keep working and the card stands down rather than showing invented values. No
+wire or schema change (`EXPECTED_API_VERSION` stays 1). DEC-243.
+
+### Added
+- **Daemon Configuration card.** Every daemon setting with the value in effect, where it
+  came from (the daemon's own runtime config, `daemon.toml`, or a built-in default), and
+  whether a saved change is still waiting on a restart. Poll interval, serial port and
+  timeout, and the two hardware-detection opt-ins are editable; the socket path and state
+  directory are shown but deliberately not, because a wrong value there would lock the
+  application out of the daemon or strand its stored data.
+- **A restart banner with the exact command to run.** Almost every daemon setting only
+  applies at startup, so saving one is not the same as it taking effect. The daemon
+  reports which keys are waiting, per key — the GUI does not guess from what it sent, so
+  the state survives closing the application and is right even when someone edits the
+  config by hand.
+- **Honest reporting for the two opt-in features.** The Super-I/O probe and NVIDIA
+  telemetry each need a system file installed by an administrator *as well as* the
+  setting. The card shows what is still missing and never presents the feature as on
+  when only half the requirement is met.
+
+### Fixed
+- **The daemon startup delay is read from the daemon instead of guessed.** It was stored
+  locally and pushed on save, so it could show 0 while the daemon ran with 10.
+
+### Changed
+- The Operations Guide gains the `[detection]` config section, the `--config` and
+  `--allow-non-root` arguments, the `CONTROL_OFC_CONFIG` and `HOME` variables, and a
+  table of which settings can be changed without editing a file by hand. The Settings
+  spec records why the socket path and state directory stay read-only.
+
 ## [2.37.0] — 2026-08-07
 
 **Settings is a complete map of what can be configured.** Fourteen of the twenty-nine

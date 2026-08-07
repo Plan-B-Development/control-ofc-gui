@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -159,6 +160,15 @@ class SettingsPage(QWidget):
         self._series_selection = series_selection
         # Guards the alias table's itemChanged handler while it is repopulated.
         self._populating_aliases = False
+        # DEC-243 daemon-config state. `_daemon_config_unsupported` latches on a
+        # 404 so a pre-2.16.0 daemon is asked once, mirroring the DEC-200
+        # preferred-sensor precedent; `_populating_daemon_cfg` stops the render
+        # from firing the change handlers back at the daemon.
+        self._daemon_config = None
+        self._daemon_config_unsupported = False
+        self._populating_daemon_cfg = False
+        self._daemon_cfg_loaded = False
+        self._port_probe_reason = ""
         # Phase 4 (DEC-200): preferred-sensor selector state. ``_populating_prefs``
         # suppresses the change→POST while the combos are filled programmatically;
         # ``_prefs_loaded`` gates the one-time lazy fetch on first show.
@@ -206,6 +216,7 @@ class SettingsPage(QWidget):
         col2.addWidget(self._build_path_management_card())
         col2.addWidget(self._build_preferred_sensors_group())
         col2.addWidget(self._build_sensors_series_card())
+        col2.addWidget(self._build_daemon_config_card())
         col2.addWidget(self._build_prompts_card())
         col2.addWidget(self._build_sync_backup_card())
         col2.addStretch()
@@ -641,6 +652,303 @@ class SettingsPage(QWidget):
         self._refresh_reset_buttons()
         self._set_status("All chart series shown")
 
+    # ─── DEC-243: daemon configuration ───────────────────────────────
+    # Read side of a surface that used to be write-only. The GUI previously kept
+    # a local mirror of the startup delay and pushed it on save, so a fresh GUI
+    # against a daemon set to 10 s displayed 0 s — the field was a guess. These
+    # values now come from the daemon, and `restart_pending` is the daemon's own
+    # verdict (on-disk vs running), never something inferred here.
+
+    #: Rows rendered by the card: (config key, label, sublabel).
+    _DAEMON_ROWS = (
+        ("polling.poll_interval_ms", "Poll interval", "How often the daemon reads hardware"),
+        ("serial.port", "Serial port", "OpenFan device path — blank to auto-detect"),
+        ("serial.timeout_ms", "Serial timeout", "Read timeout for the OpenFan device"),
+        ("detection.allow_port_probe", "Super-I/O port probe", "Opt-in active chip detection"),
+        ("detection.enable_nvidia_telemetry", "NVIDIA telemetry", "Opt-in read-only NVML"),
+    )
+
+    def _build_daemon_config_card(self) -> QWidget:
+        card = Card()
+        v = QVBoxLayout(card)
+        v.setSpacing(8)
+        v.addWidget(
+            SectionHeader("Daemon Configuration", object_name="Settings_SectionHeader_daemonConfig")
+        )
+
+        self._daemon_cfg_note = QLabel(
+            "Settings owned by the daemon. Changes are written to its runtime "
+            "configuration and take effect when the daemon restarts."
+        )
+        self._daemon_cfg_note.setWordWrap(True)
+        self._daemon_cfg_note.setProperty("class", "CardMeta")
+        v.addWidget(self._daemon_cfg_note)
+
+        self._daemon_restart_banner = QLabel("")
+        self._daemon_restart_banner.setObjectName("Settings_Label_daemonRestartBanner")
+        self._daemon_restart_banner.setWordWrap(True)
+        self._daemon_restart_banner.setVisible(False)
+        self._daemon_restart_banner.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        v.addWidget(self._daemon_restart_banner)
+
+        self._poll_interval_spin = QSpinBox()
+        self._poll_interval_spin.setObjectName("Settings_Spin_pollInterval")
+        self._poll_interval_spin.setRange(250, 10000)
+        self._poll_interval_spin.setSingleStep(250)
+        self._poll_interval_spin.setSuffix(" ms")
+        self._poll_interval_spin.editingFinished.connect(
+            lambda: self._write_daemon_key(
+                "polling.poll_interval_ms",
+                lambda c: c.set_poll_interval(self._poll_interval_spin.value()),
+            )
+        )
+
+        self._serial_port_edit = QLineEdit()
+        self._serial_port_edit.setObjectName("Settings_Edit_serialPort")
+        self._serial_port_edit.setPlaceholderText("auto-detect")
+        self._serial_port_edit.setMaximumWidth(220)
+        self._serial_port_edit.editingFinished.connect(self._write_serial_port)
+
+        self._serial_timeout_spin = QSpinBox()
+        self._serial_timeout_spin.setObjectName("Settings_Spin_serialTimeout")
+        self._serial_timeout_spin.setRange(50, 5000)
+        self._serial_timeout_spin.setSingleStep(50)
+        self._serial_timeout_spin.setSuffix(" ms")
+        self._serial_timeout_spin.editingFinished.connect(
+            lambda: self._write_daemon_key(
+                "serial.timeout_ms",
+                lambda c: c.set_serial_timeout(self._serial_timeout_spin.value()),
+            )
+        )
+
+        self._port_probe_toggle = ToggleSwitch()
+        self._port_probe_toggle.setObjectName("Settings_Check_allowPortProbe")
+        self._port_probe_toggle.toggled.connect(
+            lambda on: self._write_daemon_key(
+                "detection.allow_port_probe", lambda c: c.set_allow_port_probe(on)
+            )
+        )
+
+        self._nvidia_toggle = ToggleSwitch()
+        self._nvidia_toggle.setObjectName("Settings_Check_nvidiaTelemetry")
+        self._nvidia_toggle.toggled.connect(
+            lambda on: self._write_daemon_key(
+                "detection.enable_nvidia_telemetry", lambda c: c.set_nvidia_telemetry(on)
+            )
+        )
+
+        controls = {
+            "polling.poll_interval_ms": self._poll_interval_spin,
+            "serial.port": self._serial_port_edit,
+            "serial.timeout_ms": self._serial_timeout_spin,
+            "detection.allow_port_probe": self._port_probe_toggle,
+            "detection.enable_nvidia_telemetry": self._nvidia_toggle,
+        }
+        # Per-row source/restart annotation, keyed by config key.
+        self._daemon_row_notes: dict[str, QLabel] = {}
+        for key, title, subtitle in self._DAEMON_ROWS:
+            v.addLayout(self._setting_row(title, subtitle, controls[key]))
+            note = QLabel("")
+            note.setObjectName(f"Settings_Label_daemonNote_{key.replace('.', '_')}")
+            note.setWordWrap(True)
+            note.setProperty("class", "CardMeta")
+            note.setVisible(False)
+            v.addWidget(note)
+            self._daemon_row_notes[key] = note
+
+        # Read-only by design (DEC-243): a bad socket path locks the GUI out of
+        # the daemon permanently, and moving the state dir orphans runtime.toml
+        # and the daemon-owned profile store. Shown so they stay diagnosable.
+        self._daemon_paths_label = QLabel("")
+        self._daemon_paths_label.setObjectName("Settings_Label_daemonPaths")
+        self._daemon_paths_label.setWordWrap(True)
+        self._daemon_paths_label.setProperty("class", "CardMeta")
+        self._daemon_paths_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        v.addWidget(self._daemon_paths_label)
+
+        self._daemon_cfg_result = QLabel("")
+        self._daemon_cfg_result.setObjectName("Settings_Label_daemonCfgResult")
+        self._daemon_cfg_result.setWordWrap(True)
+        self._daemon_cfg_result.setVisible(False)
+        v.addWidget(self._daemon_cfg_result)
+        return card
+
+    def _daemon_config_controls(self) -> list[QWidget]:
+        return [
+            self._poll_interval_spin,
+            self._serial_port_edit,
+            self._serial_timeout_spin,
+            self._port_probe_toggle,
+            self._nvidia_toggle,
+        ]
+
+    def _refresh_daemon_config(self) -> None:
+        """Fetch GET /config and render it. 404-tolerant (pre-2.16.0 daemon)."""
+        if self._client is None or self._daemon_config_unsupported:
+            self._set_daemon_config_available(False)
+            return
+        try:
+            cfg = self._client.get_daemon_config()
+        except DaemonError as e:
+            if getattr(e, "status", None) == 404:
+                # Older daemon: the card cannot be truthful, so it stands down
+                # rather than showing values it would have to invent.
+                self._daemon_config_unsupported = True
+                self._daemon_cfg_note.setText(
+                    "This daemon is too old to report its configuration "
+                    "(requires control-ofc-daemon 2.16.0 or newer)."
+                )
+            else:
+                self._set_daemon_cfg_result(
+                    f"Could not read daemon configuration: {e.message}", "CriticalChip"
+                )
+            self._set_daemon_config_available(False)
+            return
+        except (ConnectionError, OSError):
+            self._daemon_cfg_note.setText("Daemon unavailable — configuration not loaded.")
+            self._set_daemon_config_available(False)
+            return
+
+        self._daemon_config = cfg
+        self._set_daemon_config_available(True)
+        self._render_daemon_config(cfg)
+
+    def _set_daemon_config_available(self, available: bool) -> None:
+        for widget in self._daemon_config_controls():
+            widget.setEnabled(available)
+
+    def _render_daemon_config(self, cfg) -> None:
+        self._populating_daemon_cfg = True
+        try:
+            poll = cfg.get("polling.poll_interval_ms")
+            if poll is not None and isinstance(poll.value, int):
+                self._poll_interval_spin.setValue(poll.value)
+            port = cfg.get("serial.port")
+            if port is not None:
+                self._serial_port_edit.setText("" if port.value is None else str(port.value))
+            timeout = cfg.get("serial.timeout_ms")
+            if timeout is not None and isinstance(timeout.value, int):
+                self._serial_timeout_spin.setValue(timeout.value)
+            probe = cfg.get("detection.allow_port_probe")
+            if probe is not None:
+                self._port_probe_toggle.setChecked(bool(probe.value))
+            nvidia = cfg.get("detection.enable_nvidia_telemetry")
+            if nvidia is not None:
+                self._nvidia_toggle.setChecked(bool(nvidia.value))
+
+            # The startup-delay spinner on the Operational card was a local
+            # guess; seed it from the daemon so the two cannot disagree.
+            delay = cfg.get("startup.delay_secs")
+            if delay is not None and isinstance(delay.value, int):
+                self._startup_delay_spin.setValue(delay.value)
+        finally:
+            self._populating_daemon_cfg = False
+
+        for key, _title, _sub in self._DAEMON_ROWS:
+            self._render_daemon_row_note(cfg.get(key), self._daemon_row_notes[key])
+
+        if cfg.restart_pending:
+            pending = [k.key for k in cfg.keys if k.restart_pending]
+            self._daemon_restart_banner.setText(
+                f"{len(pending)} change(s) saved but not yet in effect. "
+                "Restart the daemon to apply:  sudo systemctl restart control-ofc-daemon"
+            )
+            set_chip_class(self._daemon_restart_banner, "CautionChip", skip_if_unchanged=True)
+        self._daemon_restart_banner.setVisible(cfg.restart_pending)
+
+        self._daemon_paths_label.setText(
+            f"Admin config (hand-edit only): {cfg.admin_config_path}\n"
+            f"Daemon runtime config: {cfg.runtime_config_path}\n"
+            f"Socket: {self._daemon_value(cfg, 'ipc.socket_path')} · "
+            f"State directory: {self._daemon_value(cfg, 'state.state_dir')}"
+        )
+
+    @staticmethod
+    def _daemon_value(cfg, key: str) -> str:
+        entry = cfg.get(key)
+        return "—" if entry is None else str(entry.value)
+
+    def _render_daemon_row_note(self, entry, label: QLabel) -> None:
+        """Annotate a row with where its value came from and what it still needs."""
+        if entry is None:
+            label.setVisible(False)
+            return
+        parts: list[str] = []
+        if entry.source == "runtime":
+            parts.append("set here (overrides daemon.toml)")
+        elif entry.source == "admin":
+            parts.append("set in daemon.toml")
+        if entry.restart_pending:
+            parts.append(f"restart required — daemon is running {entry.effective_running_value}")
+        if entry.requires_privilege:
+            # Never let the toggle alone read as "the feature is on".
+            parts.append(entry.requires_privilege)
+        if entry.key == "detection.allow_port_probe" and self._port_probe_reason:
+            parts.append(self._port_probe_reason)
+        label.setText(" · ".join(parts))
+        label.setVisible(bool(parts))
+
+    def _refresh_port_probe_availability(self) -> None:
+        """Ask the daemon whether the probe can actually run right now.
+
+        The config flag is only half the requirement — the other half is a root
+        systemd drop-in this GUI cannot install. The daemon already computes the
+        real answer (`port_probe_available` + reason), so report that rather than
+        implying the toggle is sufficient.
+        """
+        if self._client is None:
+            return
+        try:
+            readiness = self._client.hardware_readiness()
+        except (DaemonError, ConnectionError, OSError):
+            return
+        superio = getattr(readiness, "superio", None)
+        if superio is None or superio.port_probe_available:
+            self._port_probe_reason = ""
+        else:
+            self._port_probe_reason = superio.port_probe_reason or ""
+
+    def _write_serial_port(self) -> None:
+        text = self._serial_port_edit.text().strip()
+        self._write_daemon_key("serial.port", lambda c: c.set_serial_port(text or None))
+
+    def _write_daemon_key(self, key: str, call) -> None:
+        """POST one daemon config key, then re-read so the card shows daemon truth."""
+        if self._populating_daemon_cfg or self._client is None:
+            return
+        if self._daemon_config_unsupported:
+            return
+        try:
+            result = call(self._client)
+        except DaemonError as e:
+            self._set_daemon_cfg_result(f"Could not save {key}: {e.message}", "CriticalChip")
+            self._refresh_daemon_config()  # revert the control to daemon truth
+            return
+        except (ConnectionError, OSError):
+            self._set_daemon_cfg_result("Daemon unavailable — not saved.", "CautionChip")
+            self._refresh_daemon_config()
+            return
+
+        msg = f"Saved {key}."
+        if result.note:
+            msg = f"{msg} {result.note}."
+        if result.requires_privilege:
+            msg = f"{msg} Note: {result.requires_privilege}."
+        self._set_daemon_cfg_result(msg, "SuccessChip")
+        # Re-read rather than trusting the local control: this is what makes the
+        # restart-pending annotation the daemon's verdict instead of our memory.
+        self._refresh_daemon_config()
+
+    def _set_daemon_cfg_result(self, text: str, css: str) -> None:
+        self._daemon_cfg_result.setText(text)
+        self._daemon_cfg_result.setVisible(bool(text))
+        if css:
+            set_chip_class(self._daemon_cfg_result, css, skip_if_unchanged=True)
+
     def _build_prompts_card(self) -> QWidget:
         card = Card()
         v = QVBoxLayout(card)
@@ -1036,6 +1344,11 @@ class SettingsPage(QWidget):
         # is shown — a light, cache-backed GET kept off the startup path.
         if not self._prefs_loaded and self._client is not None:
             self._refresh_preferred_sensors()
+        # Daemon config is likewise fetched on first arrival, not at startup.
+        if not self._daemon_cfg_loaded and self._client is not None:
+            self._daemon_cfg_loaded = True
+            self._refresh_port_probe_availability()
+            self._refresh_daemon_config()
         # The mirrored surfaces reflect state owned elsewhere (fans arrive by
         # poll; sensors are hidden from Overview; colours are picked on the
         # Dashboard), so re-read on arrival rather than trusting construction.

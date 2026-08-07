@@ -10,6 +10,8 @@ from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import (
     ActiveProfileInfo,
     Capabilities,
+    ConfigWriteResult,
+    DaemonConfig,
     DaemonStatus,
     FanReading,
     GpuFanResetResult,
@@ -33,6 +35,8 @@ from control_ofc.api.models import (
     SuperIoReport,
     parse_active_profile,
     parse_capabilities,
+    parse_config_write,
+    parse_daemon_config,
     parse_fans,
     parse_gpu_fan_reset,
     parse_gpu_verify_result,
@@ -290,6 +294,46 @@ class DaemonClient:
         return parse_profile_search_dirs(
             self._post("/config/profile-search-dirs", json={"add": add})
         )
+
+    def get_daemon_config(self) -> DaemonConfig:
+        """GET /config — the daemon's effective configuration (DEC-243).
+
+        Raises ``DaemonError`` with ``.status == 404`` on a pre-2.16.0 daemon;
+        callers degrade to the write-only behaviour rather than showing an error
+        (same precedent as the DEC-200 preferred-sensor endpoints).
+        """
+        return parse_daemon_config(self._get("/config"))
+
+    def set_poll_interval(self, poll_interval_ms: int) -> ConfigWriteResult:
+        """POST /config/poll-interval — 250..10000 ms. Takes effect on restart."""
+        return parse_config_write(
+            self._post("/config/poll-interval", json={"poll_interval_ms": poll_interval_ms})
+        )
+
+    def set_serial_port(self, port: str | None) -> ConfigWriteResult:
+        """POST /config/serial-port — a path under /dev/, or ``None`` to
+        auto-detect. Takes effect on restart."""
+        return parse_config_write(self._post("/config/serial-port", json={"port": port}))
+
+    def set_serial_timeout(self, timeout_ms: int) -> ConfigWriteResult:
+        """POST /config/serial-timeout — 50..5000 ms. Takes effect on restart."""
+        return parse_config_write(
+            self._post("/config/serial-timeout", json={"timeout_ms": timeout_ms})
+        )
+
+    def set_allow_port_probe(self, enabled: bool) -> ConfigWriteResult:
+        """POST /config/allow-port-probe — the DEC-203 opt-in.
+
+        Persisting ``True`` is only half of enabling the probe; it also needs the
+        ``CAP_SYS_RAWIO`` systemd drop-in, which no API can install. The result's
+        ``requires_privilege`` carries that caveat — surface it.
+        """
+        return parse_config_write(self._post("/config/allow-port-probe", json={"enabled": enabled}))
+
+    def set_nvidia_telemetry(self, enabled: bool) -> ConfigWriteResult:
+        """POST /config/nvidia-telemetry — the DEC-204 opt-in. Same drop-in
+        caveat as :meth:`set_allow_port_probe` (``/dev/nvidia*``)."""
+        return parse_config_write(self._post("/config/nvidia-telemetry", json={"enabled": enabled}))
 
     def hardware_diagnostics(self) -> HardwareDiagnosticsResult:
         """GET /diagnostics/hardware — hardware readiness and driver diagnostics."""

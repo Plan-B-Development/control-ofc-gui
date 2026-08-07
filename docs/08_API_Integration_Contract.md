@@ -1105,6 +1105,54 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
 
 ## Config management
 
+- **`GET /config` — the read side (daemon ≥ 2.16.0, DEC-243).** Returns the
+  daemon's effective configuration: `admin_config_path`, `runtime_config_path`, a
+  top-level `restart_pending` rollup, and `keys[]`. Each key carries:
+  - `key` — dotted path (`startup.delay_secs`)
+  - `value` — the **on-disk effective** value: `daemon.toml` with the
+    `runtime.toml` overlay applied, i.e. what a restart would produce
+  - `running_value` — what this daemon process actually started with. **Omitted
+    when identical to `value`**; clients treat absent as "same".
+  - `source` — `runtime` | `admin` | `default`. `runtime` means a `POST /config/*`
+    write is shadowing the admin file — the one case where an operator's
+    `daemon.toml` edit appears to do nothing.
+  - `mutable` — a `POST /config/*` route exists for it
+  - `requires_restart`, `restart_pending` — `restart_pending` is **the daemon's
+    verdict** (`value != running_value`). Clients must not re-derive it from what
+    they posted.
+  - `requires_privilege` — present only when a config write alone cannot enable
+    the feature (the two `[detection]` opt-ins, which also need a root systemd
+    drop-in). A client must not present such a key as enabled on the strength of
+    the flag.
+
+  Before this endpoint the writable knobs were **write-only**: the GUI kept a
+  local mirror and pushed it on save, so a fresh GUI against a daemon set to 10 s
+  displayed 0 s. Older daemons answer `404`; the GUI stands the card down for the
+  session rather than showing invented values (the DEC-200 precedent).
+
+  `ipc.socket_path` and `state.state_dir` are reported with `mutable: false` **by
+  design** — a bad socket path permanently locks out every client, and moving the
+  state dir orphans `runtime.toml` and the profile store.
+
+- **Extended writes (daemon ≥ 2.16.0, DEC-243).** All persist to `runtime.toml`,
+  all are start-only, all return `503 persistence_failed` on a write error, and
+  each response carries `{"updated", "key", "value", "note"}`:
+  - `POST /config/poll-interval` — `{"poll_interval_ms": 250..10000}`. The floor
+    is deliberate: the control loop, serial I/O and sysfs writes all run on this
+    cadence, so a tiny value is a self-inflicted DoS on the hardware the daemon
+    exists to protect.
+  - `POST /config/serial-port` — `{"port": string | null}`. **Confined to
+    `/dev/`, no `..`** — the daemon opens this path as root, so an unconfined
+    value would let an unprivileged caller aim it anywhere. `null` clears the
+    override and returns to auto-detection.
+  - `POST /config/serial-timeout` — `{"timeout_ms": 50..5000}`.
+  - `POST /config/allow-port-probe` / `POST /config/nvidia-telemetry` —
+    `{"enabled": bool}`. On success with `enabled: true` the response adds
+    `requires_privilege`, because the systemd drop-in is the other half of the
+    requirement and no API can install it.
+
+  Out-of-range, wrong-typed and missing keys are all `400 validation_error`.
+
 - `POST /config/profile-search-dirs` — add directories to the daemon's profile search path (persisted to `runtime.toml` per ADR-002). Each added dir must be an absolute path with no `..`. **Peer-uid confined (daemon ≥ 2.9.0, DEC-205):** a non-root client may only add directories that exist and canonicalize to a path within its **own home directory** (resolved from the socket peer's `SO_PEERCRED` uid); root / CLI callers are exempt. An out-of-home dir, a nonexistent/unreadable dir, or a caller whose uid/home cannot be resolved is `400 validation_error`; a persistence failure is `503 persistence_failed`. Older daemons (< 2.9.0) accept any absolute dir. The GUI already surfaces the daemon's message to the user (Settings ▸ profiles-directory picker shows it prefixed with `Failed to update daemon:`), so no client change was needed.
 - `POST /config/startup-delay` — set the daemon startup delay in seconds (persisted to `runtime.toml`, takes effect on next restart). The GUI pushes this best-effort on **both** Settings → Save and Settings → Import; a `DaemonError` is logged and surfaced in the save status, never fatal (Settings page wires the daemon client as of the 2026-06 audit, F2/F11).
 - `POST /config/preferred-cpu-sensor` / `POST /config/preferred-mb-sensor` — persist the user's preferred CPU / motherboard temperature sensor by stable id (body `{"sensor_id": string | null}`; `null` clears the preference). The id is validated against the live sensor set — an unknown id (or a missing key) is `400 validation_error`; a persistence failure is `503 persistence_failed`. Advisory only (thermal safety still keys off `kind`) — reflected in `/inventory/hwmon` `default_cpu` (`source: "user"`) + `preferences` and the readiness `selected_cpu_sensor_missing` item. Daemon ≥ 2.6.0 (DEC-200); older daemons answer `404` and the GUI hides the feature for the session. The GUI offers these from the Overview page's sensor-table context menu and the Settings page.

@@ -137,13 +137,39 @@ Nice-to-have later:
 - export/import profile packs
 - export/import aliases/groups separately
 
-## What should NOT be editable in V1 Settings
-Unless or until the daemon cleanly supports them at runtime, do not surface as editable GUI settings:
-- serial port path and timeout
-- daemon IPC socket path
-- daemon startup-only polling/publish intervals
-- hardware binding details
-- experimental daemon internals
+## What should NOT be editable in Settings
+
+**Amended by DEC-243.** The original rule read "unless or until the daemon
+cleanly supports them at runtime, do not surface as editable: serial port path
+and timeout, daemon IPC socket path, daemon startup-only polling/publish
+intervals, hardware binding details, experimental daemon internals."
+
+The precondition is now met for three of those. ADR-002 (daemon) established
+`runtime.toml` — daemon-owned, overlaying the admin-owned `daemon.toml`, written
+only through `POST /config/*` — so the daemon *does* cleanly support mutating
+them, and it does so without a privileged helper. DEC-243 therefore surfaces
+**serial port**, **serial timeout** and **poll interval** as editable on the
+Daemon Configuration card, each labelled with its source and a restart-required
+state (`GET /config` reports both).
+
+Still **not** editable, and not merely for want of daemon support:
+
+- **daemon IPC socket path** — a bad value permanently locks every client,
+  including the GUI writing it, out of the daemon. Displayed read-only.
+- **daemon state directory** — moving it orphans `runtime.toml` and the
+  daemon-owned profile store. Displayed read-only.
+- **hardware binding details** — the daemon is the authority on what hardware
+  exists; the GUI never pins it.
+- **experimental daemon internals** — no stable contract to edit against.
+
+The two `[detection]` opt-ins (`allow_port_probe`, `enable_nvidia_telemetry`)
+are editable **but explicitly incomplete**: each also needs a root-installed
+systemd drop-in that no API can install. The card must show the outstanding
+requirement and must never present the feature as enabled on the strength of the
+config flag alone.
+
+Safety floors remain non-editable and daemon-owned (see § C above) — DEC-243
+does not touch them.
 
 ## Settings ownership model
 
