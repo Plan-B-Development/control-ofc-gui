@@ -154,6 +154,7 @@ class MainWindow(QWidget):
             state=self._state,
             settings_service=self._settings_service,
             client=self._client,
+            series_selection=self._series_selection,
         )
         # DEC-209: Overview is its own page (merged Diagnostics Overview/Fans/
         # Sensors). DEC-216 retired the legacy Diagnostics page entirely.

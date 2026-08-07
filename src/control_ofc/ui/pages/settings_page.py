@@ -13,16 +13,21 @@ from PySide6.QtCore import Qt
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
+    from control_ofc.services.series_selection import SeriesSelectionModel
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -45,11 +50,58 @@ from control_ofc.services.profile_import_service import import_profiles
 from control_ofc.services.profile_service import ImportCollection, collect_local_profiles_for_import
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card, SectionHeader
+from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.components.toggle_switch import ToggleSwitch
 from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.theme import ThemeTokens
 
 log = logging.getLogger(__name__)
+
+
+# DEC-237: every ``AppSettings`` field this page exposes, mapped to the
+# objectName of the widget that edits or resets it.
+#
+# ``tests/test_settings_coverage_dec237.py`` asserts two things against this map:
+# that it, plus the Theme page's fields and an explicitly-justified implicit
+# list, accounts for *every* field on ``AppSettings``; and that each objectName
+# below resolves to a real widget on a constructed page. Together those make an
+# orphaned setting a test failure rather than a silent gap — 14 of 29 fields had
+# drifted out of reach before this map existed, because nothing checked.
+#
+# Add a field to ``AppSettings`` → the suite fails until it is classified here,
+# on the Theme page, or in the implicit list with a reason.
+SETTINGS_FIELD_WIDGETS: dict[str, str] = {
+    # General & Startup
+    "default_startup_page": "Settings_Combo_startupPage",
+    "restore_last_page": "Settings_Check_restorePage",
+    "demo_on_disconnect": "Settings_Check_demoDisconnect",
+    "show_gpu_zero_rpm_warning": "Settings_Check_gpuZeroRpmWarn",
+    "chart_default_range_index": "Settings_Combo_chartRange",
+    # Operational Behavior
+    "wizard_spindown_seconds": "Settings_Spin_wizardSpindown",
+    "daemon_startup_delay_secs": "Settings_Spin_startupDelay",
+    "hide_igpu_sensors": "Settings_Check_hideIgpu",
+    "hide_unused_fan_headers": "Settings_Check_hideUnusedFans",
+    # Path Management
+    "profiles_dir_override": "Settings_Label_profilesDir",
+    "themes_dir_override": "Settings_Label_themesDir",
+    "export_default_dir": "Settings_Label_exportDir",
+    # Fan Names & Aliases (mirrors the DEC-227 Dashboard rename)
+    "fan_aliases": "Settings_Table_fanAliases",
+    # Sensors & Chart Series (mirrors the Overview context menu + Sensors rail)
+    "diagnostics_hidden_sensor_ids": "Settings_Btn_unhideSensors",
+    "sensor_class_overrides": "Settings_Btn_resetSensorClasses",
+    "series_colors": "Settings_Btn_resetSeriesColors",
+    "hidden_chart_series": "Settings_Btn_showAllSeries",
+    # Prompts & Dismissals
+    "show_aio_pump_info": "Settings_Check_aioPumpInfo",
+    "acknowledged_kernel_warnings": "Settings_Btn_clearKernelWarnings",
+    "daemon_import_prompted": "Settings_Btn_reofferImport",
+    "fan_aliases_seeded": "Settings_Btn_reseedAliases",
+    "chart_series_seeded": "Settings_Btn_reseedSeries",
+    # Card Layout
+    "controls_card_sizes": "Settings_Btn_resetCardSizes",
+}
 
 
 def _safe_import_name(name: str, dest_dir: Path) -> str | None:
@@ -93,12 +145,20 @@ class SettingsPage(QWidget):
         state: AppState | None = None,
         settings_service: AppSettingsService | None = None,
         client: DaemonClient | None = None,
+        series_selection: SeriesSelectionModel | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._state = state
         self._settings_svc = settings_service or AppSettingsService()
         self._client = client
+        # DEC-237: the live chart-series model. "Show all series" has to go
+        # through it rather than writing hidden_chart_series directly — the model
+        # is what the dashboard renders from, and its selection_changed signal is
+        # what MainWindow persists on.
+        self._series_selection = series_selection
+        # Guards the alias table's itemChanged handler while it is repopulated.
+        self._populating_aliases = False
         # Phase 4 (DEC-200): preferred-sensor selector state. ``_populating_prefs``
         # suppresses the change→POST while the combos are filled programmatically;
         # ``_prefs_loaded`` gates the one-time lazy fetch on first show.
@@ -138,11 +198,15 @@ class SettingsPage(QWidget):
         col1.setSpacing(16)
         col1.addWidget(self._build_general_startup_card())
         col1.addWidget(self._build_operational_card())
+        col1.addWidget(self._build_fan_aliases_card())
+        col1.addWidget(self._build_card_layout_card())
         col1.addStretch()
         col2 = QVBoxLayout()
         col2.setSpacing(16)
         col2.addWidget(self._build_path_management_card())
         col2.addWidget(self._build_preferred_sensors_group())
+        col2.addWidget(self._build_sensors_series_card())
+        col2.addWidget(self._build_prompts_card())
         col2.addWidget(self._build_sync_backup_card())
         col2.addStretch()
         cols.addLayout(col1, 1)
@@ -331,7 +395,420 @@ class SettingsPage(QWidget):
         v.addLayout(
             self._dir_picker_row("Default export:", self._export_dir_label, self._browse_export_dir)
         )
+
+        # Disclosure: ``services/polling.py`` registers the profiles directory
+        # with the daemon on first poll and again on every reconnect, so the
+        # daemon can discover GUI-authored profiles. The call is additive and
+        # deduplicated daemon-side, but it is a write to daemon config that the
+        # operator otherwise never sees anywhere in the UI.
+        self._search_dir_note = QLabel()
+        self._search_dir_note.setObjectName("Settings_Label_searchDirNote")
+        self._search_dir_note.setWordWrap(True)
+        self._search_dir_note.setProperty("class", "CardMeta")
+        v.addWidget(self._search_dir_note)
         return card
+
+    def _refresh_search_dir_note(self) -> None:
+        """Update the profile-search-dir disclosure to match the current path."""
+        path = self._profiles_dir_label.text() or str(profiles_dir())
+        self._search_dir_note.setText(
+            f"Automatically registered with the daemon as a profile search "
+            f"directory: {path}. The GUI re-registers this on connect and on "
+            f"every reconnect."
+        )
+
+    # ─── DEC-237: mirrored + reset surfaces ──────────────────────────
+    # These cards make Settings a complete map of what can be configured. The
+    # in-context affordances they mirror (Dashboard rename, Overview context
+    # menu, Sensors-rail colour picker) all stay exactly where they were — this
+    # is an additional surface, not a relocation.
+
+    def _in_demo_mode(self) -> bool:
+        """Demo replaces the per-hardware maps with synthetic ones (DEC-227).
+
+        Demo fan ids collide exactly with real hardware ids, so MainWindow
+        refuses to persist alias edits made during a demo session. Editing here
+        would therefore look like it worked and silently not stick — so the
+        editor is disabled instead of lying.
+        """
+        from control_ofc.api.models import OperationMode
+
+        return self._state is not None and self._state.mode == OperationMode.DEMO
+
+    def _build_fan_aliases_card(self) -> QWidget:
+        card = Card()
+        v = QVBoxLayout(card)
+        v.setSpacing(8)
+        header = SectionHeader("Fan Names", object_name="Settings_SectionHeader_fanAliases")
+        v.addWidget(header)
+
+        note = QLabel(
+            "Custom names for your fans. Fans can also be renamed in place from "
+            "the Dashboard and the Overview fan table — this is the same list."
+        )
+        note.setWordWrap(True)
+        note.setProperty("class", "CardMeta")
+        v.addWidget(note)
+
+        self._fan_alias_table = QTableWidget(0, 2)
+        self._fan_alias_table.setObjectName("Settings_Table_fanAliases")
+        self._fan_alias_table.setHorizontalHeaderLabels(["Fan", "Name"])
+        apply_dense_table(self._fan_alias_table)
+        self._fan_alias_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self._fan_alias_table.horizontalHeader().setStretchLastSection(True)
+        self._fan_alias_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._fan_alias_table.setMinimumHeight(120)
+        self._fan_alias_table.itemChanged.connect(self._on_fan_alias_edited)
+        v.addWidget(self._fan_alias_table)
+
+        self._fan_alias_note = QLabel("")
+        self._fan_alias_note.setObjectName("Settings_Label_fanAliasNote")
+        self._fan_alias_note.setWordWrap(True)
+        self._fan_alias_note.setProperty("class", "CardMeta")
+        v.addWidget(self._fan_alias_note)
+
+        row = QHBoxLayout()
+        row.addStretch()
+        self._reset_aliases_btn = make_button(
+            "Clear all names", "ghost", object_name="Settings_Btn_resetAliases"
+        )
+        self._reset_aliases_btn.setToolTip(
+            "Remove every custom fan name and fall back to detection"
+        )
+        self._reset_aliases_btn.clicked.connect(self._reset_fan_aliases)
+        row.addWidget(self._reset_aliases_btn)
+        v.addLayout(row)
+        return card
+
+    def _refresh_fan_aliases(self) -> None:
+        """Repopulate the alias table from live fans plus any orphaned aliases."""
+        table = self._fan_alias_table
+        aliases = dict(self._state.fan_aliases) if self._state else {}
+        fan_ids = [f.id for f in (self._state.fans if self._state else [])]
+        # Aliases whose fan is not currently present still deserve a row —
+        # otherwise a stale name for unplugged hardware can never be cleared.
+        for fan_id in aliases:
+            if fan_id not in fan_ids:
+                fan_ids.append(fan_id)
+
+        demo = self._in_demo_mode()
+        self._populating_aliases = True
+        try:
+            table.setRowCount(len(fan_ids))
+            for row, fan_id in enumerate(fan_ids):
+                id_item = QTableWidgetItem(fan_id)
+                id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                table.setItem(row, 0, id_item)
+
+                name_item = QTableWidgetItem(aliases.get(fan_id, ""))
+                name_item.setData(Qt.ItemDataRole.UserRole, fan_id)
+                if demo:
+                    name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                fallback = self._state.fan_fallback_name(fan_id) if self._state else fan_id
+                name_item.setToolTip(f"Leave blank to use the detected name: {fallback}")
+                table.setItem(row, 1, name_item)
+        finally:
+            self._populating_aliases = False
+
+        self._reset_aliases_btn.setEnabled(bool(aliases) and not demo)
+        if demo:
+            self._fan_alias_note.setText(
+                "Demo mode — names shown are synthetic and edits are not saved."
+            )
+        elif not fan_ids:
+            self._fan_alias_note.setText("No fans detected yet.")
+        else:
+            self._fan_alias_note.setText(
+                f"{len(aliases)} of {len(fan_ids)} fans have custom names."
+            )
+
+    def _on_fan_alias_edited(self, item: QTableWidgetItem) -> None:
+        if self._populating_aliases or item.column() != 1 or self._state is None:
+            return
+        fan_id = item.data(Qt.ItemDataRole.UserRole)
+        if not fan_id:
+            return
+        # AppState owns the rule (empty/fallback clears) and emits the signal
+        # MainWindow persists on — including the demo-mode refusal. Never write
+        # settings.fan_aliases from here.
+        self._state.apply_fan_rename(fan_id, item.text())
+        self._refresh_fan_aliases()
+
+    def _reset_fan_aliases(self) -> None:
+        if self._state is None or self._in_demo_mode():
+            return
+        for fan_id in list(self._state.fan_aliases):
+            self._state.set_fan_alias(fan_id, "")
+        self._refresh_fan_aliases()
+        self._set_status("Cleared all custom fan names")
+
+    def _build_sensors_series_card(self) -> QWidget:
+        card = Card()
+        v = QVBoxLayout(card)
+        v.setSpacing(8)
+        v.addWidget(
+            SectionHeader("Sensors & Chart Series", object_name="Settings_SectionHeader_sensors")
+        )
+        note = QLabel(
+            "Hidden sensors, coolant overrides and chart colours are set where "
+            "you see them — on the Overview sensor table and the Dashboard "
+            "sensor list. Reset them from here."
+        )
+        note.setWordWrap(True)
+        note.setProperty("class", "CardMeta")
+        v.addWidget(note)
+
+        self._unhide_sensors_btn = make_button(
+            "Unhide all sensors", "ghost", object_name="Settings_Btn_unhideSensors"
+        )
+        self._unhide_sensors_btn.clicked.connect(self._unhide_all_sensors)
+        v.addLayout(
+            self._setting_row(
+                "Hidden sensors",
+                "Sensors hidden from the Overview table",
+                self._unhide_sensors_btn,
+            )
+        )
+
+        self._reset_classes_btn = make_button(
+            "Clear overrides", "ghost", object_name="Settings_Btn_resetSensorClasses"
+        )
+        self._reset_classes_btn.clicked.connect(self._reset_sensor_classes)
+        v.addLayout(
+            self._setting_row(
+                "Sensor classification overrides",
+                "Sensors manually marked as coolant",
+                self._reset_classes_btn,
+            )
+        )
+
+        self._reset_colors_btn = make_button(
+            "Reset colours", "ghost", object_name="Settings_Btn_resetSeriesColors"
+        )
+        self._reset_colors_btn.clicked.connect(self._reset_series_colors)
+        v.addLayout(
+            self._setting_row(
+                "Custom chart colours",
+                "Series colours picked from the sensor list",
+                self._reset_colors_btn,
+            )
+        )
+
+        self._show_series_btn = make_button(
+            "Show all series", "ghost", object_name="Settings_Btn_showAllSeries"
+        )
+        self._show_series_btn.clicked.connect(self._show_all_series)
+        v.addLayout(
+            self._setting_row(
+                "Hidden chart series",
+                "Series hidden from the dashboard graph",
+                self._show_series_btn,
+            )
+        )
+        return card
+
+    def _unhide_all_sensors(self) -> None:
+        self._settings_svc.update(diagnostics_hidden_sensor_ids=[])
+        self._refresh_reset_buttons()
+        self._set_status("All sensors unhidden")
+
+    def _reset_sensor_classes(self) -> None:
+        if self._state is not None:
+            # Route through AppState so the Overview table re-renders via
+            # sensor_class_override_changed and MainWindow persists the result.
+            for sensor_id in list(self._state.sensor_class_overrides):
+                self._state.set_sensor_class_override(sensor_id, "")
+        else:
+            self._settings_svc.update(sensor_class_overrides={})
+        self._refresh_reset_buttons()
+        self._set_status("Sensor classification overrides cleared")
+
+    def _reset_series_colors(self) -> None:
+        self._settings_svc.update(series_colors={})
+        self._refresh_reset_buttons()
+        self._set_status("Chart series colours reset to defaults")
+
+    def _show_all_series(self) -> None:
+        if self._series_selection is not None:
+            # select_all() emits selection_changed, which is what persists the
+            # (now empty) hidden set — writing the setting directly would leave
+            # the live model still hiding them until restart.
+            self._series_selection.select_all()
+        else:
+            self._settings_svc.update(hidden_chart_series=[])
+        self._refresh_reset_buttons()
+        self._set_status("All chart series shown")
+
+    def _build_prompts_card(self) -> QWidget:
+        card = Card()
+        v = QVBoxLayout(card)
+        v.setSpacing(8)
+        v.addWidget(
+            SectionHeader("Prompts & Dismissals", object_name="Settings_SectionHeader_prompts")
+        )
+        note = QLabel("One-time prompts and advisories you have dismissed. Re-arm them here.")
+        note.setWordWrap(True)
+        note.setProperty("class", "CardMeta")
+        v.addWidget(note)
+
+        # The sibling of show_gpu_zero_rpm_warning on the General card. This one
+        # was dismiss-only with no way back until DEC-237.
+        self._aio_pump_info_cb = ToggleSwitch()
+        self._aio_pump_info_cb.setObjectName("Settings_Check_aioPumpInfo")
+        self._aio_pump_info_cb.setToolTip(
+            "Show the informational popup when an AIO pump header is added to a role"
+        )
+        v.addLayout(
+            self._setting_row(
+                "Show AIO pump info",
+                "Explains pump headers when one is added to a role",
+                self._aio_pump_info_cb,
+            )
+        )
+
+        self._clear_kernel_warnings_btn = make_button(
+            "Clear dismissed", "ghost", object_name="Settings_Btn_clearKernelWarnings"
+        )
+        self._clear_kernel_warnings_btn.clicked.connect(self._clear_kernel_warnings)
+        v.addLayout(
+            self._setting_row(
+                "Dismissed driver advisories",
+                "Kernel/driver warnings you have acknowledged",
+                self._clear_kernel_warnings_btn,
+            )
+        )
+
+        self._reoffer_import_btn = make_button(
+            "Offer again", "ghost", object_name="Settings_Btn_reofferImport"
+        )
+        self._reoffer_import_btn.setToolTip(
+            "Offer to migrate local profiles into the daemon store at next startup"
+        )
+        self._reoffer_import_btn.clicked.connect(self._reoffer_profile_import)
+        v.addLayout(
+            self._setting_row(
+                "Daemon profile import",
+                "The once-per-install migration offer",
+                self._reoffer_import_btn,
+            )
+        )
+
+        self._reseed_aliases_btn = make_button(
+            "Run again", "ghost", object_name="Settings_Btn_reseedAliases"
+        )
+        self._reseed_aliases_btn.setToolTip(
+            "Re-adopt fan names from your profiles on the next connection"
+        )
+        self._reseed_aliases_btn.clicked.connect(self._reseed_fan_aliases)
+        v.addLayout(
+            self._setting_row(
+                "Fan name seeding",
+                "One-time adoption of names from your profiles",
+                self._reseed_aliases_btn,
+            )
+        )
+
+        self._reseed_series_btn = make_button(
+            "Run again", "ghost", object_name="Settings_Btn_reseedSeries"
+        )
+        self._reseed_series_btn.setToolTip(
+            "Re-pick the default chart series on the next connection"
+        )
+        self._reseed_series_btn.clicked.connect(self._reseed_chart_series)
+        v.addLayout(
+            self._setting_row(
+                "Chart series defaults",
+                "One-time pick of which series start visible",
+                self._reseed_series_btn,
+            )
+        )
+        return card
+
+    def _clear_kernel_warnings(self) -> None:
+        self._settings_svc.update(acknowledged_kernel_warnings=[])
+        self._refresh_reset_buttons()
+        self._set_status("Dismissed driver advisories cleared")
+
+    def _reoffer_profile_import(self) -> None:
+        self._settings_svc.update(daemon_import_prompted=False)
+        self._refresh_reset_buttons()
+        self._set_status("The profile import will be offered again at next startup")
+
+    def _reseed_fan_aliases(self) -> None:
+        self._settings_svc.update(fan_aliases_seeded=False)
+        self._refresh_reset_buttons()
+        self._set_status("Fan name seeding will run again at next startup")
+
+    def _reseed_chart_series(self) -> None:
+        self._settings_svc.update(chart_series_seeded=False)
+        self._refresh_reset_buttons()
+        self._set_status("Chart series defaults will be re-picked at next startup")
+
+    def _build_card_layout_card(self) -> QWidget:
+        card = Card()
+        v = QVBoxLayout(card)
+        v.setSpacing(8)
+        v.addWidget(SectionHeader("Card Layout", object_name="Settings_SectionHeader_cardLayout"))
+        note = QLabel(
+            "Controls-page cards are resized with their corner grips; "
+            "double-click a grip to reset one card."
+        )
+        note.setWordWrap(True)
+        note.setProperty("class", "CardMeta")
+        v.addWidget(note)
+
+        self._reset_card_sizes_btn = make_button(
+            "Reset all sizes", "ghost", object_name="Settings_Btn_resetCardSizes"
+        )
+        self._reset_card_sizes_btn.clicked.connect(self._reset_card_sizes)
+        v.addLayout(
+            self._setting_row(
+                "Custom card sizes",
+                "Per-card size overrides on the Controls page",
+                self._reset_card_sizes_btn,
+            )
+        )
+        return card
+
+    def _reset_card_sizes(self) -> None:
+        self._settings_svc.update(controls_card_sizes={})
+        self._refresh_reset_buttons()
+        self._set_status("Controls card sizes reset")
+
+    def _refresh_reset_buttons(self) -> None:
+        """Label each reset control with its count and disable it when empty.
+
+        A reset button that is always enabled cannot tell you whether there is
+        anything to reset — the count is the state readout for these settings.
+        """
+        s = self._settings_svc.settings
+        hidden_series = (
+            len(self._series_selection.to_dict()["hidden_keys"])
+            if self._series_selection is not None
+            else len(s.hidden_chart_series)
+        )
+        for btn, count, label in (
+            (self._unhide_sensors_btn, len(s.diagnostics_hidden_sensor_ids), "Unhide all sensors"),
+            (self._reset_classes_btn, len(s.sensor_class_overrides), "Clear overrides"),
+            (self._reset_colors_btn, len(s.series_colors), "Reset colours"),
+            (self._show_series_btn, hidden_series, "Show all series"),
+            (
+                self._clear_kernel_warnings_btn,
+                len(s.acknowledged_kernel_warnings),
+                "Clear dismissed",
+            ),
+            (self._reset_card_sizes_btn, len(s.controls_card_sizes), "Reset all sizes"),
+        ):
+            btn.setEnabled(count > 0)
+            btn.setText(f"{label} ({count})" if count else label)
+
+        # The one-time latches are booleans, not counts: enabled only while the
+        # latch is set, because re-arming an unfired prompt is a no-op.
+        self._reoffer_import_btn.setEnabled(s.daemon_import_prompted)
+        self._reseed_aliases_btn.setEnabled(s.fan_aliases_seeded)
+        self._reseed_series_btn.setEnabled(s.chart_series_seeded)
 
     def _dir_picker_row(self, label_text: str, path_label: QLabel, browse_callback) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -417,6 +894,7 @@ class SettingsPage(QWidget):
             max(0, min(s.chart_default_range_index, self._chart_range_combo.count() - 1))
         )
         self._gpu_zero_rpm_warn_cb.setChecked(s.show_gpu_zero_rpm_warning)
+        self._aio_pump_info_cb.setChecked(s.show_aio_pump_info)
         self._wizard_spindown_spin.setValue(s.wizard_spindown_seconds)
         self._startup_delay_spin.setValue(s.daemon_startup_delay_secs)
         self._hide_igpu_cb.setChecked(s.hide_igpu_sensors)
@@ -429,6 +907,9 @@ class SettingsPage(QWidget):
         self._profiles_dir_label.setText(s.profiles_dir_override or str(profiles_dir()))
         self._themes_dir_label.setText(s.themes_dir_override or str(themes_dir()))
         self._export_dir_label.setText(s.export_default_dir or str(export_default_dir()))
+        self._refresh_search_dir_note()
+        self._refresh_fan_aliases()
+        self._refresh_reset_buttons()
 
     def _save_app_settings(self) -> None:
         # Determine directory overrides: empty label text means "use default"
@@ -454,6 +935,7 @@ class SettingsPage(QWidget):
             demo_on_disconnect=self._demo_disconnect_cb.isChecked(),
             chart_default_range_index=self._chart_range_combo.currentIndex(),
             show_gpu_zero_rpm_warning=self._gpu_zero_rpm_warn_cb.isChecked(),
+            show_aio_pump_info=self._aio_pump_info_cb.isChecked(),
             wizard_spindown_seconds=self._wizard_spindown_spin.value(),
             daemon_startup_delay_secs=self._startup_delay_spin.value(),
             hide_igpu_sensors=self._hide_igpu_cb.isChecked(),
@@ -554,6 +1036,11 @@ class SettingsPage(QWidget):
         # is shown — a light, cache-backed GET kept off the startup path.
         if not self._prefs_loaded and self._client is not None:
             self._refresh_preferred_sensors()
+        # The mirrored surfaces reflect state owned elsewhere (fans arrive by
+        # poll; sensors are hidden from Overview; colours are picked on the
+        # Dashboard), so re-read on arrival rather than trusting construction.
+        self._refresh_fan_aliases()
+        self._refresh_reset_buttons()
 
     def _refresh_preferred_sensors(self) -> None:
         """Fetch the classified sensor inventory and (re)populate the combos."""
@@ -708,6 +1195,9 @@ class SettingsPage(QWidget):
                 )
         elif kind == "profiles":
             self._set_status("Daemon not connected — update profile search dirs manually")
+
+        if kind == "profiles":
+            self._refresh_search_dir_note()
 
     # ── Daemon profile import (DEC-161) ──────────────────────────────────
 

@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+## [2.37.0] — 2026-08-07
+
+**Settings is a complete map of what can be configured.** Fourteen of the twenty-nine
+stored preferences had no presence on the Settings page at all — some reachable only
+through a context menu or an unlabelled table cell, one dismissible with no way to bring
+it back. This release gives every one of them a home and adds the test that stops the gap
+reopening. GUI-only; no wire, schema, or API change (`EXPECTED_API_VERSION` stays 1);
+still pairs with `control-ofc-daemon` ≥ v2.11.0. DEC-237.
+
+### Added
+- **Fan Names card** — the full list of fan names in one place, including names for
+  hardware that is no longer plugged in, which previously could never be cleared. Renaming
+  in place from the Dashboard and the Overview fan table is unchanged; this is an
+  additional surface, not a relocation. Read-only during demo mode, because demo fan ids
+  collide with real hardware ids and edits made there are deliberately not persisted.
+- **Sensors & Chart Series card** — reset hidden sensors, coolant classification
+  overrides, custom chart colours, and hidden chart series. Each control reports how many
+  items it would affect and is disabled when there is nothing to reset.
+- **Prompts & Dismissals card** — re-arm the AIO pump popup, clear dismissed driver
+  advisories, re-offer the daemon profile import, and re-run the one-time fan-name and
+  chart-series seeding.
+- **Card Layout card** — reset every Controls-page card size at once. Resetting a single
+  card by double-clicking its grip is unchanged.
+- **A settings-coverage test.** Every `AppSettings` field must be classified as a Settings
+  control, a Theme-page control, or an explicitly-justified implicit field, *and* each
+  declared control must resolve to a real widget on a constructed page. A new preference
+  now fails the suite until it is given a home. Nothing checked this before, which is why
+  the drift accumulated unnoticed.
+
+### Fixed
+- **The AIO pump popup can be turned back on.** `show_aio_pump_info` was a one-way
+  dismissal with no re-enable anywhere in the application, while its exact counterpart
+  `show_gpu_zero_rpm_warning` had a Settings toggle the whole time.
+- **Setting a preferred sensor from the Overview context menu reports what happened.**
+  A daemon rejection or an unreachable daemon looked precisely like success — the menu
+  closed and nothing else occurred. This restores the feedback that was lost when the
+  context menu moved off the retired Diagnostics page in DEC-216, and explains the
+  version gap rather than silently removing the menu entries on an older daemon.
+- **Chart series colours persist through the settings validation layer.** The colour
+  picker mutated the stored map in place and then saved, writing past the coercion that
+  every other settings write goes through (DEC-137).
+
+### Changed
+- **Path Management discloses the daemon registration it performs.** The GUI registers
+  its profiles directory with the daemon on connect and on every reconnect; that write
+  now appears in the interface instead of only in the logs.
+
 ## [2.36.0] — 2026-08-04
 
 **`sudo pacman -Syu` upgrades Control-OFC again.** DEC-240 retired the AUR and left

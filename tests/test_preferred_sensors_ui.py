@@ -113,10 +113,14 @@ def test_focus_preferred_sensors_populates(settings_page):
 # ── Overview ▸ Sensors context-menu ───────────────────────────────────
 # Re-vehicled off the retired Diagnostics page: OverviewPage owns the equivalent
 # sensor context-menu — `_set_preferred_sensor` plus the
-# `_preferred_sensor_unsupported` version gate. OverviewPage's handler is silent
-# (no status label), so the DiagnosticsPage status-string assertions are dropped:
-# the capability (post + 404 gate) survives, the status-string feedback did not
-# move to Overview.
+# `_preferred_sensor_unsupported` version gate.
+#
+# DEC-237: the status-string feedback is back. When the context menu moved here
+# from DiagnosticsPage (DEC-216) the result label did not come with it, so every
+# failure mode — daemon rejection, daemon unreachable — looked exactly like a
+# success: the menu closed and nothing happened. `_pref_result_label` restores
+# the DiagnosticsPage behaviour, so these tests now assert the reported text as
+# well as the capability gate.
 
 
 def _overview_page(qtbot, client):
@@ -164,8 +168,7 @@ def test_context_menu_mb_404_hides_feature(qtbot):
 
 def test_context_menu_non_404_error_keeps_feature(qtbot):
     # A non-404 error is a transient failure, NOT a version gap: the feature must
-    # stay enabled (OverviewPage's silent handler intentionally does not surface
-    # the daemon-supplied error string).
+    # stay enabled, and (DEC-237) the daemon-supplied reason is surfaced.
     class _FlakyClient(_StubClient):
         def set_preferred_cpu_sensor(self, sensor_id):
             raise DaemonError(code="internal_error", message="disk full", status=500)
@@ -174,3 +177,63 @@ def test_context_menu_non_404_error_keeps_feature(qtbot):
     page = _overview_page(qtbot, client)
     page._set_preferred_sensor("x", "cpu")
     assert page._preferred_sensor_unsupported is False
+    assert "disk full" in page._pref_result_label.text()
+    assert not page._pref_result_label.isHidden()
+
+
+# ── DEC-237: the preferred-sensor result line ─────────────────────────
+# Regression guard for the silent-failure defect. Each branch of
+# `_set_preferred_sensor` must leave the operator able to tell what happened.
+
+
+def test_pref_result_hidden_until_an_action_occurs(qtbot):
+    page = _overview_page(qtbot, _StubClient())
+    assert page._pref_result_label.text() == ""
+    assert page._pref_result_label.isHidden()
+
+
+def test_pref_result_reports_success(qtbot):
+    client = _StubClient()
+    page = _overview_page(qtbot, client)
+    page._set_preferred_sensor("hwmon:x:Tctl", "cpu")
+    assert "CPU" in page._pref_result_label.text()
+    assert not page._pref_result_label.isHidden()
+
+    page._set_preferred_sensor("hwmon:x:SYSTIN", "mb")
+    assert "motherboard" in page._pref_result_label.text()
+
+
+def test_pref_result_reports_daemon_unreachable(qtbot):
+    """A transport failure used to be indistinguishable from success."""
+
+    class _DeadClient(_StubClient):
+        def set_preferred_cpu_sensor(self, sensor_id):
+            raise ConnectionError("socket gone")
+
+    page = _overview_page(qtbot, _DeadClient())
+    page._set_preferred_sensor("x", "cpu")
+    assert "unavailable" in page._pref_result_label.text().lower()
+    assert not page._pref_result_label.isHidden()
+
+
+def test_pref_result_reports_os_error(qtbot):
+    class _BrokenClient(_StubClient):
+        def set_preferred_mb_sensor(self, sensor_id):
+            raise OSError("EPIPE")
+
+    page = _overview_page(qtbot, _BrokenClient())
+    page._set_preferred_sensor("x", "mb")
+    assert "unavailable" in page._pref_result_label.text().lower()
+
+
+def test_pref_result_explains_404_version_gap(qtbot):
+    """The menu entries vanish after a 404 — say why rather than just hiding them."""
+
+    class _OldClient(_StubClient):
+        def set_preferred_cpu_sensor(self, sensor_id):
+            raise DaemonError(code="not_found", message="no route", status=404)
+
+    page = _overview_page(qtbot, _OldClient())
+    page._set_preferred_sensor("x", "cpu")
+    assert page._preferred_sensor_unsupported is True
+    assert "too old" in page._pref_result_label.text().lower()

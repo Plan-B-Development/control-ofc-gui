@@ -244,6 +244,15 @@ class OverviewPage(QWidget):
         self._unavailable_label.setWordWrap(True)
         self._unavailable_label.setVisible(False)
         v.addWidget(self._unavailable_label)
+
+        # Result line for the preferred-sensor context-menu actions. Those POST
+        # to the daemon and used to fail completely silently, so a rejected or
+        # unreachable write looked identical to a successful one.
+        self._pref_result_label = QLabel("")
+        self._pref_result_label.setObjectName("Overview_Label_prefResult")
+        self._pref_result_label.setWordWrap(True)
+        self._pref_result_label.setVisible(False)
+        v.addWidget(self._pref_result_label)
         return pane
 
     def _build_cards_row(self) -> QHBoxLayout:
@@ -693,6 +702,7 @@ class OverviewPage(QWidget):
             return
         from control_ofc.api.errors import DaemonError
 
+        label = "CPU" if role == "cpu" else "motherboard"
         try:
             if role == "cpu":
                 self._client.set_preferred_cpu_sensor(sensor_id)
@@ -700,10 +710,30 @@ class OverviewPage(QWidget):
                 self._client.set_preferred_mb_sensor(sensor_id)
         except DaemonError as e:
             if getattr(e, "status", None) == 404:
+                # Pre-DEC-200 daemon: the menu entries disappear from here on,
+                # so say why rather than letting them silently vanish.
                 self._preferred_sensor_unsupported = True
+                self._set_pref_result(
+                    "This daemon is too old to store preferred sensors.", "CautionChip"
+                )
+            else:
+                self._set_pref_result(
+                    f"Could not save preferred {label} sensor: {e.message}", "CriticalChip"
+                )
             return
         except (ConnectionError, OSError):
+            self._set_pref_result("Daemon unavailable — preferred sensor not saved.", "CautionChip")
             return
+        self._set_pref_result(f"Preferred {label} sensor saved.", "SuccessChip")
+
+    def _set_pref_result(self, text: str, css: str) -> None:
+        """Show a result line for the preferred-sensor actions (mirrors Settings)."""
+        from control_ofc.ui.qt_util import set_chip_class
+
+        self._pref_result_label.setText(text)
+        self._pref_result_label.setVisible(bool(text))
+        if css:
+            set_chip_class(self._pref_result_label, css, skip_if_unchanged=True)
 
     def _ensure_daemon_classifications(self) -> None:
         if self._daemon_classifications_loaded or self._client is None:

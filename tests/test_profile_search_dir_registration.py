@@ -267,3 +267,41 @@ class TestSettingsPageSearchDirError:
         assert "Failed to update daemon" in text
         # The daemon's own message must reach the user verbatim.
         assert "within your home directory" in text
+
+
+class TestSearchDirDisclosure:
+    """DEC-237: the automatic registration must be visible somewhere in the UI.
+
+    ``_register_profile_search_dir`` writes to daemon config on first poll and
+    on every reconnect. It is additive and deduplicated daemon-side, and it logs
+    — but nothing in the GUI ever told the operator it happens. The Path
+    Management card now states it.
+    """
+
+    def test_path_management_discloses_registration(
+        self, qapp, app_state, settings_service, tmp_path, monkeypatch
+    ):
+        from control_ofc.paths import profiles_dir, set_path_overrides
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        set_path_overrides()
+        page = SettingsPage(state=app_state, settings_service=settings_service)
+
+        text = page._search_dir_note.text()
+        assert str(profiles_dir()) in text, "the disclosure must name the actual directory"
+        assert "daemon" in text.lower()
+        assert "reconnect" in text.lower(), "the repeat-on-reconnect behaviour must be stated"
+
+    def test_disclosure_follows_a_directory_change(
+        self, qapp, app_state, settings_service, tmp_path
+    ):
+        """Changing the profiles directory must not leave a stale path on display."""
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        page = SettingsPage(state=app_state, settings_service=settings_service)
+        new_dir = tmp_path / "elsewhere"
+        page._handle_dir_change(
+            "profiles", page._profiles_dir_label, str(new_dir), tmp_path / "absent-old"
+        )
+        assert str(new_dir) in page._search_dir_note.text()

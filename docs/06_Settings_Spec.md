@@ -25,6 +25,9 @@ Implemented settings:
 - chart default time range — labels are driven by the chart's own `TIME_RANGES`,
   so the Settings label always matches what the dashboard opens (F6)
 - GPU zero-RPM warning toggle
+- AIO pump info toggle — the one-time "constant-speed pump" popup (DEC-157).
+  Dismissing it flips the key to `false`; before DEC-237 nothing could flip it
+  back, unlike its GPU counterpart directly above.
 - Fan Wizard spin-down seconds
 - daemon startup delay (pushed to the daemon on save and on import)
 - auto-hide iGPU sensors / auto-hide unused fan headers (applied live)
@@ -33,16 +36,46 @@ Implemented settings:
 *Removed:* "remember last active profile" — the daemon owns active-profile
 persistence (`daemon_state.json`), so a GUI-side toggle controlled nothing (DEC-138).
 
-*Persisted but not surfaced as page controls:* a few `AppSettings` keys are
-written by behaviour elsewhere rather than by a Settings widget. `fan_zones`
-(Dashboard fan-zone layout, DEC-176/187) is **dormant since DEC-222** — the
-Dashboard surfaces that wrote it were removed, and the key is retained unread so
-no settings-schema migration is needed and no saved zone assignments are lost.
-(Its companions `fan_zone_order`, `fan_zones_collapsed`, `card_sensor_bindings`
-and `show_hardware_guidance` were **fully dropped in DEC-224 (v3)** as
-written-never-read keys.) `show_aio_pump_info` (the one-time "constant-speed pump" info popup, DEC-157,
-flips to `false` once dismissed). They still round-trip through
-`AppSettings.from_dict`/`to_dict` and the import/export trust boundary.
+Added in DEC-237 — mirror and reset surfaces for settings authored elsewhere:
+- **Fan Names** — every fan name in one table, including names for hardware that
+  is no longer present (otherwise unclearable). Renaming in place from the
+  Dashboard and the Overview fan table is unchanged; this is an *additional*
+  surface. Edits route through `AppState.apply_fan_rename`, never through
+  `settings_service.update(fan_aliases=…)` — the `fan_alias_changed` signal is
+  what persists them, and it carries the demo-mode refusal
+  (`MainWindow._demo_blocks_persist`). Demo fan ids collide exactly with real
+  hardware ids, so the table is read-only in demo mode.
+- **Sensors & Chart Series** — reset hidden sensors, coolant classification
+  overrides, custom series colours, hidden chart series. Classification resets
+  route through `AppState.set_sensor_class_override` so the Overview table
+  re-renders; "show all series" calls `SeriesSelectionModel.select_all()` so the
+  live chart updates rather than only the stored key list.
+- **Prompts & Dismissals** — re-arm `show_aio_pump_info`, clear
+  `acknowledged_kernel_warnings`, re-offer the daemon profile import, re-run the
+  fan-alias and chart-series seeding latches.
+- **Card Layout** — bulk reset of `controls_card_sizes` (per-card reset by
+  double-clicking a grip is unchanged, DEC-129).
+
+Reset controls show the count they would affect and disable at zero: an
+always-enabled reset button cannot tell you whether there is anything to reset.
+
+*Coverage is enforced, not documented.* `SETTINGS_FIELD_WIDGETS` in
+`settings_page.py` maps each exposed `AppSettings` field to the objectName of the
+widget that edits or resets it. `tests/test_settings_coverage_dec237.py` asserts
+that map plus the Theme page's fields plus an explicitly-justified implicit list
+accounts for *every* dataclass field, and that each named widget exists on a
+constructed page. A new preference fails the suite until it is given a home.
+
+*Persisted but deliberately not surfaced:* `fan_zones` (Dashboard fan-zone
+layout, DEC-176/187) is **dormant since DEC-222** — the Dashboard surfaces that
+wrote it were removed, and the key is retained unread so no settings-schema
+migration is needed and no saved zone assignments are lost. It must not gain a
+control. (Its companions `fan_zone_order`, `fan_zones_collapsed`,
+`card_sensor_bindings` and `show_hardware_guidance` were **fully dropped in
+DEC-224 (v3)** as written-never-read keys.) `version`, `window_geometry` and
+`last_page_index` are session/schema state with no meaningful control. All still
+round-trip through `AppSettings.from_dict`/`to_dict` and the import/export trust
+boundary.
 
 ### B. Themes
 **Now its own page (DEC-215):** theming moved out of Settings into a top-level **Theme** sidebar page. The V1 requirements and preset notes below still hold — they now describe that Theme page, not a Settings sub-section.

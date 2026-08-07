@@ -62,6 +62,65 @@ class TestSensorPanelColourSwatch:
         panel._on_item_clicked(item, 2)
         assert chart.color_for_key("sensor:cpu0") == "#abcdef"
 
+    def test_color_pick_persists_through_settings_validation(
+        self, qtbot, app_state, settings_service, monkeypatch
+    ):
+        """DEC-237: the picker must persist via AppSettingsService.update().
+
+        It used to mutate ``settings.series_colors`` in place and then call
+        ``save()``, writing straight past the DEC-137 coercion layer. The
+        discriminator is a pre-existing invalid entry: ``update()`` re-runs
+        ``_as_color_dict`` over the whole map and drops it, whereas the old
+        mutate-then-save path persisted it verbatim.
+        """
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QColorDialog, QTreeWidgetItem
+
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
+
+        panel = SensorSeriesPanel(SeriesSelectionModel(), state=app_state)
+        qtbot.addWidget(panel)
+        chart = TimelineChart(HistoryStore())
+        qtbot.addWidget(chart)
+        panel.set_chart(chart, settings_service)
+
+        # Poison the map with a value the coercion layer must reject.
+        settings_service.settings.series_colors["sensor:bogus"] = "javascript:alert(1)"
+
+        item = QTreeWidgetItem(["CPU", "", ""])
+        item.setData(0, Qt.ItemDataRole.UserRole, "sensor:cpu0")
+        monkeypatch.setattr(QColorDialog, "exec", lambda self: 1)
+        monkeypatch.setattr(QColorDialog, "currentColor", lambda self: QColor("#abcdef"))
+
+        panel._on_item_clicked(item, 2)
+
+        stored = settings_service.settings.series_colors
+        assert stored["sensor:cpu0"] == "#abcdef"
+        assert "sensor:bogus" not in stored, "invalid entry survived — update() was bypassed"
+
+    def test_color_pick_without_settings_service_is_safe(self, qtbot, app_state, monkeypatch):
+        """set_chart() leaves settings_service None by default — must not raise."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QColorDialog, QTreeWidgetItem
+
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
+
+        panel = SensorSeriesPanel(SeriesSelectionModel(), state=app_state)
+        qtbot.addWidget(panel)
+        chart = TimelineChart(HistoryStore())
+        qtbot.addWidget(chart)
+        panel.set_chart(chart)  # no settings service
+
+        item = QTreeWidgetItem(["CPU", "", ""])
+        item.setData(0, Qt.ItemDataRole.UserRole, "sensor:cpu0")
+        monkeypatch.setattr(QColorDialog, "exec", lambda self: 1)
+        monkeypatch.setattr(QColorDialog, "currentColor", lambda self: QColor("#abcdef"))
+
+        panel._on_item_clicked(item, 2)
+        assert chart.color_for_key("sensor:cpu0") == "#abcdef"
+
     def test_click_off_color_column_opens_no_picker(self, qtbot, app_state, monkeypatch):
         """A click outside the colour column (column 2) must not open the picker."""
         from PySide6.QtCore import Qt

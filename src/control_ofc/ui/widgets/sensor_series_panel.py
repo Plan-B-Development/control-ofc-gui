@@ -238,8 +238,14 @@ class SensorSeriesPanel(QFrame):
             self._chart.set_series_color(series_key, hex_color)
             item.setBackground(2, color)
             if self._settings_service and hasattr(self._settings_service, "settings"):
-                self._settings_service.settings.series_colors[series_key] = hex_color
-                self._settings_service.save()
+                # Route through update() so the value is coerced and validated
+                # exactly like a fresh load (DEC-137). Mutating
+                # settings.series_colors in place and then calling save() writes
+                # straight past _as_color_dict, so an invalid entry would persist
+                # in memory and only be dropped on the next launch.
+                merged = dict(self._settings_service.settings.series_colors)
+                merged[series_key] = hex_color
+                self._settings_service.update(series_colors=merged)
 
     # ── Public update methods ────────────────────────────────────────
 
