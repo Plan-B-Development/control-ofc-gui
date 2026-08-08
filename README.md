@@ -47,14 +47,32 @@ Just curious, or have no hardware yet? Explore the whole app with **demo mode** 
 **Signed pacman repository (recommended).** Set it up once; both packages then
 upgrade with your normal `sudo pacman -Syu`. Arch / x86_64.
 
+**Bootstrap script (easiest).** Download it, verify its signature, read it, run
+it. It trusts the signing key (checking the fingerprint first), adds the
+repository, installs both packages, and enables the daemon — and it is safe to
+re-run. The install is a full `pacman -Syu` and asks you to confirm the
+transaction once, so it may upgrade more than control-ofc.
+
+```bash
+base=https://github.com/Plan-B-Development/pacman-repo/releases/download/repo
+curl -fsSLO "$base/bootstrap.sh"
+curl -fsSLO "$base/bootstrap.sh.sig"
+curl -fsSL https://raw.githubusercontent.com/Plan-B-Development/pacman-repo/main/keys/control-ofc.gpg | gpg --import
+gpg --verify bootstrap.sh.sig bootstrap.sh   # expect 4AAD6D2DE40D0D10773BF770BC27C5EB2831FCDA
+less bootstrap.sh
+bash ./bootstrap.sh
+```
+
+**Or by hand:**
+
 ```bash
 # 1. trust the signing key
 curl -fsSL https://raw.githubusercontent.com/Plan-B-Development/pacman-repo/main/keys/control-ofc.gpg \
   | sudo pacman-key --add -
 sudo pacman-key --lsign-key 4AAD6D2DE40D0D10773BF770BC27C5EB2831FCDA
 
-# 2. add the repository
-sudo tee -a /etc/pacman.conf <<'EOF'
+# 2. add the repository — run once; `tee -a` would append a duplicate block
+grep -q '^\[control-ofc\]' /etc/pacman.conf || sudo tee -a /etc/pacman.conf <<'EOF'
 
 [control-ofc]
 SigLevel = Required
