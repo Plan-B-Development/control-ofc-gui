@@ -221,6 +221,46 @@ hardware-blocked (no NVIDIA hardware to verify against). NVIDIA fans are never
 offered as writable curve members, mirroring the Intel Arc read-only pattern
 (§14).
 
+### 16. Controls-page fan-role card clips its "Manual" button (open, cosmetic)
+
+**Symptom.** The action row at the bottom of each fan-role card reads
+`718 RPM │ Manual │ Delete │ Edit…`, and the Manual button's label renders as
+"Manua". Visible in the shipped `screenshots/auto/02_controls.png` (Pump / AIO at
+1191 RPM) and in every capture back to at least v2.38.0 — it is not a regression
+from the v2.39.0/v2.40.0 work, it was simply never noticed.
+
+**Measured behaviour** (offscreen, `ControlCard` at each density, default theme):
+
+| Card size | Card width | Manual button gets | `sizeHint` | Result |
+|---|---|---|---|---|
+| compact | 258 px | 51 px | 64 px | **clipped at every RPM** |
+| comfortable (default) | 280 px | 64 px @ 3 digits, 59 px @ 4 | 64 px | **clipped from 1191 RPM up** |
+| large | 330 px | 64 px | 64 px | never clipped |
+
+So the reported 4-digit trigger is only the *default* density's threshold —
+**compact clips for every fan, at every speed**. Any pump or fan reading over
+999 RPM hits it on comfortable, which is most pumps.
+
+**Mechanism.** `control_card.py:196-227` builds the row as
+`QLabel(rpm) → addStretch() → Manual → Delete → Edit…`. The card is a
+fixed-width grid item (DEC-128 density tiers, DEC-129 per-card overrides), so
+when the row's natural width exceeds the card the stretch collapses first and Qt
+then shrinks the buttons. Note the button reports
+`minimumSizeHint == sizeHint == 64 px` and is still allocated 51 px: the row is
+over-constrained, so Qt goes *below* the stated minimum and Qt elides the label.
+Widening the RPM text (3 → 4 digits) simply moves the threshold.
+
+**Why it is only cosmetic.** Nothing functional depends on the caption; the
+button keeps its full hit area, its tooltip, and its `ControlCard_Btn_manual_{id}`
+objectName, so both users and tests still reach it.
+
+**Fix shapes, cheapest first.** Give the RPM label a fixed width sized for four
+digits (it is the only variable-width item, and a stable column also stops the
+buttons shifting as RPM changes); or drop the row to icons with tooltips at the
+compact tier; or let the row wrap below a width threshold. Not attempted here —
+it is a `/frontend-design` question about the density tiers, not a one-line
+padding tweak, and DEC-128/129 own that surface.
+
 ## Resolved Gaps (previously listed as future work)
 
 > **Historical ledger.** Each row records a fix at the version in its Evidence
