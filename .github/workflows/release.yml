@@ -257,6 +257,28 @@ jobs:
     if: github.event_name == 'push'
     needs: github-release
     steps:
+      # Settle window before dispatching (DEC-248).
+      #
+      # pacman-repo's publish is DECLARATIVE: it assembles from whatever is the
+      # latest Release of each source project at the moment it runs. In a
+      # coordinated GUI + daemon release the two release.yml runs finish at
+      # different times, so dispatching the instant this one finishes can trigger
+      # a publish that pairs THIS new package with the OTHER project's previous
+      # one, and serve that pair as current until the second publish lands.
+      #
+      # Waiting here lets a paired release catch up, so the first publish already
+      # contains both new packages.
+      #
+      # Limits, stated plainly so nobody over-trusts this: it is a timing
+      # heuristic, not a guarantee. The daemon's build-test runs cargo test in a
+      # clean container and can outlast this window by a wide margin, in which
+      # case the old interleaving still happens. What keeps that survivable is
+      # that the GUI's `depends=control-ofc-daemon>=X` floor is only raised when
+      # a release genuinely requires a new daemon capability (DEC-248) — so a
+      # transient new-GUI/old-daemon pair normally still resolves.
+      - name: Let a paired release catch up
+        run: sleep 180
+
       - name: Trigger a repository rebuild
         env:
           GH_TOKEN: ${{ secrets.PACMAN_REPO_TOKEN }}

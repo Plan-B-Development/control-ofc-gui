@@ -340,8 +340,16 @@ def test_notify_repo_targets_the_pacman_repo_with_a_cross_repo_token():
     `github.token` yields a 404 that looks like a typo. A changed endpoint fails
     the same way.
     """
-    step = _release_workflow()["jobs"]["notify-repo"]["steps"][0]
-    run, env = step.get("run", ""), str(step.get("env", {}))
+    # Located by content, not by index: the job gained a settle step ahead of the
+    # dispatch (DEC-248), and an index-based lookup silently pointed at that
+    # instead — a test that breaks when a step is prepended is testing the
+    # ordering it did not mean to pin.
+    steps = _release_workflow()["jobs"]["notify-repo"]["steps"]
+    dispatch = [s for s in steps if "dispatches" in s.get("run", "")]
+    assert len(dispatch) == 1, (
+        f"expected exactly one dispatching step in notify-repo, got {len(dispatch)}"
+    )
+    run, env = dispatch[0].get("run", ""), str(dispatch[0].get("env", {}))
 
     assert "repos/Plan-B-Development/pacman-repo/dispatches" in run, (
         "notify-repo must POST to the pacman-repo dispatches endpoint (DEC-241)"
@@ -353,4 +361,31 @@ def test_notify_repo_targets_the_pacman_repo_with_a_cross_repo_token():
     assert "PACMAN_REPO_TOKEN" in env, (
         "notify-repo must authenticate with the cross-repo PACMAN_REPO_TOKEN; the "
         f"ambient GITHUB_TOKEN cannot dispatch across repositories. got env={env!r}"
+    )
+
+
+def test_notify_repo_settles_before_dispatching():
+    """A coordinated GUI + daemon release must not publish a mismatched pair.
+
+    pacman-repo's publish is declarative — it assembles from whatever is each
+    project's latest Release when it runs — so dispatching the instant this
+    release finishes can pair the new package with the counterpart's previous
+    one and serve that as current (DEC-248). The wait gives a paired release
+    time to land.
+
+    A timing heuristic, not a guarantee; this pins that it exists and runs
+    BEFORE the dispatch, which is the part that silently stops being true.
+    """
+    steps = _release_workflow()["jobs"]["notify-repo"]["steps"]
+    runs = [s.get("run", "") for s in steps]
+    sleep_idx = [i for i, r in enumerate(runs) if "sleep" in r]
+    dispatch_idx = [i for i, r in enumerate(runs) if "dispatches" in r]
+
+    assert sleep_idx, (
+        "notify-repo must wait before dispatching so a paired cross-stack release "
+        "can land first (DEC-248); no sleep step found"
+    )
+    assert sleep_idx[0] < dispatch_idx[0], (
+        "the settle wait must come BEFORE the dispatch — waiting afterwards does "
+        f"nothing at all. sleep at {sleep_idx[0]}, dispatch at {dispatch_idx[0]}"
     )
