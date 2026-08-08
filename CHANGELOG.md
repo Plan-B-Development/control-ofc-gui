@@ -30,6 +30,13 @@
   by its divider alone — a saved zero-width rail would have been unrecoverable.
 - Window position, size and the last page you were on are saved as you go rather than only
   on a clean exit, so a crash, a forced logout or a `kill` no longer loses them.
+- **Fan names survive a driver update that renames the headers.** A motherboard fan's
+  internal identifier includes its sysfs label, so a kernel or driver update that starts or
+  stops publishing those labels renames every header on the chip and your saved names stop
+  matching anything — and since kernels arrive in the same update as the daemon, it looks
+  like the update lost them. Names now follow their header, matched on the chip and fan
+  number, which a relabel does not change. Only done when the match is unambiguous, and
+  each one is written to the log so you can see it happened. DEC-247.
 
 ## [2.39.0] — 2026-08-08
 

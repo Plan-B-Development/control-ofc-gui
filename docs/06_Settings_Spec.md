@@ -46,7 +46,11 @@ Added in DEC-237 — mirror and reset surfaces for settings authored elsewhere:
   demo session (DEC-244 — the per-site `MainWindow._demo_blocks_persist` guard
   this used to name was removed in favour of that single mechanism). Demo fan
   ids collide exactly with real hardware ids, so the table is read-only in demo
-  mode.
+  mode. DEC-247: on the first fan poll, an alias whose hwmon id no longer names a
+  live fan is re-keyed onto the header with the same `(chip, pwm index)` when that
+  match is unique (`services/id_migration.py`) — those two parts are what a driver
+  relabel leaves alone. Only hwmon ids embed a label, so `openfan:chNN` and GPU BDF
+  ids are never re-keyed.
 - **Sensors & Chart Series** — reset hidden sensors, coolant classification
   overrides, custom series colours, hidden chart series. Classification resets
   route through `AppState.set_sensor_class_override` so the Overview table

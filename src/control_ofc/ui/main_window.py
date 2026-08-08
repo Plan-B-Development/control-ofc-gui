@@ -20,6 +20,7 @@ from control_ofc.services.demo_service import DemoService
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.fan_alias_seed import seed_fan_aliases_from_profiles
 from control_ofc.services.history_store import HistoryStore
+from control_ofc.services.id_migration import apply_realias_moves, find_realias_moves
 from control_ofc.services.profile_import_service import should_offer_import
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.series_selection import SeriesSelectionModel
@@ -119,6 +120,10 @@ class MainWindow(QWidget):
         # map, so there is nothing of the user's to recover and the ids collide.
         if not self._demo_mode and not self._settings_service.settings.fan_aliases_seeded:
             self._state.fans_updated.connect(self._maybe_seed_fan_aliases)
+        # DEC-247: re-key fan names whose hwmon id a driver update reshaped. Same
+        # first-poll trigger and the same demo exclusion, for the same reasons.
+        if not self._demo_mode:
+            self._state.fans_updated.connect(self._maybe_remigrate_fan_ids)
 
         # Persist alias and series changes back to settings
         self._state.fan_alias_changed.connect(self._persist_fan_alias)
@@ -686,6 +691,42 @@ class MainWindow(QWidget):
         self._demo_timer.timeout.connect(self._demo_tick)
         self._demo_timer.start()
         self._demo_tick()
+
+    def _maybe_remigrate_fan_ids(self, fans: list) -> None:
+        """Follow saved fan names onto their header's new id (DEC-247).
+
+        A hwmon fan id embeds the sysfs label and device-symlink shape, so a kernel
+        or driver update that starts or stops publishing ``fanN_label`` renames every
+        id on that chip and orphans the user's names. Matching on chip + pwm index —
+        the two parts such an update does *not* change — recovers them.
+
+        Announced rather than silent: a name moving between fans is exactly the kind
+        of change someone should be able to see and disbelieve. It is only ever a
+        name; ``role_preserving_label`` and ``infer_member_role`` mean a re-key
+        cannot lower the DEC-095/162 CPU/pump floor (see ``id_migration``).
+        """
+        moves = find_realias_moves(self._state.fan_aliases, {f.id for f in fans})
+        if not moves:
+            return
+        updated = apply_realias_moves(self._state.fan_aliases, moves)
+        self._state.fan_aliases = updated
+        self._settings_service.update(fan_aliases=dict(updated))
+        log.info("Re-matched %d fan name(s) after a hardware id change", len(moves))
+        self._diag.log_event(
+            "info",
+            "gui",
+            f"{len(moves)} saved fan name(s) were re-matched after a hardware id change "
+            f"(a driver update renamed the headers): "
+            + ", ".join(f"{updated[new]} → {new}" for _old, new in sorted(moves.items())),
+        )
+        # Repaint the affected rows; the file has just been written in full, so the
+        # per-row persist slot is stood down for the burst (as DEC-228 does).
+        self._state.fan_alias_changed.disconnect(self._persist_fan_alias)
+        try:
+            for new_id in moves.values():
+                self._state.fan_alias_changed.emit(new_id, self._state.fan_display_name(new_id))
+        finally:
+            self._state.fan_alias_changed.connect(self._persist_fan_alias)
 
     def _maybe_seed_fan_aliases(self, fans: list) -> None:
         """Adopt profile member labels as fan aliases, once (DEC-228).
