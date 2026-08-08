@@ -150,3 +150,29 @@ Support bundles should be exported to a user-selected location, typically as a z
 - keep backups or temp files when overwriting config
 - validate before saving
 - ignore unknown future keys where reasonable to aid forward compatibility
+
+### Settings write lifecycle (DEC-244)
+`AppSettingsService.save()` serialises the **whole** `AppSettings` object — there is
+no read-modify-write, so any single `update()` rewrites every key at once. That makes
+*who is allowed to write* the load-bearing question, and three rules answer it:
+
+1. **An unloaded service refuses to save.** `__init__` seeds a defaults object and only
+   `main.py` calls `load()`, so a default-constructed service holds placeholders while
+   still pointing at the real file. Saving from one replaces the user's entire config
+   with defaults. It logs a warning: reaching this is a programming error, not a user
+   condition.
+2. **`load()` arms the service, including when the file is absent** — on a fresh install
+   the defaults *are* the truth, and the first save legitimately creates the file.
+3. **An ephemeral service never saves.** `make_ephemeral()` is a one-way latch used by
+   demo mode (see `docs/10`). One-way because a re-armable service would put the clobber
+   back within reach of a later caller.
+
+Both refusals block the *write* only; in-memory state still updates, so the session
+behaves normally and simply leaves no trace on disk.
+
+`load()` also distinguishes **unparseable** from **unreadable**. A file that fails to
+parse is renamed to `app_settings.json.corrupt` and normal saving resumes — the first
+quarantine is kept and never overwritten, because after one the app writes a clean file
+and a later `.corrupt` would be that generated file rather than the user's data. An
+`OSError` is treated as "we could not read it", not "it is bad": the service stays
+unloaded and persists nothing, so a transient I/O failure cannot cost a healthy config.

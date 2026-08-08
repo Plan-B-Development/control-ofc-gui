@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from control_ofc.colors import is_valid_color
 from control_ofc.paths import app_settings_path, atomic_write, load_json_capped
@@ -297,29 +299,133 @@ class AppSettings:
 
 
 class AppSettingsService:
-    """Load, save, and manage application settings."""
+    """Load, save, and manage application settings.
+
+    Two guards stand between this class and the user's file (DEC-244), because
+    ``save()`` writes a **whole-object snapshot** — there is no read-modify-write,
+    so a single ``update()`` from a service holding the wrong state rewrites
+    every key at once.
+
+    * **An unloaded service never writes.** ``__init__`` seeds a defaults
+      object and only ``main.py`` calls ``load()``, so a default-constructed
+      service holds *placeholder* values while still pointing ``save()`` at the
+      real file. One ``update()`` would then replace the user's entire config
+      with defaults. Not theoretical: three tests reached this path and
+      reproducibly wiped the developer's chart colours and series selection —
+      on every quality-gate run, which is why the loss looked like it came from
+      a daemon update.
+    * **An ephemeral service never writes.** Demo mode swaps the hardware-keyed
+      maps for synthetic fixtures whose ids collide exactly with real hardware
+      (``openfan:ch00`` …). ``make_ephemeral`` latches the service off disk for
+      the whole session, so all ~29 persist call sites are safe by
+      construction. Guarding them one at a time is precisely what failed
+      before: DEC-227 guarded two and the rest silently diverged.
+    * **A file we could not read is never overwritten.** ``load()`` separates
+      "unparseable" from "unreadable": a proven-bad file is quarantined to
+      ``.corrupt`` and normal saving resumes, while an ``OSError`` leaves the
+      service unloaded, so a transient read failure cannot cost the user a
+      healthy config.
+
+    The first two guards refuse the *write* only — in-memory state still updates, so a
+    demo or unloaded session behaves normally on screen and leaves no trace on
+    disk. Callers therefore need no guard of their own; the exceptions are the
+    hardware-keyed maps demo replaces wholesale, which are additionally held
+    out of the in-memory object by ``MainWindow._demo_blocks_persist`` so a
+    Settings *export* taken mid-demo cannot carry synthetic ids either.
+    """
 
     def __init__(self) -> None:
         self._settings = AppSettings()
+        self._loaded = False
+        self._ephemeral_reason = ""
 
     @property
     def settings(self) -> AppSettings:
         return self._settings
 
+    @property
+    def is_ephemeral(self) -> bool:
+        """Whether this service has been latched off disk for the session."""
+        return bool(self._ephemeral_reason)
+
+    def make_ephemeral(self, reason: str) -> None:
+        """Detach this service from disk for the rest of the process.
+
+        One-way by design: there is no demo -> live transition, and a service
+        that could be re-armed would put the clobber back within reach of some
+        future caller.
+        """
+        if self._ephemeral_reason:
+            return
+        self._ephemeral_reason = reason
+        log.info("App settings are session-only (%s) — nothing will be persisted", reason)
+
+    def _quarantine_unparseable(self, path: Path, error: Exception) -> None:
+        """Move a proven-unparseable settings file aside instead of losing it.
+
+        Without this, a file that fails to parse loads as defaults and the very
+        next ``update()`` replaces it — the user's whole config gone behind a
+        single log line. Renaming keeps it recoverable by hand while letting the
+        app carry on with a fresh file.
+
+        Only the *first* corruption is preserved. After one quarantine the app
+        writes a clean file, so a later ``.corrupt`` would be that generated
+        file rather than anything of the user's — overwriting the original would
+        destroy the only copy of their real settings.
+        """
+        quarantine = path.with_suffix(path.suffix + ".corrupt")
+        if quarantine.exists():
+            log.warning("Keeping the earlier %s — not overwriting it", quarantine.name)
+            return
+        try:
+            os.replace(path, quarantine)
+        except OSError as e:
+            log.warning("Could not quarantine unparseable %s: %s", path, e)
+            return
+        log.warning("Moved unparseable app settings to %s (%s)", quarantine, error)
+
     def load(self) -> None:
         path = app_settings_path()
-        if path.exists():
-            try:
-                data = load_json_capped(path)
-                self._settings = AppSettings.from_dict(data)
-                log.info("Loaded app settings from %s", path)
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError, OSError) as e:
-                log.warning("Failed to load app settings from %s: %s — using defaults", path, e)
-                self._settings = AppSettings()
-        else:
+        if not path.exists():
+            # A missing file is a legitimate authoritative state (fresh
+            # install): defaults *are* the truth, and the first save creates it.
             self._settings = AppSettings()
+            self._loaded = True
+            return
+
+        self._settings = AppSettings()
+        try:
+            self._settings = AppSettings.from_dict(load_json_capped(path))
+            log.info("Loaded app settings from %s", path)
+        except OSError as e:
+            # A read failure, not a bad file — the config may be perfectly
+            # intact, so do *not* authorise writing over it. This session runs
+            # on defaults and persists nothing, which is recoverable; replacing
+            # a healthy file we simply could not open is not.
+            log.warning(
+                "Could not read app settings from %s: %s — this session will not persist", path, e
+            )
+            return
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            # Proven unparseable: move it aside, then carry on writing normally.
+            log.warning("Failed to parse app settings from %s: %s — using defaults", path, e)
+            self._quarantine_unparseable(path, e)
+        self._loaded = True
 
     def save(self) -> None:
+        if self._ephemeral_reason:
+            log.debug("Not writing app settings — session-only (%s)", self._ephemeral_reason)
+            return
+        if not self._loaded:
+            # A programming error, not a user condition — something built a
+            # service and wrote through it without load(). Loud on purpose: a
+            # silently dropped save is how the next settings bug would hide.
+            log.warning(
+                "Refusing to write app settings — this service never loaded %s, so saving "
+                "would overwrite it with defaults",
+                app_settings_path(),
+            )
+            return
         atomic_write(app_settings_path(), json.dumps(self._settings.to_dict(), indent=2) + "\n")
 
     def update(self, **kwargs: object) -> None:

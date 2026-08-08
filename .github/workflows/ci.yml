@@ -86,6 +86,30 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest --cov --cov-branch --cov-report=term-missing -q
+      - name: Assert no test wrote to the real user config (DEC-244)
+        # The suite must never touch $HOME. Three tests did — two built
+        # MainWindow(demo_mode=True) with no settings_service (which
+        # default-constructs one aimed at the real file) and one drove a real
+        # ProfileService — so running this very gate before a release is what
+        # wiped the author's live chart config. The conftest
+        # _isolate_user_config fixture is what keeps this green; this step is
+        # what proves it, and it catches the whole class rather than those three
+        # sites. No env is perturbed: the runner's $HOME is already disposable,
+        # so a leak lands here exactly as it would on a developer's machine.
+        # Scoped to the two control-ofc dirs — a bare $HOME diff would redden on
+        # pip/pytest cache noise. A test exporting straight into $HOME (the
+        # export_default_dir default) would slip past; nothing does today.
+        run: |
+          set -e
+          leaked=0
+          for d in "$HOME/.config/control-ofc" "$HOME/.cache/control-ofc"; do
+            if [ -e "$d" ]; then
+              echo "::error::test suite wrote to $d — user config is not isolated"
+              find "$d" | head -50
+              leaked=1
+            fi
+          done
+          exit $leaked
 
   canary:
     name: Teardown UAF canary (py3.12, hostile allocator)

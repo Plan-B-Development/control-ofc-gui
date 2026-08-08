@@ -86,7 +86,7 @@ Demo mode must never:
 - imply real hardware safety state
 - overwrite the user's real runtime settings without clear confirmation
 
-### GUI-owned per-hardware maps are session-only in demo (DEC-227)
+### GUI-owned per-hardware maps are session-only in demo (DEC-227, closed by DEC-244)
 `_start_demo_mode` **replaces** `AppState.fan_aliases` / `fan_zones` with
 `DemoService`'s synthetic maps, and demo fan ids are deliberately realistic —
 `openfan:ch00` … `openfan:ch07` are the canonical OpenFan channel ids. Any
@@ -95,33 +95,46 @@ user's real labels and write demo names onto their actual hardware, and
 `fan_aliases` is portable (see `docs/06`), so the pollution could travel in a
 shared export.
 
-`MainWindow._persist_fan_alias` / `_persist_fan_zones` accordingly refuse to write
-while `_demo_mode` is set. Renaming a fan in demo works for the session and is
-silently not saved — demo hardware is synthetic, so persisting a name for it is
-meaningless, and the feature stays demonstrable for the hardware-less tester
-below. Demo is startup-only (there is no demo → live transition), so refusing the
-write is sufficient; nothing needs snapshotting or restoring.
+Demo is startup-only (there is no demo → live transition), so refusing the write
+is sufficient; nothing needs snapshotting or restoring. Renaming a fan in demo
+works for the session and is silently not saved — demo hardware is synthetic, so
+persisting a name for it is meaningless, and the feature stays demonstrable for
+the hardware-less tester below.
 
-Any future GUI-owned map keyed by hardware id must make the same choice
-explicitly.
+**How it is enforced (two layers, DEC-244).** DEC-227 guarded two call sites
+individually and the rest silently diverged — which is how the leak below went on
+to destroy a real user's chart configuration. Enforcement is no longer per-site:
 
-**Still leaking — deferred to its own change (OPEN).** Four writers persist
-hardware-keyed state from a demo session and are *not* behind the guard. The
-scope for DEC-227 was deliberately limited to the fan-label maps, but a release
-security review sharpened the severity, so it is recorded here rather than lost:
+1. **The file.** `MainWindow.__init__` calls `AppSettingsService.make_ephemeral()`
+   when `demo_mode` is set, latching the service off disk for the whole process.
+   The latch is one-way, and every page shares the one service instance, so all
+   ~29 persist call sites are covered by construction. A new persist path needs
+   no guard of its own and cannot reintroduce this.
+2. **The in-memory object.** `_demo_blocks_persist` survives with a narrowed job:
+   keeping demo ids out of `AppSettings` itself for the maps that travel in a
+   portable export. `fan_aliases`, `fan_zones` and `hidden_chart_series` are the
+   only hardware-keyed maps absent from `MACHINE_SPECIFIC_KEYS` (see `docs/06`),
+   so they are the three that need it.
 
-| Writer | Key | Why it matters |
+Any future GUI-owned map keyed by hardware id inherits layer 1 automatically. It
+needs an explicit layer-2 decision only if it is *portable*.
+
+**The four writers previously recorded here as OPEN are closed.** All were reached
+through `AppSettingsService`, so the ephemeral latch closes the persisted-file leak
+for every one:
+
+| Writer | Key | Status |
 |---|---|---|
-| `dashboard_page._maybe_seed_chart_defaults` | `chart_series_seeded` | **Irreversible by design** — the flag exists precisely so a returning user is never re-decluttered, so one demo launch permanently consumes the real user's first-run chart seeding. Fires with **no user action at all**, as soon as demo ticks deliver sensors and fans. |
-| `main_window._persist_series_selection` | `hidden_chart_series` | Portable (not in `MACHINE_SPECIFIC_KEYS`), so demo-derived keys travel in a Settings export — the same propagation path as the `fan_aliases` bug DEC-227 fixed. |
-| `main_window._persist_sensor_class_override` | `sensor_class_overrides` | A coolant override set on a demo sensor id lands on the identically-named real sensor. |
-| `sensor_series_panel._on_item_clicked` (colour picker) | `series_colors` | Writes `settings.series_colors[key]` and `save()` directly, bypassing `AppSettingsService.update()` entirely. |
+| `dashboard_page._maybe_seed_chart_defaults` | `chart_series_seeded` | File-level only. The in-memory latch must still flip, or the seeding re-fires on every tick and fights the user's in-session chart choices. |
+| `main_window._persist_series_selection` | `hidden_chart_series` | Both layers. This is the one that was actually lost — portable, so it also travelled in exports. |
+| `main_window._persist_sensor_class_override` | `sensor_class_overrides` | File-level; machine-specific, so it is stripped from export anyway. |
+| `sensor_series_panel._on_item_clicked` (colour picker) | `series_colors` | File-level. It calls `save()` directly rather than `update()`, which the latch covers regardless. |
 
-Blast radius is display/chart preferences only — no PWM, safety, or profile
-effect — which is why it was not treated as a release blocker. The first two
-`main_window` handlers are one-line guard additions; the page-owned writers need
-a `persist_allowed` predicate or an `OperationMode.DEMO` check. When this lands,
-`_demo_blocks_persist`'s docstring should say "every per-hardware map".
+One residue, deliberately left: `chart_series_seeded` is **not** in
+`MACHINE_SPECIFIC_KEYS`, unlike its twin `fan_aliases_seeded`, so an export taken
+during a demo session carries `true` and would suppress first-run chart seeding on
+the machine that imports it. Cosmetic, and fixing it means changing export
+semantics, so it is recorded rather than folded in.
 
 ## Suggested implementation approach
 Create a demo service that emits the same internal models used by live mode.

@@ -165,13 +165,16 @@ def test_thermal_state_propagates_to_ribbon(window, app_state):
     assert ribbon._thermal_pill.state() == "ok"
 
 
-def test_close_stops_the_poll_age_ticker(qtbot):
+def test_close_stops_the_poll_age_ticker(qtbot, settings_service):
     """DEC-222: the poll-age ticker writes into the footer every second. If it
     outlived closeEvent, a tick could land on an already-deleted widget during
     teardown — which is why every other timer here is stopped explicitly."""
     from control_ofc.ui.main_window import MainWindow
 
-    window = MainWindow(demo_mode=True)
+    # settings_service is explicit for a reason (DEC-244): omitting it makes
+    # MainWindow default-construct one pointed at the real user config file, and
+    # close() persists geometry — so this test used to overwrite it for real.
+    window = MainWindow(settings_service=settings_service, demo_mode=True)
     qtbot.addWidget(window)
     assert window._poll_age_timer.isActive()
 

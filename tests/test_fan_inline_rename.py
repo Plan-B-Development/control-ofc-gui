@@ -651,7 +651,13 @@ class TestDemoPersistenceGuard:
     """Demo replaces state.fan_aliases with DemoService's synthetic map, whose ids
     collide exactly with real hardware (openfan:ch00 …). Persisting from a demo
     session therefore both wipes the user's real labels and writes demo names onto
-    their actual fans. fan_aliases is portable, so it can travel in an export."""
+    their actual fans. fan_aliases is portable, so it can travel in an export.
+
+    DEC-244 moved the file-level guarantee into AppSettingsService itself — demo
+    latches the service off disk for the whole session, so every persist path is
+    covered rather than the handful anyone remembered to guard. These tests now
+    pin that end to end, including the whole-file byte comparison at the bottom,
+    which is the one that would have caught the hidden_chart_series miss."""
 
     def test_demo_rename_does_not_touch_persisted_aliases(self, qtbot, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -659,6 +665,7 @@ class TestDemoPersistenceGuard:
         from control_ofc.ui.main_window import MainWindow
 
         svc = AppSettingsService()
+        svc.load()  # as main.py does — an unloaded service refuses to write (DEC-244)
         svc.update(fan_aliases={OPENFAN: "My Real Intake"})
 
         window = MainWindow(settings_service=svc, demo_mode=True)
@@ -682,6 +689,7 @@ class TestDemoPersistenceGuard:
         from control_ofc.ui.main_window import MainWindow
 
         svc = AppSettingsService()
+        svc.load()  # as main.py does — an unloaded service refuses to write (DEC-244)
         svc.update(fan_zones={OPENFAN: "Real Zone"})
 
         window = MainWindow(settings_service=svc, demo_mode=True)
@@ -702,8 +710,63 @@ class TestDemoPersistenceGuard:
         from control_ofc.ui.main_window import MainWindow
 
         svc = AppSettingsService()
+        svc.load()  # as main.py does — an unloaded service refuses to write (DEC-244)
         window = MainWindow(settings_service=svc, demo_mode=False)
         qtbot.addWidget(window)
         window._state.apply_fan_rename(OPENFAN, "Front Intake")
 
         assert _persisted_aliases(tmp_path) == {OPENFAN: "Front Intake"}
+
+    def test_demo_series_selection_does_not_persist(self, qtbot, tmp_path, monkeypatch):
+        """The key that actually got wiped (DEC-244).
+
+        DEC-227 guarded aliases and zones and stopped there; hidden_chart_series
+        kept writing straight through, so a demo session replaced the user's real
+        selection with 20 synthetic ids. It is portable too, so the same ids could
+        travel in a Settings export.
+        """
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        from control_ofc.services.app_settings_service import AppSettingsService
+        from control_ofc.ui.main_window import MainWindow
+
+        real = ["sensor:hwmon:k10temp:0000:00:18.3:Tccd1"]
+        svc = AppSettingsService()
+        svc.load()
+        svc.update(hidden_chart_series=real, chart_series_seeded=True)
+
+        window = MainWindow(settings_service=svc, demo_mode=True)
+        qtbot.addWidget(window)
+        window._series_selection.selection_changed.emit()
+
+        path = tmp_path / "control-ofc" / "app_settings.json"
+        assert json.loads(path.read_text())["hidden_chart_series"] == real
+
+    def test_demo_session_leaves_the_settings_file_byte_identical(
+        self, qtbot, tmp_path, monkeypatch
+    ):
+        """The whole-file guarantee, rather than one key at a time.
+
+        A demo session must be a no-op on disk. Comparing bytes catches any
+        persist path added later that the per-key tests above know nothing about
+        — which is precisely how hidden_chart_series slipped past DEC-227 and
+        went on to eat a real user's chart config.
+        """
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        from control_ofc.services.app_settings_service import AppSettingsService
+        from control_ofc.ui.main_window import MainWindow
+
+        svc = AppSettingsService()
+        svc.load()
+        svc.update(fan_aliases={OPENFAN: "My Real Intake"}, theme_name="Ocean Blue")
+        path = tmp_path / "control-ofc" / "app_settings.json"
+        before = path.read_bytes()
+
+        window = MainWindow(settings_service=svc, demo_mode=True)
+        qtbot.addWidget(window)
+        window._demo_tick()
+        window._state.apply_fan_rename(OPENFAN, "Renamed In Demo")
+        window._series_selection.selection_changed.emit()
+        window._state.sensor_class_override_changed.emit("sensor:demo", "coolant")
+        window.close()  # closeEvent persists geometry + last page
+
+        assert path.read_bytes() == before

@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+## [2.39.0] — 2026-08-08
+
+**Your chart colours and series selection stop disappearing.** They were not being lost to a
+daemon update, an uninstall, or anything in packaging — they were being overwritten by this
+project's own test suite. Two tests built a main window without handing it a settings service,
+so it made one pointed at the real `~/.config/control-ofc/app_settings.json`; a third wrote a
+real profile. Because saving wrote the whole settings object at once rather than merging,
+a single write from a demo-mode window replaced every key — including twenty synthetic chart
+series ids from demo hardware nobody owns, and an emptied colour map. Since the test suite runs
+before every release, releasing is what destroyed the settings, which is why the loss looked
+like it arrived with a daemon update.
+
+Settings persistence is now fail-safe by construction rather than by remembering to guard each
+write. No daemon change, no configuration format change, nothing to migrate. DEC-244.
+
+### Fixed
+- **Demo mode can no longer overwrite real settings.** Demo hardware ids collide exactly with
+  real ones (`openfan:ch00` and friends), so a demo session could write demo fan names and a
+  demo chart selection onto your actual hardware. The settings service is now detached from
+  disk for the whole demo session, which covers every save path rather than the two that had
+  been guarded individually — the chart series selection was the one that had been missed, and
+  it is the one that got lost.
+- **A settings object that was never loaded can no longer be saved.** This is what turned a
+  test-only mistake into real data loss: such an object holds built-in defaults, not your
+  settings, while still pointing at your real file.
+- **A settings file that cannot be parsed is now moved aside** to `app_settings.json.corrupt`
+  instead of being silently replaced on the next save, so a damaged file stays recoverable by
+  hand. A file that merely cannot be *read* (a transient I/O error) is left completely alone
+  and nothing is saved over it for that session.
+
+### Changed
+- A deliberate `--demo` session no longer remembers theme, card sizes or window position. That
+  is the cost of demo never touching your settings, and it is intentional.
+
+### Internal
+- The test suite is now isolated from the real user config by an autouse fixture covering
+  `HOME` and both XDG directories; a full run creates zero files outside its temp directory.
+  CI fails the build if anything appears in `~/.config/control-ofc` or `~/.cache/control-ofc`.
+- The screenshot script sandboxes its own config directory rather than relying on the operator
+  to remember.
+
 ## [2.38.0] — 2026-08-07
 
 **Settings becomes a complete map of what can be configured — including the daemon.**

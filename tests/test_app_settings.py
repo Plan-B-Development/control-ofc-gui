@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 
 
@@ -138,6 +140,139 @@ def test_service_persist_fan_aliases(tmp_path, monkeypatch):
     svc2 = AppSettingsService()
     svc2.load()
     assert svc2.settings.fan_aliases == {"openfan:ch00": "Front Intake"}
+
+
+# ---------------------------------------------------------------------------
+# Write guards (DEC-244). save() writes a whole-object snapshot with no
+# read-modify-write, so a service holding the wrong state rewrites every key at
+# once. Two guards stop that — an unloaded service and an ephemeral one both
+# refuse. These pin both, and pin that in-memory state still updates either way.
+# ---------------------------------------------------------------------------
+
+
+def _settings_file(tmp_path):
+    return tmp_path / "control-ofc" / "app_settings.json"
+
+
+def test_unloaded_service_refuses_to_overwrite_an_existing_file(tmp_path, monkeypatch):
+    """The exact defect. A default-constructed service holds *defaults*, not the
+    user's settings, yet still points save() at the real file — so one update()
+    replaces the lot. Three tests reached this path and wiped the developer's
+    chart colours and series selection on every quality-gate run."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    seeded = AppSettingsService()
+    seeded.load()
+    seeded.update(theme_name="Ocean Blue", series_colors={"sensor:cpu": "#ff0000"})
+    before = _settings_file(tmp_path).read_bytes()
+
+    unloaded = AppSettingsService()  # never .load()ed
+    unloaded.update(theme_name="Clobbered")
+
+    assert _settings_file(tmp_path).read_bytes() == before
+    assert unloaded.settings.theme_name == "Clobbered"  # memory still updates
+
+
+def test_load_of_a_missing_file_authorises_the_first_write(tmp_path, monkeypatch):
+    """A fresh install must still be able to save: with no file on disk the
+    defaults *are* the truth, so load() has to arm the service."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert not _settings_file(tmp_path).exists()
+
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(theme_name="Ocean Blue")
+
+    assert json.loads(_settings_file(tmp_path).read_text())["theme_name"] == "Ocean Blue"
+
+
+def test_ephemeral_service_never_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(theme_name="Ocean Blue")
+    before = _settings_file(tmp_path).read_bytes()
+
+    svc.make_ephemeral("demo mode")
+    assert svc.is_ephemeral
+    svc.update(theme_name="Demo Neon")
+
+    assert _settings_file(tmp_path).read_bytes() == before
+    assert svc.settings.theme_name == "Demo Neon"  # the session still behaves
+
+
+def test_unparseable_file_is_quarantined_not_overwritten(tmp_path, monkeypatch):
+    """A corrupt file used to load as defaults and then get replaced by the next
+    update() — the user's whole config gone behind one log line."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = _settings_file(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"theme_name": "Ocean Blue", TRUNCATED')
+
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(theme_name="Fresh Start")
+
+    quarantined = tmp_path / "control-ofc" / "app_settings.json.corrupt"
+    assert quarantined.read_text() == '{"theme_name": "Ocean Blue", TRUNCATED'
+    # …and the app carries on with a clean file rather than refusing to save.
+    assert json.loads(path.read_text())["theme_name"] == "Fresh Start"
+
+
+def test_quarantine_keeps_the_first_corrupt_file(tmp_path, monkeypatch):
+    """The original is the one worth keeping. By the time a second corruption
+    happens the app has already written a clean file, so overwriting would trade
+    the user's real settings for a generated one."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = _settings_file(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    path.write_text("ORIGINAL USER DATA {")
+    AppSettingsService().load()
+    path.write_text("LATER GENERATED JUNK {")
+    AppSettingsService().load()
+
+    quarantined = tmp_path / "control-ofc" / "app_settings.json.corrupt"
+    assert quarantined.read_text() == "ORIGINAL USER DATA {"
+
+
+def test_unreadable_file_is_left_alone_and_blocks_writing(tmp_path, monkeypatch):
+    """An OSError means we could not read it, not that it is bad. Overwriting a
+    healthy config we simply failed to open is the worse outcome, so the service
+    stays unloaded and persists nothing."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    seeded = AppSettingsService()
+    seeded.load()
+    seeded.update(theme_name="Ocean Blue")
+    before = _settings_file(tmp_path).read_bytes()
+
+    from control_ofc.services import app_settings_service as mod
+
+    monkeypatch.setattr(
+        mod, "load_json_capped", lambda *a, **k: (_ for _ in ()).throw(OSError("EIO"))
+    )
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(theme_name="Clobbered")
+
+    assert _settings_file(tmp_path).read_bytes() == before
+    assert not (tmp_path / "control-ofc" / "app_settings.json.corrupt").exists()
+
+
+def test_make_ephemeral_cannot_be_undone_by_a_later_load(tmp_path, monkeypatch):
+    """The latch is one-way on purpose: if load() re-armed it, any code path that
+    reloaded settings mid-session would put the clobber back within reach."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(theme_name="Ocean Blue")
+    before = _settings_file(tmp_path).read_bytes()
+
+    svc.make_ephemeral("demo mode")
+    svc.load()
+    svc.update(theme_name="Clobbered")
+
+    assert svc.is_ephemeral
+    assert _settings_file(tmp_path).read_bytes() == before
 
 
 # ---------------------------------------------------------------------------

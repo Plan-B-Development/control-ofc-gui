@@ -81,6 +81,13 @@ class MainWindow(QWidget):
         self._settings_service = settings_service or AppSettingsService()
         self._client = client
         self._demo_mode = demo_mode
+        # DEC-244: latch settings off disk for the whole demo session, before any
+        # persist path can fire. Demo's synthetic ids collide exactly with real
+        # hardware, so one write from here overwrites the user's real config —
+        # which is what happened. Sealing the shared service covers every page at
+        # once; guarding callers one at a time is what let this through before.
+        if self._demo_mode:
+            self._settings_service.make_ephemeral("demo mode")
         self._demo_service: DemoService | None = None
         self._demo_controller: DemoController | None = None
         # Safety gate (DEC-165): True while connected to a daemon too old to be
@@ -707,15 +714,24 @@ class MainWindow(QWidget):
                 self._state.fan_alias_changed.connect(self._persist_fan_alias)
 
     def _demo_blocks_persist(self, what: str) -> bool:
-        """Whether a per-hardware map must stay session-only (DEC-227).
+        """Whether a hardware-keyed map must stay out of the settings object.
 
-        ``_start_demo_mode`` *replaces* the fan alias/zone maps with DemoService's
-        synthetic ones, and demo fan ids collide exactly with real hardware ids
-        (``openfan:ch00`` …). Persisting from a demo session would therefore both
-        wipe the user's real labels and write demo names onto their actual fans —
-        and ``fan_aliases`` is portable (not in ``MACHINE_SPECIFIC_KEYS``), so the
-        pollution can travel in a Settings export. ``docs/10_Demo_Mode_Spec.md``:
-        demo must never overwrite the user's real runtime settings.
+        ``_start_demo_mode`` *replaces* the fan alias/zone maps and the chart
+        series selection with DemoService's synthetic ones, and demo ids collide
+        exactly with real hardware ids (``openfan:ch00`` …).
+
+        Since DEC-244 this is no longer what protects the *file* — the settings
+        service refuses every write in a demo session, so all ~29 persist call
+        sites are safe without a guard of their own. What this still protects is
+        the **in-memory object**: ``fan_aliases``, ``fan_zones`` and
+        ``hidden_chart_series`` are all portable (absent from
+        ``MACHINE_SPECIFIC_KEYS``), so without it a Settings *export* taken
+        mid-demo would carry synthetic ids onto another machine's real hardware.
+        ``docs/10_Demo_Mode_Spec.md``: demo must never overwrite the user's real
+        runtime settings.
+
+        ``hidden_chart_series`` was the one missing here (DEC-227 covered only
+        aliases and zones), and it is the key that actually got clobbered.
 
         Demo is startup-only (there is no demo -> live transition), so refusing the
         write is sufficient — nothing needs snapshotting or restoring.
@@ -741,6 +757,8 @@ class MainWindow(QWidget):
         )
 
     def _persist_series_selection(self) -> None:
+        if self._demo_blocks_persist("hidden_chart_series"):
+            return
         hidden = list(self._series_selection.to_dict()["hidden_keys"])
         self._settings_service.update(hidden_chart_series=hidden)
 

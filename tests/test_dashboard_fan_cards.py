@@ -250,14 +250,17 @@ class TestEditRouting:
         page._fan_cards["c1"]._edit_btn.click()
         assert seen == ["c1"]
 
-    def test_main_window_routes_edit_to_the_controls_page(self, qtbot):
+    def test_main_window_routes_edit_to_the_controls_page(self, qtbot, settings_service):
         """End-to-end: the card's Edit must land the user on Controls, or every
         card's button would be a dead affordance. This caught exactly that —
         open_control was initially left unconnected."""
         from control_ofc.constants import PAGE_CONTROLS
         from control_ofc.ui.main_window import MainWindow
 
-        window = MainWindow(demo_mode=True)
+        # settings_service is explicit for a reason (DEC-244): omitting it makes
+        # MainWindow default-construct one pointed at the real user config file,
+        # and this test used to overwrite it for real.
+        window = MainWindow(settings_service=settings_service, demo_mode=True)
         qtbot.addWidget(window)
         window.dashboard_page.open_control.emit("")
         assert window.page_stack.currentIndex() == PAGE_CONTROLS

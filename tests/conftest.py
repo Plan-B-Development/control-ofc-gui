@@ -254,6 +254,42 @@ def _flush_deferred_deletes():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_user_config(tmp_path, monkeypatch):
+    """Point every user-config path at ``tmp_path`` (DEC-244).
+
+    Three tests were writing the developer's live config: two built
+    ``MainWindow(demo_mode=True)`` with no ``settings_service`` — which
+    default-constructs one aimed at the real ``~/.config/control-ofc`` — and one
+    drove ``_on_save_profile`` through a real ``ProfileService``. The damage was
+    not hypothetical: a suite run reproducibly replaced the author's
+    ``hidden_chart_series`` with the 20 synthetic ids from ``DemoService`` and
+    emptied ``series_colors``, because ``AppSettingsService.save()`` serialises
+    the whole dataclass with no read-modify-write. Running the quality gate
+    before a release is what destroyed the config — which is exactly why it
+    presented as "the *daemon update* ate my settings".
+
+    Guarding the three call sites would not close this: the next test to
+    default-construct a service leaks again. Isolating the environment closes
+    the class. ``HOME`` covers ``Path.home()`` (``export_default_dir``); the two
+    XDG vars cover ``config_dir``/``cache_dir``. ``paths._overrides`` is reset
+    as well — it is module-level mutable state, and an absolute
+    ``profiles_dir_override`` escaping one test would defeat the env redirect
+    for every test after it.
+
+    The opt-in ``profile_service``/``settings_service`` fixtures still set
+    ``XDG_CONFIG_HOME`` themselves. That is now redundant but harmless, and
+    both land inside ``tmp_path`` either way.
+    """
+    from control_ofc import paths
+
+    home = tmp_path / "_home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
+    monkeypatch.setattr(paths, "_overrides", {})
+
+
+@pytest.fixture(autouse=True)
 def _neutralize_modals(monkeypatch):
     """Stop any modal dialog from blocking the test run.
 

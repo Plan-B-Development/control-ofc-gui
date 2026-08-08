@@ -84,6 +84,7 @@ class TestGpuZeroRpmWarningSetting:
     def test_persists_false(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         svc = AppSettingsService()
+        svc.load()  # as main.py does — an unloaded service refuses to write (DEC-244)
         svc.update(show_gpu_zero_rpm_warning=False)
 
         # Reload
@@ -93,7 +94,11 @@ class TestGpuZeroRpmWarningSetting:
 
     def test_persists_true(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        # NB: this case passed even while the write was being refused, because
+        # True is the field default — svc2.load() on a missing file produced it
+        # anyway. Loading makes the assertion mean something (DEC-244).
         svc = AppSettingsService()
+        svc.load()
         svc.update(show_gpu_zero_rpm_warning=True)
 
         svc2 = AppSettingsService()

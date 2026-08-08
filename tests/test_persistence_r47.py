@@ -81,6 +81,7 @@ class TestWindowGeometryPersistence:
     def test_geometry_roundtrip(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         svc = AppSettingsService()
+        svc.load()  # as main.py does — an unloaded service refuses to write (DEC-244)
         svc.update(last_page_index=2, window_geometry=[50, 50, 1400, 900])
 
         svc2 = AppSettingsService()
@@ -91,6 +92,7 @@ class TestWindowGeometryPersistence:
     def test_geometry_in_export(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         svc = AppSettingsService()
+        svc.load()
         svc.update(last_page_index=3, window_geometry=[200, 200, 800, 600])
 
         # Re-vehicled off the removed service export (2026-07-21 sweep): the
@@ -107,6 +109,7 @@ class TestSettingsRoundtripCompleteness:
     def test_all_fields_roundtrip(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         svc = AppSettingsService()
+        svc.load()  # as main.py does — an unloaded service refuses to write (DEC-244)
         svc.update(
             theme_name="Neon",
             show_gpu_zero_rpm_warning=False,

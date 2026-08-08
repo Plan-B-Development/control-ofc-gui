@@ -68,6 +68,7 @@ class TestColourPersistence:
 
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         svc = AppSettingsService()
+        svc.load()  # as main.py does — an unloaded service refuses to write (DEC-244)
         svc.settings.series_colors["sensor:cpu0"] = "#ff0000"
         svc.save()
 
