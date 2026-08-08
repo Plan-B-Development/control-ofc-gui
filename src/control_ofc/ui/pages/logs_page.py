@@ -617,8 +617,22 @@ class LogsPage(QWidget):
         self._render_inspector()
 
     def cleanup(self) -> None:
-        """Tear the journal worker + thread down race-free (mirrors the
-        Diagnostics ``_teardown_worker`` disconnect-first ordering)."""
+        """Flush a pending filter write, then tear the journal worker + thread
+        down race-free (mirrors the Diagnostics ``_teardown_worker``
+        disconnect-first ordering).
+
+        The flush is DEC-245: a filter typed within the 500 ms debounce window is
+        otherwise lost on close. No teardown hazard — the timer is parented to
+        this page and a child QTimer of a destroyed parent never fires — so this
+        is purely a lost-write fix, and it must precede the blocking
+        ``QThread.wait`` below rather than follow it.
+        """
+        if getattr(self, "_filter_write_timer", None) is not None and (
+            self._filter_write_timer.isActive()
+        ):
+            self._filter_write_timer.stop()
+            self._persist_log_filters()
+
         if self._journal_worker is not None:
             QObject.disconnect(self._journal_worker, None, None, None)
         if self._journal_thread is not None:

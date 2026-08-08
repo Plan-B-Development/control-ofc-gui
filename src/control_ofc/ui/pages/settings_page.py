@@ -54,7 +54,7 @@ from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card, SectionHeader
 from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.components.toggle_switch import ToggleSwitch
-from control_ofc.ui.qt_util import set_chip_class
+from control_ofc.ui.qt_util import block_signals, set_chip_class
 from control_ofc.ui.theme import ThemeTokens
 
 log = logging.getLogger(__name__)
@@ -323,8 +323,8 @@ class SettingsPage(QWidget):
             self._chart_range_combo.addItem(label)
         v.addLayout(
             self._setting_row(
-                "Chart default time range",
-                "Initial window on the dashboard graph",
+                "Chart time range",
+                "Window shown on the dashboard graph; follows the chart's own selector",
                 self._chart_range_combo,
             )
         )
@@ -704,7 +704,14 @@ class SettingsPage(QWidget):
         if self._series_selection is not None:
             self._series_selection.load_hidden(self._settings_svc.settings.hidden_chart_series)
         self._refresh_reset_buttons()
-        self._set_status(f"Removed {report.total} setting(s) for missing hardware")
+        # Report what actually happened. Both keys are demo-sealed (DEC-244), so in
+        # a demo session update() drops the call entirely — announcing a removal
+        # that did not occur is the same fabricated-success bug v2.39.0 fixed
+        # elsewhere, just smaller.
+        if self._chart_orphans().total == report.total:
+            self._set_status("Not saved — demo mode uses session-only settings")
+        else:
+            self._set_status(f"Removed {report.total} setting(s) for missing hardware")
 
     def _show_all_series(self) -> None:
         if self._series_selection is not None:
@@ -1502,6 +1509,20 @@ class SettingsPage(QWidget):
         # Dashboard), so re-read on arrival rather than trusting construction.
         self._refresh_fan_aliases()
         self._refresh_reset_buttons()
+        # DEC-245 made the Dashboard's Range combo a second writer of
+        # chart_default_range_index, so this mirror has to re-read on arrival too.
+        # Without it the combo holds its construction-time value and Save Changes
+        # writes that back, silently reverting a range picked on the Dashboard.
+        with block_signals(self._chart_range_combo):
+            self._chart_range_combo.setCurrentIndex(
+                max(
+                    0,
+                    min(
+                        self._settings_svc.settings.chart_default_range_index,
+                        self._chart_range_combo.count() - 1,
+                    ),
+                )
+            )
 
     def _refresh_preferred_sensors(self) -> None:
         """Fetch the classified sensor inventory and (re)populate the combos."""

@@ -2,13 +2,29 @@
 
 ## [Unreleased]
 
+## [2.40.0] — 2026-08-08
+
+**The application remembers how you left it, and stops quietly losing track of your
+hardware.** v2.39.0 stopped configuration being destroyed; this is the other half —
+the state that was never saved in the first place, and the saved state that goes stale
+when hardware changes underneath it.
+
+Panel sizes, chart range and mode, log filters and your theme all survive a restart now.
+Chart settings for hardware that has gone can be cleared on request rather than
+accumulating invisibly. And fan names follow their header when a driver update renames
+it, which previously looked like yet another thing an update had lost.
+
+No daemon change, no configuration format change, nothing to migrate.
+DEC-245, DEC-246, DEC-247.
+
 ### Added
 - **The application remembers how you left it.** Panel sizes on every page, the chart's
   time range and mode, the Logs level filters and search text, and the theme shown in the
   Theme page's selector all survive a restart. Previously every one of them reset on each
   launch. DEC-245.
-- **Settings ▸ Card Layout ▸ "Reset layout"** puts every panel divider back to an even
-  split, for when a saved layout is simply not what you want any more.
+- **Settings ▸ Card Layout ▸ "Reset layout"** puts every panel divider back to the
+  proportions the page was designed with, for when a saved layout is simply not what you
+  want any more.
 - **Settings ▸ Sensors & Chart Series ▸ "Settings for missing hardware".** Chart colours and
   hidden-series entries for fans and sensors the daemon no longer reports accumulate forever
   and were invisible — the dashboard quietly ignores them while the saved file keeps them. The
@@ -28,6 +44,9 @@
 - A restored panel can never come back collapsed to nothing. Panel sizes are clamped to a
   usable minimum when restored, because the Dashboard's sensor rail is opened and closed
   by its divider alone — a saved zero-width rail would have been unrecoverable.
+- Panel sizes for a page you have not opened this session are left alone. Only the current
+  page in a stack is laid out by Qt, so the others report placeholder sizes; writing those
+  back would have quietly replaced a layout you had set on a page you never visited.
 - Window position, size and the last page you were on are saved as you go rather than only
   on a clean exit, so a crash, a forced logout or a `kill` no longer loses them.
 - **Fan names survive a driver update that renames the headers.** A motherboard fan's

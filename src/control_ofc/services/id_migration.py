@@ -2,12 +2,16 @@
 
 Qt-free; the view-model half of the house pattern.
 
-A hwmon fan id embeds the sysfs label and the device-symlink shape —
-``hwmon:{chip}:{device_id}:pwm{N}:{label}`` (``pwm_discovery.rs``). A kernel or
-driver update that starts or stops publishing ``fanN_label``, or that changes what
-``device`` points at, therefore renames every id on that chip, and the user's saved
-names silently stop matching anything. Kernels ride the same ``pacman -Syu`` as the
+A hwmon fan id embeds the sysfs label — ``hwmon:{chip}:{device_id}:pwm{N}:{label}``
+(``pwm_discovery.rs``). A kernel or driver update that starts or stops publishing
+``fanN_label`` therefore renames every id on that chip, and the user's saved names
+silently stop matching anything. Kernels ride the same ``pacman -Syu`` as the
 daemon, so this is genuinely update-sensitive.
+
+**Scope is the label segment only.** An earlier draft also followed a changed
+``device_id``, matching on ``(chip, pwm index)`` alone; pre-release review showed
+that is unsafe, because ``device_id`` is exactly what tells two identical chips
+apart. See :func:`parse_hwmon_fan_id`.
 
 **Only hwmon fans are affected.** ``openfan:ch07`` is a channel number and
 ``amd_gpu:0000:03:00.0`` is a PCI BDF — both stable by construction, so neither can
@@ -37,23 +41,42 @@ from collections.abc import Iterable
 # The ``pwmN`` segment is the anchor for parsing. Splitting on ":" alone is
 # ambiguous — a device id can itself contain colons (``0000:2d:00.0``) — but the
 # pwm index is unmistakable and always sits immediately before the label.
-_PWM_SEGMENT = re.compile(r"^pwm(\d+)$")
+# `[0-9]` rather than `\d`, which also matches non-ASCII digits — the daemon can
+# only ever emit ASCII `pwm{N}`, so anything else is a hand-edited settings file.
+_PWM_SEGMENT = re.compile(r"^pwm([0-9]+)$")
 
 
-def parse_hwmon_fan_id(fan_id: str) -> tuple[str, int] | None:
-    """``(chip, pwm_index)`` for a hwmon fan id, else ``None``.
+def parse_hwmon_fan_id(fan_id: str) -> tuple[str, str, int] | None:
+    """``(chip, device_id, pwm_index)`` for a hwmon fan id, else ``None``.
 
-    The pair is deliberately everything *except* the two volatile segments: the
-    device id and the label are exactly what a driver update rewrites, while the
-    chip name and the pwm index identify the same physical header across the change.
+    Only the **label** is dropped, because only the label is what a driver
+    relabel rewrites.
+
+    ``device_id`` is deliberately part of the key even though the module
+    docstring calls it volatile. The daemon includes it precisely "to distinguish
+    multiple chips with the same name" (``discovery.rs``), and dropping it makes
+    two identical controllers indistinguishable — a Commander Pro unplugged while
+    its twin stays connected produces orphan/live pairs byte-identical to a
+    legitimate relabel, so every name from the absent unit would silently move
+    onto the present one. Worse, the move is self-sealing: once the key is a live
+    id the returning device is unaliased and can never get its names back.
+
+    The cost is that a change to the ``device`` symlink itself is no longer
+    followed — the name is simply left orphaned, exactly as before this feature.
+    That is the right side to err on: failing to recover a name is recoverable by
+    typing it again; putting the pump's name on a chassis fan is not obviously
+    wrong to the user, and ``member_label`` is the DEC-095/162 role carrier.
     """
     parts = fan_id.split(":")
     if len(parts) < 4 or parts[0] != "hwmon":
         return None
-    for part in parts[2:]:
+    for i, part in enumerate(parts[2:], start=2):
         m = _PWM_SEGMENT.match(part)
         if m:
-            return parts[1], int(m.group(1))
+            device_id = ":".join(parts[2:i])
+            if not device_id:
+                return None
+            return parts[1], device_id, int(m.group(1))
     return None
 
 
@@ -67,9 +90,9 @@ def find_realias_moves(
 
     * the saved id must name **no** live fan — a name still pointing at present
       hardware is not orphaned and must never be moved;
-    * both sides must parse as hwmon fans with the same ``(chip, pwm index)``;
-    * exactly **one** live candidate may match. Two identical chips on one board
-      would otherwise make the choice a coin flip;
+    * both sides must parse as hwmon fans with the same
+      ``(chip, device id, pwm index)`` — everything but the label;
+    * exactly **one** live candidate may match;
     * the candidate must not already carry an alias of its own — the user's
       existing name always wins over a resurrected one;
     * no two orphans may claim the same candidate.
@@ -82,7 +105,7 @@ def find_realias_moves(
     if not live:
         return {}
 
-    by_slot: dict[tuple[str, int], list[str]] = {}
+    by_slot: dict[tuple[str, str, int], list[str]] = {}
     for fan_id in live:
         slot = parse_hwmon_fan_id(fan_id)
         if slot is not None:

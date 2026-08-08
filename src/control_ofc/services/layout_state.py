@@ -8,8 +8,24 @@ attaches this clamp as a condition of the reversal. The reason is DEC-222, not
 aesthetics: that ADR removed the sensors rail's show/hide toggle in favour of the
 splitter handle, stating there is "no hidden state and no width-based
 auto-collapse". Restoring a fully-collapsed pane would put that hidden state back
-on the next launch with no affordance left to undo it — a soft-lock. So a
-restored pane is never allowed to arrive collapsed, however it was saved.
+on the next launch with no affordance left to undo it — a soft-lock.
+
+**Be precise about how much of that this clamp actually does.** Measured against
+the real panes in a laid-out window, every effective minimum
+(``max(minimumSizeHint, minimum)`` along the split axis) is already 50 px or more —
+the smallest is the Logs inspector at 50, most are 140-470. Qt raises any non-zero
+``setSizes`` value to that minimum by itself, so ``MIN_PANE_PX`` almost never binds
+and the widgets do the bulk of the anti-collapse work.
+
+What the floor *does* guarantee is that ``setSizes`` is never handed a literal
+``0``, which for a ``childrenCollapsible=True`` splitter (seven of the nine are)
+Qt honours as a genuine collapse rather than clamping up. That is the soft-lock
+path, and it is narrow — but it is the one that matters, and it is exactly the
+case a saved layout can contain.
+
+A corollary worth knowing: because Qt overrides clamped values upward, the
+rescale-and-settle arithmetic below is approximate in practice. It sets the
+intent; the widget minimums have the final say.
 """
 
 from __future__ import annotations

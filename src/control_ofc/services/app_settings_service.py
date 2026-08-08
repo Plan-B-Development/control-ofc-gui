@@ -45,6 +45,13 @@ MACHINE_SPECIFIC_KEYS = frozenset(
 # pins the two together so the pair cannot drift.
 _CHART_MODES = frozenset({"thermals", "fans", "combined", "diagnostics"})
 
+# Bounds on the persisted layout map. The app has nine splitters; the headroom is
+# for retired objectNames a future release leaves behind. Only reachable by hand
+# editing (the key is machine-specific, so it cannot arrive by import), but every
+# save deep-copies the whole dataclass and DEC-245 made saves far more frequent.
+_MAX_SPLITTERS = 64
+_MAX_PANES_PER_SPLITTER = 16
+
 _LOG_LEVELS = frozenset({"info", "warn", "error"})
 _LOG_LEVELS_ALL = ["info", "warn", "error"]
 
@@ -169,7 +176,11 @@ def _as_splitter_sizes(value: object, default: dict[str, list[int]]) -> dict[str
         return dict(default)
     result: dict[str, list[int]] = {}
     for key, sizes in value.items():
+        if len(result) >= _MAX_SPLITTERS:
+            break  # a hand-edited file cannot make every save deep-copy a huge dict
         if not isinstance(key, str) or not isinstance(sizes, (list, tuple)) or not sizes:
+            continue
+        if len(sizes) > _MAX_PANES_PER_SPLITTER:
             continue
         if any(
             isinstance(n, bool) or not isinstance(n, int) or not (0 <= n <= _GEOM_MAX)

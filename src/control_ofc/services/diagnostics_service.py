@@ -41,6 +41,11 @@ _BUNDLE_EXCLUDED_SETTING_KEYS = frozenset(
         "series_colors",
         "export_default_dir",
         "daemon_import_prompted",
+        # DEC-245 view state. `splitter_sizes` is exactly the "genuine window/layout
+        # state" this set exists to drop, and `logs_search_text` is free text the
+        # user typed — neither belongs in a bundle they may hand to someone else.
+        "splitter_sizes",
+        "logs_search_text",
     }
 )
 

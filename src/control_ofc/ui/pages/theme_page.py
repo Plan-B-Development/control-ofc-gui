@@ -29,7 +29,6 @@ from control_ofc.paths import themes_dir
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card
-from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.theme import (
     ThemeTokens,
     default_dark_theme,
@@ -147,6 +146,9 @@ class ThemePage(QWidget):
         root.addWidget(self._status_label)
 
         self._load_theme_settings()
+        # DEC-245: last, because it loads the theme into the editor and the
+        # name label, both of which are built above.
+        self._select_saved_theme()
 
     # ─── Lifecycle ───────────────────────────────────────────────────
 
@@ -174,14 +176,41 @@ class ThemePage(QWidget):
                     self._theme_combo.addItem(t.name, str(p))
                 except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
                     log.warning("Skipping invalid theme %s: %s", p, e)
-        # DEC-245: point the combo at the theme actually in force. Rebuilding the
-        # list left index 0 selected, so the page claimed "Default Dark" on every
-        # launch while `theme_name` said otherwise and the app rendered otherwise.
-        saved = self._settings_svc.settings.theme_name
-        idx = self._theme_combo.findText(saved)
-        if idx >= 0 and idx != self._theme_combo.currentIndex():
-            with block_signals(self._theme_combo):
-                self._theme_combo.setCurrentIndex(idx)
+
+    def _select_saved_theme(self) -> None:
+        """Point the combo at the theme actually in force. Startup only (DEC-245).
+
+        Rebuilding the list left index 0 selected, so the page claimed "Default
+        Dark" on every launch while ``theme_name`` said otherwise. Selecting the
+        index *alone* was worse than the bug it fixed: the combo is not connected
+        to ``currentIndexChanged`` (loading is the explicit Load button) and the
+        editor initialises from ``default_dark_theme()``, so the picker read
+        "Solar Light" while the label under it read "Current theme: Default Dark"
+        and the colour grid showed Default Dark — and Apply Theme Globally would
+        have applied Default Dark. So the selection is followed by a real load.
+
+        Called from ``__init__`` only, never from the ``_refresh_theme_list``
+        callers in save/import: re-loading there would discard unsaved edits.
+
+        Matching by display text is correct today because the combo is filled in
+        ``sorted(td.glob("*.json"))`` order and ``main._resolve_startup_theme``
+        resolves the persisted name by walking the *same* order — so duplicates by
+        name still land on the same file. That coupling is undocumented elsewhere;
+        this comment is the documentation.
+        """
+        saved_name = self._settings_svc.settings.theme_name
+        idx = self._theme_combo.findText(saved_name)
+        if idx < 0:
+            return
+        if idx != self._theme_combo.currentIndex():
+            self._theme_combo.setCurrentIndex(idx)
+        # Guarded because this now runs during MainWindow.__init__: the combo only
+        # holds files that parsed a moment ago, but the consequence of losing that
+        # race changed from "the Load button failed" to "the GUI does not start".
+        try:
+            self._apply_selected_theme()
+        except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
+            log.warning("Could not load saved theme %r: %s", saved_name, e)
 
     def _apply_selected_theme(self) -> None:
         path_str = self._theme_combo.currentData()

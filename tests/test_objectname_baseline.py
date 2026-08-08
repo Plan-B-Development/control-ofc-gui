@@ -107,6 +107,9 @@ DASHBOARD_OBJECTNAMES = frozenset(
         "Dashboard_Section_telemetry",
         "Dashboard_Splitter_horizontal",
         "Dashboard_Splitter_vertical",
+        # DEC-245: debounces the Range combo so a wheel scroll is one
+        # settings write rather than one per notch.
+        "Dashboard_Timer_rangeWrite",
         "ErrorBanner_Btn_dismiss",
         "Inspector_Heading",
         "Inspector_Panel_sensors",

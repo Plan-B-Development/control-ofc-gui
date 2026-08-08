@@ -81,6 +81,9 @@ class SeriesSelectionModel(QObject):
         # NOT group-based, so the "new keys default visible" contract is untouched
         # until the user picks a group-based mode (Thermals/Fans).
         self._active_mode: ChartMode = ChartMode.COMBINED
+        # Whether the group-mode new-key rule may fire on the next key
+        # registration. Cleared by `restore_mode` — see there for why.
+        self._mode_rule_armed = True
 
     # -- visibility --
 
@@ -143,8 +146,21 @@ class SeriesSelectionModel(QObject):
         This is what closes the label/data divergence: before, the mode reset to
         Combined on every launch while the hidden set still held the previous
         mode's result, so the selector and the chart disagreed.
+
+        **Disarming the new-key rule for one registration is load-bearing**, and
+        the first cut of this method omitted it. On the first poll ``_known_keys``
+        is empty, so *every* key counts as newly added; with a group mode active
+        the rule would then re-hide every out-of-group series — including the ones
+        the user had deliberately re-shown while in that mode — and the resulting
+        ``selection_changed`` persists the loss. Their tweak would be destroyed on
+        every launch. Pre-DEC-245 this could not happen because the mode always
+        reset to COMBINED, which is not group-based.
+
+        The rule re-arms after that first registration, so genuinely new hardware
+        arriving later still follows the mode.
         """
         self._active_mode = mode
+        self._mode_rule_armed = False
 
     def apply_mode(self, mode: ChartMode, curated_keys: set[str] | None = None) -> None:
         """Apply a chart-readability preset and remember it for the new-key rule.
@@ -157,6 +173,7 @@ class SeriesSelectionModel(QObject):
         - THERMALS / FANS → the group-based preset (``_MODE_GROUPS``).
         """
         self._active_mode = mode
+        self._mode_rule_armed = True
         if mode == ChartMode.DIAGNOSTICS:
             self.select_all()
             return
@@ -206,7 +223,11 @@ class SeriesSelectionModel(QObject):
         self._known_keys = filtered
         # Prune hidden keys that no longer exist
         self._hidden_keys &= self._known_keys
-        groups = _MODE_GROUPS.get(self._active_mode)
+        # After `restore_mode` the first registration is not "new hardware" — it
+        # is the hardware the saved hidden set already describes, so the mode rule
+        # must sit that one out or it overwrites the user's own adjustments.
+        groups = _MODE_GROUPS.get(self._active_mode) if self._mode_rule_armed else None
+        self._mode_rule_armed = True
         changed = False
         if groups:
             for key in added:

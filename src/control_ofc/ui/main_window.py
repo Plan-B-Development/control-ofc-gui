@@ -363,7 +363,11 @@ class MainWindow(QWidget):
         self._geometry_timer.setSingleShot(True)
         self._geometry_timer.setInterval(800)
         self._geometry_timer.timeout.connect(self._persist_window_state)
-        self.page_stack.currentChanged.connect(lambda _i: self._geometry_timer.start())
+        # A bound method, not a lambda: this file's own rule (see the comment on
+        # the poll-age ticker) is that PySide holds bound receivers weakly, while a
+        # self-capturing lambda is kept alive by the sender's connection list and
+        # forms a GC-only cycle — the finalisation ordering DEC-230 identified.
+        self.page_stack.currentChanged.connect(self._on_page_stack_changed)
 
         if demo_mode:
             self._start_demo_mode()
@@ -721,7 +725,11 @@ class MainWindow(QWidget):
         )
         # Repaint the affected rows; the file has just been written in full, so the
         # per-row persist slot is stood down for the burst (as DEC-228 does).
-        self._state.fan_alias_changed.disconnect(self._persist_fan_alias)
+        # suppress: if the slot is somehow already disconnected, an exception here
+        # would skip the finally and leave it disconnected for the whole session —
+        # renames would then update memory and never reach disk.
+        with contextlib.suppress(RuntimeError, TypeError):
+            self._state.fan_alias_changed.disconnect(self._persist_fan_alias)
         try:
             for new_id in moves.values():
                 self._state.fan_alias_changed.emit(new_id, self._state.fan_display_name(new_id))
@@ -813,6 +821,16 @@ class MainWindow(QWidget):
             self._state.set_fans(self._demo_service.fans())
             self._state.mark_poll_success()  # drive the strip's poll-age in demo
 
+    def _on_page_stack_changed(self, _index: int) -> None:
+        """Arm the geometry debounce when the visible page changes (DEC-245).
+
+        Deliberately NOT named `_on_page_changed`: that already exists as the
+        sidebar handler which *sets* the page. Reusing the name shadowed it, so
+        navigation silently stopped working — and wiring `currentChanged` to it
+        would also have recursed through `setCurrentIndex`.
+        """
+        self._geometry_timer.start()
+
     def _persist_window_state(self) -> None:
         """Write geometry + last page. Debounced; also called from closeEvent."""
         geo = self.geometry()
@@ -839,8 +857,12 @@ class MainWindow(QWidget):
             self._geometry_timer.stop()
         self._persist_window_state()
         # Flush any pane drag still inside the debounce window, before the widgets
-        # go away and their sizes become unreadable (DEC-245).
-        self._splitter_persistence.stop()
+        # go away and their sizes become unreadable (DEC-245). Guarded like the
+        # geometry timer beside it: both are created in the same block, so a
+        # partially built window must still close cleanly rather than raising
+        # AttributeError out of closeEvent.
+        if getattr(self, "_splitter_persistence", None) is not None:
+            self._splitter_persistence.stop()
         # Stop the poll-age ticker before the pages tear down: it writes into the
         # footer every second, and a tick landing mid-teardown would touch an
         # already-deleted widget (DEC-222).

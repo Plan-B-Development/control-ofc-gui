@@ -118,6 +118,8 @@ class DashboardPage(QWidget):
         # first-run seeding would re-fire on every 1 Hz tick, stamping the
         # curated subset back over whatever the user selected mid-session.
         self._chart_defaults_seeded = False
+        # DEC-245: coalesce a wheel-scroll over the Range combo into one write.
+        self._pending_range_index: int | None = None
         self._prev_connection = state.connection if state else None
         self._last_override_ids: set[str] = set()
         self._last_stale_sensor_ids: set[str] = set()
@@ -160,6 +162,12 @@ class DashboardPage(QWidget):
         if self._profile_service:
             self._profile_service.profiles_changed.connect(self.populate_profiles)
             self._profile_service.active_changed.connect(self._on_active_id_changed)
+
+        self._range_write_timer = QTimer(self)
+        self._range_write_timer.setObjectName("Dashboard_Timer_rangeWrite")
+        self._range_write_timer.setSingleShot(True)
+        self._range_write_timer.setInterval(400)
+        self._range_write_timer.timeout.connect(self._persist_chart_range)
 
         # Chart refresh timer — visibility-gated for performance (R48)
         self._chart_timer = QTimer(self)
@@ -470,7 +478,7 @@ class DashboardPage(QWidget):
             self._chart.set_range_index(s.chart_default_range_index)
             # DEC-245: the Range combo used to be session-local — the persisted
             # value was applied here and every later change discarded.
-            self._chart.range_changed.connect(self._persist_chart_range)
+            self._chart.range_changed.connect(self._on_range_changed)
             # Restore the mode *label* only. The saved hidden set is already this
             # mode's result plus any later tweaks, so re-applying the preset would
             # throw those away; the divergence was that the label reset while the
@@ -629,9 +637,21 @@ class DashboardPage(QWidget):
         self._chart_defaults_seeded = True
         self._settings_service.update(chart_series_seeded=True)
 
-    def _persist_chart_range(self, index: int) -> None:
-        if self._settings_service:
-            self._settings_service.update(chart_default_range_index=index)
+    def _on_range_changed(self, index: int) -> None:
+        """Debounce the Range combo (DEC-245).
+
+        The only one of this release's write paths that was undebounced, and the
+        one most exposed to it: a QComboBox changes index on every wheel notch, so
+        a single scroll over the Range control produced five to ten whole-file
+        writes on the GUI thread — each an asdict + json.dumps + mkstemp + two
+        fsyncs. Cheap on tmpfs, a visible hitch on a loaded real filesystem.
+        """
+        self._pending_range_index = index
+        self._range_write_timer.start()
+
+    def _persist_chart_range(self) -> None:
+        if self._settings_service and self._pending_range_index is not None:
+            self._settings_service.update(chart_default_range_index=self._pending_range_index)
 
     def _on_chart_mode_selected(self, mode: ChartMode) -> None:
         curated = self._curated_chart_keys() if mode == ChartMode.COMBINED else None
@@ -641,9 +661,17 @@ class DashboardPage(QWidget):
 
     def _on_chart_reset(self) -> None:
         """Reset-to-default: restore the curated Combined subset and reflect it in
-        the selector (refinement §11)."""
+        the selector (refinement §11).
+
+        Persists the mode for the same reason `_on_chart_mode_selected` does. Reset
+        is a second way to change it, and leaving it out reintroduced the very
+        divergence DEC-245 exists to close: reset while in Fans, and the next launch
+        showed "Fans" in the selector over Combined data.
+        """
         self._selection.apply_mode(ChartMode.COMBINED, self._curated_chart_keys())
         self._chart.set_mode(ChartMode.COMBINED)
+        if self._settings_service:
+            self._settings_service.update(chart_mode=ChartMode.COMBINED.value)
 
     def _push_chart_context(self) -> None:
         """Feed the chart's crosshair footer the current profile + mode (DEC-181)."""

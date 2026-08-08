@@ -14,22 +14,25 @@ from control_ofc.services.id_migration import (
     parse_hwmon_fan_id,
 )
 
-# The reporter's real board, before and after a driver relabel. Same chip, same
-# pwm index; the device id and the label are what moved.
-OLD = "hwmon:it8696:pci0:pwm1:CHA_FAN1"
+# A driver relabel on the reporter's real board: same chip, same device, same pwm
+# index — only the label segment moved, which is all a relabel can change.
+OLD = "hwmon:it8696:it87.2624:pwm1:CHA_FAN1"
 NEW = "hwmon:it8696:it87.2624:pwm1:pwm1"
+# A *different* physical instance of the same chip model. Distinguished only by
+# device_id, which is why device_id is part of the match key.
+TWIN = "hwmon:it8696:it87.656:pwm1:pwm1"
 
 
 class TestParse:
     @pytest.mark.parametrize(
         ("fan_id", "expected"),
         [
-            (OLD, ("it8696", 1)),
-            (NEW, ("it8696", 1)),
-            ("hwmon:it8696:it87.2624:pwm3:pwm3", ("it8696", 3)),
+            (OLD, ("it8696", "it87.2624", 1)),
+            (NEW, ("it8696", "it87.2624", 1)),
+            ("hwmon:it8696:it87.2624:pwm3:pwm3", ("it8696", "it87.2624", 3)),
             # A device id containing colons is why the pwm segment is the anchor
             # and a bare split(":") would not do.
-            ("hwmon:nct6687:0000:2d:00.0:pwm2:CPU_FAN", ("nct6687", 2)),
+            ("hwmon:nct6687:0000:2d:00.0:pwm2:CPU_FAN", ("nct6687", "0000:2d:00.0", 2)),
         ],
     )
     def test_reads_chip_and_index(self, fan_id, expected):
@@ -59,10 +62,37 @@ class TestFindMoves:
         assert find_realias_moves({OLD: "CPU"}, {OLD, NEW}) == {}
 
     def test_refuses_an_ambiguous_match(self):
-        """Two identical chips on one board would make the choice a coin flip."""
-        twin_a = "hwmon:it8696:it87.2624:pwm1:pwm1"
-        twin_b = "hwmon:it8696:it87.656:pwm1:pwm1"
-        assert find_realias_moves({OLD: "CPU"}, {twin_a, twin_b}) == {}
+        """Two live candidates for one orphan would make the choice a coin flip.
+
+        Defence in depth rather than a reachable state: once ``device_id`` is part
+        of the key, two live ids can only collide if the daemon reported the same
+        chip, device and pwm index under two different labels, which one header
+        cannot do. The guard stays because the cost of being wrong here is a name
+        on the wrong cooler.
+        """
+        twin_labels = {
+            "hwmon:it8696:it87.2624:pwm1:labelA",
+            "hwmon:it8696:it87.2624:pwm1:labelB",
+        }
+        assert find_realias_moves({"hwmon:it8696:it87.2624:pwm1:gone": "CPU"}, twin_labels) == {}
+
+    def test_an_absent_twin_never_claims_its_present_sibling(self):
+        """The case the live-uniqueness guard does NOT catch, and the reason
+        device_id is in the match key.
+
+        Unplug one of two identical controllers and the orphan/live pair is
+        byte-identical to a legitimate relabel — so a (chip, index) match would
+        silently move every name from the absent unit onto the present one. It is
+        self-sealing too: once the key is a live id, the returning device is
+        unaliased and can never get its names back.
+        """
+        assert find_realias_moves({"hwmon:it8696:it87.2624:pwm1:pwm1": "Pump"}, {TWIN}) == {}
+
+    def test_a_changed_device_id_is_left_orphaned_rather_than_guessed(self):
+        """The deliberate cost of the above. Failing to recover a name is fixed by
+        typing it again; putting the pump's name on a chassis fan is not obviously
+        wrong to the user, and member_label is the CPU/pump role carrier."""
+        assert find_realias_moves({"hwmon:it8696:pci0:pwm1:CHA_FAN1": "CPU"}, {NEW}) == {}
 
     def test_will_not_overwrite_an_existing_name(self):
         """The user's current name for the live fan always wins over a
@@ -70,7 +100,7 @@ class TestFindMoves:
         assert find_realias_moves({OLD: "CPU", NEW: "Already Named"}, {NEW}) == {}
 
     def test_two_orphans_cannot_claim_the_same_fan(self):
-        other = "hwmon:it8696:usb0:pwm1:SYS_FAN"
+        other = "hwmon:it8696:it87.2624:pwm1:SYS_FAN"
         moves = find_realias_moves({OLD: "CPU", other: "Rear"}, {NEW})
         assert len(moves) == 1
 
@@ -79,6 +109,10 @@ class TestFindMoves:
 
     def test_different_chip_is_not_a_match(self):
         assert find_realias_moves({OLD: "CPU"}, {"hwmon:nct6687:it87.2624:pwm1:pwm1"}) == {}
+
+    def test_non_ascii_digits_are_not_a_pwm_index(self):
+        """The daemon only ever emits ASCII pwm{N}; anything else is hand-edited."""
+        assert parse_hwmon_fan_id("hwmon:chip:dev:pwm\u0663:x") is None
 
     def test_no_live_fans_means_no_moves(self):
         """Disconnected or pre-first-poll: everything looks orphaned and there is
