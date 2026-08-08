@@ -50,6 +50,25 @@ This is **advisory only**: thermal safety always uses the hottest CPU sensor reg
 
 Requires `control-ofc-daemon` ≥ v2.6.0.
 
+## Resets & Maintenance
+
+Several cards collect the things that accumulate quietly as you use the application. Each control shows a count and is disabled when there is nothing to do — the count is how you find out the state exists at all.
+
+| Card | What it clears |
+|---|---|
+| **Fan Names** | Every fan name in one place, including names for hardware that is no longer plugged in. Those rows are kept on purpose: otherwise a stale name could never be removed. Renaming from the Dashboard or the Overview fan table is unchanged |
+| **Sensors & Chart Series** | Hidden sensors, coolant classification overrides, custom chart colours, hidden chart series — and **Settings for missing hardware** (below) |
+| **Prompts & Dismissals** | Re-arms the AIO pump popup, dismissed driver advisories, the daemon profile-import offer, and the one-time fan-name and chart-series seeding |
+| **Card Layout** | Every Controls-page card size at once. Resetting one card by double-clicking its grip is unchanged |
+
+### Settings for missing hardware
+
+Chart colours and hidden-series entries are stored per fan and per sensor. Swap a GPU, unplug a fan, or change a kernel that renames a sensor, and those entries stay behind — the chart quietly ignores them, but they are still in your settings file. **Remove (N)** counts them and clears them.
+
+Nothing is removed unless you ask, and the reason is that the application genuinely cannot tell the difference between hardware that is gone and hardware that is merely switched off. A fan that is stopped, or a sensor the daemon has temporarily set aside because it cannot be read (a WiFi temperature with the radio off is the usual one), looks exactly like hardware that has been removed. Deleting those automatically would lose your colours the next time you booted with a device idle. The button is also disabled while disconnected, when the application knows of no hardware at all.
+
+**Fan names are deliberately not included.** Use the Fan Names card for those — it is the surface built for it, and a fan's name also feeds the minimum-speed rule that protects CPU coolers and pumps, so it is not something to clear in bulk by accident.
+
 ## Sync & Backup
 
 This card (formerly the Import/Export tab) provides full backup and restore of all application state, plus a one-click push of your local profiles into the daemon. A **backup is created automatically before any import**.

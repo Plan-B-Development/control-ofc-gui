@@ -47,6 +47,7 @@ from control_ofc.paths import (
 )
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
+from control_ofc.services.orphan_prune import OrphanReport, find_orphans, live_series_keys
 from control_ofc.services.profile_import_service import import_profiles
 from control_ofc.services.profile_service import ImportCollection, collect_local_profiles_for_import
 from control_ofc.ui.components.buttons import make_button
@@ -626,6 +627,19 @@ class SettingsPage(QWidget):
                 self._show_series_btn,
             )
         )
+
+        self._prune_orphans_btn = make_button(
+            "Remove", "ghost", object_name="Settings_Btn_pruneChartOrphans"
+        )
+        self._prune_orphans_btn.clicked.connect(self._prune_chart_orphans)
+        v.addLayout(
+            self._setting_row(
+                "Settings for missing hardware",
+                "Colours and hidden-series entries for fans and sensors the daemon "
+                "no longer reports",
+                self._prune_orphans_btn,
+            )
+        )
         return card
 
     def _unhide_all_sensors(self) -> None:
@@ -648,6 +662,45 @@ class SettingsPage(QWidget):
         self._settings_svc.update(series_colors={})
         self._refresh_reset_buttons()
         self._set_status("Chart series colours reset to defaults")
+
+    def _chart_orphans(self) -> OrphanReport:
+        """Chart settings referring to hardware the daemon no longer reports.
+
+        Returns an empty report whenever the live key set is empty — disconnected,
+        or before the first poll. Without that, "prune what the daemon did not
+        mention" would mean "delete everything" (see ``find_orphans``).
+        """
+        if self._state is None:
+            return OrphanReport()
+        status = self._state.daemon_status
+        known = live_series_keys(
+            (f.id for f in self._state.fans),
+            (s.id for s in self._state.sensors),
+            # DEC-193: quarantined sensors are evicted from `sensors`, so without
+            # this a WiFi temp with the radio off reads as gone and loses its colour.
+            (u.id for u in (status.unavailable_sensors if status else [])),
+        )
+        s = self._settings_svc.settings
+        return find_orphans(s.hidden_chart_series, s.series_colors, known)
+
+    def _prune_chart_orphans(self) -> None:
+        report = self._chart_orphans()
+        if not report:
+            return
+        s = self._settings_svc.settings
+        dropped = set(report.hidden_series)
+        self._settings_svc.update(
+            hidden_chart_series=[k for k in s.hidden_chart_series if k not in dropped],
+            series_colors={
+                k: v for k, v in s.series_colors.items() if k not in set(report.series_colors)
+            },
+        )
+        # Keep the live model in step, or the chart goes on hiding a series whose
+        # saved entry has just been removed and the next emit writes it back.
+        if self._series_selection is not None:
+            self._series_selection.load_hidden(self._settings_svc.settings.hidden_chart_series)
+        self._refresh_reset_buttons()
+        self._set_status(f"Removed {report.total} setting(s) for missing hardware")
 
     def _show_all_series(self) -> None:
         if self._series_selection is not None:
@@ -1174,6 +1227,7 @@ class SettingsPage(QWidget):
                 "Clear dismissed",
             ),
             (self._reset_card_sizes_btn, len(s.controls_card_sizes), "Reset all sizes"),
+            (self._prune_orphans_btn, self._chart_orphans().total, "Remove"),
         ):
             btn.setEnabled(count > 0)
             btn.setText(f"{label} ({count})" if count else label)

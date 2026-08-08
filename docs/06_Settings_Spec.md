@@ -52,6 +52,15 @@ Added in DEC-237 — mirror and reset surfaces for settings authored elsewhere:
   route through `AppState.set_sensor_class_override` so the Overview table
   re-renders; "show all series" calls `SeriesSelectionModel.select_all()` so the
   live chart updates rather than only the stored key list.
+  Also **"Settings for missing hardware"** (DEC-246): clears `series_colors` and
+  `hidden_chart_series` entries whose entity the daemon no longer reports. The rule
+  is the Qt-free `services/orphan_prune.py`; it returns *nothing* when the live key
+  set is empty (disconnected, or pre-first-poll), because otherwise "remove what the
+  daemon did not mention" deletes everything. Quarantined sensors (DEC-193) count as
+  known — they are evicted from `sensors` and reported separately, so omitting them
+  would drop a WiFi temperature's colour whenever its radio is off. `fan_aliases` is
+  deliberately out of scope: see the Fan Names card above, and the `member_label`
+  safety-floor path.
 - **Prompts & Dismissals** — re-arm `show_aio_pump_info`, clear
   `acknowledged_kernel_warnings`, re-offer the daemon profile import, re-run the
   fan-alias and chart-series seeding latches.

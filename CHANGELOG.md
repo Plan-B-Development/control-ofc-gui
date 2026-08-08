@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+- **Settings ▸ Sensors & Chart Series ▸ "Settings for missing hardware".** Chart colours and
+  hidden-series entries for fans and sensors the daemon no longer reports accumulate forever
+  and were invisible — the dashboard quietly ignores them while the saved file keeps them. The
+  new row counts them and clears them on request. Fan names are deliberately *not* included:
+  the Fan Names card already lists names for unplugged hardware so you can clear those
+  yourself, and a fan name feeds the CPU/pump minimum-speed rule.
+- Removal only ever happens when you ask. A fan that is merely switched off, or a sensor the
+  daemon has temporarily quarantined (a WiFi temperature with the radio off), is indistinguishable
+  from one that is gone for good, so nothing is deleted automatically. The button is also
+  disabled while disconnected, when the application knows of no hardware at all. DEC-246.
+
 ## [2.39.0] — 2026-08-08
 
 **Your chart colours and series selection stop disappearing.** They were not being lost to a
