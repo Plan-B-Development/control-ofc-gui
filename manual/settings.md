@@ -59,7 +59,13 @@ Several cards collect the things that accumulate quietly as you use the applicat
 | **Fan Names** | Every fan name in one place, including names for hardware that is no longer plugged in. Those rows are kept on purpose: otherwise a stale name could never be removed. Renaming from the Dashboard or the Overview fan table is unchanged |
 | **Sensors & Chart Series** | Hidden sensors, coolant classification overrides, custom chart colours, hidden chart series — and **Settings for missing hardware** (below) |
 | **Prompts & Dismissals** | Re-arms the AIO pump popup, dismissed driver advisories, the daemon profile-import offer, and the one-time fan-name and chart-series seeding |
-| **Card Layout** | Every Controls-page card size at once. Resetting one card by double-clicking its grip is unchanged |
+| **Card Layout** | Every Controls-page card size at once (resetting one card by double-clicking its grip is unchanged), and **Reset layout**, which puts every panel divider back to an even split |
+
+### Remembered layout
+
+Panel sizes set by dragging the dividers between sections are remembered per page, along with the chart's time range and mode, the Logs level filters and search text, and your theme. Everything here used to reset on every launch.
+
+A restored panel is never allowed to come back collapsed to nothing, however narrow you left it. That matters most on the Dashboard, where the sensor rail is opened and closed by its divider alone — a saved zero-width rail would have left no way to get it back. **Reset layout** is the escape hatch for a saved arrangement you have simply gone off.
 
 ### Settings for missing hardware
 

@@ -34,6 +34,7 @@ from control_ofc.ui.pages.system_state_page import SystemStatePage
 from control_ofc.ui.pages.theme_page import ThemePage
 from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.sidebar import Sidebar
+from control_ofc.ui.splitter_persistence import SplitterPersistence
 from control_ofc.ui.status_banner import THERMAL_STATES, StatusBanner
 from control_ofc.ui.status_ribbon import StatusRibbon
 from control_ofc.ui.widgets.error_banner import ErrorBanner
@@ -176,7 +177,11 @@ class MainWindow(QWidget):
         # a Log Inspector). Shares the same DiagnosticsService feed.
         # DEC-222: Logs is now the single active-warnings surface, so it needs
         # AppState (the warnings live there, not in the diagnostics event feed).
-        self.logs_page = LogsPage(diagnostics_service=self._diag, state=self._state)
+        self.logs_page = LogsPage(
+            diagnostics_service=self._diag,
+            state=self._state,
+            settings_service=self._settings_service,
+        )
         # DEC-211: System State is now its own page (migrated Diagnostics
         # Troubleshooting). Owns its own hw-diagnostics/verify workers; reads the
         # shared last_hw_diagnostics cache.
@@ -335,6 +340,25 @@ class MainWindow(QWidget):
         self._poll_age_timer.timeout.connect(self._tick_poll_age)
         self._poll_age_timer.start()
         self._tick_poll_age()
+
+        # DEC-245: adopt every named splitter in one pass, after the pages exist.
+        # findChildren rather than nine registrations, so a splitter added later is
+        # covered without anyone remembering — the same argument DEC-234 used for
+        # the shared handle style, and the lesson DEC-244 paid for.
+        self._splitter_persistence = SplitterPersistence(self._settings_service, self)
+        self._splitter_persistence.adopt(self)
+        self.settings_page.layout_reset_requested.connect(self._splitter_persistence.reset)
+
+        # DEC-245: geometry and last-page used to be written only in closeEvent, so
+        # a crash, SIGKILL or logout lost them. Debounced from resize/move/page
+        # change instead — closeEvent still writes, it is just no longer the only
+        # chance. Debounced because a drag emits a resize per frame.
+        self._geometry_timer = QTimer(self)
+        self._geometry_timer.setObjectName("MainWindow_Timer_geometryWrite")
+        self._geometry_timer.setSingleShot(True)
+        self._geometry_timer.setInterval(800)
+        self._geometry_timer.timeout.connect(self._persist_window_state)
+        self.page_stack.currentChanged.connect(lambda _i: self._geometry_timer.start())
 
         if demo_mode:
             self._start_demo_mode()
@@ -748,13 +772,34 @@ class MainWindow(QWidget):
             self._state.set_fans(self._demo_service.fans())
             self._state.mark_poll_success()  # drive the strip's poll-age in demo
 
-    def closeEvent(self, event) -> None:
-        """Persist window geometry and last page on close, then clean up timers."""
+    def _persist_window_state(self) -> None:
+        """Write geometry + last page. Debounced; also called from closeEvent."""
         geo = self.geometry()
         self._settings_service.update(
             last_page_index=self.page_stack.currentIndex(),
             window_geometry=[geo.x(), geo.y(), geo.width(), geo.height()],
         )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # Guarded: resizeEvent fires during __init__ (resize() in the constructor),
+        # before the timer exists.
+        if getattr(self, "_geometry_timer", None) is not None:
+            self._geometry_timer.start()
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        if getattr(self, "_geometry_timer", None) is not None:
+            self._geometry_timer.start()
+
+    def closeEvent(self, event) -> None:
+        """Persist window geometry and last page on close, then clean up timers."""
+        if getattr(self, "_geometry_timer", None) is not None:
+            self._geometry_timer.stop()
+        self._persist_window_state()
+        # Flush any pane drag still inside the debounce window, before the widgets
+        # go away and their sizes become unreadable (DEC-245).
+        self._splitter_persistence.stop()
         # Stop the poll-age ticker before the pages tear down: it writes into the
         # footer every second, and a tick landing mid-teardown would touch an
         # already-deleted widget (DEC-222).

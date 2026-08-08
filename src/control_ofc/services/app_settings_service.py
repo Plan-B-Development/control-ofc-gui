@@ -31,8 +31,22 @@ MACHINE_SPECIFIC_KEYS = frozenset(
         "themes_dir_override",
         "export_default_dir",
         "daemon_import_prompted",
+        # DEC-245: persisted view state. Pane sizes and log filters describe one
+        # person's window on one screen; a shared export carrying them is the
+        # DEC-140 problem (someone else's geometry moving your panes).
+        "splitter_sizes",
+        "logs_level_filters",
+        "logs_search_text",
     }
 )
+
+# DEC-245. Kept as literals rather than importing ChartMode, which would make the
+# settings layer depend on a UI-facing service. `test_chart_modes_match_the_enum`
+# pins the two together so the pair cannot drift.
+_CHART_MODES = frozenset({"thermals", "fans", "combined", "diagnostics"})
+
+_LOG_LEVELS = frozenset({"info", "warn", "error"})
+_LOG_LEVELS_ALL = ["info", "warn", "error"]
 
 # Hardware-derived state a demo session must never write (DEC-244). Demo's
 # synthetic ids collide *exactly* with real hardware (`openfan:ch00` …), so these
@@ -144,6 +158,28 @@ def _as_geometry(value: object, default: list[int]) -> list[int]:
     return [x, y, w, h]
 
 
+def _as_splitter_sizes(value: object, default: dict[str, list[int]]) -> dict[str, list[int]]:
+    """Keep only objectName -> list-of-positive-ints entries (DEC-245).
+
+    Length is not checked here — a splitter's pane count can legitimately change
+    between releases, and the restore side drops a stale entry whose length no
+    longer matches rather than forcing a wrong layout.
+    """
+    if not isinstance(value, dict):
+        return dict(default)
+    result: dict[str, list[int]] = {}
+    for key, sizes in value.items():
+        if not isinstance(key, str) or not isinstance(sizes, (list, tuple)) or not sizes:
+            continue
+        if any(
+            isinstance(n, bool) or not isinstance(n, int) or not (0 <= n <= _GEOM_MAX)
+            for n in sizes
+        ):
+            continue
+        result[key] = list(sizes)
+    return result
+
+
 def _as_card_sizes(value: object, default: dict[str, list[int]]) -> dict[str, list[int]]:
     """Keep only str -> [width, height] entries of two positive ints."""
     if not isinstance(value, dict):
@@ -243,6 +279,24 @@ class AppSettings:
     # group row at the bottom of the table, not silently removed.
     diagnostics_hidden_sensor_ids: list[str] = field(default_factory=list)
 
+    # DEC-245: view state that used to reset on every launch.
+    #
+    # `chart_mode` closes a live inconsistency, not just a lost preference: the
+    # selector reset to Combined on restart while `hidden_chart_series` still held
+    # the *previous* mode's result, so the label and the chart disagreed.
+    chart_mode: str = "combined"
+    # Per-splitter pane sizes keyed by objectName (every QSplitter in the app has a
+    # unique one). One dict rather than nine fields, mirroring how DEC-234 put the
+    # handle *styling* in one shared helper. Restored sizes are clamped to a
+    # per-pane minimum — DEC-222 removed the sensors rail's show/hide toggle in
+    # favour of the splitter, so a persisted fully-collapsed pane would be an
+    # unrecoverable soft-lock.
+    splitter_sizes: dict[str, list[int]] = field(default_factory=dict)
+    # Enabled Logs level toggles. Absent means "all on"; an explicitly empty list
+    # is a real state (the user unticked everything) and is preserved.
+    logs_level_filters: list[str] = field(default_factory=lambda: list(_LOG_LEVELS_ALL))
+    logs_search_text: str = ""
+
     # DEC-156: user overrides forcing a sensor's classification, keyed by stable
     # sensor id -> source_class (only "coolant" today). GUI-owned policy — the
     # daemon stays hardware-truthful; this lets the user mark a coolant sensor
@@ -320,6 +374,14 @@ class AppSettings:
                 data.get("diagnostics_hidden_sensor_ids"), []
             ),
             sensor_class_overrides=_as_sensor_overrides(data.get("sensor_class_overrides"), {}),
+            chart_mode=_as_enum(data.get("chart_mode"), _CHART_MODES, "combined"),
+            splitter_sizes=_as_splitter_sizes(data.get("splitter_sizes"), {}),
+            logs_level_filters=[
+                lv
+                for lv in _as_str_list(data.get("logs_level_filters"), _LOG_LEVELS_ALL)
+                if lv in _LOG_LEVELS
+            ],
+            logs_search_text=_as_str(data.get("logs_search_text"), "", maxlen=200),
         )
 
     def portable_dict(self) -> dict:

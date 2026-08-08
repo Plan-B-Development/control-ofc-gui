@@ -29,6 +29,7 @@ from control_ofc.paths import themes_dir
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card
+from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.theme import (
     ThemeTokens,
     default_dark_theme,
@@ -173,6 +174,14 @@ class ThemePage(QWidget):
                     self._theme_combo.addItem(t.name, str(p))
                 except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
                     log.warning("Skipping invalid theme %s: %s", p, e)
+        # DEC-245: point the combo at the theme actually in force. Rebuilding the
+        # list left index 0 selected, so the page claimed "Default Dark" on every
+        # launch while `theme_name` said otherwise and the app rendered otherwise.
+        saved = self._settings_svc.settings.theme_name
+        idx = self._theme_combo.findText(saved)
+        if idx >= 0 and idx != self._theme_combo.currentIndex():
+            with block_signals(self._theme_combo):
+                self._theme_combo.setCurrentIndex(idx)
 
     def _apply_selected_theme(self) -> None:
         path_str = self._theme_combo.currentData()

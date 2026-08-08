@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
@@ -141,6 +141,10 @@ class SettingsPage(QWidget):
     former Themes tab moved to its own ``ThemePage`` and Import/Export folded into
     the "Sync & Backup" card.
     """
+
+    # DEC-245: MainWindow owns the live splitters (it adopts them all in one pass),
+    # so the page asks for a reset rather than reaching across for them.
+    layout_reset_requested = Signal()
 
     def __init__(
         self,
@@ -1197,7 +1201,30 @@ class SettingsPage(QWidget):
                 self._reset_card_sizes_btn,
             )
         )
+
+        self._reset_layout_btn = make_button(
+            "Reset layout", "ghost", object_name="Settings_Btn_resetLayout"
+        )
+        self._reset_layout_btn.clicked.connect(self._reset_layout)
+        v.addLayout(
+            self._setting_row(
+                "Section sizes",
+                "Panel sizes you have set by dragging the dividers between sections",
+                self._reset_layout_btn,
+            )
+        )
         return card
+
+    def _reset_layout(self) -> None:
+        """DEC-245: the escape hatch that made persisting splitters acceptable.
+
+        The restore clamp stops a pane coming back unusably small; this is the way
+        out for a saved layout the user simply dislikes. MainWindow owns the live
+        splitters, so the page asks rather than reaching for them.
+        """
+        self.layout_reset_requested.emit()
+        self._refresh_reset_buttons()
+        self._set_status("Section sizes reset")
 
     def _reset_card_sizes(self) -> None:
         self._settings_svc.update(controls_card_sizes={})

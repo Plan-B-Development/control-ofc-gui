@@ -68,6 +68,10 @@ if TYPE_CHECKING:
 # show; narrower windows start collapsed so the chart keeps room (DEC-182, 3A).
 _INSPECTOR_WIDE_THRESHOLD_PX = 1100
 
+# DEC-245: settings store the chart mode as its string value — the settings layer
+# must not import a UI-facing service — so the page owns the lookup back.
+_CHART_MODE_BY_VALUE = {m.value: m for m in ChartMode}
+
 
 class DashboardPage(QWidget):
     """Landing page showing fan speeds, temperatures, and profile status."""
@@ -462,9 +466,19 @@ class DashboardPage(QWidget):
             self._history, selection=self._selection, color_overrides=color_overrides
         )
         if self._settings_service:
-            # Startup default only — changing the Range combo afterwards is
-            # session-local; the Settings value is re-applied on next launch.
-            self._chart.set_range_index(self._settings_service.settings.chart_default_range_index)
+            s = self._settings_service.settings
+            self._chart.set_range_index(s.chart_default_range_index)
+            # DEC-245: the Range combo used to be session-local — the persisted
+            # value was applied here and every later change discarded.
+            self._chart.range_changed.connect(self._persist_chart_range)
+            # Restore the mode *label* only. The saved hidden set is already this
+            # mode's result plus any later tweaks, so re-applying the preset would
+            # throw those away; the divergence was that the label reset while the
+            # data did not.
+            mode = _CHART_MODE_BY_VALUE.get(s.chart_mode)
+            if mode is not None:
+                self._selection.restore_mode(mode)
+                self._chart.set_mode(mode)
         # Chart modes/reset (DEC-181): the chart is dumb about sensor kinds, so it
         # emits the choice and the page applies it (COMBINED is the curated subset).
         self._chart.mode_selected.connect(self._on_chart_mode_selected)
@@ -615,9 +629,15 @@ class DashboardPage(QWidget):
         self._chart_defaults_seeded = True
         self._settings_service.update(chart_series_seeded=True)
 
+    def _persist_chart_range(self, index: int) -> None:
+        if self._settings_service:
+            self._settings_service.update(chart_default_range_index=index)
+
     def _on_chart_mode_selected(self, mode: ChartMode) -> None:
         curated = self._curated_chart_keys() if mode == ChartMode.COMBINED else None
         self._selection.apply_mode(mode, curated)
+        if self._settings_service:
+            self._settings_service.update(chart_mode=mode.value)
 
     def _on_chart_reset(self) -> None:
         """Reset-to-default: restore the curated Combined subset and reflect it in

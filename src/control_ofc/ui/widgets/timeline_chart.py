@@ -143,6 +143,10 @@ class TimelineChart(QWidget):
     # dashboard applies these (it owns the kind-aware curated subset, DEC-181).
     mode_selected = Signal(object)  # ChartMode
     reset_requested = Signal()
+    # DEC-245: the Range combo used to be session-local — the persisted value was
+    # applied once at startup and every later change was thrown away. The page
+    # listens to this and writes it back so the window survives a restart.
+    range_changed = Signal(int)
 
     def __init__(
         self,
@@ -728,6 +732,7 @@ class TimelineChart(QWidget):
         if 0 <= index < len(TIME_RANGES):
             self._time_range_s = TIME_RANGES[index][1]
             self.update_chart()
+            self.range_changed.emit(index)
 
     # ── Chart modes (DEC-181) ────────────────────────────────────────
 

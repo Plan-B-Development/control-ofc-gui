@@ -42,6 +42,16 @@ IMPLICIT_FIELDS: dict[str, str] = {
         "rather than dropped, so no AppSettings migration is required; it is inert "
         "and must not gain a control."
     ),
+    # DEC-245 view state. These are set by *using* the app, not by configuring it —
+    # the control is the splitter handle, the Range combo, the log toggle itself.
+    # A Settings row duplicating them would be a worse surface than the real one.
+    "chart_mode": "set by the Dashboard chart's mode selector; Settings would duplicate it",
+    "splitter_sizes": (
+        "set by dragging a splitter handle. Settings ▸ Card Layout owns the escape "
+        "hatch (Reset layout), which is the DEC-245 counterpart to the restore clamp"
+    ),
+    "logs_level_filters": "set by the Logs page level toggles",
+    "logs_search_text": "set by the Logs page search box",
 }
 
 

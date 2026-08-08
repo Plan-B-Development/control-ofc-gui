@@ -132,6 +132,20 @@ class SeriesSelectionModel(QObject):
             self._hidden_keys = new_hidden
             self.selection_changed.emit()
 
+    def restore_mode(self, mode: ChartMode) -> None:
+        """Adopt a persisted mode *without* recomputing visibility (DEC-245).
+
+        The restored ``hidden_chart_series`` is already the result of that mode
+        plus whatever the user adjusted afterwards, so re-applying the preset here
+        would discard those adjustments. Only the new-key rule and the selector
+        label need to know which mode is active.
+
+        This is what closes the label/data divergence: before, the mode reset to
+        Combined on every launch while the hidden set still held the previous
+        mode's result, so the selector and the chart disagreed.
+        """
+        self._active_mode = mode
+
     def apply_mode(self, mode: ChartMode, curated_keys: set[str] | None = None) -> None:
         """Apply a chart-readability preset and remember it for the new-key rule.
 

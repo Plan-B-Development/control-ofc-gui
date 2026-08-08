@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Added
+- **The application remembers how you left it.** Panel sizes on every page, the chart's
+  time range and mode, the Logs level filters and search text, and the theme shown in the
+  Theme page's selector all survive a restart. Previously every one of them reset on each
+  launch. DEC-245.
+- **Settings ▸ Card Layout ▸ "Reset layout"** puts every panel divider back to an even
+  split, for when a saved layout is simply not what you want any more.
 - **Settings ▸ Sensors & Chart Series ▸ "Settings for missing hardware".** Chart colours and
   hidden-series entries for fans and sensors the daemon no longer reports accumulate forever
   and were invisible — the dashboard quietly ignores them while the saved file keeps them. The
@@ -13,6 +19,17 @@
   daemon has temporarily quarantined (a WiFi temperature with the radio off), is indistinguishable
   from one that is gone for good, so nothing is deleted automatically. The button is also
   disabled while disconnected, when the application knows of no hardware at all. DEC-246.
+
+### Fixed
+- **The chart's mode selector no longer disagrees with the chart.** It reset to "Combined"
+  on every launch while the series shown were still whichever set the previous mode had
+  produced, so the label and the data said different things. The mode is now remembered
+  alongside the selection it produced.
+- A restored panel can never come back collapsed to nothing. Panel sizes are clamped to a
+  usable minimum when restored, because the Dashboard's sensor rail is opened and closed
+  by its divider alone — a saved zero-width rail would have been unrecoverable.
+- Window position, size and the last page you were on are saved as you go rather than only
+  on a clean exit, so a crash, a forced logout or a `kill` no longer loses them.
 
 ## [2.39.0] — 2026-08-08
 

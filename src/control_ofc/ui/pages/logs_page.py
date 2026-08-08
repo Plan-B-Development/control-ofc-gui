@@ -26,7 +26,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -51,11 +51,12 @@ from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card, SectionHeader
 from control_ofc.ui.components.tables import apply_dense_table
-from control_ofc.ui.qt_util import style_splitter
+from control_ofc.ui.qt_util import block_signals, style_splitter
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.warnings_view import WarningsView
 
 if TYPE_CHECKING:
+    from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.app_state import AppState
 
 log = logging.getLogger(__name__)
@@ -99,11 +100,13 @@ class LogsPage(QWidget):
         parent: QWidget | None = None,
         *,
         state: AppState | None = None,
+        settings_service: AppSettingsService | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("Logs_Root")
         self._diag = diagnostics_service
         self._state = state
+        self._settings_service = settings_service
 
         # Poll/feed-driven state.
         self._all_rows: list[LogRowVM] = []
@@ -115,13 +118,51 @@ class LogsPage(QWidget):
         self._journal_thread: QThread | None = None
         self._journal_worker: _JournalWorker | None = None
 
+        # DEC-245: coalesce a typed search phrase into one settings write.
+        self._filter_write_timer = QTimer(self)
+        self._filter_write_timer.setObjectName("Logs_Timer_filterWrite")
+        self._filter_write_timer.setSingleShot(True)
+        self._filter_write_timer.setInterval(500)
+        self._filter_write_timer.timeout.connect(self._persist_log_filters)
+
         self._build_ui()
         self._connect_signals()
+        self._restore_log_filters()
 
         # Backfill from any events already in the deque (startup breadcrumbs).
         self._all_rows = build_log_rows(self._diag.events)
         self._rebuild_table()
         self._render_inspector()
+
+    # ── Filter persistence (DEC-245) ─────────────────────────────────
+
+    def _level_toggles(self) -> dict[str, QPushButton]:
+        return {
+            "info": self._toggle_info,
+            "warn": self._toggle_warn,
+            "error": self._toggle_error,
+        }
+
+    def _restore_log_filters(self) -> None:
+        """Re-apply the saved filter, signals blocked so it does not write itself back."""
+        if self._settings_service is None:
+            return
+        s = self._settings_service.settings
+        enabled = set(s.logs_level_filters)
+        for level, btn in self._level_toggles().items():
+            with block_signals(btn):
+                btn.setChecked(level in enabled)
+        if s.logs_search_text:
+            with block_signals(self._search_edit):
+                self._search_edit.setText(s.logs_search_text)
+
+    def _persist_log_filters(self) -> None:
+        if self._settings_service is None:
+            return
+        self._settings_service.update(
+            logs_level_filters=[lv for lv, b in self._level_toggles().items() if b.isChecked()],
+            logs_search_text=self._search_edit.text(),
+        )
 
     # ── UI construction ──────────────────────────────────────────────
 
@@ -389,6 +430,14 @@ class LogsPage(QWidget):
         self._toggle_info.toggled.connect(self._rebuild_table)
         self._toggle_warn.toggled.connect(self._rebuild_table)
         self._toggle_error.toggled.connect(self._rebuild_table)
+
+        # DEC-245: an ERR-only filter used to revert to all-levels on every launch.
+        # Toggles write immediately; the search box is debounced so a typed phrase
+        # is one write rather than one per keystroke.
+        self._search_edit.textChanged.connect(lambda _t: self._filter_write_timer.start())
+        self._toggle_info.toggled.connect(self._persist_log_filters)
+        self._toggle_warn.toggled.connect(self._persist_log_filters)
+        self._toggle_error.toggled.connect(self._persist_log_filters)
 
         self._clear_btn.clicked.connect(self._diag.clear_events)
         self._copy_btn.clicked.connect(self._copy_visible)
