@@ -4,6 +4,11 @@ The Settings page collects the application's own preferences — startup, behavi
 
 Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-page)**, and full backup/restore lives in the **Sync & Backup** card below.
 
+> **In demo mode, nothing on this page is written to disk.** Changes apply for the
+> session so you can see what they do, but the settings file is left untouched —
+> demo's synthetic hardware ids match real ones, so a demo session is never
+> allowed to overwrite your real configuration.
+
 ![Settings page](../screenshots/auto/06_settings.png)
 
 ## General & Startup

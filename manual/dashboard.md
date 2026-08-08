@@ -141,6 +141,10 @@ fan at a time so you can see which one slows down.
 
 > In demo mode you can rename fans to try the feature out, but the names are not
 > saved — demo hardware is not real, and your actual fan names are left untouched.
+> This applies to **everything** in a demo session, not just fan names: theme,
+> card sizes, chart selection and window position are all session-only. Demo's
+> synthetic hardware ids deliberately match real ones, so nothing a demo session
+> does is allowed to reach your settings file.
 
 > Both the **event log** and the **active warnings** list live on the
 > [Logs page](diagnostics.md), side by side — the event feed is history, the warnings
