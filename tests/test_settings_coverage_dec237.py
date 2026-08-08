@@ -111,8 +111,9 @@ def test_implicit_fields_carry_a_justification():
 #
 # They also assert that the mirrored surfaces do NOT write settings directly: the
 # in-context affordances persist through AppState signals, and a second writer
-# bypassing that is how demo-mode data corrupts real hardware names
-# (MainWindow._demo_blocks_persist).
+# bypassing that is how demo-mode data corrupts real hardware names. The demo
+# refusal now lives entirely in AppSettingsService (_DEMO_SEALED_KEYS, DEC-244);
+# the per-site MainWindow._demo_blocks_persist guard was removed with it.
 
 
 @pytest.fixture()

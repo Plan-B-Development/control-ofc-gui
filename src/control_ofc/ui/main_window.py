@@ -695,8 +695,8 @@ class MainWindow(QWidget):
             active_profile_id=active.id if active else "",
         )
         self._state.fan_aliases.update(seeded)
-        if self._demo_blocks_persist("fan_aliases"):
-            return  # defensive: demo never reaches here (the connect is gated)
+        # No demo guard needed: the connect is gated on `not self._demo_mode`, and
+        # the settings service seals fan_aliases in a demo session anyway (DEC-244).
         self._settings_service.update(
             fan_aliases=dict(self._state.fan_aliases), fan_aliases_seeded=True
         )
@@ -713,42 +713,24 @@ class MainWindow(QWidget):
             finally:
                 self._state.fan_alias_changed.connect(self._persist_fan_alias)
 
-    def _demo_blocks_persist(self, what: str) -> bool:
-        """Whether a hardware-keyed map must stay out of the settings object.
-
-        ``_start_demo_mode`` *replaces* the fan alias/zone maps and the chart
-        series selection with DemoService's synthetic ones, and demo ids collide
-        exactly with real hardware ids (``openfan:ch00`` …).
-
-        Since DEC-244 this is no longer what protects the *file* — the settings
-        service refuses every write in a demo session, so all ~29 persist call
-        sites are safe without a guard of their own. What this still protects is
-        the **in-memory object**: ``fan_aliases``, ``fan_zones`` and
-        ``hidden_chart_series`` are all portable (absent from
-        ``MACHINE_SPECIFIC_KEYS``), so without it a Settings *export* taken
-        mid-demo would carry synthetic ids onto another machine's real hardware.
-        ``docs/10_Demo_Mode_Spec.md``: demo must never overwrite the user's real
-        runtime settings.
-
-        ``hidden_chart_series`` was the one missing here (DEC-227 covered only
-        aliases and zones), and it is the key that actually got clobbered.
-
-        Demo is startup-only (there is no demo -> live transition), so refusing the
-        write is sufficient — nothing needs snapshotting or restoring.
-        """
-        if self._demo_mode:
-            log.debug("Demo mode — not persisting %s (session-only)", what)
-            return True
-        return False
+    # DEC-244 retired the per-site `_demo_blocks_persist` guard these four slots
+    # used to carry. `_start_demo_mode` replaces the fan alias/zone maps and the
+    # chart selection with DemoService's synthetic ones, whose ids collide exactly
+    # with real hardware (`openfan:ch00` …) — but the settings service now seals
+    # every hardware-derived key for the whole demo session, in memory as well as
+    # on disk, so these slots are safe by construction and need no guard.
+    #
+    # The per-site version is deliberately gone rather than kept as belt and
+    # braces: DEC-227 added it to two of the four, the other two silently
+    # diverged, and `hidden_chart_series` — the key that actually got clobbered —
+    # was one of the ones it missed. A second, partial copy of the rule is what
+    # made the gap invisible, and mutation testing showed it also masked whether
+    # the surviving guard worked.
 
     def _persist_fan_alias(self, _fan_id: str, _display_name: str) -> None:
-        if self._demo_blocks_persist("fan_aliases"):
-            return
         self._settings_service.update(fan_aliases=dict(self._state.fan_aliases))
 
     def _persist_fan_zones(self, _fan_id: str, _zone_name: str) -> None:
-        if self._demo_blocks_persist("fan_zones"):
-            return
         self._settings_service.update(fan_zones=dict(self._state.fan_zones))
 
     def _persist_sensor_class_override(self, _sensor_id: str, _source_class: str) -> None:
@@ -757,8 +739,6 @@ class MainWindow(QWidget):
         )
 
     def _persist_series_selection(self) -> None:
-        if self._demo_blocks_persist("hidden_chart_series"):
-            return
         hidden = list(self._series_selection.to_dict()["hidden_keys"])
         self._settings_service.update(hidden_chart_series=hidden)
 

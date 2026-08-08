@@ -87,6 +87,11 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: pytest --cov --cov-branch --cov-report=term-missing -q
       - name: Assert no test wrote to the real user config (DEC-244)
+        # always(): a run that both fails AND leaks is the most likely one to
+        # have leaked, and the default if:success() would skip precisely that
+        # case. The job is already red for the other reason; this adds the
+        # diagnosis rather than hiding it.
+        if: always()
         # The suite must never touch $HOME. Three tests did — two built
         # MainWindow(demo_mode=True) with no settings_service (which
         # default-constructs one aimed at the real file) and one drove a real

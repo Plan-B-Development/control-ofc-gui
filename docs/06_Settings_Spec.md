@@ -42,9 +42,11 @@ Added in DEC-237 — mirror and reset surfaces for settings authored elsewhere:
   Dashboard and the Overview fan table is unchanged; this is an *additional*
   surface. Edits route through `AppState.apply_fan_rename`, never through
   `settings_service.update(fan_aliases=…)` — the `fan_alias_changed` signal is
-  what persists them, and it carries the demo-mode refusal
-  (`MainWindow._demo_blocks_persist`). Demo fan ids collide exactly with real
-  hardware ids, so the table is read-only in demo mode.
+  what persists them, and the settings service seals `fan_aliases` for the whole
+  demo session (DEC-244 — the per-site `MainWindow._demo_blocks_persist` guard
+  this used to name was removed in favour of that single mechanism). Demo fan
+  ids collide exactly with real hardware ids, so the table is read-only in demo
+  mode.
 - **Sensors & Chart Series** — reset hidden sensors, coolant classification
   overrides, custom series colours, hidden chart series. Classification resets
   route through `AppState.set_sensor_class_override` so the Overview table

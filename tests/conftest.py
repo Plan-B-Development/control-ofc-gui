@@ -240,9 +240,16 @@ def _flush_deferred_deletes():
 
     Flushing the posted ``DeferredDelete`` events here destroys those trees now,
     top-down with wrappers consistent, instead of leaving them for the GC. This
-    fixture is defined **first** among the autouse fixtures so it is set up first
-    and therefore torn down last — after qtbot has posted the ``deleteLater()``
-    events this dispatches. Net-new test scaffolding; no production code changes.
+    fixture is defined **first in this file** so it is set up first among the
+    fixtures here and therefore torn down last — after qtbot has posted the
+    ``deleteLater()`` events this dispatches. Net-new test scaffolding; no
+    production code changes.
+
+    One fixture still outlives it, deliberately: ``_isolate_user_config`` in the
+    **repo-root** ``conftest.py``. Root conftests are set up before package ones,
+    so the config sandbox is torn down after this flush — meaning the widget
+    destruction below runs with ``HOME``/XDG still redirected, and a settings
+    write during destruction cannot reach the real config (DEC-244).
     """
     yield
     from PySide6.QtCore import QEvent
@@ -251,42 +258,6 @@ def _flush_deferred_deletes():
     app = QApplication.instance()
     if app is not None:
         app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-
-
-@pytest.fixture(autouse=True)
-def _isolate_user_config(tmp_path, monkeypatch):
-    """Point every user-config path at ``tmp_path`` (DEC-244).
-
-    Three tests were writing the developer's live config: two built
-    ``MainWindow(demo_mode=True)`` with no ``settings_service`` — which
-    default-constructs one aimed at the real ``~/.config/control-ofc`` — and one
-    drove ``_on_save_profile`` through a real ``ProfileService``. The damage was
-    not hypothetical: a suite run reproducibly replaced the author's
-    ``hidden_chart_series`` with the 20 synthetic ids from ``DemoService`` and
-    emptied ``series_colors``, because ``AppSettingsService.save()`` serialises
-    the whole dataclass with no read-modify-write. Running the quality gate
-    before a release is what destroyed the config — which is exactly why it
-    presented as "the *daemon update* ate my settings".
-
-    Guarding the three call sites would not close this: the next test to
-    default-construct a service leaks again. Isolating the environment closes
-    the class. ``HOME`` covers ``Path.home()`` (``export_default_dir``); the two
-    XDG vars cover ``config_dir``/``cache_dir``. ``paths._overrides`` is reset
-    as well — it is module-level mutable state, and an absolute
-    ``profiles_dir_override`` escaping one test would defeat the env redirect
-    for every test after it.
-
-    The opt-in ``profile_service``/``settings_service`` fixtures still set
-    ``XDG_CONFIG_HOME`` themselves. That is now redundant but harmless, and
-    both land inside ``tmp_path`` either way.
-    """
-    from control_ofc import paths
-
-    home = tmp_path / "_home"
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
-    monkeypatch.setattr(paths, "_overrides", {})
 
 
 @pytest.fixture(autouse=True)
@@ -393,5 +364,14 @@ def profile_service(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def settings_service(tmp_path, monkeypatch):
+    """A service wired exactly the way ``main.py`` wires the real one.
+
+    The ``load()`` is load-bearing, not ceremony: since DEC-244 an unloaded
+    service refuses every write, so without it ``save()`` is a permanent no-op
+    and any test expecting a real round-trip through this fixture would silently
+    assert nothing. Mirrors the ``profile_service`` fixture below.
+    """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    return AppSettingsService()
+    svc = AppSettingsService()
+    svc.load()
+    return svc

@@ -109,6 +109,11 @@ class DashboardPage(QWidget):
         # Chart first-run seeding + poll-diff annotation state (DEC-181).
         self._seen_sensors = False
         self._seen_fans = False
+        # Session-local mirror of settings.chart_series_seeded (DEC-244). A demo
+        # session seals that key, so the persisted flag never flips and the
+        # first-run seeding would re-fire on every 1 Hz tick, stamping the
+        # curated subset back over whatever the user selected mid-session.
+        self._chart_defaults_seeded = False
         self._prev_connection = state.connection if state else None
         self._last_override_ids: set[str] = set()
         self._last_stale_sensor_ids: set[str] = set()
@@ -599,12 +604,15 @@ class DashboardPage(QWidget):
         seen, declutter the chart to the curated subset and latch
         ``chart_series_seeded`` so a returning user who chose "show all" is never
         re-decluttered. Skipped entirely without a settings service or once seeded."""
+        if self._chart_defaults_seeded:
+            return
         if not self._settings_service or self._settings_service.settings.chart_series_seeded:
             return
         if not (self._seen_sensors and self._seen_fans):
             return
         self._selection.apply_mode(ChartMode.COMBINED, self._curated_chart_keys())
         self._chart.set_mode(ChartMode.COMBINED)
+        self._chart_defaults_seeded = True
         self._settings_service.update(chart_series_seeded=True)
 
     def _on_chart_mode_selected(self, mode: ChartMode) -> None:

@@ -741,25 +741,38 @@ class TestDemoPersistenceGuard:
         path = tmp_path / "control-ofc" / "app_settings.json"
         assert json.loads(path.read_text())["hidden_chart_series"] == real
 
-    def test_demo_session_leaves_the_settings_file_byte_identical(
+    def test_demo_session_cannot_change_any_hardware_derived_key_on_disk(
         self, qtbot, tmp_path, monkeypatch
     ):
-        """The whole-file guarantee, rather than one key at a time.
+        """The whole-set guarantee, rather than one key at a time.
 
-        A demo session must be a no-op on disk. Comparing bytes catches any
-        persist path added later that the per-key tests above know nothing about
-        — which is precisely how hidden_chart_series slipped past DEC-227 and
+        Checks every key in ``_DEMO_SEALED_KEYS`` at once, so a persist path
+        added later is covered without anyone remembering to extend this test —
+        which is precisely how ``hidden_chart_series`` slipped past DEC-227 and
         went on to eat a real user's chart config.
+
+        Reads the sealed subset rather than comparing whole-file bytes: since
+        DEC-244's rescope, ordinary preferences are *expected* to persist from a
+        demo session, so a byte comparison would now fail for the right reason
+        and hide the wrong one.
         """
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        from control_ofc.services.app_settings_service import AppSettingsService
+        from control_ofc.services.app_settings_service import (
+            _DEMO_SEALED_KEYS,
+            AppSettingsService,
+        )
         from control_ofc.ui.main_window import MainWindow
 
         svc = AppSettingsService()
         svc.load()
-        svc.update(fan_aliases={OPENFAN: "My Real Intake"}, theme_name="Ocean Blue")
+        svc.update(
+            fan_aliases={OPENFAN: "My Real Intake"},
+            hidden_chart_series=["sensor:hwmon:k10temp:0000:00:18.3:Tccd1"],
+            series_colors={"sensor:real": "#ff0000"},
+            chart_series_seeded=True,
+        )
         path = tmp_path / "control-ofc" / "app_settings.json"
-        before = path.read_bytes()
+        sealed_before = {k: json.loads(path.read_text())[k] for k in _DEMO_SEALED_KEYS}
 
         window = MainWindow(settings_service=svc, demo_mode=True)
         qtbot.addWidget(window)
@@ -769,4 +782,61 @@ class TestDemoPersistenceGuard:
         window._state.sensor_class_override_changed.emit("sensor:demo", "coolant")
         window.close()  # closeEvent persists geometry + last page
 
-        assert path.read_bytes() == before
+        on_disk = json.loads(path.read_text())
+        assert {k: on_disk[k] for k in _DEMO_SEALED_KEYS} == sealed_before
+
+    def test_demo_session_cannot_leak_synthetic_ids_into_an_export(
+        self, qtbot, tmp_path, monkeypatch
+    ):
+        """The seal has to hold in *memory*, not only on disk.
+
+        A Settings export serialises ``portable_dict()`` off the live in-memory
+        object, so a demo id that reached memory would travel to another machine
+        even though it never touched this one's file. Mutation-testing found the
+        whole suite green with this guard removed — every other demo test asserts
+        on the file, which a disk-only guard already protects.
+        """
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        from control_ofc.services.app_settings_service import AppSettingsService
+        from control_ofc.services.demo_service import DemoService
+        from control_ofc.ui.main_window import MainWindow
+
+        real_hidden = ["sensor:hwmon:k10temp:0000:00:18.3:Tccd1"]
+        svc = AppSettingsService()
+        svc.load()
+        svc.update(fan_aliases={OPENFAN: "My Real Intake"}, hidden_chart_series=real_hidden)
+
+        window = MainWindow(settings_service=svc, demo_mode=True)
+        qtbot.addWidget(window)
+        window._demo_tick()
+        window._state.apply_fan_rename(OPENFAN, "Renamed In Demo")
+        window._series_selection.selection_changed.emit()
+
+        exported = svc.settings.portable_dict()
+        assert exported["fan_aliases"] == {OPENFAN: "My Real Intake"}
+        assert exported["hidden_chart_series"] == real_hidden
+        # And no demo label reached the portable payload by any other route.
+        for demo_label in DemoService.fan_aliases().values():
+            assert demo_label not in exported["fan_aliases"].values()
+
+    def test_demo_session_can_still_turn_off_demo_on_disconnect(self, qtbot, tmp_path, monkeypatch):
+        """The lock-in trap: with demo_on_disconnect on and the daemon down, the
+        user lands in demo involuntarily. If the seal covered every key, the one
+        setting that gets them out could not be written from the only session in
+        which they need it — and Settings reported success regardless. Ordinary
+        preferences must survive a demo session (DEC-244)."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        from control_ofc.services.app_settings_service import AppSettingsService
+        from control_ofc.ui.main_window import MainWindow
+
+        svc = AppSettingsService()
+        svc.load()
+        svc.update(demo_on_disconnect=True)
+
+        window = MainWindow(settings_service=svc, demo_mode=True)
+        qtbot.addWidget(window)
+        svc.update(demo_on_disconnect=False, theme_name="Solar Light")
+
+        on_disk = json.loads((tmp_path / "control-ofc" / "app_settings.json").read_text())
+        assert on_disk["demo_on_disconnect"] is False, "user is trapped in demo mode"
+        assert on_disk["theme_name"] == "Solar Light"

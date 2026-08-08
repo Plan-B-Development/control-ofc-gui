@@ -18,30 +18,45 @@ Settings persistence is now fail-safe by construction rather than by remembering
 write. No daemon change, no configuration format change, nothing to migrate. DEC-244.
 
 ### Fixed
-- **Demo mode can no longer overwrite real settings.** Demo hardware ids collide exactly with
-  real ones (`openfan:ch00` and friends), so a demo session could write demo fan names and a
-  demo chart selection onto your actual hardware. The settings service is now detached from
-  disk for the whole demo session, which covers every save path rather than the two that had
-  been guarded individually — the chart series selection was the one that had been missed, and
-  it is the one that got lost.
+- **Demo mode can no longer overwrite real hardware settings.** Demo hardware ids collide
+  exactly with real ones (`openfan:ch00` and friends), so a demo session could write demo fan
+  names and a demo chart selection onto your actual hardware. Fan names, fan zones, chart
+  selection, series colours, sensor classification overrides and card sizes are now sealed for
+  the whole demo session, covering every save path rather than the two that had been guarded
+  individually — the chart series selection was the one that had been missed, and it is the one
+  that got lost. Ordinary preferences still save normally in demo (see below).
 - **A settings object that was never loaded can no longer be saved.** This is what turned a
   test-only mistake into real data loss: such an object holds built-in defaults, not your
-  settings, while still pointing at your real file.
-- **A settings file that cannot be parsed is now moved aside** to `app_settings.json.corrupt`
-  instead of being silently replaced on the next save, so a damaged file stays recoverable by
-  hand. A file that merely cannot be *read* (a transient I/O error) is left completely alone
-  and nothing is saved over it for that session.
+  settings, while still pointing at your real file. A *re*-load that fails now disarms an
+  already-loaded object for the same reason.
+- **A settings file that cannot be used is moved aside** to `app_settings.json.corrupt`
+  instead of being silently replaced on the next save. Quarantines are numbered, so a second
+  problem years later cannot discard the first — or, worse, be discarded in favour of it. This
+  now also catches a file that is valid JSON of the wrong shape, such as an exported settings
+  bundle copied over the wrong filename, which previously slipped through and was overwritten.
+- **A settings file that cannot be read is left completely alone** and nothing is saved over it
+  for that session. This includes a file symlinked into a dotfiles repository whose target is
+  not checked out or whose drive is not mounted: it used to look like a fresh install, and the
+  first save replaced the symlink itself with a plain file, quietly detaching your managed
+  config from its repository.
+- **If the file cannot be moved aside at all**, nothing is saved for that session rather than
+  the damaged file being overwritten. Better to save nothing than to destroy the only copy.
 
 ### Changed
-- A deliberate `--demo` session no longer remembers theme, card sizes or window position. That
-  is the cost of demo never touching your settings, and it is intentional.
+- In demo mode, theme, card sizes, window position and the other ordinary preferences **do**
+  still save. Only hardware-derived state is held back. An earlier iteration of this fix
+  blocked every setting, which turned out to trap anyone using "start in demo mode when the
+  daemon is unavailable": dropped into demo by a daemon that was down, they could not turn that
+  option off — the Settings page reported success and the write was discarded. The same fault
+  could strand your profiles, because choosing a new profiles directory physically moves the
+  files before saving the location.
 
 ### Internal
 - The test suite is now isolated from the real user config by an autouse fixture covering
   `HOME` and both XDG directories; a full run creates zero files outside its temp directory.
   CI fails the build if anything appears in `~/.config/control-ofc` or `~/.cache/control-ofc`.
-- The screenshot script sandboxes its own config directory rather than relying on the operator
-  to remember.
+  The isolation applies to anything collected from the repository, so an ad-hoc run on a
+  scratch file outside `tests/` is covered too — that gap was found the hard way.
 
 ## [2.38.0] — 2026-08-07
 

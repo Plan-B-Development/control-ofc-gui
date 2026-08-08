@@ -17,9 +17,27 @@ that even a deliberately unguarded ``MainWindow`` cannot escape the sandbox.
 
 from __future__ import annotations
 
+import os
+import pwd
 from pathlib import Path
 
 from control_ofc import paths
+
+
+def _tree_snapshot(root: Path) -> set[tuple[str, int, int]]:
+    """(relative path, size, mtime_ns) for every file under *root*.
+
+    Empty set when *root* does not exist, so "still absent" and "unchanged" are
+    both expressible without depending on the developer's machine having a
+    config there.
+    """
+    if not root.exists():
+        return set()
+    return {
+        (str(p.relative_to(root)), p.stat().st_size, p.stat().st_mtime_ns)
+        for p in root.rglob("*")
+        if p.is_file()
+    }
 
 
 def test_every_path_helper_resolves_inside_the_sandbox(tmp_path):
@@ -86,10 +104,19 @@ def test_unguarded_main_window_cannot_escape_the_sandbox(qtbot, tmp_path):
     """
     from control_ofc.ui.main_window import MainWindow
 
+    # The *real* home, read from the password database so the fixture's $HOME
+    # redirect cannot mask it. Asserting only on the path helpers (as an earlier
+    # version of this test did) would stay green against a regression that
+    # bypassed them — a hardcoded path, or a component that cached a directory
+    # before the fixture ran. This watches the actual destination instead.
+    real_cofc = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".config" / "control-ofc"
+    before = _tree_snapshot(real_cofc)
+
     window = MainWindow(demo_mode=True)
     qtbot.addWidget(window)
     window.close()
 
+    assert _tree_snapshot(real_cofc) == before, f"something wrote to the real {real_cofc}"
     for resolved in (paths.app_settings_path(), paths.profiles_dir(), Path.home()):
         assert tmp_path in resolved.parents or resolved == tmp_path, (
             f"unguarded MainWindow escaped the sandbox: {resolved}"

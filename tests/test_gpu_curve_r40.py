@@ -94,11 +94,13 @@ class TestGpuZeroRpmWarningSetting:
 
     def test_persists_true(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        # NB: this case passed even while the write was being refused, because
-        # True is the field default — svc2.load() on a missing file produced it
-        # anyway. Loading makes the assertion mean something (DEC-244).
+        # True is the field default, so asserting it directly proves nothing —
+        # a save that silently no-ops and a save that works are indistinguishable
+        # (this test stayed green through the whole DEC-244 write-refusal bug).
+        # Seed False first so the assertion can only pass if the flip persisted.
         svc = AppSettingsService()
         svc.load()
+        svc.update(show_gpu_zero_rpm_warning=False)
         svc.update(show_gpu_zero_rpm_warning=True)
 
         svc2 = AppSettingsService()

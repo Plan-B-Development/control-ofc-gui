@@ -34,6 +34,35 @@ MACHINE_SPECIFIC_KEYS = frozenset(
     }
 )
 
+# Hardware-derived state a demo session must never write (DEC-244). Demo's
+# synthetic ids collide *exactly* with real hardware (`openfan:ch00` …), so these
+# are the keys where a demo write would land on the user's actual fans and
+# sensors. Everything else in AppSettings is an ordinary preference and saves
+# normally, even in demo — sealing the lot locked the user out of
+# `demo_on_disconnect`, the one setting they need when a dead daemon has just
+# dropped them into demo involuntarily.
+#
+# `chart_series_seeded` is not hardware-keyed but belongs here: it is a one-way
+# "this install has been seeded" latch, so a demo session flipping it would
+# permanently consume the real user's first-run chart seeding (DEC-181).
+_DEMO_SEALED_KEYS = frozenset(
+    {
+        "fan_aliases",
+        "fan_zones",
+        "hidden_chart_series",
+        "series_colors",
+        "sensor_class_overrides",
+        "controls_card_sizes",
+        "chart_series_seeded",
+    }
+)
+
+# How many `app_settings.json.corrupt[.N]` files to keep before refusing to
+# quarantine further. Bounded so a repeatedly-corrupting file cannot fill the
+# config directory, but >1 because the *newest* corrupt file is usually the most
+# valuable one — see `_quarantine_unparseable`.
+_MAX_QUARANTINE_SLOTS = 5
+
 _CARD_SIZES = frozenset({"compact", "comfortable", "large"})
 
 # Window-geometry sanity bound — rejects corruption and absurd off-screen values.
@@ -314,24 +343,36 @@ class AppSettingsService:
       reproducibly wiped the developer's chart colours and series selection —
       on every quality-gate run, which is why the loss looked like it came from
       a daemon update.
-    * **An ephemeral service never writes.** Demo mode swaps the hardware-keyed
-      maps for synthetic fixtures whose ids collide exactly with real hardware
-      (``openfan:ch00`` …). ``make_ephemeral`` latches the service off disk for
-      the whole session, so all ~29 persist call sites are safe by
-      construction. Guarding them one at a time is precisely what failed
-      before: DEC-227 guarded two and the rest silently diverged.
-    * **A file we could not read is never overwritten.** ``load()`` separates
-      "unparseable" from "unreadable": a proven-bad file is quarantined to
-      ``.corrupt`` and normal saving resumes, while an ``OSError`` leaves the
-      service unloaded, so a transient read failure cannot cost the user a
-      healthy config.
+    * **An ephemeral service never writes hardware-derived state.** Demo mode
+      swaps the hardware-keyed maps for synthetic fixtures whose ids collide
+      exactly with real hardware (``openfan:ch00`` …). ``make_ephemeral`` seals
+      ``_DEMO_SEALED_KEYS`` for the whole session, in memory as well as on disk,
+      so all ~29 persist call sites are safe by construction. Guarding them one
+      at a time is precisely what failed before: DEC-227 guarded two and the
+      rest silently diverged.
 
-    The first two guards refuse the *write* only — in-memory state still updates, so a
-    demo or unloaded session behaves normally on screen and leaves no trace on
-    disk. Callers therefore need no guard of their own; the exceptions are the
-    hardware-keyed maps demo replaces wholesale, which are additionally held
-    out of the in-memory object by ``MainWindow._demo_blocks_persist`` so a
-    Settings *export* taken mid-demo cannot carry synthetic ids either.
+      The seal is scoped to those keys rather than to every write. Sealing
+      everything meant a user dropped into demo by ``demo_on_disconnect`` (a
+      dead daemon) could not turn ``demo_on_disconnect`` back off — the Settings
+      page reported success and the write was dropped, so the next launch was
+      demo again, with no in-app escape.
+    * **A file we could not read is never overwritten.** ``load()`` separates
+      "unparseable" from "unreadable". A proven-bad file is moved to a numbered
+      ``.corrupt`` slot and saving resumes; an ``OSError`` — including one raised
+      by ``open()`` on a symlink whose target is missing, which a ``path.exists()``
+      pre-check would have hidden — leaves the service unloaded. If the file
+      cannot be moved aside at all, the service stays unloaded too: better to
+      save nothing than to destroy the only copy. A failed *re*-load disarms an
+      already-armed service for the same reason.
+
+    The unloaded guard refuses the *write* only — in-memory state still updates,
+    so the session behaves normally on screen and leaves nothing on disk. The
+    demo seal instead drops sealed keys from ``update()`` outright, memory
+    included: that is what stops a Settings *export* taken mid-demo from
+    carrying synthetic ids, since ``portable_dict()`` reads the in-memory
+    object. This class is the **only** place the demo rule lives — the per-site
+    guard MainWindow used to carry was retired with it, because a second partial
+    copy of the rule is exactly what let DEC-227's gap go unnoticed.
     """
 
     def __init__(self) -> None:
@@ -349,73 +390,127 @@ class AppSettingsService:
         return bool(self._ephemeral_reason)
 
     def make_ephemeral(self, reason: str) -> None:
-        """Detach this service from disk for the rest of the process.
+        """Seal hardware-derived state for the rest of the process.
 
         One-way by design: there is no demo -> live transition, and a service
         that could be re-armed would put the clobber back within reach of some
         future caller.
+
+        Ordinary preferences keep saving — see ``_DEMO_SEALED_KEYS`` for why the
+        seal is scoped rather than total.
         """
         if self._ephemeral_reason:
             return
         self._ephemeral_reason = reason
-        log.info("App settings are session-only (%s) — nothing will be persisted", reason)
+        log.info("App settings: hardware-derived keys are session-only (%s)", reason)
 
-    def _quarantine_unparseable(self, path: Path, error: Exception) -> None:
-        """Move a proven-unparseable settings file aside instead of losing it.
+    def _quarantine_unparseable(self, path: Path, error: Exception) -> bool:
+        """Move a proven-unparseable settings file aside. True if saving may resume.
 
         Without this, a file that fails to parse loads as defaults and the very
         next ``update()`` replaces it — the user's whole config gone behind a
         single log line. Renaming keeps it recoverable by hand while letting the
         app carry on with a fresh file.
 
-        Only the *first* corruption is preserved. After one quarantine the app
-        writes a clean file, so a later ``.corrupt`` would be that generated
-        file rather than anything of the user's — overwriting the original would
-        destroy the only copy of their real settings.
+        Quarantines are **numbered, not single-slot**. The first draft kept only
+        the earliest ``.corrupt`` on the theory that a later one would be the
+        app's own generated file — which is wrong once any time has passed: a
+        second corruption years in holds a fully rebuilt configuration, while the
+        preserved copy is the near-empty day-one file. Whichever file is more
+        valuable is not knowable here, so none is discarded.
+
+        Returning ``False`` (rename failed, or every slot taken) means the bad
+        file is still in place, so the caller must **not** arm the service —
+        writing would destroy the only copy.
         """
-        quarantine = path.with_suffix(path.suffix + ".corrupt")
-        if quarantine.exists():
-            log.warning("Keeping the earlier %s — not overwriting it", quarantine.name)
-            return
-        try:
-            os.replace(path, quarantine)
-        except OSError as e:
-            log.warning("Could not quarantine unparseable %s: %s", path, e)
-            return
-        log.warning("Moved unparseable app settings to %s (%s)", quarantine, error)
+        for n in range(_MAX_QUARANTINE_SLOTS):
+            suffix = ".corrupt" if n == 0 else f".corrupt.{n}"
+            target = path.with_suffix(path.suffix + suffix)
+            if target.exists():
+                continue
+            try:
+                os.replace(path, target)
+            except OSError as e:
+                log.warning(
+                    "Could not quarantine unparseable %s: %s — refusing to write over it", path, e
+                )
+                return False
+            log.warning("Moved unparseable app settings to %s (%s)", target, error)
+            return True
+        log.warning(
+            "All %d quarantine slots beside %s are occupied — refusing to overwrite the "
+            "unreadable file. Settings will not be saved this session; remove the .corrupt "
+            "files to re-enable saving.",
+            _MAX_QUARANTINE_SLOTS,
+            path,
+        )
+        return False
 
     def load(self) -> None:
         path = app_settings_path()
-        if not path.exists():
-            # A missing file is a legitimate authoritative state (fresh
-            # install): defaults *are* the truth, and the first save creates it.
-            self._settings = AppSettings()
+        # Reset both: a *re*-load that fails must disarm, or the service is left
+        # armed while holding defaults — precisely the clobber this class exists
+        # to prevent, just reached from the second call instead of the first.
+        self._settings = AppSettings()
+        self._loaded = False
+
+        try:
+            data = load_json_capped(path)
+        except FileNotFoundError:
+            if path.is_symlink():
+                # The link exists, its target does not — a dotfiles repo that is
+                # not checked out, or a drive not mounted at login. `lstat` is
+                # what separates this from a genuinely absent file; `exists()`
+                # and `open()` both collapse the two. Arming here would let the
+                # first save replace the *symlink* with a regular file and
+                # silently detach the user's managed config from its repo.
+                log.warning(
+                    "App settings symlink %s has no target — this session will not persist", path
+                )
+                return
+            # Genuinely absent: a legitimate authoritative state (fresh install).
+            # Defaults *are* the truth, and the first save creates the file.
             self._loaded = True
             return
-
-        self._settings = AppSettings()
-        try:
-            self._settings = AppSettings.from_dict(load_json_capped(path))
-            log.info("Loaded app settings from %s", path)
         except OSError as e:
-            # A read failure, not a bad file — the config may be perfectly
-            # intact, so do *not* authorise writing over it. This session runs
-            # on defaults and persists nothing, which is recoverable; replacing
-            # a healthy file we simply could not open is not.
+            # Could not read it — the config may be perfectly intact, so do *not*
+            # authorise writing over it.
             log.warning(
                 "Could not read app settings from %s: %s — this session will not persist", path, e
             )
             return
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-            # Proven unparseable: move it aside, then carry on writing normally.
-            log.warning("Failed to parse app settings from %s: %s — using defaults", path, e)
-            self._quarantine_unparseable(path, e)
+        except ValueError as e:
+            # Unparseable JSON, or past the size cap. Either way the file cannot
+            # be used, and `load_json_capped` raises this before we ever see a
+            # dict. (`json.JSONDecodeError` is a `ValueError`.)
+            log.warning("Unusable app settings at %s: %s — using defaults", path, e)
+            if not self._quarantine_unparseable(path, e):
+                return  # bad file still in place — saving would destroy it
+            self._loaded = True
+            return
+
+        try:
+            if not isinstance(data, dict):
+                # Valid JSON, wrong shape — a themes/profiles export or a sync
+                # conflict artefact copied over the file. `from_dict` never
+                # raises and would coerce this to defaults, arming the service so
+                # the next save destroys it: the exact loss DEC-244 exists to
+                # stop, arriving through the one door still open.
+                raise ValueError(f"top-level JSON is {type(data).__name__}, expected an object")
+            self._settings = AppSettings.from_dict(data)
+        except (KeyError, TypeError, ValueError) as e:
+            log.warning("Wrong-shaped app settings at %s: %s — using defaults", path, e)
+            if not self._quarantine_unparseable(path, e):
+                return  # bad file still in place — saving would destroy it
+        else:
+            log.info("Loaded app settings from %s", path)
         self._loaded = True
 
     def save(self) -> None:
-        if self._ephemeral_reason:
-            log.debug("Not writing app settings — session-only (%s)", self._ephemeral_reason)
-            return
+        # No ephemeral check here on purpose: the demo seal is enforced in
+        # update(), which never lets a sealed key reach self._settings. Refusing
+        # the whole write instead would also block ordinary preferences and trap
+        # the user in demo_on_disconnect.
         if not self._loaded:
             # A programming error, not a user condition — something built a
             # service and wrote through it without load(). Loud on purpose: a
@@ -434,7 +529,23 @@ class AppSettingsService:
         Routes through ``AppSettings.from_dict`` so every value is coerced and
         range-checked exactly like a fresh load (P2-A) — a wrong-typed value can
         no longer persist in memory and then fail to reload next launch.
+
+        In a sealed (demo) session, ``_DEMO_SEALED_KEYS`` are dropped here rather
+        than at ``save()``. Dropping them from *memory* is the point: a Settings
+        export reads ``portable_dict()`` off the in-memory object, so a key that
+        reached memory could still travel even though it never hit disk.
         """
+        if self._ephemeral_reason:
+            sealed = _DEMO_SEALED_KEYS.intersection(kwargs)
+            if sealed:
+                log.debug(
+                    "Session-only (%s) — dropping hardware-derived %s",
+                    self._ephemeral_reason,
+                    ", ".join(sorted(sealed)),
+                )
+                kwargs = {k: v for k, v in kwargs.items() if k not in _DEMO_SEALED_KEYS}
+                if not kwargs:
+                    return
         merged = self._settings.to_dict()
         merged.update({k: v for k, v in kwargs.items() if hasattr(self._settings, k)})
         self._settings = AppSettings.from_dict(merged)

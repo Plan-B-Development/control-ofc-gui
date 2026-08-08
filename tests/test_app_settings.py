@@ -185,19 +185,56 @@ def test_load_of_a_missing_file_authorises_the_first_write(tmp_path, monkeypatch
     assert json.loads(_settings_file(tmp_path).read_text())["theme_name"] == "Ocean Blue"
 
 
-def test_ephemeral_service_never_writes(tmp_path, monkeypatch):
+def test_ephemeral_service_drops_sealed_keys_from_memory_and_disk(tmp_path, monkeypatch):
+    """Dropping them from *memory* is the point — a Settings export reads
+    portable_dict() off the live object, so a key that only got blocked at the
+    disk boundary could still travel to another machine."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     svc = AppSettingsService()
     svc.load()
-    svc.update(theme_name="Ocean Blue")
-    before = _settings_file(tmp_path).read_bytes()
+    svc.update(fan_aliases={"openfan:ch00": "My Real Intake"})
 
     svc.make_ephemeral("demo mode")
     assert svc.is_ephemeral
-    svc.update(theme_name="Demo Neon")
+    svc.update(fan_aliases={"openfan:ch00": "Demo Label"})
 
-    assert _settings_file(tmp_path).read_bytes() == before
-    assert svc.settings.theme_name == "Demo Neon"  # the session still behaves
+    assert svc.settings.fan_aliases == {"openfan:ch00": "My Real Intake"}
+    on_disk = json.loads(_settings_file(tmp_path).read_text())
+    assert on_disk["fan_aliases"] == {"openfan:ch00": "My Real Intake"}
+
+
+def test_ephemeral_service_still_saves_ordinary_preferences(tmp_path, monkeypatch):
+    """The seal is scoped, not total. Sealing everything trapped a user in
+    demo_on_disconnect: dropped into demo by a dead daemon, they could not write
+    the one setting that gets them out, and Settings claimed success anyway."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(demo_on_disconnect=True)
+
+    svc.make_ephemeral("demo mode")
+    svc.update(demo_on_disconnect=False, theme_name="Solar Light")
+
+    on_disk = json.loads(_settings_file(tmp_path).read_text())
+    assert on_disk["demo_on_disconnect"] is False
+    assert on_disk["theme_name"] == "Solar Light"
+
+
+def test_ephemeral_mixed_update_keeps_the_preference_and_drops_the_sealed_key(
+    tmp_path, monkeypatch
+):
+    """One update() carrying both must not be all-or-nothing in either direction."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(fan_aliases={"openfan:ch00": "Real"})
+
+    svc.make_ephemeral("demo mode")
+    svc.update(fan_aliases={"openfan:ch00": "Demo"}, card_size="large")
+
+    on_disk = json.loads(_settings_file(tmp_path).read_text())
+    assert on_disk["fan_aliases"] == {"openfan:ch00": "Real"}
+    assert on_disk["card_size"] == "large"
 
 
 def test_unparseable_file_is_quarantined_not_overwritten(tmp_path, monkeypatch):
@@ -218,21 +255,119 @@ def test_unparseable_file_is_quarantined_not_overwritten(tmp_path, monkeypatch):
     assert json.loads(path.read_text())["theme_name"] == "Fresh Start"
 
 
-def test_quarantine_keeps_the_first_corrupt_file(tmp_path, monkeypatch):
-    """The original is the one worth keeping. By the time a second corruption
-    happens the app has already written a clean file, so overwriting would trade
-    the user's real settings for a generated one."""
+def test_valid_json_of_the_wrong_shape_is_quarantined_too(tmp_path, monkeypatch):
+    """The hole that survived the first cut of DEC-244, found independently by
+    two reviewers. A top-level list/null/scalar parses fine, so no exception
+    reached the quarantine arm; `from_dict` coerced it to defaults, `load()`
+    armed the service, and the next save destroyed it. Realistically: a
+    profiles or themes export copied over the file, or a sync-conflict artefact."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = _settings_file(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('["this", "is", "a", "list"]')
+
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(theme_name="Fresh Start")
+
+    quarantined = tmp_path / "control-ofc" / "app_settings.json.corrupt"
+    assert quarantined.read_text() == '["this", "is", "a", "list"]'
+    assert json.loads(path.read_text())["theme_name"] == "Fresh Start"
+
+
+def test_a_file_that_cannot_be_quarantined_is_not_overwritten(tmp_path, monkeypatch):
+    """If the rename fails the bad file is still sitting there, so arming the
+    service would destroy the only copy. Save nothing this session instead."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = _settings_file(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("NOT JSON {")
+
+    from control_ofc.services import app_settings_service as mod
+
+    monkeypatch.setattr(mod.os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("EROFS")))
+
+    svc = AppSettingsService()
+    svc.load()  # must not raise
+    svc.update(theme_name="Would Clobber")
+
+    assert path.read_text() == "NOT JSON {"
+
+
+def test_every_corruption_is_kept_not_just_the_first(tmp_path, monkeypatch):
+    """A second corruption years later holds a fully rebuilt configuration, while
+    the day-one quarantine is near-empty. Which is worth more is not knowable
+    here, so numbered slots keep both rather than guessing."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     path = _settings_file(tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    path.write_text("ORIGINAL USER DATA {")
+    path.write_text("DAY ONE {")
     AppSettingsService().load()
-    path.write_text("LATER GENERATED JUNK {")
+    path.write_text("YEARS OF REAL SETTINGS {")
     AppSettingsService().load()
 
-    quarantined = tmp_path / "control-ofc" / "app_settings.json.corrupt"
-    assert quarantined.read_text() == "ORIGINAL USER DATA {"
+    base = tmp_path / "control-ofc"
+    assert (base / "app_settings.json.corrupt").read_text() == "DAY ONE {"
+    assert (base / "app_settings.json.corrupt.1").read_text() == "YEARS OF REAL SETTINGS {"
+
+
+def test_saving_stops_once_every_quarantine_slot_is_taken(tmp_path, monkeypatch):
+    """Bounded so a repeatedly-corrupting file cannot fill the config dir — but
+    the bound fails closed: it refuses to write rather than discarding data."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from control_ofc.services.app_settings_service import _MAX_QUARANTINE_SLOTS
+
+    path = _settings_file(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for i in range(_MAX_QUARANTINE_SLOTS):
+        path.write_text(f"CORRUPT {i} {{")
+        AppSettingsService().load()
+
+    path.write_text("ONE TOO MANY {")
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(theme_name="Would Clobber")
+
+    assert path.read_text() == "ONE TOO MANY {"
+
+
+def test_failed_reload_disarms_an_already_loaded_service(tmp_path, monkeypatch):
+    """load() resets _settings to defaults before reading, so a reload that fails
+    must reset _loaded too — otherwise the service is armed while holding
+    defaults, the exact clobber this class exists to prevent."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(theme_name="Ocean Blue")
+    before = _settings_file(tmp_path).read_bytes()
+
+    from control_ofc.services import app_settings_service as mod
+
+    monkeypatch.setattr(
+        mod, "load_json_capped", lambda *a, **k: (_ for _ in ()).throw(OSError("EIO"))
+    )
+    svc.load()  # the second load fails
+    svc.update(card_size="large")
+
+    assert _settings_file(tmp_path).read_bytes() == before
+
+
+def test_unstattable_file_is_not_treated_as_a_fresh_install(tmp_path, monkeypatch):
+    """A settings file symlinked into a dotfiles repo whose target is not mounted
+    makes Path.exists() return False. A pre-check would call that a fresh install,
+    and the first save would replace the symlink itself."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = _settings_file(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(tmp_path / "not-mounted" / "app_settings.json")
+    assert not path.exists()  # the trap: a dangling symlink stats as absent
+
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(theme_name="Would Clobber")
+
+    assert path.is_symlink(), "the dotfiles symlink was replaced by a regular file"
 
 
 def test_unreadable_file_is_left_alone_and_blocks_writing(tmp_path, monkeypatch):
@@ -264,15 +399,16 @@ def test_make_ephemeral_cannot_be_undone_by_a_later_load(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     svc = AppSettingsService()
     svc.load()
-    svc.update(theme_name="Ocean Blue")
-    before = _settings_file(tmp_path).read_bytes()
+    svc.update(fan_aliases={"openfan:ch00": "Real"})
 
     svc.make_ephemeral("demo mode")
-    svc.load()
-    svc.update(theme_name="Clobbered")
+    svc.load()  # re-reading from disk must not re-arm the seal
+    svc.update(fan_aliases={"openfan:ch00": "Clobbered"})
 
     assert svc.is_ephemeral
-    assert _settings_file(tmp_path).read_bytes() == before
+    assert json.loads(_settings_file(tmp_path).read_text())["fan_aliases"] == {
+        "openfan:ch00": "Real"
+    }
 
 
 # ---------------------------------------------------------------------------
