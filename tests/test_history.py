@@ -343,3 +343,86 @@ def test_generation_bumps_on_clear():
     before = store.generation("sensor:cpu")
     store.clear()
     assert store.generation("sensor:cpu") == before + 1
+
+
+# --- prefill_fan (DEC-248) -------------------------------------------------
+# The fan counterpart to prefill_sensor. Added because the screenshot pipeline
+# had no public way to seed fan history and reached for the private _append,
+# which neither sorts nor bumps the generation the chart's cache watches.
+
+
+def test_prefill_fan_populates_rpm_series():
+    store = HistoryStore()
+    now_ms = int(time.time() * 1000)
+    store.prefill_fan("openfan:ch00", [HistoryPoint(ts=now_ms - 1000, v=700.0)])
+    series = store.get_series("fan:openfan:ch00:rpm")
+    assert len(series) == 1
+    assert series[0].value == 700.0
+
+
+def test_prefill_fan_metric_selects_the_series():
+    """rpm is measured, pwm is commanded — they must never be conflated."""
+    store = HistoryStore()
+    now_ms = int(time.time() * 1000)
+    store.prefill_fan("f1", [HistoryPoint(ts=now_ms - 1000, v=55.0)], metric="pwm")
+    assert len(store.get_series("fan:f1:pwm")) == 1
+    assert store.get_series("fan:f1:rpm") == []
+
+
+def test_prefill_fan_empty_points_is_noop():
+    store = HistoryStore()
+    store.prefill_fan("f1", [])
+    assert store.get_series("fan:f1:rpm") == []
+
+
+def test_prefill_fan_merges_with_existing_series_sorted():
+    """The invariant that motivated this method: older backfill merged behind
+    newer live readings must still leave timestamps ascending. Raw _append did
+    not, which corrupts the np.searchsorted hover lookup."""
+    from itertools import pairwise
+
+    store = HistoryStore()
+    # Live reading first (newest timestamp), exactly as at capture time.
+    store.record_fans([FanReading(id="f1", source="hwmon", rpm=900)])
+
+    now_ms = int(time.time() * 1000)
+    store.prefill_fan(
+        "f1",
+        [HistoryPoint(ts=now_ms - 3000, v=700.0), HistoryPoint(ts=now_ms - 2000, v=800.0)],
+    )
+
+    series = store.get_series("fan:f1:rpm")
+    timestamps = [r.timestamp for r in series]
+    assert timestamps == sorted(timestamps), "series must be sorted ascending"
+    assert all(b > a for a, b in pairwise(timestamps)), "timestamps must be strictly increasing"
+    assert [r.value for r in series] == [700.0, 800.0, 900.0]
+
+
+def test_prefill_fan_bumps_generation():
+    """The chart rebuilds only when the generation changes; without the bump a
+    backfill is invisible even though the store holds it (the DEC-248 bug)."""
+    store = HistoryStore()
+    store.record_fans([FanReading(id="f1", source="hwmon", rpm=900)])
+    before = store.generation("fan:f1:rpm")
+    store.prefill_fan("f1", [HistoryPoint(ts=int(time.time() * 1000) - 5000, v=700.0)])
+    assert store.generation("fan:f1:rpm") > before
+
+
+def test_prefill_fan_dedupes_exact_timestamps():
+    from unittest.mock import patch
+
+    store = HistoryStore()
+    points = [
+        HistoryPoint(ts=2_000_000 - 3000, v=700.0),
+        HistoryPoint(ts=2_000_000 - 2000, v=800.0),
+    ]
+    # get_series() must be read INSIDE the patch: it prunes against the current
+    # clock, and points stamped at a frozen monotonic of 1000.0 are older than
+    # max_age relative to the real clock, so reading outside returns an empty
+    # series rather than the dedupe result.
+    with patch("time.monotonic", lambda: 1000.0), patch("time.time", lambda: 2000.0):
+        store.prefill_fan("f1", points)
+        store.prefill_fan("f1", points)
+        series = store.get_series("fan:f1:rpm")
+    assert len(series) == 2
+    assert [r.value for r in series] == [700.0, 800.0]

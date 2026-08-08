@@ -117,9 +117,34 @@ class HistoryStore:
         (conversion jitter defeats exact-ts dedupe); they are bounded
         (≤ one daemon ring per reconnect), sorted, and age out with pruning.
         """
+        self._merge_prefill(f"sensor:{sensor_id}", points)
+
+    def prefill_fan(self, fan_id: str, points: list[HistoryPoint], *, metric: str = "rpm") -> None:
+        """Pre-fill a fan series, the counterpart to :meth:`prefill_sensor`.
+
+        Same merge semantics, same guarantees — it shares the implementation
+        rather than restating it, so the sorted/deduped/generation-bumped
+        invariant cannot drift between the two paths.
+
+        ``metric`` selects the series: ``"rpm"`` (measured) or ``"pwm"``
+        (commanded). These are never conflated — see ``CLAUDE.md``.
+
+        Added for DEC-248: the screenshot pipeline had no public way to seed
+        fan history, so it used the private ``_append``, which neither sorts nor
+        bumps the generation. The result was an RPM series the chart never
+        rendered *and* a deque that violated the ascending-timestamp invariant
+        ``np.searchsorted`` depends on.
+        """
+        self._merge_prefill(f"fan:{fan_id}:{metric}", points)
+
+    def _merge_prefill(self, key: str, points: list[HistoryPoint]) -> None:
+        """Merge wall-clock history into *key*, preserving the sorted invariant.
+
+        Acquires the lock itself, unlike ``_append``/``_prune`` which require it
+        to be held already.
+        """
         if not points:
             return
-        key = f"sensor:{sensor_id}"
         now_mono = time.monotonic()
         now_wall_ms = int(time.time() * 1000)
         incoming = [
