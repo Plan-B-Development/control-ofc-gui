@@ -19,12 +19,30 @@ class Card(QFrame):
 
 
 class BracketCard(QFrame):
-    """A card with a left accent bar that intensifies on hover (``.BracketCard``)."""
+    """A card with a left accent bar that intensifies on hover (``.BracketCard``).
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    ``state`` colours the bar by severity (``"crit"`` / ``"warn"`` / ``"neutral"``)
+    through QSS, so it repaints on a live theme change. That matters: the System
+    State issue cards previously hand-rolled this shape with a ``QFrame`` strip
+    and an inline ``setStyleSheet`` carrying an interpolated token, which freezes
+    the colour at render time and never repaints (DEC-258).
+
+    ``warning`` is kept as the original binary toggle for existing callers.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        object_name: str | None = None,
+        state: str = "neutral",
+    ) -> None:
         super().__init__(parent)
+        if object_name:
+            self.setObjectName(object_name)
         self.setProperty("class", "BracketCard")
         self.setProperty("warning", "false")
+        self.setProperty("state", state)
 
 
 class SectionHeader(QWidget):

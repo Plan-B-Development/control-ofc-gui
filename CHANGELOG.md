@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- **A `NOTICE.md`**, mirroring the daemon's: the two dependencies whose licences
+  are not permissive (PySide6's LGPL-3.0, certifi's MPL-2.0) with the reasoning
+  for why neither changes this project's own MIT licence. Neither is a new
+  situation; neither was written down.
 - **The daemon can now tell you your GUI is too old.** `min_supported_gui` has
   been advertised in `/capabilities` since 2.0.0 and was never compared against
   anything — and the one place it was read used it backwards, as a *daemon*

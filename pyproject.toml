@@ -26,6 +26,12 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.4",
     "pip-audit>=2.7",
+    # Dead-code sweep for the /ofc:audit pass. Was installed ad hoc into .venv
+    # and declared nowhere, which meant it rode along in the
+    # `pip freeze --exclude-editable` snapshot DEC-143 defines as the canonical
+    # audit input — so a "clean" supply-chain result had scanned a package that
+    # was not part of the reproducible surface (DEC-258).
+    "vulture>=2.14",
     # 3.x reads scope from [tool.mutmut]; the old 2.5 `--paths-to-mutate` CLI is gone.
     "mutmut>=3.5",
     # tests/test_packaging_dependencies.py parses .github/workflows/release.yml to
@@ -84,7 +90,10 @@ source = ["control_ofc"]
 # the push/PR CI workflow (.github/workflows/ci.yml). Measured 84% on 2026-06-21;
 # the floor sits below that to leave refactor headroom — ratchet it upward over
 # time rather than letting coverage silently regress.
-fail_under = 80
+# DEC-258: raised 80 -> 88. Actual coverage has sat at ~89% for many releases,
+# so an 80 floor could absorb a nine-point regression without failing. 88 leaves
+# roughly a point of headroom for legitimate churn while making a real drop loud.
+fail_under = 88
 show_missing = true
 
 [tool.setuptools.package-data]
@@ -94,5 +103,12 @@ show_missing = true
 "control_ofc" = ["ui/presets/*.json", "ui/fonts/*.ttf", "ui/fonts/*.txt"]
 
 [build-system]
-requires = ["setuptools>=68.0"]
+# DEC-258: 77.0.0, not 68.0. `license = "MIT"` above is PEP 639's bare SPDX
+# expression, and setuptools only learned to read that shape in 77.0.0 —
+# 68.0-76.x parse `project.license` as PEP 621's table and mis-handle a plain
+# string. Wrong since the first commit, and invisible because both real build
+# paths dodge it: pip's isolated build resolves the newest satisfying setuptools,
+# and the PKGBUILD builds `--no-isolation` against Arch's current one. It bites
+# anyone testing minimum-supported versions or building from a pinned mirror.
+requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"

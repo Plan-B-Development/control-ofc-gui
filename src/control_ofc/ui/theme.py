@@ -1364,6 +1364,17 @@ def build_stylesheet(t: ThemeTokens) -> str:
     .BracketCard[warning="true"] {{
         border-left-color: {t.status_warn};
     }}
+    /* DEC-258: severity-coloured bar, so the System State issue cards can use
+       this primitive instead of hand-rolling a QFrame strip with an inline
+       stylesheet — which froze the colour at render time and never repainted on
+       a theme change. Placed after :hover so a severity always wins over it: a
+       critical card must not look merely "hovered". */
+    .BracketCard[state="warn"] {{
+        border-left-color: {t.status_warn};
+    }}
+    .BracketCard[state="crit"] {{
+        border-left-color: {t.status_crit};
+    }}
 
     /* Section header: accent bar + uppercase heading-font label */
     .SectionBar {{

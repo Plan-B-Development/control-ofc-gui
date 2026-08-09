@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
-from control_ofc.ui.components.cards import Card, SectionHeader
+from control_ofc.ui.components.cards import BracketCard, Card, SectionHeader
 from control_ofc.ui.components.gauges import RadialGauge
 from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.theme import active_theme
@@ -95,17 +95,19 @@ def _ensure_items(table: QTableWidget, row: int, ncols: int) -> None:
 def _make_issue_card(vm) -> QWidget:
     theme = active_theme()
     color = _severity_border_color(vm.severity_state, theme)
-    card = QFrame()
-    card.setObjectName(f"SystemState_IssueCard_{vm.key}")
-    card.setProperty("class", "Card")
+    # DEC-258: the shared BracketCard, not a hand-rolled twin. This built the
+    # same left-accent-bar shape from a QFrame strip whose colour came from an
+    # inline setStyleSheet — an interpolated token, frozen at render time, so the
+    # bar kept the old theme's colour after a live theme change. The primitive
+    # carries the severity as a QSS property instead, and it was dead code until
+    # this call site adopted it.
+    card = BracketCard(
+        object_name=f"SystemState_IssueCard_{vm.key}",
+        state=vm.severity_state if vm.severity_state in ("crit", "warn") else "neutral",
+    )
     row = QHBoxLayout(card)
     row.setContentsMargins(0, 0, 0, 0)
     row.setSpacing(0)
-
-    strip = QFrame()
-    strip.setFixedWidth(3)
-    strip.setStyleSheet(f"background: {color}; border: none;")
-    row.addWidget(strip)
 
     body = QWidget()
     v = QVBoxLayout(body)
