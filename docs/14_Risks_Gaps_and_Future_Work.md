@@ -221,7 +221,30 @@ hardware-blocked (no NVIDIA hardware to verify against). NVIDIA fans are never
 offered as writable curve members, mirroring the Intel Arc read-only pattern
 (§14).
 
-### 16. Controls-page fan-role card clips its "Manual" button (open, cosmetic)
+### 16. Controls-page fan-role card clips its "Manual" button (FIXED — GUI v2.41.0, DEC-258)
+
+**Resolved 2026-08-09.** Re-measuring for the fix found the gap was wider than
+recorded below: the whole details block clipped, not just the Manual button, and
+it started at **11 pt in the default density and 9 pt in compact** — the 4-digit
+RPM threshold was one symptom of a metric that was simply too shallow
+(`_WIDTH_PER_PT = 11` against a measured ~23 px/pt requirement).
+
+It also could not be closed by a constant. The dominant contributor is the curve
+label, whose text is **profile-authored and arbitrary-length** — 286 px of a
+304 px content area at 16 pt for an ordinary name — so no card width is ever
+sufficient for the widest possible content. The fix is therefore both halves: the
+metric re-derived from measurement (base 299, 23 px/pt, so the default and large
+densities never elide at any size 7–16 pt), and the curve label switched to the
+existing `ElidedLabel` primitive so the unbounded case degrades to an ellipsis
+instead of a clip. Compact still elides above ~9 pt, which is the honest meaning
+of that density once the content is fixed-width.
+
+Guarded by `test_the_control_card_details_row_fits_the_default_tier`, which
+sweeps every font size rather than pinning the one reported symptom.
+
+<details><summary>Original report (2026-08-08)</summary>
+
+#### Controls-page fan-role card clips its "Manual" button (cosmetic)
 
 **Symptom.** The action row at the bottom of each fan-role card reads
 `718 RPM │ Manual │ Delete │ Edit…`, and the Manual button's label renders as
@@ -260,6 +283,8 @@ buttons shifting as RPM changes); or drop the row to icons with tooltips at the
 compact tier; or let the row wrap below a width threshold. Not attempted here —
 it is a `/frontend-design` question about the density tiers, not a one-line
 padding tweak, and DEC-128/129 own that surface.
+
+</details>
 
 ## Resolved Gaps (previously listed as future work)
 
