@@ -190,6 +190,24 @@ other value as a warning; an absent/unparseable field falls back to `"unknown"`.
 Emitted by the daemon's `HealthStatus::Display` and pinned on both sides by
 `health_status_display_wire_strings` (daemon) and the dashboard health tests (GUI).
 
+`subsystems[]` is `openfan`, `hwmon`, then — on daemon ≥ 2.17.0 — **`engine`**
+(DEC-249, additive; `api_version` unchanged). The order is stable and the new
+entry is appended, never inserted, so an index-based reader is unaffected; the
+GUI iterates the array and needs no change to display it. The first two report
+*data* freshness from the poll loops. `engine` reports the profile engine's
+**liveness**: the daemon's sole PWM writer also evaluates the 105 °C rule, but
+nothing supervises its task, so a panic inside a tick would end fan control and
+thermal safety while every other signal stayed green and `/status` kept
+answering 200. Thresholds are the shared staleness bands against a fixed 1 Hz
+tick (`ok` ≤ 2 s, `warn` ≤ 5 s, `crit` beyond) — deliberately **not** derived
+from the operator-configurable `poll_interval_ms`, so widening polling cannot
+widen what counts as a live engine. Reasons are engine-specific
+(`"evaluating on schedule"`, `"tick overdue"`, `"not ticking — fan control and
+thermal safety are stalled"`, `"never ticked"`). A `crit` engine escalates
+`overall_status` to `"crit"` — that escalation is the point of the surface.
+Daemons < 2.17.0 emit two entries and no `engine`; a client must treat its
+absence as "unknown", never as healthy.
+
 `thermal_state` (daemon ≥1.13.0, additive — `api_version` unchanged) is one of
 `"normal" | "recovery" | "emergency" | "no_sensor_fallback"`. While it is not
 `"normal"` the daemon is forcing all OpenFan+hwmon PWM (GPU fans excluded —
