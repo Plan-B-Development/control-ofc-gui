@@ -1060,3 +1060,177 @@ class TestApplyThemeIsTheOnlyEntryPoint:
             "these push a generated stylesheet without the palette/font that go "
             f"with it — route them through apply_theme(): {offenders}"
         )
+
+
+class TestKeyboardFocusVisibility:
+    """DEC-251: every interactive control must show a visible keyboard focus
+    indicator (WCAG 2.4.7).
+
+    Asserted by **rendering**, not by grepping the stylesheet for `:focus`. A
+    rule can be present and still show nothing: the first attempt at the primary
+    variant drew its ring in the accent token, which is the colour that button is
+    already filled with — a correct-looking QSS rule that was invisible on
+    screen. Only a render diff catches that, and it is what found the original
+    gap (six of eight controls rendered pixel-identical focused and unfocused).
+    """
+
+    @staticmethod
+    def _states(make):
+        """Render *make*'s widget unfocused and focused; return both images."""
+        from PySide6.QtWidgets import QLineEdit, QWidget
+
+        host = QWidget()
+        host.resize(400, 60)
+        # A second focusable widget, so focus can genuinely leave the subject.
+        elsewhere = QLineEdit(host)
+        elsewhere.setGeometry(300, 5, 80, 24)
+        subject = make(host)
+        subject.setGeometry(10, 5, 180, 30)
+        host.show()
+
+        elsewhere.setFocus()
+        QApplication.processEvents()
+        unfocused = subject.grab().toImage()
+        hint_unfocused = subject.sizeHint()
+
+        subject.setFocus()
+        QApplication.processEvents()
+        focused = subject.grab().toImage()
+        hint_focused = subject.sizeHint()
+
+        host.hide()
+        return unfocused, focused, hint_unfocused, hint_focused
+
+    @staticmethod
+    def _button(variant=None, object_name=None):
+        from PySide6.QtWidgets import QPushButton
+
+        def make(parent):
+            b = QPushButton("Sample", parent)
+            if variant:
+                b.setProperty("variant", variant)
+            if object_name:
+                b.setObjectName(object_name)
+            return b
+
+        return make
+
+    @staticmethod
+    def _checkbox(parent):
+        from PySide6.QtWidgets import QCheckBox
+
+        return QCheckBox("Sample", parent)
+
+    @staticmethod
+    def _combo(parent):
+        from PySide6.QtWidgets import QComboBox
+
+        c = QComboBox(parent)
+        c.addItems(["a", "b"])
+        return c
+
+    @staticmethod
+    def _line_edit(parent):
+        from PySide6.QtWidgets import QLineEdit
+
+        return QLineEdit("sample", parent)
+
+    def test_every_interactive_control_renders_a_focus_indicator(self, restore_app_theme):
+        """The regression itself: a QSS-styled widget loses Qt's native focus
+        rect, so anything without its own `:focus` rule is invisible to a
+        keyboard user. Before DEC-251 only ghost buttons and QLineEdit passed."""
+        from control_ofc.ui.theme import apply_theme, default_dark_theme
+
+        apply_theme(default_dark_theme())
+
+        subjects = {
+            "QPushButton (no variant)": self._button(),
+            "QPushButton[variant=primary]": self._button("primary"),
+            "QPushButton[variant=secondary]": self._button("secondary"),
+            "QPushButton[variant=ghost]": self._button("ghost"),
+            "QPushButton[variant=danger]": self._button("danger"),
+            "QPushButton#PrimaryButton": self._button(object_name="PrimaryButton"),
+            "QCheckBox": self._checkbox,
+            "QComboBox": self._combo,
+            "QLineEdit": self._line_edit,
+        }
+
+        invisible = []
+        for label, make in subjects.items():
+            unfocused, focused, _, _ = self._states(make)
+            if unfocused == focused:
+                invisible.append(label)
+
+        assert not invisible, (
+            "these render identically focused and unfocused, so a keyboard user "
+            f"cannot see where they are (WCAG 2.4.7): {invisible}"
+        )
+
+    def test_focus_ring_does_not_resize_the_control(self, restore_app_theme):
+        """The ring must not reflow the page.
+
+        Primary and #PrimaryButton carry `border: none`, so the ring is declared
+        only in the focused state. Giving them a transparent border in the
+        *resting* rule instead — the obvious-looking alternative — grows the
+        button by 2px in both axes, which was measured before choosing this
+        shape."""
+        from control_ofc.ui.theme import apply_theme, default_dark_theme
+
+        apply_theme(default_dark_theme())
+
+        for label, make in {
+            "primary": self._button("primary"),
+            "#PrimaryButton": self._button(object_name="PrimaryButton"),
+            "secondary": self._button("secondary"),
+            "QCheckBox": self._checkbox,
+        }.items():
+            _, _, hint_unfocused, hint_focused = self._states(make)
+            assert hint_unfocused == hint_focused, (
+                f"{label} changes size when focused — the ring shifts layout"
+            )
+
+    def test_checkbox_is_styled_only_in_the_focused_state(self):
+        """QCheckBox has no *resting* rule on purpose.
+
+        Styling the widget at rest makes Qt swap its native indicator for the
+        stylesheet's own, which repaints and shrinks the resting box — the same
+        subcontrol trap already documented for `QComboBox::drop-down`. Measured:
+        a resting rule changed 393px and took the box from 70x23 to 68x20."""
+        qss = build_stylesheet(default_dark_theme())
+        checkbox_rules = re.findall(r"^\s*(QCheckBox[^\n{]*)\{", qss, re.MULTILINE)
+        assert checkbox_rules, "expected at least the focus rule"
+        assert all(":focus" in rule for rule in checkbox_rules), (
+            "a resting QCheckBox rule replaces Qt's native indicator — keep the "
+            f"styling scoped to :focus: {checkbox_rules}"
+        )
+
+
+class TestAccessibleNames:
+    """DEC-251: a control whose only label is a glyph or a tooltip announces as
+    an anonymous button.
+
+    A tooltip is **not** an accessible name — Qt does not expose it as one, and a
+    keyboard-only screen-reader user never triggers it. `setAccessibleName`
+    appeared zero times in the whole `ui/` tree before this."""
+
+    def test_colour_swatches_are_named(self, qtbot):
+        from control_ofc.ui.widgets.theme_editor import ColorSwatch
+
+        swatch = ColorSwatch("accent_primary", "#1FB88A")
+        qtbot.addWidget(swatch)
+        assert swatch.text() == "", "precondition: the swatch's content is its colour"
+        assert "accent_primary" in swatch.accessibleName()
+
+    def test_every_reset_button_in_the_theme_editor_is_named(self, qtbot):
+        """There is one per token, so an unnamed glyph is heard dozens of times."""
+        from PySide6.QtWidgets import QPushButton
+
+        from control_ofc.ui.widgets.theme_editor import ThemeEditorWidget
+
+        editor = ThemeEditorWidget()
+        qtbot.addWidget(editor)
+
+        resets = [b for b in editor.findChildren(QPushButton) if b.text() == "↺"]
+        assert len(resets) > 10, "expected the per-token reset buttons"
+        unnamed = [b for b in resets if not b.accessibleName()]
+        assert not unnamed, f"{len(unnamed)} reset buttons announce only as a glyph"

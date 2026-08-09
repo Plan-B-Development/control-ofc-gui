@@ -141,6 +141,11 @@ class ColorSwatch(QPushButton):
         self._color = hex_color
         self.setFixedSize(32, 24)
         self.setToolTip(f"Click to change {token_name}")
+        # The swatch carries no text — its whole content is the colour it shows —
+        # so without a name assistive tech announces an anonymous button, once per
+        # token (DEC-251). A tooltip is not an accessible name: it is not exposed
+        # as one and never reaches a keyboard-only screen-reader user.
+        self.setAccessibleName(f"{token_name} colour")
         self._update_style()
         self.clicked.connect(self._pick_color)
 
@@ -377,6 +382,10 @@ class ThemeEditorWidget(QWidget):
 
         reset = QPushButton("↺")  # ↺
         reset.setToolTip(f"Reset {token_name} to default")
+        # "↺" announces as an anonymous symbol, and there is one of these per
+        # token — a screen-reader user would hear the same meaningless glyph
+        # dozens of times down the page (DEC-251).
+        reset.setAccessibleName(f"Reset {token_name} to default")
         reset.setFixedSize(24, 24)
         reset.clicked.connect(lambda _checked, tn=token_name: self._reset_token(tn))
         grid.addWidget(reset, row_idx, 3)

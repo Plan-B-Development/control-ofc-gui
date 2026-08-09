@@ -1027,6 +1027,13 @@ def build_stylesheet(t: ThemeTokens) -> str:
         padding: 4px 8px;
     }}
 
+    /* A combo box is an input, so it takes the input focus colour rather than
+       the buttons' `text_primary` ring (DEC-251) — it sits beside QLineEdit in
+       forms and should focus like one. */
+    QComboBox:focus {{
+        border-color: {t.input_border_focus};
+    }}
+
     QComboBox::drop-down {{
         border: none;
         width: 22px;
@@ -1088,6 +1095,17 @@ def build_stylesheet(t: ThemeTokens) -> str:
 
     QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
         border-color: {t.input_border_focus};
+    }}
+
+    /* QCheckBox deliberately has no *resting* rule (DEC-251). Styling the widget
+       at rest makes Qt swap its native indicator for the stylesheet's own, which
+       measurably repaints the resting box and shrinks it — the same subcontrol
+       trap documented for `QComboBox::drop-down`. Declaring the ring only in the
+       focused state leaves the indicator native and costs no layout. Styling
+       `::indicator:focus` instead was measured too: it resizes the indicator. */
+    QCheckBox:focus {{
+        border: 1px solid {t.text_primary};
+        border-radius: 3px;
     }}
 
     /* Read-only output panes — the Logs snapshot previews and the inspector's
@@ -1413,6 +1431,44 @@ def build_stylesheet(t: ThemeTokens) -> str:
     QPushButton[variant="danger"]:hover {{
         background-color: {_rgba(t.status_crit, 0.14)};
         border-color: {t.status_crit};
+    }}
+
+    /* Keyboard focus for every remaining button (DEC-251). DEC-238's reasoning
+       above was right and is simply extended here: a QSS-styled button loses
+       Qt's native focus rect, so *any* variant without its own `:focus` rule is
+       invisible to a keyboard user (WCAG 2.4.7). Ghost was the only one that had
+       one — measured, not assumed: rendering each variant focused and unfocused
+       and diffing produced identical images for all the others.
+
+       `text_primary` throughout, following DEC-238 — one recognisable focus
+       language on buttons, and distinct from `[variant="danger"]:hover`, which
+       already swaps its border to `status_crit`. Focus and hover must not look
+       the same.
+
+       These sit AFTER the variant rules on purpose. `QPushButton:focus` and
+       `QPushButton[variant="..."]` have equal CSS2 specificity, so a bare
+       `:focus` rule placed earlier would lose the tie to a variant's base border
+       and silently do nothing for exactly the variants this fixes. */
+    QPushButton:focus {{
+        border-color: {t.text_primary};
+    }}
+    QPushButton[variant="secondary"]:focus {{
+        border-color: {t.text_primary};
+    }}
+    QPushButton[variant="danger"]:focus {{
+        border-color: {t.text_primary};
+    }}
+
+    /* Primary and #PrimaryButton are filled with accent and carry `border:
+       none`, so there is no border colour to swap and an accent ring would be
+       invisible against its own fill. The ring is declared only in the focused
+       state — adding a transparent border to the resting rule instead grows the
+       button by 2px, which measurably shifts layout. `primary_btn_text` is the
+       token that already contrasts against this fill by construction: it is the
+       button's own label colour. */
+    QPushButton[variant="primary"]:focus,
+    QPushButton#PrimaryButton:focus {{
+        border: 1px solid {t.primary_btn_text};
     }}
 
     /* Dense data table (Overview / Logs consume this later) */

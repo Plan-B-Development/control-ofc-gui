@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Fixed
+- **You can see where the keyboard is again.** Applying a stylesheet makes Qt drop
+  its native focus rect, and only ghost buttons and text inputs had a replacement —
+  so tabbing through the app moved an invisible cursor. Measured rather than
+  eyeballed: rendering each control focused and unfocused produced **pixel-identical
+  images for six of eight** (every other button variant, checkboxes and combo boxes).
+  All of them now show a ring (WCAG 2.4.7), and it cannot resize the control it
+  surrounds. A render-diff test guards it, because a focus rule can be present and
+  still draw nothing — the first attempt ringed the primary button in the accent
+  colour that button is already filled with. DEC-251.
+- **Theme Editor swatches and reset buttons announce themselves.** The colour
+  swatches carry no text and the per-token reset buttons say only "↺", so assistive
+  technology read out an anonymous button once per token, dozens of times down the
+  page. A tooltip is not an accessible name — Qt does not expose it as one, and a
+  keyboard-only screen-reader user never triggers it. Both now set one explicitly.
+  DEC-251.
+
 ## [2.40.0] — 2026-08-08
 
 **The application remembers how you left it, and stops quietly losing track of your

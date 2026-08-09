@@ -170,6 +170,38 @@ contrast pair `check_contrast_warnings()` evaluates.** The thresholds:
 
 Important labels, controls, and meaningful chart elements must remain readable and distinguishable.
 
+### Keyboard focus and accessible names (DEC-251)
+**Every interactive control shows a visible focus indicator (WCAG 2.4.7).** This is not
+automatic: applying a stylesheet makes Qt drop its native focus rect, so a widget
+without an explicit `:focus` rule is invisible to a keyboard user. Two colours, split
+by role:
+
+- **Buttons** use a `text_primary` ring — deliberately not the accent, which is this
+  app's primary-action language (see DEC-238), and deliberately distinct from
+  `[variant="danger"]:hover`, which already swaps its border to `status_crit`. Focus
+  and hover must not look alike.
+- **Inputs** (`QLineEdit`, `QSpinBox`, `QComboBox`) use `input_border_focus`.
+- **Accent-filled buttons** (`[variant="primary"]`, `#PrimaryButton`) ring in
+  `primary_btn_text`, the token that contrasts against that fill by construction.
+
+Two constraints, both measured rather than assumed:
+
+- **The ring must not resize the control.** Where a border already exists, swap its
+  colour; where it does not (`border: none`), declare the border only in the `:focus`
+  state. Adding a transparent border to the *resting* rule instead grows the widget by
+  2 px in both axes.
+- **`QCheckBox` is styled only in `:focus`.** Any resting rule makes Qt replace the
+  native indicator with the stylesheet's own, repainting and shrinking it — the same
+  subcontrol trap as `QComboBox::drop-down`.
+
+**A tooltip is not an accessible name.** Qt does not expose it as one and a
+keyboard-only screen-reader user never triggers it, so any control whose visible label
+is empty or a bare glyph sets `setAccessibleName` explicitly.
+
+Both rules are enforced by rendering, not by grepping the stylesheet: a `:focus` rule
+can be present and still draw nothing (an accent ring on an accent fill). See
+`tests/test_theme_system.py::TestKeyboardFocusVisibility`.
+
 The Theme Editor's "Contrast Warnings" panel lists any pair that falls
 below its threshold. A theme that produces no warnings can be considered
 AA-compliant for the pairs the GUI cares about.
