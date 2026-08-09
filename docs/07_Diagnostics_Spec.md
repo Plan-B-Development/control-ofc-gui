@@ -77,32 +77,38 @@ no sensors are reported.) The `U unavailable` bucket counts daemon-reported
 `unavailable_sensors[]` entries (DEC-193) and is sourced from the status poll,
 not the sensor table re-render.
 
-**10-column table** (all visible by default; the last column hosts a per-row
-"Details" button widget). Row height is derived from a polished probe button
-at build time and re-derived on theme change, so the themed Details button is
-never vertically clipped at any font size (DEC-196):
+**8-column table**, on the **Overview** page since the tabbed Diagnostics page was
+retired (DEC-216). Row height is derived from a polished probe button at build
+time and re-derived on theme change, so no row is vertically clipped at any font
+size (DEC-196):
 
-1. **Label** — sensor label reported by the kernel driver. Prefixed with `⚠ `
+1. **#** — row number, so a user can refer to a row unambiguously in a support
+   thread without pasting the full sensor id.
+2. **Label** — sensor label reported by the kernel driver. Prefixed with `⚠ `
    for bogus-quirk sensors (e.g. ASUS NCT6776F CPUTIN) and `? ` for
    low-confidence classifications.
-2. **Sensor ID** — stable `hwmon:<chip>:<dev_id>:<label>` identifier. Users
+3. **Sensor ID** — stable `hwmon:<chip>:<dev_id>:<label>` identifier. Users
    need this to bind sensors to profile members.
-3. **Source class** — pretty-printed classification from the sensor knowledge
+4. **Source class** — pretty-printed classification from the sensor knowledge
    base (`CPU die`, `VRM`, `External probe`, `Board thermistor`, …). Unknown
    classes pass through verbatim for forward compatibility.
-4. **Source** — daemon source subsystem (`hwmon` / `amd_gpu`).
 5. **Chip** — kernel driver / chip name (`k10temp`, `nct6798`, …). Em-dash
    when missing.
 6. **Value (°C)** — current reading. When `crit_alarm` is asserted OR the
    live value has crossed the reported `crit_c`, the cell appends
    `⚠ ALARM` in `status_crit` colour.
-7. **Session min/max** — lowest and highest values observed since daemon
-   start (`21.0 - 78.5 °C`).
-8. **Age (ms)** — time since the daemon last polled this sensor.
-9. **Confidence** — classification confidence (`High` / `Medium-High` /
+7. **Age (ms)** — time since the daemon last polled this sensor.
+8. **Confidence** — classification confidence (`High` / `Medium-High` /
    `Medium` / `Low`).
-10. **Details** — per-row button opening the **Sensor Detail dialog**
-    (`Diagnostics_SensorDetail_Dialog`).
+
+**The Sensor Detail dialog opens from the row's context menu**, not from a
+per-row Details button — the button column went with the page rebuild. Right-click
+any row → "Open detail…".
+
+*This section previously described a 10-column table with **Source**, **Session
+min/max** and **Details** columns. Those belonged to the retired Diagnostics page;
+the claim outlived it by four releases (DEC-258). Session min/max and Source both
+remain in the detail dialog.*
 
 DEC-196 removed the former Kind, Driver type, Trend, and Freshness columns
 (and the per-row stale/invalid warn/crit paint that rode on Freshness). All

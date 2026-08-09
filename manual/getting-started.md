@@ -47,14 +47,40 @@ troubleshooting.
 
 Set it up once; both packages then upgrade with your normal `sudo pacman -Syu`.
 
+#### The easy way: the bootstrap script
+
+There is a signed script that does the whole setup for you. It trusts the signing
+key (checking the fingerprint first), adds the repository, installs both packages
+and enables the daemon. It is safe to re-run.
+
+Verify its signature before running it — that is the point of signing it, and the
+step is what stops a tampered script from being the thing that installs your
+system packages:
+
+```bash
+base=https://github.com/Plan-B-Development/pacman-repo/releases/download/repo
+curl -fsSLO "$base/bootstrap.sh"
+curl -fsSLO "$base/bootstrap.sh.sig"
+curl -fsSL https://raw.githubusercontent.com/Plan-B-Development/pacman-repo/main/keys/control-ofc.gpg | gpg --import
+gpg --verify bootstrap.sh.sig bootstrap.sh   # expect 4AAD6D2DE40D0D10773BF770BC27C5EB2831FCDA
+less bootstrap.sh                            # read it — you are about to run it as root
+bash ./bootstrap.sh
+```
+
+The install is a full `sudo pacman -Syu` and asks you to confirm the transaction
+once, so it may upgrade more than control-ofc. If you would rather see every step,
+use the manual path below — the script does exactly the same things.
+
+#### By hand
+
 ```bash
 # 1. trust the signing key
 curl -fsSL https://raw.githubusercontent.com/Plan-B-Development/pacman-repo/main/keys/control-ofc.gpg \
   | sudo pacman-key --add -
 sudo pacman-key --lsign-key 4AAD6D2DE40D0D10773BF770BC27C5EB2831FCDA
 
-# 2. add the repository
-sudo tee -a /etc/pacman.conf <<'EOF'
+# 2. add the repository — run once; `tee -a` would append a duplicate block
+grep -q '^\[control-ofc\]' /etc/pacman.conf || sudo tee -a /etc/pacman.conf <<'EOF'
 
 [control-ofc]
 SigLevel = Required

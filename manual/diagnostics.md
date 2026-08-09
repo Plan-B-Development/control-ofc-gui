@@ -35,7 +35,7 @@ The **Overview** page answers *"is the daemon healthy, what hardware was found, 
 
 ### Sensor Intelligence
 
-A 10-column diagnostic table of every temperature sensor reported by the daemon. A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · U unavailable · M hidden`.
+An 8-column diagnostic table of every temperature sensor reported by the daemon (`#`, Label, Sensor ID, Source class, Chip, Value, Age, Confidence — right-click a row for the full detail dialog). A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · U unavailable · M hidden`.
 
 | Column | Meaning |
 |--------|---------|

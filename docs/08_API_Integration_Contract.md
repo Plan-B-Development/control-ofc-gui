@@ -133,9 +133,22 @@ GUI treats every flag as false / old behaviour (AIP-180):
   a pre-2.0 daemon omits it (so the GUI defaults it to `false` and stays in the
   capability gate rather than leaving fans uncontrolled). Drives the startup
   control gate. `true` since **2.0.0**.
-- `min_supported_gui` (string) — coarse GUI-version floor for a legible
-  hard-fail; empty until the 2.0.0 cutover sets it (drives the GUI's startup
-  capability gate).
+- `min_supported_gui` (string) — the minimum **GUI** version this daemon supports.
+  Empty until the 2.0.0 cutover sets it.
+
+  Note the direction: this is a floor the *daemon* places on the *GUI*, the
+  opposite of the `autonomous_control` gate, which is about the daemon being too
+  old. It does **not** drive that gate — an earlier revision of this document said
+  it did, and the GUI's one consumer had the direction backwards too, rendering it
+  as "this GUI needs control-ofc-daemon ≥ X". Both read correctly only because the
+  two numbers happened to be `2.0.0` (DEC-257).
+
+  Since GUI **2.41.0** it is compared against the GUI's own version and drives a
+  persistent but **non-blocking** warning banner. Non-blocking by design: the
+  daemon is the sole PWM writer and is controlling fans correctly whatever the
+  GUI's age, so refusing to run would strand the user for no safety gain. An empty
+  value means the daemon declares no floor and is treated as satisfied — not as
+  version zero.
 
 ### Per-call timeouts (DEC-098 / DEC-099)
 

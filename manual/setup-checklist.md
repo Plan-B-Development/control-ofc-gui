@@ -30,8 +30,8 @@ curl -fsSL https://raw.githubusercontent.com/Plan-B-Development/pacman-repo/main
   | sudo pacman-key --add -
 sudo pacman-key --lsign-key 4AAD6D2DE40D0D10773BF770BC27C5EB2831FCDA
 
-# add the repository
-sudo tee -a /etc/pacman.conf <<'EOF'
+# add the repository — run once; `tee -a` would append a duplicate block
+grep -q '^\[control-ofc\]' /etc/pacman.conf || sudo tee -a /etc/pacman.conf <<'EOF'
 
 [control-ofc]
 SigLevel = Required
@@ -42,6 +42,10 @@ EOF
 sudo pacman -Syu control-ofc-gui
 sudo systemctl enable --now control-ofc-daemon
 ```
+
+A signed `bootstrap.sh` does all of the above in one step — download it, verify
+its signature against `4AAD6D2DE40D0D10773BF770BC27C5EB2831FCDA`, read it, run it.
+Full commands in [Getting Started](getting-started.md#the-easy-way-the-bootstrap-script).
 
 The one-off `pacman -U` alternative, the from-source path, and the note on the frozen AUR package are in [Getting Started](getting-started.md). The daemon's own prerequisites table lives in the [daemon README](https://github.com/Plan-B-Development/control-ofc-daemon#prerequisites).
 

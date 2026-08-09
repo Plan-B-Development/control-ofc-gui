@@ -29,7 +29,7 @@ Just curious, or have no hardware yet? Explore the whole app with **demo mode** 
 - **Multi-source fan control** — OpenFan Controller channels, motherboard hwmon headers (daemon-managed), and AMD discrete GPU fans (PMFW `fan_curve` / legacy `pwm1`), with a one-click **Dedicate GPU Fan** setup for true 0-RPM idle when the GPU is cool
 - **GPU monitoring** — AMD, Intel Arc, and NVIDIA discrete GPU temperatures and fan RPM (Intel Arc and NVIDIA fans are read-only — the GPU firmware owns them)
 - **Settings** — GUI preferences, daemon runtime config, full theme editor with contrast checking, import/export
-- **Overview · System State · Hardware · Logs** — connection health, subsystem status, 10-column sensor table, Test PWM Control / Test GPU Fan Control, Restore GPU Fan to Automatic, hardware rescan, hardware-readiness reporting, support bundle export
+- **Overview · System State · Hardware · Logs** — connection health, subsystem status, 8-column sensor table, Test PWM Control / Test GPU Fan Control, Restore GPU Fan to Automatic, hardware rescan, hardware-readiness reporting, support bundle export
 - **Fan Wizard** — guided fan identification and labelling
 - **Demo mode** — full UI without hardware (`--demo`)
 
