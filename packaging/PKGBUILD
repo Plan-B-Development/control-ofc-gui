@@ -94,6 +94,11 @@ package() {
 
     # License
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    # DEC-260: ship NOTICE.md beside LICENSE. It records the dependencies whose
+    # licences are not permissive and what obligations they carry — a document
+    # written for recipients, which until now never reached one: it existed only
+    # in the git tree, not in the installed package.
+    install -Dm644 NOTICE.md "$pkgdir/usr/share/licenses/$pkgname/NOTICE.md"
 
     # Bundled font licences — DM Sans + Space Grotesk ship inside the wheel;
     # OFL-1.1 §2 wants the licence carried alongside the fonts (DEC-208).

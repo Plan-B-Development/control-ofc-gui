@@ -8,10 +8,23 @@ rather than restating the whole dependency set.
 
 ## Runtime dependencies
 
-- **PySide6** — **LGPL-3.0** (also available under a commercial Qt license).
-  <https://doc.qt.io/qtforpython/licenses.html>
+- **PySide6** — **LGPL-3.0 OR GPL-2.0 OR GPL-3.0** (also available under a
+  commercial Qt license). <https://doc.qt.io/qtforpython/licenses.html>
 
-  LGPL-3.0 permits use by an application that does not derive from it, provided
+  The disjunction is not cosmetic. `PySide6` unconditionally requires
+  `PySide6_Addons`, which bundles bindings for **Qt Charts** and **Qt Data
+  Visualization** — and those two are **GPL-3.0-only**, with no LGPL option.
+  Arch's own `pyside6` package records the same mix.
+
+  It does not reach this application. Nothing under `src/` imports `QtCharts` or
+  `QtDataVisualization` (we use only `QtCore`, `QtGui`, `QtWidgets`), and on the
+  packaged Arch install the GPL engine libraries are not even present — they live
+  in the separate optional `qt6-charts` / `qt6-datavis3d` packages. So the
+  GPL-covered code is unreached and uninstalled, which is mere aggregation at
+  most, not a derivative work.
+
+  For the LGPL parts that this application *does* use: LGPL-3.0 permits use by an
+  application that does not derive from it, provided
   the user can replace the library. This project imports PySide6 dynamically at
   run time as a normal Python package and links nothing statically, so the
   replaceability condition is satisfied by the ordinary Python import mechanism:
