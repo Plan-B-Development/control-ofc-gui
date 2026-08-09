@@ -94,7 +94,7 @@ persisted change is not yet in effect (`restart_pending`). The GUI's
 | `profiles.search_dirs` | `POST /config/profile-search-dirs` | Additive; also re-applied on SIGHUP |
 | `startup.delay_secs` | `POST /config/startup-delay` | 0–30 |
 | `polling.poll_interval_ms` | `POST /config/poll-interval` | 250–2000 via the API (the admin file allows more; the API ceiling bounds thermal-safety reaction latency) |
-| `serial.port` | `POST /config/serial-port` | Must match the serial allowlist (`/dev/tty{S,USB,ACM,AMA}*`, `/dev/serial/*`), ≤256 chars; `null` = auto-detect. A port that fails to open falls back to auto-detection |
+| `serial.port` | `POST /config/serial-port` | Must match the serial allowlist (`/dev/tty{S,USB,ACM,AMA}*`, `/dev/serial/*`), ≤256 chars; `null` = auto-detect. A port that fails to open — or opens but does not answer the OpenFanController handshake — falls back to auto-detection (DEC-250), so a wrong-but-openable tty cannot be adopted as the fan controller |
 | `serial.timeout_ms` | `POST /config/serial-timeout` | 50–1000 via the API (bounds emergency write latency) |
 | `detection.allow_port_probe` | `POST /config/allow-port-probe` | **Also needs the drop-in** |
 | `detection.enable_nvidia_telemetry` | `POST /config/nvidia-telemetry` | **Also needs the drop-in** |
