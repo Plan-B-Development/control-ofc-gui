@@ -69,7 +69,11 @@ class StatusFooter(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("StatusFooter_Root")
-        self.setFixedHeight(36)
+        # DEC-258: was setFixedHeight(36) against a 43px hint, so the footer's
+        # own chips were clipped vertically at the default font and worsened as
+        # the user scaled text up. A minimum keeps the strip compact without
+        # capping it below its content.
+        self.setMinimumHeight(36)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         layout = QHBoxLayout(self)

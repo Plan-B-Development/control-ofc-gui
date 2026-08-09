@@ -20,7 +20,10 @@ class AboutDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"About {APP_NAME}")
-        self.setFixedSize(480, 320)
+        # DEC-258: was setFixedSize, which cannot hold its own content once the
+        # user raises the theme's base font (7-16pt is user-adjustable). A
+        # minimum keeps the dialog from collapsing while letting it grow.
+        self.setMinimumSize(480, 320)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)

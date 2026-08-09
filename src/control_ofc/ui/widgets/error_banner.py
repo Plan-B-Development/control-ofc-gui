@@ -30,7 +30,11 @@ class ErrorBanner(QWidget):
 
         self._dismiss_btn = QPushButton("Dismiss")
         self._dismiss_btn.setObjectName("ErrorBanner_Btn_dismiss")
-        self._dismiss_btn.setFixedWidth(80)
+        # DEC-258: was setFixedWidth(80) while the button's own hint is 110 at
+        # the shipped default font — the label was cut off before anyone changed
+        # a setting. A minimum keeps the button from collapsing in a cramped
+        # banner without capping it below its own text.
+        self._dismiss_btn.setMinimumWidth(80)
         self._dismiss_btn.clicked.connect(self.hide_banner)
         layout.addWidget(self._dismiss_btn)
 

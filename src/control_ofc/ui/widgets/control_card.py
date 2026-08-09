@@ -28,6 +28,7 @@ from control_ofc.services.profile_service import (
     infer_control_role,
     infer_member_role,
 )
+from control_ofc.ui.components.labels import ElidedLabel
 from control_ofc.ui.qt_util import repolish, set_chip_class
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE
@@ -140,10 +141,16 @@ class ControlCard(ResizableGridCard):
         curve_row.setSpacing(4)
         curve_name = self._curve_name(curves, control.curve_id)
         mode_text = "Manual" if control.mode == ControlMode.MANUAL else curve_name
-        self._curve_label = QLabel(f"Curve: {mode_text}")
-        # DEC-231: the curve name is profile-authored (untrusted) — PlainText so
-        # stray markup is never reinterpreted as rich text.
-        self._curve_label.setTextFormat(Qt.TextFormat.PlainText)
+        # DEC-258: an ElidedLabel, not a QLabel. The curve name is
+        # profile-authored and arbitrary-length, so this row's width demand is
+        # unbounded — it alone wanted 286px of a 304px content area at 16pt, and
+        # a longer name clips at ANY font size or card tier. Widening the card
+        # (see `card_metrics._WIDTH_PER_PT`) fixes the typical case; only elision
+        # bounds the worst one.
+        #
+        # DEC-231 still holds: ElidedLabel renders plain text unconditionally, so
+        # stray markup in a profile-authored name cannot become formatting.
+        self._curve_label = ElidedLabel(f"Curve: {mode_text}")
         self._curve_label.setProperty("class", "CardMeta")
         self._curve_label.setStyleSheet("background: transparent;")
         self._curve_label.setObjectName(f"ControlCard_Label_curve_{control.id}")

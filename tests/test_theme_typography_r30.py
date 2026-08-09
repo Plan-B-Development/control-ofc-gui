@@ -7,6 +7,9 @@ save/load roundtrip for typography fields.
 
 from __future__ import annotations
 
+import pytest
+from PySide6.QtWidgets import QWidget
+
 from control_ofc.ui.theme import (
     ThemeTokens,
     build_stylesheet,
@@ -119,3 +122,140 @@ class TestThemeSaveLoadRoundtrip:
         assert loaded.font_family == "DM Sans"
         assert loaded.font_family_heading == "Space Grotesk"
         assert loaded.base_font_size_pt == 10
+
+
+@pytest.fixture()
+def restore_app_theme(qtbot):
+    """Save/restore everything ``apply_theme`` mutates (mirrors the fixture in
+    test_theme_system.py — these tests scale the base font, which is global)."""
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QApplication
+
+    from control_ofc.ui import theme as theme_mod
+
+    app = QApplication.instance()
+    saved = (QPalette(app.palette()), app.styleSheet(), app.font(), theme_mod._active_theme)
+    try:
+        yield app
+    finally:
+        app.setPalette(saved[0])
+        app.setStyleSheet(saved[1])
+        app.setFont(saved[2])
+        theme_mod._active_theme = saved[3]
+
+
+class TestNoWidgetIsCappedBelowItsOwnContent:
+    """DEC-258: a fixed size must never be smaller than what the widget needs.
+
+    The Controls card's "Manual" button clipping (docs/14 §16) was one instance
+    of a class: a hardcoded pixel size chosen at one font size, against content
+    that grows with the theme's user-adjustable 7-16pt base. Point-fixing each
+    site leaves the next one to be found by a user, so this sweeps the offenders
+    as a group and at the extremes where they actually break.
+    """
+
+    @staticmethod
+    def _apply(pt: int):
+        from control_ofc.ui.theme import apply_theme, default_dark_theme
+
+        tokens = default_dark_theme()
+        tokens.base_font_size_pt = pt
+        apply_theme(tokens)
+        return tokens
+
+    def test_the_control_card_details_row_fits_the_default_tier(self, qtbot, restore_app_theme):
+        """The measured regression: the details block clipped from 11pt in the
+        default tier (79px deficit at 15pt) because `_WIDTH_PER_PT` was 11 where
+        the content needs ~23."""
+        from control_ofc.services.profile_service import (
+            ControlMember,
+            ControlMode,
+            CurveConfig,
+            CurveType,
+            LogicalControl,
+        )
+        from control_ofc.ui.widgets.card_metrics import CARD_SIZE_COMFORTABLE, card_dimensions
+        from control_ofc.ui.widgets.control_card import ControlCard
+
+        clipped = []
+        for pt in range(7, 17):
+            self._apply(pt)
+            curves = [CurveConfig(id="c1", name="Aggressive Ramp", type=CurveType.GRAPH)]
+            control = LogicalControl(
+                id="ctl",
+                name="Radiator Loop",
+                mode=ControlMode.CURVE,
+                curve_id="c1",
+                manual_output_pct=50.0,
+                members=[
+                    ControlMember(
+                        source="hwmon",
+                        member_id="hwmon:it8696:0:pwm1:CPU_FAN",
+                        member_label="CPU_FAN",
+                    )
+                ],
+            )
+            card = ControlCard(control, curves, card_size=CARD_SIZE_COMFORTABLE)
+            qtbot.addWidget(card)
+            width, _height = card_dimensions(pt, CARD_SIZE_COMFORTABLE)
+            card.setFixedWidth(width)
+            card.show()
+            details = card.findChild(QWidget, "ControlCard_Details_ctl")
+            need = details.sizeHint().width()
+            have = width - 42  # measured card padding
+            if need > have:
+                clipped.append(f"{pt}pt: needs {need}, has {have}")
+            card.hide()
+
+        assert not clipped, (
+            "the default card tier must hold its own details row at every theme "
+            f"font size: {clipped}"
+        )
+
+    def test_no_fixed_size_caps_a_widget_below_its_hint(self, qtbot, restore_app_theme):
+        """The sites that hardcoded a pixel size against growing content."""
+        from control_ofc.ui.about_dialog import AboutDialog
+        from control_ofc.ui.components.footer import StatusFooter
+        from control_ofc.ui.widgets.error_banner import ErrorBanner
+
+        offenders = []
+        for pt in (7, 10, 16):
+            self._apply(pt)
+            for name, widget in (
+                ("ErrorBanner", ErrorBanner()),
+                ("StatusFooter", StatusFooter()),
+                ("AboutDialog", AboutDialog()),
+            ):
+                qtbot.addWidget(widget)
+                hint = widget.sizeHint()
+                maxi = widget.maximumSize()
+                if maxi.width() < hint.width() or maxi.height() < hint.height():
+                    offenders.append(
+                        f"{name}@{pt}pt capped at {maxi.width()}x{maxi.height()} "
+                        f"below its hint {hint.width()}x{hint.height()}"
+                    )
+        assert not offenders, offenders
+
+    def test_theme_editor_reset_glyphs_scale_with_the_font(self, qtbot, restore_app_theme):
+        """~50 of these down the page; they were a hard 24x24 and clipped at the
+        shipped default, not only at large sizes."""
+        from PySide6.QtWidgets import QPushButton
+
+        from control_ofc.ui.widgets.theme_editor import ThemeEditorWidget
+
+        sizes = {}
+        for pt in (7, 16):
+            self._apply(pt)
+            editor = ThemeEditorWidget()
+            qtbot.addWidget(editor)
+            resets = [b for b in editor.findChildren(QPushButton) if b.text() == "↺"]
+            assert resets, "expected the per-token reset buttons"
+            too_small = [b for b in resets if b.width() < b.fontMetrics().height()]
+            assert not too_small, (
+                f"{len(too_small)} reset glyphs are narrower than their own text at {pt}pt"
+            )
+            sizes[pt] = resets[0].width()
+
+        assert sizes[16] > sizes[7], (
+            "the glyph button must grow with the theme font, not stay pinned at 24px"
+        )

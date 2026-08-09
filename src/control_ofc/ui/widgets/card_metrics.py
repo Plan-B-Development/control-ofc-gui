@@ -38,11 +38,25 @@ _TIER_SCALE: dict[str, float] = {
 # ~55px of surplus that the layouts spread between text rows, reading as
 # bloated line spacing.
 _REF_PT = 10
-_BASE_WIDTH = 280
+_BASE_WIDTH = 299
 _BASE_HEIGHT = 132
-# Per-point growth so cards track the theme's text size across the 7-16 range
-# (measured content growth is ~9-10px/pt; 192 ≥ the 187px content at 16pt).
-_WIDTH_PER_PT = 11
+# Per-point growth so cards track the theme's text size across the 7-16 range.
+#
+# DEC-258: was 11, which was measurably too small — the ControlCard's details
+# block clipped from 11pt in the default tier and from 9pt in compact, worsening
+# to a 79px deficit at 15pt. Re-derived by rendering the card at every size and
+# measuring the block's own hint: it needs ~23px/pt (161px at 7pt rising to 372px
+# at 15-16pt, plus 42px of card padding), so the reference 280px at 10pt is
+# right in isolation, but a steeper slope shrinks the small end too — 7pt began
+# eliding where it had not before — so the base is re-anchored to 299 as well.
+# 299/23 dominates the measured requirement at every size in the default tier
+# (need = hint + 42px padding: 203px at 7pt, 279 at 10, 414 at 15-16).
+#
+# A constant alone cannot close this class, which is why the curve label now
+# elides: curve names are profile-authored and arbitrary-length, so no width is
+# ever sufficient for the widest possible content. This makes the *typical* card
+# fit; elision makes the worst case survivable.
+_WIDTH_PER_PT = 23
 _HEIGHT_PER_PT = 10
 
 # Font range mirrors theme.ThemeTokens.base_font_size_pt (7-16).

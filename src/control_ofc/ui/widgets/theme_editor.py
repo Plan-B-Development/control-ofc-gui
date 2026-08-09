@@ -394,7 +394,11 @@ class ThemeEditorWidget(QWidget):
         # token — a screen-reader user would hear the same meaningless glyph
         # dozens of times down the page (DEC-251).
         reset.setAccessibleName(f"Reset {token_name} to default")
-        reset.setFixedSize(24, 24)
+        # DEC-258: was a hard 24x24 at every theme font size, so the glyph
+        # clipped at the SHIPPED DEFAULT and worse as text scaled — once per
+        # token, roughly fifty times down the page. Sized from the font instead.
+        _size = max(24, round(self.fontMetrics().height() * 1.6))
+        reset.setFixedSize(_size, _size)
         reset.clicked.connect(lambda _checked, tn=token_name: self._reset_token(tn))
         grid.addWidget(reset, row_idx, 3)
 
