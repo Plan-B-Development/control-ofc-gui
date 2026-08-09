@@ -116,10 +116,25 @@ _CONFIDENCE_STATE: dict[str, str] = {
     "medium": "neutral",
     "low": "warn",
 }
+# Daemon `overall_status` → pill state.
+#
+# The daemon emits exactly three values, from `HealthStatus::Display`:
+# "ok" | "warn" | "crit". "crit" was missing here, so a critical daemon fell
+# through `.get(..., "neutral")` and painted a **grey** pill — visually calmer
+# than "warn", which *was* mapped. A severity inversion, and it silently
+# nullified DEC-249's whole point: a stalled engine escalates overall_status to
+# "crit" precisely so it is impossible to miss.
+#
+# The other keys are legacy/defensive spellings this GUI has carried for
+# daemons that never emitted them; harmless, kept so an older or third-party
+# daemon still colours sensibly. The three the daemon actually sends are pinned
+# by test_overview_view.
 _STATUS_STATE: dict[str, str] = {
     "ok": "ok",
-    "degraded": "warn",
     "warn": "warn",
+    "crit": "crit",
+    # Legacy / defensive spellings — not emitted by any current daemon.
+    "degraded": "warn",
     "warning": "warn",
     "error": "crit",
     "critical": "crit",

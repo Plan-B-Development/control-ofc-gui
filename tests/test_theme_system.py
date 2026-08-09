@@ -1166,28 +1166,121 @@ class TestKeyboardFocusVisibility:
             f"cannot see where they are (WCAG 2.4.7): {invisible}"
         )
 
-    def test_focus_ring_does_not_resize_the_control(self, restore_app_theme):
-        """The ring must not reflow the page.
+    def test_no_focusable_widget_is_left_without_an_indicator(self, restore_app_theme):
+        """Sweep, rather than a hand-written list.
 
-        Primary and #PrimaryButton carry `border: none`, so the ring is declared
-        only in the focused state. Giving them a transparent border in the
-        *resting* rule instead — the obvious-looking alternative — grows the
-        button by 2px in both axes, which was measured before choosing this
-        shape."""
+        The first version of this guard enumerated nine widgets it already knew
+        about, so it could not fail for a widget nobody added to the dict — and
+        six focusable classes shipped invisible behind a green suite, including
+        the sidebar navigation. This walks the widget types the app actually
+        instantiates and checks every one that can take keyboard focus.
+        """
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import (
+            QCheckBox,
+            QPlainTextEdit,
+            QPushButton,
+            QRadioButton,
+            QSlider,
+        )
+
+        from control_ofc.ui.components.toggle_switch import ToggleSwitch
+        from control_ofc.ui.theme import apply_theme, default_dark_theme
+        from control_ofc.ui.widgets.theme_editor import ColorSwatch
+
+        apply_theme(default_dark_theme())
+
+        def _btn(variant=None, object_name=None, css_class=None, host=None):
+            def make(parent):
+                if host:
+                    host(parent)
+                b = QPushButton("Sample", parent)
+                if variant:
+                    b.setProperty("variant", variant)
+                if object_name:
+                    b.setObjectName(object_name)
+                if css_class:
+                    b.setProperty("class", css_class)
+                return b
+
+            return make
+
+        def _sidebar(parent):
+            parent.setObjectName("Sidebar")
+
+        def _card(parent):
+            parent.setProperty("class", "Card")
+
+        subjects = {
+            "QPushButton": _btn(),
+            "QPushButton in .Card": _btn(host=_card),
+            "QPushButton in #Sidebar": _btn(host=_sidebar),
+            "[variant=primary]": _btn("primary"),
+            "[variant=secondary]": _btn("secondary"),
+            "[variant=ghost]": _btn("ghost"),
+            "[variant=danger]": _btn("danger"),
+            "#PrimaryButton": _btn(object_name="PrimaryButton"),
+            ".CollapsibleSectionHeader": _btn(css_class="CollapsibleSectionHeader"),
+            "QCheckBox": lambda p: QCheckBox("Sample", p),
+            "QRadioButton": lambda p: QRadioButton("Sample", p),
+            "ToggleSwitch": lambda p: ToggleSwitch(p),
+            "ColorSwatch": lambda p: ColorSwatch("accent_primary", "#1FB88A", p),
+            "QSlider": lambda p: QSlider(Qt.Orientation.Horizontal, p),
+            "QComboBox": self._combo,
+            "QLineEdit": self._line_edit,
+            "QPlainTextEdit": lambda p: QPlainTextEdit("sample", p),
+        }
+
+        invisible = []
+        for label, make in subjects.items():
+            unfocused, focused, _, _ = self._states(make)
+            if unfocused == focused:
+                invisible.append(label)
+
+        assert not invisible, (
+            "these render identically focused and unfocused, so a keyboard user "
+            f"cannot see where they are (WCAG 2.4.7): {invisible}"
+        )
+
+    def test_focus_ring_does_not_reflow_neighbouring_content(self, restore_app_theme):
+        """Measure laid-out geometry, not ``sizeHint()``.
+
+        The previous version of this test asserted ``sizeHint()`` was unchanged
+        between focus states — which is always true for a ``:focus``-only QSS
+        change, because Qt does not re-resolve the hint without an explicit
+        repolish. It passed with the border widened to 6px. Real layout geometry
+        is the property that actually matters, so measure that.
+        """
+        from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+
         from control_ofc.ui.theme import apply_theme, default_dark_theme
 
         apply_theme(default_dark_theme())
 
-        for label, make in {
-            "primary": self._button("primary"),
-            "#PrimaryButton": self._button(object_name="PrimaryButton"),
-            "secondary": self._button("secondary"),
-            "QCheckBox": self._checkbox,
-        }.items():
-            _, _, hint_unfocused, hint_focused = self._states(make)
-            assert hint_unfocused == hint_focused, (
-                f"{label} changes size when focused — the ring shifts layout"
-            )
+        host = QWidget()
+        layout = QVBoxLayout(host)
+        first = QPushButton("First", host)
+        first.setProperty("variant", "primary")
+        second = QPushButton("Second", host)
+        layout.addWidget(first)
+        layout.addWidget(second)
+        host.resize(240, 120)
+        host.show()
+        QApplication.processEvents()
+
+        second.setFocus()
+        QApplication.processEvents()
+        before = (first.geometry(), second.geometry())
+
+        first.setFocus()
+        QApplication.processEvents()
+        after = (first.geometry(), second.geometry())
+
+        host.hide()
+        assert before == after, (
+            "focusing a button moved it or its neighbour — the ring must not "
+            f"reflow the page: {before} -> {after}"
+        )
 
     def test_checkbox_is_styled_only_in_the_focused_state(self):
         """QCheckBox has no *resting* rule on purpose.

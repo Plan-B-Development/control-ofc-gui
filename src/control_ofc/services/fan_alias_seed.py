@@ -24,7 +24,9 @@ cleared on an older version is indistinguishable from one never set, so the seed
 does adopt the profile label for it — once.
 
 The seed deliberately does **not** write ``member_label``. That field feeds
-``infer_member_role`` (and its daemon mirror ``member_is_pump_or_cpu``), which
+``infer_member_role`` (and the daemon's ``member_is_pump_or_cpu``, which since
+DEC-252 is a *union* with the daemon's own discovered label rather than a pure
+mirror — it can add a floor this label omits, never remove one), which
 set the DEC-095/162 CPU/pump minimum-PWM floor — leaving it byte-identical keeps
 the safety path out of this migration entirely.
 """

@@ -360,9 +360,27 @@ tier. The control surfaces resolve through `AppState.member_display_name`
 (alias > cached `member_label` > fallback), and `member_label` itself is kept
 **hardware-truthful** rather than set to the user's alias, because both the GUI's
 `infer_member_role` and the daemon's `member_is_pump_or_cpu` match "cpu"/"pump"/"aio"
-against it to apply the DEC-095/162 30% CPU/pump floor. The daemon's classifier mirrors
-the GUI's rather than detecting pumps independently, so what the GUI writes there sets
-the floor on **both** sides.
+against it to apply the DEC-095/162 30% CPU/pump floor.
+
+**As of daemon 2.17.0 this is no longer a pure mirror (DEC-252).** The daemon's
+*eval-time* classifier is a **union**: the hard floor applies if the client's
+`member_label` says cpu/pump/aio **or** the label the daemon itself discovered does —
+the latter travelling in the member's own stable id (`hwmon:{chip}:{device}:pwmN:{label}`).
+Union only: the daemon can add a floor, never remove one the profile asked for. So a
+header the user renamed away from `PUMP` keeps its 30% floor at runtime even though the
+GUI stamped 20%.
+
+Two consequences a client must know:
+- `validate()`'s `FLOOR_TOO_LOW` / `PUMP_STOP_FORBIDDEN` **rejections deliberately still
+  use the narrow, author-declared classifier**, so a daemon upgraded ahead of its GUI
+  cannot start refusing profiles the GUI still bakes.
+- The GUI may therefore *display* a lower `minimum_pct` than the daemon *enforces*. That
+  is fail-safe but not truthful; adopting the same union GUI-side is tracked work.
+
+The limit is worth stating: where a chip publishes no label file the daemon synthesises
+`pwmN`, and it reads no `/etc/sensors.d`, so on such a board the author's label is still
+the only signal. This is a backstop, not an independent pump detector — `member_label`
+remains a safety input.
 
 Fan `source` is `"openfan"`, `"hwmon"`, `"amd_gpu"`, `"intel_gpu"`, or `"nvidia_gpu"`. GPU fan IDs embed the PCI BDF: `amd_gpu:{bdf}`, `intel_gpu:{bdf}`, and `nvidia_gpu:{bdf}`. OpenFan fan IDs are `openfan:ch{NN}`, where `NN` is the **zero-padded** channel index (hardware-fixed range 0–9, `NUM_CHANNELS = 10`). The GUI parses that index for tier 3 above, so the padding and decimal form are part of the contract; a non-decimal suffix falls through to the raw id rather than being guessed at. Intel (DEC-121) and NVIDIA (DEC-204) GPU fans are **read-only** — `rpm` is reported when available (and NVIDIA additionally reports a measured `duty_pct`), but `last_commanded_pwm` is always absent; the GUI must never issue a write to an `intel_gpu:`/`nvidia_gpu:` target.
 

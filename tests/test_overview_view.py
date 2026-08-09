@@ -205,27 +205,35 @@ def test_build_daemon_health():
 
 
 def test_build_daemon_health_severity_arms():
-    # B5: _STATUS_STATE maps daemon overall_status → chip state. The existing
-    # test only exercises the "ok" arm; pin the non-ok arms so a crit↔warn swap
-    # in the map cannot slip through.
+    """Pin the three strings the daemon ACTUALLY emits.
+
+    This test previously exercised only "error"/"critical"/"degraded" — none of
+    which any daemon sends. `HealthStatus::Display` emits exactly
+    "ok" | "warn" | "crit", and "crit" was absent from `_STATUS_STATE`, so a
+    critical daemon painted a neutral grey pill while this test reported the map
+    as covered. Invented inputs are worse than no test: they buy confidence in
+    the one case that was broken.
+    """
+    for wire, expected in (("ok", "ok"), ("warn", "warn"), ("crit", "crit")):
+        vm = ov.build_daemon_health_vm(None, DaemonStatus(overall_status=wire, uptime_seconds=0))
+        assert vm.status_state == expected, f"daemon '{wire}' must map to {expected}"
+
+    # Unknown values must degrade to neutral rather than raise.
     assert (
         ov.build_daemon_health_vm(
-            None, DaemonStatus(overall_status="error", uptime_seconds=0)
+            None, DaemonStatus(overall_status="wat", uptime_seconds=0)
         ).status_state
-        == "crit"
+        == "neutral"
     )
-    assert (
-        ov.build_daemon_health_vm(
-            None, DaemonStatus(overall_status="critical", uptime_seconds=0)
-        ).status_state
-        == "crit"
-    )
-    assert (
-        ov.build_daemon_health_vm(
-            None, DaemonStatus(overall_status="degraded", uptime_seconds=0)
-        ).status_state
-        == "warn"
-    )
+
+    # Legacy spellings kept for older/third-party daemons.
+    for wire, expected in (("error", "crit"), ("critical", "crit"), ("degraded", "warn")):
+        assert (
+            ov.build_daemon_health_vm(
+                None, DaemonStatus(overall_status=wire, uptime_seconds=0)
+            ).status_state
+            == expected
+        )
 
 
 def test_build_device_discovery_hwmon_all_readonly_warn():

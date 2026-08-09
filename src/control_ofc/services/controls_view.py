@@ -145,9 +145,11 @@ def role_preserving_label(display_name: str, fallback_label: str, source: str) -
 
     ``member_label`` is not only a name: both ``infer_member_role`` and the
     daemon's ``member_is_pump_or_cpu`` match "cpu"/"pump"/"aio" against it to
-    apply the DEC-095/162 30% CPU/pump floor, and the daemon's classifier mirrors
-    the GUI's rather than detecting pumps independently — so whatever is written
-    here sets the floor on *both* sides.
+    apply the DEC-095/162 30% CPU/pump floor. Since DEC-252 the daemon's
+    eval-time classifier is a *union* of this label and the one it discovered
+    itself (carried in the member id), so it can add a floor this label omits —
+    but never remove one. Keeping this hardware-truthful is still what makes the
+    two agree, and what `validate()`'s rejection still keys on.
 
     Neither candidate is reliably the safer one, so the rule is simply **never
     lower the inferred role**:

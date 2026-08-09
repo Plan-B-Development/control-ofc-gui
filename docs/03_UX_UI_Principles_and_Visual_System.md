@@ -192,7 +192,15 @@ Two constraints, both measured rather than assumed:
   2 px in both axes.
 - **`QCheckBox` is styled only in `:focus`.** Any resting rule makes Qt replace the
   native indicator with the stylesheet's own, repainting and shrinking it — the same
-  subcontrol trap as `QComboBox::drop-down`.
+  subcontrol trap as `QComboBox::drop-down`. The resting appearance is untouched; the
+  focused one shifts its content right by the border width (~2 px), which is a repaint,
+  not a reflow — neighbouring widgets do not move.
+- **For a subcontrol, the pseudo-state goes last.** `QSlider::handle:horizontal:focus`
+  renders; `QSlider:focus::handle:horizontal` is silently inert.
+- **Some widgets cannot be reached by QSS at all.** A widget with its own
+  `setStyleSheet` outranks the application stylesheet by *origin*, not specificity
+  (`ColorSwatch`), and an owner-drawn `paintEvent` never consults the style at all
+  (`ToggleSwitch`). Both need their focus ring written where they are drawn.
 
 **A tooltip is not an accessible name.** Qt does not expose it as one and a
 keyboard-only screen-reader user never triggers it, so any control whose visible label

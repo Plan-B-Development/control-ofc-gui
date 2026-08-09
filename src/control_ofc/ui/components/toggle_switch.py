@@ -32,6 +32,19 @@ class ToggleSwitch(QCheckBox):
         # itself carries no text — the whole 36x20 area is the hit target.
         self.setText("")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # DEC-255: with no text, assistive tech announces an anonymous checkbox —
+        # once per boolean on the Settings page. Callers that have a row label
+        # should pass it via `set_accessible_label`; this is the fallback so the
+        # control is never completely nameless.
+        self.setAccessibleName("Toggle")
+
+    def set_accessible_label(self, label: str) -> None:
+        """Name this switch for assistive tech using its visible row label.
+
+        The switch itself carries no text (the row's label/sublabel are separate
+        QLabels), so without this it announces as an unnamed checkbox.
+        """
+        self.setAccessibleName(label)
 
     def sizeHint(self) -> QSize:
         return QSize(_TRACK_W, _TRACK_H)
@@ -72,4 +85,13 @@ class ToggleSwitch(QCheckBox):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(knob)
         painter.drawEllipse(knob_x, _MARGIN, _KNOB_D, _KNOB_D)
+        # Keyboard focus (DEC-255). This widget owner-draws entirely and never
+        # consults the style, so no QSS `:focus` rule can reach it — yet it is
+        # StrongFocus and backs every boolean on the Settings page, so tabbing
+        # through them moved an invisible cursor. Drawn just outside the track
+        # rather than inset, so it cannot be mistaken for the "on" border.
+        if self.hasFocus():
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QColor(theme.text_primary))
+            painter.drawRoundedRect(0, 0, _TRACK_W - 1, _TRACK_H - 1, radius, radius)
         painter.end()

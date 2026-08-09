@@ -156,10 +156,18 @@ class ColorSwatch(QPushButton):
     def _update_style(self) -> None:
         # Swatch outline follows the active theme's border token rather than a
         # hardcoded grey, so it stays legible in every theme.
+        # DEC-255: a widget's OWN stylesheet outranks the application stylesheet
+        # by origin, not specificity — so `QPushButton:focus` from the theme can
+        # never reach this swatch, and it was the one control invisible to a
+        # keyboard user among ~40 identical siblings. The focus ring has to live
+        # in the same string. (The dialog-level note below is the same rule seen
+        # from the other side.)
+        t = active_theme()
         self.setStyleSheet(
-            f"background-color: {self._color}; "
-            f"border: 1px solid {active_theme().border_default}; border-radius: 3px; "
-            f"min-width: 30px; max-width: 30px;"
+            f"ColorSwatch {{ background-color: {self._color}; "
+            f"border: 1px solid {t.border_default}; border-radius: 3px; "
+            f"min-width: 30px; max-width: 30px; }}"
+            f"ColorSwatch:focus {{ border: 2px solid {t.text_primary}; }}"
         )
 
     def _pick_color(self) -> None:

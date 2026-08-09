@@ -3,6 +3,24 @@
 ## [Unreleased]
 
 ### Fixed
+- **A critical daemon no longer paints a calm grey badge.** `overall_status: "crit"`
+  was missing from the Overview's status map, so it fell through to "neutral" —
+  *less* alarming than "warn", which was mapped. The map instead carried four
+  spellings no daemon emits, and the test that claimed to cover it asserted those
+  invented strings, so the one broken case was the one nobody checked. This also
+  silently nullified the daemon's new engine-liveness escalation, whose entire
+  purpose is to be impossible to miss.
+- **Six more controls show keyboard focus.** The previous release fixed the
+  button and input family and claimed to cover everything; a sweep found the
+  sidebar navigation — the app's primary keyboard path — plus the manual-override
+  slider, every Settings toggle, the Theme Editor's colour swatches, the
+  collapsible section headers, radio buttons, the log panes and the tab bar all
+  still invisible. Three separate Qt mechanisms were behind it: `border-color`
+  cannot revive a border another rule set to `none` (even from *lower*
+  specificity), a widget's own stylesheet outranks the application's by origin,
+  and an owner-drawn `paintEvent` never consults the stylesheet at all. The guard
+  is now a sweep rather than a hand-written list, so the next widget cannot ship
+  unguarded. DEC-255.
 - **You can see where the keyboard is again.** Applying a stylesheet makes Qt drop
   its native focus rect, and only ghost buttons and text inputs had a replacement —
   so tabbing through the app moved an invisible cursor. Measured rather than

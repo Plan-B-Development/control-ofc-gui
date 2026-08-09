@@ -782,6 +782,16 @@ def build_stylesheet(t: ThemeTokens) -> str:
         font-weight: 500;
     }}
 
+    /* DEC-255: `#Sidebar QPushButton` above declares `border: none` at
+       specificity 257, which beats the generic `QPushButton:focus` (17) — so the
+       app's PRIMARY KEYBOARD PATH had no focus indicator at all. The `border`
+       shorthand, not `border-color`: colour alone cannot revive a border whose
+       style is `none` and width `0`. The 10px/16px padding absorbs the 1px, so
+       nothing reflows. */
+    #Sidebar QPushButton:focus {{
+        border: 1px solid {t.text_primary};
+    }}
+
     #Sidebar QPushButton:hover {{
         background-color: {t.nav_item_hover};
         color: {t.text_primary};
@@ -906,6 +916,14 @@ def build_stylesheet(t: ThemeTokens) -> str:
         font-size: {fs["body"]}pt;
         font-weight: 600;
         text-align: left;
+    }}
+
+    /* DEC-255: same trap as the sidebar, and a sharper illustration of it —
+       `.CollapsibleSectionHeader` is specificity 16, *lower* than
+       `QPushButton:focus` at 17, and still wins because `border-color` cannot
+       restore a border that another rule set to `none`. Shorthand required. */
+    .CollapsibleSectionHeader:focus {{
+        border: 1px solid {t.text_primary};
     }}
 
     .CollapsibleSectionHeader:hover {{
@@ -1064,6 +1082,18 @@ def build_stylesheet(t: ThemeTokens) -> str:
         border-radius: 8px;
     }}
 
+    /* DEC-255: the manual-override slider and the fan-role dialog's slider are
+       driven with arrow keys, so a keyboard user needs to see which one has
+       focus. The handle already carries a background and a radius, so a border
+       lands inside it without moving the groove.
+
+       Selector order matters and is easy to get backwards: the pseudo-state goes
+       AFTER the subcontrol. `QSlider::handle:horizontal:focus` renders;
+       `QSlider:focus::handle:horizontal` is silently inert — measured both. */
+    QSlider::handle:horizontal:focus {{
+        border: 2px solid {t.text_primary};
+    }}
+
     /* Splitters — one shared resize handle on every page (DEC-234). A quiet
        hairline at rest (the same divider language as .CardDivider / gridlines),
        brightening to the brand accent on hover so the drag affordance is
@@ -1097,13 +1127,20 @@ def build_stylesheet(t: ThemeTokens) -> str:
         border-color: {t.input_border_focus};
     }}
 
+    /* DEC-255: the Logs snapshot panes are keyboard-scrollable tab stops, so
+       seeing focus is functional rather than decorative. The resting rule above
+       declares a real border, so a colour swap suffices and cannot reflow. */
+    QPlainTextEdit:focus {{
+        border-color: {t.input_border_focus};
+    }}
+
     /* QCheckBox deliberately has no *resting* rule (DEC-251). Styling the widget
        at rest makes Qt swap its native indicator for the stylesheet's own, which
        measurably repaints the resting box and shrinks it — the same subcontrol
        trap documented for `QComboBox::drop-down`. Declaring the ring only in the
        focused state leaves the indicator native and costs no layout. Styling
        `::indicator:focus` instead was measured too: it resizes the indicator. */
-    QCheckBox:focus {{
+    QCheckBox:focus, QRadioButton:focus {{
         border: 1px solid {t.text_primary};
         border-radius: 3px;
     }}
@@ -1131,6 +1168,13 @@ def build_stylesheet(t: ThemeTokens) -> str:
         color: {t.text_secondary};
         padding: 8px 16px;
         border-bottom: 2px solid transparent;
+    }}
+
+    /* DEC-255: arrow keys move selection and the selected tab is already
+       accented, so focus and selection usually coincide — but tabbing INTO the
+       bar from elsewhere was silent. */
+    QTabBar::tab:focus {{
+        border: 1px solid {t.text_primary};
     }}
 
     QTabBar::tab:selected {{
