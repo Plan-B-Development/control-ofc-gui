@@ -70,8 +70,23 @@ class _PollWorker(QObject):
         # call is still made for safety, but it's almost always a no-op
         # on the daemon side and shouldn't clutter the journal).
         self._announced_dirs: set[str] = set()
+        # DEC-256: shutdown latch. `shutdown()` closed the client, but the 1 Hz
+        # timer→poll() connection is QUEUED, so an invocation already sitting in
+        # the worker thread's event queue still ran afterwards — and
+        # `_ensure_client()` cheerfully rebuilt the very client shutdown had just
+        # closed, opening a fresh socket and blocking on it. That kept the thread
+        # busy past `wait(2000)` and forced `QThread::terminate()`, which is how
+        # you orphan a half-written request. The latch makes post-shutdown work a
+        # no-op instead. Single-threaded worker, so a plain bool needs no lock —
+        # same reasoning as `_in_flight` above.
+        self._shutting_down = False
 
     def _ensure_client(self) -> DaemonClient:
+        # DEC-256: never resurrect the client after shutdown. This is the half
+        # that made the latch necessary — closing the client is not enough when
+        # the next queued call simply builds another one.
+        if self._shutting_down:
+            raise RuntimeError("poll worker is shutting down")
         if self._client is None:
             self._client = DaemonClient(socket_path=self._socket_path)
         return self._client
@@ -85,7 +100,7 @@ class _PollWorker(QObject):
         The flag is set here and cleared in ``finally`` so a raising cycle can
         never wedge polling off permanently.
         """
-        if self._in_flight:
+        if self._shutting_down or self._in_flight:
             return
         self._in_flight = True
         try:
@@ -258,6 +273,9 @@ class _PollWorker(QObject):
             self._client = None
 
     def shutdown(self) -> None:
+        # Latch first, then close: a queued poll that slips in between must find
+        # the latch already set, not an open client it can keep using.
+        self._shutting_down = True
         self._close_client()
 
 

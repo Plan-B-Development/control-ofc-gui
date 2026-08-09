@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Fixed
+- **Closing the app no longer risks killing a request mid-write.** Shutting down
+  closed the daemon client, but the 1 Hz poll connection is queued — an
+  invocation already sitting in the worker thread's event queue still ran
+  afterwards and simply rebuilt the client that had just been closed, opening a
+  fresh socket and blocking on it. That kept the thread busy past its 2-second
+  join and forced a hard thread terminate, which is how a half-written request
+  gets orphaned. The worker now latches on shutdown and refuses both the queued
+  work and the client rebuild. DEC-256.
 - **A critical daemon no longer paints a calm grey badge.** `overall_status: "crit"`
   was missing from the Overview's status map, so it fell through to "neutral" —
   *less* alarming than "warn", which was mapped. The map instead carried four

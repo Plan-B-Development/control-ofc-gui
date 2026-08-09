@@ -197,3 +197,67 @@ class TestFanAliasWhitespace:
         state.set_fan_alias("openfan:ch00", "Something")
         state.set_fan_alias("openfan:ch00", None)
         assert "openfan:ch00" not in state.fan_aliases
+
+
+class TestPollWorkerShutdownLatch:
+    """DEC-256: a worker must stop accepting work once shutdown is called.
+
+    ``shutdown()`` closed the client, but the 1 Hz timer→``poll()`` connection is
+    a QUEUED connection — an invocation already sitting in the worker thread's
+    event queue still ran afterwards, and ``_ensure_client()`` rebuilt the very
+    client that had just been closed, opening a fresh socket and blocking on it.
+    That kept the thread busy past ``wait(2000)`` and forced
+    ``QThread::terminate()``, orphaning a half-written request.
+    """
+
+    def test_queued_poll_after_shutdown_does_no_work(self, monkeypatch):
+        from control_ofc.services.polling import _PollWorker
+
+        worker = _PollWorker(socket_path="/tmp/nonexistent-shutdown.sock")
+
+        built = []
+        monkeypatch.setattr(
+            "control_ofc.services.polling.DaemonClient",
+            lambda **kw: built.append(kw) or object(),
+        )
+
+        worker.shutdown()
+        worker.poll()  # the queued invocation that used to slip through
+
+        assert not built, (
+            "a poll queued before shutdown must not open a new client afterwards — "
+            "this is what kept the thread busy until terminate()"
+        )
+
+    def test_the_client_is_never_resurrected_after_shutdown(self, monkeypatch):
+        """The half that made the latch necessary: closing is not enough if the
+        next call simply builds another one."""
+        import pytest
+
+        from control_ofc.services.polling import _PollWorker
+
+        worker = _PollWorker(socket_path="/tmp/nonexistent-shutdown.sock")
+        monkeypatch.setattr("control_ofc.services.polling.DaemonClient", lambda **kw: object())
+
+        # Before shutdown the client is built on demand, as normal.
+        assert worker._ensure_client() is not None
+
+        worker.shutdown()
+        with pytest.raises(RuntimeError):
+            worker._ensure_client()
+
+    def test_shutdown_latches_before_closing(self):
+        """Order matters: a poll slipping in between must find the latch set,
+        not an open client it can keep using."""
+        from control_ofc.services.polling import _PollWorker
+
+        worker = _PollWorker(socket_path="/tmp/nonexistent-shutdown.sock")
+        seen: list[bool] = []
+
+        def _record_close() -> None:
+            seen.append(worker._shutting_down)
+
+        worker._close_client = _record_close  # type: ignore[method-assign]
+        worker.shutdown()
+
+        assert seen == [True], "the latch must be set before the client is closed"
