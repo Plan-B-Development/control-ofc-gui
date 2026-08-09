@@ -2,7 +2,39 @@
 
 ## [Unreleased]
 
+### Added
+- **The daemon can now tell you your GUI is too old.** `min_supported_gui` has
+  been advertised in `/capabilities` since 2.0.0 and was never compared against
+  anything — and the one place it was read used it backwards, as a *daemon*
+  requirement rather than the floor the daemon places on the GUI. It read
+  correctly only because both numbers happened to be `2.0.0`. The comparison now
+  runs in the right direction and shows a persistent but **non-blocking** warning:
+  the daemon drives fans itself, so refusing to work would strand you in exchange
+  for nothing. DEC-257.
+
 ### Fixed
+- **Ctrl+C no longer throws away your layout.** Interrupting from a terminal quit
+  the event loop without ever delivering a close event, so every save that hangs
+  off it — window geometry, panel sizes, chart range, log filters — was skipped.
+  It now runs the same teardown as the close button. DEC-257.
+- **A window saved on a monitor you unplugged comes back where you can reach
+  it.** The saved geometry was sanity-bounded but never checked against the
+  *current* display layout, so it could be restored onto a screen that no longer
+  exists — recoverable only by editing the settings file. DEC-257.
+- **Thermal recovery no longer renders as "nothing happening".** The System State
+  page's thermal map carried three states the daemon has never sent and was
+  missing the two that mean it is actively forcing fans (`recovery`,
+  `no_sensor_fallback`); both fell through to a neutral grey pill. Three separate
+  maps key off this field, so all of them are now pinned against the wire
+  vocabulary rather than collapsed — a new one is a line away from the same
+  guarantee. DEC-257.
+- **The chart range you set just before closing is kept.** The write is debounced
+  by 400 ms and the timer was stopped rather than flushed at teardown, discarding
+  anything inside that window — the fifth instance of that pattern. DEC-257.
+- **A renamed pump header shows the floor the daemon actually enforces.** The
+  daemon raises the 30% hard floor when the label *it* discovered says cpu/pump
+  even if yours does not (daemon 2.17.0); the GUI still stamped and displayed
+  20%, which was fail-safe but untrue. DEC-257.
 - **Closing the app no longer risks killing a request mid-write.** Shutting down
   closed the daemon client, but the 1 Hz poll connection is queued — an
   invocation already sitting in the worker thread's event queue still ran

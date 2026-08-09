@@ -292,6 +292,27 @@ class ReadinessRollup:
         return self.critical + self.warning
 
 
+# Every value the daemon's `thermal_state` field can take (DEC-132/165), in
+# severity order. This is the WIRE vocabulary, so it belongs with the model
+# rather than with any one surface that renders it.
+#
+# DEC-257: three separate presentation maps key off this field
+# (`ui.status_banner.THERMAL_STATES`, `services.dashboard_view._THERMAL_REASONS`,
+# `services.system_state_view._THERMAL_STATE`) and one of them had silently
+# drifted — it carried three values the daemon never sends and was missing
+# `recovery` and `no_sensor_fallback`, so a live thermal recovery rendered as a
+# neutral grey pill. They cannot be collapsed into one map (they map to different
+# things, and one lives behind a Qt import while two are deliberately Qt-free),
+# so `test_thermal_state_maps_cover_the_wire_vocabulary` pins all of them against
+# this tuple instead. Any future map is one line away from the same guarantee.
+THERMAL_STATE_VALUES: tuple[str, ...] = (
+    "normal",
+    "recovery",
+    "emergency",
+    "no_sensor_fallback",
+)
+
+
 @dataclass
 class DaemonStatus:
     api_version: int = 1
@@ -299,8 +320,8 @@ class DaemonStatus:
     overall_status: str = "unknown"
     subsystems: list[SubsystemStatus] = field(default_factory=list)
     uptime_seconds: int | None = None
-    # Daemon thermal safety override state (DEC-132): "normal" | "recovery"
-    # | "emergency" | "no_sensor_fallback". While not "normal" the daemon is
+    # Daemon thermal safety override state (DEC-132) — one of
+    # `THERMAL_STATE_VALUES`. While not "normal" the daemon is
     # forcing OpenFan + writable-hwmon PWM to protect the hardware — the engine
     # is the sole writer since 2.0.0, so there is no GUI loop to stand down
     # (DEC-165). Defaults to "normal" for older daemons that don't send the field.

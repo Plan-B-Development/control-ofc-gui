@@ -289,8 +289,16 @@ def main() -> None:
     )
     window.show()
 
-    # Allow Ctrl+C to exit cleanly
-    signal.signal(signal.SIGINT, lambda *_: qt_app.quit())
+    # Allow Ctrl+C to exit cleanly.
+    #
+    # DEC-257: `close()`, not `quit()`. `qt_app.quit()` tears the event loop down
+    # without ever delivering a close event, so every closeEvent-driven save —
+    # window geometry, splitter sizes, chart range, log filters (DEC-245) — was
+    # silently skipped. Ctrl+C is a normal way to stop a desktop app from a
+    # terminal, and it should not be the one exit path that loses your layout.
+    # `close()` runs the same teardown the window-manager close button does; the
+    # app then quits because it is the last window (quitOnLastWindowClosed).
+    signal.signal(signal.SIGINT, lambda *_: window.close())
     _sigint_timer = QTimer()
     _sigint_timer.timeout.connect(lambda: None)
     _sigint_timer.start(200)

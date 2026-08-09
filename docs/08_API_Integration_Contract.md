@@ -580,9 +580,16 @@ as unavailable. The daemon never writes hardware to build this report.
 ### GET /inventory/readiness (DEC-200, daemon ≥ 2.6.0)
 
 A structured, read-only diagnose-and-guide list: the daemon's assessment of the
-CPU/hwmon/PWM inventory as actionable items, for the GUI's first-run guide and
-the **Hardware** page. Never mutates the system. 404-only gated. Full
-shape in `responses.rs::ReadinessResponse`.
+CPU/hwmon/PWM inventory as actionable items. Never mutates the system. 404-only
+gated. Full shape in `responses.rs::ReadinessResponse`.
+
+**Not consumed by this GUI (DEC-257).** DEC-207 merged readiness and Super-I/O
+into `GET /inventory/hardware-readiness`, which is what the Hardware page calls
+(`DaemonClient.hardware_readiness`); this endpoint has no client method. It is
+documented because the daemon still serves it — for other clients, and because
+the daemon refreshes its cached rollup on each GET of it — not because the GUI
+calls it. Earlier revisions of this document described it as GUI-consumed, which
+was true before the merge.
 
 - `api_version: int` — always `1`.
 - `overall: str` — the rollup severity (`ok | info | warning | critical`), equal
@@ -603,6 +610,11 @@ Forward-compatible: parse each item with a field filter (unknown daemon keys
 dropped) and default an absent `severity` to `info` (never falsely `ok`).
 
 ### GET /inventory/superio (DEC-202, daemon ≥ 2.7.0)
+
+**Not consumed by this GUI (DEC-257)** — same reason as `/inventory/readiness`
+above: DEC-207 folded this into `GET /inventory/hardware-readiness`. The GUI's
+only Super-I/O call is the opt-in `POST /inventory/superio/probe`. Documented for
+the daemon surface it still is.
 
 Passive Super-I/O chip detection. **Read-only** — the daemon composes signals it
 already has (DMI board table, bound hwmon chips, `/proc/modules`, `/dev/kmsg`,

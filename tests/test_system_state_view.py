@@ -407,3 +407,39 @@ def test_build_system_state_vm_critical_issue_count_state():
     # "warn" and "ok" arms, leaving the crit branch dead.
     vm = build_system_state_vm(_diag_with_revert("pwm1", 10))
     assert vm.issue_count_state == "crit"
+
+
+def test_thermal_state_maps_cover_the_wire_vocabulary():
+    """Every surface that renders `thermal_state` must handle every value.
+
+    DEC-257. Three maps key off this one field, in three modules, and one had
+    silently drifted: it carried three values the daemon never sends and was
+    missing `recovery` and `no_sensor_fallback` — the two that mean the daemon is
+    actively forcing fans. Both fell through to a neutral grey pill, so a live
+    thermal recovery rendered as "nothing happening".
+
+    They cannot be collapsed into a single map (they map to different things, and
+    one lives behind a Qt import while two are deliberately Qt-free), so this
+    pins all of them against the wire vocabulary instead. A new map is one line
+    away from the same guarantee.
+    """
+    from control_ofc.api.models import THERMAL_STATE_VALUES
+    from control_ofc.services.dashboard_view import _THERMAL_REASONS
+    from control_ofc.services.system_state_view import _THERMAL_STATE
+    from control_ofc.ui.status_banner import THERMAL_STATES
+
+    wire = set(THERMAL_STATE_VALUES)
+    for name, mapping in (
+        ("status_banner.THERMAL_STATES", THERMAL_STATES),
+        ("dashboard_view._THERMAL_REASONS", _THERMAL_REASONS),
+        ("system_state_view._THERMAL_STATE", _THERMAL_STATE),
+    ):
+        keys = set(mapping)
+        assert not wire - keys, (
+            f"{name} is missing daemon states {sorted(wire - keys)} — they will "
+            "render as an unstyled fallback while the daemon forces fans"
+        )
+        assert not keys - wire, (
+            f"{name} carries {sorted(keys - wire)}, which no daemon emits; "
+            "invented keys hide the fact that a real one is unhandled"
+        )

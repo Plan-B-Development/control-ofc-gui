@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Cross-stack member role-classification agreement vectors (DEC-162). The GUI's profile_service.infer_member_role and the daemon's profile::{member_is_gpu, member_is_pump_or_cpu} MUST agree on every case, or a GUI-baked profile could be wrongly rejected by the daemon's FLOOR_TOO_LOW backstop. role is one of: gpu, cpu_or_pump, chassis (the GUI CONTROL_ROLE_* values). This file must be byte-identical in both repos (daemon/tests/fixtures and the GUI tests/fixtures).",
+  "description": "Cross-stack member role-classification agreement vectors (DEC-162, extended DEC-257). The GUI's profile_service.infer_member_role and the daemon's profile::{member_is_gpu, member_needs_hard_floor} MUST agree on every case. Pinned against member_needs_hard_floor (the daemon's EVAL-TIME union, DEC-252) rather than the narrower member_is_pump_or_cpu, because that is the classifier that actually decides the runtime floor and the stop-snap exemption. The daemon's FLOOR_TOO_LOW/PUMP_STOP_FORBIDDEN rejections deliberately stay on the narrow one, so the GUI is never stricter than what the daemon accepts. role is one of: gpu, cpu_or_pump, chassis (the GUI CONTROL_ROLE_* values). This file must be byte-identical in both repos (daemon/tests/fixtures and the GUI tests/fixtures).",
   "cases": [
     {"name": "amd_gpu_fan", "source": "amd_gpu", "member_id": "amd_gpu:0000:03:00.0", "member_label": "9070XT Fan", "role": "gpu"},
     {"name": "intel_gpu_fan", "source": "intel_gpu", "member_id": "intel_gpu:0000:03:00.0", "member_label": "", "role": "gpu"},
@@ -11,6 +11,11 @@
     {"name": "kraken_pump_bare_label", "source": "hwmon", "member_id": "hwmon:z53:0000:pwm1:pwm1", "member_label": "pwm1", "role": "cpu_or_pump"},
     {"name": "aquacomputer_pump_bare_label", "source": "hwmon", "member_id": "hwmon:d5next:0000:pwm1:pwm1", "member_label": "pwm1", "role": "cpu_or_pump"},
     {"name": "radiator_chassis_fan", "source": "hwmon", "member_id": "hwmon:it8696:0000:pwm2:CHA_FAN", "member_label": "Radiator Top", "role": "chassis"},
+    {"name": "renamed_pump_daemon_label_wins", "source": "hwmon", "member_id": "hwmon:nct6798:0000:pwm3:PUMP", "member_label": "Radiator Top", "role": "cpu_or_pump"},
+    {"name": "renamed_cpu_header_daemon_label_wins", "source": "hwmon", "member_id": "hwmon:nct6798:0000:pwm1:CPU_OPT", "member_label": "Front Intake", "role": "cpu_or_pump"},
+    {"name": "renamed_chassis_stays_chassis", "source": "hwmon", "member_id": "hwmon:it8696:0000:pwm2:CHA_FAN", "member_label": "My Fan", "role": "chassis"},
+    {"name": "synthetic_pwm_label_adds_no_hint", "source": "hwmon", "member_id": "hwmon:nct6798:0000:pwm7:pwm7", "member_label": "Radiator Top", "role": "chassis"},
+    {"name": "pci_bdf_colons_do_not_break_label_parsing", "source": "hwmon", "member_id": "hwmon:k10temp:0000:00:18.3:pwm2:CPU_FAN", "member_label": "Renamed", "role": "cpu_or_pump"},
     {"name": "chassis_empty_label", "source": "hwmon", "member_id": "hwmon:nct6798:0000:pwm5:", "member_label": "", "role": "chassis"},
     {"name": "openfan_chassis", "source": "openfan", "member_id": "openfan:ch00", "member_label": "", "role": "chassis"}
   ]

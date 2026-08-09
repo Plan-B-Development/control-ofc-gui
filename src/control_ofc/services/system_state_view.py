@@ -60,13 +60,21 @@ _STATE_BY_CSS: dict[str, str] = {
     "SuccessChip": "ok",
 }
 
-# Daemon thermal_safety.state → pill state.
+# Daemon `thermal_state` → pill state.
+#
+# DEC-257: this had drifted badly. It carried "warning"/"throttling"/"critical" —
+# none of which the daemon has ever sent — and was MISSING "recovery" and
+# "no_sensor_fallback", the two states that mean the daemon is actively forcing
+# fans. Both fell through `.get(..., "neutral")` and rendered as a calm grey
+# pill, so a live thermal recovery looked like nothing was happening. Keys are
+# now pinned against the wire vocabulary by
+# `test_thermal_state_maps_cover_the_wire_vocabulary`; severities match
+# `ui.status_banner.THERMAL_STATES`' chip classes.
 _THERMAL_STATE: dict[str, str] = {
     "normal": "ok",
-    "warning": "warn",
-    "throttling": "warn",
+    "recovery": "warn",
     "emergency": "crit",
-    "critical": "crit",
+    "no_sensor_fallback": "warn",
 }
 
 
@@ -82,6 +90,15 @@ def daemon_version_at_least(version: str, minimum: tuple[int, int, int]) -> bool
     (the old page is untouched this stage). Tolerates ``1.11.0-rc1`` / ``1.11`` and
     compares an unparseable/empty version as *below* ``minimum``.
     """
+    return version_tuple(version) >= minimum
+
+
+def version_tuple(version: str) -> tuple[int, int, int]:
+    """Parse a version string to a 3-tuple, tolerating ``1.11.0-rc1`` / ``1.11``.
+
+    An unparseable or empty version yields ``(0, 0, 0)`` — i.e. sorts *below*
+    every real version, so a comparison against it fails safe.
+    """
     core = version.strip().split("-", 1)[0].split("+", 1)[0]
     nums: list[int] = []
     for part in core.split(".")[:3]:
@@ -91,7 +108,24 @@ def daemon_version_at_least(version: str, minimum: tuple[int, int, int]) -> bool
             break
     while len(nums) < 3:
         nums.append(0)
-    return tuple(nums[:3]) >= minimum
+    return (nums[0], nums[1], nums[2])
+
+
+def gui_meets_daemon_floor(app_version: str, min_supported_gui: str) -> bool:
+    """Whether this GUI satisfies the daemon's declared minimum GUI version.
+
+    DEC-257. ``min_supported_gui`` is the floor the *daemon* places on the *GUI*
+    — the opposite direction from the ``autonomous_control`` gate, which is about
+    the daemon being too old. The single place the field was previously used got
+    that backwards, rendering it as "this GUI needs control-ofc-daemon >= X". It
+    read correctly only because both numbers happened to be 2.0.0.
+
+    An empty floor means the daemon declares none (older daemons omit it), which
+    is not a failure — treat it as satisfied rather than as version 0.
+    """
+    if not min_supported_gui.strip():
+        return True
+    return version_tuple(app_version) >= version_tuple(min_supported_gui)
 
 
 def interference_gauge_fraction(count: int) -> float:

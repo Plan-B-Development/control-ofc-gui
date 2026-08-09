@@ -415,6 +415,24 @@ def _label_indicates_cpu_or_pump(label: str) -> bool:
     return any(hint in lower for hint in _CPU_PUMP_LABEL_HINTS)
 
 
+def _daemon_label_from_member_id(member_id: str) -> str:
+    """The label the DAEMON discovered, parsed out of the member's stable id.
+
+    `pwm_discovery` mints hwmon ids as ``hwmon:{chip}:{device}:pwmN:{label}``, so
+    the daemon's own view of the header's name travels with every member.
+
+    Split on the ``:pwm`` marker rather than by field index: ``device`` is a PCI
+    BDF (``0000:00:18.3``) and carries its own colons, and a label may too.
+    Returns "" for a malformed or non-hwmon id, which classifies as "no hint" —
+    the safe direction, since this only ever *adds* a floor.
+    """
+    _, marker, rest = member_id.partition(":pwm")
+    if not marker:
+        return ""
+    _index, sep, label = rest.partition(":")
+    return label if sep else ""
+
+
 def _member_is_aio_header(member: ControlMember) -> bool:
     """True when a hwmon member is a liquid-cooler header (NZXT Kraken /
     Aquacomputer), so a pump labelled only ``pwm1`` still gets the 30% pump
@@ -441,7 +459,19 @@ def infer_member_role(member: ControlMember) -> str:
     if member.source in ("amd_gpu", "intel_gpu", "nvidia_gpu"):
         return CONTROL_ROLE_GPU
     if member.source == "hwmon" and (
-        _label_indicates_cpu_or_pump(member.member_label) or _member_is_aio_header(member)
+        _label_indicates_cpu_or_pump(member.member_label)
+        # DEC-257: match the daemon's eval-time union (DEC-252). The daemon raises
+        # the hard floor when the label IT discovered says cpu/pump — carried in
+        # the member id — even if the author's `member_label` does not, which
+        # happens whenever a user renames a PUMP header. Without this the GUI
+        # stamped and displayed 20% while the daemon enforced 30%: fail-safe, but
+        # a UI lie. Union only, never replacement, exactly as the daemon does it.
+        #
+        # Safe in either skew direction: a GUI stamping a HIGHER floor is accepted
+        # by any daemon, which is why the daemon's `validate()` rejection was
+        # deliberately left on the narrower author-declared classifier.
+        or _label_indicates_cpu_or_pump(_daemon_label_from_member_id(member.member_id))
+        or _member_is_aio_header(member)
     ):
         return CONTROL_ROLE_CPU_PUMP
     return CONTROL_ROLE_CHASSIS

@@ -800,6 +800,14 @@ class DashboardPage(QWidget):
         """Release chart resources before app shutdown. Idempotent."""
         self._chart_timer.stop()
         self._reset_apply_timer.stop()
+        # DEC-257: FLUSH, don't just stop. The chart-range write is debounced by
+        # 400 ms, so closing within that window silently discarded the user's
+        # last range change — the fifth instance of the DEC-245 pattern, where a
+        # pending debounce is dropped at teardown instead of being committed.
+        # Stopping a timer whose payload has not run is data loss, not cleanup.
+        if self._range_write_timer.isActive():
+            self._range_write_timer.stop()
+            self._persist_chart_range()
         self._chart.cleanup()
 
     def closeEvent(self, event) -> None:

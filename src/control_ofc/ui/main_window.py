@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, 
 
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.models import ConnectionState, OperationMode, ReadinessRollup
-from control_ofc.constants import PAGE_CONTROLS, PAGE_DASHBOARD, POLL_INTERVAL_MS
+from control_ofc.constants import APP_VERSION, PAGE_CONTROLS, PAGE_DASHBOARD, POLL_INTERVAL_MS
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.dashboard_view import safety_detail_text
@@ -24,6 +24,7 @@ from control_ofc.services.id_migration import apply_realias_moves, find_realias_
 from control_ofc.services.profile_import_service import should_offer_import
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.services.system_state_view import gui_meets_daemon_floor
 from control_ofc.ui.components.footer import StatusFooter
 from control_ofc.ui.pages.controls_page import ControlsPage
 from control_ofc.ui.pages.dashboard_page import DashboardPage
@@ -41,6 +42,12 @@ from control_ofc.ui.status_ribbon import StatusRibbon
 from control_ofc.ui.widgets.error_banner import ErrorBanner
 
 log = logging.getLogger(__name__)
+
+# The daemon version that introduced `control.autonomous_control` (DEC-165) — the
+# thing the control gate is actually about. Named because the gate's message used
+# to quote `min_supported_gui` instead, which is the floor the daemon places on
+# the GUI: the opposite direction (DEC-257).
+AUTONOMOUS_CONTROL_DAEMON_VERSION = "2.0.0"
 
 
 def _resolve_startup_page(settings: AppSettings, page_count: int) -> int:
@@ -141,6 +148,16 @@ class MainWindow(QWidget):
         self._gate_banner.setWordWrap(True)
         self._gate_banner.setProperty("class", "CriticalChip")
         self._gate_banner.setVisible(False)
+        # Persistent, NON-blocking "your GUI is older than this daemon supports"
+        # banner (DEC-257). Deliberately a warning rather than the critical gate
+        # above: an old GUI against a new daemon is a mismatch worth telling the
+        # user about, but the daemon is the sole PWM writer and is controlling
+        # fans correctly, so refusing to drive would strand them for no gain.
+        self._gui_floor_banner = QLabel()
+        self._gui_floor_banner.setObjectName("MainWindow_Banner_guiOutdated")
+        self._gui_floor_banner.setWordWrap(True)
+        self._gui_floor_banner.setProperty("class", "WarningChip")
+        self._gui_floor_banner.setVisible(False)
 
         # --- Sidebar ---
         self.sidebar = Sidebar()
@@ -226,6 +243,7 @@ class MainWindow(QWidget):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
         content_layout.addWidget(self._gate_banner)
+        content_layout.addWidget(self._gui_floor_banner)
         content_layout.addWidget(self.status_banner)
         content_layout.addWidget(self.error_banner)
         content_layout.addWidget(self.page_stack, 1)
@@ -318,7 +336,7 @@ class MainWindow(QWidget):
         # dashboard — it owns its own strip).
         self.status_banner.setVisible(idx != PAGE_DASHBOARD)
         geo = s.window_geometry
-        if len(geo) == 4:
+        if len(geo) == 4 and self._geometry_is_reachable(geo):
             self.setGeometry(geo[0], geo[1], geo[2], geo[3])
 
         # Wire the dashboard readiness affordances (cooling-readiness chip +
@@ -393,6 +411,7 @@ class MainWindow(QWidget):
         # to capabilities so a daemon restart/upgrade clears it without a GUI
         # restart. Demo mode never reaches the daemon, so it is exempt.
         self._state.capabilities_updated.connect(self._on_control_capability_gate)
+        self._state.capabilities_updated.connect(self._apply_gui_version_floor)
 
         # DEC-102: when fresh hwmon header data arrives, sanitize any
         # profile member that targets an unknown or read-only header.
@@ -596,20 +615,59 @@ class MainWindow(QWidget):
         if self._control_blocked:
             return
         self._control_blocked = True
-        min_gui = (control.min_supported_gui if control else "") or "2.0.0"
         found = getattr(caps, "daemon_version", "") or "unknown"
+        # DEC-257: `min_supported_gui` used to be quoted here, which had the
+        # direction backwards — it is the floor the DAEMON places on the GUI, not
+        # the daemon version this GUI requires. It only ever read correctly
+        # because both numbers happened to be 2.0.0. The version this gate is
+        # actually about is the one that introduced `autonomous_control`.
         self._gate_banner.setText(
             f"⚠  Daemon upgrade required — this GUI needs control-ofc-daemon "
-            f"≥ {min_gui} (found {found}). The GUI has stood down; the daemon's "
-            f"built-in engine is controlling your fans. Upgrade the daemon for full "
-            f"GUI control."
+            f"≥ {AUTONOMOUS_CONTROL_DAEMON_VERSION} (found {found}). The GUI has "
+            f"stood down; the daemon's built-in engine is controlling your fans. "
+            f"Upgrade the daemon for full GUI control."
         )
         self._gate_banner.setVisible(True)
         log.warning(
             "Control gate engaged — daemon %s lacks autonomous_control (needs >= %s); "
             "GUI refuses to control (it has no local loop)",
             found,
-            min_gui,
+            AUTONOMOUS_CONTROL_DAEMON_VERSION,
+        )
+
+    def _apply_gui_version_floor(self, caps) -> None:
+        """Warn when this GUI is older than the daemon says it supports (DEC-257).
+
+        `min_supported_gui` was advertised in `/capabilities` and never compared
+        against anything — the one place it was read used it backwards, as a
+        *daemon* requirement. This is the enforcement it was always meant to have.
+
+        Deliberately NON-blocking. The daemon is the sole PWM writer (DEC-165) and
+        is controlling fans correctly regardless of the GUI's age; a hard gate
+        would strand the user with no control at all in exchange for nothing. An
+        absent floor (older daemons omit the field) is treated as satisfied, not
+        as version zero.
+        """
+        if self._demo_mode:
+            return
+        control = getattr(caps, "control", None)
+        floor = (control.min_supported_gui if control else "") or ""
+        if gui_meets_daemon_floor(APP_VERSION, floor):
+            if not self._gui_floor_banner.isHidden():
+                self._gui_floor_banner.setVisible(False)
+                log.info("GUI version now satisfies the daemon's floor")
+            return
+        if not self._gui_floor_banner.isHidden():
+            return
+        self._gui_floor_banner.setText(
+            f"⚠  This GUI is older than the daemon supports — control-ofc-gui "
+            f"{APP_VERSION} is below the daemon's declared minimum of {floor}. "
+            f"Fan control is unaffected (the daemon drives fans itself), but some "
+            f"screens may not reflect everything this daemon can do. Upgrade the GUI."
+        )
+        self._gui_floor_banner.setVisible(True)
+        log.warning(
+            "GUI %s is below the daemon's declared min_supported_gui %s", APP_VERSION, floor
         )
 
     def _open_overview(self) -> None:
@@ -850,6 +908,43 @@ class MainWindow(QWidget):
         super().moveEvent(event)
         if getattr(self, "_geometry_timer", None) is not None:
             self._geometry_timer.start()
+
+    @staticmethod
+    def _geometry_is_reachable(geo: list[int]) -> bool:
+        """Whether a saved geometry still lands on a connected screen (DEC-257).
+
+        The stored values are sanity-bounded (`_as_geometry`) but were never
+        checked against the *current* display layout. Save the window on a second
+        monitor, unplug it, reopen: the window is restored somewhere that no
+        longer exists, off-screen and unreachable — with no way to recover it
+        except editing the settings file.
+
+        Qt's own `restoreGeometry()` performs this check; raw `setGeometry()`,
+        which this uses, does not. Requiring a real overlap rather than merely a
+        visible corner, because a window one pixel onto a screen is not usable.
+
+        Returns True when it cannot tell (no screens reported) — a restore that
+        might be fine beats discarding the user's layout on a headless quirk.
+        """
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QGuiApplication
+
+        screens = QGuiApplication.screens()
+        if not screens:
+            return True
+        want = QRect(geo[0], geo[1], geo[2], geo[3])
+        # A quarter of the window on-screen is enough to grab and drag back.
+        needed = (want.width() * want.height()) // 4
+        for screen in screens:
+            overlap = screen.availableGeometry().intersected(want)
+            if overlap.width() * overlap.height() >= max(1, needed):
+                return True
+        log.info(
+            "Saved window geometry %s does not fit any connected screen — "
+            "using the default position instead",
+            geo,
+        )
+        return False
 
     def closeEvent(self, event) -> None:
         """Persist window geometry and last page on close, then clean up timers."""
