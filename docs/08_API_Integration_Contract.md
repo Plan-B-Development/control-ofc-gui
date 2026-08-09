@@ -211,15 +211,38 @@ GUI iterates the array and needs no change to display it. The first two report
 **liveness**: the daemon's sole PWM writer also evaluates the 105 °C rule, but
 nothing supervises its task, so a panic inside a tick would end fan control and
 thermal safety while every other signal stayed green and `/status` kept
-answering 200. Thresholds are the shared staleness bands against a fixed 1 Hz
-tick (`ok` ≤ 2 s, `warn` ≤ 5 s, `crit` beyond) — deliberately **not** derived
-from the operator-configurable `poll_interval_ms`, so widening polling cannot
-widen what counts as a live engine. Reasons are engine-specific
-(`"evaluating on schedule"`, `"tick overdue"`, `"not ticking — fan control and
-thermal safety are stalled"`, `"never ticked"`). A `crit` engine escalates
-`overall_status` to `"crit"` — that escalation is the point of the surface.
-Daemons < 2.17.0 emit two entries and no `engine`; a client must treat its
-absence as "unknown", never as healthy.
+answering 200.
+
+**A slow tick is not a stopped engine, and the daemon distinguishes them
+(DEC-259).** The engine stamps both the start and the completion of every tick,
+so `engine` reports one of two situations:
+
+- *Between ticks* — judged on how long ago the last tick **finished**, against a
+  fixed 1 Hz period: `ok` ≤ 2 s, `warn` ≤ 5 s, `crit` beyond. Deliberately **not**
+  derived from the operator-configurable `poll_interval_ms`, so widening polling
+  cannot widen what counts as a live engine.
+- *Mid-tick* — judged on how long the current tick has been **running**: `ok`
+  within a normal tick, `warn` while it is merely slow, and `crit` only past 30×
+  the period, where it is stuck rather than slow.
+
+That second case is why the pair exists. A thermal `force_all` walks all ten
+OpenFan channels, each bounded by `serial.timeout_ms` (up to 1 s), so a
+degraded-but-open link makes a **legitimate** tick take 5–10 s. With a single
+timestamp the daemon reported `crit` / "not ticking — fan control and thermal
+safety are stalled" *while it was actively driving the 105 °C emergency* — the
+inverse of the truth, in the state where a client can least afford to be misled.
+Widening the threshold would have traded that false alarm for blindness to a real
+death; splitting the stamps distinguishes the cases instead.
+
+Reasons are engine-specific: `"evaluating on schedule"`, `"tick overdue"`,
+`"tick still running — a slow write is holding it up"`, `"tick stuck — the engine
+has not finished a pass"`, `"not ticking — fan control and thermal safety are
+stalled"`, `"never ticked"`. `age_ms` is always time since the last **completed**
+pass, so a client can read "mid-tick, last full pass N ms ago" coherently.
+
+A `crit` engine escalates `overall_status` to `"crit"` — that escalation is the
+point of the surface. Daemons < 2.17.0 emit two entries and no `engine`; a client
+must treat its absence as "unknown", never as healthy.
 
 `thermal_state` (daemon ≥1.13.0, additive — `api_version` unchanged) is one of
 `"normal" | "recovery" | "emergency" | "no_sensor_fallback"`. While it is not
