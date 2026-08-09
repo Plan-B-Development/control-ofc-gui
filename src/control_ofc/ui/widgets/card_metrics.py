@@ -97,6 +97,34 @@ def card_dimensions(base_pt: int, tier: str = DEFAULT_CARD_SIZE) -> tuple[int, i
     return width, height
 
 
+def card_pane_min_width(base_pt: int, tier: str = DEFAULT_CARD_SIZE) -> int:
+    """Minimum width for a scroll pane holding a single column of cards.
+
+    DEC-260. The Controls page hardcoded 300 px for this, a literal that silently
+    tracked the old 280 px card. When DEC-258 re-derived the card width to 299 px
+    the two drifted apart: the flow container's minimum (card + margins) exceeded
+    the pane's viewport, and Qt resolves that with a permanent HORIZONTAL
+    scrollbar and the card's right edge — including its resize grip — clipped
+    off. At the shipped default 1400x850 window both Controls panes did exactly
+    that, which is the same defect class DEC-258 set out to remove.
+
+    So the pane minimum is computed from the card, not guessed alongside it:
+    one card, plus the flow layout's own margins, plus the vertical scrollbar the
+    pane grows as soon as there is more than one row (that scrollbar takes its
+    width out of the viewport, so omitting it reintroduces the overflow at the
+    boundary).
+    """
+    return card_dimensions(base_pt, tier)[0] + _FLOW_MARGIN_PX + _SCROLLBAR_ALLOWANCE_PX
+
+
+# Horizontal margins the flow container adds around a card column, and the width
+# a vertical scrollbar takes out of the viewport. Both measured on this stack;
+# the scrollbar allowance is generous by a couple of pixels so a theme with a
+# wider scrollbar does not put the pane back into overflow.
+_FLOW_MARGIN_PX = 8
+_SCROLLBAR_ALLOWANCE_PX = 18
+
+
 # DEC-238: the Dashboard fan tile. Narrower than a Controls card — it carries a
 # title, a fan count, three readings and a curve band, not an editor — and it
 # takes a *fixed* width so the flow grid forms tidy columns instead of the ragged

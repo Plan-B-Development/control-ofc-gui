@@ -67,7 +67,7 @@ from control_ofc.services.profile_service import (
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.qt_util import repolish, set_chip_class, style_splitter
-from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE
+from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE, card_pane_min_width
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
 from control_ofc.ui.widgets.curve_editor import CurveEditor
@@ -333,7 +333,12 @@ class ControlsPage(QWidget):
 
         # ── Pane 1: Assign Roles ──
         pane1 = QWidget()
-        pane1.setMinimumWidth(300)  # ≥ the comfortable card width so cards never clip
+        # DEC-260: derived from the card metric, not a literal. A hardcoded 300
+        # tracked the pre-DEC-258 card width by coincidence; once the card grew to
+        # 299 the pane could no longer hold one, and Qt answered with a permanent
+        # horizontal scrollbar and a clipped right edge at the default window size.
+        pane_min = card_pane_min_width(self._base_font_pt(), self._card_size_tier())
+        pane1.setMinimumWidth(pane_min)
         p1_layout = QVBoxLayout(pane1)
         p1_layout.setContentsMargins(0, 0, 0, 0)
         p1_layout.setSpacing(6)
@@ -388,7 +393,7 @@ class ControlsPage(QWidget):
 
         # Pane 2: Link Logic (curve cards)
         pane2 = QWidget()
-        pane2.setMinimumWidth(300)
+        pane2.setMinimumWidth(pane_min)
         p2_layout = QVBoxLayout(pane2)
         p2_layout.setContentsMargins(0, 0, 0, 0)
         p2_layout.setSpacing(6)
@@ -468,7 +473,7 @@ class ControlsPage(QWidget):
 
         self._curves_editor_splitter.setStretchFactor(0, 1)
         self._curves_editor_splitter.setStretchFactor(1, 2)
-        self._curves_editor_splitter.setSizes([300, 600])
+        self._curves_editor_splitter.setSizes([pane_min, pane_min * 2])
         self._curves_editor_splitter.setCollapsible(0, False)
         self._curves_editor_splitter.setCollapsible(1, False)
         curves_section_layout.addWidget(self._curves_editor_splitter, 1)
@@ -478,7 +483,7 @@ class ControlsPage(QWidget):
         # Outer split (DEC-214): Assign Roles (1) : curves = Link Logic + Editor (3).
         self._splitter.setStretchFactor(0, 1)
         self._splitter.setStretchFactor(1, 3)
-        self._splitter.setSizes([300, 900])
+        self._splitter.setSizes([pane_min, pane_min * 3])
         self._splitter.setCollapsible(0, False)
         self._splitter.setCollapsible(1, False)
         main_layout.addWidget(self._splitter, 1)
@@ -1667,6 +1672,12 @@ class ControlsPage(QWidget):
                 card.control, output, member_outputs.get(control_id, {})
             )
             card.set_output(output, sensor_name, sensor_value, gpu_output_pct=gpu_output)
+
+    def _base_font_pt(self) -> int:
+        """Theme base font size, which the card metric scales with (DEC-260)."""
+        from control_ofc.ui.theme import active_theme
+
+        return active_theme().base_font_size_pt
 
     def _card_size_tier(self) -> str:
         """Current card-size density tier from settings (default comfortable)."""

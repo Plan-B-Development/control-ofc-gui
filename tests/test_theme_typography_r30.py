@@ -163,10 +163,25 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
         apply_theme(tokens)
         return tokens
 
-    def test_the_control_card_details_row_fits_the_default_tier(self, qtbot, restore_app_theme):
-        """The measured regression: the details block clipped from 11pt in the
-        default tier (79px deficit at 15pt) because `_WIDTH_PER_PT` was 11 where
-        the content needs ~23."""
+    def test_the_control_card_details_row_fits_every_density(self, qtbot, restore_app_theme):
+        """The measured regression, swept across the whole tier matrix.
+
+        The details block clipped from 11pt in the default density and 9pt in
+        compact because `_WIDTH_PER_PT` was 11 where the content needs ~23.
+
+        DEC-260: this originally iterated font sizes but pinned `comfortable`, so
+        it stayed green while a third of the matrix still clipped — the same
+        hand-scoped blind spot that let six focus gaps ship. It now sweeps all
+        three densities and distinguishes the two outcomes:
+
+        - `comfortable` and `large` must FIT outright: they are the densities that
+          promise no elision at any supported font size.
+        - `compact` is allowed to elide, and does from 9pt up. That is the honest
+          consequence of a density multiplier that scales the card but not its
+          content, and since DEC-258 it degrades to an ellipsis rather than a
+          hard clip. Asserted as *bounded* rather than ignored, so a future change
+          that turns a graceful elision into a gross one still fails here.
+        """
         from control_ofc.services.profile_service import (
             ControlMember,
             ControlMode,
@@ -174,42 +189,59 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
             CurveType,
             LogicalControl,
         )
-        from control_ofc.ui.widgets.card_metrics import CARD_SIZE_COMFORTABLE, card_dimensions
+        from control_ofc.ui.widgets.card_metrics import (
+            CARD_SIZE_COMFORTABLE,
+            CARD_SIZE_COMPACT,
+            CARD_SIZE_LARGE,
+            card_dimensions,
+        )
         from control_ofc.ui.widgets.control_card import ControlCard
 
-        clipped = []
-        for pt in range(7, 17):
-            self._apply(pt)
-            curves = [CurveConfig(id="c1", name="Aggressive Ramp", type=CurveType.GRAPH)]
-            control = LogicalControl(
-                id="ctl",
-                name="Radiator Loop",
-                mode=ControlMode.CURVE,
-                curve_id="c1",
-                manual_output_pct=50.0,
-                members=[
-                    ControlMember(
-                        source="hwmon",
-                        member_id="hwmon:it8696:0:pwm1:CPU_FAN",
-                        member_label="CPU_FAN",
-                    )
-                ],
-            )
-            card = ControlCard(control, curves, card_size=CARD_SIZE_COMFORTABLE)
-            qtbot.addWidget(card)
-            width, _height = card_dimensions(pt, CARD_SIZE_COMFORTABLE)
-            card.setFixedWidth(width)
-            card.show()
-            details = card.findChild(QWidget, "ControlCard_Details_ctl")
-            need = details.sizeHint().width()
-            have = width - 42  # measured card padding
-            if need > have:
-                clipped.append(f"{pt}pt: needs {need}, has {have}")
-            card.hide()
+        must_fit = (CARD_SIZE_COMFORTABLE, CARD_SIZE_LARGE)
+        clipped: list[str] = []
+        compact_deficits: list[int] = []
+
+        for tier in (CARD_SIZE_COMPACT, *must_fit):
+            for pt in range(7, 17):
+                self._apply(pt)
+                curves = [CurveConfig(id="c1", name="Aggressive Ramp", type=CurveType.GRAPH)]
+                control = LogicalControl(
+                    id="ctl",
+                    name="Radiator Loop",
+                    mode=ControlMode.CURVE,
+                    curve_id="c1",
+                    manual_output_pct=50.0,
+                    members=[
+                        ControlMember(
+                            source="hwmon",
+                            member_id="hwmon:it8696:0:pwm1:CPU_FAN",
+                            member_label="CPU_FAN",
+                        )
+                    ],
+                )
+                card = ControlCard(control, curves, card_size=tier)
+                qtbot.addWidget(card)
+                width, _height = card_dimensions(pt, tier)
+                card.setFixedWidth(width)
+                card.show()
+                details = card.findChild(QWidget, "ControlCard_Details_ctl")
+                need = details.sizeHint().width()
+                have = width - 42  # measured card padding
+                if need > have:
+                    if tier in must_fit:
+                        clipped.append(f"{tier}@{pt}pt: needs {need}, has {have}")
+                    else:
+                        compact_deficits.append(need - have)
+                card.hide()
 
         assert not clipped, (
-            "the default card tier must hold its own details row at every theme "
-            f"font size: {clipped}"
+            "the comfortable and large densities must hold their own details row "
+            f"at every theme font size: {clipped}"
+        )
+        # Compact elides by design; keep it a trim, not a truncation.
+        assert max(compact_deficits, default=0) <= 60, (
+            "compact's elision has grown beyond a trim — the curve name is being "
+            f"cut back too far: worst deficit {max(compact_deficits, default=0)}px"
         )
 
     def test_no_fixed_size_caps_a_widget_below_its_hint(self, qtbot, restore_app_theme):

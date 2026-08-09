@@ -410,8 +410,15 @@ Two consequences a client must know:
 - `validate()`'s `FLOOR_TOO_LOW` / `PUMP_STOP_FORBIDDEN` **rejections deliberately still
   use the narrow, author-declared classifier**, so a daemon upgraded ahead of its GUI
   cannot start refusing profiles the GUI still bakes.
-- The GUI may therefore *display* a lower `minimum_pct` than the daemon *enforces*. That
-  is fail-safe but not truthful; adopting the same union GUI-side is tracked work.
+- **The GUI adopted the same union in v2.41.0** (DEC-257), so the displayed floor now
+  matches what the daemon enforces: `infer_member_role` parses the daemon-discovered
+  label out of the member id exactly as the daemon does. Safe in either skew direction —
+  a GUI stamping a *higher* floor is accepted by any daemon, which is why the daemon's
+  `validate()` rejection was deliberately left on the narrower classifier.
+- One residual: `apply_role_floor` runs when members are edited, not on profile *load*,
+  so a profile written before v2.41.0 keeps its stored `minimum_pct` until it is next
+  edited. The **displayed** floor is union-correct either way, and the daemon clamps at
+  eval time regardless, so the stored value lagging is cosmetic rather than a safety gap.
 
 The limit is worth stating: where a chip publishes no label file the daemon synthesises
 `pwmN`, and it reads no `/etc/sensors.d`, so on such a board the author's label is still

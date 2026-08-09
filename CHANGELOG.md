@@ -17,6 +17,13 @@
   for nothing. DEC-257.
 
 ### Fixed
+- **The Controls page fits its cards again at the default window size.** Widening
+  the card metric to stop text clipping (below) made the cards wider than the
+  panes that hold them, so at the shipped 1400×850 window both Controls panes grew
+  a permanent horizontal scrollbar and clipped ~12 px off every card's right edge
+  — including its resize grip. The pane width was a hardcoded 300 px that had
+  silently tracked the old card width; it is now derived from the card metric, so
+  the two cannot drift apart again. DEC-260.
 - **Ctrl+C no longer throws away your layout.** Interrupting from a terminal quit
   the event loop without ever delivering a close event, so every save that hangs
   off it — window geometry, panel sizes, chart range, log filters — was skipped.
