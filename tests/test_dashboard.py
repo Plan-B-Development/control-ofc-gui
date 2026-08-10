@@ -106,6 +106,43 @@ class TestSubsystemHealth:
         assert "error" in dash._sub_openfan_label.text()
         assert "permission denied" in dash._sub_openfan_label.text()
 
+    def test_a_wedged_engine_is_surfaced_on_the_dashboard(self, qtbot, window, app_state):
+        """Release review, 2026-08-10.
+
+        DEC-249 added an `engine` subsystem because the profile engine is the
+        sole PWM writer and owns the 105 C emergency, so its death had been
+        invisible behind a green /status. The Dashboard loop matched only
+        openfan/hwmon, so the new signal was dropped on the page CLAUDE.md
+        designates for "is the system healthy?" — the ADR's whole point, undone
+        one layer above it.
+        """
+        status = DaemonStatus(
+            overall_status="degraded",
+            subsystems=[
+                SubsystemStatus(name="engine", status="error", reason="no tick for 31s"),
+            ],
+        )
+        app_state.set_status(status)
+
+        dash = window.dashboard_page
+        assert not dash._engine_banner.isHidden(), (
+            "a stalled sole-PWM-writer must be visible on the default page"
+        )
+        text = dash._engine_banner._message_label.text()
+        assert "error" in text
+        assert "no tick for 31s" in text
+        assert "105" in text, "the user must be told thermal protection is gone too"
+
+    def test_a_healthy_engine_stays_out_of_the_way(self, qtbot, window, app_state):
+        """The banner is a warning surface; a permanent "engine: ok" is noise."""
+        status = DaemonStatus(
+            overall_status="ok",
+            subsystems=[SubsystemStatus(name="engine", status="ok", reason="")],
+        )
+        app_state.set_status(status)
+
+        assert window.dashboard_page._engine_banner.isHidden()
+
     def test_subsystem_ok_is_not_flagged_as_warning(self, qtbot, window, app_state):
         """ "ok" is the daemon's healthy sentinel — the dashboard must NOT raise a
         WarningChip for it (dashboard_page _on_status_updated branches on

@@ -369,3 +369,53 @@ class TestTightenedSpacing:
         card = ControlCard(_control(), [])
         qtbot.addWidget(card)
         assert card.sizeHint().height() < 188
+
+
+class TestResizeFloorTracksTheTierWidths:
+    """Release review, 2026-08-10.
+
+    `MIN_USER_CARD_WIDTH_PX` was a hardcoded 220 whose comment claimed it sat
+    "just under the smallest DEC-128 width (compact tier at 7pt ~227px)". True
+    when written; quietly false once DEC-258 re-anchored `_BASE_WIDTH` /
+    `_WIDTH_PER_PT` from 280/11 to 299/23 and the real smallest became 212. The
+    floor then sat *above* a size the app ships by default, so a user who
+    resized a card could never return it to its neighbours' width.
+    """
+
+    def test_the_floor_is_below_every_width_the_tiers_ship(self):
+        from control_ofc.ui.widgets.card_metrics import (
+            _MAX_PT,
+            _MIN_PT,
+            _TIER_SCALE,
+            MIN_USER_CARD_WIDTH_PX,
+            card_dimensions,
+        )
+
+        offenders = [
+            (pt, tier, card_dimensions(pt, tier)[0])
+            for pt in range(_MIN_PT, _MAX_PT + 1)
+            for tier in _TIER_SCALE
+            if card_dimensions(pt, tier)[0] < MIN_USER_CARD_WIDTH_PX
+        ]
+        assert not offenders, (
+            "these default card widths are below the user-resize floor, so a "
+            f"resized card can never be returned to them: {offenders}"
+        )
+
+    def test_a_card_can_be_shrunk_back_to_its_own_default_width(self):
+        """The user-facing consequence, stated directly."""
+        from control_ofc.ui.widgets.card_metrics import (
+            MIN_USER_CARD_WIDTH_PX,
+            card_dimensions,
+        )
+        from control_ofc.ui.widgets.resizable_grid_card import snap_size
+
+        default_w, default_h = card_dimensions(7, "compact")
+        # Drag all the way in; the floor is what stops it. The default width
+        # itself need not be reachable — 212 is off the 20px lattice — but the
+        # user must be able to get at least that narrow.
+        width, _ = snap_size(1, default_h, MIN_USER_CARD_WIDTH_PX, default_h)
+        assert width <= default_w, (
+            f"dragging down stops at {width}px, above this card's own default "
+            f"{default_w}px — the card is stuck wider than its neighbours"
+        )

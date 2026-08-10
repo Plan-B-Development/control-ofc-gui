@@ -89,6 +89,8 @@ DASHBOARD_OBJECTNAMES = frozenset(
         "Dashboard_Banner_api_version",
         "Dashboard_Banner_hwmon",
         "Dashboard_Banner_thermal",
+        # DEC-249 engine-liveness banner, added by the 2026-08-10 release review.
+        "Dashboard_Banner_engine",
         "Dashboard_Btn_apply",
         "Dashboard_Btn_copyEnableCommand",
         "Dashboard_Btn_openReadiness",

@@ -66,12 +66,28 @@ _MAX_PT = 16
 # DEC-129: per-card user resize. Drag sizes snap to an absolute lattice —
 # multiples of SNAP_STEP_PX, not offsets from the drag start — so two cards
 # resized near the same size land on *exactly* the same size. The width floor
-# is a constant just under the smallest DEC-128 width (compact tier at 7pt
-# ≈ 227px) so a user shrink can't get meaningfully worse than the smallest
-# size the tier system already ships; the height floor is per-card content
-# (the card layout's minimumSize), enforced in snap_size's clamp.
+# sits just under the smallest width the tier system itself ships, so a user
+# shrink can't get meaningfully worse than a size the app already uses; the
+# height floor is per-card content (the card layout's minimumSize), enforced
+# in snap_size's clamp.
 SNAP_STEP_PX = 20
-MIN_USER_CARD_WIDTH_PX = 220
+
+
+def _smallest_tier_width() -> int:
+    """The narrowest width `card_dimensions` can produce, over every tier and pt.
+
+    DERIVED, not written down. It was a hardcoded 220 with a comment claiming
+    "compact tier at 7pt ~227px" — true when written, and quietly false after
+    DEC-258 re-anchored `_BASE_WIDTH`/`_WIDTH_PER_PT` from 280/11 to 299/23.
+    The real smallest became 212, i.e. *below* the resize floor, so a user who
+    resized a card could never return it to the size its unresized neighbours
+    were already using: dragging down snapped to 220 and stopped.
+
+    Deriving it means the next re-anchor cannot reintroduce that skew.
+    """
+    return min(
+        card_dimensions(pt, tier)[0] for pt in range(_MIN_PT, _MAX_PT + 1) for tier in _TIER_SCALE
+    )
 
 
 def card_dimensions(base_pt: int, tier: str = DEFAULT_CARD_SIZE) -> tuple[int, int]:
@@ -148,3 +164,19 @@ def fan_tile_width(base_pt: int) -> int:
         base_pt = _REF_PT
     base_pt = max(_MIN_PT, min(_MAX_PT, base_pt))
     return _TILE_BASE_WIDTH + (base_pt - _REF_PT) * _TILE_WIDTH_PER_PT
+
+
+# Evaluated once at import, after `card_dimensions` is defined.
+#
+# Rounded DOWN onto the snap lattice, and that is load-bearing rather than
+# tidiness: `snap_size` rounds an off-lattice floor *up* to the next multiple,
+# so an off-lattice floor is silently replaced by a larger one. A first pass at
+# this fix used `smallest - 8` = 204 and changed nothing at all — 204 rounds
+# straight back up to 220. Only a lattice-aligned floor is the floor it claims
+# to be.
+#
+# Down rather than up for the same reason the constant exists: drag targets are
+# multiples of SNAP_STEP_PX, so the smallest tier width (212) is not itself
+# reachable by dragging. Rounding down to 200 lets a user shrink a card to at
+# least as narrow as its own default; rounding up would strand it wider.
+MIN_USER_CARD_WIDTH_PX = (_smallest_tier_width() // SNAP_STEP_PX) * SNAP_STEP_PX

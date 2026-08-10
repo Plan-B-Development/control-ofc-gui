@@ -122,10 +122,35 @@ def gui_meets_daemon_floor(app_version: str, min_supported_gui: str) -> bool:
 
     An empty floor means the daemon declares none (older daemons omit it), which
     is not a failure — treat it as satisfied rather than as version 0.
+
+    An unparseable *GUI* version is treated the same way, and the symmetry is the
+    point. ``constants.APP_VERSION`` falls back to the literal ``"dev"`` whenever
+    ``importlib.metadata.version()`` raises ``PackageNotFoundError`` — i.e. every
+    run from a source checkout that was not ``pip install``ed, which is the
+    documented ``PYTHONPATH=src`` workflow. ``version_tuple("dev")`` is
+    ``(0, 0, 0)``, which sorts below every real floor, so the original one-sided
+    check raised a permanent, non-dismissible "your GUI is too old" banner against
+    a perfectly current daemon. Failing an unknown floor open while failing an
+    unknown GUI version closed is an asymmetry with no justification: in both
+    cases the answer is "this comparison is not meaningful", and the honest
+    response is to not claim a violation.
     """
     if not min_supported_gui.strip():
         return True
+    if not _is_comparable_version(app_version):
+        return True
     return version_tuple(app_version) >= version_tuple(min_supported_gui)
+
+
+def _is_comparable_version(version: str) -> bool:
+    """Whether *version* carries a real leading number, rather than ``dev``/``""``.
+
+    ``version_tuple`` deliberately coerces junk to ``(0, 0, 0)`` so ordering never
+    raises; this distinguishes "genuinely version 0" from "no version at all",
+    which that coercion throws away.
+    """
+    head = version.strip().split("-", 1)[0].split("+", 1)[0].split(".", 1)[0]
+    return head.isdigit()
 
 
 def interference_gauge_fraction(count: int) -> float:

@@ -442,6 +442,21 @@ class DashboardPage(QWidget):
         content_layout.addWidget(self._thermal_banner)
         self._last_thermal_state = "normal"
 
+        # Engine liveness (DEC-249), surfaced the same way and for the same
+        # reason as the thermal banner above: poll is the authoritative source,
+        # and the GUI has no loop of its own to notice.
+        #
+        # This is a BANNER on the live page, not a chip on the "Subsystem
+        # Status" card — that card is built inside `_build_no_hardware_state`,
+        # so it renders only when no hardware was detected at all. A wedged
+        # engine on a working machine would never have reached it. The release
+        # review caught the missing branch; the card it would have gone in was
+        # the deeper half of the same bug.
+        self._engine_banner = ErrorBanner()
+        self._engine_banner.setObjectName("Dashboard_Banner_engine")
+        content_layout.addWidget(self._engine_banner)
+        self._last_engine_status = "ok"
+
         self._v_splitter = QSplitter(Qt.Orientation.Vertical)
         self._v_splitter.setObjectName("Dashboard_Splitter_vertical")
         self._h_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -736,6 +751,25 @@ class DashboardPage(QWidget):
                     f"Thermal protection active ({thermal}) — the daemon has overridden "
                     "fan control to protect your hardware. Fans return to your profile "
                     "once temperatures recover."
+                )
+
+        # Engine liveness (DEC-249). The profile engine is the sole PWM writer
+        # and owns the 105 C emergency, so its death is the most consequential
+        # thing this page can report — and the daemon reports it ONLY here, as a
+        # subsystem entry. Older daemons omit it; absence is not a failure.
+        engine = next((s for s in status.subsystems if s.name == "engine"), None)
+        engine_status = engine.status if engine else "ok"
+        if engine_status != self._last_engine_status:
+            self._last_engine_status = engine_status
+            self._annotate(f"Engine: {engine_status}")
+            if engine_status == "ok":
+                self._engine_banner.hide_banner()
+            else:
+                reason = f" ({engine.reason})" if engine and engine.reason else ""
+                self._engine_banner.show_error(
+                    f"Fan control engine {engine_status}{reason} — the daemon is not "
+                    "driving your fans, and its 105 \u00b0C emergency protection is not "
+                    "running. Restart control-ofc-daemon."
                 )
 
         # Override start/end (poll-diff, DEC-181) — net-new diff state; overrides

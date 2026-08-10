@@ -217,6 +217,32 @@ class TestGuiVersionFloor:
         # Equal satisfies.
         assert gui_meets_daemon_floor("2.41.0", "2.41.0")
 
+    def test_a_source_checkout_is_not_reported_as_too_old(self):
+        """Release review, 2026-08-10.
+
+        `constants.APP_VERSION` is the literal "dev" whenever
+        `importlib.metadata.version()` raises PackageNotFoundError — every run
+        from a source checkout that was not pip installed, which is the
+        documented PYTHONPATH=src workflow. `version_tuple("dev")` is (0, 0, 0),
+        so the one-sided check raised a permanent, non-dismissible "your GUI is
+        too old" banner against a perfectly current daemon.
+        """
+        from control_ofc.services.system_state_view import gui_meets_daemon_floor
+
+        assert gui_meets_daemon_floor("dev", "2.0.0")
+        assert gui_meets_daemon_floor("", "2.0.0")
+        assert gui_meets_daemon_floor("unknown", "99.0.0")
+
+    def test_a_real_version_is_still_compared(self):
+        """The escape hatch must not swallow genuine violations: only a version
+        with no leading number at all is exempt."""
+        from control_ofc.services.system_state_view import gui_meets_daemon_floor
+
+        assert not gui_meets_daemon_floor("1.9.0", "2.0.0")
+        assert not gui_meets_daemon_floor("0.1.0", "2.0.0")
+        # A real number with a suffix still parses, so it is still compared.
+        assert not gui_meets_daemon_floor("1.9.0-rc1", "2.0.0")
+
     def test_an_absent_floor_is_satisfied_not_zero(self):
         """Older daemons omit the field; that is not a violation."""
         from control_ofc.services.system_state_view import gui_meets_daemon_floor
