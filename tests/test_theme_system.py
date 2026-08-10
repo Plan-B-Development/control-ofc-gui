@@ -1242,44 +1242,61 @@ class TestKeyboardFocusVisibility:
             f"cannot see where they are (WCAG 2.4.7): {invisible}"
         )
 
-    def test_focus_ring_does_not_reflow_neighbouring_content(self, restore_app_theme):
-        """Measure laid-out geometry, not ``sizeHint()``.
+    def test_no_focus_rule_declares_a_ring_fatter_than_policy(self, restore_app_theme):
+        """Check the stylesheet, because no *rendered* property can catch this.
 
-        The previous version of this test asserted ``sizeHint()`` was unchanged
-        between focus states — which is always true for a ``:focus``-only QSS
-        change, because Qt does not re-resolve the hint without an explicit
-        repolish. It passed with the border widened to 6px. Real layout geometry
-        is the property that actually matters, so measure that.
+        Three earlier versions of this test were tautological. The first asserted
+        ``sizeHint()`` was unchanged between focus states; the second "fixed" it
+        by asserting laid-out ``geometry()``; a third tried the rendered pixels.
+        The first two pass with the border widened to 6px for the same underlying
+        reason — **Qt never runs a layout pass off a ``:focus`` change**, so every
+        geometry property is blind here by construction and swapping one for
+        another only moves the blind spot. Pixels are not the answer either: a
+        focused ``QLineEdit`` legitimately paints a text cursor, and the policy
+        deliberately *accepts* a 1px content shift on ``border: none`` widgets
+        (see below), so an interior-pixel diff has innocent causes it cannot
+        distinguish from guilty ones.
+
+        What is left is the declaration itself, which is exact. Policy
+        (``CLAUDE.md § GUI component standard``, DEC-251) is that the ring must
+        not resize the control: swap an existing border's colour, or — where the
+        resting state is ``border: none`` — declare the border only under
+        ``:focus``, accepting 1px over the 2px a transparent resting border would
+        cost. Either way the ring is **1px**. A fatter one displaces the widget's
+        own contents, which is precisely the regression the geometry tests could
+        never see.
         """
-        from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+        import re
 
-        from control_ofc.ui.theme import apply_theme, default_dark_theme
+        from control_ofc.ui.theme import apply_theme, build_stylesheet, default_dark_theme
 
         apply_theme(default_dark_theme())
+        qss = re.sub(r"/\*.*?\*/", " ", build_stylesheet(default_dark_theme()), flags=re.S)
 
-        host = QWidget()
-        layout = QVBoxLayout(host)
-        first = QPushButton("First", host)
-        first.setProperty("variant", "primary")
-        second = QPushButton("Second", host)
-        layout.addWidget(first)
-        layout.addWidget(second)
-        host.resize(240, 120)
-        host.show()
-        QApplication.processEvents()
+        # Fixed-size subcontrols are the one sanctioned exception: the slider
+        # handle declares its own width/height, so a border is drawn *inside* it
+        # and cannot displace the groove or anything else. Named explicitly, so
+        # a fat ring anywhere else still fails.
+        exempt = {"QSlider::handle:horizontal:focus"}
 
-        second.setFocus()
-        QApplication.processEvents()
-        before = (first.geometry(), second.geometry())
+        # Selector list + body, for every rule whose selector mentions :focus.
+        rule = re.compile(r"([^{}]*:focus[^{}]*)\{([^{}]*)\}", re.S)
+        width = re.compile(r"border(?:-width|-top|-right|-bottom|-left)?\s*:\s*([^;]+)", re.I)
 
-        first.setFocus()
-        QApplication.processEvents()
-        after = (first.geometry(), second.geometry())
+        fat = []
+        for selector, body in rule.findall(qss):
+            selector = " ".join(selector.split())
+            if selector in exempt:
+                continue
+            for decl in width.findall(body):
+                px = re.search(r"(\d+)\s*px", decl)
+                if px and int(px.group(1)) > 1:
+                    fat.append((selector, decl.strip()))
 
-        host.hide()
-        assert before == after, (
-            "focusing a button moved it or its neighbour — the ring must not "
-            f"reflow the page: {before} -> {after}"
+        assert not fat, (
+            "these :focus rules declare a ring wider than the 1px policy, which "
+            "displaces the control's own contents rather than outlining it "
+            f"(DEC-251): {fat}"
         )
 
     def test_checkbox_is_styled_only_in_the_focused_state(self):

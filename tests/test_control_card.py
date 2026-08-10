@@ -432,3 +432,51 @@ class TestControlCardCompact:
         assert not c._details.isHidden()
         assert c.property("selected") is True
         assert not c._link_nub.isHidden()
+
+
+class TestCurveLabelElision:
+    """DEC-258: the curve line must not widen its card.
+
+    The label was a plain `QLabel`, whose `minimumSizeHint` refuses to shrink
+    below the full text — so one profile with a long curve name stretched one
+    tile in an otherwise uniform grid, and the fixed-width card clipped it. The
+    swap to `ElidedLabel` had no test: every existing card test uses short names
+    like "Balanced", which fit either way.
+    """
+
+    def test_a_long_curve_name_does_not_force_the_card_wider(self, qtbot, curves):
+        from control_ofc.ui.components.labels import ElidedLabel
+
+        long_name = "Aggressive Cooling For Sustained All-Core Workloads"
+        curves = [*curves, CurveConfig(id="c3", name=long_name, type=CurveType.GRAPH)]
+        ctrl = LogicalControl(
+            id="wide_ctrl", name="Test Role", mode=ControlMode.CURVE, curve_id="c3"
+        )
+        card = ControlCard(ctrl, curves)
+        qtbot.addWidget(card)
+
+        label = card._curve_label
+        assert isinstance(label, ElidedLabel), (
+            "a plain QLabel refuses to shrink below its full text, so a long "
+            "curve name widens the card it sits in"
+        )
+        assert label.minimumSizeHint().width() < label.sizeHint().width(), (
+            "the label must be free to shrink below its natural width, or elision cannot happen"
+        )
+
+    def test_the_full_curve_name_is_still_stored_verbatim(self, qtbot, curves):
+        """Elision is a paint-time effect (DEC-231): `text()` must not be rewritten,
+        because the card's XSS guard asserts the label holds exactly what it was
+        handed."""
+        long_name = "Aggressive Cooling For Sustained All-Core Workloads"
+        curves = [*curves, CurveConfig(id="c3", name=long_name, type=CurveType.GRAPH)]
+        ctrl = LogicalControl(
+            id="wide_ctrl", name="Test Role", mode=ControlMode.CURVE, curve_id="c3"
+        )
+        card = ControlCard(ctrl, curves)
+        qtbot.addWidget(card)
+        card.resize(120, card.height())
+        card.show()
+
+        assert long_name in card._curve_label.text()
+        assert "…" not in card._curve_label.text()

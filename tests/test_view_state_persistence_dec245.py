@@ -517,6 +517,37 @@ class TestTriggerWiring:
             page._range_write_timer.timeout.emit()
             assert spy.call_count == 1
 
+    def test_closing_the_dashboard_flushes_a_pending_chart_range(
+        self, qtbot, app_state, settings_service
+    ):
+        """The fifth instance of this class, and it shipped without a test.
+
+        `cleanup()` used to merely *stop* the 400 ms range debounce, so changing
+        the chart range and closing the window inside that window discarded the
+        change — the same shape as the logs-page search above. The fix flushes
+        instead of stopping; this pins it, because deleting the flush leaves the
+        stop behind and every other dashboard test still passes.
+        """
+        from control_ofc.services.history_store import HistoryStore
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
+
+        page = DashboardPage(
+            state=app_state, history=HistoryStore(), settings_service=settings_service
+        )
+        qtbot.addWidget(page)
+
+        combo = page._chart._range_combo
+        target = 1 if combo.currentIndex() != 1 else 2
+        combo.setCurrentIndex(target)
+        assert page._range_write_timer.isActive(), "the write must be debounced, not immediate"
+
+        page.cleanup()
+
+        assert settings_service.settings.chart_default_range_index == target, (
+            "closing within the debounce window dropped the chart range the user "
+            "picked — stopping a timer whose payload has not run is data loss"
+        )
+
     def test_reset_layout_cancels_a_pending_drag_write(self, qtbot, settings_service):
         """Reset raced its own debounce: a drag in the last 400 ms left a pending
         flush that fired straight after and wrote all nine entries back, so
