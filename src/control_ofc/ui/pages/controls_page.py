@@ -339,6 +339,12 @@ class ControlsPage(QWidget):
         # horizontal scrollbar and a clipped right edge at the default window size.
         pane_min = card_pane_min_width(self._base_font_pt(), self._card_size_tier())
         pane1.setMinimumWidth(pane_min)
+        # Held so `set_theme` can re-derive the minimum. The metric depends on
+        # the base font size and the density tier, both of which the Theme page
+        # changes live — so computing it once at construction pins the panes to
+        # whatever was in effect at startup while the cards inside them keep
+        # growing, which is the DEC-260 overflow all over again.
+        self._card_panes = [pane1]
         p1_layout = QVBoxLayout(pane1)
         p1_layout.setContentsMargins(0, 0, 0, 0)
         p1_layout.setSpacing(6)
@@ -394,6 +400,7 @@ class ControlsPage(QWidget):
         # Pane 2: Link Logic (curve cards)
         pane2 = QWidget()
         pane2.setMinimumWidth(pane_min)
+        self._card_panes.append(pane2)
         p2_layout = QVBoxLayout(pane2)
         p2_layout.setContentsMargins(0, 0, 0, 0)
         p2_layout.setSpacing(6)
@@ -1744,6 +1751,15 @@ class ControlsPage(QWidget):
         for card in self._curve_cards.values():
             card.set_theme(tokens)
             card.apply_card_size(base_pt, tier)
+
+        # The panes must track the cards. Raising the live base font from 10pt
+        # to 16pt grows a card from 299px to 437px; leaving the panes at the
+        # 325px minimum derived at startup puts the flow container's minimum
+        # past the viewport, and Qt answers with exactly the permanent
+        # horizontal scrollbar and clipped resize grip DEC-260 removed.
+        pane_min = card_pane_min_width(base_pt, tier)
+        for pane in self._card_panes:
+            pane.setMinimumWidth(pane_min)
 
     def _on_capabilities_updated(self, caps) -> None:
         # DEC-157/233: surface the Configure AIO entry (now a "Set up ▾" menu

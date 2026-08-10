@@ -119,7 +119,7 @@ class TestSubsystemHealth:
         status = DaemonStatus(
             overall_status="degraded",
             subsystems=[
-                SubsystemStatus(name="engine", status="error", reason="no tick for 31s"),
+                SubsystemStatus(name="engine", status="crit", reason="no tick for 31s"),
             ],
         )
         app_state.set_status(status)
@@ -129,9 +129,45 @@ class TestSubsystemHealth:
             "a stalled sole-PWM-writer must be visible on the default page"
         )
         text = dash._engine_banner._message_label.text()
-        assert "error" in text
+        assert "stopped" in text
         assert "no tick for 31s" in text
         assert "105" in text, "the user must be told thermal protection is gone too"
+
+    def test_a_slow_engine_is_not_reported_as_a_dead_one(self, qtbot, window, app_state):
+        """Release review round 2, 2026-08-10 — a P1 in the round-1 fix.
+
+        The banner branched only on `== "ok"` and sent every other wire value
+        down the critical path. The daemon's values are ok|warn|crit, and it
+        added `warn` in DEC-259 for exactly this reason: reporting a slow tick
+        as a stopped engine is, in the daemon's own words, "exactly inverted".
+
+        The canonical slow tick is the 105 C force_all walking ten OpenFan
+        channels at up to a second each — so the critical wording claimed
+        thermal protection was off, and told the user to restart the sole PWM
+        writer, at the moment it was saving their hardware.
+        """
+        status = DaemonStatus(
+            overall_status="degraded",
+            subsystems=[
+                SubsystemStatus(
+                    name="engine",
+                    status="warn",
+                    reason="tick still running - a slow write is holding it up",
+                ),
+            ],
+        )
+        app_state.set_status(status)
+
+        dash = window.dashboard_page
+        assert not dash._engine_banner.isHidden(), "a slow engine is still worth showing"
+        text = dash._engine_banner._message_label.text()
+        assert "stopped" not in text
+        assert "not driving your fans" not in text
+        assert "Restart" not in text, (
+            "telling the user to restart the sole PWM writer mid-emergency is the "
+            "worst possible advice"
+        )
+        assert "thermal protection is active" in text
 
     def test_a_healthy_engine_stays_out_of_the_way(self, qtbot, window, app_state):
         """The banner is a warning surface; a permanent "engine: ok" is noise."""

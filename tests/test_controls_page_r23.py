@@ -99,3 +99,58 @@ class TestCurveReorder:
 
         assert len(profile.curves) == 1
         assert profile.curves[0].name == "Only"
+
+
+class TestPaneMinimumTracksTheCardMetric:
+    """Release review round 2, 2026-08-10 — a P2 in the round-1 DEC-260 fix.
+
+    `pane_min` was derived from the card metric (correct) but computed once in
+    `_build_ui` and never again. `set_theme` re-derives every card's width from
+    the new base font and density tier, so raising the live base font grew the
+    cards while the panes stayed pinned to the startup value — putting the flow
+    container's minimum past the viewport and restoring exactly the permanent
+    horizontal scrollbar and clipped resize grip DEC-260 removed.
+    """
+
+    def _tokens(self, base_pt: int):
+        from control_ofc.ui.theme import default_dark_theme
+
+        t = default_dark_theme()
+        t.base_font_size_pt = base_pt
+        return t
+
+    def test_raising_the_base_font_widens_the_panes(self, qtbot, app_state, profile_service):
+        from control_ofc.ui.widgets.card_metrics import card_pane_min_width
+
+        page = ControlsPage(state=app_state, profile_service=profile_service)
+        qtbot.addWidget(page)
+        before = [p.minimumWidth() for p in page._card_panes]
+
+        page.set_theme(self._tokens(16))
+
+        expected = card_pane_min_width(16, page._card_size_tier())
+        after = [p.minimumWidth() for p in page._card_panes]
+        assert after == [expected] * len(after), (
+            f"panes stayed at {before} while cards re-derived to a 16pt width — "
+            "the flow container no longer fits, which is the DEC-260 overflow"
+        )
+        assert all(a > b for a, b in zip(after, before, strict=True)), (
+            "16pt must be wider than the default"
+        )
+
+    def test_every_pane_holds_at_least_one_card(self, qtbot, app_state, profile_service):
+        """The property that actually matters, across the whole live font range."""
+        from control_ofc.ui.widgets.card_metrics import card_dimensions
+
+        page = ControlsPage(state=app_state, profile_service=profile_service)
+        qtbot.addWidget(page)
+        tier = page._card_size_tier()
+
+        for pt in (7, 10, 13, 16):
+            page.set_theme(self._tokens(pt))
+            card_w = card_dimensions(pt, tier)[0]
+            for pane in page._card_panes:
+                assert pane.minimumWidth() >= card_w, (
+                    f"at {pt}pt a card is {card_w}px but its pane bottoms out at "
+                    f"{pane.minimumWidth()}px — one card cannot fit"
+                )

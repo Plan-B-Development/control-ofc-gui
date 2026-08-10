@@ -757,17 +757,34 @@ class DashboardPage(QWidget):
         # and owns the 105 C emergency, so its death is the most consequential
         # thing this page can report — and the daemon reports it ONLY here, as a
         # subsystem entry. Older daemons omit it; absence is not a failure.
+        # Wire values are ok | warn | crit (daemon `HealthStatus::Display`). The
+        # three must NOT collapse into one message, and that is DEC-259's whole
+        # point: the daemon added `warn` precisely because reporting a slow tick
+        # as a dead engine is, in its own words, "exactly inverted". The
+        # canonical slow tick is the 105 \u00b0C force_all walking ten OpenFan
+        # channels at up to a second each, so the critical wording would claim
+        # thermal protection was off, and tell the user to restart the sole PWM
+        # writer, at the exact moment it was saving their hardware.
         engine = next((s for s in status.subsystems if s.name == "engine"), None)
         engine_status = engine.status if engine else "ok"
         if engine_status != self._last_engine_status:
             self._last_engine_status = engine_status
             self._annotate(f"Engine: {engine_status}")
+            reason = f" ({engine.reason})" if engine and engine.reason else ""
             if engine_status == "ok":
                 self._engine_banner.hide_banner()
+            elif engine_status == "warn":
+                # Running, just late. Say so, and prescribe nothing.
+                self._engine_banner.show_warning(
+                    f"Fan control engine is running slowly{reason}. Fans are still "
+                    "being driven and thermal protection is active \u2014 no action "
+                    "needed unless this persists."
+                )
             else:
-                reason = f" ({engine.reason})" if engine and engine.reason else ""
+                # crit \u2014 and anything a future daemon adds, because silence
+                # about a dead engine is the worse failure.
                 self._engine_banner.show_error(
-                    f"Fan control engine {engine_status}{reason} — the daemon is not "
+                    f"Fan control engine has stopped{reason} \u2014 the daemon is not "
                     "driving your fans, and its 105 \u00b0C emergency protection is not "
                     "running. Restart control-ofc-daemon."
                 )
