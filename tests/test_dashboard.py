@@ -169,6 +169,82 @@ class TestSubsystemHealth:
         )
         assert "thermal protection is active" in text
 
+    def test_an_older_daemon_that_omits_engine_shows_nothing(self, qtbot, window, app_state):
+        """Absence is not a failure — daemons before 2.17.0 have no `engine` entry."""
+        status = DaemonStatus(
+            overall_status="ok",
+            subsystems=[SubsystemStatus(name="openfan", status="ok", reason="")],
+        )
+        app_state.set_status(status)
+
+        assert window.dashboard_page._engine_banner.isHidden()
+
+    def test_the_banner_clears_when_engine_recovers_or_disappears(
+        self, qtbot, window, app_state
+    ):
+        """The transition latch must not strand a shown banner.
+
+        `_last_engine_status` suppresses repeat renders, so a banner raised on
+        `crit` is only ever cleared by a *transition*. Two ways out matter: the
+        engine recovers, and the entry vanishes entirely (a daemon downgrade, or
+        any payload that stops carrying it). Both must reach `hide_banner`, or
+        the user is told their fans are dead forever.
+        """
+        dash = window.dashboard_page
+
+        app_state.set_status(
+            DaemonStatus(
+                overall_status="degraded",
+                subsystems=[SubsystemStatus(name="engine", status="crit", reason="not ticking")],
+            )
+        )
+        assert not dash._engine_banner.isHidden()
+
+        # Recovery.
+        app_state.set_status(
+            DaemonStatus(
+                overall_status="ok",
+                subsystems=[SubsystemStatus(name="engine", status="ok", reason="")],
+            )
+        )
+        assert dash._engine_banner.isHidden()
+
+        # Raise it again, then drop the entry from the payload entirely.
+        app_state.set_status(
+            DaemonStatus(
+                overall_status="degraded",
+                subsystems=[SubsystemStatus(name="engine", status="crit", reason="not ticking")],
+            )
+        )
+        assert not dash._engine_banner.isHidden()
+        app_state.set_status(DaemonStatus(overall_status="ok", subsystems=[]))
+        assert dash._engine_banner.isHidden(), (
+            "the entry vanishing must clear the banner, not strand it"
+        )
+
+    def test_a_warn_to_crit_escalation_swaps_the_wording(self, qtbot, window, app_state):
+        """Both are non-ok, so a latch keyed on "did it change" is not enough —
+        it must re-render when the *severity* changes."""
+        dash = window.dashboard_page
+
+        app_state.set_status(
+            DaemonStatus(
+                overall_status="degraded",
+                subsystems=[SubsystemStatus(name="engine", status="warn", reason="slow tick")],
+            )
+        )
+        assert "stopped" not in dash._engine_banner._message_label.text()
+
+        app_state.set_status(
+            DaemonStatus(
+                overall_status="degraded",
+                subsystems=[SubsystemStatus(name="engine", status="crit", reason="not ticking")],
+            )
+        )
+        assert "stopped" in dash._engine_banner._message_label.text(), (
+            "an escalation from slow to stopped must upgrade the message"
+        )
+
     def test_a_healthy_engine_stays_out_of_the_way(self, qtbot, window, app_state):
         """The banner is a warning surface; a permanent "engine: ok" is noise."""
         status = DaemonStatus(
