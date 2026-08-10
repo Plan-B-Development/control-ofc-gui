@@ -2,7 +2,21 @@
 
 ## [Unreleased]
 
+## [2.41.0] — 2026-08-10
+
 ### Added
+- **A dead fan-control engine is now visible on the Dashboard.** The daemon
+  reports engine liveness as a subsystem entry, and that is the only
+  client-visible signal that the sole PWM writer — and with it the 105 °C
+  emergency protection — has stopped. Nothing rendered it. The Dashboard now
+  carries a banner beside the thermal one, and it distinguishes the daemon's
+  three states rather than collapsing them: a *slow* tick says fans are still
+  being driven and prescribes nothing, a *stopped* engine says so plainly and
+  tells you to restart the daemon. The distinction matters because the canonical
+  slow tick is the 105 °C emergency itself walking every OpenFan channel — so a
+  single critical message would have claimed thermal protection was off at the
+  exact moment it was saving your hardware. Older daemons omit the field
+  entirely; absence is not a failure and shows nothing.
 - **A `NOTICE.md`**, mirroring the daemon's: the two dependencies whose licences
   are not permissive (PySide6's LGPL-3.0, certifi's MPL-2.0) with the reasoning
   for why neither changes this project's own MIT licence. Neither is a new
@@ -17,6 +31,31 @@
   for nothing. DEC-257.
 
 ### Fixed
+- **A source checkout is no longer told its GUI is too old.** The new
+  `min_supported_gui` comparison treated an unparseable GUI version as version
+  zero while treating an unparseable daemon floor as no constraint at all. Since
+  the version string falls back to the literal `dev` whenever the package is not
+  installed — the documented `PYTHONPATH=src` workflow — every source run raised a
+  permanent, non-dismissible upgrade banner against a perfectly current daemon.
+  Both unknowns are now treated the same way: the comparison is not meaningful,
+  so no violation is claimed.
+- **A resized card can be shrunk back to its neighbours' width.** The user-resize
+  floor was a hardcoded constant documenting an invariant it no longer satisfied:
+  once the card width curve was re-anchored, the smallest size the app ships by
+  default fell *below* the floor, so a card that had been resized could never be
+  returned to it. The floor is now derived from the actual card widths, and
+  aligned to the drag lattice — an off-lattice floor is silently rounded up and
+  is not the floor it claims to be.
+- **A curve card's "used by" line elides instead of clipping mid-word.** It was a
+  plain label on a fixed-width card, so two or three role names were cut without
+  an ellipsis — it shipped as "Used by: Case Intake, Case Exha". Same defect and
+  same fix as the control card's curve line; the sibling widget was fixed and
+  this one was missed. The full list remains available as the tooltip.
+- **The Controls panes keep fitting their cards after a live theme change.** Pane
+  minimums were derived from the card metric but computed once at construction,
+  while the cards inside them re-derive on every theme change. Raising the live
+  base font grew the cards and left the panes behind, restoring the same
+  horizontal scrollbar and clipped resize grip the metric fix had just removed.
 - **The Controls page fits its cards again at the default window size.** Widening
   the card metric to stop text clipping (below) made the cards wider than the
   panes that hold them, so at the shipped 1400×850 window both Controls panes grew

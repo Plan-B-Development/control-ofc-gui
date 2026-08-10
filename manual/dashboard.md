@@ -23,7 +23,7 @@ The title row carries a **profile selector + Apply** (see
 [Profile Selector](#profile-selector)) so you can switch profiles without leaving the
 page. The sidebar has one too — either works.
 
-Below it, three banners appear only when they apply:
+Below it, four banners appear only when they apply:
 
 - **Motherboard fan headers** are missing or all read-only
 - **API version mismatch** — the connected daemon's API version differs from the one
@@ -32,6 +32,14 @@ Below it, three banners appear only when they apply:
   misbehave
 - **Thermal protection active** — the daemon has overridden fan control to protect the
   hardware, and will hand control back to your profile once temperatures recover
+- **Fan control engine** — how the daemon's control loop itself is doing. It is the
+  only thing writing fan speeds, and it owns the 105 °C emergency, so this is the
+  banner worth reading first. *Running slowly* means it is late but still driving
+  your fans, and needs no action unless it persists — a thermal emergency legitimately
+  slows a tick down, because the daemon writes to every fan in turn. *Stopped* means
+  nothing is controlling your fans and the emergency protection is not running:
+  restart `control-ofc-daemon`. Daemons older than v2.17.0 do not report this, and
+  show no banner
 
 ## Fan Cards
 

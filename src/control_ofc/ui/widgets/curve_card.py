@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.profile_service import CurveConfig, CurveType
+from control_ofc.ui.components.labels import ElidedLabel
 from control_ofc.ui.qt_util import repolish
 from control_ofc.ui.theme import active_theme, default_dark_theme
 from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE
@@ -240,7 +241,14 @@ class CurveCard(ResizableGridCard):
         # Row 4: Used by + status
         footer = QHBoxLayout()
         footer.setSpacing(4)
-        self._used_by_label = QLabel("Not assigned")
+        # Elided, not a plain QLabel: the card is a fixed width, so two or three
+        # role names overflow and a QLabel simply clips mid-word with no ellipsis
+        # — visible in the shipped Controls screenshot as "Case Exha". Same
+        # defect and same fix as the control card's curve line (DEC-258). The
+        # full list stays available as the tooltip set below, and DEC-231 holds:
+        # ElidedLabel renders plain text unconditionally, so a profile-authored
+        # role name cannot become markup.
+        self._used_by_label = ElidedLabel("Not assigned")
         self._used_by_label.setProperty("class", "CardMeta")
         self._used_by_label.setStyleSheet("background: transparent;")
         self._used_by_label.setObjectName(f"CurveCard_Label_usedBy_{curve.id}")

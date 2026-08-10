@@ -276,3 +276,45 @@ def test_curve_card_grip_resize_carries_curve_id(qtbot, graph_curve):
     seen.clear()
     card._grip.resize_finished.emit(360, 320)
     assert seen == [graph_curve.id]
+
+
+class TestUsedByElision:
+    """DEC-258, extended. Caught by looking at the release screenshot.
+
+    The card is a fixed width, so a plain `QLabel` holding two or three role
+    names clips mid-word with no ellipsis — it shipped as "Used by: Case Intake,
+    Case Exha". Same defect and same fix as the control card's curve line; the
+    sibling widget was fixed and this one was not.
+    """
+
+    def test_the_used_by_label_can_shrink(self, qtbot):
+        from control_ofc.services.profile_service import CurveConfig, CurveType
+        from control_ofc.ui.components.labels import ElidedLabel
+        from control_ofc.ui.widgets.curve_card import CurveCard
+
+        card = CurveCard(CurveConfig(id="c1", name="Case Fan Curve", type=CurveType.GRAPH))
+        qtbot.addWidget(card)
+        card.set_used_by(["Case Intake", "Case Exhaust", "Front Radiator"])
+
+        label = card._used_by_label
+        assert isinstance(label, ElidedLabel), (
+            "a plain QLabel refuses to shrink below its full text, so it clips "
+            "mid-word instead of eliding"
+        )
+        assert label.minimumSizeHint().width() < label.sizeHint().width()
+
+    def test_the_full_role_list_survives_as_text_and_tooltip(self, qtbot):
+        """Elision is paint-time (DEC-231): the stored string stays verbatim, and
+        the tooltip still carries every name, not just the first three."""
+        from control_ofc.services.profile_service import CurveConfig, CurveType
+        from control_ofc.ui.widgets.curve_card import CurveCard
+
+        card = CurveCard(CurveConfig(id="c1", name="Case Fan Curve", type=CurveType.GRAPH))
+        qtbot.addWidget(card)
+        roles = ["Case Intake", "Case Exhaust", "Front Radiator", "Pump / AIO"]
+        card.set_used_by(roles)
+
+        assert "Case Exhaust" in card._used_by_label.text()
+        assert "…" not in card._used_by_label.text()
+        for r in roles:
+            assert r in card._used_by_label.toolTip()

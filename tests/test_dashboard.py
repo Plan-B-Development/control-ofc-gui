@@ -179,9 +179,7 @@ class TestSubsystemHealth:
 
         assert window.dashboard_page._engine_banner.isHidden()
 
-    def test_the_banner_clears_when_engine_recovers_or_disappears(
-        self, qtbot, window, app_state
-    ):
+    def test_the_banner_clears_when_engine_recovers_or_disappears(self, qtbot, window, app_state):
         """The transition latch must not strand a shown banner.
 
         `_last_engine_status` suppresses repeat renders, so a banner raised on
