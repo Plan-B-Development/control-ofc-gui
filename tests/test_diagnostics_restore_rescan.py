@@ -139,3 +139,99 @@ def test_demo_reset_gpu_fan_reports_success():
 def test_demo_hwmon_rescan_returns_demo_headers():
     demo = DemoService()
     assert [h.id for h in demo.hwmon_rescan()] == [h.id for h in demo.hwmon_headers()]
+
+
+# ── OpenFan rescan (DEC-265) ─────────────────────────────────────────
+
+
+def test_openfan_rescan_posts_and_returns_the_payload():
+    client = DaemonClient.__new__(DaemonClient)
+    client._post = MagicMock(
+        return_value={"adopted": True, "already_connected": False, "port": "/dev/ttyACM0"}
+    )
+
+    result = client.openfan_rescan()
+
+    client._post.assert_called_once_with("/fans/openfan/rescan")
+    assert result["adopted"] is True
+    assert result["port"] == "/dev/ttyACM0"
+
+
+def test_do_rescan_asks_the_daemon_to_look_for_an_openfan_controller():
+    """DEC-265: the hwmon rescan carries the OpenFan leg.
+
+    The gap it closes is not cosmetic — a controller adopted only at boot means
+    the 105 °C emergency has no path to those fans for the rest of the daemon's
+    life. If this call is dropped, the route exists and nothing ever calls it.
+    """
+    worker = _HwDiagWorker("/tmp/x.sock")
+    caps = MagicMock()
+    caps.control.openfan_rescan = True
+    worker._client = MagicMock(
+        capabilities=MagicMock(return_value=caps),
+        openfan_rescan=MagicMock(return_value={"adopted": True, "port": "/dev/ttyACM0"}),
+        hwmon_rescan=MagicMock(return_value=[]),
+    )
+
+    worker.do_rescan()
+
+    worker._client.openfan_rescan.assert_called_once_with()
+
+
+def test_do_rescan_skips_the_openfan_leg_on_a_daemon_without_the_route():
+    """Capability-gated, so an older daemon is never asked and never 404s."""
+    worker = _HwDiagWorker("/tmp/x.sock")
+    caps = MagicMock()
+    caps.control.openfan_rescan = False
+    worker._client = MagicMock(
+        capabilities=MagicMock(return_value=caps),
+        openfan_rescan=MagicMock(),
+        hwmon_rescan=MagicMock(return_value=[]),
+    )
+
+    worker.do_rescan()
+
+    worker._client.openfan_rescan.assert_not_called()
+
+
+def test_a_failing_openfan_leg_does_not_fail_the_hwmon_rescan():
+    """Finding no controller is the NORMAL outcome on a machine without one.
+
+    Letting that propagate would report the hwmon rescan as broken on every
+    machine that has no OpenFan hardware.
+    """
+    from control_ofc.api.errors import DaemonError
+
+    worker = _HwDiagWorker("/tmp/x.sock")
+    caps = MagicMock()
+    caps.control.openfan_rescan = True
+    headers = [MagicMock()]
+    worker._client = MagicMock(
+        capabilities=MagicMock(return_value=caps),
+        openfan_rescan=MagicMock(
+            side_effect=DaemonError(
+                status=503, code="hardware_unavailable", message="no controller"
+            )
+        ),
+        hwmon_rescan=MagicMock(return_value=headers),
+    )
+    got = []
+    errs = []
+    worker.rescan_ok.connect(got.append)
+    worker.rescan_error.connect(lambda c, m: errs.append((c, m)))
+
+    worker.do_rescan()
+
+    assert got == [headers], "the hwmon rescan must still succeed"
+    assert errs == []
+
+
+def test_capabilities_default_openfan_rescan_false_on_an_older_daemon():
+    """AIP-180: a daemon that omits the field must read as 'no such route'."""
+    from control_ofc.api.models import parse_capabilities
+
+    caps = parse_capabilities({"control": {"autonomous_control": True}})
+    assert caps.control.openfan_rescan is False
+
+    caps = parse_capabilities({"control": {"openfan_rescan": True}})
+    assert caps.control.openfan_rescan is True

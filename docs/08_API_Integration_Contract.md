@@ -150,6 +150,11 @@ GUI treats every flag as false / old behaviour (AIP-180):
   value means the daemon declares no floor and is treated as satisfied — not as
   version zero.
 
+- `openfan_rescan` (bool, daemon ≥ 2.18.0) — the daemon exposes
+  `POST /fans/openfan/rescan` (DEC-265). Omitted by older daemons, so a client
+  defaults it to `false` (AIP-180) and skips the call rather than issuing one
+  that can only `404`.
+
 ### Per-call timeouts (DEC-098 / DEC-099)
 
 The GUI's `DaemonClient` accepts a `timeout=` kwarg on every method that
@@ -1012,8 +1017,39 @@ Old daemons predating the route answer `404`, which the GUI treats as
   - Daemon side effect: flags the sensor polling loop to rebuild its cached
     descriptor set on the next tick (DEC-133), so newly loaded sensor chips
     appear through normal polling within ~2 s. Does **not** replace the
-    running PWM controller — new fan-control hardware still requires a
-    daemon restart; the GUI repeats this caveat in the result line.
+    running PWM controller — new hwmon fan-control hardware still requires a
+    daemon restart; the GUI repeats this caveat in the result line. (The
+    OpenFan controller is the exception, and has its own route below.)
+
+### OpenFan rescan (DEC-265, daemon ≥ 2.18.0)
+- `POST /fans/openfan/rescan` — adopt an OpenFanController without a restart
+  - Response `200`: `{"adopted": bool, "already_connected": bool, "port": str,
+    "message": str}`. `port` is present only when a controller was newly
+    adopted. Rescanning while one is already connected is a **no-op success**
+    (`adopted:false, already_connected:true`), not an error — it probes nothing
+    and leaves the existing controller in place.
+  - `503 hardware_unavailable` — no candidate port both opened *and* identified
+    as an OpenFanController. This is the normal answer on a machine with no
+    OpenFan hardware.
+  - `409 validation_error` — a rescan is already in progress (single-flight;
+    two racing probes would open the same tty and the loser would install a
+    controller over the winner's).
+  - `404 not_found` on any daemon before 2.18.0. **Gate on
+    `capabilities.control.openfan_rescan`.**
+  - **Why this exists.** The daemon adopts its controller during startup only.
+    A device that enumerated a moment too late, or that failed the DEC-250
+    identity handshake once, previously left the daemon with no OpenFan backend
+    for the whole process lifetime — and since the profile engine's 105 °C
+    `force_all` reaches OpenFan fans through that same backend, the thermal
+    emergency silently lost its OpenFan leg too. A failed boot connect only
+    logs a warning, so `Restart=on-failure` never fired and nothing recovered
+    it. Adoption uses the same identity-verified path as boot, so a port that
+    opens but is not an OpenFanController is still refused.
+  - Called by the GUI as part of the System State page's *Rescan Hardware*
+    action, not as a separate button: that action is what a user reaches for
+    when hardware is missing, and requiring them to know *which kind* of
+    hardware went missing is the worse UX. The leg is best-effort — a `503`
+    (no controller found) never fails the hwmon rescan.
 
 ## Error model
 All errors use a standard nested envelope:

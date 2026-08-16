@@ -193,6 +193,12 @@ class ControlCapability:
     fan_identify: bool = False
     autonomous_control: bool = False
     min_supported_gui: str = ""
+    # DEC-265: daemon exposes POST /fans/openfan/rescan, which adopts an
+    # OpenFanController that appeared after the daemon booted (or that failed its
+    # identity handshake once at startup) without a restart. Older daemons omit
+    # the field, so it defaults False and the action stays hidden rather than
+    # offering a button that can only 404.
+    openfan_rescan: bool = False
 
 
 @dataclass

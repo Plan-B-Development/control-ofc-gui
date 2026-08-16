@@ -216,11 +216,22 @@ class _HwDiagWorker(_SocketWorker):
 
     @Slot()
     def do_rescan(self) -> None:
-        """Re-enumerate hwmon devices via POST /hwmon/rescan (DEC-147)."""
+        """Re-enumerate hwmon devices via POST /hwmon/rescan (DEC-147).
+
+        DEC-265: also asks the daemon to look for an OpenFanController, when it
+        advertises that route. "Rescan Hardware" is the action a user reaches for
+        when a device is missing, and an OpenFan controller that enumerated after
+        the daemon booted is exactly that case — offering a second, separate
+        button for it would mean knowing in advance which kind of hardware went
+        missing. The OpenFan leg is best-effort: it never fails the hwmon rescan,
+        which is the part with a UI contract.
+        """
         from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 
         try:
-            headers = self._ensure_client().hwmon_rescan()
+            client = self._ensure_client()
+            self._try_openfan_rescan(client)
+            headers = client.hwmon_rescan()
             self.rescan_ok.emit(headers)
         except DaemonTimeout:
             self.rescan_error.emit("unavailable", "Hardware rescan timed out")
@@ -235,6 +246,28 @@ class _HwDiagWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.rescan_error.emit("unavailable", "Connection lost during hardware rescan")
+
+    def _try_openfan_rescan(self, client) -> None:
+        """Best-effort OpenFan adoption alongside the hwmon rescan (DEC-265).
+
+        Capability-gated, so an older daemon is never asked and never 404s. Every
+        failure is swallowed deliberately: this is an opportunistic extra, and a
+        serial probe that finds nothing is the *normal* outcome on a machine with
+        no OpenFan hardware — surfacing that as a rescan failure would report the
+        hwmon rescan as broken on every such machine.
+        """
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            caps = client.capabilities()
+            if not caps.control.openfan_rescan:
+                return
+            result = client.openfan_rescan()
+            if result.get("adopted"):
+                log.info("OpenFanController adopted via rescan: %s", result.get("port"))
+        except (DaemonError, DaemonTimeout, DaemonUnavailable, ConnectionError, OSError) as e:
+            # Not fatal to the rescan — see the docstring.
+            log.debug("OpenFan rescan leg did not adopt a controller: %s", e)
 
 
 class _HardwareReadinessWorker(_SocketWorker):

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+- **Rescan Hardware now also looks for an OpenFan controller.** The daemon only
+  went looking for one while it was starting up, so a controller plugged in
+  afterwards — or one that was simply slow to announce itself on a particular
+  boot — stayed invisible until the daemon was restarted, with no indication that
+  anything was wrong. That is worse than it sounds: the 105 °C emergency reaches
+  OpenFan-attached fans through the same connection, so it quietly had no way to
+  drive them either. Rescan Hardware now asks the daemon to look again, rather
+  than being a separate button you would have to know to press — which would mean
+  knowing in advance *which kind* of hardware had gone missing. Finding nothing is
+  the normal outcome on a machine without OpenFan hardware and is not reported as
+  a failure. Needs daemon 2.18.0; on older ones the action behaves exactly as
+  before. DEC-265.
+
 ### Fixed
 - **Three keyboard focus rings were drawn but not visible.** A focus indicator
   had been required to clear 3:1 against its surroundings since the accessibility

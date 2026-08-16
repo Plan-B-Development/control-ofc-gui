@@ -259,6 +259,26 @@ class DaemonClient:
         data = self._post("/hwmon/rescan")
         return parse_hwmon_headers(data)
 
+    def openfan_rescan(self) -> dict:
+        """POST /fans/openfan/rescan — adopt an OpenFanController found now.
+
+        The daemon adopts its controller during startup. A device that
+        enumerated a moment too late, or that failed its identity handshake
+        once, therefore left the daemon with no OpenFan backend for the rest of
+        the process — and, because the 105 °C thermal emergency reaches OpenFan
+        fans through that same backend, without its OpenFan leg either. This
+        recovers both without a daemon restart (DEC-265).
+
+        Returns the daemon's payload: ``adopted`` (bool), ``already_connected``
+        (bool), ``port`` (str, present only when newly adopted) and a
+        human-readable ``message``. Rescanning while connected is a no-op
+        success, not an error.
+
+        Gate on ``capabilities.control.openfan_rescan`` — an older daemon has no
+        such route and returns ``404 not_found``.
+        """
+        return self._post("/fans/openfan/rescan")
+
     def activate_profile(
         self,
         profile_path: str | None = None,
