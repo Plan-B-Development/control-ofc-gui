@@ -163,7 +163,14 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
         apply_theme(tokens)
         return tokens
 
-    def test_the_control_card_details_row_fits_every_density(self, qtbot, restore_app_theme):
+    # Well under the global 60s ini cap, so cost creep reddens here as an early
+    # warning rather than at the wire. The dominant cost is `apply_theme`, which
+    # scales with the number of live widgets in the application — a figure that
+    # grows as the suite grows — so this needs to fire before CI does.
+    @pytest.mark.timeout(40)
+    def test_the_control_card_details_row_fits_every_density(
+        self, qtbot, restore_app_theme, monkeypatch
+    ):
         """The measured regression, swept across the whole tier matrix.
 
         The details block clipped from 11pt in the default density and 9pt in
@@ -201,9 +208,31 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
         clipped: list[str] = []
         compact_deficits: list[int] = []
 
-        for tier in (CARD_SIZE_COMPACT, *must_fit):
-            for pt in range(7, 17):
-                self._apply(pt)
+        # Count REAL application-wide applies, not calls to the `_apply` helper —
+        # the timeout above is machine-dependent, this is not. `_apply` imports
+        # `apply_theme` at call time, so patching the module attribute sees every
+        # application regardless of which helper routed it.
+        from control_ofc.ui import theme as theme_mod
+
+        real_apply_theme = theme_mod.apply_theme
+        applies: list[int] = []
+
+        def _counting_apply_theme(tokens):
+            applies.append(tokens.base_font_size_pt)
+            return real_apply_theme(tokens)
+
+        monkeypatch.setattr(theme_mod, "apply_theme", _counting_apply_theme)
+
+        # Font size is the OUTER loop and the theme is applied once per size, not
+        # once per (tier, size) pair. `apply_theme` is application-wide — Qt
+        # re-polishes every live widget — so at suite scale (~12k widgets alive by
+        # the time this runs) one call costs ~1.5s. Nesting it inside the tier loop
+        # bought 30 applies where 10 cover the same matrix, and the resulting ~47s
+        # test blew the 60s pytest-timeout on every CI runner while passing here.
+        # Nothing in the tier loop mutates the theme, so this is a pure reordering.
+        for pt in range(7, 17):
+            self._apply(pt)
+            for tier in (CARD_SIZE_COMPACT, *must_fit):
                 curves = [CurveConfig(id="c1", name="Aggressive Ramp", type=CurveType.GRAPH)]
                 control = LogicalControl(
                     id="ctl",
@@ -242,6 +271,14 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
         assert max(compact_deficits, default=0) <= 60, (
             "compact's elision has grown beyond a trim — the curve name is being "
             f"cut back too far: worst deficit {max(compact_deficits, default=0)}px"
+        )
+        # One apply per font size, covering all three tiers. Moving `_apply` back
+        # inside the tier loop triples this and is what timed out CI at v2.41.0;
+        # asserting the count catches that on any machine, where the wall-clock
+        # guard above only catches it on a slow enough one.
+        assert applies == list(range(7, 17)), (
+            "the theme must be applied once per font size, outside the tier loop — "
+            f"got {len(applies)} applies: {applies}"
         )
 
     def test_no_fixed_size_caps_a_widget_below_its_hint(self, qtbot, restore_app_theme):
