@@ -64,6 +64,73 @@ permissions:
   contents: read
 
 jobs:
+  # DEC-263. v2.41.0 published with every CI test leg red: `build-test` below is
+  # a clean-room *package* build and version check, and nothing in this workflow
+  # had ever looked at ci.yml. The correctness gate and the publish gate were
+  # simply unrelated, so a red suite could not stop a Release.
+  #
+  # It cannot be a `needs:` — ci.yml triggers on branch pushes and this workflow
+  # on tags, so there is no run of ci.yml *in this workflow* to depend on. The
+  # tagged commit's CI run is the one from when that commit was pushed to main,
+  # so we ask the Checks API for it.
+  #
+  # Fails CLOSED. No run found for the SHA is not "nothing to worry about" — it
+  # is what tagging a commit that was never pushed to main looks like, which is
+  # precisely the case where nothing has been verified.
+  ci-green:
+    name: CI green on the tagged commit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      actions: read # read ci.yml's conclusion for this commit
+    steps:
+      - name: Require a successful CI run for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          # Generous: the tag is often pushed seconds after main, so CI is
+          # usually still running. Waiting is the normal path, not the sad one.
+          WAIT_SECONDS: '2700'
+          POLL_SECONDS: '30'
+        run: |
+          set -euo pipefail
+
+          deadline=$(( SECONDS + WAIT_SECONDS ))
+          while :; do
+            # Newest run last, so `.[-1]` survives a re-run of a previously red
+            # run (`gh run rerun` updates the run in place, but an explicit
+            # re-dispatch creates a second one).
+            run=$(gh api \
+              "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=100" \
+              --jq '[.workflow_runs[]] | sort_by(.created_at) | last // empty')
+
+            if [ -n "$run" ]; then
+              status=$(printf '%s' "$run" | jq -r '.status')
+              conclusion=$(printf '%s' "$run" | jq -r '.conclusion // ""')
+              url=$(printf '%s' "$run" | jq -r '.html_url')
+
+              if [ "$status" = 'completed' ]; then
+                if [ "$conclusion" = 'success' ]; then
+                  echo "CI is green for $SHA — $url"
+                  exit 0
+                fi
+                echo "::error::CI concluded '$conclusion' for the tagged commit $SHA. Refusing to publish a release from a commit whose test suite did not pass. See $url"
+                exit 1
+              fi
+              echo "CI is '$status' for $SHA; waiting ($(( deadline - SECONDS ))s left) — $url"
+            else
+              echo "no ci.yml run found for $SHA yet; waiting ($(( deadline - SECONDS ))s left)"
+            fi
+
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::No successful ci.yml run for the tagged commit $SHA within ${WAIT_SECONDS}s. If this commit was never pushed to main it has never been tested — push the branch, let CI pass, then re-tag."
+              exit 1
+            fi
+            sleep "$POLL_SECONDS"
+          done
+
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
@@ -73,7 +140,9 @@ jobs:
     # Gate on the clean-room build: the attached asset must be the artifact CI
     # actually verified, and an unbuildable PKGBUILD must not yield a Release.
     # This costs the Release the build's wall-clock, which is the right trade.
-    needs: build-test
+    # `ci-green` (DEC-263) is the correctness half of the same bargain: the build
+    # proves the package assembles, ci.yml proves the code in it works.
+    needs: [build-test, ci-green]
     permissions:
       contents: write # create the Release and upload its assets
       id-token: write # keyless Sigstore signing for the attestation

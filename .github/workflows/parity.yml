@@ -20,6 +20,16 @@ on:
     paths:
       - 'tests/fixtures/parity_vectors.json'
       - 'tests/fixtures/role_classification.json'
+  # DEC-263: the triggers above are path-filtered to the fixtures, so a change to
+  # THIS FILE never exercises it — the guard could be broken for months and look
+  # fine. Dispatch makes it provable on demand; set wait_seconds=0 to skip the
+  # catch-up window and compare the two mains as they stand right now.
+  workflow_dispatch:
+    inputs:
+      wait_seconds:
+        description: 'Seconds to wait for the peer repo to catch up (0 = compare immediately)'
+        required: false
+        default: '900'
 
 permissions:
   contents: read
@@ -34,11 +44,61 @@ jobs:
         with:
           repository: Plan-B-Development/control-ofc-daemon
           path: _daemon
-      - name: Compare oracle copies
+      - name: Compare oracle copies, waiting for the peer to catch up
+        env:
+          PEER: _daemon
+          PEER_PREFIX: daemon/tests/fixtures
+          OURS_PREFIX: tests/fixtures
+          WAIT_SECONDS: ${{ github.event.inputs.wait_seconds || '900' }}
+          POLL_SECONDS: '30'
         run: |
-          cmp tests/fixtures/parity_vectors.json \
-              _daemon/daemon/tests/fixtures/parity_vectors.json \
-            || { echo "::error::parity_vectors.json drifted between the GUI and daemon copies — they must be byte-identical (DEC-126). Update both in lockstep (daemon-first)."; exit 1; }
-          cmp tests/fixtures/role_classification.json \
-              _daemon/daemon/tests/fixtures/role_classification.json \
-            || { echo "::error::role_classification.json drifted between the GUI and daemon copies — they must be byte-identical (DEC-162). Update both in lockstep (daemon-first)."; exit 1; }
+          set -euo pipefail
+
+          # DEC-263: the peer is checked out at ITS main, which necessarily lags
+          # whenever a coordinated fixture change lands daemon-first — the very
+          # order the error message below mandates. At v2.17.0/v2.41.0 the daemon
+          # pushed 7 minutes ahead of the GUI and the daemon-side job failed on a
+          # pair of files that were already byte-identical. So the mismatch is
+          # only conclusive once the peer has had a chance to arrive: re-fetch and
+          # re-compare until the window closes, and only then call it drift.
+          # Success is immediate when the peer is already up to date; the wait is
+          # paid only on the path that used to be a false red.
+          FILES='parity_vectors.json role_classification.json'
+
+          dec_for() {
+            case "$1" in
+              parity_vectors.json) echo 'DEC-126' ;;
+              role_classification.json) echo 'DEC-162' ;;
+            esac
+          }
+
+          compare() {
+            bad=''
+            for f in $FILES; do
+              if ! cmp -s "$OURS_PREFIX/$f" "$PEER/$PEER_PREFIX/$f"; then
+                bad="$bad $f"
+              fi
+            done
+            [ -z "$bad" ]
+          }
+
+          deadline=$(( SECONDS + WAIT_SECONDS ))
+          attempt=0
+          while :; do
+            attempt=$(( attempt + 1 ))
+            if compare; then
+              echo "oracle copies are byte-identical (attempt $attempt)"
+              exit 0
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              for f in $bad; do
+                echo "::error::$f drifted between the GUI and daemon copies — they must be byte-identical ($(dec_for "$f")). Update both in lockstep (daemon-first)."
+              done
+              echo "Waited ${WAIT_SECONDS}s across $attempt attempts; the peer's main never matched."
+              exit 1
+            fi
+            echo "mismatch on:$bad — the peer may not have pushed yet; retrying in ${POLL_SECONDS}s ($(( deadline - SECONDS ))s of the window left)"
+            sleep "$POLL_SECONDS"
+            git -C "$PEER" fetch --depth=1 origin main
+            git -C "$PEER" checkout -q FETCH_HEAD
+          done

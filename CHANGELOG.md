@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Fixed
+- **A release can no longer be published from a commit whose tests failed.**
+  v2.41.0 shipped that way. The publish workflow gated on a clean-room package
+  build — proof that the package *assembles* — and had never looked at the test
+  suite at all, so the two gates were simply unrelated and a red suite could not
+  stop a Release. The tag pushes and the test run happen in different workflows,
+  so there is nothing to depend on directly; the publish job now asks the Checks
+  API for the tagged commit's own CI result and refuses to proceed unless it
+  passed. It fails closed: a commit with *no* CI run is not treated as innocent,
+  because that is exactly what tagging something never pushed to `main` looks
+  like. DEC-263.
+- **The cross-repo oracle check stops reporting drift that isn't there.** The
+  guard compares this repo's copy of the shared parity fixtures against the peer
+  repo's, but it read the peer's `main` at the instant it ran — and the rule it
+  enforces asks for coordinated changes to land daemon-first. So the daemon's
+  copy of the check failed on every coordinated change by construction, on files
+  that were already identical, purely because the GUI's push had not landed yet.
+  It now re-reads the peer for a bounded window before calling it drift. A
+  genuine drift is still reported, and a peer that is already up to date still
+  passes immediately.
+- **The theme typography sweep no longer takes 40% of the test suite's runtime.**
+  It applied the application-wide theme once per card density *per* font size
+  where once per font size covers the same matrix. Applying a theme re-styles
+  every live widget, so at suite scale each call costs over a second — the test
+  spent 47s of its 60s budget on 20 applications it did not need, and tipped over
+  that budget on CI while passing locally. The whole suite is now 83s → 48s.
+
 ## [2.41.0] — 2026-08-10
 
 ### Added
