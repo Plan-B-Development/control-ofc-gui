@@ -165,6 +165,12 @@ contrast pair `check_contrast_warnings()` evaluates.** The thresholds:
   non-text UI components. Applies to `text_muted` on cards,
   `text_secondary` on cards, `nav_text_active` on `nav_item_active`,
   `chart_axis_text` on `chart_bg`, and `input_placeholder` on `input_bg`.
+  **Focus indicators are enforced separately** (DEC-264) — by
+  `tests/test_theme_system.py::TestKeyboardFocusContrast`, which measures every
+  `:focus` ring in the built stylesheet against the surface it is drawn on, for
+  every shipped theme. `check_contrast_warnings()` does **not** evaluate any
+  focus pair, so the Theme Editor will not warn a user authoring their own theme
+  about a low-contrast ring. That is a known gap, not an oversight.
 - **Disabled controls are exempt** — WCAG itself exempts them, so
   `disabled_text` / `disabled_bg` is not enforced.
 
@@ -181,8 +187,18 @@ by role:
   `[variant="danger"]:hover`, which already swaps its border to `status_crit`. Focus
   and hover must not look alike.
 - **Inputs** (`QLineEdit`, `QSpinBox`, `QComboBox`) use `input_border_focus`.
-- **Accent-filled buttons** (`[variant="primary"]`, `#PrimaryButton`) ring in
-  `primary_btn_text`, the token that contrasts against that fill by construction.
+- **Accent-filled controls** (`[variant="primary"]`, `#PrimaryButton`, and the
+  `QSlider` handle) ring in `primary_btn_text`, the token that contrasts against
+  that fill by construction. The slider was the exception until DEC-264 — it rang
+  in `text_primary`, which is chosen to contrast with the *page*, and measured
+  1.65:1 against its own accent fill in the default theme. Qt draws a border
+  inside the widget rect, so for a filled control the fill is the adjacent
+  surface; a ring picked for the page has no reason to be legible on it.
+- **Swatches of arbitrary colour** (`ColorSwatch` in the Theme Editor) cannot use
+  a fixed token at all — the surface *is* the token being edited, and a
+  `text_primary` ring on the `text_primary` swatch is 1.00:1. They pick whichever
+  of `text_primary` / `primary_btn_text` contrasts better with the swatch, a
+  light/dark pair in every theme, so the worst case is still ~4.6:1.
 
 Two constraints, both measured rather than assumed:
 

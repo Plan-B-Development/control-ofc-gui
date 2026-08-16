@@ -3,6 +3,22 @@
 ## [Unreleased]
 
 ### Fixed
+- **Three keyboard focus rings were drawn but not visible.** A focus indicator
+  had been required to clear 3:1 against its surroundings since the accessibility
+  pass that introduced them, and nothing had ever measured one — the tests
+  rendered each control focused and unfocused and asserted the pixels differed,
+  which a ring at 1.65:1 does. The slider's handle rang in the text colour, which
+  is picked to contrast with the *page*, while the handle itself is filled with
+  the accent: 1.65:1 in the default theme, 1.75 in Noctua, 2.45 in Solar Light,
+  and passing only in Classic Blue, by luck. Classic Blue had its own: the focus
+  border on every dropdown and text field scored 2.92:1 against the field it
+  outlines. And in the Theme Editor, where each swatch shows the colour it edits,
+  the ring was a fixed colour drawn over an arbitrary one — on the swatch for the
+  text colour itself the ring *was* that colour, 1.00:1, with 13 to 20 of the
+  ~40 swatches below the threshold in every theme. All three now clear it, and a
+  new test measures every ring in every shipped theme against the surface it sits
+  on, refusing to let a new one be added without declaring what that surface is.
+  DEC-264.
 - **A release can no longer be published from a commit whose tests failed.**
   v2.41.0 shipped that way. The publish workflow gated on a clean-room package
   build — proof that the package *assembles* — and had never looked at the test

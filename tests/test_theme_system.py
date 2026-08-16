@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from PySide6.QtWidgets import QApplication
@@ -1312,6 +1313,177 @@ class TestKeyboardFocusVisibility:
         assert all(":focus" in rule for rule in checkbox_rules), (
             "a resting QCheckBox rule replaces Qt's native indicator — keep the "
             f"styling scoped to :focus: {checkbox_rules}"
+        )
+
+
+class TestKeyboardFocusContrast:
+    """DEC-264: a focus ring must also be *legible*, not merely drawn.
+
+    ``TestKeyboardFocusVisibility`` above renders each control focused and
+    unfocused and asserts the pixels differ. That is a necessary check and it is
+    not a sufficient one: a ring at 1.65:1 against the surface it sits on still
+    changes pixels, so every one of those tests passed while the slider's ring
+    was effectively invisible in three of the four shipped themes. ``docs/03``
+    has required 3:1 for focus indicators since DEC-251; nothing measured it.
+
+    Deliberately **pure token maths — no ``apply_theme`` call.** That function is
+    application-wide and costs over a second per call at suite scale; a
+    theme-applying sweep of this size is exactly what blew the CI timeout in
+    v2.41.0. ``build_stylesheet`` is a pure function of its tokens, which is all
+    this needs.
+
+    The ring colours are read out of the *generated stylesheet* rather than
+    restated here, so the test cannot drift from the QSS the way a duplicated
+    token list would. Only the adjacency — what each control is drawn on — is
+    declared, because the stylesheet cannot tell us what sits behind a
+    transparent widget.
+    """
+
+    # selector -> the token whose colour the ring is drawn against.
+    #
+    # Qt draws a border INSIDE the widget rect, so for a filled control the
+    # adjacent surface is its own fill, not the page behind it. That distinction
+    # is the whole finding for the accent-filled controls: the slider handle and
+    # the primary button are filled with `accent_primary`, so a ring in
+    # `text_primary` — a token chosen to contrast with the PAGE — has no reason
+    # to be legible, and measurably was not.
+    FOCUS_SURFACE: ClassVar[dict[str, str]] = {
+        "#Sidebar QPushButton:focus": "nav_bg",
+        ".CollapsibleSectionHeader:focus": "surface_1",
+        "QComboBox:focus": "input_bg",
+        "QSlider::handle:horizontal:focus": "accent_primary",
+        "QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus": "input_bg",
+        "QPlainTextEdit:focus": "code_block_bg",
+        "QCheckBox:focus, QRadioButton:focus": "app_bg",
+        "QTabBar::tab:focus": "surface_1",
+        'QPushButton[variant="ghost"]:focus': "app_bg",
+        "QPushButton:focus": "surface_2",
+        'QPushButton[variant="secondary"]:focus': "surface_1",
+        'QPushButton[variant="danger"]:focus': "app_bg",
+        'QPushButton[variant="primary"]:focus, QPushButton#PrimaryButton:focus': ("accent_primary"),
+    }
+
+    # WCAG 2.1 SC 1.4.11: non-text UI components, which includes focus
+    # indicators. Same threshold docs/03 already states.
+    MIN_RATIO = 3.0
+
+    @staticmethod
+    def _focus_rings(tokens) -> dict[str, str]:
+        """Map each `:focus` selector in the built QSS to its border colour."""
+        qss = re.sub(r"/\*.*?\*/", "", build_stylesheet(tokens), flags=re.S)
+        rings: dict[str, str] = {}
+        for match in re.finditer(r"([^{}]*:focus[^{}]*)\{([^{}]*)\}", qss):
+            selector = " ".join(match.group(1).split())
+            colours = re.findall(
+                r"(?:border(?:-color)?)\s*:[^;]*?(#[0-9A-Fa-f]{3,8})", match.group(2)
+            )
+            if colours:
+                rings[selector] = colours[0]
+        return rings
+
+    @staticmethod
+    def _all_themes() -> list[tuple[str, object]]:
+        from control_ofc.ui.theme import list_bundled_themes
+
+        themes = [("default_dark", default_dark_theme())]
+        themes += [(p.stem, load_theme(p)) for p in list_bundled_themes()]
+        return themes
+
+    def test_every_focus_ring_clears_the_contrast_threshold(self):
+        """Every focus ring, in every shipped theme, against what it sits on."""
+        failures: list[str] = []
+        for theme_name, tokens in self._all_themes():
+            for selector, ring in self._focus_rings(tokens).items():
+                surface_token = self.FOCUS_SURFACE[selector]
+                surface = getattr(tokens, surface_token)
+                ratio = contrast_ratio(ring, surface)
+                if ratio < self.MIN_RATIO:
+                    failures.append(
+                        f"{theme_name}: {selector} rings {ring} on "
+                        f"{surface_token}={surface} = {ratio:.2f}:1"
+                    )
+        assert not failures, (
+            "focus indicators must clear "
+            f"{self.MIN_RATIO}:1 against the surface they are drawn on "
+            f"(WCAG 1.4.11, docs/03):\n  " + "\n  ".join(failures)
+        )
+
+    def test_every_focus_rule_declares_what_it_sits_on(self):
+        """A new focus rule must be measured, not silently exempted.
+
+        Without this, adding a rule to the stylesheet quietly adds an untested
+        one: the loop above only checks selectors that appear in the map. This
+        is the guard against the hand-scoped blind spot that let the original
+        six focus gaps ship — the failure mode is not a wrong entry, it is a
+        missing one.
+        """
+        for theme_name, tokens in self._all_themes():
+            undeclared = set(self._focus_rings(tokens)) - set(self.FOCUS_SURFACE)
+            assert not undeclared, (
+                f"{theme_name}: focus rule(s) with no declared adjacent surface — "
+                f"add them to FOCUS_SURFACE so their contrast is measured: {sorted(undeclared)}"
+            )
+
+
+class TestColorSwatchFocusContrast:
+    """DEC-264: the Theme Editor's swatches ring against their own colour.
+
+    Separate from ``TestKeyboardFocusContrast`` because this one needs a widget:
+    the rule lives in the swatch's *own* stylesheet, not the application one
+    (DEC-255 — a widget stylesheet outranks the app's by origin, so the theme's
+    `QPushButton:focus` can never reach it).
+
+    A fixed ring token cannot work here. The surface is whatever colour the token
+    holds, so on the `text_primary` swatch a `text_primary` ring was literally
+    the same colour — 1.00:1, invisible among ~40 identical siblings, which is
+    the exact failure DEC-255 set out to fix for this widget and only half fixed.
+    """
+
+    @staticmethod
+    def _ring_of(swatch) -> str:
+        match = re.search(r"ColorSwatch:focus\s*\{[^}]*?(#[0-9A-Fa-f]{3,8})", swatch.styleSheet())
+        assert match, f"no ColorSwatch:focus ring found in {swatch.styleSheet()!r}"
+        return match.group(1)
+
+    @pytest.mark.parametrize(
+        "colour",
+        [
+            "#C8D4C0",  # text_primary itself — the 1.00:1 case that prompted this
+            "#0A0E08",  # app_bg: near-black
+            "#ffffff",  # near-white
+            "#808080",  # mid grey: the worst case for any light/dark pair
+            "#1FB88A",  # the brand accent
+        ],
+    )
+    def test_the_ring_is_legible_on_any_swatch_colour(self, qtbot, colour):
+        from control_ofc.ui.widgets.theme_editor import ColorSwatch
+
+        swatch = ColorSwatch("token_under_test", colour)
+        qtbot.addWidget(swatch)
+        ratio = contrast_ratio(self._ring_of(swatch), colour)
+        assert ratio >= 3.0, (
+            f"a focus ring on a {colour} swatch scores {ratio:.2f}:1 — a swatch is "
+            "one of ~40 identical siblings, so an illegible ring loses the keyboard "
+            "user entirely (WCAG 1.4.11)"
+        )
+
+    def test_the_ring_tracks_the_swatch_colour(self, qtbot):
+        """Not a constant dressed up as a computation.
+
+        Asserting only "every colour passes" would also pass if the ring were
+        hardcoded to something that happens to clear 3:1 on the sampled colours.
+        The ring must actually *differ* between a near-black and a near-white
+        swatch, which no fixed token can do.
+        """
+        from control_ofc.ui.widgets.theme_editor import ColorSwatch
+
+        dark = ColorSwatch("t", "#000000")
+        light = ColorSwatch("t", "#ffffff")
+        qtbot.addWidget(dark)
+        qtbot.addWidget(light)
+        assert self._ring_of(dark) != self._ring_of(light), (
+            "the ring is the same colour on a black and a white swatch — it is not "
+            "being chosen against the swatch at all"
         )
 
 

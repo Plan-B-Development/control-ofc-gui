@@ -26,6 +26,7 @@ from control_ofc.ui.theme import (
     ThemeTokens,
     active_theme,
     check_contrast_warnings,
+    contrast_ratio,
     default_dark_theme,
 )
 
@@ -163,11 +164,23 @@ class ColorSwatch(QPushButton):
         # in the same string. (The dialog-level note below is the same rule seen
         # from the other side.)
         t = active_theme()
+        # DEC-264: the ring is drawn ON the swatch, whose colour is whatever the
+        # token happens to be — so no single token can contrast with it. A fixed
+        # `text_primary` ring scored 1.00:1 on the `text_primary` swatch itself
+        # (ring and fill are literally the same colour) and under 3:1 on 13-20 of
+        # the ~40 swatches per theme. Pick per swatch instead: `text_primary` and
+        # `primary_btn_text` are a light/dark pair in every theme, and the better
+        # of the two is guaranteed to clear 3:1 against any fill — the worst case
+        # is a mid-luminance fill, where both still score ~4.6:1.
+        ring = max(
+            (t.text_primary, t.primary_btn_text),
+            key=lambda c: contrast_ratio(c, self._color),
+        )
         self.setStyleSheet(
             f"ColorSwatch {{ background-color: {self._color}; "
             f"border: 1px solid {t.border_default}; border-radius: 3px; "
             f"min-width: 30px; max-width: 30px; }}"
-            f"ColorSwatch:focus {{ border: 2px solid {t.text_primary}; }}"
+            f"ColorSwatch:focus {{ border: 2px solid {ring}; }}"
         )
 
     def _pick_color(self) -> None:

@@ -1090,8 +1090,18 @@ def build_stylesheet(t: ThemeTokens) -> str:
        Selector order matters and is easy to get backwards: the pseudo-state goes
        AFTER the subcontrol. `QSlider::handle:horizontal:focus` renders;
        `QSlider:focus::handle:horizontal` is silently inert — measured both. */
+    /* DEC-264: rings in `primary_btn_text`, not `text_primary`. The handle is
+       filled with `accent_primary`, so the fill is the only colour this ring is
+       adjacent to — and `text_primary` is chosen to contrast with the PAGE, not
+       with the accent. Measured against the fill it scored 1.65:1 in the default
+       dark theme, 1.75 in Noctua and 2.45 in Solar Light; only Classic Blue
+       cleared 3:1, by accident. `primary_btn_text` is the token that contrasts
+       with an accent fill by construction (docs/03) and scores 4.81 to 7.67 across
+       all four. This is the rule DEC-255 wrote while fixing the selector order —
+       the colour was copied from the button convention without re-checking what
+       it would sit on. */
     QSlider::handle:horizontal:focus {{
-        border: 2px solid {t.text_primary};
+        border: 2px solid {t.primary_btn_text};
     }}
 
     /* Splitters — one shared resize handle on every page (DEC-234). A quiet
