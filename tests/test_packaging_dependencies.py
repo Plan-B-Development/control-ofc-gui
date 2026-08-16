@@ -206,6 +206,34 @@ def test_github_release_gates_on_clean_room_build():
     )
 
 
+def test_github_release_gates_on_a_green_test_suite():
+    """github-release must also need ci-green.
+
+    DEC-263: `build-test` proves the package *assembles* — it runs no test suite.
+    Until this gate existed the two were unrelated, and v2.41.0 published with
+    every CI test leg red. Pinned because the failure mode is silent: dropping
+    the job does not break the Release, it just stops checking, so nothing
+    surfaces the loss.
+    """
+    wf = _release_workflow()
+    needs = wf["jobs"]["github-release"].get("needs")
+    needs = [needs] if isinstance(needs, str) else (needs or [])
+    assert "ci-green" in needs, (
+        "github-release must declare `needs: ci-green` (DEC-263) — build-test only "
+        "proves the package builds, so without this a red test suite can still "
+        f"publish; got needs={needs!r}"
+    )
+
+    run = "\n".join(step.get("run", "") for step in wf["jobs"]["ci-green"].get("steps", []))
+    assert "actions/workflows/ci.yml/runs" in run, (
+        "ci-green must resolve the tagged commit's ci.yml run via the Checks API (DEC-263)"
+    )
+    assert "head_sha=$SHA" in run, (
+        "ci-green must query CI for THIS commit — a query not pinned to the tagged "
+        "SHA would pass on some other commit's green run (DEC-263)"
+    )
+
+
 def test_release_attests_build_provenance_with_required_permissions():
     """Provenance signing needs both the attest step and its two permissions.
 
