@@ -59,7 +59,12 @@ from control_ofc.api.models import (
     parse_status,
     parse_superio_report,
 )
-from control_ofc.constants import API_TIMEOUT_S, DEFAULT_SOCKET_PATH, VERIFY_TIMEOUT_S
+from control_ofc.constants import (
+    API_TIMEOUT_S,
+    DEFAULT_SOCKET_PATH,
+    OPENFAN_RESCAN_TIMEOUT_S,
+    VERIFY_TIMEOUT_S,
+)
 
 BASE_URL = "http://localhost"
 
@@ -276,8 +281,12 @@ class DaemonClient:
 
         Gate on ``capabilities.control.openfan_rescan`` — an older daemon has no
         such route and returns ``404 not_found``.
+
+        Carries its own timeout (DEC-266): serial probing is blocking and scales
+        with the number of candidate ports, so the 5 s default aborted legitimate
+        scans on hosts with a few unresponsive USB-serial devices attached.
         """
-        return self._post("/fans/openfan/rescan")
+        return self._post("/fans/openfan/rescan", timeout=OPENFAN_RESCAN_TIMEOUT_S)
 
     def activate_profile(
         self,

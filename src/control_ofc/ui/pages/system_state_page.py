@@ -163,6 +163,11 @@ class SystemStatePage(QWidget):
         self._rescan_result_label.setObjectName("SystemState_Label_rescanResult")
         self._rescan_result_label.setProperty("class", "CardMeta")
         self._rescan_result_label.setWordWrap(True)
+        # This label renders daemon-supplied text — an adopted serial port path,
+        # and on the error path a daemon error message. AutoText would run
+        # `mightBeRichText()` over it and switch to HTML rendering on anything
+        # bracket-shaped, so pin it to plain (DEC-266).
+        self._rescan_result_label.setTextFormat(Qt.TextFormat.PlainText)
         self._rescan_result_label.setVisible(False)
         layout.addWidget(self._rescan_result_label)
 
@@ -409,24 +414,48 @@ class SystemStatePage(QWidget):
         set_chip_class(self._rescan_result_label, css_class)
         self._rescan_result_label.setVisible(True)
 
-    @Slot(object)
-    def _on_rescan_ok(self, headers: list[HwmonHeader]) -> None:
+    @Slot(object, str)
+    def _on_rescan_ok(self, headers: list[HwmonHeader], adopted_port: str = "") -> None:
         """Apply a successful rescan: push the fresh header list through AppState
         (feeding the member picker, profile sanitization, and every other
         ``headers_updated`` consumer), drop the cached libsensors label config
         (so an ``/etc/sensors.d`` relabel surfaces without a GUI restart), then
-        chain a hardware-diagnostics refetch so readiness reflects reality."""
+        chain a hardware-diagnostics refetch so readiness reflects reality.
+
+        ``adopted_port`` is the serial port an OpenFanController was adopted on
+        by the same action's best-effort DEC-265 leg, or ``""`` for every other
+        outcome — including "looked and found nothing", which is the normal
+        result on a machine without one. It selects which caveat the result line
+        carries. The default exists only so the three pre-DEC-266 direct-call
+        tests stay valid; Qt always delivers both arguments.
+        """
         clear_libsensors_cache()
         if self._state is not None:
             self._state.set_hwmon_headers(headers)
         n = len(headers)
-        self._show_rescan_message(
-            f"Rescan complete — {n} PWM header(s) found. Sensors refresh on the "
-            "next poll cycle. New fan-control hardware still requires a daemon "
-            "restart.",
-            "SuccessChip",
-        )
+        # DEC-266: the restart advice is about *hwmon* hardware, and saying it
+        # unconditionally was wrong in exactly the case DEC-265 exists for — the
+        # daemon had just adopted an OpenFan controller without a restart while
+        # the UI told the user to perform one. An adoption is also the one
+        # outcome of this leg worth reporting; anything else stays silent.
+        if adopted_port:
+            message = (
+                f"Rescan complete — {n} PWM header(s) found, and an OpenFan "
+                f"controller was adopted on {adopted_port}. Sensors and fans "
+                "refresh on the next poll cycle."
+            )
+        else:
+            message = (
+                f"Rescan complete — {n} PWM header(s) found. Sensors refresh on "
+                "the next poll cycle. New motherboard fan-control hardware still "
+                "requires a daemon restart."
+            )
+        self._show_rescan_message(message, "SuccessChip")
         self._diag.log_event("info", "hwmon", f"Hardware rescan: {n} PWM header(s) found")
+        if adopted_port:
+            self._diag.log_event(
+                "info", "openfan", f"OpenFanController adopted on {adopted_port} via rescan"
+            )
         self._rescan_in_flight = False
         self._fetch_hardware_diagnostics()
 

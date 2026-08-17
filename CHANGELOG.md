@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.42.0] — 2026-08-17
 
 ### Added
 - **Rescan Hardware now also looks for an OpenFan controller.** The daemon only
@@ -52,6 +52,47 @@
   It now re-reads the peer for a bounded window before calling it drift. A
   genuine drift is still reported, and a peer that is already up to date still
   passes immediately.
+- **The Theme Editor's focus rings were still invisible in Classic Blue.** The
+  fix above picks whichever of two text colours contrasts better with the swatch
+  being edited, which only works if those two are a light/dark pair. In three
+  shipped themes they are; in Classic Blue they are `#e0e0e8` and `#ffffff`,
+  1.31:1 apart, so there was no dark option to pick and 18 of the 54 swatches
+  stayed below the threshold — including the very swatch the original fix was
+  written for, at 1.31:1. Theme tokens are user-editable, so no pairing of them
+  can carry a guarantee; the ring is now derived from the swatch's own luminance
+  as plain black or white, whose worst case is the crossover grey at 4.61:1 —
+  which is where the "~4.6:1" the docs already claimed came from. The test could
+  not have caught this: it never applied a theme, so every swatch was measured
+  under the default, and it sampled five hardcoded colours when the failing set
+  was the themes' own token values. It now sweeps every shipped theme against
+  every swatch the editor actually renders. DEC-266.
+- **Rescan Hardware could be wedged for the rest of the session.** The OpenFan
+  leg documented itself as swallowing every failure but caught only the
+  daemon-error family, so a malformed capabilities response — which raises an
+  ordinary `AttributeError` — escaped both its handler and the outer one. Neither
+  success nor failure was then signalled, and since the page only clears its
+  in-flight flag in those two places, the button stayed dead with the chip stuck
+  on "Rescanning hardware…". The same escape had already been found and fixed
+  once in the polling service. DEC-266.
+- **The rescan result no longer tells you to restart the daemon right after it
+  avoided one.** The success line ended with "New fan-control hardware still
+  requires a daemon restart" unconditionally — including in the one case this
+  release exists for, where a controller had just been adopted without one. An
+  adoption is now reported with the port it was found on, and the restart advice
+  is both suppressed there and narrowed to the motherboard hardware it actually
+  applies to. The OpenFan leg also runs *after* the hwmon rescan rather than
+  before it, so the part with a UI contract is no longer queued behind a serial
+  sweep that can take seconds, and it is allowed a timeout that fits that sweep
+  instead of the 5 s default it kept exceeding. DEC-266.
+- **Rescan Hardware could still be wedged through its other leg.** The fix above
+  widened the OpenFan leg to swallow every failure, but the hwmon leg it runs
+  alongside kept the same narrow handler — and that call raises outside the
+  daemon-error family too: a malformed `headers` array gives a `TypeError`, and a
+  client closed by window teardown gives a bare `RuntimeError`. Either escaped
+  every handler with the same result, a dead button and a chip stuck on
+  "Rescanning hardware…". Both legs now report rather than vanish. A socket that
+  dies inside the trailing OpenFan leg also drops the stale client instead of
+  handing it to the next call. DEC-266.
 - **The theme typography sweep no longer takes 40% of the test suite's runtime.**
   It applied the application-wide theme once per card density *per* font size
   where once per font size covers the same matrix. Applying a theme re-styles

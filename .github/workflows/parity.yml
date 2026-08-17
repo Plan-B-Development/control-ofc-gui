@@ -82,6 +82,25 @@ jobs:
             [ -z "$bad" ]
           }
 
+          # DEC-266: `$(( ))` recursively evaluates a referenced variable's VALUE
+          # as an arithmetic expression, and an array subscript inside it runs
+          # command substitution — so an unvalidated `wait_seconds` dispatch input
+          # is a shell-injection primitive (`set -u` does not block it). Only a
+          # collaborator can supply the input and they could edit this file
+          # anyway, but the runner's git config holds the checkout AUTHORIZATION
+          # header for the peer fetch, so validate before use rather than rely on
+          # that. Non-numeric falls back to the default rather than failing the
+          # job: this guard is not the thing being tested.
+          case "$WAIT_SECONDS" in
+            ''|*[!0-9]*) echo "wait_seconds is not a plain integer — using 900"; WAIT_SECONDS=900 ;;
+          esac
+          # Force base 10. A leading zero is still all-digits, so it passes the
+          # guard above and then hits bash's octal rule inside `$(( ))`: `09`
+          # aborts the job with "value too great for base", and `010` silently
+          # means 8. Both would land on the one job whose purpose is proving this
+          # guard works.
+          WAIT_SECONDS=$((10#$WAIT_SECONDS))
+
           deadline=$(( SECONDS + WAIT_SECONDS ))
           attempt=0
           while :; do

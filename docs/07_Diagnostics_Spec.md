@@ -389,8 +389,11 @@ top-to-bottom:
   (pop-out), *Rescan Hardware* (DEC-147: `POST /hwmon/rescan` — daemon-side
   re-enumeration after loading a sensor kernel module; a result line under the
   row reports the header count, notes that sensors refresh on the next poll
-  cycle, and repeats the daemon's caveat that new fan-*control* hardware still
-  requires a daemon restart; a successful rescan pushes the fresh header list
+  cycle, and repeats the daemon's caveat that new *motherboard* fan-control
+  hardware still requires a daemon restart — suppressed when an OpenFan
+  controller was adopted, since the same action also carries a
+  `POST /fans/openfan/rescan` leg that adopts one without a restart (DEC-265),
+  and the line then names the port instead; a successful rescan pushes the fresh header list
   through `AppState.set_hwmon_headers` and chains a `/diagnostics/hardware`
   refetch). *Rescan Hardware* is now the application's global-footer action
   (DEC-216, relocated from the retired Diagnostics page); the separate

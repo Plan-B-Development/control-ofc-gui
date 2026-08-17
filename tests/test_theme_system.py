@@ -6,6 +6,7 @@ import ast
 import re
 from pathlib import Path
 from typing import ClassVar
+from unittest import mock
 
 import pytest
 from PySide6.QtWidgets import QApplication
@@ -1445,26 +1446,93 @@ class TestColorSwatchFocusContrast:
         assert match, f"no ColorSwatch:focus ring found in {swatch.styleSheet()!r}"
         return match.group(1)
 
-    @pytest.mark.parametrize(
-        "colour",
-        [
-            "#C8D4C0",  # text_primary itself — the 1.00:1 case that prompted this
-            "#0A0E08",  # app_bg: near-black
-            "#ffffff",  # near-white
-            "#808080",  # mid grey: the worst case for any light/dark pair
-            "#1FB88A",  # the brand accent
-        ],
-    )
-    def test_the_ring_is_legible_on_any_swatch_colour(self, qtbot, colour):
+    @staticmethod
+    def _editor_swatch_colours(tokens) -> list[tuple[str, str]]:
+        """Every colour the editor actually renders a swatch for.
+
+        DEC-266: sampling literals under-samples by construction. The set that
+        failed in Classic Blue was data — the theme's own token values — so a
+        hand-picked list could never have contained it. Enumerate what the editor
+        builds instead: the ``_TOKEN_GROUPS`` entries plus the chart-series slots.
+        """
+        from control_ofc.ui.widgets.theme_editor import _CHART_SERIES_SLOTS, _TOKEN_GROUPS
+
+        out: list[tuple[str, str]] = []
+        for _group, entries in _TOKEN_GROUPS:
+            for token, _label in entries:
+                value = getattr(tokens, token, None)
+                if isinstance(value, str) and value.startswith("#"):
+                    out.append((token, value))
+        series = getattr(tokens, "chart_series", None) or []
+        out += [(f"chart_series[{i}]", c) for i, c in enumerate(series[:_CHART_SERIES_SLOTS])]
+        return out
+
+    def test_every_editor_swatch_rings_legibly_in_every_shipped_theme(self, qtbot):
+        """DEC-266: the whole editor, under each theme actually applied.
+
+        The first version of this test never called ``apply_theme``, so every
+        swatch was built under the default dark theme — whose ``text_primary`` /
+        ``primary_btn_text`` *are* a light/dark pair. Classic Blue's are not
+        (``#e0e0e8`` vs ``#ffffff``, 1.31:1 apart), so the ring had no dark option
+        and 18 of its 54 swatches sat under 3:1 — including the ``text_primary``
+        swatch DEC-264 was written to fix. The bug was in a theme the test could
+        not see, on tokens the test did not sample.
+        """
+        from control_ofc.ui.widgets import theme_editor as te
+
+        # The swatch reads the active theme through `theme_editor.active_theme`,
+        # so patch that rather than calling the real `apply_theme`. Applying a
+        # theme is application-wide and irreversible in-process: `active_theme()`
+        # falls back to a fresh default when nothing has been applied yet, so
+        # "restoring" it actually applies a theme that was not there before,
+        # changing app font metrics for every later test. That surfaced as an
+        # unrelated splitter-geometry test failing by a few pixels in full-suite
+        # order only. Patching keeps the sweep hermetic and still fails if the
+        # ring goes back to being derived from tokens.
+        failures: list[str] = []
+        for theme_name, tokens in TestKeyboardFocusContrast._all_themes():
+            with mock.patch.object(te, "active_theme", return_value=tokens):
+                for token, colour in self._editor_swatch_colours(tokens):
+                    swatch = te.ColorSwatch(token, colour)
+                    qtbot.addWidget(swatch)
+                    ratio = contrast_ratio(self._ring_of(swatch), colour)
+                    if ratio < 3.0:
+                        failures.append(f"{theme_name}.{token} ({colour}) rings at {ratio:.2f}:1")
+
+        assert not failures, (
+            "focus rings below 3:1 on Theme Editor swatches — a swatch is one of "
+            "~54 identical siblings, so an illegible ring loses the keyboard user "
+            "entirely (WCAG 1.4.11):\n  " + "\n  ".join(failures)
+        )
+
+    def test_the_ring_does_not_depend_on_theme_tokens(self, qtbot):
+        """The ring must be derivable from the swatch alone.
+
+        Any pairing of *theme tokens* is a guess about values a user can edit —
+        which is exactly how DEC-264's ``text_primary``/``primary_btn_text`` pair
+        held in three shipped themes and failed in the fourth. Pinning the worst
+        case over the full grey ramp is what makes the guarantee universal rather
+        than a property of the themes that happen to ship today.
+        """
         from control_ofc.ui.widgets.theme_editor import ColorSwatch
 
-        swatch = ColorSwatch("token_under_test", colour)
-        qtbot.addWidget(swatch)
-        ratio = contrast_ratio(self._ring_of(swatch), colour)
-        assert ratio >= 3.0, (
-            f"a focus ring on a {colour} swatch scores {ratio:.2f}:1 — a swatch is "
-            "one of ~40 identical siblings, so an illegible ring loses the keyboard "
-            "user entirely (WCAG 1.4.11)"
+        worst = 99.0
+        for v in range(0, 256, 5):
+            grey = f"#{v:02x}{v:02x}{v:02x}"
+            swatch = ColorSwatch("t", grey)
+            # Parented to the qtbot so the DEC-230 teardown flush destroys them
+            # deterministically; 52 unowned widgets is the shape that used to
+            # take the shiboken finalizer down.
+            qtbot.addWidget(swatch)
+            worst = min(worst, contrast_ratio(self._ring_of(swatch), grey))
+        assert worst >= 3.0, (
+            f"the worst grey-ramp swatch rings at {worst:.2f}:1 — the ring is being "
+            "chosen from something other than the swatch's own luminance"
+        )
+        # The crossover grey is the theoretical floor for a black/white choice.
+        # Documented in docs/03 as ~4.6:1, so hold the claim to its own number.
+        assert worst >= 4.5, (
+            f"worst case is {worst:.2f}:1 but docs/03 claims ~4.6:1 — fix one or the other"
         )
 
     def test_the_ring_tracks_the_swatch_colour(self, qtbot):

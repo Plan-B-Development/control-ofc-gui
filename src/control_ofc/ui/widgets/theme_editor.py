@@ -168,14 +168,18 @@ class ColorSwatch(QPushButton):
         # token happens to be — so no single token can contrast with it. A fixed
         # `text_primary` ring scored 1.00:1 on the `text_primary` swatch itself
         # (ring and fill are literally the same colour) and under 3:1 on 13-20 of
-        # the ~40 swatches per theme. Pick per swatch instead: `text_primary` and
-        # `primary_btn_text` are a light/dark pair in every theme, and the better
-        # of the two is guaranteed to clear 3:1 against any fill — the worst case
-        # is a mid-luminance fill, where both still score ~4.6:1.
-        ring = max(
-            (t.text_primary, t.primary_btn_text),
-            key=lambda c: contrast_ratio(c, self._color),
-        )
+        # the ~40 swatches per theme.
+        #
+        # DEC-266: derive the ring from the swatch's own luminance rather than
+        # from theme tokens. The previous fix picked the better of `text_primary`
+        # / `primary_btn_text`, which clears 3:1 only if those two are a genuine
+        # light/dark pair. In Classic Blue they are not — `#e0e0e8` and `#ffffff`,
+        # 1.31:1 apart — so `max()` had no dark option and 18 of 54 swatches were
+        # left under threshold, including the `text_primary` swatch the original
+        # fix was written for. Tokens are user-editable, so no pairing of them can
+        # be guaranteed; black-vs-white can. Its worst case is the crossover grey
+        # at 4.607:1, which is where the "~4.6:1" figure came from all along.
+        ring = max(("#000000", "#ffffff"), key=lambda c: contrast_ratio(c, self._color))
         self.setStyleSheet(
             f"ColorSwatch {{ background-color: {self._color}; "
             f"border: 1px solid {t.border_default}; border-radius: 3px; "

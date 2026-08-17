@@ -16,6 +16,17 @@ API_TIMEOUT_S = 5.0
 # the worst-case round-trip under load is ~7.5 s, so these calls need a longer
 # budget than API_TIMEOUT_S (DEC-231: was a bare 12.0 literal at two call sites).
 VERIFY_TIMEOUT_S = 12.0
+# Per-call timeout for POST /fans/openfan/rescan (DEC-266). The daemon probes
+# every ttyACM*/ttyUSB* candidate at its serial timeout (500 ms default, up to
+# 1000 ms) and re-verifies the winner, so a host with several unresponsive
+# USB-serial gadgets can exceed API_TIMEOUT_S. Aborting at 5 s used to be
+# actively harmful rather than merely slow: the probe is a blocking task the
+# daemon cannot cancel, so the adoption completed and was then discarded with
+# the handler's future — losing the thermal emergency's OpenFan leg from a
+# request that merely looked like a timeout. The daemon side no longer drops the
+# adoption either way (the install moved off the handler's future), but the
+# client should not be provoking that path once per rescan.
+OPENFAN_RESCAN_TIMEOUT_S = 25.0
 
 # Contract version this GUI is built against. Compared on the first
 # /capabilities response against the daemon's reported ``api_version``; a

@@ -45,6 +45,7 @@ curl -s --unix-socket $SOCK -X POST http://localhost/control/cpu_fans/override \
 curl -s --unix-socket $SOCK -X POST http://localhost/fans/amd_gpu:0000:2d:00.0/identify \
   -H 'Content-Type: application/json' -d '{"action": "stop"}'
 curl -s --unix-socket $SOCK -X POST http://localhost/hwmon/rescan
+curl -s --unix-socket $SOCK -X POST http://localhost/fans/openfan/rescan
 curl -s --unix-socket $SOCK -X POST http://localhost/gpu/0000:2d:00.0/fan/reset
 ```
 
@@ -165,6 +166,13 @@ upper bounds:
   client timeout is **12 s**.
 - `verify_gpu_fan` — daemon sleeps the same **6 s** settle (shared
   `VERIFY_WAIT_SECONDS` constant); client timeout is **12 s**.
+- `openfan_rescan` — the daemon opens and identity-probes every candidate
+  `ttyACM*`/`ttyUSB*` at `serial.timeout_ms` (500 ms default, up to 1000 ms) and
+  re-verifies the winner, so the sweep scales with how many USB-serial devices
+  are attached; client timeout is **25 s** (`OPENFAN_RESCAN_TIMEOUT_S`). Aborting
+  early is merely slow, not lossy — the daemon performs the adoption in a
+  detached task, so a client that gives up does not discard a controller that was
+  found (DEC-266).
 
 `DaemonTimeout` is a distinct subclass of `DaemonError` (separate from
 `DaemonUnavailable`) so callers can distinguish "the daemon is slow" from
@@ -213,10 +221,17 @@ Emitted by the daemon's `HealthStatus::Display` and pinned on both sides by
 entry is appended, never inserted, so an index-based reader is unaffected; the
 GUI iterates the array and needs no change to display it. The first two report
 *data* freshness from the poll loops. `engine` reports the profile engine's
-**liveness**: the daemon's sole PWM writer also evaluates the 105 °C rule, but
-nothing supervises its task, so a panic inside a tick would end fan control and
-thermal safety while every other signal stayed green and `/status` kept
-answering 200.
+**liveness**: the daemon's sole PWM writer also evaluates the 105 °C rule.
+
+On daemon ≥ 2.18.0 the engine task is **supervised** (DEC-266): if it ends —
+including by a panic inside a tick, which the runtime otherwise contains — the
+daemon restores every fan to firmware control and exits non-zero so systemd
+restarts it. So a *stopped* engine now presents to the GUI as a dropped socket,
+not as a green `/status`. Before 2.18.0 nothing supervised the task and a panic
+inside a tick ended fan control and thermal safety while every other signal
+stayed green and `/status` kept answering 200 — this field was the only client-
+visible sign. It remains the signal for a **degraded** engine (slow ticks),
+which supervision does not cover, and the only signal at all on older daemons.
 
 **A slow tick is not a stopped engine, and the daemon distinguishes them
 (DEC-259).** The engine stamps both the start and the completion of every tick,
@@ -565,7 +580,7 @@ and the GUI parser defaults safely:
   `fan_curve` `OD_RANGE` fan-speed bounds (percent, typically `15` / `100`
   on RDNA3+). The firmware-enforced minimum is the real reason a PMFW GPU
   fan cannot be driven below ~15% via the curve; surfaced so it is not
-  mistaken for a GUI/daemon clamp. `null` for non-PMFW GPUs.
+  mistaken for a GUI/daemon clamp. `null` for non-PMFW GPUs (and, on daemon ≥ 2.18.0, for a PMFW GPU whose reported `OD_RANGE` speed pair is inverted or outside 0–100 — the daemon rejects an implausible range rather than trusting it, DEC-266).
 - `gpu.fan_minimum_pwm: int | None` — best-effort percent parse of the
   `gpu_od/fan_ctrl/fan_minimum_pwm` attribute. `null` when absent /
   unparseable.
@@ -1023,11 +1038,13 @@ Old daemons predating the route answer `404`, which the GUI treats as
 
 ### OpenFan rescan (DEC-265, daemon ≥ 2.18.0)
 - `POST /fans/openfan/rescan` — adopt an OpenFanController without a restart
-  - Response `200`: `{"adopted": bool, "already_connected": bool, "port": str,
-    "message": str}`. `port` is present only when a controller was newly
-    adopted. Rescanning while one is already connected is a **no-op success**
-    (`adopted:false, already_connected:true`), not an error — it probes nothing
-    and leaves the existing controller in place.
+  - Response `200`: `{"api_version": int, "adopted": bool,
+    "already_connected": bool, "port": str, "message": str}`. `port` is present
+    only when a controller was newly adopted. Rescanning while one is already
+    connected is a **no-op success** (`adopted:false, already_connected:true`),
+    not an error — it probes nothing and leaves the existing controller in
+    place. (`api_version` was missing from the 2.18.0 pre-release shape,
+    breaking General Rule 6 above; added in DEC-266 before it shipped.)
   - `503 hardware_unavailable` — no candidate port both opened *and* identified
     as an OpenFanController. This is the normal answer on a machine with no
     OpenFan hardware.
@@ -1049,7 +1066,12 @@ Old daemons predating the route answer `404`, which the GUI treats as
     action, not as a separate button: that action is what a user reaches for
     when hardware is missing, and requiring them to know *which kind* of
     hardware went missing is the worse UX. The leg is best-effort — a `503`
-    (no controller found) never fails the hwmon rescan.
+    (no controller found) never fails the hwmon rescan — and runs **after** the
+    hwmon rescan, so the contracted leg is not delayed behind a serial sweep
+    (DEC-266). Only an adoption is reported to the user; every other outcome is
+    silent, and the success line's "requires a daemon restart" advice is
+    suppressed when a controller *was* adopted, since that is exactly the case
+    this route makes restart-free.
 
 ## Error model
 All errors use a standard nested envelope:
@@ -1080,7 +1102,7 @@ Error codes and HTTP statuses:
 - 409 `already_exists` (source: `"validation"`, retryable: false) — `POST /profiles` with an `id` that already exists (DEC-160). Rename or `PUT` the existing profile instead.
 - 409 `profile_in_use` (source: `"validation"`, retryable: false) — `DELETE /profiles/{id}` on the currently active profile (DEC-160); deactivate or switch profiles first.
 - 409 `thermal_abort` (source: `"hardware"`, retryable: true) — a fan diagnostic was aborted or refused due to high temperature: calibration aborts mid-sweep, and a verify refuses to start while any sensor is over the 85 °C limit (DEC-201, daemon ≥ 2.6.0)
-- 409 `validation_error` (source: `"validation"`, retryable: false) — a fan diagnostic (`POST /fans/openfan/{ch}/calibrate`, `POST /hwmon/{id}/verify`, or `POST /gpu/{id}/fan/verify`) when another calibration **or** verify is already in progress (they share a single-flight pause, DEC-191, daemon ≥ 2.2.2). Retry once the in-flight operation completes. (HTTP 409 with the `validation_error` code — matches the long-standing "calibration already in progress" response shape.)
+- 409 `validation_error` (source: `"validation"`, retryable: false) — a fan diagnostic (`POST /fans/openfan/{ch}/calibrate`, `POST /hwmon/{id}/verify`, or `POST /gpu/{id}/fan/verify`) when another calibration **or** verify is already in progress (they share a single-flight pause, DEC-191, daemon ≥ 2.2.2). Retry once the in-flight operation completes. (HTTP 409 with the `validation_error` code — matches the long-standing "calibration already in progress" response shape.) `POST /fans/openfan/rescan` uses the same shape for its own single-flight (DEC-265, daemon ≥ 2.18.0), on a **separate** flag — a rescan and a calibration do not block each other.
 - 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
 - 500 `internal_error` (source: `"internal"`, retryable: true)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)

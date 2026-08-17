@@ -190,7 +190,8 @@ class _HwDiagWorker(_SocketWorker):
 
     fetch_ok = Signal(object)  # HardwareDiagnosticsResult
     fetch_error = Signal(str, str)  # category ('unavailable'|'error'), message
-    rescan_ok = Signal(object)  # list[HwmonHeader]
+    # list[HwmonHeader], adopted OpenFan port ("" when none) — DEC-266
+    rescan_ok = Signal(object, str)
     rescan_error = Signal(str, str)  # category ('unavailable'|'error'), message
 
     @Slot()
@@ -230,9 +231,15 @@ class _HwDiagWorker(_SocketWorker):
 
         try:
             client = self._ensure_client()
-            self._try_openfan_rescan(client)
+            # DEC-266: the contracted leg runs FIRST. The OpenFan leg can spend
+            # seconds probing serial candidates, so running it first held the
+            # user's "Rescanning..." chip open for an opportunistic extra. It
+            # also reused the same client afterwards, so a close() racing
+            # teardown surfaced as an httpx RuntimeError out of the second call
+            # instead of a clean DaemonUnavailable out of the first.
             headers = client.hwmon_rescan()
-            self.rescan_ok.emit(headers)
+            adopted_port = self._try_openfan_rescan(client)
+            self.rescan_ok.emit(headers, adopted_port)
         except DaemonTimeout:
             self.rescan_error.emit("unavailable", "Hardware rescan timed out")
         except DaemonUnavailable:
@@ -246,9 +253,28 @@ class _HwDiagWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.rescan_error.emit("unavailable", "Connection lost during hardware rescan")
+        except Exception as e:
+            # DEC-266: backstop. The handlers above are the daemon-error family,
+            # but `hwmon_rescan()` can raise outside it — `parse_hwmon_headers`
+            # gives `TypeError` on a `"headers": null` body, and httpx raises a
+            # bare `RuntimeError` if the client is closed by teardown between
+            # entering this slot and issuing the request. Either escaped every
+            # handler, so NEITHER signal fired; the page clears
+            # `_rescan_in_flight` only in those two slots, so Rescan Hardware
+            # stayed dead for the rest of the session with the chip stuck on
+            # "Rescanning hardware…". Fixing that on the OpenFan leg alone left
+            # the same wedge reachable through this one.
+            log.exception("Hwmon rescan worker failed unexpectedly")
+            self.rescan_error.emit("error", f"Hardware rescan failed: {e}")
 
-    def _try_openfan_rescan(self, client) -> None:
+    def _try_openfan_rescan(self, client) -> str:
         """Best-effort OpenFan adoption alongside the hwmon rescan (DEC-265).
+
+        Returns the port a controller was adopted on, or ``""`` for every other
+        outcome. The caller reports an adoption to the user: DEC-266 — the result
+        line otherwise still said "New fan-control hardware still requires a
+        daemon restart", which is precisely what this feature makes untrue, so
+        the one case it exists for was the one case the UI mis-advised.
 
         Capability-gated, so an older daemon is never asked and never 404s. Every
         failure is swallowed deliberately: this is an opportunistic extra, and a
@@ -256,18 +282,37 @@ class _HwDiagWorker(_SocketWorker):
         no OpenFan hardware — surfacing that as a rescan failure would report the
         hwmon rescan as broken on every such machine.
         """
-        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
-
         try:
             caps = client.capabilities()
             if not caps.control.openfan_rescan:
-                return
+                return ""
             result = client.openfan_rescan()
             if result.get("adopted"):
-                log.info("OpenFanController adopted via rescan: %s", result.get("port"))
-        except (DaemonError, DaemonTimeout, DaemonUnavailable, ConnectionError, OSError) as e:
-            # Not fatal to the rescan — see the docstring.
+                port = str(result.get("port") or "")
+                log.info("OpenFanController adopted via rescan: %s", port)
+                return port
+        except Exception as e:
+            # DEC-266: deliberately broad, matching the precedent in
+            # `services/polling.py`. The narrow tuple this replaced did not cover
+            # what `parse_capabilities` raises on a malformed body —
+            # `AttributeError`/`TypeError` — which escaped BOTH this handler and
+            # `do_rescan`'s. Neither `rescan_ok` nor `rescan_error` then fired, so
+            # `_rescan_in_flight` never cleared and Rescan Hardware was dead for
+            # the rest of the session. The docstring above claimed "every failure
+            # is swallowed"; now it is true. Cost of catching broadly here is nil
+            # — the leg has no side effect the caller depends on.
             log.debug("OpenFan rescan leg did not adopt a controller: %s", e)
+            if isinstance(e, (ConnectionError, OSError)):
+                # This leg now runs LAST, so a socket that dies here is no longer
+                # seen by `do_rescan`'s connection handler — the hwmon call has
+                # already returned. Without this the stale client survives, the
+                # user gets a green "Rescan complete", and the very next call
+                # (the chained diagnostics refetch) fails instead.
+                with contextlib.suppress(Exception):
+                    if self._client is not None:
+                        self._client.close()
+                self._client = None
+        return ""
 
 
 class _HardwareReadinessWorker(_SocketWorker):

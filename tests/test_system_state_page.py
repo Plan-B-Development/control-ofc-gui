@@ -541,6 +541,55 @@ def test_on_rescan_ok_end_to_end_pushes_headers_and_caveat(qtbot, monkeypatch):
     assert page._rescan_result_label.property("class") == "SuccessChip"
 
 
+def test_on_rescan_ok_reports_an_adopted_openfan_and_drops_the_restart_caveat(qtbot, monkeypatch):
+    """DEC-266: the branch this release exists to deliver.
+
+    The success line used to end "New fan-control hardware still requires a
+    daemon restart" unconditionally — including right after the daemon had
+    adopted an OpenFan controller *without* one, which is the single case
+    DEC-265 was built for. Nothing carried a non-empty port through to the page,
+    so replacing the whole branch with ``if False:`` left the suite green.
+    """
+    page, _state = _page(qtbot, client=object())
+    monkeypatch.setattr(page, "_fetch_hardware_diagnostics", lambda: None)
+    events: list[tuple] = []
+    monkeypatch.setattr(
+        page._diag, "log_event", lambda lvl, sub, msg: events.append((lvl, sub, msg))
+    )
+
+    page._on_rescan_ok([], "/dev/ttyACM1")
+
+    text = page._rescan_result_label.text()
+    assert "/dev/ttyACM1" in text, "the adopted port must be named so the user can confirm it"
+    assert "adopted" in text
+    assert "daemon restart" not in text, (
+        "the daemon just adopted a controller without a restart — advising one "
+        "here is the exact mis-direction DEC-266 removed"
+    )
+    assert page._rescan_result_label.property("class") == "SuccessChip"
+    assert ("info", "openfan", "OpenFanController adopted on /dev/ttyACM1 via rescan") in events
+
+
+def test_on_rescan_ok_keeps_the_restart_caveat_when_nothing_was_adopted(qtbot, monkeypatch):
+    """The other branch: no adoption means the hwmon caveat still applies, and
+    nothing may claim an OpenFan controller appeared."""
+    page, _state = _page(qtbot, client=object())
+    monkeypatch.setattr(page, "_fetch_hardware_diagnostics", lambda: None)
+    events: list[tuple] = []
+    monkeypatch.setattr(
+        page._diag, "log_event", lambda lvl, sub, msg: events.append((lvl, sub, msg))
+    )
+
+    page._on_rescan_ok([], "")
+
+    text = page._rescan_result_label.text()
+    assert "daemon restart" in text
+    assert "adopted" not in text
+    assert not [e for e in events if e[1] == "openfan"], (
+        "no OpenFan event may be logged when nothing was adopted"
+    )
+
+
 def test_on_rescan_error_keeps_existing_headers_and_skips_refetch(qtbot, monkeypatch):
     old = [HwmonHeader(id="hwmon:it8696:pwm1", label="CHA_FAN1", is_writable=True)]
     page, state = _page(qtbot, client=object())

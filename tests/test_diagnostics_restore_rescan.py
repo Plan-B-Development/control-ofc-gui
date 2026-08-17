@@ -13,6 +13,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from control_ofc.api.client import DaemonClient
+from control_ofc.constants import OPENFAN_RESCAN_TIMEOUT_S
 from control_ofc.services.demo_service import DemoService
 from control_ofc.ui.pages.diagnostics_workers import _GpuVerifyWorker, _HwDiagWorker
 
@@ -81,14 +82,19 @@ def test_do_rescan_emits_rescan_ok_with_headers():
     """DEC-231: exercise do_rescan (was an existence-only ``callable`` check)."""
     worker = _HwDiagWorker("/tmp/x.sock")
     headers = [MagicMock()]
-    worker._client = MagicMock(hwmon_rescan=MagicMock(return_value=headers))
+    caps = MagicMock()
+    caps.control.openfan_rescan = False
+    worker._client = MagicMock(
+        hwmon_rescan=MagicMock(return_value=headers),
+        capabilities=MagicMock(return_value=caps),
+    )
     got = []
-    worker.rescan_ok.connect(got.append)
+    worker.rescan_ok.connect(lambda h, port: got.append((h, port)))
 
     worker.do_rescan()
 
     worker._client.hwmon_rescan.assert_called_once_with()
-    assert got == [headers]
+    assert got == [(headers, "")]
 
 
 def test_do_rescan_maps_daemon_error_to_error_category():
@@ -152,7 +158,7 @@ def test_openfan_rescan_posts_and_returns_the_payload():
 
     result = client.openfan_rescan()
 
-    client._post.assert_called_once_with("/fans/openfan/rescan")
+    client._post.assert_called_once_with("/fans/openfan/rescan", timeout=OPENFAN_RESCAN_TIMEOUT_S)
     assert result["adopted"] is True
     assert result["port"] == "/dev/ttyACM0"
 
@@ -217,12 +223,14 @@ def test_a_failing_openfan_leg_does_not_fail_the_hwmon_rescan():
     )
     got = []
     errs = []
-    worker.rescan_ok.connect(got.append)
+    worker.rescan_ok.connect(lambda h, port: got.append((h, port)))
     worker.rescan_error.connect(lambda c, m: errs.append((c, m)))
 
     worker.do_rescan()
 
-    assert got == [headers], "the hwmon rescan must still succeed"
+    # DEC-266: an unadopted leg reports an empty port, so the result line keeps
+    # its restart advice instead of claiming an adoption that did not happen.
+    assert got == [(headers, "")], "the hwmon rescan must still succeed"
     assert errs == []
 
 
@@ -235,3 +243,158 @@ def test_capabilities_default_openfan_rescan_false_on_an_older_daemon():
 
     caps = parse_capabilities({"control": {"openfan_rescan": True}})
     assert caps.control.openfan_rescan is True
+
+
+# ── DEC-266: the OpenFan leg cannot wedge the button or mis-advise the user ──
+
+
+def test_a_malformed_capabilities_body_does_not_wedge_the_rescan_button():
+    """The leg must swallow EVERY failure, not just the daemon-error family.
+
+    ``parse_capabilities`` on a malformed 200 raises ``AttributeError`` /
+    ``TypeError``, which are not daemon errors. Those escaped both this handler
+    and ``do_rescan``'s, so neither ``rescan_ok`` nor ``rescan_error`` fired —
+    and the page only clears ``_rescan_in_flight`` in those two slots. Rescan
+    Hardware was then dead for the rest of the session with the chip stuck on
+    "Rescanning hardware...". Same shape as the escape documented in
+    ``services/polling.py``.
+    """
+    worker = _HwDiagWorker("/tmp/x.sock")
+    headers = [MagicMock()]
+    worker._client = MagicMock(
+        capabilities=MagicMock(side_effect=AttributeError("'NoneType' has no attribute 'get'")),
+        hwmon_rescan=MagicMock(return_value=headers),
+    )
+    got: list[tuple] = []
+    errs: list[tuple] = []
+    worker.rescan_ok.connect(lambda h, port: got.append((h, port)))
+    worker.rescan_error.connect(lambda c, m: errs.append((c, m)))
+
+    worker.do_rescan()
+
+    assert got == [(headers, "")], "a broken capabilities body must not swallow the whole rescan"
+    assert errs == []
+
+
+def test_the_hwmon_leg_runs_before_the_openfan_probe():
+    """DEC-266: the contracted leg must not queue behind the opportunistic one.
+
+    Serial probing can take seconds. Running it first held the "Rescanning..."
+    chip open on a sweep the user did not ask for, and meant a client closed by
+    teardown surfaced out of the *second* call as an httpx ``RuntimeError``
+    rather than out of the first as a clean ``DaemonUnavailable``.
+    """
+    worker = _HwDiagWorker("/tmp/x.sock")
+    order: list[str] = []
+    caps = MagicMock()
+    caps.control.openfan_rescan = True
+    worker._client = MagicMock(
+        capabilities=MagicMock(return_value=caps),
+        hwmon_rescan=MagicMock(side_effect=lambda: order.append("hwmon") or []),
+        openfan_rescan=MagicMock(side_effect=lambda: order.append("openfan") or {}),
+    )
+
+    worker.do_rescan()
+
+    assert order == ["hwmon", "openfan"]
+
+
+def test_an_adopted_controller_is_reported_to_the_caller():
+    """The adoption is the one outcome of this leg worth surfacing.
+
+    Without it the UI's success line still advised a daemon restart — the exact
+    thing DEC-265 makes unnecessary — in the one case the feature had just
+    handled without one.
+    """
+    worker = _HwDiagWorker("/tmp/x.sock")
+    caps = MagicMock()
+    caps.control.openfan_rescan = True
+    worker._client = MagicMock(
+        capabilities=MagicMock(return_value=caps),
+        hwmon_rescan=MagicMock(return_value=[]),
+        openfan_rescan=MagicMock(
+            return_value={"adopted": True, "already_connected": False, "port": "/dev/ttyACM1"}
+        ),
+    )
+    got: list[tuple] = []
+    worker.rescan_ok.connect(lambda h, port: got.append((h, port)))
+
+    worker.do_rescan()
+
+    assert got == [([], "/dev/ttyACM1")]
+
+
+def test_an_already_connected_controller_is_not_reported_as_a_new_adoption():
+    """`adopted: false` is the idempotent no-op, not an adoption."""
+    worker = _HwDiagWorker("/tmp/x.sock")
+    caps = MagicMock()
+    caps.control.openfan_rescan = True
+    worker._client = MagicMock(
+        capabilities=MagicMock(return_value=caps),
+        hwmon_rescan=MagicMock(return_value=[]),
+        # `port` IS present, so the test fails if the `adopted` gate is removed.
+        # Without it the gate could be deleted and this test would still pass:
+        # `str(result.get("port") or "")` returns "" for a payload with no port
+        # regardless of the branch taken.
+        openfan_rescan=MagicMock(
+            return_value={
+                "adopted": False,
+                "already_connected": True,
+                "port": "/dev/ttyACM0",
+            }
+        ),
+    )
+    got: list[tuple] = []
+    worker.rescan_ok.connect(lambda h, port: got.append((h, port)))
+
+    worker.do_rescan()
+
+    assert got == [([], "")]
+
+
+def test_a_non_daemon_error_from_the_hwmon_leg_still_reports_instead_of_wedging():
+    """DEC-266: the backstop on the contracted leg.
+
+    `parse_hwmon_headers` raises `TypeError` on a `"headers": null` body, and a
+    client closed by teardown raises a bare `RuntimeError` — neither is in the
+    daemon-error family. Both escaped every handler, so neither signal fired and
+    the page's in-flight latch never cleared. Fixing only the OpenFan leg left
+    this one reachable.
+    """
+    worker = _HwDiagWorker("/tmp/x.sock")
+    worker._client = MagicMock(
+        hwmon_rescan=MagicMock(side_effect=TypeError("'NoneType' is not iterable"))
+    )
+    got: list[tuple] = []
+    errs: list[tuple] = []
+    worker.rescan_ok.connect(lambda h, port: got.append((h, port)))
+    worker.rescan_error.connect(lambda c, m: errs.append((c, m)))
+
+    worker.do_rescan()
+
+    assert got == []
+    assert len(errs) == 1, "a failure must be reported, not swallowed into silence"
+    assert errs[0][0] == "error"
+
+
+def test_a_dead_socket_in_the_trailing_openfan_leg_drops_the_stale_client():
+    """The leg now runs last, so `do_rescan`'s connection handler cannot see a
+    socket that dies inside it. Left alone, the stale client survives into the
+    chained diagnostics refetch and fails there instead."""
+    worker = _HwDiagWorker("/tmp/x.sock")
+    caps = MagicMock()
+    caps.control.openfan_rescan = True
+    client = MagicMock(
+        capabilities=MagicMock(return_value=caps),
+        hwmon_rescan=MagicMock(return_value=[]),
+        openfan_rescan=MagicMock(side_effect=ConnectionError("socket went away")),
+    )
+    worker._client = client
+    got: list[tuple] = []
+    worker.rescan_ok.connect(lambda h, port: got.append((h, port)))
+
+    worker.do_rescan()
+
+    assert got == [([], "")], "the hwmon result still stands"
+    assert worker._client is None, "a dead socket must not be reused by the next call"
+    client.close.assert_called_once()

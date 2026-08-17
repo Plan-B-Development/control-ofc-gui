@@ -197,8 +197,17 @@ by role:
 - **Swatches of arbitrary colour** (`ColorSwatch` in the Theme Editor) cannot use
   a fixed token at all — the surface *is* the token being edited, and a
   `text_primary` ring on the `text_primary` swatch is 1.00:1. They pick whichever
-  of `text_primary` / `primary_btn_text` contrasts better with the swatch, a
-  light/dark pair in every theme, so the worst case is still ~4.6:1.
+  of **black or white** contrasts better with the swatch, so the worst case is
+  the crossover grey at **4.61:1** (4.58:1 for an arbitrary colour at that same
+  luminance, which a user can type into the picker).
+
+  It must be black/white specifically, not a pair of theme tokens. Picking the
+  better of `text_primary` / `primary_btn_text` was tried first and is only as
+  good as those two being a genuine light/dark pair — which is a claim about
+  values a user can edit. It held in three shipped themes and failed in the
+  fourth: Classic Blue's are `#e0e0e8` and `#ffffff`, 1.31:1 apart, leaving 18 of
+  54 swatches under 3:1 including the `text_primary` swatch the rule was written
+  for. Black and white need no such assumption (DEC-266).
 
 Two constraints, both measured rather than assumed:
 
