@@ -271,6 +271,20 @@ DEC-130) and holding the hwmon lease as `thermal-safety`; the GUI has no loop
 to stand down (DEC-165) and simply shows a single poll-driven thermal warning.
 Older daemons omit the field — the GUI defaults it to `"normal"`.
 
+On daemon ≥ 2.19.0, `"no_sensor_fallback"` has a **second trigger**: a CPU
+reading that is merely *stale* now counts as absent (DEC-267). The safety rule
+reads a cached sensor map with no freshness filter of its own, so a dead hwmon
+poll loop used to freeze the last temperature — the 105 °C ladder then evaluated
+forever against a number that could not rise, the no-sensor fallback never
+engaged because the sensor was present rather than missing, and the engine's
+liveness heartbeat stayed green because the engine genuinely was ticking. A
+reading older than five poll intervals is now treated as no reading. **No client
+change is required** — the state and its meaning are unchanged, only how often
+it can be reached. Note the sensor may still appear in `/sensors` with a large
+`age_ms` while this is reported; that pairing is the signal, and it is
+short-lived, because the poll loop is supervised too and its death restarts the
+daemon.
+
 `overrides` and `fan_identify` (daemon ≥ 1.21.0, additive — `api_version`
 unchanged, omitted when empty) make `/status` the poll-authoritative source for
 active manual overrides and fan-identify holds (DEC-163 / DEC-166): `overrides[]`
