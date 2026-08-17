@@ -249,7 +249,19 @@ class SettingsPage(QWidget):
     # ─── Tab builders ────────────────────────────────────────────────
 
     def _setting_row(self, title: str, subtitle: str, control: QWidget) -> QHBoxLayout:
-        """A mockup settings row: a title + sublabel on the left, a control right."""
+        """A mockup settings row: a title + sublabel on the left, a control right.
+
+        DEC-268: the row also *names* the control for assistive tech. A
+        ``ToggleSwitch`` carries no text of its own — the label beside it is a
+        separate ``QLabel``, so the switch announces as an anonymous checkbox,
+        once per boolean down the page. `set_accessible_label` existed for this
+        since DEC-255 and no caller ever used it.
+
+        Doing it here rather than at each of the eight construction sites is the
+        point: this row is the only place that holds both the control and the
+        words describing it, so a future toggle is named by construction instead
+        of relying on whoever adds it to remember.
+        """
         row = QHBoxLayout()
         text = QVBoxLayout()
         text.setContentsMargins(0, 0, 0, 0)
@@ -260,6 +272,12 @@ class SettingsPage(QWidget):
         text.addWidget(sub)
         row.addLayout(text, 1)
         row.addWidget(control)
+        # Only for controls that carry no text of their own. A QComboBox or a
+        # QSpinBox announces its own value, and overriding that with the row
+        # title would replace useful information with a restatement of the label
+        # the user can already see.
+        if isinstance(control, ToggleSwitch):
+            control.set_accessible_label(title)
         return row
 
     def _build_general_startup_card(self) -> QWidget:

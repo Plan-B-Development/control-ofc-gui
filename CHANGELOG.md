@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Six controls announced as nothing at all to a screen reader.** Five buttons
+  whose whole label is a glyph — the two `+` buttons on Controls, the `⋮`
+  profile menu, and the `→` / `←` member arrows — carried a good tooltip and no
+  accessible name, which is precisely the trap: Qt does not expose a tooltip as
+  a name, and a keyboard-only screen-reader user never triggers one, so all five
+  announced as "button". The arrows are the worst of them, being mirror images
+  that differ only in direction. And every boolean on the Settings page
+  announced as "Toggle" — eight of them, identical, which is worse than nameless
+  because it reads as deliberate.
+
+  Both fixes go where the information already is rather than at each call site:
+  `make_button` gained an `accessible_name` parameter, and the Settings row
+  helper names its own switch from the label it is already given. A new lint
+  walks every button in the UI tree and fails on a label with no word in it, so
+  the next one cannot ship unnamed — the rule has existed since DEC-251 and
+  review had not caught these in roughly fifteen releases, which is the argument
+  for a test rather than a convention. DEC-268.
+
 ## [2.42.0] — 2026-08-17
 
 ### Added

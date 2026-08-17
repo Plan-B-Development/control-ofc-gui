@@ -74,12 +74,22 @@ class MemberEditorDialog(ModalDialog):
         # Center: add/remove buttons (mockup arrows)
         center = QVBoxLayout()
         center.addStretch()
-        self._add_btn = make_button("→", "secondary", object_name="MemberEditor_Btn_add")
+        self._add_btn = make_button(
+            "→",
+            "secondary",
+            object_name="MemberEditor_Btn_add",
+            accessible_name="Add selected outputs to this control",
+        )
         self._add_btn.setToolTip("Add selected outputs to this control")
         self._add_btn.setFixedWidth(40)
         self._add_btn.clicked.connect(self._on_add)
         center.addWidget(self._add_btn)
-        self._remove_btn = make_button("←", "secondary", object_name="MemberEditor_Btn_remove")
+        self._remove_btn = make_button(
+            "←",
+            "secondary",
+            object_name="MemberEditor_Btn_remove",
+            accessible_name="Remove selected outputs from this control",
+        )
         self._remove_btn.setToolTip("Remove selected outputs from this control")
         self._remove_btn.setFixedWidth(40)
         self._remove_btn.clicked.connect(self._on_remove)

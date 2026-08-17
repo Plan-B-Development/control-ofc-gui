@@ -351,7 +351,12 @@ class ControlsPage(QWidget):
         roles_header = SectionHeader(
             "Assign Roles", object_name="Controls_Section_assignRoles", step=1
         )
-        self._add_control_btn = make_button("+", "secondary", object_name="Controls_Btn_newControl")
+        self._add_control_btn = make_button(
+            "+",
+            "secondary",
+            object_name="Controls_Btn_newControl",
+            accessible_name="Create a new fan role",
+        )
         self._add_control_btn.setToolTip("Create a new fan role")
         self._add_control_btn.setFixedWidth(32)
         self._add_control_btn.clicked.connect(self._on_new_control_menu)
@@ -405,7 +410,12 @@ class ControlsPage(QWidget):
         p2_layout.setContentsMargins(0, 0, 0, 0)
         p2_layout.setSpacing(6)
         link_header = SectionHeader("Link Logic", object_name="Controls_Section_linkLogic", step=2)
-        self._add_curve_btn = make_button("+", "secondary", object_name="Controls_Btn_addCurve")
+        self._add_curve_btn = make_button(
+            "+",
+            "secondary",
+            object_name="Controls_Btn_addCurve",
+            accessible_name="Add a new curve to the library",
+        )
         self._add_curve_btn.setToolTip("Add a new curve to the library")
         self._add_curve_btn.setFixedWidth(32)
         self._add_curve_btn.clicked.connect(self._on_add_curve_menu)
@@ -617,7 +627,12 @@ class ControlsPage(QWidget):
         self._edited_profile_label.setTextFormat(Qt.TextFormat.PlainText)
         bar.addWidget(self._edited_profile_label)
 
-        manage_btn = make_button("⋮", "ghost", object_name="Controls_Btn_manageProfiles")
+        manage_btn = make_button(
+            "⋮",
+            "ghost",
+            object_name="Controls_Btn_manageProfiles",
+            accessible_name="Manage profiles",
+        )
         manage_btn.setToolTip("Create, rename, duplicate, or delete profiles")
         manage_btn.setFixedWidth(32)
         manage_btn.clicked.connect(self._on_manage_profiles)

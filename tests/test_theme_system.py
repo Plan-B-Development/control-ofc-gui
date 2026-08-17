@@ -9,7 +9,7 @@ from typing import ClassVar
 from unittest import mock
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
 from control_ofc.ui.theme import (
     _PALETTE_DISABLED_ROLES,
@@ -1570,6 +1570,149 @@ class TestAccessibleNames:
         qtbot.addWidget(swatch)
         assert swatch.text() == "", "precondition: the swatch's content is its colour"
         assert "accent_primary" in swatch.accessibleName()
+
+    @staticmethod
+    def _glyph_only_buttons() -> list[tuple[str, int, str, bool]]:
+        """Every button in ``ui/`` whose label carries no word.
+
+        Returns ``(relative_path, lineno, label, is_named)``. "Glyph-only" is
+        defined as *no alphanumeric character in the label* rather than by
+        length: `+`, `⋮`, `→`, `←`, `↺` say nothing to a screen reader, while
+        `OK` is a real word and needs no separate name.
+
+        A name counts if it arrives either through ``make_button``'s
+        ``accessible_name`` (the preferred form, DEC-268) or through a
+        ``setAccessibleName`` call on the same variable in the same function —
+        the latter so the Theme Editor's raw ``QPushButton("↺")`` still passes.
+        That one deliberately stays a raw button: it sets no ``variant``, so
+        routing it through the factory would restyle ~50 live instances.
+        """
+        src = Path(__file__).resolve().parent.parent / "src" / "control_ofc"
+        found: list[tuple[str, int, str, bool]] = []
+
+        for py_file in sorted((src / "ui").rglob("*.py")):
+            tree = ast.parse(py_file.read_text(encoding="utf-8"))
+            # Map each function to the set of names it calls setAccessibleName on.
+            named_in_fn: dict[int, set[str]] = {}
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                targets: set[str] = set()
+                for call in ast.walk(fn):
+                    if (
+                        isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "setAccessibleName"
+                    ):
+                        recv = call.func.value
+                        if isinstance(recv, ast.Name):
+                            targets.add(recv.id)
+                        elif isinstance(recv, ast.Attribute):
+                            targets.add(recv.attr)
+                named_in_fn[id(fn)] = targets
+
+            # Attach each call to its enclosing function.
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for node in ast.walk(fn):
+                    if not isinstance(node, ast.Call) or not node.args:
+                        continue
+                    callee = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                    if callee not in ("make_button", "QPushButton"):
+                        continue
+                    label = node.args[0]
+                    if not (isinstance(label, ast.Constant) and isinstance(label.value, str)):
+                        continue
+                    text = label.value
+                    if not text.strip() or any(ch.isalnum() for ch in text):
+                        continue
+
+                    named = any(k.arg == "accessible_name" for k in node.keywords)
+                    if not named:
+                        # Fall back to a setAccessibleName on the same target.
+                        for assign in ast.walk(fn):
+                            if isinstance(assign, ast.Assign) and assign.value is node:
+                                for t in assign.targets:
+                                    tname = getattr(t, "id", None) or getattr(t, "attr", None)
+                                    if tname and tname in named_in_fn[id(fn)]:
+                                        named = True
+                    rel = py_file.relative_to(src).as_posix()
+                    found.append((rel, node.lineno, text, named))
+        return found
+
+    def test_every_glyph_only_button_is_named(self):
+        """DEC-268: a button whose label is a bare glyph must carry a name.
+
+        Five shipped unnamed — `+` twice, `⋮`, `→`, `←` — each with a perfectly
+        good tooltip, which is precisely the trap: a tooltip reads like a fix and
+        is not one. Qt does not expose it as an accessible name and a
+        keyboard-only screen-reader user never triggers it, so all five announced
+        as "button". Review had not caught it in the ~15 releases since DEC-251
+        set the rule, which is why this is a lint and not a convention.
+        """
+        buttons = self._glyph_only_buttons()
+        assert buttons, "the AST scan found no glyph buttons at all — it has stopped working"
+
+        unnamed = [f"{f}:{ln} {text!r}" for f, ln, text, named in buttons if not named]
+        assert not unnamed, (
+            "glyph-only buttons with no accessible name — each announces as an "
+            "anonymous 'button' to a screen reader. Pass `accessible_name=` to "
+            "`make_button`:\n  " + "\n  ".join(unnamed)
+        )
+
+    def test_the_member_editor_arrows_announce_their_direction(self, qtbot):
+        """The rendered outcome, not just the source.
+
+        The AST lint above proves the argument is passed; this proves it reaches
+        the widget. `→` and `←` are the pair most dependent on a name — they are
+        mirror images that differ only in direction, so an unnamed pair leaves a
+        screen-reader user unable to tell add from remove.
+        """
+        from control_ofc.ui.widgets.member_editor import MemberEditorDialog
+
+        editor = MemberEditorDialog(current_members=[], available_outputs=[])
+        qtbot.addWidget(editor)
+
+        add = editor.findChild(QPushButton, "MemberEditor_Btn_add")
+        remove = editor.findChild(QPushButton, "MemberEditor_Btn_remove")
+        assert add is not None and remove is not None, "objectNames changed"
+        assert not any(ch.isalnum() for ch in add.text()), "precondition: label is a bare glyph"
+
+        assert "Add" in add.accessibleName()
+        assert "Remove" in remove.accessibleName()
+        assert add.accessibleName() != remove.accessibleName(), (
+            "the two arrows are mirror images; identical names leave add and "
+            "remove indistinguishable"
+        )
+
+    def test_every_settings_toggle_takes_its_row_label_as_its_name(self, qtbot):
+        """DEC-268: a ToggleSwitch carries no text, so the row must name it.
+
+        `set_accessible_label` existed for this from DEC-255 and no caller ever
+        used it, leaving eight booleans on the Settings page all announcing as
+        "Toggle" — indistinguishable from one another, which is worse than
+        nameless because it reads as deliberate. Naming happens in
+        `_setting_row`, the one place holding both the switch and its words.
+        """
+        from control_ofc.ui.components.toggle_switch import ToggleSwitch
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        page = SettingsPage()
+        qtbot.addWidget(page)
+
+        toggles = page.findChildren(ToggleSwitch)
+        assert len(toggles) >= 5, f"expected the Settings booleans, found {len(toggles)}"
+
+        generic = [t.objectName() for t in toggles if t.accessibleName() in ("", "Toggle")]
+        assert not generic, (
+            "these toggles still announce as the generic fallback rather than "
+            f"their row label: {generic}"
+        )
+        names = [t.accessibleName() for t in toggles]
+        assert len(set(names)) == len(names), (
+            f"two toggles share an accessible name, so they are indistinguishable: {names}"
+        )
 
     def test_every_reset_button_in_the_theme_editor_is_named(self, qtbot):
         """There is one per token, so an unnamed glyph is heard dozens of times."""
