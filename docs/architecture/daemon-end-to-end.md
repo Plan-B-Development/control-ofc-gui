@@ -456,7 +456,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 |-----|---------|-------|------|
 | `serial.port` | None (auto-detect) | — | path |
 | `serial.timeout_ms` | 500 | ≥50 | ms |
-| `polling.poll_interval_ms` | 1000 | ≥100 | ms |
+| `polling.poll_interval_ms` | 1000 | 100–6000 (clamped, DEC-270) | ms |
 | `ipc.socket_path` | `/run/control-ofc/control-ofc.sock` | — | path |
 
 ### Runtime Paths

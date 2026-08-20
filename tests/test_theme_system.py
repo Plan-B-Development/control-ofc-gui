@@ -1575,70 +1575,152 @@ class TestAccessibleNames:
     def _glyph_only_buttons() -> list[tuple[str, int, str, bool]]:
         """Every button in ``ui/`` whose label carries no word.
 
-        Returns ``(relative_path, lineno, label, is_named)``. "Glyph-only" is
+        Returns ``(relative_path, lineno, label, is_named)``. "Wordless" is
         defined as *no alphanumeric character in the label* rather than by
-        length: `+`, `⋮`, `→`, `←`, `↺` say nothing to a screen reader, while
-        `OK` is a real word and needs no separate name.
+        length: `+`, `⋮`, `→`, `←`, `↺` and friends say nothing to a screen reader,
+        while `OK` is a real word and needs no separate name. An **empty** label
+        counts too — that is the shape an icon-only button takes, and it is the
+        most nameless case of all.
 
         A name counts if it arrives either through ``make_button``'s
         ``accessible_name`` (the preferred form, DEC-268) or through a
-        ``setAccessibleName`` call on the same variable in the same function —
+        ``setAccessibleName`` on the *same target path* in the *innermost
+        enclosing scope* —
         the latter so the Theme Editor's raw ``QPushButton("↺")`` still passes.
         That one deliberately stays a raw button: it sets no ``variant``, so
         routing it through the factory would restyle ~50 live instances.
+
+        DEC-269 closed four holes the first version shipped with, each verified
+        by a reviewer building the shape and watching the scan miss it:
+
+        * **empty labels were skipped outright** — and `footer.py` really does
+          build ``QPushButton("")``, so the claim that the shape did not exist
+          was wrong;
+        * **module- and class-body scope were never walked**, only function
+          bodies;
+        * **the name check never inspected the keyword's value**, so
+          ``accessible_name=None`` / ``""`` passed the lint while
+          ``make_button`` skipped the setter behind its truthiness guard;
+        * **the ``setAccessibleName`` fallback matched on the bare attribute
+          name**, so ``decoy._add_btn.setAccessibleName(...)`` marked an entirely
+          different ``real._add_btn`` as named.
+
+        Still not covered, and deliberately recorded rather than implied: a label
+        built at runtime (f-string, variable, module constant), an aliased import
+        of ``make_button``, and a ``QPushButton`` subclass. Those need the
+        runtime tests beside this one, not more AST.
         """
         src = Path(__file__).resolve().parent.parent / "src" / "control_ofc"
         found: list[tuple[str, int, str, bool]] = []
 
-        for py_file in sorted((src / "ui").rglob("*.py")):
-            tree = ast.parse(py_file.read_text(encoding="utf-8"))
-            # Map each function to the set of names it calls setAccessibleName on.
-            named_in_fn: dict[int, set[str]] = {}
-            for fn in ast.walk(tree):
-                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue
-                targets: set[str] = set()
-                for call in ast.walk(fn):
-                    if (
-                        isinstance(call, ast.Call)
-                        and isinstance(call.func, ast.Attribute)
-                        and call.func.attr == "setAccessibleName"
-                    ):
-                        recv = call.func.value
-                        if isinstance(recv, ast.Name):
-                            targets.add(recv.id)
-                        elif isinstance(recv, ast.Attribute):
-                            targets.add(recv.attr)
-                named_in_fn[id(fn)] = targets
+        # Explicit, greppable opt-out for a button that is built empty and given
+        # word-bearing text at runtime. It must be a marker rather than a silent
+        # skip on empty labels, because "empty" is also exactly what an icon-only
+        # button looks like — the case most in need of a name.
+        #
+        # Why these cannot simply take an `accessible_name`: an explicit name
+        # FREEZES and stops tracking `setText` (measured — a button reading
+        # "Unassigned Fans (3)" kept exposing "(0)"). For a chip whose entire job
+        # is to announce changing status, a static name is worse than Qt's text
+        # fallback, which follows the live text.
+        EXEMPT = "a11y: text-at-runtime"
 
-            # Attach each call to its enclosing function.
-            for fn in ast.walk(tree):
-                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue
-                for node in ast.walk(fn):
-                    if not isinstance(node, ast.Call) or not node.args:
+        def target_path(node) -> str | None:
+            """Dotted path for an assignment target or attribute receiver.
+
+            Full path, not the last segment: matching on the bare name is what
+            let a decoy with a same-named attribute vouch for a different object.
+            """
+            if isinstance(node, ast.Name):
+                return node.id
+            if isinstance(node, ast.Attribute):
+                inner = target_path(node.value)
+                return f"{inner}.{node.attr}" if inner else None
+            return None
+
+        for py_file in sorted((src / "ui").rglob("*.py")):
+            source = py_file.read_text(encoding="utf-8")
+            lines = source.splitlines()
+            tree = ast.parse(source)
+
+            # Scope = each function body FIRST, then the module as a trailing
+            # catch-all for anything built at module or class level.
+            #
+            # Order is load-bearing. Putting the module first re-opened the very
+            # hole the dotted-path match closed: `ast.walk(tree)` recurses into
+            # every function, so the module pass reached every call site and the
+            # `seen` dedupe then skipped the narrower per-function passes
+            # entirely — making them dead code and every verdict file-wide. Two
+            # locals both named `btn` in unrelated methods would vouch for each
+            # other, and `btn` is the name this codebase actually uses.
+            scopes: list[ast.AST] = [
+                n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ]
+            scopes.append(tree)
+
+            seen: set[tuple[int, int]] = set()
+            for scope in scopes:
+                named_here = {
+                    target_path(call.func.value)
+                    for call in ast.walk(scope)
+                    if isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "setAccessibleName"
+                }
+                named_here.discard(None)
+
+                for node in ast.walk(scope):
+                    if not isinstance(node, ast.Call):
                         continue
                     callee = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
                     if callee not in ("make_button", "QPushButton"):
                         continue
-                    label = node.args[0]
+
+                    # Label may be positional or `text=`.
+                    label = node.args[0] if node.args else None
+                    if label is None:
+                        label = next((k.value for k in node.keywords if k.arg == "text"), None)
+                    if label is None:
+                        # No literal label at all — a runtime-built one. Out of
+                        # this scan's reach; see the docstring.
+                        continue
                     if not (isinstance(label, ast.Constant) and isinstance(label.value, str)):
                         continue
                     text = label.value
-                    if not text.strip() or any(ch.isalnum() for ch in text):
-                        continue
+                    if text.strip() and any(ch.isalnum() for ch in text):
+                        continue  # has a real word — Qt's text fallback suffices
 
-                    named = any(k.arg == "accessible_name" for k in node.keywords)
+                    # A nested function is walked twice (once via the module, once
+                    # as its own scope); report each call site once.
+                    key = (node.lineno, node.col_offset)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                    # The keyword must carry a NON-EMPTY string — `make_button`
+                    # skips `setAccessibleName` for a falsy value, so presence
+                    # alone proves nothing.
+                    named = any(
+                        k.arg == "accessible_name"
+                        and isinstance(k.value, ast.Constant)
+                        and isinstance(k.value.value, str)
+                        and k.value.value.strip()
+                        for k in node.keywords
+                    )
                     if not named:
-                        # Fall back to a setAccessibleName on the same target.
-                        for assign in ast.walk(fn):
+                        # The marker must be on the line IMMEDIATELY above the
+                        # call. A two-line window let a marker written for one
+                        # button silence the next one below it.
+                        marker = lines[node.lineno - 2] if node.lineno >= 2 else ""
+                        named = EXEMPT in marker
+                    if not named:
+                        for assign in ast.walk(scope):
                             if isinstance(assign, ast.Assign) and assign.value is node:
                                 for t in assign.targets:
-                                    tname = getattr(t, "id", None) or getattr(t, "attr", None)
-                                    if tname and tname in named_in_fn[id(fn)]:
+                                    if target_path(t) in named_here:
                                         named = True
-                    rel = py_file.relative_to(src).as_posix()
-                    found.append((rel, node.lineno, text, named))
+
+                    found.append((py_file.relative_to(src).as_posix(), node.lineno, text, named))
         return found
 
     def test_every_glyph_only_button_is_named(self):
@@ -1659,6 +1741,28 @@ class TestAccessibleNames:
             "glyph-only buttons with no accessible name — each announces as an "
             "anonymous 'button' to a screen reader. Pass `accessible_name=` to "
             "`make_button`:\n  " + "\n  ".join(unnamed)
+        )
+
+    def test_the_runtime_text_exemption_is_not_quietly_widening(self):
+        """DEC-269: the exemption marker is trusted on sight, so pin who has it.
+
+        The lint cannot verify that an exempted button really is given
+        word-bearing text later — it is a comment, not a proof. That is
+        acceptable for the one button that genuinely needs it, and unacceptable
+        as an open door: without this, anyone can silence a permanently
+        unlabelled icon button with a false comment and the gate stays green.
+        Widening the set is now a visible diff that has to be argued for.
+        """
+        src = Path(__file__).resolve().parent.parent / "src" / "control_ofc"
+        marked = sorted(
+            f"{py.relative_to(src).as_posix()}:{n}"
+            for py in (src / "ui").rglob("*.py")
+            for n, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1)
+            if "a11y: text-at-runtime" in line
+        )
+        assert marked == ["ui/components/footer.py:58"], (
+            "the runtime-text exemption set changed. Each entry must be a button "
+            f"that is genuinely re-labelled at runtime — verify, then update: {marked}"
         )
 
     def test_the_member_editor_arrows_announce_their_direction(self, qtbot):
@@ -1712,6 +1816,30 @@ class TestAccessibleNames:
         names = [t.accessibleName() for t in toggles]
         assert len(set(names)) == len(names), (
             f"two toggles share an accessible name, so they are indistinguishable: {names}"
+        )
+
+    def test_buttons_sharing_visible_text_announce_differently(self, qtbot):
+        """DEC-269: Qt's text fallback is not enough when two buttons share text.
+
+        Both re-seed buttons on Settings read "Run again", so the fallback made
+        them announce identically — the same defect as the eight "Toggle"
+        switches, at lower volume. The AST lint cannot catch this: "Run again"
+        contains real words, so it is not wordless.
+        """
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        page = SettingsPage()
+        qtbot.addWidget(page)
+
+        aliases = page.findChild(QPushButton, "Settings_Btn_reseedAliases")
+        series = page.findChild(QPushButton, "Settings_Btn_reseedSeries")
+        assert aliases is not None and series is not None, "objectNames changed"
+        assert aliases.text() == series.text() == "Run again", "precondition"
+
+        assert aliases.accessibleName() and series.accessibleName()
+        assert aliases.accessibleName() != series.accessibleName(), (
+            "two buttons with identical visible text must not also announce "
+            "identically — nothing then distinguishes them by keyboard"
         )
 
     def test_every_reset_button_in_the_theme_editor_is_named(self, qtbot):

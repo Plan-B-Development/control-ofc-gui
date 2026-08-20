@@ -272,10 +272,20 @@ class SettingsPage(QWidget):
         text.addWidget(sub)
         row.addLayout(text, 1)
         row.addWidget(control)
-        # Only for controls that carry no text of their own. A QComboBox or a
-        # QSpinBox announces its own value, and overriding that with the row
-        # title would replace useful information with a restatement of the label
-        # the user can already see.
+        # Scoped to ToggleSwitch, which is the acute case: eight of them on this
+        # page, none with text of its own, all announcing the same generic
+        # "Toggle".
+        #
+        # DEC-269 corrects the reason previously given here. It claimed that
+        # naming a QComboBox or QSpinBox would "replace useful information with a
+        # restatement of the label" — that is not how Qt works.
+        # QAccessible::Text::Name and ::Value are separate queries, so a name is
+        # ADDED to the announcement ("Poll interval, spin button, 1000 ms"), it
+        # does not overwrite the value. The combos, spin boxes and the
+        # serial-port field on this page are therefore also nameless, and none
+        # has a buddy association either. That is a real gap and it is scope, not
+        # principle — deliberately deferred to its own change rather than widened
+        # here on a release's tail end.
         if isinstance(control, ToggleSwitch):
             control.set_accessible_label(title)
         return row
@@ -1152,7 +1162,15 @@ class SettingsPage(QWidget):
         )
 
         self._reseed_aliases_btn = make_button(
-            "Run again", "ghost", object_name="Settings_Btn_reseedAliases"
+            "Run again",
+            "ghost",
+            object_name="Settings_Btn_reseedAliases",
+            # DEC-269: two buttons on this page both read "Run again", so Qt's
+            # text fallback announces them identically — the same defect as the
+            # eight "Toggle" switches, at lower volume. Sighted users
+            # disambiguate from the row title; a screen-reader user tabbing the
+            # button column cannot.
+            accessible_name="Run fan name seeding again",
         )
         self._reseed_aliases_btn.setToolTip(
             "Re-adopt fan names from your profiles on the next connection"
@@ -1167,7 +1185,10 @@ class SettingsPage(QWidget):
         )
 
         self._reseed_series_btn = make_button(
-            "Run again", "ghost", object_name="Settings_Btn_reseedSeries"
+            "Run again",
+            "ghost",
+            object_name="Settings_Btn_reseedSeries",
+            accessible_name="Re-pick default chart series",
         )
         self._reseed_series_btn.setToolTip(
             "Re-pick the default chart series on the next connection"

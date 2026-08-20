@@ -50,6 +50,12 @@ def _chip_button(object_name: str, tooltip: str) -> QPushButton:
     reachable by keyboard as well as mouse (WCAG 1.4.13) — the property the
     DEC-185 thermal chip and DEC-206 readiness chip both had in the old strip.
     """
+    # Built empty and given word-bearing text on every update ("Cooling ready",
+    # "Cooling: 2 to fix"). Qt falls back to the button text for the accessible
+    # name, which is what we want: an explicit `accessible_name` would freeze and
+    # stop tracking `setText`, so a status chip would announce a stale status
+    # forever (DEC-269).
+    # a11y: text-at-runtime
     btn = QPushButton("")
     btn.setObjectName(object_name)
     btn.setFlat(True)

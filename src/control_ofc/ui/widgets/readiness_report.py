@@ -490,7 +490,13 @@ def thermal_line(ts) -> str | None:
     info is present. Only ``state`` is daemon-supplied (escape in HTML)."""
     if ts is None:
         return None
-    found = "found" if ts.cpu_sensor_found else "NOT found"
+    # DEC-269: the daemon changed what this field answers. It used to mean "is a
+    # CpuTemp sensor present?"; since the freshness filter it means "is there a
+    # CURRENT reading?" — false for a sensor that is still listed but has
+    # stopped updating. Rendering that as "NOT found" produced
+    # "State: emergency · CPU sensor: NOT found" while the emergency was
+    # triggered by a sensor sitting right there in the sensor table.
+    found = "reading current" if ts.cpu_sensor_found else "no current reading"
     return (
         f"State: {ts.state} · CPU sensor: {found} · "
         f"emergency {ts.emergency_threshold_c:.0f}°C · "

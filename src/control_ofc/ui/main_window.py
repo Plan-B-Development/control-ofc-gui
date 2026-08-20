@@ -10,11 +10,11 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from control_ofc.api.client import DaemonClient
-from control_ofc.api.models import ConnectionState, OperationMode, ReadinessRollup
+from control_ofc.api.models import ConnectionState, Freshness, OperationMode, ReadinessRollup
 from control_ofc.constants import APP_VERSION, PAGE_CONTROLS, PAGE_DASHBOARD, POLL_INTERVAL_MS
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 from control_ofc.services.app_state import AppState
-from control_ofc.services.dashboard_view import safety_detail_text
+from control_ofc.services.dashboard_view import cpu_values_for_display, safety_detail_text
 from control_ofc.services.demo_controller import DemoController
 from control_ofc.services.demo_service import DemoService
 from control_ofc.services.diagnostics_service import DiagnosticsService
@@ -468,14 +468,26 @@ class MainWindow(QWidget):
 
         Assembled Qt-free by :func:`dashboard_view.safety_detail_text`; the
         THERMAL_STATES label is a presentation constant resolved here. Surfaces
-        only data we actually have — state, a plain reason, the current hottest
-        CPU sensor, and any active manual overrides."""
+        only data we actually have — state, a plain reason, the hottest CPU
+        sensor (labelled last-known when nothing current is left, DEC-269/270),
+        and any active manual overrides."""
         ds = self._state.daemon_status
         thermal = (ds.thermal_state if ds else "normal") or "normal"
         label, _css = THERMAL_STATES.get(thermal, (f"Thermal: {thermal}", ""))
-        cpu_vals = [s.value_c for s in self._state.sensors if s.kind in ("CpuTemp", "cpu_temp")]
+        cpu_sensors = [s for s in self._state.sensors if s.kind in ("CpuTemp", "cpu_temp")]
+        # DEC-269: the daemon stops trusting a CPU reading once it ages out, and
+        # so should the label beside it. `Freshness.FRESH` is the GUI's own
+        # existing 2 s threshold — tighter than the daemon's budget, so the
+        # hedge appears slightly early rather than slightly late.
+        #
+        # The value and the flag are resolved together by `cpu_values_for_display`
+        # so they cannot disagree; see its docstring for the multi-CCD case that
+        # made two separate computations wrong.
+        cpu_vals, cpu_stale = cpu_values_for_display(
+            (s.value_c, s.freshness is Freshness.FRESH) for s in cpu_sensors
+        )
         n = len(ds.overrides) if ds and ds.overrides else 0
-        return safety_detail_text(thermal, label, cpu_vals, n)
+        return safety_detail_text(thermal, label, cpu_vals, n, cpu_reading_is_stale=cpu_stale)
 
     def _open_safety_detail(self) -> None:
         """Show the read-only thermal-safety detail (footer thermal chip, DEC-185)."""

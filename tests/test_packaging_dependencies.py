@@ -417,3 +417,87 @@ def test_notify_repo_settles_before_dispatching():
         "the settle wait must come BEFORE the dispatch — waiting afterwards does "
         f"nothing at all. sleep at {sleep_idx[0]}, dispatch at {dispatch_idx[0]}"
     )
+
+
+# --- Release-metadata guards -------------------------------------------------
+#
+# Both of these move a check that was previously CHECKLIST-ONLY (a step in
+# /ofc:release Phase 4) into the Standard gates, so it fails at commit time
+# rather than after a tag is pushed.
+#
+# They exist because checklist-only version facts have a measured history of
+# going stale here: the README's release line sat at v1.25.0 through five
+# releases before an audit caught it, and a missing CHANGELOG section fails the
+# `github-release` CI job only AFTER the tag is live, forcing a delete-and-retag
+# cycle. Neither failure mode is subtle; both were simply unwatched.
+
+CHANGELOG = REPO_ROOT / "CHANGELOG.md"
+README = REPO_ROOT / "README.md"
+
+
+def test_changelog_has_a_section_for_the_current_version():
+    """CHANGELOG must carry a `## [X.Y.Z]` section matching pyproject's version.
+
+    `.github/workflows/release.yml` extracts the GitHub Release notes from the
+    section matching the pushed tag, and the job FAILS when there is none. Since
+    the tag is already public by then, the repair is delete-and-re-push. Catching
+    it here costs nothing.
+    """
+    version = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["version"]
+    changelog_text = CHANGELOG.read_text(encoding="utf-8")
+
+    # Accept `## [X.Y.Z]` with or without a trailing date/dash suffix.
+    pattern = rf"^## \[{re.escape(version)}\]"
+    assert re.search(pattern, changelog_text, re.MULTILINE) is not None, (
+        f"CHANGELOG.md has no '## [{version}]' section, but pyproject.toml is at "
+        f"{version!r}. CI extracts the GitHub Release notes from that section and "
+        f"the github-release job fails without it — after the tag is already "
+        f"pushed. Add the section before tagging."
+    )
+
+
+def test_pkgbuild_daemon_floor_matches_readme_pairing():
+    """The daemon-version floor is stated twice; the two statements must agree.
+
+    `packaging/PKGBUILD` `depends=('control-ofc-daemon>=X')` is what pacman
+    actually enforces at install time. The README's "Pairs with … >= vX" line is
+    what a human reads. They are two hand-maintained statements of one fact, and
+    nothing compared them — so a floor bump in one could silently disagree with
+    the other, either blocking installs that should work or promising
+    compatibility that pacman will refuse.
+    """
+    deps = _parse_pkgbuild_depends(PKGBUILD.read_text(encoding="utf-8"))
+    daemon_dep = next((d for d in deps if d.startswith("control-ofc-daemon")), None)
+    assert daemon_dep is not None, (
+        f"packaging/PKGBUILD depends declares no control-ofc-daemon entry. Got: {deps!r}"
+    )
+
+    dep_match = re.search(r">=\s*v?(\d+\.\d+\.\d+)", daemon_dep)
+    assert dep_match is not None, (
+        f"control-ofc-daemon dep {daemon_dep!r} has no '>=X.Y.Z' floor. The GUI "
+        f"must declare the minimum daemon it requires."
+    )
+    pkgbuild_floor = dep_match.group(1)
+
+    readme_line = next(
+        (ln for ln in README.read_text(encoding="utf-8").splitlines() if "Pairs with" in ln),
+        None,
+    )
+    assert readme_line is not None, (
+        "README.md has no 'Pairs with' line. It states the daemon floor for humans "
+        "and is owned only by /ofc:release Phase 4 — do not drop it."
+    )
+
+    # The line names several capability-gated versions in parentheses; the FLOOR
+    # is the first one, immediately after the >= / ≥ sign.
+    readme_match = re.search(r"(?:>=|≥)\s*v?(\d+\.\d+\.\d+)", readme_line)
+    assert readme_match is not None, (
+        f"README 'Pairs with' line states no '>= vX.Y.Z' floor:\n  {readme_line}"
+    )
+    readme_floor = readme_match.group(1)
+
+    assert pkgbuild_floor == readme_floor, (
+        f"daemon floor drift: packaging/PKGBUILD requires >={pkgbuild_floor} but "
+        f"README.md advertises >= v{readme_floor}. pacman enforces the PKGBUILD "
+        f"value; the README is what users read. Bump both together."
+    )

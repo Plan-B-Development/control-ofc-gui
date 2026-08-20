@@ -1,0 +1,28 @@
+version: 2
+
+# Scope is deliberately GitHub Actions ONLY.
+#
+# Every third-party action in this repo is SHA-pinned (a supply-chain requirement,
+# not a style choice), which means each one has to be bumped by hand — and nothing
+# was watching them. That is the gap this closes.
+#
+# Python dependencies are intentionally NOT managed here: `pip-audit` in the
+# release-time gates already covers known-CVE risk against the frozen third-party
+# set (see CLAUDE.md § Quality gates), and a second updater would generate PR
+# churn against a floor-pinned manifest without adding signal.
+#
+# Grouped and monthly on purpose. Ten pinned actions updating individually would
+# produce a stream of PRs, each of which re-runs the full CI matrix; one grouped
+# PR a month is a review that actually gets done.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns:
+          - "*"

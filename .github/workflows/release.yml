@@ -52,8 +52,10 @@ name: Release
 # credentials (the `AUR_SSH_PRIVATE_KEY` repository secret, whose public half is
 # on the AUR account) are left in place for the same reason.
 #
-# Note that `scripts/release-aur.sh` also still exists as a local break-glass
-# path; it is gitignored local-only tooling and is not part of any CI flow.
+# There is no local break-glass script. `scripts/release-aur.sh` was deleted: it
+# unconditionally grepped a 64-hex digest out of `sha256sums=` and died when it
+# found none, so DEC-242 making that field permanently `SKIP` left it unable to
+# run at all. This job supersedes it.
 
 on:
   push:
@@ -332,7 +334,8 @@ jobs:
     if: github.event_name == 'push'
     needs: github-release
     steps:
-      # Settle window before dispatching (DEC-248).
+      # Settle window before dispatching (DEC-248, made adaptive after the
+      # 2026-08-17 mismatched-pair incident).
       #
       # pacman-repo's publish is DECLARATIVE: it assembles from whatever is the
       # latest Release of each source project at the moment it runs. In a
@@ -341,18 +344,93 @@ jobs:
       # a publish that pairs THIS new package with the OTHER project's previous
       # one, and serve that pair as current until the second publish lands.
       #
-      # Waiting here lets a paired release catch up, so the first publish already
-      # contains both new packages.
+      # This used to be a blind `sleep 180`, and it did not work. On 2026-08-17
+      # the two notify-repo jobs fired 9m29s apart — the GUI's CI wall clock is
+      # dominated by the canary job, which ci-green then waits on — so publish #1
+      # assembled daemon 2.18.0 with GUI 2.41.0 and verify.yml reported that pair
+      # GREEN, because the GUI Release object did not exist yet. Three minutes
+      # was never going to cover a nine-minute skew, and on a solo release it was
+      # three idle minutes bought for nothing.
       #
-      # Limits, stated plainly so nobody over-trusts this: it is a timing
-      # heuristic, not a guarantee. The daemon's build-test runs cargo test in a
-      # clean container and can outlast this window by a wide margin, in which
-      # case the old interleaving still happens. What keeps that survivable is
-      # that the GUI's `depends=control-ofc-daemon>=X` floor is only raised when
-      # a release genuinely requires a new daemon capability (DEC-248) — so a
-      # transient new-GUI/old-daemon pair normally still resolves.
-      - name: Let a paired release catch up
-        run: sleep 180
+      # So poll for the actual condition rather than guessing at it: has the peer
+      # published its Release object yet? Nothing pending -> dispatch immediately.
+      #                                   Pending         -> wait for it, bounded.
+      #
+      # "Pending" is measured on the peer's `GitHub Release` job, never on its run
+      # status — see the step body for why run status deadlocks.
+      #
+      # Fails OPEN. Any API problem falls back to the old fixed wait instead of
+      # failing the job: this step must never become a new way for an otherwise
+      # complete release to go red. Worst case we are back to the old behaviour,
+      # and the second publish corrects the pair as it always did.
+      - name: Wait for a paired release, if one is in flight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PEER: Plan-B-Development/control-ofc-daemon
+        run: |
+          set -uo pipefail
+          deadline=$(( SECONDS + 1500 ))   # 25 min ceiling
+
+          fallback() {
+            echo "::warning::peer poll unavailable ($1) — falling back to a fixed 180s settle"
+            sleep 180
+            exit 0
+          }
+
+          # How many in-flight peer release runs have NOT yet published their
+          # Release object.
+          #
+          # The condition is the peer's `GitHub Release` JOB, not its run status.
+          # Waiting on run completion DEADLOCKED: this step lives in `notify-repo`,
+          # which is itself part of the run the peer would be waiting on, so in a
+          # coordinated release each side blocked the other until both hit the
+          # ceiling — 25 idle minutes per repo, in precisely the case the wait was
+          # written for, and the "solo release, dispatch immediately" fast path was
+          # unreachable whenever it mattered. The Release object is what pacman-repo
+          # assembles from, and `needs: github-release` puts that job well before
+          # either side's `notify-repo`, so this terminates from both directions.
+          #
+          # `event=push` scopes it to tag releases: a manual workflow_dispatch (the
+          # AUR path, DEC-240) publishes no Release and must not gate the dispatch.
+          peer_pending() {
+            local ids id jobs_done pending=0
+            ids="$(gh api \
+              "repos/${PEER}/actions/workflows/release.yml/runs?event=push&per_page=20" \
+              --jq '.workflow_runs[] | select(.status != "completed") | .id' 2>/dev/null)" \
+              || return 1
+            for id in $ids; do
+              # Any terminal status counts as settled: a peer release that FAILED
+              # will never publish a Release, so blocking on it buys nothing.
+              jobs_done="$(gh api "repos/${PEER}/actions/runs/${id}/jobs" \
+                --jq '[.jobs[] | select(.name == "GitHub Release" and .status == "completed")] | length' \
+                2>/dev/null)" || return 1
+              if [ "$jobs_done" -eq 0 ]; then
+                pending=$(( pending + 1 ))
+              fi
+            done
+            echo "$pending"
+          }
+
+          n="$(peer_pending)" || fallback "api error"
+          case "$n" in ''|*[!0-9]*) fallback "unexpected response '${n}'" ;; esac
+
+          if [ "$n" -eq 0 ]; then
+            echo "No peer Release pending — dispatching now."
+            exit 0
+          fi
+
+          echo "Peer release has not published its Release yet; waiting (max 25m)."
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            sleep 20
+            n="$(peer_pending)" || fallback "api error mid-poll"
+            case "$n" in ''|*[!0-9]*) fallback "unexpected response '${n}'" ;; esac
+            if [ "$n" -eq 0 ]; then
+              echo "Peer Release published; letting it settle."
+              sleep 30
+              exit 0
+            fi
+          done
+          echo "::warning::peer Release still not published after 25m — dispatching anyway; the second publish will correct the pair."
 
       - name: Trigger a repository rebuild
         env:

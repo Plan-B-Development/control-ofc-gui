@@ -86,6 +86,19 @@ This pack includes:
 - asset/branding direction
 - **operations guide** (18) — daemon config, CLI, permissions, troubleshooting
 - **hardware compatibility** (19), **sensor guide** (20), **AMD motherboard guide** (21), **AMD sensor deep-dive** (22), **Intel motherboard guide** (23) — helper / compatibility articles for end-user troubleshooting
+- **cooling hardware readiness** (24)
+- **GPU support rules** (25) — the detailed AMD GPU fan-control rules, split out of `CLAUDE.md` so they load on demand
+
+## Looking for code, not documents?
+This file is a **reading order for the docs pack**. It will not tell you where a
+function lives.
+
+- **`02_System_Architecture_and_Boundaries.md` § Module map** is the annotated `src/`
+  tree — the fastest route from "where does X live?" to a file path.
+- **`docs/architecture/`** holds the two deep dives that are not part of the numbered
+  pack, and were previously indexed nowhere:
+  - `daemon-end-to-end.md` — the full request/'control path through the daemon
+  - `openfan-controller-integration.md` — the OpenFan serial/USB integration
 
 ## Reference note
 This pack incorporates:

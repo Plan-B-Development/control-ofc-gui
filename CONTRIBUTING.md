@@ -18,13 +18,35 @@ All four must pass before merging:
 ruff format --check src/ tests/
 ruff check src/ tests/
 python -m compileall -q src/
-pytest
+python -m pytest tests/ -v
 ```
 
 Run all at once:
 
 ```bash
-ruff format --check src/ tests/ && ruff check src/ tests/ && python -m compileall -q src/ && pytest
+ruff format --check src/ tests/ && ruff check src/ tests/ && python -m compileall -q src/ && python -m pytest tests/ -v
+```
+
+The whole set takes well under a minute (the suite is ~3,300 tests in roughly 45
+seconds; the three lint/compile gates are milliseconds). There is no "fast subset"
+to reach for — run all four.
+
+### Coverage
+
+CI enforces a branch-coverage floor of **88%** (`fail_under` in `pyproject.toml`).
+To check it locally before pushing:
+
+```bash
+python -m pytest --cov --cov-branch --cov-report=term-missing
+```
+
+### Headless / no display
+
+Tests construct real Qt widgets. If you have no display, or see Qt platform-plugin
+errors, run with the offscreen backend:
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
 ```
 
 ## Running

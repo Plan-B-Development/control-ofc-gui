@@ -14,6 +14,7 @@ without constructing widgets, mirroring the S2-S5 ``services/*_view`` modules.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from control_ofc.api.models import (
@@ -34,8 +35,15 @@ _THERMAL_REASONS: dict[str, str] = {
         "100% to protect the hardware until temperatures fall."
     ),
     "no_sensor_fallback": (
-        "No CPU temperature sensor is reachable. The daemon has forced a safe fallback fan "
-        "speed because it cannot confirm the system is cool."
+        # DEC-269: "reachable" was true when the only trigger was a sensor that
+        # had vanished. Since DEC-267 a sensor that is still listed but has
+        # STOPPED UPDATING also reaches this state — so the old wording appeared
+        # directly above a "Hottest CPU sensor: 62.0°C" line drawn from the very
+        # list it denied. Phrased to be true of both triggers without needing a
+        # daemon-version gate.
+        "No current CPU temperature reading. The daemon has forced a safe fallback fan "
+        "speed because it cannot confirm the system is cool — a reading may still be "
+        "listed, but it has stopped updating."
     ),
 }
 
@@ -122,8 +130,39 @@ def build_capabilities_vm(
     )
 
 
+def cpu_values_for_display(
+    readings: Iterable[tuple[float, bool]],
+) -> tuple[list[float], bool]:
+    """Split CPU readings into the tier the detail text should describe.
+
+    ``readings`` is ``(value_c, is_fresh)`` per CPU sensor. Returns the values
+    the label will describe, plus whether they are stale.
+
+    Mirrors the daemon's ``hottest_cpu_reading`` (DEC-269): fresh readings win
+    outright, and stale ones stand in only when *nothing* is fresh. Resolving
+    the value and the staleness flag together is the point — computing them
+    separately let ``max()`` range over stale and fresh sensors while the flag
+    required *all* of them to be stale, so on a multi-CCD Ryzen a stale hottest
+    die printed under the confident "Hottest CPU sensor" label.
+    """
+    # Materialise first: this scans `readings` twice, and a generator caller
+    # would otherwise find it empty on the second pass and report every sensor
+    # stale.
+    pairs = list(readings)
+    fresh = [v for v, is_fresh in pairs if is_fresh]
+    if fresh:
+        return fresh, False
+    stale = [v for v, is_fresh in pairs if not is_fresh]
+    return stale, bool(stale)
+
+
 def safety_detail_text(
-    thermal: str, state_label: str, cpu_values: list[float], override_count: int
+    thermal: str,
+    state_label: str,
+    cpu_values: list[float],
+    override_count: int,
+    *,
+    cpu_reading_is_stale: bool,
 ) -> str:
     """Read-only thermal-safety summary for the thermal chip's click detail.
 
@@ -138,7 +177,17 @@ def safety_detail_text(
         _THERMAL_REASONS.get(thermal, "Current daemon thermal state."),
     ]
     if cpu_values:
-        lines += ["", f"Hottest CPU sensor: {max(cpu_values):.1f}°C"]
+        # DEC-269: hedge on the READING'S OWN AGE, not on `thermal_state`.
+        #
+        # Keying it on `no_sensor_fallback` was wrong in both directions. The
+        # daemon reports `emergency` for a latched emergency running on a stale
+        # reading — so the un-hedged label appeared in exactly the state where
+        # the value is guaranteed stale — while `no_sensor_fallback` can also be
+        # reached with the sensor genuinely gone, where there is no value to
+        # print at all. Age is the fact that actually decides it, the GUI already
+        # has it, and it needs no daemon-version gate.
+        label = "Last known CPU sensor" if cpu_reading_is_stale else "Hottest CPU sensor"
+        lines += ["", f"{label}: {max(cpu_values):.1f}°C"]
     if override_count:
         lines += [
             "",

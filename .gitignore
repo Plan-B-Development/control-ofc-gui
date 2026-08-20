@@ -52,3 +52,16 @@ gui-redesign/
 # commit. Revert these two lines if they should ever be tracked.
 /RESEARCH_SOURCES.md
 /docs/linux-superio-knowledge-curator.md
+
+# Reviewer/agent probe residue. Review agents mutate the tree to test a guard and do
+# not always clean up; one such file (`src/control_ofc/ui/_zzprobe_tmp.py`, holding two
+# glyph-only QPushButtons) sat inside the shipped package directory reddening the
+# DEC-268 accessible-name test, and polluted every source-tree grep. These patterns stop
+# the next one reaching a commit — they do NOT excuse leaving it behind: sweep the tree
+# before tagging.
+_zz*
+*_tmp.py
+
+# Workflow/efficiency audit reports produced by this repo's own analysis passes.
+# Same rationale as AUDIT_*.md above — internal-only, never shipped in a release tarball.
+*Audit.md

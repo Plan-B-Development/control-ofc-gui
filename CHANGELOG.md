@@ -1,8 +1,66 @@
 # Changelog
 
-## [Unreleased]
+## [2.43.0] — 2026-08-20
 
 ### Fixed
+- **The thermal detail could print a stale temperature under a confident label.**
+  The hedge added below keys on the reading's age, but the value and the label
+  were worked out separately: the temperature was the hottest of *every* CPU
+  sensor while the "last known" wording required *all* of them to be stale. On a
+  multi-CCD Ryzen with one die stale and hotter, that stale value printed as
+  "Hottest CPU sensor" — the exact contradiction the hedge exists to remove. Both
+  are now resolved in one step, mirroring the daemon's own rule: a fresh reading
+  wins outright and a stale one stands in only when nothing is fresh, so the
+  number on screen is the one the daemon is acting on. DEC-270.
+- **A coordinated release waited 25 minutes for itself.** The paired-release wait
+  polled the daemon repository's release *run*, but the step doing the waiting is
+  part of that same run on the other side — so each repo blocked the other until
+  both hit the ceiling, and the "solo release, dispatch immediately" fast path
+  was unreachable in exactly the case the wait exists for. It fails open, so it
+  never published a bad pair; it just never worked. It now polls the peer's
+  `GitHub Release` job, which is what actually determines whether the Release
+  object exists. DEC-270.
+- **The thermal detail hedged the temperature on the wrong signal.** It labelled
+  the reading "last known" whenever the daemon reported its no-sensor state —
+  but a thermal emergency running on a sensor that has stopped updating reports
+  *emergency*, so the un-hedged label appeared in precisely the case where the
+  value is guaranteed stale. It now keys on the reading's own age, which the GUI
+  already has, is true in every state, and needs no daemon-version gate.
+- **"CPU sensor: NOT found" while the sensor was on screen.** The daemon's
+  matching field changed meaning in the same window — from "is a sensor
+  present?" to "is there a current reading?" — so the hardware report could
+  assert no CPU sensor existed during an emergency triggered by one sitting in
+  the sensor table. It now reads "reading current" / "no current reading".
+- **The accessible-name lint was weakened by its own hardening.** Walking module
+  scope first made the "already named elsewhere" escape file-wide rather than
+  per-function, so a local named `btn` in one method vouched for a different,
+  genuinely unnamed `btn` in another — and `btn` is the name this codebase
+  actually uses. The exemption comment also applied to a two-line window, so a
+  marker written for one button silenced the next one below it. Both closed, and
+  the set of exempted buttons is now pinned, so widening it is a visible diff
+  rather than a comment anyone can add.
+- **The thermal detail could deny a sensor it was displaying.** The daemon's
+  "no CPU sensor" state gained a second trigger — a sensor still listed but no
+  longer updating — and the dialog's wording ("No CPU temperature sensor is
+  reachable") then sat directly above a "Hottest CPU sensor: 62.0 °C" line drawn
+  from the very list it denied. The copy now describes the actual condition, and
+  the value beside it is labelled as last-known rather than current. DEC-269.
+- **Two buttons that read "Run again" also announced identically.** Both
+  re-seed actions on Settings share that label, so Qt's text fallback gave a
+  screen-reader user nothing to tell them apart — the same defect as the eight
+  "Toggle" switches, at lower volume, and one the new lint cannot catch because
+  "Run again" is made of real words. DEC-269.
+- **The accessible-name lint had four holes, one of them occupied.** It skipped
+  empty labels — the exact shape an icon-only button takes, and `footer.py`
+  really does build one — never walked module or class scope, accepted
+  `accessible_name=None` or `""` without inspecting the value, and matched its
+  "already named" escape on a bare attribute name, so a decoy with the same
+  attribute could vouch for a different button. All four are closed and each is
+  pinned by a probe. The changelog claim that "the next one cannot ship unnamed"
+  was overstated; the honest version is that the shapes it can see, it now sees.
+  Buttons that are built empty and given real text at runtime carry an explicit,
+  greppable exemption with the reason, because naming them would freeze the
+  announcement against later `setText` calls. DEC-269.
 - **Six controls announced as nothing at all to a screen reader.** Five buttons
   whose whole label is a glyph — the two `+` buttons on Controls, the `⋮`
   profile menu, and the `→` / `←` member arrows — carried a good tooltip and no

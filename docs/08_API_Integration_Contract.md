@@ -272,18 +272,50 @@ to stand down (DEC-165) and simply shows a single poll-driven thermal warning.
 Older daemons omit the field — the GUI defaults it to `"normal"`.
 
 On daemon ≥ 2.19.0, `"no_sensor_fallback"` has a **second trigger**: a CPU
-reading that is merely *stale* now counts as absent (DEC-267). The safety rule
-reads a cached sensor map with no freshness filter of its own, so a dead hwmon
-poll loop used to freeze the last temperature — the 105 °C ladder then evaluated
-forever against a number that could not rise, the no-sensor fallback never
-engaged because the sensor was present rather than missing, and the engine's
-liveness heartbeat stayed green because the engine genuinely was ticking. A
-reading older than five poll intervals is now treated as no reading. **No client
-change is required** — the state and its meaning are unchanged, only how often
-it can be reached. Note the sensor may still appear in `/sensors` with a large
-`age_ms` while this is reported; that pairing is the signal, and it is
-short-lived, because the poll loop is supervised too and its death restarts the
-daemon.
+reading that is merely *stale* now counts as no reading (DEC-267). The safety
+rule reads a cached sensor map with no freshness filter of its own, so a sensor
+that stopped updating used to freeze the last temperature — the 105 °C ladder
+then evaluated forever against a number that could not rise, the no-sensor
+fallback never engaged because the sensor was present rather than missing, and
+the engine's liveness heartbeat stayed green because the engine genuinely was
+ticking. A reading older than five poll intervals (floored at 5 s, capped at
+30 s) is now treated as no reading.
+
+**No client change is required** — the state and its meaning are unchanged, only
+how often it can be reached.
+
+Two things worth knowing about the shape of it:
+
+- **The sensor may still appear in `/sensors` with a large, growing `age_ms`
+  while this state is reported.** That pairing *is* the signal — both sides read
+  the same timestamp, so a reading a client sees as older than the budget is
+  exactly one the rule is ignoring. It is not necessarily short-lived: the case
+  this protects against is most often a poll leg that **hangs** rather than one
+  that dies, and a hung read leaves the task alive, so daemon supervision never
+  fires and the pairing persists for as long as the hang. (In the *death* case
+  the daemon restores and exits within seconds — usually before the budget plus
+  the 5-cycle debounce could produce the state at all.)
+- **Reaching the state normally takes the budget *plus* the existing 5-cycle
+  debounce** (~10 s at defaults), not the budget alone.
+
+`"no_sensor_fallback"` therefore means what it always meant — the daemon is
+forcing `NO_SENSOR_SAFE_PCT` — but a stale reading only reaches it when the last
+known temperature was **cool**. Three cases divert first (DEC-269), on the
+principle that losing sight of a sensor must never *lower* cooling:
+
+| last known reading | daemon response | `thermal_state` |
+| --- | --- | --- |
+| stale, emergency latched | holds the emergency's own 100 % | `emergency` |
+| stale, mid-recovery | holds the 60 % recovery floor | `recovery` |
+| stale, at/above the 80 °C release temp | no force — fan curves keep running on it | `normal` |
+| stale and cool | `NO_SENSOR_SAFE_PCT` after the debounce | `no_sensor_fallback` |
+| genuinely **absent** mid-emergency | 40 % immediately (DEC-190, unchanged) | `no_sensor_fallback` |
+
+**`cpu_sensor_found`** on `/diagnostics/hardware` changed meaning with the same
+release: it used to answer *"is a CpuTemp sensor present?"* and now answers *"is
+there a **current** reading?"*, so it is `false` for a sensor that is listed but
+no longer updating. Clients rendering it as "found / not found" should reword —
+`{"state": "emergency", "cpu_sensor_found": false}` is a normal pairing now.
 
 `overrides` and `fan_identify` (daemon ≥ 1.21.0, additive — `api_version`
 unchanged, omitted when empty) make `/status` the poll-authoritative source for
@@ -1308,10 +1340,16 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
     are deliberate. The floor: the control loop, serial I/O and sysfs writes all
     run on this cadence, so a tiny value is a self-inflicted DoS on the hardware
     the daemon exists to protect. **The ceiling is [SAFETY]**: this drives the
-    sensor poll loop, and the thermal-safety leg reads the cache with no age
-    filter, so it bounds how stale a temperature the 105 °C rule can act on. The
-    admin file accepts a wider range; the API does not, because the API is
-    reachable by any local user (0666 socket).
+    sensor poll loop, and the 105 °C rule's staleness budget is derived from it
+    (5×, DEC-267 — see § Freshness above; the leg is *not* unfiltered, and this
+    ceiling bounds that budget rather than substituting for it). The API is
+    tighter than the admin file because it is reachable by any local user (0666
+    socket). The admin file's own range is **100–6000 ms**: past 6000 the budget
+    stops tracking the cadence (it is capped at 30 s), so the 5x headroom erodes
+    towards 1x and ordinary readings start to look stale — and past 30 s it
+    inverts, every reading stale on arrival and the ladder never firing. The
+    daemon clamps to 6000 with a warning rather than honouring a slower value
+    (DEC-270).
   - `POST /config/serial-port` — `{"port": string | null}`. **Validated against
     the serial transport's own allowlist** (`/dev/tty{S,USB,ACM,AMA}*`,
     `/dev/serial/*`; no `..`, no NUL) and capped at 256 characters — the daemon
