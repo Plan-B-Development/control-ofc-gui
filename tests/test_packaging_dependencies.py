@@ -501,3 +501,42 @@ def test_pkgbuild_daemon_floor_matches_readme_pairing():
         f"README.md advertises >= v{readme_floor}. pacman enforces the PKGBUILD "
         f"value; the README is what users read. Bump both together."
     )
+
+
+def test_a_nightly_ci_run_cannot_veto_a_release():
+    """DEC-270: `ci-green` gates publication on the newest `ci.yml` run for the
+    tagged SHA, and this repo's `ci.yml` also runs on a nightly `schedule` whose
+    matrix is deliberately WIDER than the per-push one — it adds the py3.14 leg
+    and restores the canary's full loop count, neither `continue-on-error`.
+
+    Without a filter the newest run for a tagged commit can be last night's cron,
+    so a failure on a leg the push path never runs would block a release whose own
+    CI was green — and `ci-green` fails the release rather than waiting, so there
+    is no self-correction.
+
+    Conditional on the nightly actually existing, so removing the nightly removes
+    the requirement rather than stranding a workaround.
+    """
+    ci_workflow = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+    ci = yaml.safe_load(ci_workflow.read_text(encoding="utf-8"))
+    # PyYAML parses a bare `on:` key as the boolean True.
+    triggers = ci.get("on", ci.get(True, {}))
+    if "schedule" not in triggers:
+        return
+
+    steps = _steps(_release_workflow()["jobs"]["ci-green"])
+    body = "\n".join(s.get("run", "") for s in steps)
+    # Comments in the step explain *why* `event=push` is the wrong filter, so the
+    # negative check below has to look at code or it matches the explanation.
+    code = "\n".join(ln for ln in body.splitlines() if not ln.strip().startswith("#"))
+
+    assert 'select(.event != "schedule")' in code, (
+        "ci.yml runs a nightly with a wider matrix than the push path, so ci-green "
+        "must exclude scheduled runs when picking the newest run for the tagged "
+        "SHA — otherwise a py3.14-only nightly failure vetoes a green release"
+    )
+    assert "event=push" not in code, (
+        'filter on `.event != "schedule"`, not `event=push`: an operator '
+        "re-dispatching ci.yml produces a `workflow_dispatch` run, and that is the "
+        "documented escape hatch for tagging a docs-only commit"
+    )

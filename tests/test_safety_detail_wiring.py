@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
 from control_ofc.api.models import DaemonStatus, SensorReading
+from control_ofc.constants import CPU_HEDGE_STALE_AFTER_MS
 from control_ofc.ui.main_window import MainWindow
 
 
@@ -33,8 +34,56 @@ def window(qtbot, app_state, profile_service, settings_service):
 
 
 def _cpu(value_c: float, age_ms: int, id: str = "cpu", kind: str = "CpuTemp") -> SensorReading:
-    # age_ms >= 2000 is past Freshness.FRESH, which is the GUI's own threshold.
+    # The hedge fires at CPU_HEDGE_STALE_AFTER_MS, not at Freshness.FRESH's 2 s.
     return SensorReading(id=id, kind=kind, value_c=value_c, age_ms=age_ms)
+
+
+class TestHedgeThreshold:
+    """DEC-270: the hedge must not fire on healthy hardware.
+
+    It used to key on `Freshness.FRESH` (2 s), which answers a different
+    question — display currency at the GUI's own 1 Hz cadence. The daemon's poll
+    cadence is admin-configurable up to 6 s, and at 6 s a reading is older than
+    2 s for two thirds of every cycle, so the dialog read "Last known CPU sensor"
+    permanently while the daemon considered the value perfectly current.
+    """
+
+    @pytest.mark.parametrize("cadence_ms", [1000, 2000, 4000, 6000])
+    def test_no_false_hedge_at_any_sanctioned_daemon_cadence(self, window, cadence_ms):
+        # Worst case within a cycle: the reading is a full poll period old,
+        # measured just before the next one lands.
+        window._state.sensors = [_cpu(61.0, age_ms=cadence_ms)]
+        window._state.daemon_status = DaemonStatus(thermal_state="normal")
+
+        text = window._safety_detail_text()
+
+        assert "Hottest CPU sensor: 61.0" in text, (
+            f"a healthy {cadence_ms} ms cadence must not read as stale — "
+            "the daemon still considers this reading current"
+        )
+        assert "Last known" not in text
+
+    def test_a_genuinely_wedged_reading_still_hedges(self, window):
+        # Past the slowest sanctioned cadence plus jitter, nothing legitimate
+        # explains the age.
+        window._state.sensors = [_cpu(94.0, age_ms=CPU_HEDGE_STALE_AFTER_MS)]
+        window._state.daemon_status = DaemonStatus(thermal_state="emergency")
+
+        text = window._safety_detail_text()
+
+        assert "Last known CPU sensor: 94.0" in text
+
+    def test_the_threshold_clears_the_daemons_slowest_legal_cadence(self):
+        """Pins the relationship, not the number. The daemon clamps its poll
+        interval to MAX_SUPERVISABLE_POLL_INTERVAL_MS = 6000 ms (DEC-270); if
+        that ever rises, this threshold has to rise with it or the hedge starts
+        lying again."""
+        daemon_max_cadence_ms = 6000
+
+        assert daemon_max_cadence_ms < CPU_HEDGE_STALE_AFTER_MS, (
+            "the hedge must not fire on a reading that is merely one poll old "
+            "at the slowest cadence the daemon permits"
+        )
 
 
 # The window matches both spellings the daemon has used for this kind. Pinning
@@ -43,7 +92,7 @@ def _cpu(value_c: float, age_ms: int, id: str = "cpu", kind: str = "CpuTemp") ->
 @pytest.mark.parametrize("kind", ["CpuTemp", "cpu_temp"])
 def test_a_stale_cpu_reading_is_hedged_through_the_real_window(window, kind):
     """The headline behaviour of the release, asserted on the production path."""
-    window._state.sensors = [_cpu(94.0, age_ms=8000, kind=kind)]
+    window._state.sensors = [_cpu(94.0, age_ms=20000, kind=kind)]
     window._state.daemon_status = DaemonStatus(thermal_state="emergency")
 
     text = window._safety_detail_text()
@@ -70,7 +119,7 @@ def test_a_stale_hotter_die_does_not_print_under_the_confident_label(window):
     sensor". The window must show the fresh value it is actually being cooled to."""
     window._state.sensors = [
         _cpu(61.0, age_ms=100, id="cpu_ccd0"),
-        _cpu(94.0, age_ms=8000, id="cpu_ccd1"),
+        _cpu(94.0, age_ms=20000, id="cpu_ccd1"),
     ]
     window._state.daemon_status = DaemonStatus(thermal_state="normal")
 
@@ -94,7 +143,7 @@ def test_clicking_the_thermal_chip_shows_the_hedged_text(qtbot, window, monkeypa
     # The dialog is modal; `exec()` would block the test. Capture instead.
     monkeypatch.setattr(QMessageBox, "exec", lambda self: shown.append(self.text()))
 
-    window._state.sensors = [_cpu(94.0, age_ms=8000)]
+    window._state.sensors = [_cpu(94.0, age_ms=20000)]
     window._state.daemon_status = DaemonStatus(thermal_state="emergency")
 
     btn = window.footer.findChild(QPushButton, "StatusFooter_Chip_thermal")
@@ -119,7 +168,7 @@ def test_the_override_count_comes_from_the_real_daemon_status(window):
 def test_the_hedge_survives_a_daemon_that_reports_no_thermal_state(window):
     """`thermal_state` defaults to "normal"; the hedge keys on the reading's age,
     so it must still appear."""
-    window._state.sensors = [_cpu(70.0, age_ms=9000)]
+    window._state.sensors = [_cpu(70.0, age_ms=20000)]
     window._state.daemon_status = None
 
     text = window._safety_detail_text()

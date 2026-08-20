@@ -40,6 +40,24 @@ EXPECTED_API_VERSION = 1
 POLL_INTERVAL_MS = 1000
 CAPABILITIES_REFRESH_INTERVAL_S = 300
 
+# How old a CPU reading must be before the thermal detail hedges its label to
+# "Last known" (DEC-270). Deliberately NOT `Freshness.FRESH`'s 2 s.
+#
+# `Freshness` answers "is this display current?" at the GUI's own 1 Hz cadence.
+# The hedge answers a different question — "has the daemon stopped trusting
+# this?" — and the daemon's answer depends on ITS poll cadence, which the GUI
+# does not know. That cadence is admin-configurable up to
+# `MAX_SUPERVISABLE_POLL_INTERVAL_MS` (6000 ms, daemon-side), so at 2 s the
+# hedge fired on perfectly healthy hardware: at a 6 s cadence a reading is
+# older than 2 s for two thirds of every cycle, and the dialog permanently read
+# "Last known CPU sensor" while the daemon considered the value current.
+#
+# 7 s clears the slowest sanctioned cadence with a second of scheduling jitter
+# to spare. The cost is hedging up to ~2 s later than the daemon at the default
+# 1 s cadence (its budget there is 5 s) — a brief over-confidence during a real
+# fault, which is a far better trade than a permanent lie in normal operation.
+CPU_HEDGE_STALE_AFTER_MS = 7000
+
 # History
 HISTORY_DURATION_S = 7200  # 2 hours
 

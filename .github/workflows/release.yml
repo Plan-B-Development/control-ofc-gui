@@ -110,9 +110,24 @@ jobs:
             # Newest run last, so `.[-1]` survives a re-run of a previously red
             # run (`gh run rerun` updates the run in place, but an explicit
             # re-dispatch creates a second one).
+            #
+            # [RELEASE] `schedule` runs are excluded, and the exclusion is
+            # load-bearing. The nightly runs a WIDER matrix than the push path —
+            # it adds the py3.14 leg and restores the canary's full loop count —
+            # and neither is `continue-on-error`. Without this filter the newest
+            # run for the tagged SHA can be last night's cron rather than the
+            # push that actually gated the commit, so a py3.14-only failure would
+            # veto a release whose real CI was green.
+            #
+            # Filtered on `.event != "schedule"` rather than `event=push`: an
+            # operator re-dispatching ci.yml on a SHA produces a
+            # `workflow_dispatch` run, and that escape hatch is documented at the
+            # top of ci.yml for tagging a docs-only commit. `event=push` would
+            # silently break it.
             run=$(gh api \
               "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=100" \
-              --jq '[.workflow_runs[]] | sort_by(.created_at) | last // empty')
+              --jq '[.workflow_runs[] | select(.event != "schedule")]
+                    | sort_by(.created_at) | last // empty')
 
             if [ -n "$run" ]; then
               status=$(printf '%s' "$run" | jq -r '.status')

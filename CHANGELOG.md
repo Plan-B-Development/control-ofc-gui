@@ -12,14 +12,6 @@
   are now resolved in one step, mirroring the daemon's own rule: a fresh reading
   wins outright and a stale one stands in only when nothing is fresh, so the
   number on screen is the one the daemon is acting on. DEC-270.
-- **A coordinated release waited 25 minutes for itself.** The paired-release wait
-  polled the daemon repository's release *run*, but the step doing the waiting is
-  part of that same run on the other side — so each repo blocked the other until
-  both hit the ceiling, and the "solo release, dispatch immediately" fast path
-  was unreachable in exactly the case the wait exists for. It fails open, so it
-  never published a bad pair; it just never worked. It now polls the peer's
-  `GitHub Release` job, which is what actually determines whether the Release
-  object exists. DEC-270.
 - **The thermal detail hedged the temperature on the wrong signal.** It labelled
   the reading "last known" whenever the daemon reported its no-sensor state —
   but a thermal emergency running on a sensor that has stopped updating reports
@@ -78,6 +70,27 @@
   the next one cannot ship unnamed — the rule has existed since DEC-251 and
   review had not caught these in roughly fifteen releases, which is the argument
   for a test rather than a convention. DEC-268.
+
+### Changed
+- **A coordinated release no longer guesses how long to wait for its pair.**
+  `pacman-repo` assembles from whichever Release of each project is latest when
+  it runs, so in a joint GUI + daemon release the two `release.yml` runs finishing
+  minutes apart could publish this package against the other's *previous* version
+  and serve that pair as current. v2.42.0 handled it with a blind `sleep 180`,
+  which on 2026-08-17 was not close to enough — the two runs finished 9m29s apart
+  — and on a solo release was three idle minutes for nothing. The wait now polls
+  for the actual condition: whether the daemon repository has published its
+  Release yet, measured on its `GitHub Release` job. Solo releases dispatch
+  immediately; paired ones wait only as long as they must. Any API problem falls
+  back to the old fixed settle, so this can never turn a complete release red.
+  DEC-270.
+- **A nightly CI run can no longer veto a release.** The release gate takes the
+  newest CI run for the tagged commit, and this version adds a nightly schedule
+  whose matrix is wider than the per-push one. A nightly failure on a leg the
+  push path does not even run would have blocked publication of a commit whose
+  own CI was green. The gate now ignores scheduled runs — while still honouring a
+  manually re-dispatched one, which is the documented escape hatch for tagging a
+  docs-only commit. DEC-270.
 
 ## [2.42.0] — 2026-08-17
 

@@ -10,8 +10,14 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from control_ofc.api.client import DaemonClient
-from control_ofc.api.models import ConnectionState, Freshness, OperationMode, ReadinessRollup
-from control_ofc.constants import APP_VERSION, PAGE_CONTROLS, PAGE_DASHBOARD, POLL_INTERVAL_MS
+from control_ofc.api.models import ConnectionState, OperationMode, ReadinessRollup
+from control_ofc.constants import (
+    APP_VERSION,
+    CPU_HEDGE_STALE_AFTER_MS,
+    PAGE_CONTROLS,
+    PAGE_DASHBOARD,
+    POLL_INTERVAL_MS,
+)
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.dashboard_view import cpu_values_for_display, safety_detail_text
@@ -476,15 +482,17 @@ class MainWindow(QWidget):
         label, _css = THERMAL_STATES.get(thermal, (f"Thermal: {thermal}", ""))
         cpu_sensors = [s for s in self._state.sensors if s.kind in ("CpuTemp", "cpu_temp")]
         # DEC-269: the daemon stops trusting a CPU reading once it ages out, and
-        # so should the label beside it. `Freshness.FRESH` is the GUI's own
-        # existing 2 s threshold — tighter than the daemon's budget, so the
-        # hedge appears slightly early rather than slightly late.
+        # so should the label beside it. DEC-270: on its OWN threshold, not
+        # `Freshness.FRESH` — that 2 s line is about display currency at the
+        # GUI's 1 Hz cadence, and reusing it made the hedge permanent on healthy
+        # hardware wherever the daemon polls slower than 2 s. See
+        # `CPU_HEDGE_STALE_AFTER_MS`.
         #
         # The value and the flag are resolved together by `cpu_values_for_display`
         # so they cannot disagree; see its docstring for the multi-CCD case that
         # made two separate computations wrong.
         cpu_vals, cpu_stale = cpu_values_for_display(
-            (s.value_c, s.freshness is Freshness.FRESH) for s in cpu_sensors
+            (s.value_c, s.age_ms < CPU_HEDGE_STALE_AFTER_MS) for s in cpu_sensors
         )
         n = len(ds.overrides) if ds and ds.overrides else 0
         return safety_detail_text(thermal, label, cpu_vals, n, cpu_reading_is_stale=cpu_stale)
