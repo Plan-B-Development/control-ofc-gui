@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.43.1] — 2026-08-21
 
 ### Accessibility
 - **Nine controls on Settings announced as anonymous combo boxes, spin boxes and
@@ -10,9 +10,12 @@
   with a restatement of its label — which is not how Qt works for a spin box or
   a text field: the name is added to the announcement, not substituted for the
   value. Every control on the page that carries no text of its own now takes its
-  row title as its name, and that happens in the one place holding both the
-  control and the words describing it, so a control added later is named by
-  construction. DEC-271.
+  row title as its name, and for most of them that happens in the single place
+  holding both the control and the words describing it, so a control added there
+  is named by construction. The two preference combo boxes are stacked under
+  their captions instead of beside them, so they are named at their own
+  construction sites — for those it is the test, not the structure, that holds
+  the line. DEC-271.
 - **Combo boxes needed a second mechanism to be named at all on Linux.** Qt
   discards an accessible name set on a non-editable combo box here and announces
   the selected item instead, so the fix above would have been inert for all four
@@ -37,10 +40,31 @@
   documentation-only ones. The path filter that skipped them did not report a
   skipped check — it reported no check at all, which leaves a pull request
   waiting forever for a status that will never arrive once required checks are
-  switched on. Pushes to `main` are still filtered, so no build time is actually
-  lost. DEC-271.
+  switched on. This does cost real build time: a documentation-only pull request
+  now runs the full matrix. That is the price of the filter having been unsafe,
+  and it is worth paying — such pull requests are rare here, and pushes to `main`
+  are filtered separately and still are. DEC-271.
+
+- **Disabled buttons still looked live in two places the fix did not reach.** The
+  sidebar's buttons and the ghost buttons inside fan tiles are styled by more
+  specific rules than the disabled rule, so they won the tie and went on painting
+  their enabled colours. Neither is disabled anywhere in the app today, so
+  nothing was visibly wrong — but the fix claimed to cover every button, and it
+  did not. DEC-273.
 
 ### Internal
+- The test that checks text fields show a focus ring could not actually fail. It
+  compared a focused and an unfocused rendering, and a text field draws a
+  blinking cursor when focused, so the two images differ whether or not the ring
+  is there — removing every focus rule left it green. It now checks the ring is
+  painted in the colour it is meant to be, which is the same correction the
+  disabled buttons needed, one state over. DEC-273.
+- A malformed validation response from the daemon no longer aborts a whole batch
+  profile import. A field name arriving as a number rather than as text raised an
+  error inside the handler whose job is to stop one bad profile from taking the
+  others down with it. Values are now coerced to text where the response is
+  parsed — which is also where the documented promise that a wrong shape degrades
+  quietly is made. DEC-271.
 - `DaemonError.details` is typed as the error envelope's object shape rather than
   `Any`, with the limits of that annotation written down: it records what the
   daemon emits and is deliberately not enforced when parsing, so a malformed
