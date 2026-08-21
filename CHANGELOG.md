@@ -1,5 +1,48 @@
 # Changelog
 
+## [Unreleased]
+
+### Accessibility
+- **Nine controls on Settings announced as anonymous combo boxes, spin boxes and
+  text fields.** A screen reader would say "Dashboard, combo box" with nothing to
+  say *what* that value sets. The previous pass named the toggle switches and
+  stopped there, on the belief that naming a combo box would replace its value
+  with a restatement of its label — which is not how Qt works for a spin box or
+  a text field: the name is added to the announcement, not substituted for the
+  value. Every control on the page that carries no text of its own now takes its
+  row title as its name, and that happens in the one place holding both the
+  control and the words describing it, so a control added later is named by
+  construction. DEC-271.
+- **Combo boxes needed a second mechanism to be named at all on Linux.** Qt
+  discards an accessible name set on a non-editable combo box here and announces
+  the selected item instead, so the fix above would have been inert for all four
+  combo boxes on the page. They are now also associated with their caption, which
+  is the relation a Linux screen reader actually reads. DEC-271.
+- **The three path pickers had six buttons and two names between them.** Three
+  read "Browse..." and three read "Reset", so a keyboard user tabbing the column
+  heard the same two words repeatedly with nothing to say which directory each
+  belonged to. Each now announces the directory it acts on ("Browse for the
+  themes directory"). They also gained stable identifiers, which is why nothing
+  had caught this: they were unreachable from a test. DEC-271.
+
+### Changed
+- Continuous integration now runs on every pull request, including
+  documentation-only ones. The path filter that skipped them did not report a
+  skipped check — it reported no check at all, which leaves a pull request
+  waiting forever for a status that will never arrive once required checks are
+  switched on. Pushes to `main` are still filtered, so no build time is actually
+  lost. DEC-271.
+
+### Internal
+- `DaemonError.details` is typed as the error envelope's object shape rather than
+  `Any`, with the limits of that annotation written down: it records what the
+  daemon emits and is deliberately not enforced when parsing, so a malformed
+  payload still degrades to "no field violations" instead of raising. DEC-271.
+- The gitignore patterns that catch review-agent scratch files are scoped to
+  `src/` and `tests/` instead of the whole repository. Unanchored, they could
+  silently swallow a legitimately named file anywhere in the tree — `git add`
+  would report success and the file would never reach a release. DEC-271.
+
 ## [2.43.0] — 2026-08-20
 
 ### Fixed

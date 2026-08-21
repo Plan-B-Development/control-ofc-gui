@@ -31,6 +31,7 @@ packaging/.SRCINFO
 # Local-only project admin files (never push to GitHub)
 CLAUDE.md
 DECISIONS.md
+DECISIONS_OPEN_ITEMS.md
 .claude/
 diag/
 scripts/
@@ -59,8 +60,19 @@ gui-redesign/
 # DEC-268 accessible-name test, and polluted every source-tree grep. These patterns stop
 # the next one reaching a commit — they do NOT excuse leaving it behind: sweep the tree
 # before tagging.
-_zz*
-*_tmp.py
+#
+# ANCHORED to the two trees where a probe does damage: src/ ships in the package,
+# tests/ reddens the suite. A gitignore pattern containing no slash matches at every
+# depth, so the original unanchored `_zz*` / `*_tmp.py` reached docs/, manual/,
+# packaging/, assets/ and the repo root as well — everywhere they catch nothing and
+# can only *silently* swallow a legitimately named file, with `git add` reporting
+# success and the file never reaching a release. That failure mode is strictly worse
+# than the residue these exist to catch, which the pre-tag sweep catches anyway. The
+# two curator ledgers above are anchored for the same reason.
+/src/**/_zz*
+/src/**/*_tmp.py
+/tests/**/_zz*
+/tests/**/*_tmp.py
 
 # Workflow/efficiency audit reports produced by this repo's own analysis passes.
 # Same rationale as AUDIT_*.md above — internal-only, never shipped in a release tarball.

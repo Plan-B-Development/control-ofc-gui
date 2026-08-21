@@ -231,6 +231,29 @@ Two constraints, both measured rather than assumed:
 keyboard-only screen-reader user never triggers it, so any control whose visible label
 is empty or a bare glyph sets `setAccessibleName` explicitly.
 
+**"Empty or a bare glyph" is the floor, not the whole rule.** A combo box, spin box
+or line edit has no label of its own either — its visible words live in a *separate*
+`QLabel` beside it, so it announces its value with nothing to say what the value is
+*for*. Every such control names itself from the words already next to it. On the
+Settings page that happens inside `_setting_row`, the one place holding both the
+control and its caption, so a control added later is named by construction rather
+than by whoever adds it remembering (DEC-268 → DEC-271).
+
+**Naming a combo box takes two calls, not one.** `setAccessibleName` is enough for a
+spin box or a line edit — `QAccessible::Text::Name` and `::Value` are separate
+queries, so the name is added to the announcement rather than replacing the value.
+It is **not** enough for a non-editable `QComboBox`: Qt's Unix
+`QAccessibleComboBox::text(Name)` falls through to the current item and discards the
+property entirely, so the combo goes on announcing "Dashboard". `setBuddy` is what
+carries the label there — it publishes a `RelationFlag.Label` that AT-SPI exports as
+*labelled-by*, which is what Orca reads. Set both: the name for platforms that honour
+it, the buddy for the one this app ships to.
+
+This is why the tests assert the **announced** name (`QAccessible` interface), never
+`widget.accessibleName()`. The property reads back perfectly on a combo that announces
+nothing useful, so a property assertion is a guaranteed false green — it shipped as
+one once (DEC-271).
+
 Both rules are enforced by rendering, not by grepping the stylesheet: a `:focus` rule
 can be present and still draw nothing (an accent ring on an accent fill). See
 `tests/test_theme_system.py::TestKeyboardFocusVisibility`.

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from control_ofc.services.series_selection import SeriesSelectionModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractSpinBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -24,7 +25,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
     QScrollArea,
     QSpinBox,
     QTableWidget,
@@ -257,37 +257,59 @@ class SettingsPage(QWidget):
         once per boolean down the page. `set_accessible_label` existed for this
         since DEC-255 and no caller ever used it.
 
-        Doing it here rather than at each of the eight construction sites is the
+        Doing it here rather than at each of the construction sites is the
         point: this row is the only place that holds both the control and the
-        words describing it, so a future toggle is named by construction instead
-        of relying on whoever adds it to remember.
+        words describing it, so a future control is named by construction
+        instead of relying on whoever adds it to remember.
         """
         row = QHBoxLayout()
         text = QVBoxLayout()
         text.setContentsMargins(0, 0, 0, 0)
         text.setSpacing(0)
-        text.addWidget(QLabel(title))
+        title_label = QLabel(title)
+        text.addWidget(title_label)
         sub = QLabel(subtitle)
         sub.setProperty("class", "CardMeta")
         text.addWidget(sub)
         row.addLayout(text, 1)
         row.addWidget(control)
-        # Scoped to ToggleSwitch, which is the acute case: eight of them on this
-        # page, none with text of its own, all announcing the same generic
-        # "Toggle".
+        # Every control on this page that carries no text of its own gets the row
+        # title as its accessible name.
         #
-        # DEC-269 corrects the reason previously given here. It claimed that
-        # naming a QComboBox or QSpinBox would "replace useful information with a
-        # restatement of the label" — that is not how Qt works.
-        # QAccessible::Text::Name and ::Value are separate queries, so a name is
-        # ADDED to the announcement ("Poll interval, spin button, 1000 ms"), it
-        # does not overwrite the value. The combos, spin boxes and the
-        # serial-port field on this page are therefore also nameless, and none
-        # has a buddy association either. That is a real gap and it is scope, not
-        # principle — deliberately deferred to its own change rather than widened
-        # here on a release's tail end.
+        # History, because the reasoning has been wrong twice. DEC-268 named the
+        # eight ToggleSwitches and scoped itself there, on the claim that naming
+        # a QComboBox or QSpinBox would "replace useful information with a
+        # restatement of the label". DEC-269 refuted that — QAccessible::Text
+        # ::Name and ::Value are separate queries, so a name is ADDED to the
+        # announcement ("Poll interval, spin button, 1000 ms"), not substituted
+        # for the value — but corrected only the comment and deferred the code.
+        # DEC-271 is the code (register OPEN-01 item 01-e).
+        #
+        # TWO mechanisms, because one is not enough on the platform we ship to.
+        # DEC-269's refutation holds for QSpinBox and QLineEdit — measured, the
+        # announced Name really is the title and the Value really is separate.
+        # It does NOT hold for a non-editable QComboBox: Qt's Unix
+        # QAccessibleComboBox::text(Name) falls through to the current item, so
+        # `setAccessibleName` alone is silently discarded and the combo goes on
+        # announcing "Dashboard" with no clue what it sets. `setBuddy` is what
+        # survives — it publishes a RelationFlag.Label that AT-SPI exposes as
+        # labelled-by, which is what Orca actually reads. Set both: the name for
+        # platforms that honour it, the buddy for the one this app runs on.
+        #
+        # Buttons are deliberately excluded: several rows here place a
+        # `make_button` on the right, and a QPushButton's visible text already
+        # *is* its accessible name. Overwriting "Clear overrides" with "Sensor
+        # classification overrides" would make the spoken name disagree with the
+        # printed one. Where two such buttons share text ("Run again"), the
+        # call site passes `accessible_name=` to `make_button` instead (DEC-269).
         if isinstance(control, ToggleSwitch):
             control.set_accessible_label(title)
+        elif isinstance(control, QComboBox | QAbstractSpinBox | QLineEdit):
+            # QAbstractSpinBox, not QSpinBox: QDoubleSpinBox is a sibling, not a
+            # subclass, so the narrower check would silently miss the first
+            # fractional setting anyone adds.
+            control.setAccessibleName(title)
+            title_label.setBuddy(control)
         return row
 
     def _build_general_startup_card(self) -> QWidget:
@@ -435,17 +457,35 @@ class SettingsPage(QWidget):
         self._profiles_dir_label = QLabel()
         self._profiles_dir_label.setObjectName("Settings_Label_profilesDir")
         v.addLayout(
-            self._dir_picker_row("Profiles:", self._profiles_dir_label, self._browse_profiles_dir)
+            self._dir_picker_row(
+                "Profiles:",
+                self._profiles_dir_label,
+                self._browse_profiles_dir,
+                key="profilesDir",
+                what="profiles directory",
+            )
         )
         self._themes_dir_label = QLabel()
         self._themes_dir_label.setObjectName("Settings_Label_themesDir")
         v.addLayout(
-            self._dir_picker_row("Themes:", self._themes_dir_label, self._browse_themes_dir)
+            self._dir_picker_row(
+                "Themes:",
+                self._themes_dir_label,
+                self._browse_themes_dir,
+                key="themesDir",
+                what="themes directory",
+            )
         )
         self._export_dir_label = QLabel()
         self._export_dir_label.setObjectName("Settings_Label_exportDir")
         v.addLayout(
-            self._dir_picker_row("Default export:", self._export_dir_label, self._browse_export_dir)
+            self._dir_picker_row(
+                "Default export:",
+                self._export_dir_label,
+                self._browse_export_dir,
+                key="exportDir",
+                what="default export directory",
+            )
         )
 
         # Disclosure: ``services/polling.py`` registers the profiles directory
@@ -1311,7 +1351,30 @@ class SettingsPage(QWidget):
         self._reseed_aliases_btn.setEnabled(s.fan_aliases_seeded)
         self._reseed_series_btn.setEnabled(s.chart_series_seeded)
 
-    def _dir_picker_row(self, label_text: str, path_label: QLabel, browse_callback) -> QHBoxLayout:
+    def _dir_picker_row(
+        self,
+        label_text: str,
+        path_label: QLabel,
+        browse_callback,
+        *,
+        key: str,
+        what: str,
+    ) -> QHBoxLayout:
+        """One path-override row: a caption, the current path, Browse, Reset.
+
+        ``key`` is the camelCase objectName fragment (``"profilesDir"``); ``what``
+        is the spoken noun phrase for the directory ("profiles directory").
+
+        Both buttons go through ``make_button`` rather than a hand-rolled
+        ``QPushButton`` (`CLAUDE.md § GUI component standard`), and both take a
+        unique objectName and an explicit accessible name. This row is built
+        three times, so the hand-rolled form left six buttons with **no**
+        objectName — unfindable by `findChild`, hence untestable — and with only
+        two distinct visible labels between them: three announcing "Browse..."
+        and three announcing "Reset", indistinguishable to a screen-reader user
+        tabbing the column. Same defect as the two "Run again" buttons DEC-269
+        fixed on this page, at three times the volume.
+        """
         row = QHBoxLayout()
         row.addWidget(QLabel(label_text))
         path_label.setMinimumWidth(250)
@@ -1322,10 +1385,27 @@ class SettingsPage(QWidget):
         # re-resolves from the freshly applied stylesheet on every theme change.
         path_label.setProperty("class", "MutedLabel")
         row.addWidget(path_label, 1)
-        browse_btn = QPushButton("Browse...")
+        slug = key[:1].upper() + key[1:]
+        browse_btn = make_button(
+            "Browse...",
+            "secondary",
+            object_name=f"Settings_Btn_browse{slug}",
+            accessible_name=f"Browse for the {what}",
+        )
         browse_btn.clicked.connect(browse_callback)
         row.addWidget(browse_btn)
-        reset_btn = QPushButton("Reset")
+        reset_btn = make_button(
+            "Reset",
+            # `secondary`, matching Browse, not the `ghost` the page's other
+            # reset/clear buttons use. Those are each the only control in their
+            # row, where ghost reads as a quiet affordance; this one sits
+            # immediately beside a bordered sibling, where it would read as a
+            # weakened twin of Browse rather than a peer control. The two were
+            # visually identical before this change and stay that way.
+            "secondary",
+            object_name=f"Settings_Btn_reset{slug}",
+            accessible_name=f"Reset the {what} to its default location",
+        )
         reset_btn.setToolTip("Reset to default XDG location")
         reset_btn.clicked.connect(lambda: self._reset_dir(path_label))
         row.addWidget(reset_btn)
@@ -1494,11 +1574,23 @@ class SettingsPage(QWidget):
         note.setProperty("class", "CardMeta")
         v.addWidget(note)
 
+        # These two combos are stacked under their labels rather than placed by
+        # `_setting_row`, so they miss that helper's naming pass. They are the
+        # last two of the nine nameless Settings controls DEC-269 counted
+        # (register OPEN-01 item 01-e) — named here at the only site that holds
+        # both the combo and its words.
+        #
+        # `setBuddy` is the load-bearing call, not `setAccessibleName`: Qt's Unix
+        # QAccessibleComboBox reports the *current item* as its Name, discarding
+        # the property, so without the buddy relation these announce "Automatic"
+        # and nothing else. See `_setting_row` for the full reasoning.
         cpu_label = QLabel("Preferred CPU sensor")
         cpu_label.setProperty("class", "CardMeta")
         v.addWidget(cpu_label)
         self._pref_cpu_combo = QComboBox()
         self._pref_cpu_combo.setObjectName("Settings_Combo_preferredCpu")
+        self._pref_cpu_combo.setAccessibleName(cpu_label.text())
+        cpu_label.setBuddy(self._pref_cpu_combo)
         self._pref_cpu_combo.currentIndexChanged.connect(self._on_preferred_cpu_changed)
         v.addWidget(self._pref_cpu_combo)
 
@@ -1507,6 +1599,8 @@ class SettingsPage(QWidget):
         v.addWidget(mb_label)
         self._pref_mb_combo = QComboBox()
         self._pref_mb_combo.setObjectName("Settings_Combo_preferredMb")
+        self._pref_mb_combo.setAccessibleName(mb_label.text())
+        mb_label.setBuddy(self._pref_mb_combo)
         self._pref_mb_combo.currentIndexChanged.connect(self._on_preferred_mb_changed)
         v.addWidget(self._pref_mb_combo)
 

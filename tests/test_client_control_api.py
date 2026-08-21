@@ -222,3 +222,89 @@ class TestFieldViolations:
         assert parse_field_violations(None) == []
         assert parse_field_violations("oops") == []
         assert parse_field_violations({"other": 1}) == []
+
+
+class TestErrorDetailsShape:
+    """Register OPEN-02 item 02-d (DEC-091 P3-G4): ``DaemonError.details`` was
+    annotated ``Any``, which told a reader nothing about a field the daemon
+    documents as a structured envelope member.
+    """
+
+    def test_details_is_annotated_as_the_envelope_object(self):
+        """The annotation is the contract; ``Any`` was the absence of one.
+
+        Asserted on the resolved hint rather than the source text so a future
+        ``from __future__ import annotations`` or reformat cannot make it pass
+        vacuously.
+        """
+        import typing
+
+        from control_ofc.api.errors import DaemonError
+
+        hints = typing.get_type_hints(DaemonError)
+        assert hints["details"] == dict[str, typing.Any] | None, (
+            "details must record the daemon's envelope shape "
+            f"(dict | None), got {hints['details']!r}"
+        )
+
+    def test_client_hands_the_envelope_details_straight_to_the_parser(self):
+        """Call-site test, not just the annotation.
+
+        The narrowed type is only honest if what ``_handle`` actually stores is
+        the mapping ``parse_field_violations`` expects — so this asserts the
+        whole path: 400 envelope → ``DaemonError.details`` → violations.
+        """
+        from control_ofc.api.errors import DaemonError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "code": "validation_error",
+                        "message": "profile 'p' failed validation",
+                        "retryable": False,
+                        "source": "validation",
+                        "details": {
+                            "field_violations": [
+                                {
+                                    "field": "minimum_pct",
+                                    "reason": "FLOOR_TOO_LOW",
+                                    "description": "pump < 30%",
+                                    "severity": "error",
+                                }
+                            ]
+                        },
+                    }
+                },
+            )
+
+        try:
+            _client(handler).create_profile({"id": "p"})
+        except DaemonError as exc:
+            assert isinstance(exc.details, dict)
+            violations = parse_field_violations(exc.details)
+            assert [v.reason for v in violations] == ["FLOOR_TOO_LOW"]
+        else:  # pragma: no cover - the handler always returns 400
+            raise AssertionError("expected DaemonError")
+
+    def test_a_non_conforming_details_still_degrades_rather_than_crashing(self):
+        """The annotation is documentation, not enforcement — and that is stated
+        in the docstring. ``_handle`` passes the payload through untouched, so a
+        daemon that sends a string must degrade to "no violations", never raise.
+        """
+        from control_ofc.api.errors import DaemonError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={"error": {"code": "validation_error", "details": "not an object"}},
+            )
+
+        try:
+            _client(handler).create_profile({"id": "p"})
+        except DaemonError as exc:
+            assert exc.details == "not an object"
+            assert parse_field_violations(exc.details) == []
+        else:  # pragma: no cover - the handler always returns 400
+            raise AssertionError("expected DaemonError")

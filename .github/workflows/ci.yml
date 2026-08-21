@@ -21,6 +21,17 @@ name: CI
 # for ci-green's full 45-minute budget and then fail. In practice every real
 # release bumps pyproject.toml, so the tagged commit always has a run — but if you
 # ever tag a docs-only commit, dispatch this workflow on that SHA first.
+#
+# `paths-ignore` is on `push` ONLY, deliberately. The same filter on
+# `pull_request` carries GitHub's well-known required-checks footgun: a skipped
+# path filter does not report a *skipped* check, it reports *no check at all*, so
+# a docs-only PR leaves every required status permanently "Expected — waiting for
+# status to be reported" and the PR cannot be merged without an admin override.
+# It is latent rather than live today (main has no branch protection), which is
+# precisely why it would land as a mystery the day protection is switched on.
+# The saving it bought was nil either way: docs-only PRs are rare here, and the
+# merge commit's own push event is still filtered, so the CI minutes were already
+# saved on the push side.
 on:
   push:
     branches: [main]
@@ -30,10 +41,6 @@ on:
       - 'assets/branding/**'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - 'manual/**'
-      - 'assets/branding/**'
   # Nightly full-strength run: the canary at its original x5 loop count and the
   # py3.14 leg, both of which are trimmed off the per-push path below (DEC-230
   # guard economics — see the canary job). 06:00 UTC keeps clear of the

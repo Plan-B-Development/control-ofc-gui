@@ -1855,3 +1855,194 @@ class TestAccessibleNames:
         assert len(resets) > 10, "expected the per-token reset buttons"
         unnamed = [b for b in resets if not b.accessibleName()]
         assert not unnamed, f"{len(unnamed)} reset buttons announce only as a glyph"
+
+    @staticmethod
+    def _announced_label(widget) -> str:
+        """What assistive tech would actually use to say what ``widget`` is.
+
+        **Not** ``widget.accessibleName()``. That reads back the Qt property,
+        which is set on every control here and is therefore evidence of nothing:
+        Qt's Unix ``QAccessibleComboBox::text(Name)`` falls through to the
+        current item and silently discards the property, so a combo can carry a
+        perfect ``accessibleName`` and still announce "Dashboard". Asserting the
+        property is exactly the false green this helper exists to prevent — the
+        first version of this test passed on two controls that announce nothing
+        useful.
+
+        So: ask the accessibility interface. A Name distinct from the Value is a
+        real name; otherwise fall back to the ``Label`` relation a ``setBuddy``
+        publishes, which is what AT-SPI exports as *labelled-by* and what Orca
+        reads for a combo box.
+        """
+        from PySide6.QtGui import QAccessible
+
+        iface = QAccessible.queryAccessibleInterface(widget)
+        if iface is None:
+            return ""
+        name = iface.text(QAccessible.Text.Name)
+        value = iface.text(QAccessible.Text.Value)
+        if name and name != value:
+            return name
+        for target, flags in iface.relations():
+            if flags & QAccessible.RelationFlag.Label:
+                return target.text(QAccessible.Text.Name)
+        return ""
+
+    def test_every_value_control_on_settings_is_named(self, qtbot):
+        """Register OPEN-01 item 01-e: the nine controls DEC-269 left nameless.
+
+        DEC-268 named the eight ToggleSwitches and scoped itself there, on a
+        premise DEC-269 refuted — ``QAccessible::Text::Name`` and ``::Value``
+        are separate queries, so a name is added rather than substituted — but
+        DEC-269 corrected only the comment and deferred the code. The combos,
+        spin boxes and the serial-port line edit stayed nameless. DEC-271 closes
+        that.
+
+        Deliberately widened to *every* combo/spin/line-edit the page builds, not
+        the nine that existed when the row was written: the naming lives in
+        ``_setting_row`` precisely so a control added later is named by
+        construction, and a test that enumerates today's nine would not notice
+        a tenth added outside the helper.
+        """
+        from PySide6.QtWidgets import QAbstractSpinBox, QComboBox, QLineEdit
+
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        page = SettingsPage()
+        qtbot.addWidget(page)
+
+        controls = [
+            *page.findChildren(QComboBox),
+            *page.findChildren(QAbstractSpinBox),
+            *page.findChildren(QLineEdit),
+        ]
+        # A QComboBox owns an internal QLineEdit when editable, and a spin box
+        # always owns one; those are implementation details of a named parent,
+        # not separate controls a user tabs to. Nothing else is filtered — in
+        # particular a *disabled* control is still checked, because the five
+        # daemon-config controls ship disabled until the daemon answers and a
+        # user who never connects one would otherwise get no coverage at all.
+        controls = [c for c in controls if not isinstance(c.parent(), QComboBox | QAbstractSpinBox)]
+        assert len(controls) >= 9, f"expected the Settings value controls, found {len(controls)}"
+
+        nameless = [
+            c.objectName() or repr(c) for c in controls if not self._announced_label(c).strip()
+        ]
+        assert not nameless, (
+            "these Settings controls announce as an anonymous combo/spin/edit "
+            f"with no indication of what they set: {nameless}"
+        )
+
+    def test_a_settings_combo_is_labelled_by_more_than_its_property(self, qtbot):
+        """The regression that a property assertion cannot see.
+
+        `setAccessibleName` on a non-editable QComboBox is discarded by Qt on
+        Unix, so the naming only works because ``_setting_row`` also calls
+        ``setBuddy``. Delete the buddy and ``accessibleName()`` still reads back
+        perfectly while the combo announces its current item — this pins the
+        mechanism that actually carries the label.
+        """
+        from PySide6.QtGui import QAccessible
+        from PySide6.QtWidgets import QComboBox
+
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        page = SettingsPage()
+        qtbot.addWidget(page)
+
+        for name in ("Settings_Combo_startupPage", "Settings_Combo_preferredCpu"):
+            combo = page.findChild(QComboBox, name)
+            assert combo is not None, f"objectName changed: {name}"
+            iface = QAccessible.queryAccessibleInterface(combo)
+            relations = [f for _t, f in iface.relations()]
+            assert any(f & QAccessible.RelationFlag.Label for f in relations), (
+                f"{name} has no Label relation, so on Linux it announces only its "
+                "current item — `setAccessibleName` alone is discarded here"
+            )
+            assert self._announced_label(combo).strip(), f"{name} resolves to no label"
+
+    def test_dir_picker_buttons_are_distinguishable(self, qtbot):
+        """Three identical Browse/Reset pairs, built by one helper.
+
+        Hand-rolled ``QPushButton``s left all six with no objectName (so
+        ``findChild`` could not reach them and nothing could test them) and only
+        two distinct labels between them — three buttons announcing "Browse..."
+        and three announcing "Reset". Same defect as the two "Run again" buttons
+        DEC-269 fixed, at three times the volume.
+        """
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        page = SettingsPage()
+        qtbot.addWidget(page)
+
+        keys = ("profilesDir", "themesDir", "exportDir")
+        browse = [
+            page.findChild(QPushButton, f"Settings_Btn_browse{k[0].upper()}{k[1:]}") for k in keys
+        ]
+        reset = [
+            page.findChild(QPushButton, f"Settings_Btn_reset{k[0].upper()}{k[1:]}") for k in keys
+        ]
+        assert all(b is not None for b in browse + reset), (
+            "the dir-picker buttons must carry unique objectNames: "
+            f"browse={[b is not None for b in browse]} reset={[b is not None for b in reset]}"
+        )
+
+        assert {b.text() for b in browse} == {"Browse..."}, "precondition: visible text is shared"
+        assert {b.text() for b in reset} == {"Reset"}, "precondition: visible text is shared"
+
+        names = [b.accessibleName() for b in browse + reset]
+        assert all(names), f"an unnamed dir-picker button falls back to shared text: {names}"
+        assert len(set(names)) == len(names), (
+            f"two dir-picker buttons announce identically, so nothing tells them apart: {names}"
+        )
+
+    def test_dir_picker_buttons_stay_wired_after_the_component_swap(self, qtbot, monkeypatch):
+        """`.click()`, not `_handler()` — the swap to ``make_button`` moved the
+        construction, and the connection is the thing most likely to break.
+        """
+        from PySide6.QtWidgets import QFileDialog
+
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        page = SettingsPage()
+        qtbot.addWidget(page)
+
+        # The export row is the one whose browse handler sets the label directly,
+        # with no migrate-files QMessageBox to block a headless run.
+        monkeypatch.setattr(
+            QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: "/tmp/ofc-export")
+        )
+        page.findChild(QPushButton, "Settings_Btn_browseExportDir").click()
+        assert page._export_dir_label.text() == "/tmp/ofc-export", "Browse lost its connection"
+
+        page.findChild(QPushButton, "Settings_Btn_resetExportDir").click()
+        assert page._export_dir_label.text() == "", "Reset lost its connection"
+
+    def test_each_dir_picker_row_acts_on_its_own_path(self, qtbot):
+        """`_dir_picker_row` takes the label, the callback, the objectName slug
+        and the spoken noun as four independent arguments, so a call site can
+        pair ``key="themesDir"`` with the *profiles* label and nothing visible
+        breaks — the button would simply reset the wrong path under the wrong
+        name. Clicking one Reset must clear exactly one label.
+        """
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        page = SettingsPage()
+        qtbot.addWidget(page)
+
+        labels = {
+            "profilesDir": page._profiles_dir_label,
+            "themesDir": page._themes_dir_label,
+            "exportDir": page._export_dir_label,
+        }
+        for key, target in labels.items():
+            for label in labels.values():
+                label.setText(f"/sentinel/{label.objectName()}")
+            page.findChild(QPushButton, f"Settings_Btn_reset{key[0].upper()}{key[1:]}").click()
+
+            assert target.text() == "", f"Reset for {key} did not clear its own label"
+            others = {k: v.text() for k, v in labels.items() if k != key}
+            assert all(others.values()), (
+                f"Reset for {key} also cleared another row's path — the helper's "
+                f"label/key pairing is crossed: {others}"
+            )

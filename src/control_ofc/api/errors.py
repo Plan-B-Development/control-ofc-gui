@@ -8,14 +8,32 @@ from typing import Any
 
 @dataclass
 class DaemonError(Exception):
-    """Raised when the daemon returns an error envelope."""
+    """Raised when the daemon returns an error envelope.
+
+    ``details`` is the envelope's optional structured payload. The daemon types
+    it as ``Option<serde_json::Value>`` but every value it actually emits is a
+    JSON **object** — today the sole producer is ``validation_with_details``,
+    which sends ``{"field_violations": [...]}`` (DEC-160). The annotation
+    records that contract rather than the wider ``Any`` it replaced (OPEN-02
+    item 02-d, from the DEC-091 P3 review): ``Any`` told a reader nothing, and
+    the one consumer in the GUI —
+    :func:`control_ofc.api.models.parse_field_violations` — has always assumed a
+    mapping.
+
+    Nothing *enforces* the shape at parse time: :meth:`DaemonClient._handle`
+    passes whatever JSON arrived straight through, so a non-conforming daemon
+    can still land a string or a list here. That is deliberate — dropping the
+    value would discard diagnostic information the envelope meant to carry —
+    and ``parse_field_violations`` re-checks with ``isinstance`` before reading
+    it, so a wrong shape degrades to "no field violations", never a crash.
+    """
 
     code: str
     message: str
     retryable: bool = False
     source: str = ""
     status: int = 0
-    details: Any = None
+    details: dict[str, Any] | None = None
     endpoint: str = ""
     method: str = ""
 
