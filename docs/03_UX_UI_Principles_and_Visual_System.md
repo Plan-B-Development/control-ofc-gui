@@ -236,12 +236,14 @@ or line edit has no label of its own either — its visible words live in a *sep
 `QLabel` beside it, so it announces its value with nothing to say what the value is
 *for*. Every such control must name itself from the words already next to it.
 
-**Settings is the only page that does so today.** The rule above is the standard for
-new and edited code, not a description of the app as it stands: combo boxes, spin
-boxes and line edits on the theme, curve-editor, logs, wizard and dialog surfaces are
-still unnamed, and the enforcing test is scoped to `SettingsPage`. Treat an
-app-wide compliance claim as false until those surfaces are swept and the test
-widened.
+**Two surfaces comply today, not the whole app.** The rule above is the standard for
+new and edited code, not a description of the app as it stands. `SettingsPage` names
+its value controls, and the Dashboard's two chart combos are already associated with
+their captions via `setBuddy` (`timeline_chart.py`) — which is the mechanism the next
+paragraph identifies as the load-bearing one on Linux. Everything else is still
+unnamed: the theme, curve-editor, logs, wizard and dialog surfaces. The enforcing test
+covers `SettingsPage` only, so treat any wider compliance claim — in either direction
+— as unverified until those surfaces are swept and the test widened.
 
 On Settings the naming happens inside `_setting_row` — the place holding both the
 control and its caption — so a control added *through that helper* is named by

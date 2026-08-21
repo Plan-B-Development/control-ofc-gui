@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Internal
+- Two accessibility guards were weaker than they read. The disabled-button check
+  compared each of its two subjects against a single "enabled" colour that only
+  one of them actually uses, so each subject was really pinned by one half of the
+  assertion; it now checks the positive fact that a disabled button paints the
+  disabled colour, which holds for both. The focus-ring check covered text fields
+  but not spin boxes, which share the same rule and the same blinking-cursor
+  problem that made the old check unable to fail. DEC-273.
+- `docs/03` now records that the Dashboard's chart selectors are already named,
+  which the previous correction had accidentally denied while fixing an
+  over-claim in the other direction. DEC-271.
+
 ## [2.43.1] — 2026-08-21
 
 ### Accessibility

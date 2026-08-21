@@ -1182,17 +1182,26 @@ class TestKeyboardFocusVisibility:
         apply_theme(theme)
         expected = theme.input_border_focus.lower()
 
+        from PySide6.QtWidgets import QDoubleSpinBox, QSpinBox
+
         def _plain_text(parent):
             return QPlainTextEdit(parent)
 
         def _line_edit(parent):
             return QLineEdit("sample", parent)
 
+        # QSpinBox/QDoubleSpinBox share the one `QLineEdit:focus, QSpinBox:focus,
+        # QDoubleSpinBox:focus` rule and embed a QLineEdit, so they carry the exact
+        # caret-driven vacuity this test exists to remove — and were in no render
+        # test at all, across five real surfaces (settings, curve editor and dialog,
+        # fan-role dialog, theme page).
         missing = {
             label: sorted(painted)
             for label, painted in (
                 ("QLineEdit", self._focused_perimeter(_line_edit)),
                 ("QPlainTextEdit", self._focused_perimeter(_plain_text)),
+                ("QSpinBox", self._focused_perimeter(lambda p: QSpinBox(p))),
+                ("QDoubleSpinBox", self._focused_perimeter(lambda p: QDoubleSpinBox(p))),
             )
             if expected not in painted
         }
@@ -1487,21 +1496,31 @@ class TestDisabledStateVisibility:
             parent.setProperty("class", "Card")
             parent.setProperty("density", "tile")
 
-        live_text = theme.text_primary.lower()
+        # Each host has its OWN enabled label colour — the sidebar paints `nav_text`,
+        # the tile card `text_primary` — so a single shared "enabled colour" probe is
+        # vacuous for whichever host does not use it, and the background probe is
+        # vacuous for the tile-ghost (which already reached `disabled_bg` from the
+        # variant rule; its pre-fix defect was text-only). Assert the POSITIVE fact
+        # instead, which holds for every host: a disabled button paints
+        # `disabled_text` somewhere. Then keep the per-host negative as a second net.
+        disabled_text = theme.disabled_text.lower()
         wrong = {}
-        for label, make, host in (
-            ("#Sidebar QPushButton", self._button(), _sidebar),
+        for label, make, host, enabled_text in (
+            ("#Sidebar QPushButton", self._button(), _sidebar, theme.nav_text.lower()),
             (
                 '.Card[density="tile"] [variant=ghost]',
                 self._button("ghost"),
                 _tile_card,
+                theme.text_primary.lower(),
             ),
         ):
             bg, allpx = self._scoped_disabled_background(make, host)
             if bg != {expected}:
                 wrong[f"{label} background"] = sorted(bg)
-            if live_text in allpx:
-                wrong[f"{label} label"] = f"still paints the enabled {live_text}"
+            if disabled_text not in allpx:
+                wrong[f"{label} label"] = f"never paints disabled_text ({disabled_text})"
+            if enabled_text in allpx:
+                wrong[f"{label} label(enabled)"] = f"still paints {enabled_text}"
 
         assert not wrong, (
             "a disabled button must paint disabled_bg "
