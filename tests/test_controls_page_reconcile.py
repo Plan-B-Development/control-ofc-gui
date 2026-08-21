@@ -278,3 +278,119 @@ class TestSkippedControlReconcile:
 
         assert page._skipped_controls == {}
         assert page._control_cards["lc1"]._skipped_reason is None
+
+
+class TestSkipAndManualInteraction:
+    """The state machine where a user-held Manual meets a daemon-reported skip.
+
+    Nothing covered this until two independent reviewers found the same defect
+    in it. `set_skipped` and `set_external_override` deliberately SUPPRESS the
+    chip while Manual is held rather than discarding the state — so leaving
+    Manual has to put it back. Blanking instead left a live "Now: N%" with no
+    chip at all, permanently: `set_output` early-returns while `_skipped_reason`
+    is set, and the page reconciles only on a reason *delta*, so nothing ever
+    repainted it. Exactly the silence 273-i exists to end.
+    """
+
+    def test_leaving_manual_restores_the_not_controlled_chip(
+        self, qtbot, app_state, profile_service
+    ):
+        client = MagicMock()
+        client.override_take.return_value = _grant(token=7)
+        page = _page(qtbot, app_state, profile_service, client)
+        page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
+        card = page._control_cards["lc1"]
+        assert card._status_chip.text() == "Not controlled"
+
+        card._manual_btn.setChecked(True)  # user takes over
+        assert card._status_chip.text() == "Manual", "Manual wins while it is held"
+        card._manual_btn.setChecked(False)  # ...and changes their mind
+
+        assert card._status_chip.text() == "Not controlled", (
+            "leaving Manual must restore what the daemon still reports — the "
+            "reconcile acts only on a delta, so nothing else will"
+        )
+        # And the 1 Hz poll must not undo it.
+        card.set_output(42.0, "CPU", 55.0)
+        assert card._status_chip.text() == "Not controlled"
+
+    def test_leaving_manual_restores_an_external_chip(self, qtbot, app_state, profile_service):
+        """The card's own state machine, exercised directly — NOT via the page.
+
+        Through the page this combination cannot arise: reconcile excludes
+        GUI-owned controls from `foreign`, and taking over an external override
+        makes it yours, so the page clears `_external_pct` on takeover. That is
+        correct and this test does not contradict it.
+
+        What is pinned here is the card-level invariant that the same restore
+        path covers both suppressed states, so the `_external_pct` arm cannot rot
+        while only the `_skipped_reason` arm is exercised. It is a latent
+        inconsistency rather than a live defect, and it predates 273-i.
+        """
+        client = MagicMock()
+        page = _page(qtbot, app_state, profile_service, client)
+        card = page._control_cards["lc1"]
+
+        card.set_external_override(55)
+        card._manual_btn.blockSignals(True)  # card only — no page takeover
+        card._manual_btn.setChecked(True)
+        card._manual_btn.blockSignals(False)
+        card._apply_chip("Manual", "WarningChip")
+
+        card.clear_manual()
+
+        assert card._status_chip.text() == "External 55%"
+
+    def test_leaving_manual_with_nothing_outstanding_clears_the_chip(
+        self, qtbot, app_state, profile_service
+    ):
+        """The control case. Without it, always repainting something would pass
+        the two tests above while a healthy card kept a stale badge."""
+        client = MagicMock()
+        client.override_take.return_value = _grant(token=7)
+        page = _page(qtbot, app_state, profile_service, client)
+        card = page._control_cards["lc1"]
+
+        card._manual_btn.setChecked(True)
+        card._manual_btn.setChecked(False)
+
+        assert card._status_chip.text() == ""
+
+    def test_the_tooltip_does_not_outlive_the_chip_that_set_it(
+        self, qtbot, app_state, profile_service
+    ):
+        """Qt maps toolTip to QAccessible::Text::Description, so a stale one is
+        announced, not merely hoverable. A card reading "Manual" once carried
+        "the daemon is not commanding these fans" — the opposite of true while
+        the user is commanding them."""
+        client = MagicMock()
+        client.override_take.return_value = _grant(token=7)
+        page = _page(qtbot, app_state, profile_service, client)
+        page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
+        card = page._control_cards["lc1"]
+        assert card._status_chip.toolTip() != ""
+
+        card._manual_btn.setChecked(True)
+
+        assert card._status_chip.text() == "Manual"
+        assert card._status_chip.toolTip() == "", (
+            "the skip tooltip must not survive onto the Manual chip"
+        )
+
+    def test_a_skip_does_not_paint_over_an_active_external_override(
+        self, qtbot, app_state, profile_service
+    ):
+        """The daemon short-circuits an override before curve resolution, so the
+        two cannot co-occur today. Enforced locally anyway: if a future daemon
+        ever sent both, "Not controlled" over a live override would be a lie in
+        the unsafe direction."""
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        card.set_external_override(55)
+
+        card.set_skipped("mix_unresolvable")
+
+        assert card._status_chip.text() == "External 55%", (
+            "an override is actively pinning these fans; the card must not claim "
+            "nothing is controlling them"
+        )

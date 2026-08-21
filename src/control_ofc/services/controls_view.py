@@ -153,7 +153,12 @@ def skipped_control_feedback(reason: str) -> tuple[str, str]:
     is strictly better than showing nothing at all, which is the very silence
     273-i exists to end.
     """
-    detail = _SKIP_REASONS.get(reason)
+    # `reason` is whatever the wire sent. `_filter_fields` does no type
+    # coercion, so a non-conforming daemon sending `"reason": []` would reach a
+    # dict lookup with an unhashable key and raise on the 1 Hz poll path — a
+    # crash, not a degraded render. `unavailable_sensors` never keys a dict on a
+    # wire value, which is why this asymmetry is ours to handle.
+    detail = _SKIP_REASONS.get(reason) if isinstance(reason, str) else None
     if detail is None:
         return (
             "Not controlled",

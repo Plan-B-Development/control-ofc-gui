@@ -16,6 +16,17 @@
   older daemon nothing changes. 273-i.
 
 ### Fixed
+- **A fan card could end up showing no status at all.** If a role the daemon
+  could not control was switched to Manual and back — or an override attempt was
+  refused — the card lost its status badge entirely and never got it back, while
+  still showing a live speed. That is the exact silence the "Not controlled"
+  badge was added to end, so it mattered most in the case it was built for. The
+  badge is now restored whenever Manual ends. The same fix covers the "External"
+  badge, which had a quieter version of the problem.
+- **A badge could carry the wrong explanation on hover.** The tooltip was set
+  alongside the badge but never cleared with it, so a card reading "Manual"
+  could still explain that nothing was controlling it. Screen readers announce
+  that text, so it was not only a hover-time oddity.
 - **Dropdowns, spin boxes and sliders now say what they set.** A control that
   shows a value carries no words of its own — the words are in the label beside
   it — so a screen reader announced "combo box, Dashboard" and never what

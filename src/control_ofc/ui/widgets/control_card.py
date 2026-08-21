@@ -411,10 +411,39 @@ class ControlCard(ResizableGridCard):
             self._member_row_rpm[mid] = rpm
         self._member_rows.setVisible(bool(control.members))
 
-    def _apply_chip(self, text: str, cls: str) -> None:
-        """Set the status chip text + style class and repolish."""
+    def _apply_chip(self, text: str, cls: str, tooltip: str = "") -> None:
+        """Set the status chip text + style class + tooltip, and repolish.
+
+        The tooltip is owned HERE, not by callers. When `set_skipped` wrote it
+        directly onto `_status_chip`, every later transition inherited it — a
+        card showing "Manual" carried "the daemon is not commanding these fans",
+        which is the opposite of true while the user is commanding them. Qt maps
+        `toolTip` to `QAccessible::Text::Description`, so a stale one is not
+        merely cosmetic.
+        """
         self._status_chip.setText(text)
+        self._status_chip.setToolTip(tooltip)
         set_chip_class(self._status_chip, cls)
+
+    def _restore_chip_after_manual(self) -> None:
+        """Repaint whatever the daemon still says about this control.
+
+        Leaving Manual must not blank the chip: `set_skipped` and
+        `set_external_override` deliberately SUPPRESS the chip while the user
+        holds Manual rather than discarding the state, so exiting Manual has to
+        put it back. Blanking instead left the card with a live "Now: N%" and no
+        chip at all, permanently — `set_output` early-returns while
+        `_skipped_reason`/`_external_pct` is set, and the page reconciles only on
+        a *delta*, so nothing ever repainted it. That is exactly the silence
+        273-i exists to end, and the `_external_pct` half of it predates 273-i.
+        """
+        if self._skipped_reason is not None:
+            text, tooltip = skipped_control_feedback(self._skipped_reason)
+            self._apply_chip(text, "WarningChip", tooltip)
+        elif self._external_pct is not None:
+            self._apply_chip(f"External {self._external_pct}%", "InfoChip")
+        else:
+            self._apply_chip("", "")
 
     def _on_manual_toggled(self, checked: bool) -> None:
         """Reveal/hide the inline slider and signal the transient manual state."""
@@ -436,7 +465,10 @@ class ControlCard(ResizableGridCard):
         self._manual_slider.setVisible(checked)
         self._manual_pct_label.setVisible(checked)
         self._output_label.setVisible(not checked)
-        self._apply_chip("Manual", "WarningChip") if checked else self._apply_chip("", "")
+        if checked:
+            self._apply_chip("Manual", "WarningChip")
+        else:
+            self._restore_chip_after_manual()
         self.manual_toggled.emit(self._control.id, checked, self._manual_slider.value())
 
     def _on_manual_slider_changed(self, value: int) -> None:
@@ -475,7 +507,7 @@ class ControlCard(ResizableGridCard):
         self._manual_slider.setVisible(False)
         self._manual_pct_label.setVisible(False)
         self._output_label.setVisible(True)
-        self._apply_chip("", "")
+        self._restore_chip_after_manual()
 
     def set_external_override(self, pct: int) -> None:
         """Show a read-only "External" chip for a daemon-held override this GUI
@@ -513,11 +545,15 @@ class ControlCard(ResizableGridCard):
         to confirm and flickering it would be worse than delaying this.
         """
         self._skipped_reason = reason
-        if self._manual_btn.isChecked():
+        if self._manual_btn.isChecked() or self._external_pct is not None:
+            # Suppressed, not discarded — `_restore_chip_after_manual` repaints
+            # it when Manual ends. The `_external_pct` arm enforces the
+            # "cannot co-occur" invariant LOCALLY rather than trusting the wire:
+            # an override actively pins these fans, so "Not controlled" would be
+            # a lie in the unsafe direction if a future daemon ever sent both.
             return
         text, tooltip = skipped_control_feedback(reason)
-        self._apply_chip(text, "WarningChip")
-        self._status_chip.setToolTip(tooltip)
+        self._apply_chip(text, "WarningChip", tooltip)
 
     def clear_skipped(self) -> None:
         """Drop the "Not controlled" chip (273-i) once the daemon stops reporting
@@ -526,10 +562,9 @@ class ControlCard(ResizableGridCard):
         if self._skipped_reason is None:
             return
         self._skipped_reason = None
-        self._status_chip.setToolTip("")
         if self._manual_btn.isChecked():
             return
-        self._apply_chip("", "")
+        self._restore_chip_after_manual()
 
     def update_control(self, control: LogicalControl, curves: list[CurveConfig]) -> None:
         self._control = control

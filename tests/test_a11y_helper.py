@@ -177,3 +177,35 @@ def test_a_widget_that_is_not_a_value_control_is_left_alone(host):
 
     assert bar.accessibleName() == ""
     assert not bar.findChildren(QLabel)
+
+
+def test_naming_the_same_control_twice_does_not_duplicate_the_proxy(host):
+    """The docstring promises idempotence; the string path did not deliver it.
+
+    A second call minted another QLabel with an IDENTICAL objectName, breaking
+    the unique-objectName rule and any `findChild` on that name. No call site
+    does this today — which is precisely why it needed a test rather than trust.
+    """
+    edit = QLineEdit(host)
+    edit.setObjectName("Test_Edit_search")
+
+    name_value_control(edit, "Search sensors")
+    name_value_control(edit, "Search sensors")
+
+    proxies = [lbl for lbl in edit.findChildren(QLabel) if lbl.objectName().endswith("_A11yLabel")]
+    assert len(proxies) == 1, (
+        f"a second call duplicated the proxy: {[p.objectName() for p in proxies]}"
+    )
+    assert announced(edit) == "Search sensors"
+
+
+def test_renaming_a_control_updates_the_existing_proxy(host):
+    """Reuse must re-label, not silently keep the first name."""
+    combo = QComboBox(host)
+    combo.addItem("Default Dark")
+    combo.setObjectName("Test_Combo_x")
+
+    name_value_control(combo, "Theme")
+    name_value_control(combo, "Colour scheme")
+
+    assert announced(combo) == "Colour scheme"

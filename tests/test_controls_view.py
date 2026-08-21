@@ -259,3 +259,18 @@ def test_skipped_control_feedback_names_the_cause_when_known():
     _, tooltip = skipped_control_feedback("sync_unresolvable")
     assert "mirrors" in tooltip
     assert "hold their last speed" in tooltip
+
+
+def test_a_malformed_reason_does_not_crash_the_poll_path():
+    """`_filter_fields` does no type coercion, so a non-conforming daemon can put
+    any JSON value in `reason` — and it then keys a dict. `{"reason": []}` raised
+    `TypeError: unhashable type` on the 1 Hz poll path: a crash, not a degraded
+    render. `unavailable_sensors` never keys a dict on a wire value, which is why
+    this asymmetry is ours to handle.
+    """
+    from control_ofc.services.controls_view import skipped_control_feedback
+
+    for bad in ([], {}, None, 42, ["mix_unresolvable"]):
+        chip, tooltip = skipped_control_feedback(bad)
+        assert chip == "Not controlled"
+        assert tooltip, f"a {type(bad).__name__} reason must still render something"

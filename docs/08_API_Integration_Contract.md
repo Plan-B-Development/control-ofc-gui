@@ -359,6 +359,10 @@ and are never reported; a control is listed only after **three consecutive** ski
 otherwise flap in and out of the list at 1 Hz. The daemon logs one WARN on entry and one INFO on
 resolution.
 
+`skipped_for_ms` counts from when the control was **listed**, i.e. after the debounce, not from the
+first skipped tick — so a freshly-listed control reads ~0 and the field understates the real outage
+by up to three seconds. It is display-only and the GUI does not currently render it.
+
 `reason` is a **stable token, not prose** — the daemon deliberately leaves the wording to the client:
 
 | `reason` | Meaning |

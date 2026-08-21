@@ -114,16 +114,34 @@ def name_value_control(control: QWidget, label: str | QLabel) -> None:
     # control so it shares its lifetime, and hidden so it changes no layout.
     if isinstance(label, QLabel):
         label.setBuddy(control)
-    else:
-        proxy = QLabel(text, control)
-        # Named from the control if it has one, else from the label text — never
-        # a fixed string, which would collide the moment two controls took this
-        # path (CLAUDE.md: every widget gets a unique objectName). The text
-        # fallback matters because the objectName may not be set YET: this helper
-        # is called at construction, and a caller that names the control on the
-        # NEXT line would otherwise get the generic form. That happened once
-        # already, on the sensor-series search box.
-        slug = "".join(ch if ch.isalnum() else "_" for ch in text).strip("_")
-        proxy.setObjectName(f"{control.objectName() or slug}_A11yLabel")
-        proxy.hide()
-        proxy.setBuddy(control)
+        return
+
+    # Reuse an existing proxy rather than adding a second one. The docstring
+    # promises idempotence and the string path was not: a second call minted
+    # another QLabel with an IDENTICAL objectName, breaking the unique-objectName
+    # rule and any `findChild` on it. No call site does this today, which is
+    # exactly why it needed pinning rather than trusting.
+    existing = control.findChild(QLabel, _proxy_name(control, text))
+    if existing is not None:
+        existing.setText(text)
+        existing.setBuddy(control)
+        return
+
+    proxy = QLabel(text, control)
+    proxy.setObjectName(_proxy_name(control, text))
+    proxy.hide()
+    proxy.setBuddy(control)
+
+
+def _proxy_name(control: QWidget, text: str) -> str:
+    """objectName for the hidden buddy label.
+
+    From the control if it has one, else from the label text — never a fixed
+    string, which would collide the moment two controls took this path. The text
+    fallback matters because the objectName may not be set YET: this helper runs
+    at construction and a caller that names the control on the NEXT line would
+    otherwise get the generic form. That happened once, on the sensor-series
+    search box.
+    """
+    slug = "".join(ch if ch.isalnum() else "_" for ch in text).strip("_")
+    return f"{control.objectName() or slug}_A11yLabel"
