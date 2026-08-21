@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Internal
+- The lint tooling is version-bounded. It was floored but not capped, so a fresh
+  install in CI resolved a newer formatter than the one developers had, and the
+  two disagreed about a line sitting exactly on the column limit — turning the
+  build red on a commit whose local check was green. Upgrading a formatter is a
+  deliberate act with a reformatting pass attached, not something that should
+  happen implicitly on every CI run.
 - A rejected publishing token now says so. When the token that tells the package
   repository about a new release expires, the release itself still succeeds and
   looks complete — only publication silently stops, and the next day's check

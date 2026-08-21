@@ -24,7 +24,14 @@ dev = [
     # Coverage plugin for the `pytest --cov` audit/test-tests/release gate
     # (CLAUDE.md "Quality gates"). Without it that gate errors out on `--cov`.
     "pytest-cov>=5",
-    "ruff>=0.4",
+    # Upper-bounded deliberately (DEC-258 follow-up). A FORMATTER's output is
+    # version-dependent, so an open floor makes `ruff format --check` a different
+    # check locally than in CI: a fresh CI install resolved 0.16.x while the dev
+    # venv held 0.15.20, and the two disagreed about a line sitting on the
+    # 100-column boundary. Lint went red on a commit whose local check was green.
+    # Upgrading a formatter is a deliberate act with a formatting pass attached,
+    # not something that should happen implicitly on every CI run.
+    "ruff>=0.15.20,<0.16",
     "pip-audit>=2.7",
     # Dead-code sweep for the /ofc:audit pass. Was installed ad hoc into .venv
     # and declared nowhere, which meant it rode along in the

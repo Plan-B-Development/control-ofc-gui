@@ -1514,7 +1514,14 @@ class TestDisabledStateVisibility:
             return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
 
         def _dist2(a, b):
-            return sum((x - y) ** 2 for x, y in zip(a, b))
+            # strict= is required by lint and is the right call anyway: both
+            # operands are 3-tuples from _rgb, so a length mismatch is a bug in
+            # the parsing, not something to silently truncate.
+            return sum((x - y) ** 2 for x, y in zip(a, b, strict=True))
+
+        def _nearer(px, a, b):
+            rgb = _rgb(px)
+            return _dist2(rgb, a) < _dist2(rgb, b)
 
         disabled_rgb = _rgb(theme.disabled_text)
         wrong = {}
@@ -1536,11 +1543,7 @@ class TestDisabledStateVisibility:
             enabled_rgb = _rgb(enabled_text)
             if enabled_rgb == disabled_rgb:  # pragma: no cover - theme sanity
                 continue
-            live = [
-                px
-                for px in allpx
-                if _dist2(_rgb(px), enabled_rgb) < _dist2(_rgb(px), disabled_rgb)
-            ]
+            live = [px for px in allpx if _nearer(px, enabled_rgb, disabled_rgb)]
             if live:
                 wrong[f"{label} label"] = (
                     f"{len(live)} pixel(s) nearer the enabled {enabled_text} "
