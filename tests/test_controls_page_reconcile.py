@@ -269,6 +269,37 @@ class TestSkippedControlReconcile:
         assert card._status_chip.text() == "Not controlled"
         assert card._status_chip.toolTip() != ""
 
+    def test_a_malformed_control_id_does_not_crash_the_poll_path(
+        self, qtbot, app_state, profile_service
+    ):
+        """`control_id` keys a dict straight off the wire and `_filter_fields` does
+        no type coercion, so `"control_id": []` reached an unhashable-key `TypeError`
+        inside the `status_updated` slot on the 1 Hz poll path. That runs on the main
+        thread, outside the poll worker's own `except`, so it escaped to
+        `sys.excepthook` and aborted the rest of that emission every second — stale
+        UI presented as live.
+
+        `skipped_control_feedback` already guarded the sibling `reason` and said so
+        in a comment; the key itself was missed. A well-formed sibling entry in the
+        same payload must still render, or the guard has merely moved the failure.
+        """
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        status = _skipped(("lc1", "mix_unresolvable"))
+        status.skipped_controls.append(
+            SkippedControl(
+                control_id=[],  # type: ignore[arg-type]
+                control_name="bad",
+                reason="curve_not_found",
+                skipped_for_ms=1000,
+            )
+        )
+
+        page._on_status_reconcile(status)
+
+        assert page._control_cards["lc1"]._status_chip.text() == "Not controlled", (
+            "a malformed sibling entry must not cost the well-formed one its chip"
+        )
+
     def test_older_daemon_reports_nothing_skipped(self, qtbot, app_state, profile_service):
         """A daemon predating 2.21.0 omits the key entirely. The GUI must read
         that as "nothing skipped", not crash and not warn."""
@@ -393,4 +424,125 @@ class TestSkipAndManualInteraction:
         assert card._status_chip.text() == "External 55%", (
             "an override is actively pinning these fans; the card must not claim "
             "nothing is controlling them"
+        )
+
+    def test_an_external_override_lapsing_restores_the_skip_chip(
+        self, qtbot, app_state, profile_service
+    ):
+        """The mirror of the test above — and the direction that was broken.
+
+        `set_skipped` SUPPRESSES its chip while an external override is displayed
+        rather than discarding the reason, so when the override lapses the chip has
+        to come back. `clear_external_override` blanked it instead, and nothing
+        could ever repaint it: `set_output` early-returns while `_skipped_reason` is
+        set, and the page reconciles only on a reason *delta*. The card was left
+        showing a live "Now: N%" with no chip at all, permanently — the same silence
+        273-i exists to end, one interleaving over.
+
+        Reachable rather than theoretical: `/status` reads `overrides[]` live but
+        `skipped_controls[]` from the last COMPLETED tick, so the two genuinely
+        co-occur on the wire for up to a tick. Found by four reviewers independently
+        in the v2.44.0 pre-release review; the invariant was asserted in one
+        direction (above) and violated in the other.
+        """
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        card.set_external_override(55)
+        card.set_skipped("mix_unresolvable")
+        assert card._status_chip.text() == "External 55%"
+
+        card.clear_external_override()
+
+        assert card._status_chip.text() == "Not controlled", (
+            "the suppressed skip must be repainted when the override lapses, not "
+            "blanked — nothing else will ever repaint it"
+        )
+        assert card._status_chip.toolTip() != "", "the reason must return with the chip"
+
+        # And it must survive the next poll's output update, which is what made the
+        # old bug permanent rather than a single-frame flicker.
+        card.set_output(42.0, "CPU", 55.0)
+        assert card._status_chip.text() == "Not controlled"
+
+    def test_the_no_members_chip_does_not_inherit_a_stale_tooltip(
+        self, qtbot, app_state, profile_service
+    ):
+        """`_apply_chip` owns the tooltip; writing the chip directly bypasses that.
+
+        Qt maps `toolTip` to `QAccessible::Text::Description`, so a screen reader
+        would announce "No members" described as "the daemon is not commanding
+        these fans" — a leftover from the state before.
+        """
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        page._on_status_reconcile(_skipped(("lc1", "sync_unresolvable")))
+        card = page._control_cards["lc1"]
+        assert card._status_chip.toolTip() != ""
+
+        stripped = LogicalControl(
+            id="lc1", name="LC", mode=ControlMode.CURVE, curve_id="c1", members=[]
+        )
+        card._update_no_members_state(stripped)
+
+        assert card._status_chip.text() == "No members"
+        assert card._status_chip.toolTip() == "", (
+            "the skip tooltip must not survive onto the No members chip"
+        )
+
+    def test_clearing_a_skip_on_a_memberless_control_restores_no_members(
+        self, qtbot, app_state, profile_service
+    ):
+        """The "No members" chip is a TERMINAL state, not a write-once label.
+
+        The daemon records a skip BEFORE its own member-less short-circuit, so a
+        role with no outputs and an unresolvable curve really is listed in
+        `skipped_controls[]`. When that skip clears, the chip used to fall through
+        to blank — and `set_output` early-returns for a member-less control, so
+        nothing ever repainted it. The card was left with no chip at all for the
+        rest of the session.
+        """
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        empty = LogicalControl(
+            id="lc1", name="LC", mode=ControlMode.CURVE, curve_id="c1", members=[]
+        )
+        card.update_control(empty, [CurveConfig(id="c1", name="C", type=CurveType.FLAT)])
+        assert card._status_chip.text() == "No members"
+
+        card.set_skipped("mix_unresolvable")
+        card.clear_skipped()
+
+        assert card._status_chip.text() == "No members", (
+            "a member-less card must fall back to its terminal state, not to a "
+            "blank chip nothing will ever repaint"
+        )
+
+    def test_assigning_members_takes_the_no_members_chip_down(
+        self, qtbot, app_state, profile_service
+    ):
+        """The mirror: nothing else clears it, so it pinned the card forever.
+
+        `set_output` repaints only once it is past its own member guard, and the
+        page reconciles skips on a *delta*, so a control that gained outputs kept
+        advertising "No members" for the rest of the session.
+        """
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        curves = [CurveConfig(id="c1", name="C", type=CurveType.FLAT)]
+        empty = LogicalControl(
+            id="lc1", name="LC", mode=ControlMode.CURVE, curve_id="c1", members=[]
+        )
+        card.update_control(empty, curves)
+        assert card._status_chip.text() == "No members"
+
+        filled = LogicalControl(
+            id="lc1",
+            name="LC",
+            mode=ControlMode.CURVE,
+            curve_id="c1",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        card.update_control(filled, curves)
+
+        assert card._status_chip.text() != "No members", (
+            "the card now has outputs; the terminal chip must come down"
         )

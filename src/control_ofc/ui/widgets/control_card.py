@@ -425,13 +425,14 @@ class ControlCard(ResizableGridCard):
         self._status_chip.setToolTip(tooltip)
         set_chip_class(self._status_chip, cls)
 
-    def _restore_chip_after_manual(self) -> None:
+    def _restore_daemon_chip(self) -> None:
         """Repaint whatever the daemon still says about this control.
 
-        Leaving Manual must not blank the chip: `set_skipped` and
-        `set_external_override` deliberately SUPPRESS the chip while the user
-        holds Manual rather than discarding the state, so exiting Manual has to
-        put it back. Blanking instead left the card with a live "Now: N%" and no
+        EVERY exit from a chip-suppressing state must end here — leaving Manual,
+        and equally the external override lapsing. `set_skipped` deliberately
+        SUPPRESSES its chip while Manual is held *or* an external override is
+        displayed, rather than discarding the reason, so whichever of those ends
+        first has to put the chip back. Blanking instead left the card with a live "Now: N%" and no
         chip at all, permanently — `set_output` early-returns while
         `_skipped_reason`/`_external_pct` is set, and the page reconciles only on
         a *delta*, so nothing ever repainted it. That is exactly the silence
@@ -442,6 +443,15 @@ class ControlCard(ResizableGridCard):
             self._apply_chip(text, "WarningChip", tooltip)
         elif self._external_pct is not None:
             self._apply_chip(f"External {self._external_pct}%", "InfoChip")
+        elif not self._control.members:
+            # "No members" is a TERMINAL state of the card, not a transient chip.
+            # Falling through to a blank here stranded a member-less control with
+            # no chip at all, permanently: `set_output` early-returns for a control
+            # with no members, so nothing ever repaints it. Reachable because the
+            # daemon records a skip BEFORE its own member-less short-circuit, so a
+            # role with no outputs and an unresolvable curve really is listed in
+            # `skipped_controls[]` — and clearing that skip landed here.
+            self._apply_chip("No members", "PageSubtitle")
         else:
             self._apply_chip("", "")
 
@@ -468,7 +478,7 @@ class ControlCard(ResizableGridCard):
         if checked:
             self._apply_chip("Manual", "WarningChip")
         else:
-            self._restore_chip_after_manual()
+            self._restore_daemon_chip()
         self.manual_toggled.emit(self._control.id, checked, self._manual_slider.value())
 
     def _on_manual_slider_changed(self, value: int) -> None:
@@ -507,7 +517,7 @@ class ControlCard(ResizableGridCard):
         self._manual_slider.setVisible(False)
         self._manual_pct_label.setVisible(False)
         self._output_label.setVisible(True)
-        self._restore_chip_after_manual()
+        self._restore_daemon_chip()
 
     def set_external_override(self, pct: int) -> None:
         """Show a read-only "External" chip for a daemon-held override this GUI
@@ -533,7 +543,16 @@ class ControlCard(ResizableGridCard):
         self._external_pct = None
         if self._manual_btn.isChecked():
             return
-        self._apply_chip("", "")
+        # NOT `_apply_chip("", "")`. `set_skipped` suppresses its chip while an
+        # external override is displayed rather than discarding the reason, so
+        # blanking here strands a still-skipped control with a live "Now: N%" and
+        # no chip at all: `set_output` early-returns while `_skipped_reason` is
+        # set, and the page reconciles only on a reason *delta*, so nothing ever
+        # repaints it. Same permanent silence 273-i exists to end, one
+        # interleaving over. Reachable rather than theoretical: `/status` reads
+        # `overrides[]` live but `skipped_controls[]` from the last COMPLETED
+        # tick, so the two genuinely co-occur on the wire for up to a tick.
+        self._restore_daemon_chip()
 
     def set_skipped(self, reason: str) -> None:
         """Show a "Not controlled" chip for a control the daemon cannot resolve
@@ -546,7 +565,7 @@ class ControlCard(ResizableGridCard):
         """
         self._skipped_reason = reason
         if self._manual_btn.isChecked() or self._external_pct is not None:
-            # Suppressed, not discarded — `_restore_chip_after_manual` repaints
+            # Suppressed, not discarded — `_restore_daemon_chip` repaints
             # it when Manual ends. The `_external_pct` arm enforces the
             # "cannot co-occur" invariant LOCALLY rather than trusting the wire:
             # an override actively pins these fans, so "Not controlled" would be
@@ -564,7 +583,7 @@ class ControlCard(ResizableGridCard):
         self._skipped_reason = None
         if self._manual_btn.isChecked():
             return
-        self._restore_chip_after_manual()
+        self._restore_daemon_chip()
 
     def update_control(self, control: LogicalControl, curves: list[CurveConfig]) -> None:
         self._control = control
@@ -638,8 +657,20 @@ class ControlCard(ResizableGridCard):
         self._manual_btn.setEnabled(bool(control.members))
         if not control.members:
             self._output_label.setText("Assign outputs to enable")
-            self._status_chip.setText("No members")
-            set_chip_class(self._status_chip, "PageSubtitle")
+            # Through `_apply_chip`, which owns the tooltip: writing the chip
+            # directly leaves a previous state's tooltip attached, and Qt maps
+            # `toolTip` to `QAccessible::Text::Description`, so a screen reader
+            # announces "No members" described as "the daemon is not commanding
+            # these fans".
+            self._apply_chip("No members", "PageSubtitle")
+        elif self._status_chip.text() == "No members":
+            # Members restored. Nothing else takes this chip down: `set_output`
+            # repaints only once it is past its own member guard, and the page
+            # reconciles skips on a *delta*, so a stale "No members" otherwise
+            # pinned the card for the rest of the session. Guarded rather than
+            # unconditional so a live "Applied" is not blanked for a frame on
+            # every profile edit.
+            self._restore_daemon_chip()
 
     def _effective_floor(self) -> float:
         """The role-derived minimum PWM the daemon floor-clamps to (DEC-095/162):

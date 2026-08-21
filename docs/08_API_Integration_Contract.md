@@ -377,7 +377,15 @@ rather than dropping the entry — otherwise a newer daemon reintroduces exactly
 removes.
 
 An **overridden** control is never listed: the engine short-circuits an active override before curve
-resolution, so a skip and an override cannot co-occur.
+resolution. Note the scope of that guarantee — it is **per evaluation tick, not per response**.
+`GET /status` composes `overrides[]` live from the override table but `skipped_controls[]` from the
+last *completed* tick, and an override is taken synchronously by `POST /control/{id}/override`
+independently of the 1 Hz tick. So a client that takes an override on a control currently listed as
+skipped can see **one** response carrying that `control_id` in both arrays, for up to about a tick.
+Clients must therefore decide a precedence rather than assume the pair is impossible: an override is
+actively pinning those fans, so it wins — painting "not controlled" over a live override would be
+wrong in the unsafe direction. Equally, a client that *suppresses* a skip while an override is shown
+must restore it when the override lapses, not discard it.
 
 The GUI consumes this **display-only** — it never writes PWM (DEC-165), so there is nothing for it to
 do beyond telling the user. The Controls page reconciles `skipped_controls[]` each poll and paints a

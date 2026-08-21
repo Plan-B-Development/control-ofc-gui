@@ -21,8 +21,11 @@
   refused — the card lost its status badge entirely and never got it back, while
   still showing a live speed. That is the exact silence the "Not controlled"
   badge was added to end, so it mattered most in the case it was built for. The
-  badge is now restored whenever Manual ends. The same fix covers the "External"
-  badge, which had a quieter version of the problem.
+  badge is now restored whenever Manual ends, and equally when a daemon-held
+  override lapses — the same silence, one step over. A card for a role with no
+  outputs assigned had a third version of it: its "No members" badge vanished
+  the first time the daemon reported the role as uncontrollable and never came
+  back, and it also failed to come down once outputs were assigned.
 - **A badge could carry the wrong explanation on hover.** The tooltip was set
   alongside the badge but never cleared with it, so a card reading "Manual"
   could still explain that nothing was controlling it. Screen readers announce
@@ -66,6 +69,23 @@
 - `docs/03` now records that the Dashboard's chart selectors are already named,
   which the previous correction had accidentally denied while fixing an
   over-claim in the other direction. DEC-271.
+- The guard protecting the token diagnosis above could not fail. It scanned the
+  whole publishing job, and an unrelated step earlier in it already carried the
+  setting being checked for — so the exact regression the guard exists to catch
+  went undetected when it was tried. It is now scoped to the one step that does
+  the publishing, and checks the thing that actually keeps the diagnosis
+  reachable rather than a bystander of it. OPEN-07b.
+- A malformed status payload could stop the display updating. A control id
+  arriving from the daemon in the wrong shape raised an error inside the
+  once-a-second refresh, which runs outside the polling worker's own error
+  handling — so the rest of that update was abandoned and a stale window carried
+  on looking live. The field beside it was already guarded; this one was missed.
+- The contract document overstated a guarantee. It said a control cannot be both
+  manually overridden and reported as uncontrolled at once; that holds per
+  evaluation cycle, but the two parts of a status response are composed at
+  different moments, so the pair really can appear together for up to a second.
+  It now says so, and says which one wins — an override is actively driving those
+  fans, so claiming nothing is would be wrong in the unsafe direction.
 
 ## [2.43.1] — 2026-08-21
 

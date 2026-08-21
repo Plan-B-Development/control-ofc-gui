@@ -556,8 +556,18 @@ def test_notify_repo_names_an_auth_failure_instead_of_reporting_a_mystery():
     deleted, and a future edit reinstating a bare ``gh api`` under ``set -e`` would
     restore the silent version.
     """
-    job = _release_workflow()["jobs"]["notify-repo"]
-    block = "\n".join(step.get("run", "") for step in _steps(job))
+    # Scope to the DISPATCH step, not the whole job. The peer-wait step above it
+    # carries its own `set -uo pipefail`, so a job-wide scan is satisfied by THAT
+    # occurrence alone — reinstating `set -euo pipefail` on the dispatch step, the
+    # exact OPEN-07b regression this guard exists to catch, left both this test and
+    # its Rust twin green. Measured against the real job text in the v2.44.0
+    # pre-release review, by two reviewers independently.
+    steps = _steps(_release_workflow()["jobs"]["notify-repo"])
+    dispatch = [s for s in steps if "dispatches" in s.get("run", "")]
+    assert len(dispatch) == 1, (
+        f"expected exactly one dispatching step in notify-repo, got {len(dispatch)}"
+    )
+    block = dispatch[0].get("run", "")
 
     # Assert the case BRANCH, not the prose. The first version of this guard
     # checked `"HTTP 401" in block`, which stays true when only the branch pattern
@@ -574,7 +584,17 @@ def test_notify_repo_names_an_auth_failure_instead_of_reporting_a_mystery():
         "the 401 branch must tell the operator the release is intact and only this "
         "job needs re-running — the expensive part was assuming a new tag was needed"
     )
+    # What actually keeps the diagnosis reachable is that `gh api` runs as an `if`
+    # CONDITION: bash never applies errexit to a command in that position, with or
+    # without `-e`. The previous assertion credited the absent `-e` instead, which
+    # is not the load-bearing part — it would keep passing if the `if` were
+    # unwrapped, which is the edit that actually reintroduces the silent failure.
+    assert re.search(r"if\s+\w+=\$\(\s*gh api", block), (
+        "the `gh api` call must run as an `if` CONDITION so a failure falls through "
+        "to the 401/403/404 diagnosis instead of aborting the step (OPEN-07b). This, "
+        "not the absence of `set -e`, is what makes the diagnosis reachable."
+    )
     assert "set -uo pipefail" in block, (
-        "the dispatch step must not run under `set -e`, which aborts at the failed "
-        "`gh api` before the diagnosis can print"
+        "the dispatch step must not run under `set -e` — belt-and-braces for any "
+        "future command added here that is NOT wrapped in an `if` condition"
     )

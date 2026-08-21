@@ -67,9 +67,12 @@ jobs:
           python-version: '3.12'
           cache: pip
       # DEC-258: install from the manifest, not a bare `pip install ruff`. The
-      # bare form was a second source of truth — it ignored the `ruff>=0.4` floor
-      # in pyproject.toml, so raising that floor would never have reached this
-      # job and lint could silently run a different version from `test`/`canary`.
+      # bare form was a second source of truth — it ignored the ruff constraint
+      # in pyproject.toml, so changing that constraint would never have reached
+      # this job and lint could silently run a different version from
+      # `test`/`canary`. The constraint is deliberately not restated here: it is
+      # now a floor AND a ceiling, and the previous wording still cited the old
+      # floor-only `>=0.4` long after it had been replaced.
       - name: Install lint tooling
         run: pip install -e ".[dev]"
       - name: ruff format --check

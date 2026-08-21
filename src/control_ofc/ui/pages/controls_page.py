@@ -2093,7 +2093,19 @@ class ControlsPage(QWidget):
         # nothing. Same delta shape as the block above. Display-only — the GUI
         # never writes PWM (DEC-165), so there is nothing to do about it here
         # beyond telling the user their fan is not being driven.
-        skipped = {entry.control_id: entry.reason for entry in status.skipped_controls}
+        # `control_id` keys this dict straight off the wire, and `_filter_fields`
+        # does no type coercion — a daemon sending `"control_id": []` would raise
+        # `TypeError: unhashable type` inside the `status_updated` slot on the 1 Hz
+        # poll path. That is a crash, not a degraded render: it runs on the main
+        # thread, outside the poll worker's own `except`, so it escapes to
+        # `sys.excepthook` and aborts the rest of that emission every second —
+        # stale UI presented as live. `skipped_control_feedback` already guards the
+        # sibling `reason` and says so in a comment; the key was missed.
+        skipped = {
+            entry.control_id: entry.reason
+            for entry in status.skipped_controls
+            if isinstance(entry.control_id, str)
+        }
         for control_id, reason in skipped.items():
             card = self._control_cards.get(control_id)
             if card is None:
