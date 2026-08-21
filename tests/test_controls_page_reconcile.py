@@ -28,6 +28,7 @@ from control_ofc.services.profile_service import (
     Profile,
 )
 from control_ofc.ui.pages.controls_page import ControlsPage
+from control_ofc.ui.widgets.control_card import ControlCard
 
 
 def _grant(token=7, renew_secs=5):
@@ -169,6 +170,46 @@ class TestForeignOverrideReconcile:
         page._refresh_controls_grid(Profile(id="p", name="P", controls=[], curves=[curve]))
 
         assert page._external_overrides == {}
+
+    def test_grid_rebuild_clears_skipped_tracking(self, qtbot, app_state, profile_service):
+        """The mirror of the test above, for 273-i — and it was unpinned.
+
+        `_refresh_controls_grid` destroys every card and builds fresh ones, so the
+        per-card `_skipped_reason` goes with them. If the page's own
+        `_skipped_controls` delta cache is NOT cleared alongside, the next poll
+        reporting the same reason is a no-op — `set_skipped` is never called again
+        and the rebuilt card never gets its "Not controlled" chip back. The card
+        then sits quiet about a fan the daemon is not commanding, which is the
+        silence 273-i exists to end.
+
+        Deleting the `self._skipped_controls.clear()` line left the whole suite
+        green before this test existed; the external-override half of the same
+        pair has been pinned since DEC-169.
+        """
+        client = MagicMock()
+        page = _page(qtbot, app_state, profile_service, client)
+        page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
+        assert page._skipped_controls == {"lc1": "mix_unresolvable"}
+        assert page._control_cards["lc1"]._status_chip.text() == "Not controlled"
+
+        curve = CurveConfig(id="c1", name="C", type=CurveType.FLAT, flat_output_pct=40.0)
+        control = LogicalControl(
+            id="lc1",
+            name="LC",
+            mode=ControlMode.CURVE,
+            curve_id="c1",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        page._refresh_controls_grid(Profile(id="p", name="P", controls=[control], curves=[curve]))
+        assert page._skipped_controls == {}, "the delta cache must not outlive the cards"
+
+        # The same reason again: only a cleared cache makes this a fresh delta.
+        page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
+
+        assert page._control_cards["lc1"]._status_chip.text() == "Not controlled", (
+            "the rebuilt card must get its chip back on the next poll — otherwise "
+            "the page goes quiet about a fan nothing is driving"
+        )
 
     def test_reconcile_noop_in_demo_mode(self, qtbot, app_state, profile_service):
         """Demo mode (no daemon client) owns its own simulated manual state — the
@@ -412,9 +453,16 @@ class TestSkipAndManualInteraction:
         self, qtbot, app_state, profile_service
     ):
         """The daemon short-circuits an override before curve resolution, so the
-        two cannot co-occur today. Enforced locally anyway: if a future daemon
-        ever sent both, "Not controlled" over a live override would be a lie in
-        the unsafe direction."""
+        two cannot co-occur within one evaluation TICK — but that is not the same
+        as within one response. `/status` composes `overrides[]` live and
+        `skipped_controls[]` from the last COMPLETED tick, so the shipping daemon
+        really does send both for up to a tick. `docs/08` states the precedence
+        this asserts: the override wins, because it is actively pinning those
+        fans and "Not controlled" over one is a lie in the unsafe direction.
+
+        An earlier version of this docstring said the pair "cannot co-occur
+        today", which invited exactly the simplification that broke the mirror
+        case below."""
         page = _page(qtbot, app_state, profile_service, MagicMock())
         card = page._control_cards["lc1"]
         card.set_external_override(55)
@@ -424,6 +472,50 @@ class TestSkipAndManualInteraction:
         assert card._status_chip.text() == "External 55%", (
             "an override is actively pinning these fans; the card must not claim "
             "nothing is controlling them"
+        )
+
+    def test_leaving_manual_over_both_states_restores_the_override_not_the_skip(self, qtbot):
+        """`_restore_daemon_chip` must apply the SAME precedence `set_skipped` does.
+
+        Both `_external_pct` and `_skipped_reason` can be set at once — the
+        shipping daemon sends the pair for up to a tick, and `set_external_override`
+        records the value even while Manual is held, only skipping the paint. The
+        first version of `_restore_daemon_chip` ranked skip above external while
+        `set_skipped` and `docs/08` rank external above skip, and the disagreement
+        is visible exactly here: release Manual over a card carrying both.
+
+        Getting it wrong paints "Not controlled" over an override that is actively
+        pinning those fans — a lie in the unsafe direction, as `set_skipped`'s own
+        comment says. Nothing asserted it before, so swapping the arms back left
+        the whole suite green.
+
+        Card-level on purpose: this is a `ControlCard` invariant, and a bare card
+        lets `_manual_btn.click()` drive the real `toggled` connection rather than
+        calling the handler (which is the part most likely to be broken).
+        """
+        control = LogicalControl(
+            id="lc1",
+            name="LC",
+            mode=ControlMode.CURVE,
+            curve_id="c1",
+            members=[ControlMember(source="openfan", member_id="openfan:ch00")],
+        )
+        card = ControlCard(control, [CurveConfig(id="c1", name="C", type=CurveType.FLAT)])
+        qtbot.addWidget(card)
+
+        card._manual_btn.click()
+        assert card._status_chip.text() == "Manual"
+        # Both arrive while Manual holds the chip: each records its state and
+        # defers the paint, which is what makes the restore order decidable.
+        card.set_external_override(55)
+        card.set_skipped("mix_unresolvable")
+        assert card._status_chip.text() == "Manual"
+
+        card._manual_btn.click()
+
+        assert card._status_chip.text() == "External 55%", (
+            "an override still pins these fans; restoring must not rank the "
+            "suppressed skip above it"
         )
 
     def test_an_external_override_lapsing_restores_the_skip_chip(

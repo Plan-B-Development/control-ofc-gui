@@ -10,22 +10,27 @@
   the card carried on showing a reassuring "Applied" while that happened, so the
   only symptom was a fan that never changed speed again.
   Such a control now shows a **"Not controlled"** badge, with the reason on
-  hover. The output figure still shows the last commanded value, because that is
-  genuinely what the fans are holding. The badge clears by itself as soon as the
-  daemon can resolve the control again. Needs daemon 2.21.0 or newer; against an
-  older daemon nothing changes. 273-i.
+  hover. The badge clears by itself as soon as the daemon can resolve the control
+  again. Needs daemon 2.21.0 or newer; against an older daemon nothing changes.
+  273-i.
 
 ### Fixed
 - **A fan card could end up showing no status at all.** If a role the daemon
-  could not control was switched to Manual and back — or an override attempt was
-  refused — the card lost its status badge entirely and never got it back, while
-  still showing a live speed. That is the exact silence the "Not controlled"
-  badge was added to end, so it mattered most in the case it was built for. The
-  badge is now restored whenever Manual ends, and equally when a daemon-held
-  override lapses — the same silence, one step over. A card for a role with no
-  outputs assigned had a third version of it: its "No members" badge vanished
-  the first time the daemon reported the role as uncontrollable and never came
-  back, and it also failed to come down once outputs were assigned.
+  could not control was switched to Manual and back, the card lost its status
+  badge and did not get it back — the page only repaints a badge when the daemon
+  changes what it says, and it had not changed. That is the exact silence the
+  "Not controlled" badge was added to end, so it mattered most in the case it was
+  built for. The badge is now restored whenever Manual ends, and equally when a
+  daemon-held override lapses — the same silence, one step over. A card for a
+  role with no outputs assigned had a third version of it: its "No members" badge
+  vanished the first time the daemon reported the role as uncontrollable, and it
+  also failed to come down once outputs were assigned.
+- **A card could claim nothing was controlling a fan while something was.** When
+  a role carried both a daemon-held override and a stale "not controlled" report
+  — which really can arrive together, because the two halves of a status reply
+  are assembled a moment apart — leaving Manual put the wrong one of the two
+  back. The override is the one actually driving those fans, so it now wins, in
+  both places that decide.
 - **A badge could carry the wrong explanation on hover.** The tooltip was set
   alongside the badge but never cleared with it, so a card reading "Manual"
   could still explain that nothing was controlling it. Screen readers announce
@@ -75,11 +80,13 @@
   went undetected when it was tried. It is now scoped to the one step that does
   the publishing, and checks the thing that actually keeps the diagnosis
   reachable rather than a bystander of it. OPEN-07b.
-- A malformed status payload could stop the display updating. A control id
-  arriving from the daemon in the wrong shape raised an error inside the
-  once-a-second refresh, which runs outside the polling worker's own error
-  handling — so the rest of that update was abandoned and a stale window carried
-  on looking live. The field beside it was already guarded; this one was missed.
+- A malformed status payload could leave part of the Controls page stale. A
+  control id arriving from the daemon in the wrong shape raised an error inside
+  the once-a-second refresh, which stops that page's badges updating (Qt reports
+  the error and carries on with everything else, so the rest of the window keeps
+  refreshing — an earlier draft of this note said otherwise, and measurement said
+  it was wrong). The shipping daemon cannot send that shape, so this is
+  belt-and-braces rather than a bug anyone has hit.
 - The contract document overstated a guarantee. It said a control cannot be both
   manually overridden and reported as uncontrolled at once; that holds per
   evaluation cycle, but the two parts of a status response are composed at

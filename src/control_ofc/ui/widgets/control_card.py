@@ -306,9 +306,18 @@ class ControlCard(ResizableGridCard):
             self._output_label.setText(f"Now: {output_pct:.0f}%{gpu_suffix}")
         if self._skipped_reason is not None:
             # 273-i: nothing is commanding these fans. Painting "Applied" over
-            # that would be the lie this row exists to stop — the output label
-            # above still shows the last commanded value, which is what the fans
-            # are actually holding.
+            # that would be the lie this row exists to stop; the output label set
+            # above still carries the last value this card was given.
+            #
+            # Reachable in DEMO mode only, and deliberately kept. `set_output` has
+            # one production caller (`ControlsPage.update_control_outputs`) and
+            # that is wired solely to `DemoController.outputs_changed`, while
+            # `_skipped_reason` is set only from `_on_status_reconcile`, which
+            # early-returns when `self._client is None` — the demo case. So the
+            # two cannot both be live today. It stays because the guard is
+            # correct for the day the live page gains an output feed, and
+            # deleting it would make that a silent regression rather than a
+            # visible one. Do not cite this branch as protecting live users.
             return
         if self._external_pct is not None:
             # DEC-169: a foreign daemon override owns the chip — keep the
@@ -432,22 +441,31 @@ class ControlCard(ResizableGridCard):
         and equally the external override lapsing. `set_skipped` deliberately
         SUPPRESSES its chip while Manual is held *or* an external override is
         displayed, rather than discarding the reason, so whichever of those ends
-        first has to put the chip back. Blanking instead left the card with a live "Now: N%" and no
-        chip at all, permanently — `set_output` early-returns while
-        `_skipped_reason`/`_external_pct` is set, and the page reconciles only on
-        a *delta*, so nothing ever repainted it. That is exactly the silence
-        273-i exists to end, and the `_external_pct` half of it predates 273-i.
+        first has to put the chip back. Blanking instead left the card with no
+        chip at all until something else repainted it, and on this page nothing
+        does: the reconcile acts only on a *delta*, so a state that is still true
+        is never re-sent.
+
+        **Order matters and is not arbitrary.** External is checked BEFORE
+        skipped, matching `set_skipped`'s own suppression order and the
+        precedence `docs/08` states for a client: an override is actively pinning
+        those fans, so painting "Not controlled" over one is wrong in the unsafe
+        direction. The two really can be set at once — `/status` composes
+        `overrides[]` live but `skipped_controls[]` from the last COMPLETED tick
+        — so this is a reachable ordering question, not a theoretical one. The
+        first version of this method ranked them the other way round and
+        contradicted both the contract and the sibling method.
         """
-        if self._skipped_reason is not None:
+        if self._external_pct is not None:
+            self._apply_chip(f"External {self._external_pct}%", "InfoChip")
+        elif self._skipped_reason is not None:
             text, tooltip = skipped_control_feedback(self._skipped_reason)
             self._apply_chip(text, "WarningChip", tooltip)
-        elif self._external_pct is not None:
-            self._apply_chip(f"External {self._external_pct}%", "InfoChip")
         elif not self._control.members:
             # "No members" is a TERMINAL state of the card, not a transient chip.
-            # Falling through to a blank here stranded a member-less control with
-            # no chip at all, permanently: `set_output` early-returns for a control
-            # with no members, so nothing ever repaints it. Reachable because the
+            # Falling through to a blank here left a member-less control with no
+            # chip until something else repainted it, and nothing on this page
+            # does: the reconcile acts only on a *delta*. Reachable because the
             # daemon records a skip BEFORE its own member-less short-circuit, so a
             # role with no outputs and an unresolvable curve really is listed in
             # `skipped_controls[]` — and clearing that skip landed here.
@@ -545,13 +563,13 @@ class ControlCard(ResizableGridCard):
             return
         # NOT `_apply_chip("", "")`. `set_skipped` suppresses its chip while an
         # external override is displayed rather than discarding the reason, so
-        # blanking here strands a still-skipped control with a live "Now: N%" and
-        # no chip at all: `set_output` early-returns while `_skipped_reason` is
-        # set, and the page reconciles only on a reason *delta*, so nothing ever
-        # repaints it. Same permanent silence 273-i exists to end, one
-        # interleaving over. Reachable rather than theoretical: `/status` reads
-        # `overrides[]` live but `skipped_controls[]` from the last COMPLETED
-        # tick, so the two genuinely co-occur on the wire for up to a tick.
+        # blanking here leaves a still-skipped control with no chip at all, and
+        # nothing on this page will repaint it: the reconcile acts only on a
+        # reason *delta*, so a skip that is still true is never re-sent. The card
+        # goes quiet about a fan nothing is driving — the silence 273-i exists to
+        # end, one interleaving over. Reachable rather than theoretical:
+        # `/status` reads `overrides[]` live but `skipped_controls[]` from the
+        # last COMPLETED tick, so the two genuinely co-occur for up to a tick.
         self._restore_daemon_chip()
 
     def set_skipped(self, reason: str) -> None:
@@ -559,17 +577,24 @@ class ControlCard(ResizableGridCard):
         (273-i).
 
         The daemon short-circuits an overridden control before curve resolution,
-        so a skip and an override never co-occur — but a user-owned Manual state
-        still wins the chip, because that is a local intent the next poll has yet
-        to confirm and flickering it would be worse than delaying this.
+        so a skip and an override cannot co-occur **within one evaluation tick**
+        — but that guarantee does NOT extend to one `/status` response, which
+        composes `overrides[]` live and `skipped_controls[]` from the last
+        COMPLETED tick. The pair is therefore reachable on the wire for up to a
+        tick, and `docs/08` states the precedence: the override wins. A
+        user-owned Manual state wins over both, because that is a local intent
+        the next poll has yet to confirm and flickering it would be worse than
+        delaying this.
         """
         self._skipped_reason = reason
         if self._manual_btn.isChecked() or self._external_pct is not None:
-            # Suppressed, not discarded — `_restore_daemon_chip` repaints
-            # it when Manual ends. The `_external_pct` arm enforces the
-            # "cannot co-occur" invariant LOCALLY rather than trusting the wire:
-            # an override actively pins these fans, so "Not controlled" would be
-            # a lie in the unsafe direction if a future daemon ever sent both.
+            # Suppressed, not discarded — `_restore_daemon_chip` repaints it when
+            # whichever state is suppressing it ends. The `_external_pct` arm is
+            # NOT a guard against a hypothetical future daemon: per the docstring
+            # above, the pair arrives from the shipping daemon for up to a tick,
+            # and an override actively pins these fans, so "Not controlled" over
+            # one would be a lie in the unsafe direction. Two tests pin both
+            # directions of this; do not simplify the arm away.
             return
         text, tooltip = skipped_control_feedback(reason)
         self._apply_chip(text, "WarningChip", tooltip)

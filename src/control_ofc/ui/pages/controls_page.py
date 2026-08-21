@@ -2096,11 +2096,19 @@ class ControlsPage(QWidget):
         # `control_id` keys this dict straight off the wire, and `_filter_fields`
         # does no type coercion — a daemon sending `"control_id": []` would raise
         # `TypeError: unhashable type` inside the `status_updated` slot on the 1 Hz
-        # poll path. That is a crash, not a degraded render: it runs on the main
-        # thread, outside the poll worker's own `except`, so it escapes to
-        # `sys.excepthook` and aborts the rest of that emission every second —
-        # stale UI presented as live. `skipped_control_feedback` already guards the
-        # sibling `reason` and says so in a comment; the key was missed.
+        # poll path. Local belt-and-braces, and the blast radius is smaller than
+        # an earlier version of this comment claimed: measured on PySide6 6.11.1,
+        # an exception in a slot does NOT escape `emit()` — Qt prints it via
+        # `sys.excepthook` at the C++ boundary and carries on running the other
+        # slots. So the cost is this page's chips going stale plus stderr spam,
+        # not the whole status emission being lost. Unreachable against the
+        # shipping daemon too (`SkippedControlEntry.control_id` is a Rust
+        # `String`, so serde cannot emit anything else); the sibling `overrides`
+        # comprehension above is deliberately NOT given the same guard, because
+        # the codebase's posture is to trust the daemon's typed wire contract and
+        # half a dozen other sites hash wire ids the same way. Register row
+        # 277-h tracks deciding that posture once, in `models.py`, rather than
+        # per-site.
         skipped = {
             entry.control_id: entry.reason
             for entry in status.skipped_controls
