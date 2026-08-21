@@ -25,6 +25,13 @@
   themes directory"). They also gained stable identifiers, which is why nothing
   had caught this: they were unreachable from a test. DEC-271.
 
+### Fixed
+- **Disabled buttons went on looking live.** Every styled button variant kept its
+  enabled colours while disabled — a disabled primary action still painted the
+  full accent fill, indistinguishable from one you can press. Its appearance is
+  the only signal that an action is unavailable, so this invited clicks that do
+  nothing. All variants now paint the disabled surface. DEC-273.
+
 ### Changed
 - Continuous integration now runs on every pull request, including
   documentation-only ones. The path filter that skipped them did not report a

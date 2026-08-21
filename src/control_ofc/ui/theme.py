@@ -1498,6 +1498,34 @@ def build_stylesheet(t: ThemeTokens) -> str:
         border-color: {t.status_crit};
     }}
 
+    /* Disabled state for every variant (DEC-273). Exactly the tie DEC-251
+       documents below, one pseudo-class over: `QPushButton:disabled` is declared
+       with the base button rules, far above, and `QPushButton[variant="..."]` has
+       EQUAL CSS2 specificity — so every variant declared here silently won it and
+       went on painting its enabled fill and text while disabled. Ghost and
+       secondary were the visible cases (both are `setEnabled`-toggled today), but
+       all four were affected, and `#PrimaryButton` beat the base rule on ID
+       specificity regardless of order.
+
+       A disabled control that looks live is worse than a cosmetic bug: it invites
+       a click that does nothing, and it is the only signal that an action is
+       unavailable. Same tokens as the base rule, so the disabled look stays one
+       thing rather than five.
+
+       Placed AFTER the variants for the same reason the focus rules are: declared
+       earlier, these lose the tie and draw nothing at all. Verified by render
+       diff (`TestDisabledStateVisibility`), never by reading the stylesheet — a
+       rule can be present and still be defeated, which is the whole point. */
+    QPushButton[variant="primary"]:disabled,
+    QPushButton[variant="secondary"]:disabled,
+    QPushButton[variant="ghost"]:disabled,
+    QPushButton[variant="danger"]:disabled,
+    QPushButton#PrimaryButton:disabled {{
+        background-color: {t.disabled_bg};
+        color: {t.disabled_text};
+        border-color: {t.border_default};
+    }}
+
     /* Keyboard focus for every remaining button (DEC-251). DEC-238's reasoning
        above was right and is simply extended here: a QSS-styled button loses
        Qt's native focus rect, so *any* variant without its own `:focus` rule is

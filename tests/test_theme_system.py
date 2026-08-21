@@ -1317,6 +1317,91 @@ class TestKeyboardFocusVisibility:
         )
 
 
+class TestDisabledStateVisibility:
+    """A disabled control must LOOK disabled (DEC-273).
+
+    The same specificity tie DEC-251 documents for ``:focus``, one pseudo-class
+    over. ``QPushButton:disabled`` is declared with the base button rules and
+    ``QPushButton[variant="..."]`` has equal CSS2 specificity, so every variant —
+    declared later — silently won the tie and went on painting its enabled fill
+    while disabled. ``#PrimaryButton`` beat the base rule outright on ID
+    specificity. Ghost and secondary are ``setEnabled``-toggled in the app today,
+    so this was live rather than theoretical.
+
+    Measured before the fix, disabled: ``[variant="primary"]`` painted
+    ``#1fb88a`` — the full accent fill, identical to a live primary action —
+    ``[variant="secondary"]`` its own ``surface_1``, and ghost/danger stayed
+    transparent. Only the bare ``QPushButton`` reached ``disabled_bg``.
+
+    **This asserts the background COLOUR, not that the two renders differ.** The
+    first version of this test compared the enabled and disabled images and
+    passed with the rules deleted: the QPalette disabled group (DEC-226) recolours
+    the *text* on its own, so the images differ either way. "Something changed" is
+    not evidence the rule fired — which is the identical trap DEC-251 warns about,
+    walked into once more.
+    """
+
+    @staticmethod
+    def _disabled_background(make):
+        """Render *make*'s widget disabled; return its background pixels."""
+        from PySide6.QtWidgets import QWidget
+
+        host = QWidget()
+        host.resize(400, 60)
+        subject = make(host)
+        subject.setGeometry(10, 5, 180, 30)
+        host.show()
+
+        subject.setEnabled(False)
+        QApplication.processEvents()
+        image = subject.grab().toImage()
+        host.hide()
+
+        # Points inside the 1px border and clear of the centred label.
+        return {image.pixelColor(x, y).name() for x, y in ((4, 4), (90, 3), (175, 26))}
+
+    @staticmethod
+    def _button(variant=None, object_name=None):
+        def make(parent):
+            b = QPushButton("Sample", parent)
+            if variant:
+                b.setProperty("variant", variant)
+            if object_name:
+                b.setObjectName(object_name)
+            return b
+
+        return make
+
+    def test_every_button_variant_paints_the_disabled_background(self, restore_app_theme):
+        from control_ofc.ui.theme import apply_theme, default_dark_theme
+
+        theme = default_dark_theme()
+        apply_theme(theme)
+        expected = theme.disabled_bg.lower()
+
+        subjects = {
+            "QPushButton (no variant)": self._button(),
+            '[variant="primary"]': self._button("primary"),
+            '[variant="secondary"]': self._button("secondary"),
+            '[variant="ghost"]': self._button("ghost"),
+            '[variant="danger"]': self._button("danger"),
+            "#PrimaryButton": self._button(object_name="PrimaryButton"),
+        }
+
+        wrong = {}
+        for label, make in subjects.items():
+            painted = self._disabled_background(make)
+            if painted != {expected}:
+                wrong[label] = sorted(painted)
+
+        assert not wrong, (
+            f"these paint something other than disabled_bg ({expected}) while "
+            "disabled, so the action reads as available when it is not — the "
+            "variant rule is winning the specificity tie against "
+            f"QPushButton:disabled (DEC-273): {wrong}"
+        )
+
+
 class TestKeyboardFocusContrast:
     """DEC-264: a focus ring must also be *legible*, not merely drawn.
 
