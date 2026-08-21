@@ -540,3 +540,41 @@ def test_a_nightly_ci_run_cannot_veto_a_release():
         "re-dispatching ci.yml produces a `workflow_dispatch` run, and that is the "
         "documented escape hatch for tagging a docs-only commit"
     )
+
+
+def test_notify_repo_names_an_auth_failure_instead_of_reporting_a_mystery():
+    """A dead PACMAN_REPO_TOKEN must say so, not present as a mystery HTTP error.
+
+    OPEN-07b, and the second time this failure mode has cost a release: DEC-242
+    records a ``notify-repo`` 401 hiding across two of them. The mechanics are what
+    make it expensive — the GitHub Release is created and correct, so the run looks
+    finished, while the pacman repository serves the previous version and the next
+    ``verify.yml`` calls that "repo is stale". Everything points at the repository
+    and nothing at the token.
+
+    Pinned rather than trusted: the diagnosis is prose, nothing breaks if it is
+    deleted, and a future edit reinstating a bare ``gh api`` under ``set -e`` would
+    restore the silent version.
+    """
+    job = _release_workflow()["jobs"]["notify-repo"]
+    block = "\n".join(step.get("run", "") for step in _steps(job))
+
+    # Assert the case BRANCH, not the prose. The first version of this guard
+    # checked `"HTTP 401" in block`, which stays true when only the branch pattern
+    # is deleted — the error message still mentions it. Measured: that mutation
+    # passed. The branch is the thing that fires.
+    for status in ("HTTP 401", "HTTP 403", "HTTP 404"):
+        assert f'*"{status}"*' in block, (
+            f"notify-repo must have a case branch matching {status} — a bare `gh api` "
+            f"failure reads as a URL typo when it is almost always the token "
+            f"(OPEN-07b). Mentioning the code in a message is not the same as "
+            f"branching on it."
+        )
+    assert "RE-RUN THIS JOB" in block, (
+        "the 401 branch must tell the operator the release is intact and only this "
+        "job needs re-running — the expensive part was assuming a new tag was needed"
+    )
+    assert "set -uo pipefail" in block, (
+        "the dispatch step must not run under `set -e`, which aborts at the failed "
+        "`gh api` before the diagnosis can print"
+    )

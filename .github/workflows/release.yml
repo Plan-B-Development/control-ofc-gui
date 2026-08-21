@@ -452,10 +452,8 @@ jobs:
           GH_TOKEN: ${{ secrets.PACMAN_REPO_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          set -euo pipefail
-          gh api --method POST \
-            repos/Plan-B-Development/pacman-repo/dispatches \
-            --input - <<EOF
+          set -uo pipefail
+          cat > /tmp/dispatch.json <<EOF
           {
             "event_type": "package-released",
             "client_payload": {
@@ -464,7 +462,55 @@ jobs:
             }
           }
           EOF
-          echo "Requested a pacman-repo rebuild for ${RELEASE_TAG}."
+
+          if err=$(gh api --method POST \
+                     repos/Plan-B-Development/pacman-repo/dispatches \
+                     --input /tmp/dispatch.json 2>&1); then
+            echo "Requested a pacman-repo rebuild for ${RELEASE_TAG}."
+            exit 0
+          fi
+          echo "$err"
+
+          # OPEN-07b. `set -e` used to let this die on gh's generic HTTP error,
+          # which reads like a typo in the URL. It is usually the token — and the
+          # consequence is silent: the Release exists and looks complete, the
+          # pacman repository keeps serving the PREVIOUS version, and the next
+          # verify.yml calls that "repo is stale", which is the wrong diagnosis.
+          # DEC-242 records a notify-repo 401 hiding across two releases. Naming
+          # the failure is the whole fix.
+          case "$err" in
+            *"HTTP 401"*|*"Bad credentials"*)
+              echo "::error::PACMAN_REPO_TOKEN was REJECTED (HTTP 401). It has expired or"
+              echo "::error::been revoked. The release itself is FINE — the GitHub Release"
+              echo "::error::exists with its package attached. What failed is publication."
+              echo "::error::Until it is fixed, pacman -Syu keeps serving the previous"
+              echo "::error::version and verify.yml will misreport it as staleness."
+              echo "::error::Fix: mint a PAT that can dispatch to pacman-repo, update the"
+              echo "::error::PACMAN_REPO_TOKEN secret, then RE-RUN THIS JOB. No new tag and"
+              echo "::error::no new release are needed."
+              ;;
+            *"HTTP 403"*)
+              echo "::error::PACMAN_REPO_TOKEN was FORBIDDEN (HTTP 403) — it authenticated"
+              echo "::error::but may not dispatch to pacman-repo. Grant it repository"
+              echo "::error::dispatch permission, then re-run this job. See the 401 note:"
+              echo "::error::the release is complete, only publication is blocked."
+              ;;
+            *"HTTP 404"*|*"Not Found"*)
+              echo "::error::The dispatch endpoint returned 404. For repository_dispatch"
+              echo "::error::that almost always means the TOKEN CANNOT SEE pacman-repo, not"
+              echo "::error::that the URL is wrong — GitHub answers 404 rather than 403 so"
+              echo "::error::as not to confirm a private repository exists. Check"
+              echo "::error::PACMAN_REPO_TOKEN's scope and expiry BEFORE suspecting a typo."
+              echo "::error::The release is complete; only publication is blocked."
+              ;;
+            *)
+              echo "::error::Dispatch to pacman-repo failed for the reason above. The"
+              echo "::error::release is complete; the repository will keep serving the"
+              echo "::error::previous version until this job succeeds. Re-run this job once"
+              echo "::error::the cause is addressed — no new tag is needed."
+              ;;
+          esac
+          exit 1
 
   # Manual-only since DEC-240 — the AUR is offline indefinitely as a publishing
   # target for this project, so it no longer runs on a tag push and can no

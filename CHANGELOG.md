@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Internal
+- A rejected publishing token now says so. When the token that tells the package
+  repository about a new release expires, the release itself still succeeds and
+  looks complete — only publication silently stops, and the next day's check
+  reports it as "the repository is stale", which points at the wrong thing
+  entirely. That misdiagnosis has already cost two releases. The failure is now
+  named, along with the fact that no new tag is needed to recover. OPEN-07b.
 - Two accessibility guards were weaker than they read. The disabled-button check
   compared each of its two subjects against a single "enabled" colour that only
   one of them actually uses, so each subject was really pinned by one half of the
