@@ -1498,29 +1498,54 @@ class TestDisabledStateVisibility:
 
         # Each host has its OWN enabled label colour — the sidebar paints `nav_text`,
         # the tile card `text_primary` — so a single shared "enabled colour" probe is
-        # vacuous for whichever host does not use it, and the background probe is
-        # vacuous for the tile-ghost (which already reached `disabled_bg` from the
-        # variant rule; its pre-fix defect was text-only). Assert the POSITIVE fact
-        # instead, which holds for every host: a disabled button paints
-        # `disabled_text` somewhere. Then keep the per-host negative as a second net.
-        disabled_text = theme.disabled_text.lower()
+        # vacuous for whichever host does not use it. That was the real defect: the
+        # first version compared both against `text_primary`, so the sidebar arm's
+        # label half could never fire.
+        #
+        # An earlier fix ALSO asserted the positive — that `disabled_text` appears
+        # somewhere — and that is not portable. Glyphs are antialiased, so the exact
+        # token value only lands on fully-opaque pixels, which depends on the font
+        # stack: it held locally and failed on CI's py3.12/py3.13 containers, where
+        # no pixel matched exactly. A flat background is safe to compare exactly (it
+        # passed everywhere); TEXT is not. Hence a nearest-colour test, which does
+        # not care whether any pixel is an exact hit.
+        def _rgb(h):
+            h = h.lstrip("#")
+            return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
+
+        def _dist2(a, b):
+            return sum((x - y) ** 2 for x, y in zip(a, b))
+
+        disabled_rgb = _rgb(theme.disabled_text)
         wrong = {}
         for label, make, host, enabled_text in (
-            ("#Sidebar QPushButton", self._button(), _sidebar, theme.nav_text.lower()),
+            ("#Sidebar QPushButton", self._button(), _sidebar, theme.nav_text),
             (
                 '.Card[density="tile"] [variant=ghost]',
                 self._button("ghost"),
                 _tile_card,
-                theme.text_primary.lower(),
+                theme.text_primary,
             ),
         ):
             bg, allpx = self._scoped_disabled_background(make, host)
             if bg != {expected}:
                 wrong[f"{label} background"] = sorted(bg)
-            if disabled_text not in allpx:
-                wrong[f"{label} label"] = f"never paints disabled_text ({disabled_text})"
-            if enabled_text in allpx:
-                wrong[f"{label} label(enabled)"] = f"still paints {enabled_text}"
+
+            # Any pixel closer to the ENABLED label colour than to the disabled one
+            # is a glyph that is still being painted live — antialiased or not.
+            enabled_rgb = _rgb(enabled_text)
+            if enabled_rgb == disabled_rgb:  # pragma: no cover - theme sanity
+                continue
+            live = [
+                px
+                for px in allpx
+                if _dist2(_rgb(px), enabled_rgb) < _dist2(_rgb(px), disabled_rgb)
+            ]
+            if live:
+                wrong[f"{label} label"] = (
+                    f"{len(live)} pixel(s) nearer the enabled {enabled_text} "
+                    f"than the disabled {theme.disabled_text}"
+                )
 
         assert not wrong, (
             "a disabled button must paint disabled_bg "
