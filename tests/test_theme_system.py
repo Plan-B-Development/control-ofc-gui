@@ -1137,6 +1137,71 @@ class TestKeyboardFocusVisibility:
 
         return QLineEdit("sample", parent)
 
+    @staticmethod
+    def _focused_perimeter(make):
+        """Render *make*'s widget focused; return the colours on its outer edge."""
+        from PySide6.QtWidgets import QLineEdit, QWidget
+
+        host = QWidget()
+        host.resize(400, 60)
+        elsewhere = QLineEdit(host)
+        elsewhere.setGeometry(300, 5, 80, 24)
+        subject = make(host)
+        subject.setGeometry(10, 5, 180, 30)
+        host.show()
+
+        subject.setFocus()
+        QApplication.processEvents()
+        image = subject.grab().toImage()
+        host.hide()
+
+        w, h = image.width(), image.height()
+        edge = [(x, 0) for x in range(w)] + [(x, h - 1) for x in range(w)]
+        edge += [(0, y) for y in range(h)] + [(w - 1, y) for y in range(h)]
+        return {image.pixelColor(x, y).name() for x, y in edge}
+
+    def test_text_entry_focus_ring_paints_the_focus_token(self, restore_app_theme):
+        """The sweeps below compare images and so cannot see a lost focus ring
+        on a text entry: a QLineEdit or QPlainTextEdit renders a blinking CARET
+        when focused, so focused and unfocused differ whether or not any
+        ``:focus`` rule survives. Measured — strip every ``:focus`` rule from the
+        built QSS and both subjects still pass the diff.
+
+        That is exactly the trap DEC-273 fixed one pseudo-class over, and
+        ``docs/03`` asserts these rules are "enforced by rendering". So assert the
+        painted VALUE, the way the disabled sweep asserts ``disabled_bg``: the
+        focus ring must actually be ``input_border_focus``. The realistic
+        regression is a later selector winning on specificity, which is precisely
+        what ``#Sidebar QPushButton`` did to the button ring in DEC-255.
+        """
+        from PySide6.QtWidgets import QLineEdit, QPlainTextEdit
+
+        from control_ofc.ui.theme import apply_theme, default_dark_theme
+
+        theme = default_dark_theme()
+        apply_theme(theme)
+        expected = theme.input_border_focus.lower()
+
+        def _plain_text(parent):
+            return QPlainTextEdit(parent)
+
+        def _line_edit(parent):
+            return QLineEdit("sample", parent)
+
+        missing = {
+            label: sorted(painted)
+            for label, painted in (
+                ("QLineEdit", self._focused_perimeter(_line_edit)),
+                ("QPlainTextEdit", self._focused_perimeter(_plain_text)),
+            )
+            if expected not in painted
+        }
+        assert not missing, (
+            f"a focused text entry must paint its ring in input_border_focus "
+            f"({expected}); these painted none of it on their outer edge, so the "
+            f"ring is absent or has been defeated on specificity: {missing}"
+        )
+
     def test_every_interactive_control_renders_a_focus_indicator(self, restore_app_theme):
         """The regression itself: a QSS-styled widget loses Qt's native focus
         rect, so anything without its own `:focus` rule is invisible to a
@@ -1371,6 +1436,78 @@ class TestDisabledStateVisibility:
             return b
 
         return make
+
+    @staticmethod
+    def _scoped_disabled_background(make, host_setup):
+        """As ``_disabled_background``, but inside a host that scopes the QSS."""
+        from PySide6.QtWidgets import QWidget
+
+        host = QWidget()
+        host.resize(400, 60)
+        host_setup(host)
+        subject = make(host)
+        subject.setGeometry(10, 5, 180, 30)
+        host.show()
+
+        subject.setEnabled(False)
+        QApplication.processEvents()
+        image = subject.grab().toImage()
+        host.hide()
+        bg = {image.pixelColor(x, y).name() for x, y in ((4, 4), (90, 3), (175, 26))}
+        # Every colour anywhere in the render, so the LABEL is covered too: the
+        # tile-card ghost defect is a text colour, invisible to background probes.
+        allpx = {
+            image.pixelColor(x, y).name()
+            for x in range(image.width())
+            for y in range(image.height())
+        }
+        return bg, allpx
+
+    def test_scoped_button_rules_do_not_defeat_the_disabled_look(self, restore_app_theme):
+        """The bare-hosted sweep below cannot see a SCOPED selector winning.
+
+        ``QPushButton[variant="x"]:disabled`` is CSS2 specificity (0,0,2,1), but
+        ``.Card[density="tile"] QPushButton[variant="ghost"]`` is (0,0,3,2) and
+        ``#Sidebar QPushButton`` is (0,1,0,1) — both outrank it, so a disabled
+        button in either host went on painting its enabled colours. Latent today
+        (neither is ``setEnabled``-toggled yet) but it falsifies DEC-273's claim to
+        cover every variant, and the sibling focus sweep already learned to render
+        in these two hosts for exactly this reason (DEC-255).
+        """
+        from control_ofc.ui.theme import apply_theme, default_dark_theme
+
+        theme = default_dark_theme()
+        apply_theme(theme)
+        expected = theme.disabled_bg.lower()
+
+        def _sidebar(parent):
+            parent.setObjectName("Sidebar")
+
+        def _tile_card(parent):
+            parent.setProperty("class", "Card")
+            parent.setProperty("density", "tile")
+
+        live_text = theme.text_primary.lower()
+        wrong = {}
+        for label, make, host in (
+            ("#Sidebar QPushButton", self._button(), _sidebar),
+            (
+                '.Card[density="tile"] [variant=ghost]',
+                self._button("ghost"),
+                _tile_card,
+            ),
+        ):
+            bg, allpx = self._scoped_disabled_background(make, host)
+            if bg != {expected}:
+                wrong[f"{label} background"] = sorted(bg)
+            if live_text in allpx:
+                wrong[f"{label} label"] = f"still paints the enabled {live_text}"
+
+        assert not wrong, (
+            "a disabled button must paint disabled_bg "
+            f"({expected}) and must not keep its enabled label colour, but a "
+            f"scoped rule outranks the :disabled rule here: {wrong}"
+        )
 
     def test_every_button_variant_paints_the_disabled_background(self, restore_app_theme):
         from control_ofc.ui.theme import apply_theme, default_dark_theme

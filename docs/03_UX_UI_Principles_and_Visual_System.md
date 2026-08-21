@@ -234,10 +234,21 @@ is empty or a bare glyph sets `setAccessibleName` explicitly.
 **"Empty or a bare glyph" is the floor, not the whole rule.** A combo box, spin box
 or line edit has no label of its own either — its visible words live in a *separate*
 `QLabel` beside it, so it announces its value with nothing to say what the value is
-*for*. Every such control names itself from the words already next to it. On the
-Settings page that happens inside `_setting_row`, the one place holding both the
-control and its caption, so a control added later is named by construction rather
-than by whoever adds it remembering (DEC-268 → DEC-271).
+*for*. Every such control must name itself from the words already next to it.
+
+**Settings is the only page that does so today.** The rule above is the standard for
+new and edited code, not a description of the app as it stands: combo boxes, spin
+boxes and line edits on the theme, curve-editor, logs, wizard and dialog surfaces are
+still unnamed, and the enforcing test is scoped to `SettingsPage`. Treat an
+app-wide compliance claim as false until those surfaces are swept and the test
+widened.
+
+On Settings the naming happens inside `_setting_row` — the place holding both the
+control and its caption — so a control added *through that helper* is named by
+construction. Two controls do not go through it: the CPU and motherboard preference
+combos are stacked under their captions rather than beside them and are named at
+their own construction sites. So "by construction" covers the common path, not every
+path; the test is what actually holds the line (DEC-268 → DEC-271).
 
 **Naming a combo box takes two calls, not one.** `setAccessibleName` is enough for a
 spin box or a line edit — `QAccessible::Text::Name` and `::Value` are separate
@@ -249,10 +260,15 @@ carries the label there — it publishes a `RelationFlag.Label` that AT-SPI expo
 *labelled-by*, which is what Orca reads. Set both: the name for platforms that honour
 it, the buddy for the one this app ships to.
 
-This is why the tests assert the **announced** name (`QAccessible` interface), never
-`widget.accessibleName()`. The property reads back perfectly on a combo that announces
-nothing useful, so a property assertion is a guaranteed false green — it shipped as
-one once (DEC-271).
+This is why the tests assert the **announced** name (`QAccessible` interface) for
+combo boxes, spin boxes and line edits. The property reads back perfectly on a combo
+that announces nothing useful, so a property assertion there is a guaranteed false
+green — it shipped as one once (DEC-271).
+
+For `QPushButton` the property assertion is correct and the suite uses it: Qt honours
+`setAccessibleName` on a button, so `widget.accessibleName()` and the announced name
+agree. The rule is "assert what is announced where the two can diverge", not "never
+read the property".
 
 Both rules are enforced by rendering, not by grepping the stylesheet: a `:focus` rule
 can be present and still draw nothing (an accent ring on an accent fill). See

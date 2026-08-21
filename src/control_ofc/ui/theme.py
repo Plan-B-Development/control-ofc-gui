@@ -1523,7 +1523,29 @@ def build_stylesheet(t: ThemeTokens) -> str:
     QPushButton#PrimaryButton:disabled {{
         background-color: {t.disabled_bg};
         color: {t.disabled_text};
+        /* Inert for `primary` and `#PrimaryButton`, which declare `border: none`
+           — colour cannot revive a zero-width border, the same trap DEC-255
+           documents for `#Sidebar`. Left in place rather than "fixed" by
+           declaring a width: that would resize those two controls as they are
+           enabled and disabled. They read as an unbordered disabled_bg block,
+           which is still unmistakably not a live button. */
         border-color: {t.border_default};
+    }}
+
+    /* SCOPED hosts, which the rule above loses to on specificity (DEC-273 r2).
+       `QPushButton[variant="x"]:disabled` is (0,0,2,1); `#Sidebar QPushButton` is
+       (0,1,0,1) and `.Card[density="tile"] QPushButton[variant="ghost"]` is
+       (0,0,3,2), so both outrank it and a disabled button in either host went on
+       painting its ENABLED colours — measured, transparent + `nav_text` in the
+       sidebar and `text_primary` on the tile card. Latent (neither is
+       `setEnabled`-toggled today) but the base rule claims to cover every
+       variant, and the identical scoping gap already bit the `:focus` sweep once.
+       No `border-color` for the sidebar: it declares `border: none`. */
+    #Sidebar QPushButton:disabled,
+    .Card[density="tile"] QPushButton:disabled,
+    .Card[density="tile"] QPushButton[variant="ghost"]:disabled {{
+        background-color: {t.disabled_bg};
+        color: {t.disabled_text};
     }}
 
     /* Keyboard focus for every remaining button (DEC-251). DEC-238's reasoning

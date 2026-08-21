@@ -1426,13 +1426,32 @@ def parse_field_violations(details: object) -> list[FieldViolation]:
 
     Returns an empty list when ``details`` is not the validation-error shape, so
     callers can render violations uniformly without shape-checking.
+
+    Field values are coerced to ``str``. ``_filter_fields`` screens KEYS only, so
+    a daemon answering ``{"field": 1, "reason": null}`` used to build a
+    ``FieldViolation`` holding an ``int`` and a ``None``, and the only consumer —
+    :func:`control_ofc.services.profile_import_service` — calls ``.strip()`` on
+    both, raising ``AttributeError`` from inside a per-profile failure handler
+    documented never to raise, which aborted the whole batch import. The envelope
+    is not shape-enforced at parse time by design (see
+    :class:`control_ofc.api.errors.DaemonError`), so degrading has to happen
+    here. ``None`` becomes ``""`` rather than ``"None"``: an absent reason must
+    render as absent, not as the word.
     """
     if not isinstance(details, dict):
         return []
     raw = details.get("field_violations", [])
     if not isinstance(raw, list):
         return []
-    return [FieldViolation(**_filter_fields(FieldViolation, v)) for v in raw if isinstance(v, dict)]
+
+    def _text(value: object) -> str:
+        return "" if value is None else str(value)
+
+    return [
+        FieldViolation(**{k: _text(v) for k, v in _filter_fields(FieldViolation, item).items()})
+        for item in raw
+        if isinstance(item, dict)
+    ]
 
 
 def parse_calibration_result(data: dict) -> CalibrationResult:

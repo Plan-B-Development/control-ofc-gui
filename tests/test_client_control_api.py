@@ -308,3 +308,49 @@ class TestErrorDetailsShape:
             assert parse_field_violations(exc.details) == []
         else:  # pragma: no cover - the handler always returns 400
             raise AssertionError("expected DaemonError")
+
+
+class TestFieldViolationShapeTolerance:
+    """A non-conforming daemon must degrade, not crash (DEC-271 r2).
+
+    ``DaemonError.details`` is annotated as the envelope's object shape but is
+    deliberately NOT enforced at parse time — ``DaemonClient._handle`` passes
+    whatever JSON arrived straight through, because dropping it would discard
+    diagnostic information the envelope meant to carry. That makes tolerance the
+    parser's job. It already held for a wrong TOP-LEVEL shape; it did not hold
+    one level down, where ``_filter_fields`` screens keys but never types.
+    """
+
+    def test_non_string_violation_fields_do_not_raise(self):
+        from control_ofc.api.models import parse_field_violations
+
+        out = parse_field_violations(
+            {"field_violations": [{"field": 1, "reason": None, "description": 2.5}]}
+        )
+
+        assert len(out) == 1
+        assert out[0].field == "1"
+        # None renders as absent, not as the word "None".
+        assert out[0].reason == ""
+        assert out[0].description == "2.5"
+
+    def test_the_import_reason_builder_survives_a_malformed_violation(self):
+        """The call site, not just the helper: this is the path that aborted a
+        whole batch import when the helper handed it an int."""
+        from control_ofc.api.errors import DaemonError
+        from control_ofc.services.profile_import_service import _violation_summary
+
+        err = DaemonError(
+            code="validation_error",
+            message="rejected",
+            details={"field_violations": [{"field": 1, "reason": None}]},
+        )
+
+        assert isinstance(_violation_summary(err), str)
+
+    def test_a_wrong_top_level_details_shape_still_degrades(self):
+        from control_ofc.api.models import parse_field_violations
+
+        assert parse_field_violations("not a dict") == []
+        assert parse_field_violations(["not", "a", "dict"]) == []
+        assert parse_field_violations({"field_violations": "not a list"}) == []
