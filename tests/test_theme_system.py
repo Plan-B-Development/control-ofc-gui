@@ -2157,49 +2157,277 @@ class TestAccessibleNames:
                 return target.text(QAccessible.Text.Name)
         return ""
 
-    def test_every_value_control_on_settings_is_named(self, qtbot):
-        """Register OPEN-01 item 01-e: the nine controls DEC-269 left nameless.
-
-        DEC-268 named the eight ToggleSwitches and scoped itself there, on a
-        premise DEC-269 refuted — ``QAccessible::Text::Name`` and ``::Value``
-        are separate queries, so a name is added rather than substituted — but
-        DEC-269 corrected only the comment and deferred the code. The combos,
-        spin boxes and the serial-port line edit stayed nameless. DEC-271 closes
-        that.
-
-        Deliberately widened to *every* combo/spin/line-edit the page builds, not
-        the nine that existed when the row was written: the naming lives in
-        ``_setting_row`` precisely so a control added later is named by
-        construction, and a test that enumerates today's nine would not notice
-        a tenth added outside the helper.
-        """
-        from PySide6.QtWidgets import QAbstractSpinBox, QComboBox, QLineEdit
-
+    # Surfaces the runtime sweep constructs. Each entry is (name, factory).
+    #
+    # 273-g replaced a SettingsPage-only check with this. The naming rule moved
+    # into `components.a11y.name_value_control` precisely so every surface could
+    # use it, and a test that only ever built one page could not notice that the
+    # other fourteen had not.
+    #
+    # Only surfaces that construct headlessly with cheap fixtures are here.
+    # Dialogs needing real domain objects are covered by the AST lint below
+    # instead — which is the whole reason that lint exists.
+    @staticmethod
+    def _surface_registry():
+        from control_ofc.services.diagnostics_service import DiagnosticsService
+        from control_ofc.services.history_store import HistoryStore
+        from control_ofc.services.series_selection import SeriesSelectionModel
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
+        from control_ofc.ui.pages.logs_page import LogsPage
         from control_ofc.ui.pages.settings_page import SettingsPage
+        from control_ofc.ui.pages.system_state_page import SystemStatePage
+        from control_ofc.ui.pages.theme_page import ThemePage
+        from control_ofc.ui.sidebar import Sidebar
+        from control_ofc.ui.widgets.curve_editor import CurveEditor
+        from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
+        from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
-        page = SettingsPage()
-        qtbot.addWidget(page)
-
-        controls = [
-            *page.findChildren(QComboBox),
-            *page.findChildren(QAbstractSpinBox),
-            *page.findChildren(QLineEdit),
+        return [
+            ("SettingsPage", SettingsPage),
+            ("ThemePage", ThemePage),
+            ("DashboardPage", DashboardPage),
+            ("SystemStatePage", SystemStatePage),
+            ("Sidebar", Sidebar),
+            ("CurveEditor", CurveEditor),
+            ("LogsPage", lambda: LogsPage(DiagnosticsService(None))),
+            ("TimelineChart", lambda: TimelineChart(HistoryStore())),
+            ("SensorSeriesPanel", lambda: SensorSeriesPanel(SeriesSelectionModel())),
         ]
-        # A QComboBox owns an internal QLineEdit when editable, and a spin box
-        # always owns one; those are implementation details of a named parent,
-        # not separate controls a user tabs to. Nothing else is filtered — in
-        # particular a *disabled* control is still checked, because the five
-        # daemon-config controls ship disabled until the daemon answers and a
-        # user who never connects one would otherwise get no coverage at all.
-        controls = [c for c in controls if not isinstance(c.parent(), QComboBox | QAbstractSpinBox)]
-        assert len(controls) >= 9, f"expected the Settings value controls, found {len(controls)}"
 
-        nameless = [
-            c.objectName() or repr(c) for c in controls if not self._announced_label(c).strip()
-        ]
+    @staticmethod
+    def _deferred_to_phase_2(control) -> bool:
+        """True for a control 273-g phase 1 deliberately did not name.
+
+        Exactly one case: the per-token hex inputs inside ``ThemeEditorWidget``. They
+        need a name derived from each token, not a shared one, so they are
+        phase 2. Matching on the ancestor type rather than a count keeps this
+        honest — it cannot silently absorb a control added elsewhere.
+        """
+        from control_ofc.ui.widgets.theme_editor import ThemeEditorWidget
+
+        parent = control.parent()
+        while parent is not None:
+            if isinstance(parent, ThemeEditorWidget):
+                return True
+            parent = parent.parent()
+        return False
+
+    def test_every_value_control_announces_what_it_sets(self, qtbot):
+        """273-g: a combo/spin/slider/edit must say what it is for, app-wide.
+
+        Register row 273-g. `SettingsPage` was the only page whose value controls
+        were named, and the enforcing test was scoped to it — so fourteen other
+        files shipped controls that announce a bare value and nothing else
+        ("combo box, Dashboard"), which tells a screen-reader user what it says
+        but never what it does.
+
+        Deliberately over every control each surface builds, not a fixed list:
+        the naming lives in a shared helper so a control added later is named by
+        construction, and a test enumerating today's controls would not notice
+        tomorrow's.
+        """
+        from PySide6.QtWidgets import (
+            QAbstractSpinBox,
+            QComboBox,
+            QLineEdit,
+            QPlainTextEdit,
+            QSlider,
+        )
+
+        # QSlider, deliberately not QAbstractSlider: the latter also matches the
+        # QScrollBar Qt creates inside every scroll area, which is generated
+        # furniture rather than a control anyone authored — demanding names for
+        # those would bury the real findings in ~20 false ones.
+        types = (QComboBox, QAbstractSpinBox, QSlider, QLineEdit, QPlainTextEdit)
+        checked = 0
+        nameless: list[str] = []
+        deferred = 0
+
+        for surface_name, factory in self._surface_registry():
+            widget = factory()
+            qtbot.addWidget(widget)
+            controls = [c for t in types for c in widget.findChildren(t)]
+            # A QComboBox owns an internal QLineEdit when editable, and a spin
+            # box always owns one; a slider inside a scroll area likewise. Those
+            # are implementation details of a named parent, not controls a user
+            # tabs to. Nothing else is filtered — in particular a *disabled*
+            # control is still checked, because the daemon-config controls ship
+            # disabled until the daemon answers and a user who never connects one
+            # would otherwise get no coverage at all.
+            controls = [
+                c for c in controls if not isinstance(c.parent(), QComboBox | QAbstractSpinBox)
+            ]
+            # 273-g Tier C, deferred to phase 2: ThemeEditor builds one hex input
+            # per theme token (~54 of them), and a fixed name on all of them
+            # would collide — each needs its own token name, which is a change of
+            # a different size from this sweep. Excluded HERE rather than left
+            # silently failing, and the exclusion is pinned below so it cannot
+            # widen to cover a surface nobody decided to defer.
+            in_theme_editor = [c for c in controls if self._deferred_to_phase_2(c)]
+            deferred += len(in_theme_editor)
+            controls = [c for c in controls if c not in in_theme_editor]
+            checked += len(controls)
+            nameless += [
+                f"{surface_name}: {c.objectName() or repr(c)}"
+                for c in controls
+                if not self._announced_label(c).strip()
+            ]
+
+        assert deferred > 0, (
+            "no control was deferred to phase 2 — either ThemeEditor's hex inputs "
+            "have been named (delete `_deferred_to_phase_2` and this assertion, "
+            "closing 273-g Tier C) or the exclusion has stopped matching and is "
+            "now hiding nothing while looking like it hides something"
+        )
+        assert checked >= 25, (
+            f"the sweep found only {checked} value controls across "
+            f"{len(self._surface_registry())} surfaces — the registry or the "
+            "findChildren filter has stopped finding things"
+        )
         assert not nameless, (
-            "these Settings controls announce as an anonymous combo/spin/edit "
-            f"with no indication of what they set: {nameless}"
+            "these controls announce as an anonymous combo/spin/slider/edit with "
+            "no indication of what they set:\n  " + "\n  ".join(nameless)
+        )
+
+    def test_no_value_control_is_constructed_without_a_name(self):
+        """273-g: an AST inventory, because the runtime sweep cannot see everything.
+
+        `test_every_value_control_announces_what_it_sets` only checks surfaces it
+        can construct, and several dialogs need real domain objects to build. A
+        combo added to one of those would be invisible to it — and invisible is
+        how fourteen files came to ship unnamed controls in the first place.
+
+        So this scans the source instead: every `QComboBox()`/`QSpinBox()`/… bound
+        to a name must have that name passed to `name_value_control` somewhere in
+        the same function, or appear in the deferred list below. Deliberately
+        modelled on `test_every_glyph_only_button_is_named`, which does the same
+        job for buttons.
+
+        The two mechanisms are complements, not duplicates: the AST lint proves
+        the call is *written*, the runtime sweep proves it *works*. Only the
+        second could have caught a `setAccessibleName` that Qt silently discards
+        — which it did, on the theme picker, during this very change.
+        """
+        import ast
+
+        # Value controls that announce a bare value with no indication of purpose.
+        # QScrollBar is absent deliberately: Qt generates them inside scroll areas
+        # and nobody authors one.
+        value_types = {
+            "QComboBox",
+            "QSpinBox",
+            "QDoubleSpinBox",
+            "QAbstractSpinBox",
+            "QLineEdit",
+            "QPlainTextEdit",
+            "QTextEdit",
+            "QSlider",
+        }
+        # Helpers that name a control on the caller's behalf. `_setting_row` takes
+        # (title, control) and calls `name_value_control` itself, so passing a
+        # control to it IS naming it.
+        naming_helpers = {"name_value_control", "_setting_row"}
+
+        # 273-g Tier C — phase 2. Each is a control built once per item in a list,
+        # so a single shared name would collide; each needs a name derived from
+        # its own item. Keyed on file + variable rather than line number so an
+        # unrelated edit above cannot silently retire an entry.
+        deferred = {
+            # ~54 inputs, one per theme token → f"{token} hex value".
+            "ui/widgets/theme_editor.py:edit",
+            # One per fan card → f"{control.name} manual output".
+            "ui/widgets/control_card.py:_manual_slider",
+        }
+
+        # Named, but through an indirection this scan cannot follow: each is put
+        # into a `controls[key]` dict and passed to `_setting_row` as a subscript,
+        # so no bare Name reaches the helper's argument list.
+        #
+        # NOT a hole. Every one is on `SettingsPage`, which the runtime sweep
+        # above constructs and checks by ANNOUNCED name — the stronger of the two
+        # assertions. This list exists so that fact is written down instead of the
+        # scan quietly under-reporting, and the staleness check below fails if any
+        # entry stops matching.
+        indirectly_named = {
+            "ui/pages/settings_page.py:_poll_interval_spin",
+            "ui/pages/settings_page.py:_serial_port_edit",
+            "ui/pages/settings_page.py:_serial_timeout_spin",
+        }
+
+        def bound_name(node):
+            target = node.targets[0] if isinstance(node, ast.Assign) else node.target
+            if isinstance(target, ast.Name):
+                return target.id
+            if isinstance(target, ast.Attribute):
+                return target.attr
+            return None
+
+        ui = Path(__file__).resolve().parent.parent / "src" / "control_ofc" / "ui"
+        sites, unnamed, matched_deferred, matched_indirect = 0, [], set(), set()
+
+        for py in sorted(ui.rglob("*.py")):
+            rel = py.relative_to(ui.parent).as_posix()
+            tree = ast.parse(py.read_text(encoding="utf-8"))
+            for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+                named = set()
+                for call in (n for n in ast.walk(fn) if isinstance(n, ast.Call)):
+                    func = call.func
+                    fname = (
+                        func.id
+                        if isinstance(func, ast.Name)
+                        else func.attr
+                        if isinstance(func, ast.Attribute)
+                        else None
+                    )
+                    if fname not in naming_helpers:
+                        continue
+                    for arg in call.args:
+                        if isinstance(arg, ast.Name):
+                            named.add(arg.id)
+                        elif isinstance(arg, ast.Attribute):
+                            named.add(arg.attr)
+                for node in ast.walk(fn):
+                    if not isinstance(node, ast.Assign | ast.AnnAssign):
+                        continue
+                    call = node.value
+                    if not (
+                        isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Name)
+                        and call.func.id in value_types
+                    ):
+                        continue
+                    var = bound_name(node)
+                    if var is None:
+                        continue
+                    sites += 1
+                    key = f"{rel}:{var}"
+                    if key in deferred:
+                        matched_deferred.add(key)
+                    elif key in indirectly_named:
+                        matched_indirect.add(key)
+                    elif var not in named:
+                        unnamed.append(f"{rel}:{node.lineno} {call.func.id} {var}")
+
+        assert sites >= 30, (
+            f"the AST scan found only {sites} value-control constructions — it has "
+            "stopped working, and would pass no matter what shipped"
+        )
+        assert not unnamed, (
+            "these controls are built without being passed to `name_value_control`, "
+            "so they announce a bare value and never say what they set:\n  " + "\n  ".join(unnamed)
+        )
+        assert matched_indirect == indirectly_named, (
+            "the indirectly-named list no longer matches reality — unmatched: "
+            f"{sorted(indirectly_named - matched_indirect)}. Either those controls "
+            "are now named directly (delete the entry) or they moved, and the list "
+            "is excusing nothing while looking like it excuses something."
+        )
+        assert matched_deferred == deferred, (
+            "the 273-g phase-2 deferral list no longer matches reality — "
+            f"unmatched: {sorted(deferred - matched_deferred)}. Either those "
+            "controls were named (delete the entry, closing Tier C) or they moved "
+            "and the list is now excusing nothing while looking like it excuses "
+            "something."
         )
 
     def test_a_settings_combo_is_labelled_by_more_than_its_property(self, qtbot):

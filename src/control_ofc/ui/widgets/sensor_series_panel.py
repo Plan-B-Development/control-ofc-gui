@@ -25,6 +25,7 @@ from control_ofc.api.models import FanReading, SensorReading
 from control_ofc.knowledge.sensor_knowledge import classify_sensor, format_sensor_tooltip
 from control_ofc.services.app_state import AIO_SUFFIX
 from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.qt_util import block_signals
 
@@ -157,6 +158,9 @@ class SensorSeriesPanel(QFrame):
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search sensors...")
         self._search.setObjectName("SensorSeriesPanel_Edit_search")
+        # See logs_page: placeholder text is not a name, and disappears on
+        # first keystroke (273-g).
+        name_value_control(self._search, "Search sensors")
         self._search.textChanged.connect(self._on_search_changed)
         layout.addWidget(self._search)
 

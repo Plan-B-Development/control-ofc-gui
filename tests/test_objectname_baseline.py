@@ -37,6 +37,9 @@ def _object_names(widget) -> set[str]:
 
 SYSTEM_STATE_OBJECTNAMES = frozenset(
     {
+        # 273-g: hidden buddy label giving the header picker an accessible
+        # name (it has no visible label). Deliberate addition.
+        "SystemState_Combo_verifyHeader_A11yLabel",
         "SystemState_Bar_speedRange",
         "SystemState_Btn_openReport",
         "SystemState_Btn_restoreGpu",
@@ -84,6 +87,10 @@ SYSTEM_STATE_OBJECTNAMES = frozenset(
 
 DASHBOARD_OBJECTNAMES = frozenset(
     {
+        # 273-g: hidden buddy labels giving two controls with no visible
+        # label an accessible name. Deliberate additions.
+        "Dashboard_Combo_profile_A11yLabel",
+        "SensorSeriesPanel_Edit_search_A11yLabel",
         "Chart_Btn_resetSeries",
         "Chart_Mode_selector",
         "Dashboard_Banner_api_version",

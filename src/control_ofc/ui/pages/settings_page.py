@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from control_ofc.services.series_selection import SeriesSelectionModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QAbstractSpinBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -50,6 +49,7 @@ from control_ofc.services.app_state import AppState
 from control_ofc.services.orphan_prune import OrphanReport, find_orphans, live_series_keys
 from control_ofc.services.profile_import_service import import_profiles
 from control_ofc.services.profile_service import ImportCollection, collect_local_profiles_for_import
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card, SectionHeader
 from control_ofc.ui.components.tables import apply_dense_table
@@ -302,14 +302,12 @@ class SettingsPage(QWidget):
         # classification overrides" would make the spoken name disagree with the
         # printed one. Where two such buttons share text ("Run again"), the
         # call site passes `accessible_name=` to `make_button` instead (DEC-269).
-        if isinstance(control, ToggleSwitch):
-            control.set_accessible_label(title)
-        elif isinstance(control, QComboBox | QAbstractSpinBox | QLineEdit):
-            # QAbstractSpinBox, not QSpinBox: QDoubleSpinBox is a sibling, not a
-            # subclass, so the narrower check would silently miss the first
-            # fractional setting anyone adds.
-            control.setAccessibleName(title)
-            title_label.setBuddy(control)
+        #
+        # 273-g moved the rule itself into `components.a11y.name_value_control`
+        # so the rest of the app could use it. It lived here, private to one
+        # page, which is exactly why every other surface stayed unnamed for
+        # three ADRs: a dialog cannot call a private method on SettingsPage.
+        name_value_control(control, title_label)
         return row
 
     def _build_general_startup_card(self) -> QWidget:
@@ -1589,8 +1587,7 @@ class SettingsPage(QWidget):
         v.addWidget(cpu_label)
         self._pref_cpu_combo = QComboBox()
         self._pref_cpu_combo.setObjectName("Settings_Combo_preferredCpu")
-        self._pref_cpu_combo.setAccessibleName(cpu_label.text())
-        cpu_label.setBuddy(self._pref_cpu_combo)
+        name_value_control(self._pref_cpu_combo, cpu_label)
         self._pref_cpu_combo.currentIndexChanged.connect(self._on_preferred_cpu_changed)
         v.addWidget(self._pref_cpu_combo)
 
@@ -1599,8 +1596,7 @@ class SettingsPage(QWidget):
         v.addWidget(mb_label)
         self._pref_mb_combo = QComboBox()
         self._pref_mb_combo.setObjectName("Settings_Combo_preferredMb")
-        self._pref_mb_combo.setAccessibleName(mb_label.text())
-        mb_label.setBuddy(self._pref_mb_combo)
+        name_value_control(self._pref_mb_combo, mb_label)
         self._pref_mb_combo.currentIndexChanged.connect(self._on_preferred_mb_changed)
         v.addWidget(self._pref_mb_combo)
 

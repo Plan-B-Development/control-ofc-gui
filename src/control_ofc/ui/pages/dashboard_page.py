@@ -48,6 +48,7 @@ from control_ofc.services.series_selection import (
     SeriesSelectionModel,
     default_series_keys,
 )
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.fan_display import filter_displayable_fans
 from control_ofc.ui.qt_util import block_signals, repolish, set_chip_class, style_splitter
@@ -414,6 +415,9 @@ class DashboardPage(QWidget):
         title_row.addStretch()
         self._profile_combo = QComboBox()
         self._profile_combo.setObjectName("Dashboard_Combo_profile")
+        # Sits in the title row with no label of its own — without a name it
+        # announces only the profile it happens to be showing (273-g).
+        name_value_control(self._profile_combo, "Active profile")
         self._profile_combo.setMinimumWidth(160)
         title_row.addWidget(self._profile_combo)
         self._apply_btn = QPushButton("Apply")

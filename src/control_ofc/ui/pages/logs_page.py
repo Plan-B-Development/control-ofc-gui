@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.services.diagnostics_service import JOURNAL_TIMEOUT_S, DiagnosticsService
 from control_ofc.services.logs_view import LogRowVM, build_log_row, build_log_rows, filter_log_rows
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card, SectionHeader
@@ -220,6 +221,10 @@ class LogsPage(QWidget):
         self._search_edit = QLineEdit()
         self._search_edit.setObjectName("Logs_Edit_search")
         self._search_edit.setPlaceholderText("Filter messages…")
+        # Placeholder text is NOT an accessible name — Qt exposes it as a
+        # description at best, and it vanishes the moment anything is typed,
+        # so the field goes anonymous exactly when it holds state (273-g).
+        name_value_control(self._search_edit, "Filter messages")
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.setMaximumWidth(280)
         row.addWidget(self._search_edit)
@@ -355,6 +360,9 @@ class LogsPage(QWidget):
 
         preview = QPlainTextEdit()
         preview.setObjectName(f"Logs_Text_{slug}")
+        # Per-log preview — `heading` carries which log this is, so the name
+        # distinguishes the several previews on this page (273-g).
+        name_value_control(preview, heading)
         preview.setReadOnly(True)
         preview.setMinimumHeight(90)
         preview.setMaximumBlockCount(2000)
@@ -417,6 +425,7 @@ class LogsPage(QWidget):
         detail.addWidget(_caption("Raw Message"))
         self._insp_message = QPlainTextEdit()
         self._insp_message.setObjectName("Logs_Text_inspectorMessage")
+        name_value_control(self._insp_message, "Raw message")
         self._insp_message.setReadOnly(True)
         self._insp_message.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         _mono(self._insp_message)

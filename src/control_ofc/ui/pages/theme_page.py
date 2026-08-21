@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.paths import themes_dir
 from control_ofc.services.app_settings_service import AppSettingsService
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card
 from control_ofc.ui.theme import (
@@ -68,6 +69,9 @@ class ThemePage(QWidget):
 
         self._theme_combo = QComboBox()
         self._theme_combo.setObjectName("Settings_Combo_theme")
+        # No visible label — the page title is the only context a sighted user
+        # gets, and a screen reader gets none. Named in words (273-g Tier B).
+        name_value_control(self._theme_combo, "Theme")
         self._theme_combo.setMinimumWidth(150)
         self._refresh_theme_list()
         header.addWidget(self._theme_combo)
@@ -96,23 +100,29 @@ class ThemePage(QWidget):
         typo = Card()
         typo_layout = QHBoxLayout(typo)
         typo_layout.setSpacing(12)
-        typo_layout.addWidget(QLabel("Font Family:"))
+        font_label = QLabel("Font Family:")
+        typo_layout.addWidget(font_label)
         self._font_combo = QComboBox()
         self._font_combo.setObjectName("Settings_Combo_fontFamily")
+        name_value_control(self._font_combo, font_label)
         self._font_combo.addItem("(System Default)", "")
         for family in QFontDatabase.families():
             self._font_combo.addItem(family, family)
         typo_layout.addWidget(self._font_combo, 1)
-        typo_layout.addWidget(QLabel("Base Size:"))
+        size_label = QLabel("Base Size:")
+        typo_layout.addWidget(size_label)
         self._font_size_spin = QSpinBox()
         self._font_size_spin.setObjectName("Settings_Spin_fontSize")
+        name_value_control(self._font_size_spin, size_label)
         self._font_size_spin.setRange(7, 16)
         self._font_size_spin.setValue(10)
         self._font_size_spin.setSuffix(" pt")
         typo_layout.addWidget(self._font_size_spin)
-        typo_layout.addWidget(QLabel("Card Size:"))
+        card_size_label = QLabel("Card Size:")
+        typo_layout.addWidget(card_size_label)
         self._card_size_combo = QComboBox()
         self._card_size_combo.setObjectName("Settings_Combo_cardSize")
+        name_value_control(self._card_size_combo, card_size_label)
         self._card_size_combo.setToolTip(
             "Density of the Fan Role and Curve cards on the Controls page.\n"
             "Cards also scale automatically with the font size."

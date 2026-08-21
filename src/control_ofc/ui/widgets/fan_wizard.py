@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from control_ofc.api.errors import DaemonError, DaemonUnavailable
 from control_ofc.api.models import ConnectionState
 from control_ofc.constants import THERMAL_ABORT_C
+from control_ofc.ui.components.a11y import name_value_control
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
@@ -420,11 +421,13 @@ class IdentifyFanPage(QWizardPage):
 
         # Label input
         label_group = QVBoxLayout()
-        label_group.addWidget(QLabel("Assign a label for this fan:"))
+        label_prompt = QLabel("Assign a label for this fan:")
+        label_group.addWidget(label_prompt)
 
         label_row = QHBoxLayout()
         self._label_combo = QComboBox()
         self._label_combo.setObjectName("Wizard_Combo_labelPreset")
+        name_value_control(self._label_combo, label_prompt)
         self._label_combo.setEditable(True)
         for preset in _LABEL_PRESETS:
             self._label_combo.addItem(preset)

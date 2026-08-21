@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.profile_service import MIX_FUNCTIONS, CurveConfig, CurveType
+from control_ofc.ui.components.a11y import name_value_control
 
 # Curve types whose evaluation reads a single sensor (and so show the sensor
 # selector). Mix combines other curves at their own sensors and Sync mirrors a
@@ -48,18 +49,22 @@ class CurveEditDialog(QDialog):
 
         # Name
         name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("Name:"))
+        name_label = QLabel("Name:")
+        name_row.addWidget(name_label)
         self._name_edit = QLineEdit(curve.name)
         self._name_edit.setObjectName("CurveEditDialog_Edit_name")
+        name_value_control(self._name_edit, name_label)
         name_row.addWidget(self._name_edit, 1)
         layout.addLayout(name_row)
 
         # Sensor selector — only for single-sensor types. Mix/Sync omit it.
         if curve.type in _SENSOR_TYPES:
             sensor_row = QHBoxLayout()
-            sensor_row.addWidget(QLabel("Sensor:"))
+            sensor_label = QLabel("Sensor:")
+            sensor_row.addWidget(sensor_label)
             self._sensor_combo = QComboBox()
             self._sensor_combo.setObjectName("CurveEditDialog_Combo_sensor")
+            name_value_control(self._sensor_combo, sensor_label)
             if sensor_items:
                 for sid, label in sensor_items:
                     self._sensor_combo.addItem(label, sid)
@@ -107,12 +112,16 @@ class CurveEditDialog(QDialog):
         self._param_spins = {}
         for label, attr, lo, hi in fields:
             row = QHBoxLayout()
-            row.addWidget(QLabel(label))
+            field_label = QLabel(label)
+            row.addWidget(field_label)
             spin = QDoubleSpinBox()
             spin.setRange(lo, hi)
             spin.setDecimals(1)
             spin.setValue(getattr(curve, attr))
             spin.setObjectName(f"CurveEditDialog_Spin_{attr}")
+            # Four identical spin boxes per curve type; the label is the only
+            # thing distinguishing them (273-g).
+            name_value_control(spin, field_label)
             row.addWidget(spin)
             layout.addLayout(row)
             self._param_spins[attr] = spin
@@ -120,12 +129,14 @@ class CurveEditDialog(QDialog):
     def _build_flat_params(self, layout, curve):
         layout.addWidget(QLabel("Flat Curve Parameters:"))
         row = QHBoxLayout()
-        row.addWidget(QLabel("Output (%):"))
+        flat_label = QLabel("Output (%):")
+        row.addWidget(flat_label)
         self._flat_spin = QDoubleSpinBox()
         self._flat_spin.setRange(0, 100)
         self._flat_spin.setDecimals(1)
         self._flat_spin.setValue(curve.flat_output_pct)
         self._flat_spin.setObjectName("CurveEditDialog_Spin_flatOutput")
+        name_value_control(self._flat_spin, flat_label)
         row.addWidget(self._flat_spin)
         layout.addLayout(row)
 
@@ -146,12 +157,16 @@ class CurveEditDialog(QDialog):
         self._param_spins = {}
         for label, attr, lo, hi in fields:
             row = QHBoxLayout()
-            row.addWidget(QLabel(label))
+            field_label = QLabel(label)
+            row.addWidget(field_label)
             spin = QDoubleSpinBox()
             spin.setRange(lo, hi)
             spin.setDecimals(1)
             spin.setValue(getattr(curve, attr))
             spin.setObjectName(f"CurveEditDialog_Spin_{attr}")
+            # Four identical spin boxes per curve type; the label is the only
+            # thing distinguishing them (273-g).
+            name_value_control(spin, field_label)
             row.addWidget(spin)
             layout.addLayout(row)
             self._param_spins[attr] = spin
@@ -166,9 +181,11 @@ class CurveEditDialog(QDialog):
         layout.addWidget(hint)
 
         fn_row = QHBoxLayout()
-        fn_row.addWidget(QLabel("Function:"))
+        fn_label = QLabel("Function:")
+        fn_row.addWidget(fn_label)
         self._mix_function_combo = QComboBox()
         self._mix_function_combo.setObjectName("CurveEditDialog_Combo_mixFunction")
+        name_value_control(self._mix_function_combo, fn_label)
         for fn in MIX_FUNCTIONS:
             self._mix_function_combo.addItem(fn.title(), fn)
         fn_idx = self._mix_function_combo.findData(curve.mix_function)
@@ -205,9 +222,11 @@ class CurveEditDialog(QDialog):
         layout.addWidget(hint)
 
         ctrl_row = QHBoxLayout()
-        ctrl_row.addWidget(QLabel("Mirror control:"))
+        ctrl_label = QLabel("Mirror control:")
+        ctrl_row.addWidget(ctrl_label)
         self._sync_control_combo = QComboBox()
         self._sync_control_combo.setObjectName("CurveEditDialog_Combo_syncControl")
+        name_value_control(self._sync_control_combo, ctrl_label)
         self._sync_control_combo.addItem("— Select control —", "")
         for cid, name in candidates:
             self._sync_control_combo.addItem(name or cid, cid)
@@ -218,9 +237,11 @@ class CurveEditDialog(QDialog):
         layout.addLayout(ctrl_row)
 
         off_row = QHBoxLayout()
-        off_row.addWidget(QLabel("Offset (%):"))
+        off_label = QLabel("Offset (%):")
+        off_row.addWidget(off_label)
         self._sync_offset_spin = QDoubleSpinBox()
         self._sync_offset_spin.setObjectName("CurveEditDialog_Spin_syncOffset")
+        name_value_control(self._sync_offset_spin, off_label)
         self._sync_offset_spin.setRange(-100, 100)
         self._sync_offset_spin.setDecimals(1)
         self._sync_offset_spin.setValue(curve.sync_offset_pct)

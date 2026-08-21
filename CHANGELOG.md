@@ -15,6 +15,23 @@
   daemon can resolve the control again. Needs daemon 2.21.0 or newer; against an
   older daemon nothing changes. 273-i.
 
+### Fixed
+- **Dropdowns, spin boxes and sliders now say what they set.** A control that
+  shows a value carries no words of its own — the words are in the label beside
+  it — so a screen reader announced "combo box, Dashboard" and never what
+  "Dashboard" was for. Only the Settings page had been fixed; every other
+  surface still shipped this way, because the rule lived inside a method private
+  to that one page and nothing else could reach it.
+  The rule now lives in one shared place and has been applied across the theme,
+  dashboard, system-state, logs and sidebar surfaces, the curve editor, the
+  timeline chart, and the fan-role, curve-edit, AIO, GPU and wizard dialogs —
+  around forty controls. Fields with no visible label at all (the log and sensor
+  search boxes, the theme and profile pickers) are named too; placeholder text
+  is not a name, and it disappears the moment anything is typed. Still to do:
+  the per-token colour inputs in the theme editor and the per-card manual
+  slider, which need a name derived from each item rather than a shared one.
+  273-g.
+
 ### Internal
 - The lint tooling is version-bounded. It was floored but not capped, so a fresh
   install in CI resolved a newer formatter than the one developers had, and the

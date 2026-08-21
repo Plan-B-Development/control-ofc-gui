@@ -42,6 +42,7 @@ from control_ofc.constants import (
     PAGE_SYSTEM_STATE,
     PAGE_THEME,
 )
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.buttons import make_button
 
 
@@ -125,6 +126,7 @@ class Sidebar(QWidget):
         layout.addWidget(profile_title)
         self.profile_combo = QComboBox()
         self.profile_combo.setObjectName("Sidebar_Combo_profile")
+        name_value_control(self.profile_combo, profile_title)
         layout.addWidget(self.profile_combo)
         self.apply_profile_btn = make_button(
             "Apply", "secondary", object_name="Sidebar_Btn_applyProfile"

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.profile_service import CurveConfig, CurvePoint, CurveType
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.theme import ThemeTokens, default_dark_theme
 
@@ -100,9 +101,11 @@ class CurveEditor(QWidget):
 
         # Top row: sensor selector + presets
         top_row = QHBoxLayout()
-        top_row.addWidget(QLabel("Sensor:"))
+        sensor_label = QLabel("Sensor:")
+        top_row.addWidget(sensor_label)
         self._sensor_combo = QComboBox()
         self._sensor_combo.setObjectName("CurveEditor_Combo_sensor")
+        name_value_control(self._sensor_combo, sensor_label)
         self._sensor_combo.currentIndexChanged.connect(self._on_sensor_selected)
         top_row.addWidget(self._sensor_combo, 1)
         self._last_sensor_ids: list[str] = []  # track to avoid redundant repopulation
@@ -114,9 +117,11 @@ class CurveEditor(QWidget):
         self._sensor_value_label.setToolTip("Current sensor reading and computed curve output")
         top_row.addWidget(self._sensor_value_label)
 
-        top_row.addWidget(QLabel("Preset:"))
+        preset_label = QLabel("Preset:")
+        top_row.addWidget(preset_label)
         self._preset_combo = QComboBox()
         self._preset_combo.setObjectName("CurveEditor_Combo_preset")
+        name_value_control(self._preset_combo, preset_label)
         self._preset_combo.addItem("— Load preset —")
         for name in PRESETS:
             self._preset_combo.addItem(name)
@@ -189,9 +194,13 @@ class CurveEditor(QWidget):
             ("end_output", "End Output (%):", "end_output_pct"),
         ]:
             row = QHBoxLayout()
-            row.addWidget(QLabel(label_text))
+            field_label = QLabel(label_text)
+            row.addWidget(field_label)
             spin = QDoubleSpinBox()
             spin.setObjectName(f"CurveEditor_Spin_{field_name}")
+            # Four identical-looking spin boxes in a column — the label is the
+            # only thing that tells them apart, for anyone (273-g).
+            name_value_control(spin, field_label)
             spin.setRange(0, 120 if "temp" in field_name else 100)
             spin.setDecimals(1)
             spin.valueChanged.connect(self._on_linear_param_changed)
@@ -205,9 +214,11 @@ class CurveEditor(QWidget):
         flat_layout = QVBoxLayout(self._flat_widget)
         flat_layout.setContentsMargins(0, 0, 0, 0)
         flat_row = QHBoxLayout()
-        flat_row.addWidget(QLabel("Output (%):"))
+        flat_output_label = QLabel("Output (%):")
+        flat_row.addWidget(flat_output_label)
         self._flat_output_spin = QDoubleSpinBox()
         self._flat_output_spin.setObjectName("CurveEditor_Spin_flatOutput")
+        name_value_control(self._flat_output_spin, flat_output_label)
         self._flat_output_spin.setRange(0, 100)
         self._flat_output_spin.setDecimals(1)
         self._flat_output_spin.valueChanged.connect(self._on_flat_param_changed)
@@ -226,9 +237,11 @@ class CurveEditor(QWidget):
             ("load_output", "Load Output (%):"),
         ]:
             row = QHBoxLayout()
-            row.addWidget(QLabel(label_text))
+            field_label = QLabel(label_text)
+            row.addWidget(field_label)
             spin = QDoubleSpinBox()
             spin.setObjectName(f"CurveEditor_Spin_trigger_{field_name}")
+            name_value_control(spin, field_label)
             spin.setRange(0, 120 if "temp" in field_name else 100)
             spin.setDecimals(1)
             spin.valueChanged.connect(self._on_trigger_param_changed)

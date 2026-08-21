@@ -37,6 +37,7 @@ from control_ofc.services.system_state_view import (
     build_verify_headers,
     daemon_version_at_least,
 )
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.hwmon_guidance import dual_chip_verify_hint, verification_guidance
 from control_ofc.ui.pages.diagnostics_workers import _GpuVerifyWorker, _HwDiagWorker, _VerifyWorker
@@ -228,6 +229,8 @@ class SystemStatePage(QWidget):
         pwm_row = QHBoxLayout()
         self._verify_combo = QComboBox()
         self._verify_combo.setObjectName("SystemState_Combo_verifyHeader")
+        # Only the button beside it says what this picks (273-g).
+        name_value_control(self._verify_combo, "Fan header to test")
         pwm_row.addWidget(self._verify_combo, 1)
         self._verify_btn = make_button(
             "Test PWM Control", "secondary", object_name="SystemState_Btn_verifyPwm"

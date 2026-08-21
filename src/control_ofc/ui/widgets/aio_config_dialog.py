@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.profile_service import AIO_PUMP_DEFAULT_PCT, AIO_PUMP_PRESETS
+from control_ofc.ui.components.a11y import name_value_control
 
 
 class AioConfigDialog(QDialog):
@@ -114,9 +115,11 @@ class AioConfigDialog(QDialog):
             rad_layout.addWidget(empty)
         rad_layout.addWidget(self._fan_list)
 
-        rad_layout.addWidget(QLabel("Bind the radiator-fan curve to:"))
+        sensor_label = QLabel("Bind the radiator-fan curve to:")
+        rad_layout.addWidget(sensor_label)
         self._sensor_combo = QComboBox()
         self._sensor_combo.setObjectName("AioConfig_Combo_radiatorSensor")
+        name_value_control(self._sensor_combo, sensor_label)
         for ch in sensor_choices:
             prefix = "★ " if ch.get("preferred") else ""
             self._sensor_combo.addItem(f"{prefix}{ch['label']}", ch["id"])

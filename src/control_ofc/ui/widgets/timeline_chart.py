@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from control_ofc.constants import HISTORY_DURATION_S
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import ChartMode
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.theme import ThemeTokens, active_theme
 
 if TYPE_CHECKING:
@@ -207,7 +208,10 @@ class TimelineChart(QWidget):
             self._range_combo.addItem(label)
         self._range_combo.setCurrentIndex(2)  # 5m default
         self._range_combo.currentIndexChanged.connect(self._on_range_changed)
-        range_label.setBuddy(self._range_combo)
+        # 273-g: buddy alone was set here; `name_value_control` adds the
+        # `setAccessibleName` half for platforms that honour it, and keeps the
+        # buddy that Orca actually reads.
+        name_value_control(self._range_combo, range_label)
         controls.addWidget(self._range_combo)
 
         # Chart mode selector (DEC-181): a readability preset. The chart emits the
@@ -222,7 +226,7 @@ class TimelineChart(QWidget):
         for mode, text in _MODE_LABELS:
             self._mode_combo.addItem(text, mode)
         self._mode_combo.setCurrentIndex(_DEFAULT_MODE_INDEX)
-        mode_label.setBuddy(self._mode_combo)
+        name_value_control(self._mode_combo, mode_label)
         self._mode_combo.currentIndexChanged.connect(self._on_mode_combo_changed)
         controls.addWidget(self._mode_combo)
 

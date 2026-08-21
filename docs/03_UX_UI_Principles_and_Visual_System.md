@@ -236,21 +236,31 @@ or line edit has no label of its own either — its visible words live in a *sep
 `QLabel` beside it, so it announces its value with nothing to say what the value is
 *for*. Every such control must name itself from the words already next to it.
 
-**Two surfaces comply today, not the whole app.** The rule above is the standard for
-new and edited code, not a description of the app as it stands. `SettingsPage` names
-its value controls, and the Dashboard's two chart combos are already associated with
-their captions via `setBuddy` (`timeline_chart.py`) — which is the mechanism the next
-paragraph identifies as the load-bearing one on Linux. Everything else is still
-unnamed: the theme, curve-editor, logs, wizard and dialog surfaces. The enforcing test
-covers `SettingsPage` only, so treat any wider compliance claim — in either direction
-— as unverified until those surfaces are swept and the test widened.
+**One rule, one helper, and one set still outstanding.** The rule lives in
+`ui/components/a11y.py::name_value_control` (273-g). It was written inline in
+`SettingsPage._setting_row`, which named that page correctly and left every other
+surface untouched for three ADRs — a private method on one page cannot be called from
+a dialog, so extracting it is what let the rest of the app be swept.
 
-On Settings the naming happens inside `_setting_row` — the place holding both the
-control and its caption — so a control added *through that helper* is named by
-construction. Two controls do not go through it: the CPU and motherboard preference
-combos are stacked under their captions rather than beside them and are named at
-their own construction sites. So "by construction" covers the common path, not every
-path; the test is what actually holds the line (DEC-268 → DEC-271).
+Named today: `SettingsPage`, `ThemePage`, `DashboardPage`, `SystemStatePage`, the
+sidebar, the curve editor and curve-edit dialog, the fan-role, AIO and GPU-dedicate
+dialogs, the fan wizard, the logs page, the timeline chart and the sensor-series
+panel.
+
+**Still outstanding (273-g phase 2):** the per-item controls, where one shared name
+would collide because there are many instances — `ThemeEditorWidget`'s per-token hex
+inputs and `ControlCard`'s per-card manual slider. Each needs a name derived from its
+own item. They are listed explicitly in the enforcing tests rather than passed over,
+and the list is asserted non-stale, so it cannot quietly widen.
+
+**Two tests hold this, and they are complements rather than duplicates.**
+`test_every_value_control_announces_what_it_sets` constructs nine surfaces and checks
+the **announced** name; `test_no_value_control_is_constructed_without_a_name` scans
+the AST of everything under `ui/`, including the dialogs that need real domain objects
+to build and so cannot be constructed in the first test. The AST lint proves the call
+is *written*; the runtime sweep proves it *works* — and only the second could catch a
+`setAccessibleName` Qt silently discards, which is exactly what it caught on the theme
+picker while 273-g was being written.
 
 **Naming a combo box takes two calls, not one.** `setAccessibleName` is enough for a
 spin box or a line edit — `QAccessible::Text::Name` and `::Value` are separate
@@ -261,6 +271,14 @@ property entirely, so the combo goes on announcing "Dashboard". `setBuddy` is wh
 carries the label there — it publishes a `RelationFlag.Label` that AT-SPI exports as
 *labelled-by*, which is what Orca reads. Set both: the name for platforms that honour
 it, the buddy for the one this app ships to.
+
+Where a control has **no visible label at all** — a search field carrying only
+placeholder text, or a picker sitting alone in a header row — `name_value_control`
+creates a hidden `QLabel` parented to the control and buddies that instead.
+Placeholder text is not a name (Qt does not expose it as one, and it disappears on the
+first keystroke, so the field goes anonymous exactly when it holds state). Measured:
+a combo carrying only `setAccessibleName` announces nothing, the same combo with a
+hidden buddy announces identically to one with a visible buddy.
 
 This is why the tests assert the **announced** name (`QAccessible` interface) for
 combo boxes, spin boxes and line edits. The property reads back perfectly on a combo

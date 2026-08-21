@@ -33,6 +33,7 @@ from control_ofc.services.profile_service import (
     CurveConfig,
     LogicalControl,
 )
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.dialog import ModalDialog
@@ -70,17 +71,21 @@ class FanRoleDialog(ModalDialog):
 
         # Name
         name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("Name:"))
+        name_label = QLabel("Name:")
+        name_row.addWidget(name_label)
         self._name_edit = QLineEdit(control.name)
         self._name_edit.setObjectName("FanRoleDialog_Edit_name")
+        name_value_control(self._name_edit, name_label)
         name_row.addWidget(self._name_edit, 1)
         layout.addLayout(name_row)
 
         # Mode
         mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("Mode:"))
+        mode_label = QLabel("Mode:")
+        mode_row.addWidget(mode_label)
         self._mode_combo = QComboBox()
         self._mode_combo.setObjectName("FanRoleDialog_Combo_mode")
+        name_value_control(self._mode_combo, mode_label)
         self._mode_combo.addItem("Curve-based", ControlMode.CURVE.value)
         self._mode_combo.addItem("Manual", ControlMode.MANUAL.value)
         idx = 0 if control.mode == ControlMode.CURVE else 1
@@ -93,9 +98,11 @@ class FanRoleDialog(ModalDialog):
         self._curve_widget = QWidget()
         curve_layout = QHBoxLayout(self._curve_widget)
         curve_layout.setContentsMargins(0, 0, 0, 0)
-        curve_layout.addWidget(QLabel("Curve:"))
+        curve_label = QLabel("Curve:")
+        curve_layout.addWidget(curve_label)
         self._curve_combo = QComboBox()
         self._curve_combo.setObjectName("FanRoleDialog_Combo_curve")
+        name_value_control(self._curve_combo, curve_label)
         for c in curves:
             self._curve_combo.addItem(f"{c.name} ({c.type.value})", c.id)
         cidx = self._curve_combo.findData(control.curve_id)
@@ -120,6 +127,10 @@ class FanRoleDialog(ModalDialog):
         self._manual_slider.setRange(0, 100)
         self._manual_slider.setValue(round(control.manual_output_pct))
         self._manual_slider.setObjectName("FanRoleDialog_Slider_manual")
+        # Slider and spin box set the SAME value, so they must not share a
+        # name — a screen-reader user hearing "Manual Output" twice cannot tell
+        # which one has focus (273-g).
+        name_value_control(self._manual_slider, "Manual output slider")
         self._manual_slider.valueChanged.connect(self._on_slider_changed)
         speed_row.addWidget(self._manual_slider, 1)
 
@@ -128,6 +139,7 @@ class FanRoleDialog(ModalDialog):
         self._manual_spin.setValue(round(control.manual_output_pct))
         self._manual_spin.setSuffix("%")
         self._manual_spin.setObjectName("FanRoleDialog_Spin_manual")
+        name_value_control(self._manual_spin, "Manual output percent")
         self._manual_spin.valueChanged.connect(self._on_spin_changed)
         speed_row.addWidget(self._manual_spin)
 

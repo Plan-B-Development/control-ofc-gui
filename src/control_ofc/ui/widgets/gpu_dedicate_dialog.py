@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from control_ofc.ui.components.a11y import name_value_control
+
 
 class GpuDedicateDialog(QDialog):
     """Collect a GPU temperature sensor + zero-RPM opt-in for a dedicated GPU fan."""
@@ -53,9 +55,11 @@ class GpuDedicateDialog(QDialog):
         sensor_group = QGroupBox("Temperature sensor")
         sensor_group.setObjectName("GpuDedicate_Group_sensor")
         sensor_layout = QVBoxLayout(sensor_group)
-        sensor_layout.addWidget(QLabel("Bind the GPU fan curve to:"))
+        sensor_label = QLabel("Bind the GPU fan curve to:")
+        sensor_layout.addWidget(sensor_label)
         self._sensor_combo = QComboBox()
         self._sensor_combo.setObjectName("GpuDedicate_Combo_sensor")
+        name_value_control(self._sensor_combo, sensor_label)
         for ch in sensor_choices:
             prefix = "★ " if ch.get("preferred") else ""
             self._sensor_combo.addItem(f"{prefix}{ch['label']}", ch["id"])
