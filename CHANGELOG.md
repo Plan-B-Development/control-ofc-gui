@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+- **A fan card now says when nothing is driving it.** If the daemon cannot work
+  out what speed a control should run at — most often because its curve combines
+  another curve you have since deleted, or mirrors a control that is not itself
+  running — it commands nothing, and those fans hold their last speed. Until now
+  the card carried on showing a reassuring "Applied" while that happened, so the
+  only symptom was a fan that never changed speed again.
+  Such a control now shows a **"Not controlled"** badge, with the reason on
+  hover. The output figure still shows the last commanded value, because that is
+  genuinely what the fans are holding. The badge clears by itself as soon as the
+  daemon can resolve the control again. Needs daemon 2.21.0 or newer; against an
+  older daemon nothing changes. 273-i.
+
 ### Internal
 - The lint tooling is version-bounded. It was floored but not capped, so a fresh
   install in CI resolved a newer formatter than the one developers had, and the

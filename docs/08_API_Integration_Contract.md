@@ -348,6 +348,42 @@ consumes this **display-only**: the Overview page shows a low-key panel + an "N 
 summary count, and these sensors do **not** raise a staleness warning (they are absent from the live
 sensor list). Older daemons omit the array — the GUI defaults it to empty.
 
+`skipped_controls` (daemon ≥ 2.21.0, additive — `api_version` unchanged, omitted when empty) lists
+logical controls the daemon's profile engine **cannot resolve**, and is therefore not commanding at
+all (273-i). Each entry is `{control_id, control_name, reason, skipped_for_ms}`.
+
+A skipped control's fans **hold their last commanded duty** — a skip never lowers a fan (DEC-269) —
+so the symptom is a fan that has quietly stopped responding. Transient causes resolve within a tick
+and are never reported; a control is listed only after **three consecutive** skipped ticks, because
+`curve_eligible`'s freshness budget floors at 5 s and a sensor sitting on that boundary would
+otherwise flap in and out of the list at 1 Hz. The daemon logs one WARN on entry and one INFO on
+resolution.
+
+`reason` is a **stable token, not prose** — the daemon deliberately leaves the wording to the client:
+
+| `reason` | Meaning |
+| --- | --- |
+| `curve_not_found` | The control's `curve_id` names a curve the active profile does not contain |
+| `sensor_unavailable` | The curve's sensor is absent — not present on this machine, or age-filtered out as stale |
+| `mix_unresolvable` | A Mix produced no value at all (no children, none resolvable, a `subtract` missing its minuend, a cycle, or the depth backstop). A Mix with *some* inputs resolvable is **not** skipped — it runs on the survivors (DEC-272) |
+| `sync_unresolvable` | A Sync whose target is unset, is the control itself, or was not computed this tick |
+
+Adding a token is additive; renaming one is breaking. A client **must** render an unrecognised token
+rather than dropping the entry — otherwise a newer daemon reintroduces exactly the silence this field
+removes.
+
+An **overridden** control is never listed: the engine short-circuits an active override before curve
+resolution, so a skip and an override cannot co-occur.
+
+The GUI consumes this **display-only** — it never writes PWM (DEC-165), so there is nothing for it to
+do beyond telling the user. The Controls page reconciles `skipped_controls[]` each poll and paints a
+**"Not controlled"** chip on the affected card, with the reason in its tooltip; the card's live output
+label keeps showing the last commanded value, because that is what the fans are actually holding. The
+chip is cleared when the daemon stops reporting the control, and on disconnect (polling stops, so
+nothing else would clear it, and an offline GUI does not know whether it is still true). A
+user-owned Manual state wins the chip. Older daemons omit the array — the GUI defaults it to empty,
+so it never needs to know the daemon's version to read this field.
+
 `active_profile_id` and `active_profile_name` (daemon ≥ 2.4.0, additive — `api_version` unchanged,
 **both omitted when no profile is active**) mirror the daemon's currently-active profile onto the
 `/status` + `/poll` surface (DEC-194). This lets the GUI reflect an *external* activation (another

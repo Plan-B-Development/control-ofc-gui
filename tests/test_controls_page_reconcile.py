@@ -17,6 +17,7 @@ from control_ofc.api.models import (
     DaemonStatus,
     OverrideGrant,
     OverrideStatusEntry,
+    SkippedControl,
 )
 from control_ofc.services.profile_service import (
     ControlMember,
@@ -46,6 +47,21 @@ def _status(*overrides: tuple[str, int]) -> DaemonStatus:
         overrides=[
             OverrideStatusEntry(control_id=cid, pwm_percent=pwm, expires_in_secs=10)
             for cid, pwm in overrides
+        ]
+    )
+
+
+def _skipped(*entries: tuple[str, str]) -> DaemonStatus:
+    """Build a DaemonStatus carrying the given (control_id, reason) skips."""
+    return DaemonStatus(
+        skipped_controls=[
+            SkippedControl(
+                control_id=cid,
+                control_name=cid.upper(),
+                reason=reason,
+                skipped_for_ms=9000,
+            )
+            for cid, reason in entries
         ]
     )
 
@@ -173,3 +189,92 @@ class TestForeignOverrideReconcile:
         page._on_status_reconcile(_status(("ghost", 30)))
 
         assert page._external_overrides == {}
+
+
+class TestSkippedControlReconcile:
+    """273-i: a control the daemon cannot resolve is commanding nothing, and the
+    card must say so instead of showing a reassuring "Applied".
+
+    Before this the fan simply stopped responding with no signal anywhere — no
+    log at the daemon's shipped level, nothing on the API, nothing in the UI.
+    """
+
+    def test_skipped_control_marks_card_not_controlled(self, qtbot, app_state, profile_service):
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+
+        page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
+
+        assert page._skipped_controls == {"lc1": "mix_unresolvable"}
+        card = page._control_cards["lc1"]
+        assert card._status_chip.text() == "Not controlled"
+        # The reason reaches the user somewhere — terse chip, detail on hover.
+        assert "combined inputs" in card._status_chip.toolTip()
+
+    def test_skipped_control_vanishing_clears_the_chip(self, qtbot, app_state, profile_service):
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
+
+        # The profile was fixed / the sensor came back.
+        page._on_status_reconcile(_skipped())
+
+        assert page._skipped_controls == {}
+        assert page._control_cards["lc1"]._skipped_reason is None
+        assert page._control_cards["lc1"]._status_chip.text() == ""
+
+    def test_a_changed_reason_updates_the_tooltip(self, qtbot, app_state, profile_service):
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
+
+        page._on_status_reconcile(_skipped(("lc1", "curve_not_found")))
+
+        assert page._skipped_controls == {"lc1": "curve_not_found"}
+        assert "curve is missing" in page._control_cards["lc1"]._status_chip.toolTip()
+
+    def test_live_output_does_not_repaint_applied_over_a_skip(
+        self, qtbot, app_state, profile_service
+    ):
+        """The 1 Hz poll keeps calling set_output. If that repainted "Applied"
+        the warning would flash and vanish every second — worse than useless,
+        because it would read as a healthy control."""
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        page._on_status_reconcile(_skipped(("lc1", "sensor_unavailable")))
+        card = page._control_cards["lc1"]
+
+        card.set_output(42.0, "CPU", 55.0)
+
+        assert card._status_chip.text() == "Not controlled"
+        # The output label still tracks the last commanded value — that IS what
+        # the fans are holding, so hiding it would be the opposite error.
+        assert "42" in card._output_label.text()
+
+    def test_disconnect_clears_skipped_chips(self, qtbot, app_state, profile_service):
+        """Polling stops while offline, so nothing would ever clear the chip —
+        and a disconnected GUI does not know whether it is still true."""
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
+
+        page._on_connection_changed(ConnectionState.DISCONNECTED)
+
+        assert page._skipped_controls == {}
+        assert page._control_cards["lc1"]._skipped_reason is None
+
+    def test_an_unknown_reason_still_renders(self, qtbot, app_state, profile_service):
+        """A newer daemon may add a reason this build has never heard of.
+        Rendering nothing would restore exactly the silence 273-i removes."""
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+
+        page._on_status_reconcile(_skipped(("lc1", "some_future_reason")))
+
+        card = page._control_cards["lc1"]
+        assert card._status_chip.text() == "Not controlled"
+        assert card._status_chip.toolTip() != ""
+
+    def test_older_daemon_reports_nothing_skipped(self, qtbot, app_state, profile_service):
+        """A daemon predating 2.21.0 omits the key entirely. The GUI must read
+        that as "nothing skipped", not crash and not warn."""
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+
+        page._on_status_reconcile(DaemonStatus())
+
+        assert page._skipped_controls == {}
+        assert page._control_cards["lc1"]._skipped_reason is None

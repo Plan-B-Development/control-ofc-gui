@@ -124,6 +124,48 @@ def override_rejection_feedback(code: str) -> tuple[str, str] | None:
     return None
 
 
+# Wording for each `skipped_controls[].reason` token the daemon can send (273-i).
+# The daemon deliberately sends a stable token and leaves the wording to the
+# client; this is where that wording lives, so it stays out of the widget and
+# stays testable without a QApplication.
+#
+# Pinned against `models.SKIP_REASON_VALUES` by
+# `test_skip_reason_map_covers_the_wire_vocabulary` — DEC-257's lesson: a
+# presentation map keyed off a wire field drifted silently once already, and a
+# live thermal recovery rendered as a neutral grey pill for it.
+_SKIP_REASONS: dict[str, str] = {
+    "curve_not_found": "its curve is missing from this profile",
+    "sensor_unavailable": "its sensor is unavailable",
+    "mix_unresolvable": "none of its combined inputs could be read",
+    "sync_unresolvable": "the control it mirrors is not running",
+}
+
+
+def skipped_control_feedback(reason: str) -> tuple[str, str]:
+    """``(chip_text, tooltip)`` for a control the daemon is not commanding.
+
+    The chip is deliberately terse and the same for every cause — what matters
+    at a glance is that this fan is not being driven, not why. The why goes in
+    the tooltip.
+
+    An UNRECOGNISED token still renders. A newer daemon may add a reason this
+    build has never heard of, and showing "Not controlled" with a vaguer tooltip
+    is strictly better than showing nothing at all, which is the very silence
+    273-i exists to end.
+    """
+    detail = _SKIP_REASONS.get(reason)
+    if detail is None:
+        return (
+            "Not controlled",
+            "The daemon is not commanding these fans. They hold their last speed.",
+        )
+    return (
+        "Not controlled",
+        f"The daemon is not commanding these fans — {detail}. "
+        "They hold their last speed until it resolves.",
+    )
+
+
 def sensor_combo_label(s, overrides: dict) -> str:
     """Curve-editor sensor-combo label, starring coolant + CPU sensors (★) — the
     recommended bindings for AIO/radiator curves (DEC-157). Selection stays free;

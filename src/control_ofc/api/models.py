@@ -271,6 +271,42 @@ class UnavailableSensor:
     unavailable_for_ms: int = 0
 
 
+# Every value the daemon's `skipped_controls[].reason` field can take (273-i), in
+# no particular order. This is the WIRE vocabulary, so — like
+# `THERMAL_STATE_VALUES` above — it belongs with the model rather than with the
+# one surface that renders it, and `test_skip_reason_map_covers_the_wire_vocabulary`
+# pins the Controls-page presentation map against it. DEC-257 is the reason: a
+# presentation map keyed off a wire field drifted silently once already and a live
+# thermal recovery rendered as a neutral grey pill.
+SKIP_REASON_VALUES: tuple[str, ...] = (
+    "curve_not_found",
+    "sensor_unavailable",
+    "mix_unresolvable",
+    "sync_unresolvable",
+)
+
+
+@dataclass
+class SkippedControl:
+    """A control the daemon's engine cannot resolve, so is not commanding (273-i).
+
+    Mirrors the daemon's ``SkippedControlEntry`` on the ``/status`` + ``/poll``
+    surface. The fans of such a control hold their last commanded duty — a skip
+    never lowers a fan (DEC-269) — but nothing is driving them, which is what
+    this says.
+
+    ``reason`` is a stable token from `SKIP_REASON_VALUES`, not prose: the daemon
+    deliberately sends the token and leaves the wording to the client, so it can
+    be styled and localised here. An unrecognised token must still render (a
+    newer daemon may add one), which is why the presentation map has a fallback.
+    """
+
+    control_id: str = ""
+    control_name: str = ""
+    reason: str = ""
+    skipped_for_ms: int = 0
+
+
 @dataclass
 class ReadinessRollup:
     """Compact hardware-readiness rollup from ``GET /status`` + ``/poll`` (DEC-206).
@@ -342,6 +378,12 @@ class DaemonStatus:
     # temp while the radio is off). Omitted from the wire when empty (daemon
     # skips empty Vecs) → defaults to []. Display-only; surfaced in Diagnostics.
     unavailable_sensors: list[UnavailableSensor] = field(default_factory=list)
+    # 273-i: controls the daemon's engine cannot resolve, so is not commanding —
+    # e.g. a Mix naming a curve id the profile no longer has. Their fans hold
+    # their last commanded duty. Omitted from the wire when empty (daemon skips
+    # empty Vecs) and absent entirely from daemons older than 2.21.0 → defaults
+    # to []. Display-only; surfaced on the Controls page card for the control.
+    skipped_controls: list[SkippedControl] = field(default_factory=list)
     # DEC-194: the daemon's active profile, mirrored onto every /poll status so an
     # external activation (CLI --profile, another client, systemd) shows within
     # ~1 s instead of the slow /profile/active refresh. `None` (not "") when the
@@ -1331,6 +1373,14 @@ def parse_status(data: dict) -> DaemonStatus:
         unavailable_sensors=[
             UnavailableSensor(**_filter_fields(UnavailableSensor, e))
             for e in data.get("unavailable_sensors", [])
+            if isinstance(e, dict)
+        ],
+        # 273-i: omitted when empty, and absent entirely before daemon 2.21.0 —
+        # default to [] either way, so an older daemon simply reports nothing
+        # skipped rather than the GUI having to know its version.
+        skipped_controls=[
+            SkippedControl(**_filter_fields(SkippedControl, e))
+            for e in data.get("skipped_controls", [])
             if isinstance(e, dict)
         ],
         # DEC-194: absent key (older daemon, or no active profile) → None, so the

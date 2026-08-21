@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.services.controls_view import skipped_control_feedback
 from control_ofc.services.profile_service import (
     CONTROL_ROLE_GPU,
     ControlMode,
@@ -70,6 +71,11 @@ class ControlCard(ResizableGridCard):
         # the Controls page's /status reconcile; shows a read-only "External"
         # chip. `None` when no foreign override is pinning this control.
         self._external_pct: int | None = None
+        # 273-i: the daemon reports this control as one it cannot resolve, so it
+        # is commanding nothing and these fans hold their last speed. `None` when
+        # the control is being commanded normally. Set by the Controls page's
+        # /status reconcile, exactly like `_external_pct` above.
+        self._skipped_reason: str | None = None
         # Sizing (DEC-128 floor) + the DEC-129 resize grip live in the base.
         self._init_grid_card(control.id, f"ControlCard_Grip_{control.id}")
 
@@ -298,6 +304,12 @@ class ControlCard(ResizableGridCard):
             )
         else:
             self._output_label.setText(f"Now: {output_pct:.0f}%{gpu_suffix}")
+        if self._skipped_reason is not None:
+            # 273-i: nothing is commanding these fans. Painting "Applied" over
+            # that would be the lie this row exists to stop — the output label
+            # above still shows the last commanded value, which is what the fans
+            # are actually holding.
+            return
         if self._external_pct is not None:
             # DEC-169: a foreign daemon override owns the chip — keep the
             # read-only "External" badge instead of repainting "Applied" each
@@ -487,6 +499,34 @@ class ControlCard(ResizableGridCard):
         if self._external_pct is None:
             return
         self._external_pct = None
+        if self._manual_btn.isChecked():
+            return
+        self._apply_chip("", "")
+
+    def set_skipped(self, reason: str) -> None:
+        """Show a "Not controlled" chip for a control the daemon cannot resolve
+        (273-i).
+
+        The daemon short-circuits an overridden control before curve resolution,
+        so a skip and an override never co-occur — but a user-owned Manual state
+        still wins the chip, because that is a local intent the next poll has yet
+        to confirm and flickering it would be worse than delaying this.
+        """
+        self._skipped_reason = reason
+        if self._manual_btn.isChecked():
+            return
+        text, tooltip = skipped_control_feedback(reason)
+        self._apply_chip(text, "WarningChip")
+        self._status_chip.setToolTip(tooltip)
+
+    def clear_skipped(self) -> None:
+        """Drop the "Not controlled" chip (273-i) once the daemon stops reporting
+        the control as skipped. Leaves a user-owned Manual state untouched;
+        otherwise clears the chip and lets the next ``set_output`` repaint."""
+        if self._skipped_reason is None:
+            return
+        self._skipped_reason = None
+        self._status_chip.setToolTip("")
         if self._manual_btn.isChecked():
             return
         self._apply_chip("", "")

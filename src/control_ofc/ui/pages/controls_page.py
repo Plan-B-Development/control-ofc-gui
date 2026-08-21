@@ -255,6 +255,10 @@ class ControlsPage(QWidget):
         # Manual takes a fresh override (explicit ownership). Kept separate so the
         # two authorities (renew timer vs poll reconcile) never collide.
         self._external_overrides: dict[str, int] = {}
+        # 273-i: control_id → reason token, for controls the daemon reports it
+        # cannot resolve. Tracked so the reconcile below acts only on the
+        # per-poll delta, exactly like `_external_overrides`.
+        self._skipped_controls: dict[str, str] = {}
         self._override_renew_timer = QTimer(self)
         self._override_renew_timer.setObjectName("Controls_Timer_overrideRenew")
         self._override_renew_timer.timeout.connect(self._renew_overrides)
@@ -940,6 +944,10 @@ class ControlsPage(QWidget):
             # stale "External" chip — revert them now. GUI-owned overrides
             # self-correct via the renew timer's rejected renew.
             self._clear_all_external_overrides()
+            # 273-i: same reasoning — with polling stopped nothing would clear a
+            # stale "Not controlled" chip, and a disconnected GUI does not know
+            # whether the control is still skipped.
+            self._clear_all_skipped()
 
     # ─── Refresh all ─────────────────────────────────────────────────
 
@@ -966,6 +974,8 @@ class ControlsPage(QWidget):
         # Drop foreign-override tracking too — the cards are being rebuilt fresh;
         # the next poll re-adopts any still-active foreign override (DEC-169).
         self._external_overrides.clear()
+        # 273-i: likewise — the next poll re-adopts any still-skipped control.
+        self._skipped_controls.clear()
         # Clear existing
         self._controls_flow.clear_cards()
         self._control_cards.clear()
@@ -2079,12 +2089,40 @@ class ControlsPage(QWidget):
             if control_id not in foreign:
                 self._clear_external_override(control_id)
 
+        # 273-i: controls the daemon's engine cannot resolve, so is commanding
+        # nothing. Same delta shape as the block above. Display-only — the GUI
+        # never writes PWM (DEC-165), so there is nothing to do about it here
+        # beyond telling the user their fan is not being driven.
+        skipped = {entry.control_id: entry.reason for entry in status.skipped_controls}
+        for control_id, reason in skipped.items():
+            card = self._control_cards.get(control_id)
+            if card is None:
+                continue
+            if self._skipped_controls.get(control_id) != reason:
+                card.set_skipped(reason)
+                self._skipped_controls[control_id] = reason
+        for control_id in list(self._skipped_controls):
+            if control_id not in skipped:
+                self._clear_skipped(control_id)
+
     def _clear_external_override(self, control_id: str) -> None:
         """Stop tracking a foreign override and revert its card (DEC-169)."""
         self._external_overrides.pop(control_id, None)
         card = self._control_cards.get(control_id)
         if card is not None:
             card.clear_external_override()
+
+    def _clear_skipped(self, control_id: str) -> None:
+        """Stop tracking a skipped control and clear its chip (273-i)."""
+        self._skipped_controls.pop(control_id, None)
+        card = self._control_cards.get(control_id)
+        if card is not None:
+            card.clear_skipped()
+
+    def _clear_all_skipped(self) -> None:
+        """Clear every "Not controlled" chip (e.g. on daemon disconnect)."""
+        for control_id in list(self._skipped_controls):
+            self._clear_skipped(control_id)
 
     def _clear_all_external_overrides(self) -> None:
         """Revert every foreign-override card (e.g. on daemon disconnect)."""

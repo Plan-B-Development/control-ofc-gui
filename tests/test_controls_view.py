@@ -212,3 +212,50 @@ class TestPruneCardSizes:
         sizes = {"a": [1, 1]}
         prune_card_sizes(sizes, set())
         assert sizes == {}
+
+
+def test_skip_reason_map_covers_the_wire_vocabulary():
+    """Every `skipped_controls[].reason` the daemon can send must have wording.
+
+    DEC-257's mechanism, applied to a second wire field. A presentation map keyed
+    off a wire vocabulary drifted silently once already — `thermal_state` carried
+    three values the daemon never sends and was missing the two that mean it is
+    actively forcing fans, so a live thermal recovery rendered as a neutral grey
+    pill. This pins the 273-i map the same way, before it can happen twice.
+
+    The map is also allowed to be a strict superset of nothing: an extra key is
+    just as wrong, because it is wording for a state that cannot occur and will
+    never be seen or corrected.
+    """
+    from control_ofc.api.models import SKIP_REASON_VALUES
+    from control_ofc.services.controls_view import _SKIP_REASONS
+
+    wire = set(SKIP_REASON_VALUES)
+    keys = set(_SKIP_REASONS)
+    assert not wire - keys, (
+        f"controls_view._SKIP_REASONS is missing daemon reasons {sorted(wire - keys)} — "
+        "a control skipped for one would render with the vague fallback tooltip"
+    )
+    assert not keys - wire, (
+        f"controls_view._SKIP_REASONS carries reasons the daemon never sends "
+        f"{sorted(keys - wire)} — dead wording nobody will ever see or correct"
+    )
+
+
+def test_skipped_control_feedback_renders_an_unknown_reason():
+    """A newer daemon may add a reason token this build has never heard of.
+    Returning nothing would restore the exact silence 273-i exists to end, so the
+    fallback must still name the situation."""
+    from control_ofc.services.controls_view import skipped_control_feedback
+
+    chip, tooltip = skipped_control_feedback("a_reason_from_the_future")
+    assert chip == "Not controlled"
+    assert "not commanding" in tooltip
+
+
+def test_skipped_control_feedback_names_the_cause_when_known():
+    from control_ofc.services.controls_view import skipped_control_feedback
+
+    _, tooltip = skipped_control_feedback("sync_unresolvable")
+    assert "mirrors" in tooltip
+    assert "hold their last speed" in tooltip

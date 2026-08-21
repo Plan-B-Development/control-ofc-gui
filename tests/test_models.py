@@ -789,3 +789,44 @@ def test_parse_preferred_sensor_set_and_clear():
 
     clear_res = parse_preferred_sensor({"updated": True, "role": "mb", "preferred_sensor": None})
     assert clear_res.preferred_sensor is None
+
+
+def test_parse_status_defaults_skipped_controls_for_an_older_daemon():
+    """273-i: daemons before 2.21.0 omit the key entirely, and any daemon omits
+    it when nothing is skipped. Both must read as "nothing skipped" — the GUI
+    must never need to know the daemon's version to interpret this."""
+    from control_ofc.api.models import parse_status
+
+    assert parse_status({}).skipped_controls == []
+
+
+def test_parse_status_reads_skipped_controls():
+    from control_ofc.api.models import parse_status
+
+    status = parse_status(
+        {
+            "skipped_controls": [
+                {
+                    "control_id": "lc1",
+                    "control_name": "Front intake",
+                    "reason": "mix_unresolvable",
+                    "skipped_for_ms": 9000,
+                }
+            ]
+        }
+    )
+    assert len(status.skipped_controls) == 1
+    entry = status.skipped_controls[0]
+    assert entry.control_id == "lc1"
+    assert entry.control_name == "Front intake"
+    assert entry.reason == "mix_unresolvable"
+    assert entry.skipped_for_ms == 9000
+
+
+def test_parse_status_ignores_malformed_skipped_entries():
+    """A non-dict entry must not take the whole poll down — the same tolerance
+    every other list on this surface already has."""
+    from control_ofc.api.models import parse_status
+
+    status = parse_status({"skipped_controls": ["not-a-dict", None, 42]})
+    assert status.skipped_controls == []

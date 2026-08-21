@@ -784,7 +784,8 @@ def profile_file_path(profile_id: str) -> Path:
 #
 # Mix curves depend on other *curves*; Sync curves depend on other *controls*.
 # A dependency cycle is prohibited (DEC-152, retiring DEC-014). The evaluators
-# guard cycles at eval time (visited-set / tick-output map → safe fallback);
+# guard cycles at eval time (visited-set / tick-output map → the control is
+# skipped and its fans hold their last speed, never a lower value);
 # these pure helpers let the editor *prevent* a cycle being authored in the
 # first place by offering only safe choices. Both are O(V+E) DFS reachability
 # over the relevant dependency edges.
