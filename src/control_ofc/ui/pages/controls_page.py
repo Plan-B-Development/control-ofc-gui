@@ -2068,10 +2068,20 @@ class ControlsPage(QWidget):
         """
         if self._client is None:
             return
+        # `_manual_intent` as well as `_overrides`, and the second half is not
+        # redundant. `_take_override` records intent SYNCHRONOUSLY but the grant
+        # only lands in `_overrides` when the worker returns — a queued
+        # cross-thread hop in production (`_OVERRIDE_USE_THREAD`). A poll landing
+        # inside that window would otherwise classify THIS session's own override
+        # as foreign and stamp `_external_pct` from it, so releasing Manual then
+        # painted an "External N%" chip for an override the user owns. Tests could
+        # not catch it: `conftest` forces the worker inline, which closes the
+        # window by construction — so the pin below sets intent without a grant.
         foreign = {
             entry.control_id: entry.pwm_percent
             for entry in status.overrides
             if entry.control_id not in self._overrides
+            and entry.control_id not in self._manual_intent
         }
         # Adopt new / changed foreign overrides onto their cards.
         for control_id, pwm in foreign.items():

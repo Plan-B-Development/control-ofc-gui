@@ -389,8 +389,11 @@ must restore it when the override lapses, not discard it.
 
 The GUI consumes this **display-only** — it never writes PWM (DEC-165), so there is nothing for it to
 do beyond telling the user. The Controls page reconciles `skipped_controls[]` each poll and paints a
-**"Not controlled"** chip on the affected card, with the reason in its tooltip; the card's live output
-label keeps showing the last commanded value, because that is what the fans are actually holding. The
+**"Not controlled"** chip on the affected card, with the reason in its tooltip. (Note what the
+reference GUI does *not* do: its Controls card shows no live commanded value to leave standing, so
+the chip is the whole of the signal there. Register row 277-k tracks giving that page an output
+feed; a second client that has one should keep showing the last commanded value, since that is what
+the fans are holding.) The
 chip is cleared when the daemon stops reporting the control, and on disconnect (polling stops, so
 nothing else would clear it, and an offline GUI does not know whether it is still true). A
 user-owned Manual state wins the chip. Older daemons omit the array — the GUI defaults it to empty,

@@ -309,7 +309,7 @@ class ControlCard(ResizableGridCard):
             # that would be the lie this row exists to stop; the output label set
             # above still carries the last value this card was given.
             #
-            # Reachable in DEMO mode only, and deliberately kept. `set_output` has
+            # Dead in BOTH modes today, and deliberately kept. `set_output` has
             # one production caller (`ControlsPage.update_control_outputs`) and
             # that is wired solely to `DemoController.outputs_changed`, while
             # `_skipped_reason` is set only from `_on_status_reconcile`, which
@@ -441,7 +441,9 @@ class ControlCard(ResizableGridCard):
         and equally the external override lapsing. `set_skipped` deliberately
         SUPPRESSES its chip while Manual is held *or* an external override is
         displayed, rather than discarding the reason, so whichever of those ends
-        first has to put the chip back. Blanking instead left the card with no
+        first has to put the chip back. (Suppression is the skip's property, not
+        the override's: taking Manual *discards* `_external_pct` outright,
+        DEC-169.) Blanking instead left the card with no
         chip at all until something else repainted it, and on this page nothing
         does: the reconcile acts only on a *delta*, so a state that is still true
         is never re-sent.
@@ -555,7 +557,11 @@ class ControlCard(ResizableGridCard):
     def clear_external_override(self) -> None:
         """Drop the read-only external-override chip (DEC-169) once the daemon no
         longer reports it. Leaves a user-owned Manual state untouched; otherwise
-        clears the chip and lets the next ``set_output`` repaint "Applied"."""
+        clears the chip.
+
+        It does NOT hand off to ``set_output``: that runs in demo mode only, so
+        on a live page this method's own repaint is the last word. An earlier
+        docstring promised the handoff (register row 277-k)."""
         if self._external_pct is None:
             return
         self._external_pct = None
@@ -602,7 +608,8 @@ class ControlCard(ResizableGridCard):
     def clear_skipped(self) -> None:
         """Drop the "Not controlled" chip (273-i) once the daemon stops reporting
         the control as skipped. Leaves a user-owned Manual state untouched;
-        otherwise clears the chip and lets the next ``set_output`` repaint."""
+        otherwise clears the chip. No ``set_output`` handoff — that runs in demo
+        mode only (register row 277-k), so this repaint is the last word."""
         if self._skipped_reason is None:
             return
         self._skipped_reason = None

@@ -202,6 +202,10 @@ class TestForeignOverrideReconcile:
         )
         page._refresh_controls_grid(Profile(id="p", name="P", controls=[control], curves=[curve]))
         assert page._skipped_controls == {}, "the delta cache must not outlive the cards"
+        assert page._control_cards["lc1"]._status_chip.text() == "", (
+            "the rebuilt card must start chip-less — without this the outcome "
+            "assertion below could pass on a stale chip if cards were ever reused"
+        )
 
         # The same reason again: only a cleared cache makes this a fresh delta.
         page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
@@ -210,6 +214,32 @@ class TestForeignOverrideReconcile:
             "the rebuilt card must get its chip back on the next poll — otherwise "
             "the page goes quiet about a fan nothing is driving"
         )
+
+    def test_own_in_flight_take_is_not_adopted_as_foreign(self, qtbot, app_state, profile_service):
+        """A poll landing mid-take must not mistake this session's own override
+        for someone else's.
+
+        `_take_override` records `_manual_intent` synchronously, but the grant only
+        reaches `_overrides` when the worker returns — a queued cross-thread hop in
+        production. A poll inside that window used to classify the control as
+        foreign and stamp `_external_pct` from it, so releasing Manual painted
+        "External N%" for an override the user owns.
+
+        The window cannot be reproduced through the worker here: `conftest` forces
+        `_OVERRIDE_USE_THREAD=False`, so a take completes inline and the window
+        closes by construction. That is exactly why this seeds the intent directly
+        — the state, not the timing, is what the guard reads.
+        """
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        page._manual_intent.add("lc1")
+        assert "lc1" not in page._overrides, "precondition: the grant has not landed yet"
+
+        page._on_status_reconcile(_status(("lc1", 50)))
+
+        assert page._external_overrides == {}, (
+            "this session's own in-flight override must not be adopted as foreign"
+        )
+        assert page._control_cards["lc1"]._external_pct is None
 
     def test_reconcile_noop_in_demo_mode(self, qtbot, app_state, profile_service):
         """Demo mode (no daemon client) owns its own simulated manual state — the

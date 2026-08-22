@@ -7,8 +7,9 @@
   out what speed a control should run at — most often because its curve combines
   another curve you have since deleted, or mirrors a control that is not itself
   running — it commands nothing, and those fans hold their last speed. Until now
-  the card carried on showing a reassuring "Applied" while that happened, so the
-  only symptom was a fan that never changed speed again.
+  the card said nothing at all about it — the badge simply sat blank, exactly as
+  it does for a healthy control — so the only symptom was a fan that never
+  changed speed again.
   Such a control now shows a **"Not controlled"** badge, with the reason on
   hover. The badge clears by itself as soon as the daemon can resolve the control
   again. Needs daemon 2.21.0 or newer; against an older daemon nothing changes.
