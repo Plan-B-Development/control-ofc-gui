@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.44.0] — 2026-08-22
 
 ### Added
 - **A fan card now says when nothing is driving it.** If the daemon cannot work
