@@ -108,6 +108,9 @@ DASHBOARD_OBJECTNAMES = frozenset(
         "Dashboard_Label_fanCardsEmpty",
         "Dashboard_Label_fanCount",
         "Dashboard_Label_subHwmon",
+        # 279-a: the daemon 2.22.0 `controls` subsystem chip (DEC-279). Hidden
+        # until something is unresolved, but always constructed.
+        "Dashboard_Label_subControls",
         "Dashboard_Label_subOpenfan",
         "Dashboard_Pane_fanCards",
         "Dashboard_ScrollArea_fanCards",

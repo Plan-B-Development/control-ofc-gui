@@ -414,12 +414,13 @@ must restore it when the override lapses, not discard it.
 
 The GUI consumes this **display-only** — it never writes PWM (DEC-165), so there is nothing for it to
 do beyond telling the user. The Controls page reconciles `skipped_controls[]` each poll and paints a
-**"Not controlled"** chip on the affected card, with the reason in its tooltip. (Note what the
-reference GUI does *not* do: its Controls card shows no live commanded value to leave standing, so
-the chip is the whole of the signal there. `control_outputs[]` below is the daemon half of register
-row 277-k and exists as of daemon 2.22.0; the reference GUI does not consume it yet. A second client
-that shows an output should keep showing the last commanded value, since that is what the fans are
-holding.) The
+**"Not controlled"** chip on the affected card, with the reason in its tooltip. (Since GUI 2.45.0 the reference GUI
+also shows a live output figure on the card, fed from `control_outputs[]` below — so a skip chip and
+an output figure now co-exist there, and the chip is no longer the whole of the signal. **A client
+showing an output must drop it to "unknown" when the daemon stops reporting that control**, exactly
+as the `control_outputs[]` section below requires; it must NOT keep displaying the last commanded
+value. An earlier revision of this note advised the opposite, which contradicted that section and
+would have a card state a duty nothing is applying for the whole of a thermal event.) The
 chip is cleared when the daemon stops reporting the control, and on disconnect (polling stops, so
 nothing else would clear it, and an offline GUI does not know whether it is still true). A
 user-owned Manual state wins the chip. Older daemons omit the array — the GUI defaults it to empty,

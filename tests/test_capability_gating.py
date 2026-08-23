@@ -37,7 +37,10 @@ def _no_write_caps() -> Capabilities:
     return Capabilities(
         daemon_version="2.0.0",
         features=FeatureFlags(openfan_write_supported=False, hwmon_write_supported=False),
-        control=ControlCapability(autonomous_control=True),
+        # A real 2.0.0+ daemon sets all three together and unconditionally
+        # (daemon `api/handlers/status.rs`); the Controls page gates the
+        # Manual toggle on `manual_override` rather than inferring it.
+        control=ControlCapability(autonomous_control=True, manual_override=True, fan_identify=True),
     )
 
 
@@ -46,7 +49,10 @@ def _write_caps() -> Capabilities:
     return Capabilities(
         daemon_version="2.0.0",
         features=FeatureFlags(openfan_write_supported=True),
-        control=ControlCapability(autonomous_control=True),
+        # A real 2.0.0+ daemon sets all three together and unconditionally
+        # (daemon `api/handlers/status.rs`); the Controls page gates the
+        # Manual toggle on `manual_override` rather than inferring it.
+        control=ControlCapability(autonomous_control=True, manual_override=True, fan_identify=True),
     )
 
 
@@ -307,3 +313,74 @@ class TestGuiVersionFloor:
             )
         )
         assert window._gui_floor_banner.isHidden()
+
+
+class TestOverrideAndIdentifyCapabilityGates:
+    """P3: gate Manual and the identify wizard on the flags that describe them.
+
+    Both `control.manual_override` (DEC-163) and `control.fan_identify`
+    (DEC-166) have been parsed since DEC-159/160 and never read. The Manual
+    toggle rode on `autonomous_control` alone and worked purely by
+    co-occurrence — the daemon sets all three together and unconditionally
+    (`api/handlers/status.rs`) — so a daemon that dropped either surface would
+    have offered a control that could only 404.
+    """
+
+    def _caps(self, **control_kwargs):
+        from control_ofc.api.models import Capabilities, ControlCapability, FeatureFlags
+
+        base = dict(autonomous_control=True, manual_override=True, fan_identify=True)
+        base.update(control_kwargs)
+        return Capabilities(
+            features=FeatureFlags(openfan_write_supported=True, hwmon_write_supported=True),
+            control=ControlCapability(**base),
+        )
+
+    def test_cards_stay_writable_when_the_daemon_advertises_override(
+        self, qtbot, app_state, profile_service
+    ):
+        """Precondition for the negative below: the realistic payload works."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.ui.pages.controls_page import ControlsPage
+
+        page = ControlsPage(app_state, profile_service, client=MagicMock())
+        qtbot.addWidget(page)
+        page._on_capabilities_updated(self._caps())
+        assert page._cards_writable
+
+    def test_no_manual_override_capability_disables_the_cards(
+        self, qtbot, app_state, profile_service
+    ):
+        from unittest.mock import MagicMock
+
+        from control_ofc.ui.pages.controls_page import ControlsPage
+
+        page = ControlsPage(app_state, profile_service, client=MagicMock())
+        qtbot.addWidget(page)
+        page._on_capabilities_updated(self._caps(manual_override=False))
+        assert not page._cards_writable, (
+            "without /control/{id}/override the Manual toggle can only 404, so it "
+            "must not be offered"
+        )
+
+    def test_no_fan_identify_capability_hides_the_wizard(self, qtbot, app_state, profile_service):
+        from unittest.mock import MagicMock
+
+        from control_ofc.ui.pages.controls_page import ControlsPage
+
+        page = ControlsPage(app_state, profile_service, client=MagicMock())
+        qtbot.addWidget(page)
+        page._on_capabilities_updated(self._caps())
+        assert page._wizard_action.isVisible(), "precondition: shown when advertised"
+
+        page._on_capabilities_updated(self._caps(fan_identify=False))
+        assert not page._wizard_action.isVisible()
+
+    def test_demo_mode_still_advertises_both(self):
+        """Demo must mirror the daemon, or demo loses Manual and the wizard."""
+        from control_ofc.services.demo_service import DemoService
+
+        caps = DemoService().capabilities()
+        assert caps.control.manual_override
+        assert caps.control.fan_identify

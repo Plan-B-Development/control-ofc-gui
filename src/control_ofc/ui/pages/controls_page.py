@@ -1816,11 +1816,24 @@ class ControlsPage(QWidget):
         # cards stay live.
         control = getattr(caps, "control", None)
         autonomous = bool(control and control.autonomous_control)
-        self._cards_writable = autonomous and bool(
-            caps.features.openfan_write_supported or caps.features.hwmon_write_supported
+        # `control.manual_override` is the daemon's own statement that
+        # `/control/{id}/override` exists. Until now the Manual toggle rode on
+        # `autonomous_control` alone and worked purely by co-occurrence — every
+        # 2.0.0+ daemon happened to advertise both — so a daemon that dropped the
+        # override surface would have offered a toggle that could only 404. The
+        # flag has been parsed since DEC-159/160 and simply never read.
+        self._cards_writable = (
+            autonomous
+            and bool(control and control.manual_override)
+            and bool(caps.features.openfan_write_supported or caps.features.hwmon_write_supported)
         )
         for card in self._control_cards.values():
             card.setEnabled(self._cards_writable)
+        # Same reasoning for the identify wizard, which calls
+        # `fan_identify(id, "stop"/"restore")` for every source (DEC-166). Hidden
+        # rather than disabled-with-a-tooltip, matching how the AIO and GPU
+        # actions above handle an absent capability.
+        self._wizard_action.setVisible(bool(control and control.fan_identify))
 
     def _on_card_manual_toggled(self, control_id: str, active: bool, pct: int) -> None:
         """Per-card Manual toggle: pin or release one control transiently.
@@ -1895,6 +1908,18 @@ class ControlsPage(QWidget):
         if self._override_worker is None:
             return
         self._manual_intent.add(control_id)
+        # 277-q: forget any foreign-override figure we were tracking for this
+        # control. Taking Manual nulls the CARD's `_external_pct`, and leaving the
+        # PAGE's entry at the same pwm meant no later poll registered as a delta —
+        # so if the take was then rejected, `_revert_card_manual` →
+        # `clear_manual` → `_restore_daemon_chip` found `_external_pct is None`
+        # and painted blank while a foreign override was still pinning those fans.
+        # Real but bounded: both `_revert_card_manual` call sites pop
+        # `self._overrides` first, so the next poll re-adopts and the chip returns
+        # within ~1 s. Dropping it here keeps card and page in step from the
+        # start rather than relying on that self-heal, which also required the
+        # other client's pwm to be unchanged and still renewing.
+        self._external_overrides.pop(control_id, None)
         self._request_take.emit(control_id, pct)
 
     def _on_take_result(self, control_id: str, _pct: int, grant: object, error: object) -> None:
@@ -2103,27 +2128,14 @@ class ControlsPage(QWidget):
         # nothing. Same delta shape as the block above. Display-only — the GUI
         # never writes PWM (DEC-165), so there is nothing to do about it here
         # beyond telling the user their fan is not being driven.
-        # `control_id` keys this dict straight off the wire, and `_filter_fields`
-        # does no type coercion — a daemon sending `"control_id": []` would raise
-        # `TypeError: unhashable type` inside the `status_updated` slot on the 1 Hz
-        # poll path. Local belt-and-braces, and the blast radius is smaller than
-        # an earlier version of this comment claimed: measured on PySide6 6.11.1,
-        # an exception in a slot does NOT escape `emit()` — Qt prints it via
-        # `sys.excepthook` at the C++ boundary and carries on running the other
-        # slots. So the cost is this page's chips going stale plus stderr spam,
-        # not the whole status emission being lost. Unreachable against the
-        # shipping daemon too (`SkippedControlEntry.control_id` is a Rust
-        # `String`, so serde cannot emit anything else); the sibling `overrides`
-        # comprehension above is deliberately NOT given the same guard, because
-        # the codebase's posture is to trust the daemon's typed wire contract and
-        # half a dozen other sites hash wire ids the same way. Register row
-        # 277-h tracks deciding that posture once, in `models.py`, rather than
-        # per-site.
-        skipped = {
-            entry.control_id: entry.reason
-            for entry in status.skipped_controls
-            if isinstance(entry.control_id, str)
-        }
+        # No `isinstance` guard here, and its absence is now the deliberate part
+        # (277-h). This comprehension carried one while its sibling `overrides`
+        # above did not, which closed one door of about six and made the asymmetry
+        # read as intentional. The posture is decided once at the parse boundary
+        # instead: `_filter_fields` coerces every identity field to `str`, so a
+        # malformed wire id arrives here as an unmatchable string rather than an
+        # unhashable list.
+        skipped = {entry.control_id: entry.reason for entry in status.skipped_controls}
         for control_id, reason in skipped.items():
             card = self._control_cards.get(control_id)
             if card is None:
@@ -2134,6 +2146,101 @@ class ControlsPage(QWidget):
         for control_id in list(self._skipped_controls):
             if control_id not in skipped:
                 self._clear_skipped(control_id)
+
+        self._apply_live_outputs(status)
+
+    def _apply_live_outputs(self, status: DaemonStatus) -> None:
+        """Drive the cards' output figure from the 1 Hz poll (277-k).
+
+        Until daemon 2.22.0 published `control_outputs[]` there was no live feed
+        at all: `update_control_outputs` had exactly one production caller, wired
+        to `DemoController.outputs_changed`, so a live card's output label sat at
+        "—" for the whole session and only ever changed during a curve edit. That
+        is a real gap against `CLAUDE.md § UX standards → Controls` ("what are the
+        fans doing?"), and it is why several comments and changelog lines used to
+        describe demo-only behaviour as if it were live.
+
+        The rendering path already existed and was already correct — sensor
+        context, and the DEC-119 GPU-divergence suffix via `divergent_gpu_output`
+        — so this is wiring, not new display logic. It also makes
+        `ControlCard.set_output`'s `_skipped_reason` guard live rather than dead
+        in live mode, which is what that guard was kept for.
+
+        **An absent control is not a zero.** The daemon omits any control it did
+        not evaluate — no profile, a listed skip, or the whole of a thermal event,
+        where `force_all` drives the fans directly and bypasses every control. A
+        card with no entry is left alone rather than being told `0`, so it keeps
+        showing whatever it last had rather than claiming the fans stopped.
+        """
+        outputs = {entry.control_id: entry.output_pct for entry in status.control_outputs}
+
+        # Cards whose curve is on the editor workbench are showing a live
+        # "Preview: N%" from `_update_card_previews`, recomputed on every drag.
+        # The poll must not stamp over it — with a 1 Hz feed the preview would
+        # otherwise survive less than a second per edit, silently degrading a
+        # feature that predates this one. Held on the PAGE, which owns the editor,
+        # rather than as lifecycle state on the card.
+        # `_editing_curve_id`, NOT `self._curve_editor.get_curve()`. The editor's
+        # `_curve` is assigned only in `__init__` and `set_curve` and is never
+        # reset, so `get_curve()` keeps returning the last-edited curve long after
+        # `_close_editor` has hidden the pane — which permanently exempted the
+        # last-edited control from the live feed and froze it on a stale
+        # "Preview: N%", including through a thermal event. That is the exact
+        # contract violation this method's reset loop exists to prevent,
+        # reintroduced for one control by the exemption meant to protect it.
+        # `_close_editor` clears `_editing_curve_id` (via `_set_curve_editing`),
+        # so it is the state that actually tracks "an editor is open on X".
+        previewing = self._editing_curve_id
+
+        # **Absence is not "keep the last value".** `docs/08` states that a client
+        # "must not carry a previous value forward ... Render absence as
+        # 'unknown' (the reference GUI's '—'), never as 0". A control is absent
+        # whenever the daemon did not evaluate it — no profile, a listed skip, or
+        # the whole of a thermal event, where `force_all` drives the fans directly
+        # and bypasses every control. Carrying "Now: 42%" through a 105 °C event
+        # while the fans run at 100% is precisely what that clause forbids, so
+        # every card the daemon did not report is reset here rather than left.
+        for control_id, card in self._control_cards.items():
+            if control_id in outputs:
+                continue
+            if card.control.mode == ControlMode.CURVE and card.control.curve_id == previewing:
+                continue
+            card.clear_output()
+
+        if not outputs:
+            return
+        # Per-member duty for the GPU-divergence suffix comes from each fan's own
+        # `last_commanded_pwm` — the control-wide figure above cannot express a
+        # member sitting below it on a floor or a diverging GPU (DEC-119).
+        member_outputs: dict[str, dict[str, float]] = {}
+        if self._state is not None:
+            by_fan = {
+                fan.id: float(fan.last_commanded_pwm)
+                for fan in self._state.fans
+                if fan.last_commanded_pwm is not None
+            }
+            for control_id in outputs:
+                card = self._control_cards.get(control_id)
+                if card is None:
+                    continue
+                members = {
+                    m.member_id: by_fan[m.member_id]
+                    for m in card.control.members
+                    if m.member_id in by_fan
+                }
+                if members:
+                    member_outputs[control_id] = members
+        if previewing is not None:
+            outputs = {
+                cid: pct
+                for cid, pct in outputs.items()
+                if not (
+                    (card := self._control_cards.get(cid)) is not None
+                    and card.control.mode == ControlMode.CURVE
+                    and card.control.curve_id == previewing
+                )
+            }
+        self.update_control_outputs(outputs, member_outputs)
 
     def _clear_external_override(self, control_id: str) -> None:
         """Stop tracking a foreign override and revert its card (DEC-169)."""

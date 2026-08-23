@@ -34,7 +34,6 @@ from control_ofc.api.models import (
     NvidiaGpuCapability,
     NvidiaGpuDiagnosticsInfo,
     OpenfanCapability,
-    SafetyLimits,
     SensorReading,
     SubsystemStatus,
     ThermalSafetyInfo,
@@ -282,12 +281,22 @@ class DemoService:
                 openfan_write_supported=True,
                 hwmon_write_supported=True,
             ),
-            limits=SafetyLimits(),
             # Demo simulates a modern, autonomous 2.0.0+ daemon (the sole fan
             # writer), so the Controls override cards stay live — the card gate now
             # requires autonomous_control (see controls_page._on_capabilities_updated
             # and the main-window control gate).
-            control=ControlCapability(autonomous_control=True, min_supported_gui="2.0.0"),
+            # Mirror what a real 2.0.0+ daemon advertises. `manual_override` and
+            # `fan_identify` are set unconditionally alongside `autonomous_control`
+            # by the daemon (`api/handlers/status.rs`), and the Controls page now
+            # GATES on them rather than inferring them from `autonomous_control`
+            # alone — so omitting them here would silently disable demo mode's
+            # Manual toggle and hide its identify wizard.
+            control=ControlCapability(
+                autonomous_control=True,
+                manual_override=True,
+                fan_identify=True,
+                min_supported_gui="2.0.0",
+            ),
         )
 
     def status(self) -> DaemonStatus:

@@ -236,7 +236,7 @@ or line edit has no label of its own either — its visible words live in a *sep
 `QLabel` beside it, so it announces its value with nothing to say what the value is
 *for*. Every such control must name itself from the words already next to it.
 
-**One rule, one helper, and one set still outstanding.** The rule lives in
+**One rule, one helper, and no deferrals left.** The rule lives in
 `ui/components/a11y.py::name_value_control` (273-g). It was written inline in
 `SettingsPage._setting_row`, which named that page correctly and left every other
 surface untouched for three ADRs — a private method on one page cannot be called from
@@ -247,14 +247,23 @@ sidebar, the curve editor and curve-edit dialog, the fan-role, AIO and GPU-dedic
 dialogs, the fan wizard, the logs page, the timeline chart and the sensor-series
 panel.
 
-**Still outstanding (273-g phase 2):** the per-item controls, where one shared name
-would collide because there are many instances — `ThemeEditorWidget`'s per-token hex
-inputs and `ControlCard`'s per-card manual slider. Each needs a name derived from its
-own item. They are listed explicitly in the enforcing tests rather than passed over,
-and the list is asserted non-stale, so it cannot quietly widen.
+**273-g phase 2 is closed.** The per-item controls — where one shared name would
+collide because there are many instances — are now named from their own item:
+`ThemeEditorWidget`'s ~54 per-token hex inputs from their token (and its chart-series
+fields from their slot), `ControlCard`'s manual slider from its own control. Both
+deferral lists are gone from the enforcing tests, so those surfaces are swept like any
+other and the runtime floor rose with them.
+
+**This is not an app-wide compliance claim.** What is asserted is narrower and worth
+stating precisely: every value control the runtime sweep can construct announces a
+name, and every one the AST scan can see is passed to the helper. Surfaces neither can
+reach — a dialog needing domain objects the sweep cannot build, a control assigned to a
+subscript the scan cannot read — are covered by neither, which is why the scan now
+*counts* the targets it cannot read and asserts that count is zero (277-g) rather than
+skipping past them.
 
 **Two tests hold this, and they are complements rather than duplicates.**
-`test_every_value_control_announces_what_it_sets` constructs nine surfaces and checks
+`test_every_value_control_announces_what_it_sets` constructs ten surfaces and checks
 the **announced** name; `test_no_value_control_is_constructed_without_a_name` scans
 the AST of everything under `ui/`, including the dialogs that need real domain objects
 to build and so cannot be constructed in the first test. The AST lint proves the call

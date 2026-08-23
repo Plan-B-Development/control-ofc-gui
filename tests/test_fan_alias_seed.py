@@ -839,7 +839,12 @@ def test_controls_page_repaints_member_rows_on_rename(qtbot, app_state, profile_
 
     def _member_texts() -> list[str]:
         card = page._control_cards[control.id]
-        return [w.text() for w in card.findChildren(QLabel)]
+        # 277-e: exclude the hidden `*_A11yLabel` proxies (DEC-276) — real
+        # text, but invisible, so a "must NOT appear" assertion here would
+        # otherwise be checking text no user can see.
+        return [
+            w.text() for w in card.findChildren(QLabel) if not w.objectName().endswith("_A11yLabel")
+        ]
 
     assert any("Stale Cached" in t for t in _member_texts())
 
@@ -897,7 +902,10 @@ def test_fan_role_dialog_resolves_member_names(qtbot):
     dlg = FanRoleDialog(control, [], display_name=state.member_display_name)
     qtbot.addWidget(dlg)
 
-    texts = [w.text() for w in dlg.findChildren(QLabel)]
+    # 277-e: exclude the hidden `*_A11yLabel` proxies (DEC-276).
+    texts = [
+        w.text() for w in dlg.findChildren(QLabel) if not w.objectName().endswith("_A11yLabel")
+    ]
     assert any("Renamed Fan" in t for t in texts)
     assert not any("Stale Cached" in t for t in texts)
 

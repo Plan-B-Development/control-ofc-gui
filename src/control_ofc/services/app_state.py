@@ -57,7 +57,6 @@ class AppState(QObject):
     warning_count_changed = Signal(int)
     warnings_cleared = Signal()
     fan_alias_changed = Signal(str, str)  # fan_id, display_name
-    fan_zones_changed = Signal(str, str)  # fan_id, zone_name ("" = unassigned)
     sensor_class_override_changed = Signal(str, str)  # sensor_id, source_class ("" = cleared)
 
     def __init__(self, parent: QObject | None = None) -> None:

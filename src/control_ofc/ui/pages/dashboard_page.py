@@ -355,6 +355,17 @@ class DashboardPage(QWidget):
         self._sub_hwmon_label.setTextFormat(Qt.TextFormat.PlainText)
         sub_layout.addWidget(self._sub_hwmon_label)
 
+        # 279-a: the daemon's fourth subsystem (daemon >= 2.22.0, DEC-279) — is
+        # every control actually being commanded? Unlike its two siblings this has
+        # no capabilities-derived baseline, so it starts hidden and appears only
+        # while something is wrong. That also keeps the frame quiet on the healthy
+        # machine, which is every machine most of the time.
+        self._sub_controls_label = QLabel("")
+        self._sub_controls_label.setObjectName("Dashboard_Label_subControls")
+        self._sub_controls_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._sub_controls_label.setVisible(False)
+        sub_layout.addWidget(self._sub_controls_label)
+
         layout.addWidget(self._subsystem_frame, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # What to do next
@@ -803,6 +814,15 @@ class DashboardPage(QWidget):
                 self._annotate(f"Override end: {cid}")
             self._last_override_ids = override_ids
 
+        # 279-a: hide first, then let the loop below re-raise it. Its two
+        # siblings are repainted from the capabilities VM on every refresh, so a
+        # poll that finds them healthy can leave them alone — nothing else ever
+        # writes THIS label, so it needs both an `ok` path and an ABSENT path.
+        # Absent matters on a reconnect to a pre-2.22.0 daemon, which sends three
+        # subsystems: without this the chip would pin the last warning for the
+        # rest of the session, long after the control was fixed or the daemon
+        # that reported it was replaced.
+        self._sub_controls_label.setVisible(False)
         for sub in status.subsystems:
             if sub.name == "openfan" and sub.status != "ok":
                 reason = f" ({sub.reason})" if sub.reason else ""
@@ -812,6 +832,11 @@ class DashboardPage(QWidget):
                 reason = f" ({sub.reason})" if sub.reason else ""
                 self._sub_hwmon_label.setText(f"hwmon: {sub.status}{reason}")
                 set_chip_class(self._sub_hwmon_label, "WarningChip")
+            elif sub.name == "controls" and sub.status != "ok":
+                reason = f" ({sub.reason})" if sub.reason else ""
+                self._sub_controls_label.setText(f"Controls: {sub.status}{reason}")
+                set_chip_class(self._sub_controls_label, "WarningChip")
+                self._sub_controls_label.setVisible(True)
 
     def _on_sensors_updated(self, sensors: list[SensorReading]) -> None:
         if sensors:

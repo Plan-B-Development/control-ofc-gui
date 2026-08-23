@@ -2169,6 +2169,7 @@ class TestAccessibleNames:
     # instead — which is the whole reason that lint exists.
     @staticmethod
     def _surface_registry():
+        from control_ofc.services.app_state import AppState
         from control_ofc.services.diagnostics_service import DiagnosticsService
         from control_ofc.services.history_store import HistoryStore
         from control_ofc.services.series_selection import SeriesSelectionModel
@@ -2179,6 +2180,7 @@ class TestAccessibleNames:
         from control_ofc.ui.pages.theme_page import ThemePage
         from control_ofc.ui.sidebar import Sidebar
         from control_ofc.ui.widgets.curve_editor import CurveEditor
+        from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
         from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
         from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
@@ -2189,28 +2191,17 @@ class TestAccessibleNames:
             ("SystemStatePage", SystemStatePage),
             ("Sidebar", Sidebar),
             ("CurveEditor", CurveEditor),
+            # 277-m: the wizard's identify page is the ONLY site where
+            # `name_value_control` runs BEFORE `setEditable(True)`, and that
+            # ordering changes which `QAccessibleComboBox::text(Name)` path
+            # applies — precisely the DEC-269 trap the helper exists to encode.
+            # The AST lint proves the call was *written*; only this sweep proves
+            # Qt honoured it. It was one of five surfaces left on lint alone.
+            ("FanConfigWizard", lambda: FanConfigWizard(AppState())),
             ("LogsPage", lambda: LogsPage(DiagnosticsService(None))),
             ("TimelineChart", lambda: TimelineChart(HistoryStore())),
             ("SensorSeriesPanel", lambda: SensorSeriesPanel(SeriesSelectionModel())),
         ]
-
-    @staticmethod
-    def _deferred_to_phase_2(control) -> bool:
-        """True for a control 273-g phase 1 deliberately did not name.
-
-        Exactly one case: the per-token hex inputs inside ``ThemeEditorWidget``. They
-        need a name derived from each token, not a shared one, so they are
-        phase 2. Matching on the ancestor type rather than a count keeps this
-        honest — it cannot silently absorb a control added elsewhere.
-        """
-        from control_ofc.ui.widgets.theme_editor import ThemeEditorWidget
-
-        parent = control.parent()
-        while parent is not None:
-            if isinstance(parent, ThemeEditorWidget):
-                return True
-            parent = parent.parent()
-        return False
 
     def test_every_value_control_announces_what_it_sets(self, qtbot):
         """273-g: a combo/spin/slider/edit must say what it is for, app-wide.
@@ -2241,7 +2232,6 @@ class TestAccessibleNames:
         types = (QComboBox, QAbstractSpinBox, QSlider, QLineEdit, QPlainTextEdit)
         checked = 0
         nameless: list[str] = []
-        deferred = 0
 
         for surface_name, factory in self._surface_registry():
             widget = factory()
@@ -2257,15 +2247,6 @@ class TestAccessibleNames:
             controls = [
                 c for c in controls if not isinstance(c.parent(), QComboBox | QAbstractSpinBox)
             ]
-            # 273-g Tier C, deferred to phase 2: ThemeEditor builds one hex input
-            # per theme token (~54 of them), and a fixed name on all of them
-            # would collide — each needs its own token name, which is a change of
-            # a different size from this sweep. Excluded HERE rather than left
-            # silently failing, and the exclusion is pinned below so it cannot
-            # widen to cover a surface nobody decided to defer.
-            in_theme_editor = [c for c in controls if self._deferred_to_phase_2(c)]
-            deferred += len(in_theme_editor)
-            controls = [c for c in controls if c not in in_theme_editor]
             checked += len(controls)
             nameless += [
                 f"{surface_name}: {c.objectName() or repr(c)}"
@@ -2273,13 +2254,12 @@ class TestAccessibleNames:
                 if not self._announced_label(c).strip()
             ]
 
-        assert deferred > 0, (
-            "no control was deferred to phase 2 — either ThemeEditor's hex inputs "
-            "have been named (delete `_deferred_to_phase_2` and this assertion, "
-            "closing 273-g Tier C) or the exclusion has stopped matching and is "
-            "now hiding nothing while looking like it hides something"
-        )
-        assert checked >= 25, (
+        # 273-g Tier C is CLOSED: ThemeEditor's ~54 hex inputs are named from
+        # their own token (and the chart-series fields from their slot), so the
+        # sweep now covers this surface like any other. The floor below rises
+        # with them, which is what stops the exclusion being reintroduced by
+        # accident — a re-deferred ThemeEditor would drop `checked` back under it.
+        assert checked >= 60, (
             f"the sweep found only {checked} value controls across "
             f"{len(self._surface_registry())} surfaces — the registry or the "
             "findChildren filter has stopped finding things"
@@ -2328,16 +2308,12 @@ class TestAccessibleNames:
         # control to it IS naming it.
         naming_helpers = {"name_value_control", "_setting_row"}
 
-        # 273-g Tier C — phase 2. Each is a control built once per item in a list,
-        # so a single shared name would collide; each needs a name derived from
-        # its own item. Keyed on file + variable rather than line number so an
-        # unrelated edit above cannot silently retire an entry.
-        deferred = {
-            # ~54 inputs, one per theme token → f"{token} hex value".
-            "ui/widgets/theme_editor.py:edit",
-            # One per fan card → f"{control.name} manual output".
-            "ui/widgets/control_card.py:_manual_slider",
-        }
+        # 273-g Tier C is CLOSED — the two per-instance deferrals are named:
+        # `theme_editor.py`'s hex inputs from their own token (and chart-series
+        # fields from their slot), `control_card.py`'s manual slider from its own
+        # control. The set stays, empty, so the machinery below keeps working and
+        # a future deferral has somewhere to go with a reason attached.
+        deferred: set[str] = set()
 
         # Named, but through an indirection this scan cannot follow: each is put
         # into a `controls[key]` dict and passed to `_setting_row` as a subscript,
@@ -2364,6 +2340,13 @@ class TestAccessibleNames:
 
         ui = Path(__file__).resolve().parent.parent / "src" / "control_ofc" / "ui"
         sites, unnamed, matched_deferred, matched_indirect = 0, [], set(), set()
+        # 277-g: constructions whose assignment target `bound_name` cannot read —
+        # a subscript (`controls["x"] = QComboBox()`) or a tuple unpack. The scan
+        # used to `continue` past these BEFORE `sites += 1`, so such a site
+        # neither failed the naming check nor inflated the staleness floor: it was
+        # invisible in both directions, and the test read as stricter than it was.
+        # None exist today; asserting that is what keeps it true.
+        skipped_targets: list[str] = []
 
         for py in sorted(ui.rglob("*.py")):
             rel = py.relative_to(ui.parent).as_posix()
@@ -2398,6 +2381,7 @@ class TestAccessibleNames:
                         continue
                     var = bound_name(node)
                     if var is None:
+                        skipped_targets.append(f"{rel}:{node.lineno} {call.func.id}")
                         continue
                     sites += 1
                     key = f"{rel}:{var}"
@@ -2408,6 +2392,13 @@ class TestAccessibleNames:
                     elif var not in named:
                         unnamed.append(f"{rel}:{node.lineno} {call.func.id} {var}")
 
+        assert not skipped_targets, (
+            "these value controls are assigned to a subscript or tuple target, so "
+            "this scan cannot tell whether they are named — it would pass over "
+            "them silently rather than reporting them (277-g). Bind them to a "
+            "plain name, or teach `bound_name` to read the target:\n  "
+            + "\n  ".join(skipped_targets)
+        )
         assert sites >= 30, (
             f"the AST scan found only {sites} value-control constructions — it has "
             "stopped working, and would pass no matter what shipped"

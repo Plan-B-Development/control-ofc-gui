@@ -209,3 +209,54 @@ def test_renaming_a_control_updates_the_existing_proxy(host):
     name_value_control(combo, "Colour scheme")
 
     assert announced(combo) == "Colour scheme"
+
+
+class TestProxyReuseAcrossDifferentText:
+    """277-l: idempotence must hold when the TEXT changes, not just the call.
+
+    `name_value_control` looked an existing proxy up by its *derived* name, so a
+    second call with different text missed the reuse and minted a rival hidden
+    label. The control then carried two `RelationFlag.Label` relations and
+    whichever Qt enumerated first won the announcement.
+
+    Both pre-existing idempotence tests set an objectName on the control first,
+    which makes `_proxy_name` stable and hides the bug — so the case the string
+    fallback exists to serve (a control with no objectName) was the untested one.
+    """
+
+    def test_renaming_a_control_does_not_mint_a_second_proxy(self, qtbot):
+        from PySide6.QtWidgets import QLabel, QLineEdit
+
+        from control_ofc.ui.components.a11y import name_value_control
+
+        edit = QLineEdit()  # deliberately NO objectName — the untested path
+        qtbot.addWidget(edit)
+
+        name_value_control(edit, "First name")
+        name_value_control(edit, "Second name")
+
+        proxies = [c for c in edit.findChildren(QLabel) if c.objectName().endswith("_A11yLabel")]
+        assert len(proxies) == 1, (
+            f"a rename must reuse the existing proxy, not add another — found "
+            f"{[p.objectName() for p in proxies]}. Two labels means two "
+            f"labelled-by relations and a coin-toss announcement."
+        )
+        assert proxies[0].text() == "Second name"
+        assert proxies[0].buddy() is edit
+
+    def test_the_surviving_proxy_is_findable_by_its_derived_name(self, qtbot):
+        """The objectName must track the text it was re-derived from.
+
+        Leaving it stale would break `findChild` on the very name the helper
+        computes, which is how the reuse lookup itself works.
+        """
+        from PySide6.QtWidgets import QLabel, QLineEdit
+
+        from control_ofc.ui.components.a11y import _proxy_name, name_value_control
+
+        edit = QLineEdit()
+        qtbot.addWidget(edit)
+        name_value_control(edit, "First name")
+        name_value_control(edit, "Second name")
+
+        assert edit.findChild(QLabel, _proxy_name(edit, "Second name")) is not None

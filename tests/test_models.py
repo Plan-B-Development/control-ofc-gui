@@ -24,7 +24,6 @@ def test_parse_capabilities_minimal():
     assert caps.api_version == 1
     assert caps.daemon_version == "0.1.0"
     assert caps.openfan.present is False
-    assert caps.limits.openfan_stop_timeout_s == 8
 
 
 def test_parse_capabilities_full():
@@ -56,7 +55,6 @@ def test_parse_capabilities_full():
     assert caps.openfan.present is True
     assert caps.openfan.channels == 8
     assert caps.hwmon.pwm_header_count == 3
-    assert caps.limits.openfan_stop_timeout_s == 8
 
 
 def test_parse_capabilities_ignores_legacy_lease_fields():
@@ -570,16 +568,26 @@ class TestParserFailureModes:
 
     def test_parse_capabilities_with_completely_empty_input(self):
         """The smoke test: an empty dict must yield sensible defaults
-        across every nested capability and limits field. This is the
-        worst-case-still-survivable shape."""
+        across every nested capability field. This is the
+        worst-case-still-survivable shape.
+
+        `limits` is deliberately absent from the assertions and from the model:
+        `SafetyLimits` was deleted with the P3 capability cleanup because nothing
+        ever read it — the daemon clamps authoritatively (DEC-163), so a GUI-side
+        mirror of its limits described a decision the GUI does not make.
+        Precedent: DEC-224 dropped four written-never-read settings keys. The
+        daemon still sends the block; `_filter_fields` drops unknown keys, so
+        parsing is unaffected — which the assertion below pins."""
         caps = parse_capabilities({})
         assert caps.api_version == 1
         assert caps.daemon_version == ""
         assert caps.openfan.present is False
         assert caps.hwmon.present is False
         assert caps.amd_gpu.present is False
-        assert caps.limits.pwm_percent_min == 0
-        assert caps.limits.pwm_percent_max == 100
+        assert not hasattr(caps, "limits"), (
+            "SafetyLimits was deleted — nothing read it and the daemon clamps "
+            "authoritatively (DEC-163). Re-adding it means finding a consumer first."
+        )
 
     def test_parse_capabilities_with_null_devices_field_falls_back(self):
         """If a future daemon were to send `devices: null` (unlikely but
@@ -830,3 +838,72 @@ def test_parse_status_ignores_malformed_skipped_entries():
 
     status = parse_status({"skipped_controls": ["not-a-dict", None, 42]})
     assert status.skipped_controls == []
+
+
+class TestWireValueCoercion:
+    """277-h: the parse boundary normalises what the dataclasses declare.
+
+    Decided once here rather than per consumer. The GUI hashes daemon-supplied
+    ids in about half a dozen places and formats `output_pct` into an
+    `f"{v:.0f}%"`; a guard on one site made the absence of a guard on its
+    siblings read as deliberate.
+    """
+
+    def test_every_id_key_is_coerced_not_just_control_id(self):
+        """The docstring claims 'every identity field'. Prove more than one.
+
+        Previously only `control_id` was exercised, via `skipped_controls` — so
+        dropping any other key from `_ID_KEYS` was uncaught while the claim stood.
+        """
+        from dataclasses import dataclass, fields
+
+        from control_ofc.api.models import _ID_KEYS, _filter_fields
+
+        # Build a probe dataclass carrying every id key, so this test widens
+        # automatically if `_ID_KEYS` gains one.
+        ns = {"__annotations__": {k: str for k in sorted(_ID_KEYS)}}
+        ns.update({k: "" for k in sorted(_ID_KEYS)})
+        Probe = dataclass(type("Probe", (), ns))
+
+        raw = {k: [1, 2] for k in sorted(_ID_KEYS)}
+        out = _filter_fields(Probe, raw)
+
+        assert set(out) == set(_ID_KEYS), "the probe must exercise every key"
+        for key, value in out.items():
+            assert isinstance(value, str), f"{key} was not coerced: {value!r}"
+        assert {f.name for f in fields(Probe)} == set(_ID_KEYS)
+
+    def test_a_coerced_id_cannot_match_a_real_one(self):
+        """Coercion must fail CLOSED — a malformed id must not collide."""
+        from control_ofc.api.models import SkippedControl, _filter_fields
+
+        out = _filter_fields(SkippedControl, {"control_id": [], "control_name": "x"})
+        assert out["control_id"] == "[]"
+        assert out["control_id"] not in {"lc1", "", "openfan:ch00"}
+
+    def test_an_unparseable_output_is_dropped_not_defaulted(self):
+        """An output we cannot read is an ABSENT output, which renders as '—'.
+
+        Keeping it would carry a value that raises inside `f"{v:.0f}%"` on the
+        1 Hz slot; defaulting it to 0.0 would invent a duty the daemon never
+        reported, which is what the contract's "never as 0" clause forbids.
+        """
+        from control_ofc.api.models import parse_status
+
+        status = parse_status(
+            {
+                "control_outputs": [
+                    {"control_id": "ok-str", "output_pct": "42.5"},
+                    {"control_id": "ok-int", "output_pct": 60},
+                    {"control_id": "bad-list", "output_pct": []},
+                    {"control_id": "bad-bool", "output_pct": True},
+                ]
+            }
+        )
+
+        got = {e.control_id: e.output_pct for e in status.control_outputs}
+        assert got == {"ok-str": 42.5, "ok-int": 60.0}, (
+            "a string or int duty coerces; a list is unparseable and a bool is "
+            f"not a duty — both must drop rather than render. Got {got!r}"
+        )
+        assert all(isinstance(v, float) for v in got.values())

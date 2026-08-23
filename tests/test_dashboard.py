@@ -662,3 +662,96 @@ class TestReadinessChip:
         chip = window.footer._readiness_btn
         with qtbot.waitSignal(window.footer.readiness_clicked, timeout=500):
             chip.click()
+
+
+class TestControlsSubsystemChip:
+    """279-a: the Dashboard surfaces the daemon 2.22.0 `controls` subsystem.
+
+    The Dashboard names `openfan`/`hwmon` explicitly and banners `engine`, so the
+    fourth subsystem was silently ignored there — and the Dashboard has never
+    read `overall_status`, so a user who stays on that page got no signal at all
+    that a control is unresolved. Not a regression (nothing there reflected it
+    before either), but a real blind spot on the default landing page.
+    """
+
+    def _page(self, qtbot):
+        from control_ofc.services.app_state import AppState
+        from control_ofc.ui.pages.dashboard_page import DashboardPage
+
+        page = DashboardPage(state=AppState())
+        qtbot.addWidget(page)
+        return page
+
+    def _status(self, controls_status, reason=""):
+        from control_ofc.api.models import DaemonStatus, SubsystemStatus
+
+        return DaemonStatus(
+            subsystems=[
+                SubsystemStatus(name="openfan", status="ok", reason="readings fresh"),
+                SubsystemStatus(name="hwmon", status="ok", reason="readings fresh"),
+                SubsystemStatus(name="engine", status="ok", reason="evaluating on schedule"),
+                SubsystemStatus(name="controls", status=controls_status, reason=reason),
+            ]
+        )
+
+    def test_a_warning_appears_with_its_reason(self, qtbot):
+        page = self._page(qtbot)
+        # `isHidden()`, not `isVisible()`: a widget is only *visible* when every
+        # ancestor is shown, and this page never is under offscreen Qt — so
+        # `isVisible()` is False regardless and would assert nothing. `isHidden()`
+        # reads the explicit flag this code actually sets.
+        assert page._sub_controls_label.isHidden(), "precondition: hidden while healthy"
+
+        page._on_status_updated(
+            self._status("warn", "1 control not being commanded — their fans hold their last speed")
+        )
+
+        assert not page._sub_controls_label.isHidden()
+        text = page._sub_controls_label.text()
+        assert "Controls" in text and "warn" in text
+        assert "not being commanded" in text, (
+            f"the daemon's reason is what makes the warning actionable, got {text!r}"
+        )
+
+    def test_it_clears_again_when_the_control_is_fixed(self, qtbot):
+        """The explicit `ok` branch matters: nothing else ever writes this label.
+
+        Its two siblings are repainted from the capabilities VM on every refresh,
+        so a poll that finds them healthy can leave them alone. Without the hide,
+        this one would pin the last warning for the rest of the session.
+        """
+        page = self._page(qtbot)
+        page._on_status_updated(self._status("warn", "1 control not being commanded"))
+        assert not page._sub_controls_label.isHidden(), "precondition: it warned first"
+
+        page._on_status_updated(self._status("ok", "every control resolves to a curve"))
+
+        assert page._sub_controls_label.isHidden(), (
+            "a resolved control must take the warning down — nothing else repaints "
+            "this label, so a stale warning would outlive the fault for the session"
+        )
+
+    def test_an_older_daemon_omits_it_entirely(self, qtbot):
+        """Pre-2.22.0 daemons send three subsystems; the chip stays hidden.
+
+        Establishes the PRESENCE first. Without that, the label is constructed
+        hidden and the `elif sub.name == "controls"` branch never runs, so this
+        passed with the entire chip block deleted — the vacuous-absence trap
+        (DEC-272).
+        """
+        from control_ofc.api.models import DaemonStatus, SubsystemStatus
+
+        page = self._page(qtbot)
+        page._on_status_updated(self._status("warn", "1 control not being commanded"))
+        assert not page._sub_controls_label.isHidden(), "precondition: it can show at all"
+
+        page._on_status_updated(
+            DaemonStatus(
+                subsystems=[
+                    SubsystemStatus(name="openfan", status="ok", reason=""),
+                    SubsystemStatus(name="hwmon", status="ok", reason=""),
+                    SubsystemStatus(name="engine", status="ok", reason=""),
+                ]
+            )
+        )
+        assert page._sub_controls_label.isHidden()

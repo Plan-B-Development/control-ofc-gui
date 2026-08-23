@@ -1,5 +1,70 @@
 # Changelog
 
+## [2.45.0] — 2026-08-23
+
+### Added
+- **A fan card now shows what speed it is actually asking for.** Until now the
+  live Controls page had no output figure at all — every card read "—" for the
+  whole session, and only ever changed during a curve edit or in demo mode. The
+  card now tracks the real value once per second, alongside the sensor driving
+  it, and keeps the existing "(GPU N%)" note for a graphics card running below
+  the rest of its control.
+  Read it as a *control-wide* figure. An individual fan can sit above it on a
+  safety floor or below it on a diverging GPU; each fan's own speed is on the
+  Dashboard as before. **A control the daemon is not evaluating goes back to
+  showing "—", not a stale number and not zero** — during a thermal emergency the
+  daemon drives the fans directly and bypasses controls entirely, so leaving the
+  last figure up would have the card confidently state a speed nothing is
+  applying, and showing 0% would claim the fans had stopped when they are running
+  flat out. Needs daemon 2.22.0; against an older daemon the card keeps reading
+  "—" exactly as before.
+  While you are editing a curve, the card keeps showing that edit's live preview
+  instead of the polled value, so the preview is not overwritten a second later.
+- **The Dashboard now says when a control is not being driven.** The daemon
+  gained a fourth health subsystem in 2.22.0 covering exactly this, and the
+  Dashboard — the page most people leave open — ignored it. It now shows a
+  warning with the daemon's own explanation, and takes it down again once the
+  control is fixed.
+
+### Fixed
+- **A stuck Manual override can always be released.** Removing every fan from a
+  control while its Manual override was live left the Manual button switched on
+  but greyed out, so there was no way to switch it back off — the override
+  cleared on its own after about fifteen seconds, and until then the fans stayed
+  pinned. The button now stays usable while it is holding an override. Taking a
+  *new* override still needs fans assigned, and a card that is holding one no
+  longer mislabels itself "No members".
+- **A control that is not being driven now explains itself to screen readers.**
+  The reason was attached only to the small status chip, which is not focusable —
+  so a keyboard-only user got "Not controlled" with no cause while a mouse user
+  got the full explanation on hover. The reason is now on the card itself.
+- **Every hex field in the theme editor, and every fan card's manual slider, now
+  announces what it sets.** These were the last controls left unnamed by the
+  accessibility sweep — roughly fifty-five of them — because each needs a name
+  from its own token or its own control rather than one shared name. Completes
+  the work started in 2.44.0.
+- **The Manual toggle and the fan-identify wizard are now offered only when the
+  daemon says it supports them.** Both worked by coincidence: every daemon that
+  supports one supports the others, so nothing had ever gone wrong — but a daemon
+  without them would have offered buttons that could only fail.
+- A malformed identifier from the daemon can no longer disrupt a poll. This was
+  already unreachable against the real daemon; what changed is that the check now
+  happens once where data enters the app, instead of in one of the six places
+  that needed it.
+
+### Internal
+- Deleted the `SafetyLimits` capability model: nothing ever read it, and the
+  daemon enforces those limits itself.
+- Formally dropped the dormant fan-zone change signal. The zone UI was removed in
+  2.25.0 (DEC-222) and nothing has emitted it since; the saved zone data is
+  unaffected.
+- The release workflow built its cross-repo notification with a shell here-doc
+  that expanded the tag before sending it, in a job holding the publishing token.
+  Now built with `jq`. Same fix as daemon 2.22.0.
+- Re-checked the CachyOS Secure Boot caveat in the driver manual: `linux-cachyos`
+  issue #862 and its fix PR #863 are both still open, so the guidance stands. The
+  fix has landed for Fedora packaging but not for the Arch build CachyOS ships.
+
 ## [2.44.0] — 2026-08-22
 
 ### Added

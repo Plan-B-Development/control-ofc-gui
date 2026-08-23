@@ -453,15 +453,20 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -uo pipefail
-          cat > /tmp/dispatch.json <<EOF
-          {
-            "event_type": "package-released",
-            "client_payload": {
-              "package": "control-ofc-gui",
-              "tag": "${RELEASE_TAG}"
-            }
-          }
-          EOF
+          # 277-p: build the payload with jq, not a heredoc. The previous form
+          # used an UNQUOTED delimiter (`<<EOF`), so the shell expanded the tag
+          # before `gh api` ever saw it — a tag containing `$(...)` or backticks
+          # would have executed here, in a job holding PACMAN_REPO_TOKEN (the
+          # cross-repo PAT that drives signed publication). Pushing a tag already
+          # implies write access to this repo, so this is not privilege
+          # escalation; it is a shell-injection sink sitting next to a
+          # credential, which is not a shape to leave lying around. `--arg` also
+          # JSON-escapes the value, which the heredoc never did. Fixed in the
+          # daemon repo first (DEC-279); this is the identical shape.
+          jq -n --arg tag "$RELEASE_TAG" \
+            '{event_type: "package-released",
+              client_payload: {package: "control-ofc-gui", tag: $tag}}' \
+            > /tmp/dispatch.json
 
           if err=$(gh api --method POST \
                      repos/Plan-B-Development/pacman-repo/dispatches \

@@ -29,6 +29,7 @@ from control_ofc.services.profile_service import (
     infer_control_role,
     infer_member_role,
 )
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.labels import ElidedLabel
 from control_ofc.ui.qt_util import repolish, set_chip_class
 from control_ofc.ui.theme import active_theme
@@ -184,6 +185,11 @@ class ControlCard(ResizableGridCard):
         row4.addWidget(self._output_label)
         self._manual_slider = QSlider(Qt.Orientation.Horizontal)
         self._manual_slider.setObjectName(f"ControlCard_Slider_manual_{control.id}")
+        # 273-g phase 2: one slider per card, so the name must come from THIS
+        # control — a shared "manual output" would announce identically on every
+        # card in the grid and tell a screen-reader user nothing about which fan
+        # they are about to move.
+        name_value_control(self._manual_slider, f"{control.name} manual output")
         self._manual_slider.setRange(0, 100)
         self._manual_slider.setValue(50)
         self._manual_slider.setVisible(False)
@@ -309,15 +315,15 @@ class ControlCard(ResizableGridCard):
             # that would be the lie this row exists to stop; the output label set
             # above still carries the last value this card was given.
             #
-            # Dead in BOTH modes today, and deliberately kept. `set_output` has
-            # one production caller (`ControlsPage.update_control_outputs`) and
-            # that is wired solely to `DemoController.outputs_changed`, while
-            # `_skipped_reason` is set only from `_on_status_reconcile`, which
-            # early-returns when `self._client is None` — the demo case. So the
-            # two cannot both be live today. It stays because the guard is
-            # correct for the day the live page gains an output feed, and
-            # deleting it would make that a silent regression rather than a
-            # visible one. Do not cite this branch as protecting live users.
+            # LIVE since 277-k, and this comment used to say the opposite.
+            # It read "dead in BOTH modes … do not cite this branch as protecting
+            # live users", which was true only while `set_output`'s sole caller
+            # was wired to `DemoController.outputs_changed`. The live page now
+            # feeds it from the 1 Hz poll (`ControlsPage._apply_live_outputs`),
+            # and `_skipped_reason` is set from `_on_status_reconcile` on that
+            # same path — so both are live together and this guard is exactly
+            # what stops "Applied" being painted over a control the daemon has
+            # told us it is not commanding.
             return
         if self._external_pct is not None:
             # DEC-169: a foreign daemon override owns the chip — keep the
@@ -325,6 +331,37 @@ class ControlCard(ResizableGridCard):
             # tick. The output label above still tracks the live value.
             return
         self._apply_chip("Applied", "SuccessChip")
+
+    def clear_output(self) -> None:
+        """Say "no live value" — the daemon is not reporting one for this control.
+
+        The contract (`docs/08`) is explicit that absence from `control_outputs[]`
+        is MEANINGFUL and that a client "must not carry a previous value forward
+        ... Render absence as 'unknown' (the reference GUI's '—'), never as 0".
+        A control is absent whenever the daemon did not evaluate it: no profile,
+        a listed skip, or the whole of a thermal event, where `force_all` drives
+        the fans directly and bypasses every control.
+
+        Carrying the last figure was the bug this method exists to fix. It left a
+        card reading "Now: 42%" for the duration of a 105 °C event while the fans
+        were actually at 100% — confidently displaying a duty nothing was
+        applying, on the page whose job is "what are the fans doing?". Zero would
+        be a different lie; "—" is the honest answer.
+
+        Suppressed in exactly the states `set_output` is suppressed in, so this
+        cannot blank something another authority owns.
+        """
+        if not self._control.members:
+            # Same guard `set_output` carries, and the docstring above promised it
+            # while the code omitted it. A member-less card shows
+            # "Assign outputs to enable" from `_update_no_members_state`; blanking
+            # that to an em dash on every poll would replace actionable guidance
+            # with nothing, and nothing would ever put it back for the session.
+            return
+        if self._manual_btn.isChecked():
+            return
+        self._last_output_pct = None
+        self._output_label.setText("\u2014")
 
     def set_rpm(self, rpm_text: str) -> None:
         self._rpm_label.setText(rpm_text)
@@ -432,6 +469,19 @@ class ControlCard(ResizableGridCard):
         """
         self._status_chip.setText(text)
         self._status_chip.setToolTip(tooltip)
+        # 277-n: mirror it onto the CARD. Qt maps `toolTip` to
+        # `QAccessible::Text::Description`, which is what the tooltip above
+        # relies on — but `_status_chip` is a non-focusable QLabel, so a user who
+        # is not pointing a mouse at it gets "Not controlled" with no cause.
+        #
+        # Scope this honestly: the card has no focus policy either, so this does
+        # NOT put the reason in the keyboard-Tab path. What it does is publish it
+        # on the card's own accessible object, which screen-reader OBJECT
+        # navigation reaches — a real improvement over a description hanging off
+        # an unreachable child label, and strictly less than making the card
+        # focusable. Giving the card a focus policy would also oblige it to carry
+        # a visible `:focus` ring (DEC-251), which is a larger change than this.
+        self.setAccessibleDescription(tooltip)
         set_chip_class(self._status_chip, cls)
 
     def _restore_daemon_chip(self) -> None:
@@ -498,6 +548,20 @@ class ControlCard(ResizableGridCard):
         if checked:
             self._apply_chip("Manual", "WarningChip")
         else:
+            # 277-o round 3: recompute the enable rule HERE too. It is
+            # `members OR checked`, and round 2 restored it only in
+            # `clear_manual` — the programmatic exit taken when an override
+            # lapses or is rejected. This is the INTERACTIVE exit, and it is the
+            # one a user actually takes: without it, un-toggling on a card whose
+            # members were stripped in place left an enabled button on a 0-member
+            # control, so the very next click took a fresh override that commands
+            # nothing and then renews it every ~5 s.
+            #
+            # Both exits now converge on the same recomputation. The round-2 fix
+            # was itself incomplete, and its tests could not see it because they
+            # called `clear_manual()` and `_update_no_members_state()` directly —
+            # `.click()`, not `_handler()` (CLAUDE.md § Hard-won lessons).
+            self._update_no_members_state(self._control)
             self._restore_daemon_chip()
         self.manual_toggled.emit(self._control.id, checked, self._manual_slider.value())
 
@@ -537,6 +601,12 @@ class ControlCard(ResizableGridCard):
         self._manual_slider.setVisible(False)
         self._manual_pct_label.setVisible(False)
         self._output_label.setVisible(True)
+        # 277-o round 2: the enable state is `members OR checked`, and nothing
+        # else recomputes it on the way out. Releasing an override on a card whose
+        # members were stripped in place therefore left the button ENABLED on a
+        # 0-member control, so the user could take a FRESH override with no fans —
+        # the very invariant the exemption was scoped to preserve.
+        self._update_no_members_state(self._control)
         self._restore_daemon_chip()
 
     def set_external_override(self, pct: int) -> None:
@@ -686,7 +756,19 @@ class ControlCard(ResizableGridCard):
 
     def _update_no_members_state(self, control: LogicalControl) -> None:
         # No fans assigned -> nothing to drive manually.
-        self._manual_btn.setEnabled(bool(control.members))
+        #
+        # 277-o: except while an override is actually held. Disabling a CHECKED
+        # button leaves the user unable to un-toggle it, so a control stripped of
+        # its members mid-override could not be released until the ~15 s deadman
+        # expired — on a card whose renew timer was still renewing. Keep the exit
+        # reachable; taking a *new* override still needs members.
+        self._manual_btn.setEnabled(bool(control.members) or self._manual_btn.isChecked())
+        if self._manual_btn.isChecked():
+            # The user is commanding these fans right now. "No members" would be
+            # both wrong and, via `_apply_chip`, announced as the card's
+            # description. Manual owns the chip until it is released, at which
+            # point `_restore_daemon_chip` repaints from the daemon's own view.
+            return
         if not control.members:
             self._output_label.setText("Assign outputs to enable")
             # Through `_apply_chip`, which owns the tooltip: writing the chip

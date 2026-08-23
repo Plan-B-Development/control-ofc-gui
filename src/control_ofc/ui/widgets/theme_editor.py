@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.colors import is_valid_color
+from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.qt_util import repolish
 from control_ofc.ui.theme import (
@@ -381,12 +382,22 @@ class ThemeEditorWidget(QWidget):
 
     # ─── Row builders ────────────────────────────────────────────────
 
-    def _hex_input(self, value: str) -> QLineEdit:
+    def _hex_input(self, value: str, accessible_name: str) -> QLineEdit:
+        """One hex field, named for the specific thing it sets (273-g phase 2).
+
+        `accessible_name` is a parameter rather than derived here because the two
+        call sites key on different things — a theme token and a chart-series
+        slot — and a single shared name would collide across the ~54 fields this
+        builds. Naming inside the helper (rather than at each call site) is what
+        lets one edit cover both, and it is what the AST lint keys on: its
+        allowlist entry names the `edit` variable in *this* function.
+        """
         edit = QLineEdit(value)
         edit.setStyleSheet("font-family: monospace;")
         edit.setMaxLength(9)  # #RRGGBBAA
         edit.setMinimumWidth(84)
         edit.setMaximumWidth(100)
+        name_value_control(edit, accessible_name)
         return edit
 
     def _add_color_row(self, grid, row_idx, token_name, description, value) -> None:
@@ -395,7 +406,7 @@ class ThemeEditorWidget(QWidget):
         self._swatches[token_name] = swatch
         grid.addWidget(swatch, row_idx, 0)
 
-        hex_input = self._hex_input(value)
+        hex_input = self._hex_input(value, f"{token_name} hex value")
         hex_input.editingFinished.connect(lambda tn=token_name: self._on_hex_edited(tn))
         self._hex_inputs[token_name] = hex_input
         grid.addWidget(hex_input, row_idx, 1)
@@ -425,7 +436,7 @@ class ThemeEditorWidget(QWidget):
         self._series_swatches[slot] = swatch
         grid.addWidget(swatch, slot, 0)
 
-        hex_input = self._hex_input(value)
+        hex_input = self._hex_input(value, f"Series {slot + 1} hex value")
         hex_input.editingFinished.connect(lambda s=slot: self._on_series_hex_edited(s))
         self._series_hex_inputs[slot] = hex_input
         grid.addWidget(hex_input, slot, 1)

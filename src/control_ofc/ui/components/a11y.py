@@ -65,6 +65,13 @@ VALUE_CONTROLS = (
 )
 
 
+#: objectName suffix every hidden buddy label carries. Reuse is matched on this
+#: rather than on the full derived name, so a second call with different text
+#: finds the existing proxy instead of minting a rival one (277-l). Tests that
+#: scrape a page for visible text filter on it too.
+_PROXY_SUFFIX = "_A11yLabel"
+
+
 def name_value_control(control: QWidget, label: str | QLabel) -> None:
     """Give *control* an accessible name taken from *label*.
 
@@ -121,8 +128,24 @@ def name_value_control(control: QWidget, label: str | QLabel) -> None:
     # another QLabel with an IDENTICAL objectName, breaking the unique-objectName
     # rule and any `findChild` on it. No call site does this today, which is
     # exactly why it needed pinning rather than trusting.
-    existing = control.findChild(QLabel, _proxy_name(control, text))
+    #
+    # Matched by SUFFIX, not by the derived name (277-l). Looking one up by
+    # `_proxy_name(control, text)` only found a proxy carrying the SAME text, so
+    # a second call with *different* text missed the reuse and minted a second
+    # hidden label — leaving the control with two `RelationFlag.Label` relations
+    # and whichever Qt enumerates first winning the announcement. That is the
+    # exact case the text fallback exists to serve (a control with no
+    # objectName), so it was the untested one: both idempotence tests set an
+    # objectName first, which makes `_proxy_name` stable and hides the bug.
+    existing = next(
+        (c for c in control.findChildren(QLabel) if c.objectName().endswith(_PROXY_SUFFIX)),
+        None,
+    )
     if existing is not None:
+        # Re-derive the objectName too: with no objectName on the control it is
+        # derived from the text, so leaving it stale would break `findChild` on
+        # the name this helper itself just computed.
+        existing.setObjectName(_proxy_name(control, text))
         existing.setText(text)
         existing.setBuddy(control)
         return
@@ -144,4 +167,4 @@ def _proxy_name(control: QWidget, text: str) -> str:
     search box.
     """
     slug = "".join(ch if ch.isalnum() else "_" for ch in text).strip("_")
-    return f"{control.objectName() or slug}_A11yLabel"
+    return f"{control.objectName() or slug}{_PROXY_SUFFIX}"

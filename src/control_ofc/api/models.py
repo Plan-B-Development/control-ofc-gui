@@ -168,13 +168,6 @@ class FeatureFlags:
 
 
 @dataclass
-class SafetyLimits:
-    pwm_percent_min: int = 0
-    pwm_percent_max: int = 100
-    openfan_stop_timeout_s: int = 8
-
-
-@dataclass
 class ControlCapability:
     """Daemon control-plane capabilities (DEC-159/160).
 
@@ -215,7 +208,6 @@ class Capabilities:
     aio_usb: UnsupportedCapability = field(default_factory=UnsupportedCapability)
     features: FeatureFlags = field(default_factory=FeatureFlags)
     control: ControlCapability = field(default_factory=ControlCapability)
-    limits: SafetyLimits = field(default_factory=SafetyLimits)
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +276,27 @@ SKIP_REASON_VALUES: tuple[str, ...] = (
     "mix_unresolvable",
     "sync_unresolvable",
 )
+
+
+@dataclass
+class ControlOutput:
+    """One control's applied output from the engine's last evaluating tick (277-k).
+
+    The value the daemon actually applied, whatever produced it — a curve or a
+    live manual override — because the question the Controls card renders it to
+    answer is "what are the fans doing?".
+
+    **Not a per-fan duty.** A member can sit above this on a role-aware floor or
+    below it on a diverging GPU (DEC-119); per-fan duty is ``FanReading.
+    last_commanded_pwm``. **Absence is meaningful**: a control the daemon did not
+    evaluate — no profile, a listed skip, or the whole of a thermal event — is
+    simply not in the list, and the card must fall back to "no value" rather than
+    carrying its previous figure forward. Daemon ≥ 2.22.0; older daemons omit the
+    array entirely and the GUI defaults it to empty.
+    """
+
+    control_id: str = ""
+    output_pct: float = 0.0
 
 
 @dataclass
@@ -384,6 +397,7 @@ class DaemonStatus:
     # empty Vecs) and absent entirely from daemons older than 2.21.0 → defaults
     # to []. Display-only; surfaced on the Controls page card for the control.
     skipped_controls: list[SkippedControl] = field(default_factory=list)
+    control_outputs: list[ControlOutput] = field(default_factory=list)
     # DEC-194: the daemon's active profile, mirrored onto every /poll status so an
     # external activation (CLI --profile, another client, systemd) shows within
     # ~1 s instead of the slow /profile/active refresh. `None` (not "") when the
@@ -1258,14 +1272,83 @@ class HardwareReadiness:
 # ---------------------------------------------------------------------------
 
 
-def _filter_fields(cls: type, data: dict) -> dict:
-    """Filter a dict to only keys that match dataclass field names.
+#: Wire keys the GUI uses as an *identity* — hashed into a dict, or compared for
+#: equality against a card/control id. Every one of them is declared ``str`` on
+#: every dataclass that carries it, so this set is the runtime half of a
+#: declaration the type annotations already make.
+_ID_KEYS = frozenset(
+    {"id", "control_id", "fan_id", "member_id", "curve_id", "sensor_id", "profile_id"}
+)
 
-    Prevents TypeError from ``**`` unpacking when the daemon sends new fields
-    that the GUI's dataclass doesn't know about yet (forward compatibility).
+#: Wire keys the GUI formats as a number. `output_pct` reaches an
+#: ``f"{v:.0f}%"`` in `ControlCard.set_output`, which raises on a str or a list.
+_FLOAT_KEYS = frozenset({"output_pct"})
+
+
+def _filter_fields(cls: type, data: dict) -> dict:
+    """Filter a dict to only keys that match dataclass field names, and coerce
+    identity fields to ``str``.
+
+    Filtering prevents TypeError from ``**`` unpacking when the daemon sends new
+    fields that the GUI's dataclass doesn't know about yet (forward
+    compatibility).
+
+    **The coercion is register row 277-h, decided once here rather than per
+    site.** The GUI hashes daemon-supplied ids in about half a dozen places
+    (``skipped_controls``, ``overrides``, ``fan_identify``, ``unavailable_sensors``,
+    ``services/session_stats.py``); a non-string id — ``"control_id": []`` — makes
+    ``{e.control_id: ...}`` raise ``TypeError: unhashable type`` inside a slot on
+    the 1 Hz poll path. 273-i patched exactly one of those comprehensions with an
+    ``isinstance`` guard, which closed one door of N and made the asymmetry *read*
+    as deliberate.
+
+    Coercing rather than dropping is the deliberate choice: a malformed id
+    becomes a string that cannot match any real control, so the entry is ignored
+    and the surface degrades quietly, where dropping the key would substitute the
+    dataclass default (``""``) and could collide with a genuinely empty id.
+
+    Unreachable against the shipping daemon — those fields are Rust ``String`` on
+    ``#[derive(Serialize)]``, so serde cannot emit anything else — and the blast
+    radius was overstated in an earlier comment: measured on PySide6 6.11.1, an
+    exception in a slot does **not** escape ``emit()``. This is about not leaving
+    a trap that reads as intentional, not about a live crash.
     """
     known = {f.name for f in fields(cls)}
-    return {k: v for k, v in data.items() if k in known}
+    return {k: _coerce_wire_value(k, v) for k, v in data.items() if k in known}
+
+
+def _coerce_wire_value(key: str, value: object) -> object:
+    """Normalise one wire field to the type its dataclass declares.
+
+    Identity fields become ``str``; ``output_pct`` becomes ``float``. Both are a
+    runtime restatement of the annotations already on those dataclasses, and both
+    exist because the value flows somewhere that a wrong type breaks: an id into a
+    dict key, ``output_pct`` into an ``f"{v:.0f}%"`` format.
+
+    Covering `output_pct` alongside the ids is the point. Coercing one and not the
+    other — on the *same new dataclass* — would recreate exactly the per-field
+    asymmetry 277-h existed to remove, where a guard on one comprehension made the
+    absence of a guard on its sibling read as deliberate.
+
+    A value that cannot be coerced is left alone rather than defaulted: the
+    dataclass default would be a plausible-looking number, where the original
+    keeps the fault visible at the point it is used.
+    """
+    if key in _ID_KEYS and not isinstance(value, str):
+        return str(value)
+    if key in _FLOAT_KEYS and not isinstance(value, float):
+        # `bool` is deliberately excluded. It is an `int` subclass, so `float(True)`
+        # is a perfectly ordinary 1.0 — which would silently turn a malformed
+        # `"output_pct": true` into a card confidently reporting 1%. Left as a
+        # bool, it fails the numeric check at the parse site and the entry is
+        # dropped, so it reads as "no value" instead.
+        if isinstance(value, bool):
+            return value
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return value
+    return value
 
 
 def _coalesce_pci_bdf(raw: dict) -> dict:
@@ -1291,7 +1374,6 @@ def _coalesce_pci_bdf(raw: dict) -> dict:
 def parse_capabilities(data: dict) -> Capabilities:
     devices = data.get("devices", {})
     features = data.get("features", {})
-    limits = data.get("limits", {})
 
     # DEC-098: kernel_warnings is a list of dicts on the wire; the
     # `_filter_fields` helper would drop it if it landed here as a list of
@@ -1337,11 +1419,6 @@ def parse_capabilities(data: dict) -> Capabilities:
         # DEC-160: top-level ``control`` block; absent on pre-1.19 daemons →
         # all-default (profile_storage=False), which disables the import offer.
         control=ControlCapability(**_filter_fields(ControlCapability, data.get("control", {}))),
-        limits=SafetyLimits(
-            pwm_percent_min=limits.get("pwm_percent_min", 0),
-            pwm_percent_max=limits.get("pwm_percent_max", 100),
-            openfan_stop_timeout_s=limits.get("openfan_stop_timeout_s", 8),
-        ),
     )
 
 
@@ -1382,6 +1459,24 @@ def parse_status(data: dict) -> DaemonStatus:
             SkippedControl(**_filter_fields(SkippedControl, e))
             for e in data.get("skipped_controls", [])
             if isinstance(e, dict)
+        ],
+        # 277-k: omitted when empty, and absent entirely before daemon 2.22.0 —
+        # default to [] either way, so an older daemon simply reports no live
+        # output and the cards keep showing "—", exactly as they did before the
+        # field existed.
+        control_outputs=[
+            entry
+            for entry in (
+                ControlOutput(**_filter_fields(ControlOutput, e))
+                for e in data.get("control_outputs", [])
+                if isinstance(e, dict)
+            )
+            # An output that will not coerce to a number is an output we do not
+            # know, so drop the entry and let it read as ABSENT — which the
+            # contract already defines as "—". Keeping it would carry a value
+            # that raises inside `f"{v:.0f}%"` on the 1 Hz slot, and defaulting it
+            # to 0.0 would invent a duty the daemon never reported.
+            if isinstance(entry.output_pct, (int, float)) and not isinstance(entry.output_pct, bool)
         ],
         # DEC-194: absent key (older daemon, or no active profile) → None, so the
         # polling fast-path leaves the /profile/active fallback authoritative. A

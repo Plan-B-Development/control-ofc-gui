@@ -480,3 +480,167 @@ class TestCurveLabelElision:
 
         assert long_name in card._curve_label.text()
         assert "…" not in card._curve_label.text()
+
+
+class TestManualHeldWithoutMembers:
+    """277-o: stripping a control's members must not trap a live override.
+
+    `_update_no_members_state` disabled the Manual button whenever the control
+    had no members. Disabling a *checked* button leaves the user unable to
+    un-toggle it — so a control stripped of its members while an override was
+    live could not be released until the ~15 s daemon deadman expired, on a card
+    whose renew timer was still renewing. Verified identical at v2.43.1, so
+    pre-existing rather than introduced.
+    """
+
+    def test_the_release_stays_reachable_when_members_vanish(self, qtbot, curves):
+        card = _card_with_member(qtbot, curves)
+        card._manual_btn.setChecked(True)
+        assert card._manual_btn.isEnabled(), "precondition: enabled while it has members"
+
+        stripped = LogicalControl(id="m_ctrl", name="Manual Role", curve_id="c1", members=[])
+        card._update_no_members_state(stripped)
+
+        assert card._manual_btn.isEnabled(), (
+            "a CHECKED Manual button must stay enabled with no members — otherwise "
+            "the user cannot release an override they are holding and must wait "
+            "out the daemon deadman"
+        )
+
+    def test_taking_manual_still_needs_members(self, qtbot, curves):
+        """Guard against over-fixing: the exemption is only for a HELD override."""
+        card = _card_with_member(qtbot, curves)
+        stripped = LogicalControl(id="m_ctrl", name="Manual Role", curve_id="c1", members=[])
+        card._update_no_members_state(stripped)
+
+        assert not card._manual_btn.isEnabled(), (
+            "an UNchecked Manual button with no members must stay disabled — "
+            "there is nothing to drive"
+        )
+
+    def test_releasing_on_an_emptied_card_re_disables_the_button(self, qtbot, curves):
+        """The exemption must not outlive the override that justified it.
+
+        `setEnabled(members or checked)` is recomputed only in
+        `_update_no_members_state`, and nothing re-ran it on the way out — so
+        after releasing an override on a card whose members were stripped in
+        place, the button stayed ENABLED on a 0-member control and the user could
+        take a FRESH override with no fans. That is the exact invariant
+        `test_taking_manual_still_needs_members` claims to guard, defeated by the
+        interleaving rather than by the static state.
+        """
+        card = _card_with_member(qtbot, curves)
+        card._manual_btn.setChecked(True)
+        stripped = LogicalControl(id="m_ctrl", name="Manual Role", curve_id="c1", members=[])
+        card._update_no_members_state(stripped)
+        card._control = stripped
+        assert card._manual_btn.isEnabled(), "precondition: enabled while held"
+
+        card.clear_manual()
+
+        assert not card._manual_btn.isEnabled(), (
+            "once the override is released the exemption lapses — a 0-member "
+            "control must not offer a fresh Manual take"
+        )
+
+    def test_clicking_the_toggle_off_re_disables_it_too(self, qtbot, curves):
+        """The INTERACTIVE exit, driven by `.click()` — not by calling a handler.
+
+        Round 2 of this fix recomputed the enable rule only in `clear_manual`,
+        the *programmatic* exit taken when an override lapses or is rejected. The
+        exit a user actually takes is `_on_manual_toggled(False)`, and it was
+        left out — so un-toggling on a member-stripped card left an enabled
+        button on a 0-member control and the next click took a fresh override
+        that commands nothing and renews it every ~5 s.
+
+        **Its round-2 tests could not have caught this**: they called
+        `clear_manual()` and `_update_no_members_state()` directly, so they never
+        crossed the signal connection where the bug lived. `.click()`, not
+        `_handler()` (CLAUDE.md § Hard-won lessons) — this test exists in that
+        form deliberately.
+        """
+        card = _card_with_member(qtbot, curves)
+        card._manual_btn.click()
+        assert card._manual_btn.isChecked(), "precondition: the click took Manual"
+
+        stripped = LogicalControl(id="m_ctrl", name="Manual Role", curve_id="c1", members=[])
+        card.update_control(stripped, curves)
+        assert card._manual_btn.isEnabled(), "precondition: the exemption holds while held"
+
+        card._manual_btn.click()
+
+        assert not card._manual_btn.isChecked(), "the click released Manual"
+        assert not card._manual_btn.isEnabled(), (
+            "the exemption must lapse on the INTERACTIVE exit as well — otherwise "
+            "the very next click takes a fresh override on a control with no fans"
+        )
+
+    def test_a_held_manual_is_not_relabelled_no_members(self, qtbot, curves):
+        card = _card_with_member(qtbot, curves)
+        card._manual_btn.setChecked(True)
+        stripped = LogicalControl(id="m_ctrl", name="Manual Role", curve_id="c1", members=[])
+        card._update_no_members_state(stripped)
+
+        assert card._status_chip.text() != "No members", (
+            "the user is commanding these fans right now, so 'No members' is both "
+            "wrong and — via _apply_chip — announced as the card's description"
+        )
+
+
+class TestSkipReasonIsAccessible:
+    """277-n: the skip reason must reach a keyboard-only user.
+
+    It existed only as a tooltip on `_status_chip`, a non-focusable QLabel. Qt
+    maps `toolTip` to `QAccessible::Text::Description`, which is what that relied
+    on — but browsing by focus never lands on a label, so a screen-reader user
+    got "Not controlled" with no cause while a mouse user got the explanation.
+    """
+
+    def test_the_card_carries_the_reason_as_its_description(self, qtbot, curves):
+        card = _card_with_member(qtbot, curves)
+
+        card.set_skipped("curve_not_found")
+
+        assert card._status_chip.text() == "Not controlled"
+        assert card._status_chip.toolTip() != "", "precondition: the chip still explains itself"
+        assert card.accessibleDescription() == card._status_chip.toolTip(), (
+            "the reason must also be on the CARD, which is focusable — the chip "
+            "is a QLabel a keyboard user can never reach"
+        )
+
+
+class TestClearOutputRespectsTheMemberGuard:
+    """277-k round 3: `clear_output` must suppress where `set_output` suppresses.
+
+    Its docstring promised exactly that; the code omitted the member guard. On a
+    member-less control the 1 Hz reset loop therefore replaced
+    `_update_no_members_state`'s "Assign outputs to enable" guidance with an em
+    dash on every poll, and nothing put it back for the rest of the session.
+    """
+
+    def test_a_member_less_card_keeps_its_guidance(self, qtbot, curves):
+        from control_ofc.services.profile_service import LogicalControl
+        from control_ofc.ui.widgets.control_card import ControlCard
+
+        card = ControlCard(
+            LogicalControl(id="empty", name="Empty", curve_id="c1", members=[]), curves
+        )
+        qtbot.addWidget(card)
+        assert card._output_label.text() == "Assign outputs to enable", "precondition"
+
+        card.clear_output()
+
+        assert card._output_label.text() == "Assign outputs to enable", (
+            "blanking this replaces actionable guidance with nothing, and nothing "
+            "restores it for the rest of the session"
+        )
+
+    def test_a_member_bearing_card_still_clears(self, qtbot, curves):
+        """Guard against over-fixing: the guard is for member-LESS controls only."""
+        card = _card_with_member(qtbot, curves)
+        card.set_output(42.0)
+        assert "42%" in card._output_label.text(), "precondition"
+
+        card.clear_output()
+
+        assert card._output_label.text() == "—"

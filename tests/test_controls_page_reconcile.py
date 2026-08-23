@@ -18,6 +18,7 @@ from control_ofc.api.models import (
     OverrideGrant,
     OverrideStatusEntry,
     SkippedControl,
+    parse_status,
 )
 from control_ofc.services.profile_service import (
     ControlMember,
@@ -343,26 +344,55 @@ class TestSkippedControlReconcile:
     def test_a_malformed_control_id_does_not_crash_the_poll_path(
         self, qtbot, app_state, profile_service
     ):
-        """`control_id` keys a dict straight off the wire and `_filter_fields` does
-        no type coercion, so `"control_id": []` reached an unhashable-key `TypeError`
-        inside the `status_updated` slot on the 1 Hz poll path. That runs on the main
-        thread, outside the poll worker's own `except`, so it escaped to
-        `sys.excepthook` and aborted the rest of that emission every second — stale
-        UI presented as live.
+        """A non-string `control_id` on the wire must not break the 1 Hz poll.
 
-        `skipped_control_feedback` already guarded the sibling `reason` and said so
-        in a comment; the key itself was missed. A well-formed sibling entry in the
-        same payload must still render, or the guard has merely moved the failure.
+        The original defect: `control_id` keys a dict straight off the wire, so
+        `"control_id": []` reached an unhashable-key `TypeError` inside the
+        `status_updated` slot, on the main thread and outside the poll worker's
+        own `except`.
+
+        **This now goes through `parse_status`, which is the change 277-h made.**
+        The first version of this test hand-built a `SkippedControl` with a list
+        id and asserted a local `isinstance` guard on the page. That guard closed
+        one of about six identical doors — the sibling `overrides` comprehension,
+        `fan_identify`, `unavailable_sensors` and `services/session_stats.py` all
+        hash wire ids the same way — and its one-sidedness made the asymmetry read
+        as deliberate. The posture is now decided once at the parse boundary:
+        `_filter_fields` coerces every identity field to `str`, so nothing
+        downstream needs a guard and no future consumer can forget one.
+
+        Driving the real entry point is also what makes this test honest — a
+        hand-built dataclass could never reach the page in production, so the old
+        test pinned a guard against an input the parser would have caught anyway
+        once the parser learned to.
         """
         page = _page(qtbot, app_state, profile_service, MagicMock())
-        status = _skipped(("lc1", "mix_unresolvable"))
-        status.skipped_controls.append(
-            SkippedControl(
-                control_id=[],  # type: ignore[arg-type]
-                control_name="bad",
-                reason="curve_not_found",
-                skipped_for_ms=1000,
-            )
+        raw = {
+            "skipped_controls": [
+                {
+                    "control_id": "lc1",
+                    "control_name": "LC1",
+                    "reason": "mix_unresolvable",
+                    "skipped_for_ms": 1000,
+                },
+                {
+                    "control_id": [],
+                    "control_name": "bad",
+                    "reason": "curve_not_found",
+                    "skipped_for_ms": 1000,
+                },
+            ]
+        }
+        status = parse_status(raw)
+
+        # The coercion happened at the boundary, so the page never sees a list.
+        bad = next(e for e in status.skipped_controls if e.control_name == "bad")
+        assert isinstance(bad.control_id, str), (
+            "a non-string wire id must be coerced at the parse boundary, so every "
+            "downstream consumer can hash it without its own guard (277-h)"
+        )
+        assert bad.control_id not in page._control_cards, (
+            "a coerced malformed id must not collide with a real control"
         )
 
         page._on_status_reconcile(status)
@@ -667,4 +697,302 @@ class TestSkipAndManualInteraction:
 
         assert card._status_chip.text() != "No members", (
             "the card now has outputs; the terminal chip must come down"
+        )
+
+
+class TestLiveControlOutputs:
+    """277-k: the live Controls page shows what each control is actually applying.
+
+    Until daemon 2.22.0 published `control_outputs[]` there was no live feed at
+    all. `ControlsPage.update_control_outputs` had exactly one production caller,
+    wired to `DemoController.outputs_changed`, so in live mode a card's output
+    label sat at "—" for the entire session — a real gap against
+    `CLAUDE.md § UX standards → Controls` ("what are the fans doing?"), and the
+    reason several code comments and changelog lines described demo-only
+    behaviour as if it were live.
+
+    These assert the CALL SITE, not the renderer. `update_control_outputs` and
+    `ControlCard.set_output` already existed and were already correct; deleting
+    the one line that feeds them from the poll would leave every renderer test
+    green while the feature published nothing — the "extracting a rule does not
+    test the call site" trap this project has hit five times.
+    """
+
+    def test_a_poll_drives_the_card_output_label(self, qtbot, app_state, profile_service):
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        assert card._output_label.text() == "—", (
+            "precondition: the card starts with no live figure, which is exactly "
+            "the state that persisted forever before this feed existed"
+        )
+
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "lc1", "output_pct": 42.0}]})
+        )
+
+        assert "42%" in card._output_label.text(), (
+            f"the poll must reach the card, got {card._output_label.text()!r}"
+        )
+
+    def test_an_absent_control_reverts_to_unknown_not_a_stale_figure(
+        self, qtbot, app_state, profile_service
+    ):
+        """Absence means "no value", not "the last value" and not "zero".
+
+        `docs/08` is explicit: a client "must not carry a previous value forward
+        ... Render absence as 'unknown' (the reference GUI's '—'), never as 0".
+
+        **The first version of this test asserted the opposite** and shipped the
+        violation it was meant to prevent: it required the card to KEEP its last
+        figure, on the strawman reasoning that the only alternative was rendering
+        0. The contract never asked for 0 — it asked for "—". A card left reading
+        "Now: 42%" through a 105 °C event, while `force_all` drives the fans at
+        100%, is exactly the "confidently display a duty nothing is applying"
+        failure that clause exists to forbid.
+        """
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "lc1", "output_pct": 42.0}]})
+        )
+        assert "42%" in card._output_label.text(), "precondition: a real figure is shown"
+
+        # A thermal event: the daemon evaluates nothing, so the array is empty.
+        page._on_status_reconcile(parse_status({"control_outputs": []}))
+
+        assert card._output_label.text() == "\u2014", (
+            f"an omitted control must revert to an em dash, not keep a duty "
+            f"nothing is applying; got {card._output_label.text()!r}"
+        )
+
+    def test_a_control_omitted_from_a_non_empty_list_also_reverts(
+        self, qtbot, app_state, profile_service
+    ):
+        """The partial-omission path, which the empty-list case cannot reach.
+
+        `_apply_live_outputs` returns early once the per-card reset is done and
+        the list is empty, so a test that only sends `[]` exercises one branch.
+        The shape that actually occurs is a NON-empty list omitting one control —
+        a per-control skip while its siblings keep evaluating. Without this, a
+        regression that reset only on the empty case would ship green.
+        """
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "lc1", "output_pct": 42.0}]})
+        )
+        assert "42%" in card._output_label.text(), "precondition: a real figure is shown"
+
+        # Another control is still evaluating; lc1 is not in the list.
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "other", "output_pct": 77.0}]})
+        )
+
+        assert card._output_label.text() == "\u2014", (
+            f"a control omitted from a NON-empty list must revert too; got "
+            f"{card._output_label.text()!r}"
+        )
+
+    def test_an_older_daemon_leaves_the_card_alone(self, qtbot, app_state, profile_service):
+        """Pre-2.22.0 daemons omit the key entirely — read that as 'no feed'.
+
+        Asserts the PRESENCE first. Without that it passed against the card's
+        construction default and would have stayed green with the whole feed
+        deleted — the vacuous-absence trap (DEC-272).
+        """
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "lc1", "output_pct": 42.0}]})
+        )
+        assert "42%" in card._output_label.text(), "precondition: the feed works at all"
+
+        page._on_status_reconcile(DaemonStatus())
+
+        assert card._output_label.text() == "\u2014"
+
+
+class TestLiveOutputMemberAssembly:
+    """277-k: the per-member half of the live feed, which the helper tests miss.
+
+    `divergent_gpu_output` is unit-tested with a hand-built dict, and
+    `set_output(gpu_output_pct=...)` is tested directly — but nothing populated
+    `AppState.fans`, so the loop in `_apply_live_outputs` that builds
+    `member_outputs` from `last_commanded_pwm` always ran with an empty mapping.
+    A wrong key there would silently drop the advertised "(GPU N%)" suffix with
+    every existing test green: the project's five-times "extracting a rule does
+    not test the call site" trap.
+    """
+
+    def _mixed_page(self, qtbot, app_state, profile_service):
+        page = ControlsPage(state=app_state, profile_service=profile_service, client=MagicMock())
+        qtbot.addWidget(page)
+        curve = CurveConfig(id="c1", name="C", type=CurveType.FLAT, flat_output_pct=40.0)
+        # Mixed control: a GPU grouped with a chassis fan is the ONLY shape that
+        # can diverge (DEC-119) — a GPU-only control's headline already is the
+        # GPU value, so `divergent_gpu_output` returns None for it by design.
+        ctrl = LogicalControl(
+            id="lc1",
+            name="LC",
+            mode=ControlMode.CURVE,
+            curve_id="c1",
+            members=[
+                ControlMember(source="openfan", member_id="openfan:ch00"),
+                ControlMember(source="amd_gpu", member_id="amd_gpu:0000:03:00.0"),
+            ],
+        )
+        page._refresh_controls_grid(Profile(id="p", name="P", controls=[ctrl], curves=[curve]))
+        return page
+
+    def test_a_diverging_gpu_member_reaches_the_card(self, qtbot, app_state, profile_service):
+        from control_ofc.api.models import FanReading
+
+        page = self._mixed_page(qtbot, app_state, profile_service)
+        card = page._control_cards["lc1"]
+        # The GPU is idling well below the control-wide value.
+        app_state.fans = [
+            FanReading(id="openfan:ch00", source="openfan", last_commanded_pwm=60),
+            FanReading(id="amd_gpu:0000:03:00.0", source="amd_gpu", last_commanded_pwm=12),
+        ]
+
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "lc1", "output_pct": 60.0}]})
+        )
+
+        text = card._output_label.text()
+        assert "60%" in text, f"the control-wide figure must show: {text!r}"
+        assert "GPU 12%" in text, (
+            f"the diverging GPU member must be annotated — this is the half fed "
+            f"from AppState.fans, and nothing else exercises it: {text!r}"
+        )
+
+    def test_a_gpu_tracking_the_control_is_not_annotated(self, qtbot, app_state, profile_service):
+        """Guard against over-fixing: the suffix is for DIVERGENCE only."""
+        from control_ofc.api.models import FanReading
+
+        page = self._mixed_page(qtbot, app_state, profile_service)
+        card = page._control_cards["lc1"]
+        app_state.fans = [
+            FanReading(id="openfan:ch00", source="openfan", last_commanded_pwm=60),
+            FanReading(id="amd_gpu:0000:03:00.0", source="amd_gpu", last_commanded_pwm=60),
+        ]
+
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "lc1", "output_pct": 60.0}]})
+        )
+
+        assert "GPU" not in card._output_label.text(), (
+            "a GPU running at the control-wide value adds noise, not information"
+        )
+
+
+class TestLiveOutputDoesNotClobberThePreview:
+    """277-k round 2: the 1 Hz feed must not overwrite a live curve-edit preview.
+
+    `_update_card_previews` writes "Preview: N%" into the same `_output_label`
+    every time the user drags a point, so that the card shows what the edit WOULD
+    do. Wiring `set_output` to the poll put a 1 Hz writer on that label — the
+    preview survived under a second per drag, silently degrading a feature that
+    predates this one.
+
+    Note this was already true in DEMO mode, where `DemoController.outputs_changed`
+    drives the same path at 1 Hz; 277-k extended it to every live user, which is
+    what made it worth fixing rather than recording.
+    """
+
+    def test_the_card_being_edited_keeps_its_preview(self, qtbot, app_state, profile_service):
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        curve = CurveConfig(id="c1", name="C", type=CurveType.FLAT, flat_output_pct=40.0)
+        page._curve_editor.set_curve(curve)
+        # `_set_curve_editing` is what the page's own open path calls, and it is
+        # what `_close_editor` clears — so it, not the editor's never-reset
+        # `_curve`, is the state the exemption reads.
+        page._set_curve_editing("c1")
+        card.update_output_preview("C", "cpu", 55.0, 40.0)
+        assert card._output_label.text().startswith("Preview:"), "precondition"
+
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "lc1", "output_pct": 99.0}]})
+        )
+
+        assert card._output_label.text().startswith("Preview:"), (
+            f"the poll must not stamp over a live preview; got {card._output_label.text()!r}"
+        )
+
+    def test_a_card_not_being_edited_still_updates(self, qtbot, app_state, profile_service):
+        """Guard against over-fixing: only the edited curve's cards are exempt."""
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        other = CurveConfig(id="c-other", name="Other", type=CurveType.FLAT, flat_output_pct=10.0)
+        page._curve_editor.set_curve(other)
+        page._set_curve_editing("c-other")
+
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "lc1", "output_pct": 99.0}]})
+        )
+
+        assert "99%" in card._output_label.text(), (
+            "a card whose curve is NOT on the workbench must still track the poll"
+        )
+
+
+class TestPreviewExemptionIsReleasedOnClose:
+    """277-k round 3: the preview exemption must end when the editor does.
+
+    `CurveEditor._curve` is assigned only in `__init__` and `set_curve` and is
+    never reset, so `get_curve()` keeps returning the last-edited curve forever.
+    Deriving the exemption from it permanently excluded the last-edited control
+    from the live feed — frozen on a stale "Preview: N%", including through a
+    thermal event. That is the same contract violation the reset loop exists to
+    prevent, reintroduced for one control by the exemption meant to protect it.
+
+    The page already tracks `_editing_curve_id`, which `_close_editor` clears.
+    """
+
+    def test_the_card_updates_again_after_the_editor_closes(
+        self, qtbot, app_state, profile_service
+    ):
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        curve = CurveConfig(id="c1", name="C", type=CurveType.FLAT, flat_output_pct=40.0)
+        page._curve_editor.set_curve(curve)
+        page._set_curve_editing("c1")
+        card.update_output_preview("C", "cpu", 55.0, 40.0)
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "lc1", "output_pct": 99.0}]})
+        )
+        assert card._output_label.text().startswith("Preview:"), (
+            "precondition: the exemption holds while the editor is open"
+        )
+
+        page._close_editor()
+
+        page._on_status_reconcile(
+            parse_status({"control_outputs": [{"control_id": "lc1", "output_pct": 99.0}]})
+        )
+        assert "99%" in card._output_label.text(), (
+            f"once the editor is closed the card must track the poll again; got "
+            f"{card._output_label.text()!r}"
+        )
+
+    def test_a_closed_editor_does_not_freeze_the_card_through_absence(
+        self, qtbot, app_state, profile_service
+    ):
+        """The thermal-event shape, which is what makes the leak matter."""
+        page = _page(qtbot, app_state, profile_service, MagicMock())
+        card = page._control_cards["lc1"]
+        curve = CurveConfig(id="c1", name="C", type=CurveType.FLAT, flat_output_pct=40.0)
+        page._curve_editor.set_curve(curve)
+        page._set_curve_editing("c1")
+        card.update_output_preview("C", "cpu", 55.0, 40.0)
+        page._close_editor()
+
+        # A thermal event: force_all drives the fans directly, so the daemon
+        # reports no control output at all.
+        page._on_status_reconcile(parse_status({"control_outputs": []}))
+
+        assert card._output_label.text() == "—", (
+            f"a closed editor must not leave a control permanently exempt from "
+            f"the absence reset; got {card._output_label.text()!r}"
         )

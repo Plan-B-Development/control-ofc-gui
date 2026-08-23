@@ -683,25 +683,41 @@ class TestDemoPersistenceGuard:
         assert "openfan:ch02" not in on_disk
         assert DemoService.fan_aliases()["openfan:ch02"] not in on_disk.values()
 
-    def test_demo_zone_change_does_not_persist(self, qtbot, tmp_path, monkeypatch):
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        from control_ofc.services.app_settings_service import AppSettingsService
+    def test_fan_zone_change_signal_stays_formally_dropped(self, qtbot):
+        """10-d intent lock: the fan-zone change signal was formally DROPPED.
+
+        It replaces `test_demo_zone_change_does_not_persist`, which emitted
+        `fan_zones_changed` by hand to exercise a demo-mode guard. Nothing has
+        emitted that signal since DEC-222 removed the zone UI, so the test was
+        the only caller of the path it protected, and three consecutive audits
+        found the same emit-dead island (register row 10-d).
+
+        DEC-224 set the condition — retire it "when the fan-zone feature returns
+        or is formally dropped" — and DEC-237 settles which, with an explicit
+        "must not gain a control" note on `fan_zones`. So the signal and
+        `MainWindow._persist_fan_zones` are gone.
+
+        **`fan_zones` itself survives as data** (DEC-237): the settings key still
+        round-trips, `AppState.fan_zones` is still seeded on both the live and
+        demo paths, and `tests/test_fan_zones.py` still pins that.
+
+        Reviving a zone surface therefore has to re-add the signal AND its
+        demo-mode persistence guard deliberately — which is the point of failing
+        here rather than silently leaving a half-wired path behind.
+        """
+        from control_ofc.services.app_state import AppState
         from control_ofc.ui.main_window import MainWindow
 
-        svc = AppSettingsService()
-        svc.load()  # as main.py does — an unloaded service refuses to write (DEC-244)
-        svc.update(fan_zones={OPENFAN: "Real Zone"})
-
-        window = MainWindow(settings_service=svc, demo_mode=True)
-        qtbot.addWidget(window)
-        # fan_zones is dormant since DEC-222 — the zone UI was removed, so nothing
-        # emits fan_zones_changed today and the signal is the only way in. The
-        # guard is defence-in-depth for whenever a zone surface returns.
-        window._state.fan_zones = {OPENFAN: "Demo Zone"}
-        window._state.fan_zones_changed.emit(OPENFAN, "Demo Zone")
-
-        path = tmp_path / "control-ofc" / "app_settings.json"
-        assert json.loads(path.read_text())["fan_zones"] == {OPENFAN: "Real Zone"}
+        assert not hasattr(AppState, "fan_zones_changed"), (
+            "fan_zones_changed was formally dropped (10-d). Re-adding it means "
+            "re-adding its persistence handler and the demo-mode guard that "
+            "stopped a demo zone overwriting real settings."
+        )
+        assert not hasattr(MainWindow, "_persist_fan_zones"), (
+            "_persist_fan_zones was formally dropped with the signal that fed it"
+        )
+        # The DATA half must NOT have been dropped with it.
+        assert hasattr(AppState(), "fan_zones"), "fan_zones stays as data (DEC-237)"
 
     def test_live_rename_still_persists(self, qtbot, tmp_path, monkeypatch):
         """Guards against over-fixing: the guard must be demo-only."""

@@ -37,7 +37,16 @@ def _state(*, enabled: bool, active: bool, can_check: bool = True) -> DaemonServ
 
 
 def _all_label_text(page: DashboardPage) -> str:
-    return "\n".join(lab.text() for lab in page.findChildren(QLabel))
+    # 277-e: skip the hidden `*_A11yLabel` proxies `name_value_control`
+    # parents to a control (DEC-276). They carry real text but are
+    # invisible, so a future "this text must NOT appear" assertion on this
+    # helper would be checking text no user can see and could pass or fail
+    # for the wrong reason.
+    return "\n".join(
+        lab.text()
+        for lab in page.findChildren(QLabel)
+        if not lab.objectName().endswith("_A11yLabel")
+    )
 
 
 class TestServiceHintVisibility:
