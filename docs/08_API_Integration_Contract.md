@@ -217,11 +217,12 @@ Emitted by the daemon's `HealthStatus::Display` and pinned on both sides by
 `health_status_display_wire_strings` (daemon) and the dashboard health tests (GUI).
 
 `subsystems[]` is `openfan`, `hwmon`, then — on daemon ≥ 2.17.0 — **`engine`**
-(DEC-249, additive; `api_version` unchanged). The order is stable and the new
-entry is appended, never inserted, so an index-based reader is unaffected; the
-GUI iterates the array and needs no change to display it. The first two report
-*data* freshness from the poll loops. `engine` reports the profile engine's
-**liveness**: the daemon's sole PWM writer also evaluates the 105 °C rule.
+(DEC-249), then — on daemon ≥ 2.22.0 — **`controls`** (DEC-279). Both additive;
+`api_version` unchanged. The order is stable and each new entry is appended, never
+inserted, so an index-based reader is unaffected; the GUI iterates the array and
+needs no change to display either. The first two report *data* freshness from the
+poll loops. `engine` reports the profile engine's **liveness**: the daemon's sole
+PWM writer also evaluates the 105 °C rule.
 
 On daemon ≥ 2.18.0 the engine task is **supervised** (DEC-266): if it ends —
 including by a panic inside a tick, which the runtime otherwise contains — the
@@ -263,6 +264,30 @@ pass, so a client can read "mid-tick, last full pass N ms ago" coherently.
 A `crit` engine escalates `overall_status` to `"crit"` — that escalation is the
 point of the surface. Daemons < 2.17.0 emit two entries and no `engine`; a client
 must treat its absence as "unknown", never as healthy.
+
+**`controls` (daemon ≥ 2.22.0, DEC-279) reports whether every control is actually
+being commanded**, which is a different question from whether the engine is
+ticking. It is `warn` while `skipped_controls[]` is non-empty and `ok` otherwise,
+with `age_ms` = the **longest** `skipped_for_ms` in that list (the oldest
+unresolved control — a flapping one must not mask a permanent one) and a reason of
+the form `"N controls not being commanded — their fans hold their last speed"`.
+
+**It is `warn` and never `crit`, deliberately.** Those fans are not stopped, and
+the 105 °C rule bypasses controls entirely (`force_all`), so it still reaches every
+OpenFan channel and writable hwmon header regardless of what is listed. `crit`
+stays reserved for a subsystem that has actually failed. But it *does* move
+`overall_status` to `"warn"`, so a client whose ribbon reads only `overall_status`
+will now show a warning in a state that previously read fully healthy — this is
+the intended behaviour change, not a regression.
+
+**This is deliberately louder than `unavailable_sensors[]`, which does not move
+`overall_status` at all (DEC-193).** The asymmetry is recorded so it is not
+"fixed" into consistency later: an unavailable sensor is a *cause*, is frequently
+benign (a powered-down WiFi radio), and often drives nothing; a skipped control is
+the *consequence* and by construction means a real fan is uncommanded right now.
+
+Daemons < 2.22.0 emit no `controls` entry; a client must treat its absence as
+"unknown", never as healthy — the same rule as `engine`.
 
 `thermal_state` (daemon ≥1.13.0, additive — `api_version` unchanged) is one of
 `"normal" | "recovery" | "emergency" | "no_sensor_fallback"`. While it is not
@@ -391,13 +416,40 @@ The GUI consumes this **display-only** — it never writes PWM (DEC-165), so the
 do beyond telling the user. The Controls page reconciles `skipped_controls[]` each poll and paints a
 **"Not controlled"** chip on the affected card, with the reason in its tooltip. (Note what the
 reference GUI does *not* do: its Controls card shows no live commanded value to leave standing, so
-the chip is the whole of the signal there. Register row 277-k tracks giving that page an output
-feed; a second client that has one should keep showing the last commanded value, since that is what
-the fans are holding.) The
+the chip is the whole of the signal there. `control_outputs[]` below is the daemon half of register
+row 277-k and exists as of daemon 2.22.0; the reference GUI does not consume it yet. A second client
+that shows an output should keep showing the last commanded value, since that is what the fans are
+holding.) The
 chip is cleared when the daemon stops reporting the control, and on disconnect (polling stops, so
 nothing else would clear it, and an offline GUI does not know whether it is still true). A
 user-owned Manual state wins the chip. Older daemons omit the array — the GUI defaults it to empty,
 so it never needs to know the daemon's version to read this field.
+
+`control_outputs` (daemon ≥ 2.22.0, additive — `api_version` unchanged, omitted when empty) carries
+the output each logical control is currently applying (277-k, DEC-279). Each entry is
+`{control_id, output_pct}`, sorted by `control_id`, `output_pct` a float 0–100.
+
+It is the **applied** control-wide value **whatever produced it** — a curve evaluation or a live
+manual override — because the question it answers is "what are the fans doing?", and an override is
+as real an answer as a curve. A client that wants to distinguish the two reads `overrides[]`, which
+is already on the same response.
+
+**It is not a per-fan duty.** An individual member can sit *above* it on a role-aware floor (the
+DEC-095/162 30% CPU/pump floor) or *below* it on a GPU that diverges (DEC-119). Per-fan commanded
+duty is `last_commanded_pwm` on `/fans` + `/poll`, which remains the only authority for what any
+single fan was told to do. Nor is it a *measured* value — `rpm` is the measured one, and the two must
+never be conflated.
+
+**Absence is meaningful and a client must not carry a previous value forward.** A control is absent
+whenever the engine did not evaluate it, which covers: no profile active; the control is listed in
+`skipped_controls[]`; and — importantly — the **whole duration of a thermal event**. `force_all`
+drives OpenFan channels and writable hwmon headers directly and bypasses every control, so there is
+no control-wide output to report and publishing the pre-emergency figure would have a client
+confidently display a duty nothing is applying. Render absence as "unknown" (the reference GUI's
+`"—"`), never as `0`.
+
+Older daemons omit the array entirely — a client defaults it to `[]` and simply shows no figure,
+which is what it already did before the field existed.
 
 `active_profile_id` and `active_profile_name` (daemon ≥ 2.4.0, additive — `api_version` unchanged,
 **both omitted when no profile is active**) mirror the daemon's currently-active profile onto the
@@ -1199,7 +1251,11 @@ Error codes and HTTP statuses:
 - 409 `already_exists` (source: `"validation"`, retryable: false) — `POST /profiles` with an `id` that already exists (DEC-160). Rename or `PUT` the existing profile instead.
 - 409 `profile_in_use` (source: `"validation"`, retryable: false) — `DELETE /profiles/{id}` on the currently active profile (DEC-160); deactivate or switch profiles first.
 - 409 `thermal_abort` (source: `"hardware"`, retryable: true) — a fan diagnostic was aborted or refused due to high temperature: calibration aborts mid-sweep, and a verify refuses to start while any sensor is over the 85 °C limit (DEC-201, daemon ≥ 2.6.0)
-- 409 `validation_error` (source: `"validation"`, retryable: false) — a fan diagnostic (`POST /fans/openfan/{ch}/calibrate`, `POST /hwmon/{id}/verify`, or `POST /gpu/{id}/fan/verify`) when another calibration **or** verify is already in progress (they share a single-flight pause, DEC-191, daemon ≥ 2.2.2). Retry once the in-flight operation completes. (HTTP 409 with the `validation_error` code — matches the long-standing "calibration already in progress" response shape.) `POST /fans/openfan/rescan` uses the same shape for its own single-flight (DEC-265, daemon ≥ 2.18.0), on a **separate** flag — a rescan and a calibration do not block each other.
+- 409 `validation_error` (source: `"validation"`, retryable: false **except the rescan cooldown described below, which is `true`**) — a fan diagnostic (`POST /fans/openfan/{ch}/calibrate`, `POST /hwmon/{id}/verify`, or `POST /gpu/{id}/fan/verify`) when another calibration **or** verify is already in progress (they share a single-flight pause, DEC-191, daemon ≥ 2.2.2). Retry once the in-flight operation completes. (HTTP 409 with the `validation_error` code — matches the long-standing "calibration already in progress" response shape.) `POST /fans/openfan/rescan` uses the same shape for its own single-flight (DEC-265, daemon ≥ 2.18.0), on a **separate** flag — a rescan and a calibration do not block each other. On daemon ≥ 2.22.0 that endpoint returns this same 409 shape for a **second** reason: a 10-second cooldown between probes (10-e, DEC-279), because each probe asserts DTR on every candidate tty and that resets Arduino-class boards.
+
+Two things distinguish the cooldown 409 from the single-flight 409, and a client that retries automatically should read the second one. The `message` differs — the cooldown says "over the same ports was attempted moments ago" and names the seconds to wait. More usefully, the cooldown carries **`retryable: true`** while the single-flight 409 carries `retryable: false`; that field is the documented signal for exactly this decision, and a condition that clears in ten seconds must not present as permanent. No `429` was added: the documented code set is a contract and no client would branch differently on the status alone.
+
+**The cooldown applies only while the candidate port set is unchanged.** Attaching a controller enumerates a new tty, so plugging one in and rescanning immediately is *not* refused — that retry is the endpoint's primary purpose and rate-limiting it on elapsed time alone was a defect corrected before release. What is spaced is a client re-probing hardware that has not changed, which cannot succeed and does reset boards. A *successful* rescan never meets the check at all: the handler returns 200 `already_connected` once a controller is adopted, before it.
 - 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
 - 500 `internal_error` (source: `"internal"`, retryable: true)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)
