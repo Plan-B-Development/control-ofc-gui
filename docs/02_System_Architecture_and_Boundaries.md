@@ -148,7 +148,11 @@ control_ofc/
     components/              # shared redesign component library (DEC-208) — import per-submodule
       badges.py             # filled status pill / badge
       buttons.py            # button-variant factory (primary / secondary / ghost / danger)
-      cards.py              # Card frame + SectionHeader
+      cards.py              # Card frame + BracketCard + ContentSizedCard + SectionHeader
+                            #   ContentSizedCard reports the height its wrapped text needs
+                            #   at its CURRENT width — neither QSplitter nor QScrollArea
+                            #   propagates heightForWidth, so a card of wrapped text is
+                            #   otherwise squashed below its content and clipped (DEC-281)
       dialog.py             # modal-dialog base (header/body/footer + translucent scrim)
       footer.py             # global footer (version/kernel/arch + mode, poll age,
                             #   thermal + cooling-readiness chips, Rescan / Export)

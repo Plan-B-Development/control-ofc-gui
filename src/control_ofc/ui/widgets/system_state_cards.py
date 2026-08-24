@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
-from control_ofc.ui.components.cards import BracketCard, Card, SectionHeader
+from control_ofc.ui.components.cards import BracketCard, Card, ContentSizedCard, SectionHeader
 from control_ofc.ui.components.gauges import RadialGauge
 from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.theme import active_theme
@@ -34,7 +34,6 @@ from control_ofc.ui.theme import active_theme
 _REGISTRY_COLS = ["Status", "Chip / Component", "Driver", "Driver Status", "Mainline", "Headers"]
 _REG_STATUS = 0
 _REG_MAINLINE = 4
-
 
 # ── shared UI helpers (card-local) ───────────────────────────────────────
 
@@ -156,7 +155,7 @@ def _make_issue_card(vm) -> QWidget:
 # ── cards ────────────────────────────────────────────────────────────────
 
 
-class HealthCard(Card):
+class HealthCard(ContentSizedCard):
     """System Health Overview — issue-count pill, summary line, and the
     severity-sorted issue cards. The page also pushes fetch/error text through
     ``set_summary()``."""
@@ -210,7 +209,7 @@ class HealthCard(Card):
             self._issues_layout.addWidget(_make_issue_card(vm))
 
 
-class InterferenceCard(Card):
+class InterferenceCard(ContentSizedCard):
     """BIOS-reclaim Interference Monitor — radial reverts gauge + contention text."""
 
     def __init__(self) -> None:
@@ -239,6 +238,18 @@ class InterferenceCard(Card):
         self._header_id_label.setObjectName("SystemState_Label_headerId")
         self._header_id_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _mono(self._header_id_label)
+        # Wraps because this text is an *unbounded* content minimum otherwise.
+        # A contended header id is a stable hwmon id — `hwmon:nct6687:platform-
+        # nct6687.2592:pwm3:CPU_FAN` — rendered in a monospace label with no
+        # wrap and no elision, so the label's minimum width is the full string:
+        # measured 345px, taking this card's minimum from 205 to 367 and the
+        # status column's from 205 to 419 the moment any contention is detected.
+        # That floor exceeded the column's own share and stole width from the
+        # health card beside it, which is a share of the squeeze this layout
+        # change exists to remove. QLabel breaks an over-long unbreakable token
+        # anywhere it must, so wrapping bounds the card at 252px (measured) and
+        # keeps the id fully readable rather than eliding it.
+        self._header_id_label.setWordWrap(True)
         v.addWidget(self._header_id_label)
 
         self._interference_explain = QLabel("")
@@ -263,7 +274,7 @@ class InterferenceCard(Card):
         self._interference_explain.setText(vm.explanation)
 
 
-class SafetyCard(Card):
+class SafetyCard(ContentSizedCard):
     """Safety & GPU limits — CPU thermal state, GPU rows, firmware speed range."""
 
     def __init__(self) -> None:
@@ -372,6 +383,40 @@ class RegistryCard(Card):
         )
         self._registry_table.horizontalHeader().setStretchLastSection(True)
         v.addWidget(self._registry_table)
+
+    def content_min_width(self) -> int:
+        """Narrowest this card can be and still show all six column headers.
+
+        DERIVED from the table rather than written down, for the DEC-258 reason:
+        a literal silently tracks today's column set and the theme's base font,
+        and drifts the moment either moves. ``sectionSizeHint`` is each column's
+        content-based hint and is stable at every widget width — unlike
+        ``QHeaderView.length()``, which the shipped ``setStretchLastSection``
+        inflates by whatever free space the table happens to have (measured 638
+        against a true 540), so length() would bake that surplus into the floor.
+
+        Rows wider than the floor still scroll inside the table. The floor only
+        keeps the *headers* — Status, Chip / Component, Driver, Driver Status,
+        Mainline, Headers — from being dragged or resized out of reach.
+        """
+        header = self._registry_table.horizontalHeader()
+        columns = sum(header.sectionSizeHint(c) for c in range(header.count()))
+        margins = self.layout().contentsMargins()
+        chrome = margins.left() + margins.right() + 2 * self._registry_table.frameWidth()
+        # The scrollbar takes its width out of the viewport as soon as there are
+        # more rows than fit, so a floor computed without it leaves the pane a
+        # scrollbar-width short at the boundary — the same shape as the pane
+        # literal in `widgets/card_metrics.card_pane_min_width`. Measured from the
+        # real scrollbar rather than written down as a literal.
+        #
+        # It has to be THAT widget's own hint. Asking the card's or the table's
+        # style for PM_ScrollBarExtent returns Qt's unstyled 14px, because the
+        # theme sets the width through a `QScrollBar:vertical` QSS rule and QSS
+        # is resolved per-widget — the scrollbar this table will actually grow
+        # is 8px wide. Both numbers look equally plausible in isolation; only
+        # the one taken from the scrollbar itself tracks the theme.
+        scrollbar = self._registry_table.verticalScrollBar().sizeHint().width()
+        return columns + chrome + scrollbar
 
     def set_summary(self, text: str) -> None:
         self._registry_summary.setText(text)

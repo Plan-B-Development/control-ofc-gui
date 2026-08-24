@@ -87,10 +87,10 @@ def test_every_splitter_uses_shared_handle_width(qtbot):
     """The heart of the consistency fix: no page may skip style_splitter."""
     pages, splitters = _build_paged_splitters(qtbot)  # keep `pages` alive below
     # Explicit count (Dashboard 2 + Controls 2 + Logs 3 + Overview 1 + System
-    # State 1) so a future page that gains a splitter without being added to
+    # State 2) so a future page that gains a splitter without being added to
     # _build_paged_splitters — or a dropped splitter — fails loudly instead of
     # silently escaping this consistency check.
-    assert len(splitters) == 9, [f"{n}/{s.objectName()}" for n, s in splitters]
+    assert len(splitters) == 10, [f"{n}/{s.objectName()}" for n, s in splitters]
     for name, sp in splitters:
         assert sp.handleWidth() == SPLITTER_HANDLE_WIDTH, (
             f"{name}/{sp.objectName() or '<unnamed>'} handleWidth={sp.handleWidth()}"
@@ -151,17 +151,23 @@ def test_system_state_sections_splitter(qtbot):
 
     overview_pane = page.findChild(QWidget, "SystemState_Pane_healthOverview")
     registry = page.findChild(QWidget, "SystemState_Card_registry")
-    assert overview_pane is not None and registry is not None
-    # Health card lives in the top pane; registry is the other splitter child.
+    row2 = page.findChild(QSplitter, "SystemState_Splitter_row2")
+    assert overview_pane is not None and registry is not None and row2 is not None
+    # Health card lives in the top pane; row 2 is the other splitter child.
     assert overview_pane.findChild(QWidget, "SystemState_Card_health") is not None
-    # Child ORDER is load-bearing (health overview above the registry) — a
-    # subtree findChild would still pass if the two addWidget calls were swapped.
+    # Child ORDER is load-bearing (health overview above row 2) — a subtree
+    # findChild would still pass if the two addWidget calls were swapped.
     assert sp.widget(0) is overview_pane
-    assert sp.widget(1) is registry
-    # Floors keep a shrunk pane usable (the registry table scrolls internally, so
-    # without its floor the pane collapses to the table's tiny natural minimum).
-    assert overview_pane.minimumHeight() >= 150
+    assert sp.widget(1) is row2
+    # The registry keeps its own floor (its table scrolls internally, so without
+    # one the card collapses to the table's tiny natural minimum).
     assert registry.minimumHeight() >= 120
+    # The health pane must NOT carry an explicit height floor. An explicit
+    # minimumSize overrides minimumSizeHint rather than backstopping it, so the
+    # old literal 190 capped the pane below the card's real minimum and clipped
+    # every issue card to a fraction of its height. The floor is the content.
+    assert overview_pane.minimumHeight() == 0
+    assert overview_pane.minimumSizeHint().height() >= 60
 
 
 def test_system_state_advanced_actions_stay_out_of_the_splitter(qtbot):

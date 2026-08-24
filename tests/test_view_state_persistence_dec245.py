@@ -604,6 +604,7 @@ def test_every_named_splitter_is_pinned_by_name(qtbot, settings_service):
         "Logs_Splitter_leftColumn",
         "Logs_Splitter_rightColumn",
         "Overview_Splitter_sections",
+        "SystemState_Splitter_row2",
         "SystemState_Splitter_sections",
     }
     w = MainWindow(settings_service=settings_service, demo_mode=True)

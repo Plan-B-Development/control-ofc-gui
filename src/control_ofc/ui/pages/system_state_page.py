@@ -172,48 +172,112 @@ class SystemStatePage(QWidget):
         self._rescan_result_label.setVisible(False)
         layout.addWidget(self._rescan_result_label)
 
-        # Row 1: health (2) | interference + safety (1). DEC-219: the display
-        # cards are their own widgets now (system_state_cards); the page routes
-        # the VM to them and keeps the workers + actions below.
+        # Row 1: System Health Overview, spanning the full content width.
+        # DEC-219: the display cards are their own widgets now
+        # (system_state_cards); the page routes the VM to them and keeps the
+        # workers + actions below.
+        #
+        # Health carries the page's densest content — each issue is a severity
+        # caption, a title, a description, an HTML detail box and a doc button —
+        # and it used to sit at stretch 2 of 3 with the two status cards beside
+        # it. At two thirds of the width every one of those lines wrapped, so the
+        # issue cards grew tall inside a band a QSplitter sizes by PROPORTION
+        # rather than by content, and the detail boxes were what got clipped.
+        # Full width attacks both halves at once: the same issues wrap less, so
+        # they need less height in the same band.
         self._health_card = HealthCard()
         self._interference_card = InterferenceCard()
         self._safety_card = SafetyCard()
         overview_pane = QWidget()
         overview_pane.setObjectName("SystemState_Pane_healthOverview")
-        overview_pane.setMinimumHeight(190)
-        row1 = QHBoxLayout(overview_pane)
+        # No explicit height floor, and removing the old literal 190 is the
+        # single biggest part of this fix. An explicit `minimumSize` OVERRIDES
+        # Qt's `minimumSizeHint`, so that literal was not a safety net under the
+        # pane's real minimum — it was a cap on it. Measured with three issues at
+        # the default window: the card's own minimumSizeHint is 508px, the pane
+        # was pinned to 231, and the issue cards were handed ~40px each against a
+        # 118-202px need, clipping every description and detail box. That is the
+        # squash in the screenshot, and no amount of extra WIDTH fixes it.
+        #
+        # Dropping the literal restores what DEC-234 already said it wanted --
+        # "a taller health card grows the band past its floor and the page
+        # scrolls". The floor is now the card's content, which is what a floor
+        # should be. Consequence, accepted: once the band is at its content
+        # height the page scrolls and the handle has no surplus left to trade,
+        # so it stops moving. That is the honest state of affairs — both panes
+        # already have exactly the height they need — and the handle resumes
+        # working as soon as the window has room to spare.
+        row1 = QVBoxLayout(overview_pane)
         row1.setContentsMargins(0, 0, 0, 0)
         row1.setSpacing(12)
-        row1.addWidget(self._health_card, 2)
-        right = QVBoxLayout()
-        right.setSpacing(12)
-        right.addWidget(self._interference_card)
-        right.addWidget(self._safety_card)
-        right.addStretch(1)
-        right_holder = QWidget()
-        right_holder.setLayout(right)
-        row1.addWidget(right_holder, 1)
+        row1.addWidget(self._health_card)
 
-        # Row 2: hardware registry.
+        # Row 2: hardware registry | status sidebar (interference over safety),
+        # sharing width through the horizontal-splitter convention the Controls
+        # page already uses (`controls_page._build_ui`, DEC-234 handles).
         self._registry_card = RegistryCard()
         self._registry_card.setMinimumHeight(150)
 
-        # Health overview ↕ hardware registry share height through a drag handle
-        # (DEC-234). The handle is inside the scroll area, so the page keeps its
-        # whole-page scroll: the splitter is content-sized (no stretch), so a
-        # taller health card grows the band past its floor and the page scrolls
-        # (rather than the splitter filling the viewport and clipping). The
-        # registry table scrolls inside its own pane; advanced actions stay fixed
-        # below. Caveat: a QSplitter divides its total by proportion, not by child
-        # sizeHint, so a pathologically long issue list can still clip — health
-        # issues are a bounded handful in practice, so this holds for real data.
+        self._status_sidebar = QWidget()
+        self._status_sidebar.setObjectName("SystemState_Pane_statusSidebar")
+        side = QVBoxLayout(self._status_sidebar)
+        side.setContentsMargins(0, 0, 0, 0)
+        side.setSpacing(12)
+        side.addWidget(self._interference_card)
+        side.addWidget(self._safety_card)
+        side.addStretch(1)
+
+        # No explicit minimum width on the sidebar — deliberately. Qt already
+        # propagates one from its own content (the RadialGauge's 140px floor plus
+        # card padding: measured 205 idle, 252 with a contended header id), and
+        # that number re-derives itself when the gauge, the padding or the theme
+        # font moves. A literal here would be both redundant and stale on the day
+        # any of those changes, which is the DEC-258 failure exactly.
+        registry_min = self._registry_card.content_min_width()
+        self._registry_card.setMinimumWidth(registry_min)
+        self._row2_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._row2_splitter.setObjectName("SystemState_Splitter_row2")
+        self._row2_splitter.setChildrenCollapsible(False)
+        self._row2_splitter.addWidget(self._registry_card)
+        self._row2_splitter.addWidget(self._status_sidebar)
+        # Registry dominant at 3:1 (the 75/25 end of the asked-for 70-75 : 25-30),
+        # stated as a ratio over the sidebar's OWN natural width rather than as
+        # pixel widths — the same idiom as
+        # `controls_page.setSizes([pane_min, pane_min * 3])`. Seeding the ratio
+        # from the registry floor instead looks equivalent and is not: it asks
+        # for a 582px sidebar, which Qt then honours in full while shrinking the
+        # registry to its floor, and the row lands at 57:43 at the default window
+        # size. The sidebar's sizeHint is what it actually wants (~324px).
+        sidebar_natural = self._status_sidebar.sizeHint().width()
+        self._row2_splitter.setSizes([sidebar_natural * 3, sidebar_natural])
+        self._row2_splitter.setStretchFactor(0, 3)
+        self._row2_splitter.setStretchFactor(1, 1)
+        style_splitter(self._row2_splitter)
+
+        # Health overview ↕ row 2 share height through a drag handle (DEC-234).
+        # The handle is inside the scroll area, so the page keeps its whole-page
+        # scroll: the splitter is content-sized (no stretch), so a taller health
+        # card grows the band past its floor and the page scrolls (rather than
+        # the splitter filling the viewport and clipping). The registry table
+        # scrolls inside its own pane; advanced actions stay fixed below.
+        #
+        # Caveat, unchanged: a QSplitter divides its total by proportion, not by
+        # child sizeHint, so a pathologically long issue list can still clip.
+        # The initial share is now taken from each pane's own sizeHint instead of
+        # the literal [280, 200] the two-column row was tuned for — [280, 200]
+        # gave row 2 42% of the band, and row 2 now has to open a ~500px-tall
+        # sidebar unclipped. Deriving it means the ratio tracks the panes.
         self._sections_splitter = QSplitter(Qt.Orientation.Vertical)
         self._sections_splitter.setObjectName("SystemState_Splitter_sections")
         self._sections_splitter.setChildrenCollapsible(False)
-        self._sections_splitter.setMinimumHeight(480)
         self._sections_splitter.addWidget(overview_pane)
-        self._sections_splitter.addWidget(self._registry_card)
-        self._sections_splitter.setSizes([280, 200])
+        self._sections_splitter.addWidget(self._row2_splitter)
+        self._sections_splitter.setSizes(
+            [
+                overview_pane.minimumSizeHint().height(),
+                self._row2_splitter.minimumSizeHint().height(),
+            ]
+        )
         style_splitter(self._sections_splitter)
         layout.addWidget(self._sections_splitter)
 
@@ -887,6 +951,16 @@ class SystemStatePage(QWidget):
         self._report_dialog.activateWindow()
 
     def set_theme(self, _tokens) -> None:
+        # The registry floor must track the table. It is derived from the column
+        # headers' own size hints, and those scale with the theme's base font —
+        # so a floor derived once at construction pins the pane to whatever was
+        # in effect at startup while the columns inside it keep growing — a width
+        # that was stated once and stopped being true, which is the DEC-258
+        # failure class. `controls_page.set_theme` re-derives its own pane minimum
+        # here for the same reason; `widgets/card_metrics.card_pane_min_width`
+        # carries the worked example (a pane literal that fell behind its card and
+        # left a permanent horizontal scrollbar).
+        self._registry_card.setMinimumWidth(self._registry_card.content_min_width())
         cached = self._diag.last_hw_diagnostics
         if cached is not None:
             self._render(cached)

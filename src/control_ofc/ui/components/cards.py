@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
 
 
@@ -16,6 +16,48 @@ class Card(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setProperty("class", "Card")
+
+
+class ContentSizedCard(Card):
+    """A ``Card`` that will not be squashed below what its content needs at the
+    width it actually has.
+
+    Qt's default minimum is width-blind: ``QLayout.totalMinimumSize()`` sums each
+    child's ``minimumSize``, and a word-wrapped label's minimum is computed at
+    some width other than its real one. A card of wrapped text therefore reports
+    a minimum that is too small, and whatever contains it — a QSplitter pane, a
+    QScrollArea — squashes it and clips the last lines silently. It gets worse as
+    the card gets narrower, which is the opposite of what a reader expects.
+
+    Measured on the System State page before this existed: the health card
+    under-reported by 17px at the default window and 35px near the minimum one,
+    and the interference card by 69px once it moved into a narrower column —
+    each of those a whole line off a paragraph or a detail box.
+
+    Overriding ``minimumSizeHint`` is what makes this reach anything: neither
+    QSplitter nor QScrollArea propagates ``heightForWidth``, so the honest number
+    has to arrive through the one channel they do consult.
+
+    Nothing else is needed on the children. ``QLabel.setWordWrap(True)`` already
+    sets the ``heightForWidth`` size-policy flag, and ``QWidget`` defers
+    ``hasHeightForWidth()`` to its layout when it has one, so a plain container
+    propagates it without help — verified, after a first pass at this shipped a
+    helper that set those flags by hand and turned out to be a no-op at all
+    twelve of its call sites. ``totalHeightForWidth`` already sees the wrapping;
+    what was missing was anyone asking.
+
+    The width used is the last layout pass's, so a *narrowing* resize is briefly
+    one pass behind and settles on the next (2 passes, measured). Widening is
+    never short — more width can only need less height.
+    """
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        layout = self.layout()
+        width = self.width()
+        if layout is None or width <= 0:
+            return hint
+        return QSize(hint.width(), max(hint.height(), layout.totalHeightForWidth(width)))
 
 
 class BracketCard(QFrame):

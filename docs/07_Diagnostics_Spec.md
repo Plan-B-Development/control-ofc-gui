@@ -172,6 +172,62 @@ The daemon owns the hwmon lease internally as of 2.0.0; the GUI holds none, so t
 **Lease tab was removed**. Lease state is no longer a GUI-surfaced diagnostic. (Pre-2.0 this section
 showed lease required / held / owner / TTL.)
 
+## System State page — layout
+
+Two rows under the page header, sharing height through the DEC-234 drag handle:
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│ SYSTEM HEALTH OVERVIEW            (full content width)       │
+└──────────────────────────────────────────────────────────────┘
+                          ↕  DEC-234 handle
+┌───────────────────────────────────────┬──────────────────────┐
+│ HARDWARE REGISTRY               ~75%  ┊  INTERFERENCE MONITOR │
+│                                       ┊──────────────────────│
+│                                       ┊  SAFETY & GPU LIMITS  │
+└───────────────────────────────────────┴──────────────────────┘
+> Advanced actions                        (fixed, below the handle)
+```
+
+Health carries the page's densest content — each finding is a severity caption,
+a title, a description, an HTML detail box and a doc button — so it gets the
+whole width. The two status cards moved into a stacked sidebar beside the
+registry (`SystemState_Splitter_row2`, horizontal, 3:1, persisted by DEC-245
+like every other named splitter).
+
+Three rules keep it from collapsing back into the cramped shape it had, and all
+three are **derived, never written down as pixel literals**:
+
+- **The registry's width floor comes from its own columns** —
+  `RegistryCard.content_min_width()` sums the header size hints so all six
+  columns stay reachable, adds the card's chrome and the width the table's own
+  vertical scrollbar will claim, and `set_theme` re-derives the result because
+  those hints scale with the theme's base font (the DEC-258 staleness trap;
+  `widgets/card_metrics.card_pane_min_width` is the same rule for the Controls
+  panes).
+  The scrollbar width is read from `verticalScrollBar().sizeHint()`, not from
+  the card's `PM_ScrollBarExtent` — the theme sets it via a `QScrollBar` QSS
+  rule, which resolves per-widget, so the card's style reports Qt's unstyled
+  default instead.
+- **The sidebar has no width floor at all.** Qt propagates one from the
+  `RadialGauge` minimum plus card padding, so it re-derives itself when the
+  gauge, the padding or the font moves.
+- **Neither splitter pane carries an explicit height floor.** An explicit
+  `minimumSize` *overrides* `minimumSizeHint` rather than backstopping it, so a
+  literal there caps the pane below its content instead of protecting it. The
+  health card is a `ContentSizedCard`, which reports the height its findings
+  need at the current width; when that exceeds the viewport the page scrolls,
+  which is what DEC-234 always said it wanted.
+  The `RegistryCard` is the deliberate exception and keeps `setMinimumHeight(150)`:
+  its table scrolls internally, so the card has no content-driven minimum of its
+  own to fall back on and would otherwise collapse to the table's tiny natural
+  size. A floor is only harmful where the widget already knows its own height.
+
+Below the combined minimum width the row keeps its floors and the page scrolls
+rather than reflowing into a stacked column — the same behaviour every other
+multi-pane page in the app has, and no orientation-swapping breakpoint exists
+(DEC-281).
+
 ## Logs page
 The **Logs** page provides a readable log/event view for:
 - recent app events

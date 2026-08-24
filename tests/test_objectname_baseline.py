@@ -69,6 +69,7 @@ SYSTEM_STATE_OBJECTNAMES = frozenset(
         # DEC-234: health overview ↕ registry gained a resize handle; the health
         # row is wrapped in a named pane so it can be a splitter child.
         "SystemState_Pane_healthOverview",
+        "SystemState_Pane_statusSidebar",
         "SystemState_Pill_issueCount",
         "SystemState_Pill_thermal",
         "SystemState_Root",
@@ -81,6 +82,7 @@ SYSTEM_STATE_OBJECTNAMES = frozenset(
         "SystemState_Section_advanced_Header",
         "SystemState_Section_advanced_Persistent",
         "SystemState_Splitter_sections",  # DEC-234
+        "SystemState_Splitter_row2",  # DEC-234 (registry | status sidebar)
         "SystemState_Table_registry",
     }
 )

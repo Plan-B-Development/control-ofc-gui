@@ -4,11 +4,11 @@ dense table, segmented control, and the modal-dialog base.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QPushButton, QTableWidget, QWidget
+from PySide6.QtWidgets import QLabel, QPushButton, QTableWidget, QVBoxLayout, QWidget
 
 from control_ofc.ui.components.badges import StatusPill, pill_class_for
 from control_ofc.ui.components.buttons import make_button
-from control_ofc.ui.components.cards import Card, SectionHeader
+from control_ofc.ui.components.cards import Card, ContentSizedCard, SectionHeader
 from control_ofc.ui.components.dialog import ModalDialog
 from control_ofc.ui.components.tables import apply_dense_table
 
@@ -86,6 +86,50 @@ def test_card_class(qtbot):
     card = Card()
     qtbot.addWidget(card)
     assert card.property("class") == "Card"
+
+
+# ── ContentSizedCard (the word-wrap clip) ──
+
+_WRAPPY = "sustained interference on this header " * 12
+
+
+def _card_of_wrapped_text(cls, qtbot, width: int):
+    card = cls()
+    layout = QVBoxLayout(card)
+    label = QLabel(_WRAPPY)
+    label.setWordWrap(True)
+    layout.addWidget(label)
+    qtbot.addWidget(card)
+    card.resize(width, 40)
+    return card
+
+
+def test_content_sized_card_reports_the_height_its_wrapped_text_needs(qtbot):
+    sized = _card_of_wrapped_text(ContentSizedCard, qtbot, 150)
+    needed = sized.layout().totalHeightForWidth(150)
+    assert needed > 0
+    assert sized.minimumSizeHint().height() >= needed
+    # The plain Card is the control: it under-reports, which is the clip this
+    # primitive exists to stop. Without this half the test could pass against a
+    # no-op override.
+    plain = _card_of_wrapped_text(Card, qtbot, 150)
+    assert plain.minimumSizeHint().height() < needed
+
+
+def test_content_sized_card_needs_less_height_as_it_gets_wider(qtbot):
+    narrow = _card_of_wrapped_text(ContentSizedCard, qtbot, 150)
+    wide = _card_of_wrapped_text(ContentSizedCard, qtbot, 600)
+    assert narrow.minimumSizeHint().height() > wide.minimumSizeHint().height()
+
+
+def test_content_sized_card_is_safe_before_it_has_a_layout_or_a_width(qtbot):
+    bare = ContentSizedCard()
+    qtbot.addWidget(bare)
+    assert bare.minimumSizeHint() == Card().minimumSizeHint()
+    unsized = ContentSizedCard()
+    QVBoxLayout(unsized).addWidget(QLabel("x"))
+    qtbot.addWidget(unsized)
+    assert unsized.minimumSizeHint().height() >= 0
 
 
 def test_section_header(qtbot):

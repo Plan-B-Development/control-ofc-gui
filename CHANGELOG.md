@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.46.0] — 2026-08-24
+
+### Changed
+- **The System State page stops squashing its own findings.** The System Health
+  Overview now spans the full width of the page, and the Interference Monitor and
+  Safety & GPU Limits cards have moved down into a stacked column beside the
+  Hardware Registry. The registry keeps about three quarters of that row at every
+  window size, and both it and the sidebar can still be resized by dragging the
+  divider between them — that position is remembered, like every other one in the
+  app.
+- **Findings are no longer cut off.** The bigger half of this fix is not the extra
+  width: the health panel carried a fixed height limit that sat *below* what its
+  own content needed, so each finding was allotted roughly a third of its height
+  and the grey detail boxes under them were flattened to a sliver. Those panels
+  now measure themselves against the text they are actually showing, at the width
+  they actually have, and the page scrolls when there is more to show than fits.
+  The same correction applies to the Interference Monitor, which wraps harder in
+  its narrower column and was losing the bottom of its explanation.
+- **A contended fan header no longer distorts the layout.** The header id shown
+  under the interference gauge is a long fixed-width string, and it used to force
+  the whole column wider the moment any BIOS interference was detected — taking
+  the space from the panel next to it. It now wraps.
+- Narrow windows keep the columns at their minimum widths and scroll, matching how
+  every other multi-pane page in the app already behaves; there is no separate
+  stacked layout below a breakpoint.
+
 ## [2.45.0] — 2026-08-23
 
 ### Added
