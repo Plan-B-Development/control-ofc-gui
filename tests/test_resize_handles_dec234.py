@@ -167,7 +167,14 @@ def test_system_state_sections_splitter(qtbot):
     # old literal 190 capped the pane below the card's real minimum and clipped
     # every issue card to a fraction of its height. The floor is the content.
     assert overview_pane.minimumHeight() == 0
-    assert overview_pane.minimumSizeHint().height() >= 60
+    # `minimumHeight() == 0` above IS the rule, and it is what catches a
+    # reintroduced literal cap. This line only asserts the pane reports a real
+    # content-derived floor at all. It is deliberately NOT `>= 60`: that was the
+    # author's font stack written down, CI measured 58, and it reded all three
+    # legs. A height in px is a font metric, and a font metric is not portable.
+    # (Nor is it `>= health.minimumSizeHint()`, which Qt containment guarantees
+    # for any non-empty card and so cannot fail.)
+    assert overview_pane.minimumSizeHint().height() > 0
 
 
 def test_system_state_advanced_actions_stay_out_of_the_splitter(qtbot):

@@ -99,6 +99,26 @@ def _sidebar(page) -> QWidget:
     return page.findChild(QWidget, "SystemState_Pane_statusSidebar")
 
 
+def _effective_min_width(widget) -> int:
+    """The width Qt will actually refuse to shrink *widget* below.
+
+    Mirrors Qt's own ``qSmartMinSize``: an explicit ``minimumWidth`` REPLACES
+    the propagated content hint, it does not raise a floor under it — the same
+    override that made ``setMinimumHeight(190)`` a cap rather than a backstop and
+    clipped this page's findings for four releases. A first cut wrote ``max(...)``
+    of the two, which is right only while no explicit minimum sits *below* its
+    widget's content hint.
+
+    Reading just one of the two is how a floor becomes invisible to the check
+    meant to notice it: the sidebar deliberately sets no explicit minimum, so
+    there the hint is the floor, while a test that forces one needs the forced
+    value. Saying that once keeps it an observation rather than an assumption
+    every call site re-makes.
+    """
+    explicit = widget.minimumWidth()
+    return explicit if explicit else widget.minimumSizeHint().width()
+
+
 # ── Row composition: the acceptance criteria, asserted structurally ──────
 
 
@@ -151,18 +171,23 @@ def test_registry_floor_is_derived_from_its_own_columns(qtbot):
     # than the columns themselves, and never the wildly inflated
     # QHeaderView.length() (which setStretchLastSection pads with free space).
     assert registry.minimumWidth() >= columns
-    # Chrome only — never the wildly inflated QHeaderView.length(), which
-    # setStretchLastSection pads with whatever free space the table happens to
-    # have (measured 638 against a true 540 on an otherwise identical table).
-    assert columns <= registry.content_min_width() <= columns + 80
-    assert registry.content_min_width() < header.length()
+    # Asserted as the EXACT decomposition, recomputed from the same widgets, so
+    # nothing here is a pixel value that only holds on one font stack. A first
+    # cut allowed `columns + 80` as a slack chrome band — a tuned literal that
+    # would have gone quietly wrong rather than red.
+    margins = registry.layout().contentsMargins()
+    chrome = margins.left() + margins.right() + 2 * registry._registry_table.frameWidth()
     # The scrollbar allowance comes from the real scrollbar, not a literal: the
     # theme sets its width through a `QScrollBar:vertical` QSS rule, and asking
     # the card's or the table's style for PM_ScrollBarExtent instead returns
     # Qt's unstyled default and silently ignores the theme.
     scrollbar = registry._registry_table.verticalScrollBar().sizeHint().width()
     assert scrollbar > 0
-    assert registry.content_min_width() >= columns + scrollbar
+    assert registry.content_min_width() == columns + chrome + scrollbar
+    # And never the wildly inflated QHeaderView.length(), which
+    # setStretchLastSection pads with whatever free space the table happens to
+    # have (measured 638 against a true 540 on an otherwise identical table).
+    assert registry.content_min_width() < header.length()
 
 
 def test_registry_floor_tracks_a_column_being_added(qtbot):
@@ -212,13 +237,85 @@ def test_sidebar_floor_is_propagated_from_the_gauge_not_hardcoded(qtbot):
 
 
 def test_row2_keeps_the_registry_dominant_at_every_width(qtbot):
+    """Registry dominant everywhere; the exact 3:1 only where the floors allow it.
+
+    The floors are derived from font metrics, so the width at which they start
+    binding is font-dependent — and once one binds, the realised ratio departs
+    from the requested 3:1 *correctly*. The first cut asserted a flat
+    ``0.70 <= share <= 0.80`` at every width and CI measured 0.6987 at the
+    narrowest one: the assertion had encoded the author's font stack, and the
+    behaviour it flagged was right. So the band is checked only when neither
+    floor is binding, and dominance — which is the actual promise — everywhere.
+    """
     page = _shown(qtbot, 1400)
-    for width in (1168, 1400, 1920, 2560):
+    registry = page.findChild(QWidget, "SystemState_Card_registry")
+    sidebar = _sidebar(page)
+    # A width DERIVED to sit inside the binding regime on any host: at a row-2
+    # width near the sum of the two floors there is nothing left to share, so
+    # the ratio must depart from 3:1. Without a binding width in the sweep the
+    # `floors_bind` guard below is unreachable locally — deleting it would leave
+    # the whole suite green here while reding CI, which is the exact flake this
+    # file caused. Measured on this host: 0.7176 at 1168 (in band, guard
+    # unpinned) against 0.6674 at 1000 (out of band, guard pinned).
+    binding = _effective_min_width(registry) + _effective_min_width(sidebar) + 40
+    unbound_seen = 0
+    bound_seen = 0
+    for width in (binding, 1400, 1920, 2560):
         page.resize(width, 900)
         qtbot.wait(1)
         registry_w, sidebar_w = _row2(page).sizes()
+        assert registry_w > sidebar_w, f"at {width}: registry not dominant"
+        floors_bind = registry_w <= _effective_min_width(
+            registry
+        ) or sidebar_w <= _effective_min_width(sidebar)
+        if floors_bind:
+            bound_seen += 1
+            continue
+        unbound_seen += 1
         share = registry_w / (registry_w + sidebar_w)
         assert 0.70 <= share <= 0.80, f"at {width}: registry share {share:.2f}"
+    # Both branches must be exercised, or this passes by asserting nothing:
+    # without an unbound width the band is never checked, and without a bound
+    # one the guard that skips it is never taken.
+    assert unbound_seen, "no tested width left both floors slack; band never checked"
+    assert bound_seen, "no tested width bound a floor; the skip branch is unpinned"
+
+
+def test_dominance_survives_an_explicit_sidebar_floor(qtbot):
+    """The one test that exercises an EXPLICIT minimum rather than a propagated one.
+
+    The sibling sweep above pins the ``floors_bind`` guard for the *propagated*
+    case, which is how the sidebar actually behaves (it sets no explicit
+    minimum). This forces an explicit one, so it is the only cover for
+    ``_effective_min_width``'s explicit branch — the branch that mirrors Qt's
+    ``qSmartMinSize`` REPLACING the content hint rather than raising a floor
+    under it.
+
+    Its ratio assertions are close to arithmetic — a 40% floor cannot yield a
+    majority sidebar — so read them as documenting the shape of the CI failure
+    (a floor binding, the ratio legitimately leaving 3:1) rather than as the
+    thing that catches a regression. The sweep above is what catches it.
+    """
+    page = _shown(qtbot, 1400)
+    registry = page.findChild(QWidget, "SystemState_Card_registry")
+    sidebar = _sidebar(page)
+    # A floor far too wide for a 25% share — the CI condition, host-independently.
+    sidebar.setMinimumWidth(int(1168 * 0.40))
+    page.resize(1168, 900)
+    qtbot.wait(1)
+    registry_w, sidebar_w = _row2(page).sizes()
+
+    floors_bind = registry_w <= _effective_min_width(registry) or sidebar_w <= _effective_min_width(
+        sidebar
+    )
+    assert floors_bind, "forced floor did not bind — reproduction is not exercising the case"
+    # The promise that must survive a binding floor:
+    assert registry_w > sidebar_w, "registry must stay dominant even when a floor binds"
+    # ...and the promise that must NOT be asserted there, which is the whole bug:
+    share = registry_w / (registry_w + sidebar_w)
+    assert not (0.70 <= share <= 0.80), (
+        f"share {share:.4f} stayed in band — this no longer reproduces the CI failure"
+    )
 
 
 # ── The anti-squash rule: measured outcome, not "something changed" ──────
@@ -286,10 +383,17 @@ def test_a_contended_header_id_does_not_blow_out_the_sidebar(qtbot):
     assert label.text() == LONG_HEADER_ID  # assert the presence before the bound
     assert label.wordWrap()
     interference = page.findChild(QWidget, "SystemState_Card_interference")
-    # Bounded well under the unwrapped 367px, and under the registry's own floor
-    # so the sidebar can never be the reason the table is cramped.
     registry = page.findChild(QWidget, "SystemState_Card_registry")
-    assert interference.minimumSizeHint().width() < 300
+    # Measured against what this same label would demand UNWRAPPED, rather than
+    # against a pixel ceiling: the whole point is that the id no longer sets the
+    # column's width, and only the counterfactual states that. A `< 300` literal
+    # here would just be this machine's fonts again.
+    wrapped = label.minimumSizeHint().width()
+    label.setWordWrap(False)
+    unwrapped = label.minimumSizeHint().width()
+    label.setWordWrap(True)  # restore before any later assertion reads the page
+    assert unwrapped > wrapped, "fixture id is too short to demonstrate the bound"
+    assert interference.minimumSizeHint().width() < unwrapped
     assert _sidebar(page).minimumSizeHint().width() < registry.minimumWidth()
 
 
@@ -301,8 +405,18 @@ def test_health_card_minimum_tracks_its_content_at_its_width(qtbot):
     """
     page = _shown(qtbot, 1400)
     health = page.findChild(QWidget, "SystemState_Card_health")
+    # The anti-vacuous guard is the fixture's CARD COUNT, not a pixel height: a
+    # `needed > 200` threshold is a font metric wearing a guard's clothing, and
+    # would fail on a small font stack while proving nothing extra on a large one.
+    cards = [
+        c for c in page.findChildren(QWidget) if c.objectName().startswith("SystemState_IssueCard_")
+    ]
+    assert len(cards) >= 2, f"fixture produced {len(cards)} issue cards"
     needed = health.layout().totalHeightForWidth(health.width())
-    assert needed > 200, "fixture is too small to distinguish the rule"
+    # That the rule DOES something (rather than merely holding) is proven
+    # portably in test_components_library, where a plain Card under-reports the
+    # same content. Here the assertion is the rule itself, both sides measured
+    # from the same widget so no font metric can move them apart.
     assert health.minimumSizeHint().height() >= needed
 
 
