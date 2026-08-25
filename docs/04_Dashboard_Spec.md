@@ -185,7 +185,7 @@ member rows, fan-role chips and the member editor.
 
 ## Warning behaviours
 If a fan or sensor is stale:
-- reflect it in the footer health rollup and the Logs page's Active Warnings list
+- reflect it in the footer health rollup and the Logs page's alert bar (DEC-282)
   (DEC-222 — the Dashboard's own warning chip went with the status strip)
 - mark the affected fan card's state chip Stale
 - visually soften or mark stale values

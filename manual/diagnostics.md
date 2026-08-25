@@ -149,7 +149,9 @@ The Super-I/O Architecture section requires `control-ofc-daemon` ≥ v2.7.0.
 
 ![Logs page](../screenshots/auto/08_logs.png)
 
-A live, filterable table of in-process GUI events: daemon connect/disconnect, profile activations and override actions, theme changes, and the like. The log retains up to 200 entries (oldest discarded first).
+A live, filterable table of in-process GUI events: daemon connect/disconnect, profile activations and override actions, alert onsets and recoveries, theme changes, and the like. The log retains up to 200 entries (oldest discarded first).
+
+The table is the page. Everything else is either one line tall or opens when you ask for it: a compact alert bar sits above it, log detail opens beside it when you select a row, and the diagnostic snapshots live in a collapsed section beneath.
 
 Three concepts that look similar but answer different questions:
 
@@ -159,6 +161,23 @@ Three concepts that look similar but answer different questions:
 | **Alerts** (this page) | *What is wrong right now — and what was wrong a moment ago?* | An alert stops being active when the condition resolves, but stays listed as **recovered** until you acknowledge it, so one that clears before you look at it can still be read afterwards. **"Acknowledge all"** records that you have seen them; it does not claim the condition is fixed, and it never suppresses the same problem happening again |
 | **System Journal** (snapshot button below) | *What happened across restarts on the daemon side?* | Persisted by systemd |
 
+### Alert bar
+
+One line above the table. When nothing is wrong it reads `✓ No active alerts` and takes
+almost no space; if something recently cleared without you seeing it, it adds
+`Recent alert: … recovered at 09:21:06` so a problem that fixed itself is still
+discoverable.
+
+When something *is* wrong it names the counts and the most serious alert —
+`✖ 1 critical   ⚠ 2 warnings` — and offers **View alerts**, which opens the **Alert
+Centre**: every active alert with when it was first and last detected, where it came
+from, a suggested next step where one can be given reliably, and **Acknowledge** /
+**Show related logs**; plus a compact list of what recently recovered.
+
+**Acknowledging is not fixing.** It records that you have seen the alert. The footer
+health rollup keeps reporting the condition for as long as it genuinely exists, and the
+same problem happening again later always raises a fresh alert.
+
 ### Filters
 
 | Control | Behaviour |
@@ -166,30 +185,34 @@ Three concepts that look similar but answer different questions:
 | **Info / Warning / Error toggles** | Multi-select severity filter. Uncheck a level to hide every row at that severity. |
 | **Source dropdown** | Single-select source filter — `gui`, `polling`, `profile`, `kernel`, etc. New sources appear automatically the first time they fire. |
 | **Search** | Case-insensitive substring match against message text and source. |
-| **Auto-scroll** | When on, the view follows new events while you are at the bottom. Scroll up to pause; scroll back to the bottom to resume. |
+| **Follow** | Follows new entries as they arrive. Scroll away from the bottom and it pauses, showing `N new events ↓` — click that to jump back to the newest and resume. You are never yanked back to the bottom while reading older rows. |
 
-Selecting a row shows its full message in the Details pane below.
+Selecting a row opens a **Log detail** pane on the right with the full timestamp, level,
+source and untruncated message, and a **Copy** button. Close it with **✕** and the table
+takes the full width back; nothing is reserved for it while no row is selected.
 
 ### Log Actions
 
 | Button | Action |
 |--------|--------|
-| **Clear Log** | Empty the event log table (does not affect snapshots below). |
-| **Clear Warnings** | Reset the warning counter shown in the status banner. |
-| **Copy Last Errors** | One-click copy of every error/warning event, regardless of the current filter. |
-| **Export view... / Copy view** (toolbar inside the table) | Save / copy the *currently-visible* rows after filters and search are applied. |
+| **Clear Logs** | Empty the event log table (does not affect the diagnostic tools below). |
+| **Copy** | Copy the *currently-visible* rows, after filters and search are applied. |
 
-### Diagnostic Snapshots
+Exporting a support bundle is the footer's **Export Support Bundle** button, which is
+available from every page.
 
-A separate sub-section below the event log fetches on-demand detail dumps. Output is appended to its own monospace view so clearing the event log never wipes a snapshot you just fetched.
+### Diagnostic tools
+
+A collapsed section below the table, expanded with the `▸ Diagnostic tools` header. Each
+tool fetches an on-demand detail dump into its own monospace view, so clearing the event
+log never wipes a snapshot you just fetched.
 
 | Button | What it Fetches |
 |--------|----------------|
 | **Daemon Status** | Current daemon health snapshot formatted as text |
-| **Controller Status** | OpenFan controller detection and capability details |
-| **GPU Status** | AMD GPU detection, fan capabilities, and current fan state |
+| **Controller (OpenFan)** | OpenFan controller detection and capability details |
+| **GPU State** | AMD GPU detection, fan capabilities, and current fan state |
 | **System Journal** | Recent entries from the `control-ofc-daemon.service` systemd journal |
-| **Clear Snapshots** | Empty the snapshot view |
 
 ### Export Support Bundle
 

@@ -154,9 +154,9 @@ fan at a time so you can see which one slows down.
 > synthetic hardware ids deliberately match real ones, so nothing a demo session
 > does is allowed to reach your settings file.
 
-> Both the **event log** and the **active warnings** list live on the
-> [Logs page](diagnostics.md), side by side — the event feed is history, the warnings
-> list is what is wrong right now. Use the profile selector in the page header to
+> Both the **event log** and the **alerts** live on the [Logs page](diagnostics.md) —
+> the log table is history, and the alert bar above it is what is wrong right now, with
+> the full detail behind **View alerts**. Use the profile selector in the page header to
 > switch profiles.
 
 ## Profile Selector
@@ -173,7 +173,7 @@ If the daemon engages its thermal failsafe (a CPU sensor at ≥ 105°C, or no CP
 found), the daemon forces OpenFan and writable hwmon fans itself and holds them until
 it reports normal again. This shows in the footer's **thermal state** chip (click it
 for the detail) and as a banner across the top of the Dashboard, and raises a warning
-(visible in the footer health rollup and the Logs page's Active Warnings list). See
+(visible in the footer health rollup and in the Logs page's alert bar). See
 ["Fans run at full speed regardless of profile"](hardware-troubleshooting.md#fans-run-at-full-speed-regardless-of-profile)
 for the full behaviour.
 
