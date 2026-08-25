@@ -42,6 +42,11 @@
 - Recorded the newer `nct6687d` module parameters (`fan_mask`, `temp_mask`) and a
   diagnostic note for the August 2026 AUR packaging regression that left some MSI
   users with no fan readings at all — already fixed upstream by the `-2` rebuild.
+- The **driver-setup manual page** carried the same two corrected claims and has been
+  brought in line: the IT8689E entry no longer points at the rejected pull request, and
+  the module-parameter table now scopes `fan_config=msi_alt1` to the NCT6687DR families,
+  adds the `msi_fan_brute_force` + `nct6683`-blacklist row, and carries the
+  do-not-force warning.
 
 ## [2.47.0] — 2026-08-25
 
