@@ -320,7 +320,7 @@ The Logs page surfaces three closely-related but distinct streams. Confusing the
 | Surface | What it answers | Storage | Lifetime |
 |---------|-----------------|---------|----------|
 | Event Log (the Logs page) | What has the GUI been doing in this session? | In-process `collections.deque` (`MAX_EVENTS = 200`) | Session-only — cleared on GUI exit |
-| Active Warnings (banner badge → dialog) | What is wrong **right now**? | `AppState.active_warnings` recomputed every poll | Cleared when the condition resolves or the user acknowledges |
+| Alerts (badge → alert surface) | What is wrong **right now**, and what was wrong recently? | `AppState.alerts`, an occurrence ledger reconciled every poll (DEC-282) | An occurrence closes when the condition resolves, but is retained as recovered history until acknowledged — it is never deleted on acknowledgement, and acknowledging one occurrence never suppresses a later one |
 | System Journal (snapshot button) | What happened across daemon restarts? | systemd journal, fetched on demand via `journalctl -u control-ofc-daemon` | Daemon-owned; persistent |
 
 ### Event stream

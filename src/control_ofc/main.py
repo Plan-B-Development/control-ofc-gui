@@ -237,22 +237,28 @@ def main() -> None:
     # uncaught error into the support bundle (set after the early hook install).
     _set_uncaught_diagnostics(diagnostics)
 
+    # DEC-282: every alert onset and recovery now writes itself into the event feed.
+    # Attach before the first warning is raised below, or that warning's onset goes
+    # unlogged — the very failure this wiring exists to prevent.
+    diagnostics.attach_alert_source(state)
+
     profile_load_errors = profile_service.load()
     for path, reason in profile_load_errors:
         # Surface per-profile load failures to Diagnostics so a corrupted
         # profile is obviously broken, not silently missing from the UI.
+        #
+        # DEC-111 established the principle here — record the failure in the event log
+        # too, so the support bundle carries it even after the user acknowledges the
+        # warning — and implemented it as a hand-written second call at this one site.
+        # DEC-282 generalises it: the alert ledger logs every onset, so the manual
+        # dual-write is gone and keeping it would double-log. The source is "profile"
+        # rather than the old "profile_service" precisely so the logged line is
+        # byte-identical to the one this used to emit by hand.
         state.add_warning(
             level="warning",
-            source="profile_service",
+            source="profile",
             message=f"Failed to load profile '{os.path.basename(path)}': {reason}",
             key=f"profile_load_fail:{path}",
-        )
-        # DEC-111: also record in the event log so the support bundle
-        # carries the failure even after the user acknowledges the warning.
-        diagnostics.log_event(
-            "warning",
-            "profile",
-            f"Failed to load profile '{os.path.basename(path)}': {reason}",
         )
 
     # Wire history recording to state updates

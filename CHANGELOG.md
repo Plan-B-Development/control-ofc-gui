@@ -1,5 +1,65 @@
 # Changelog
 
+## [2.47.0] — 2026-08-25
+
+### Fixed
+- **An alert can no longer flash past and leave you with no way to find out what it
+  was.** Three separate faults combined to produce that. Warnings were rebuilt from
+  scratch every poll and the "something changed" signal fired only when the *number*
+  of them changed — so one condition resolving as another appeared left the panel
+  showing an alert that no longer existed. Nothing about a warning starting or
+  stopping was ever written to the log, so a condition that came and went between two
+  polls left no record at all. And "Clear all warnings" added the condition to a list
+  that was never emptied, which silently suppressed **every future occurrence** of
+  that same condition for the rest of the session — acknowledge a fan stall at noon
+  and the same fan stalling again at half past two would never be shown to you.
+- **Acknowledging an alert no longer claims the problem is solved.** It records that
+  you have seen it. The footer health rollup keeps reporting the condition for as long
+  as it genuinely exists, so the application will not tell you "All systems nominal"
+  over a fan that is still stalled. The alert badge, whose job is to get your
+  attention, does go quiet — that is what acknowledging it is for.
+
+### Added
+- **Alerts now have a lifecycle, and it leaves a trail.** Each one is tracked as an
+  occurrence from the moment it starts to the moment it clears, and both ends are
+  written to the log: `Fan 'cpu_fan' stall detected` when it begins, and
+  `cpu_fan stall recovered after 1.2s` when it ends. A condition that persists is one
+  occurrence no matter how many polls it spans, so a long-running problem logs twice,
+  not once a second.
+- **An alert that recovers before you look at it stays visible** — marked as
+  recovered, with the time it cleared — rather than disappearing. It leaves the list
+  once you acknowledge it. Recent alert history is kept for the session.
+
+### Changed
+- "Clear all warnings" is now **"Acknowledge all"**, because a button cannot clear a
+  hardware fault and the old wording implied it could.
+- **The Logs page has been rebuilt around the log table.** It previously gave permanent
+  space to seven areas at once — the table, an Active Warnings panel, a Log Inspector
+  and four side-by-side terminal-style diagnostic panes — leaving the log itself about
+  half the page, while two of those areas were usually empty. One of them reserved a
+  quarter of the width to say "No active warnings."
+  - Alert state is now a **single line** above the table: `✓ No active alerts`, or
+    `✖ 1 critical  ⚠ 2 warnings` with the most serious one named. **View alerts** opens
+    an **Alert Centre** with the full detail — when it started, when it was last seen,
+    where it came from, what to try — split into what is wrong now and what recently
+    recovered.
+  - The **Log Inspector opens when you select a row** and closes again, instead of
+    permanently reserving a column. Closing it gives the width back to the table.
+  - The four diagnostic snapshots moved into a collapsed **Diagnostic tools** section.
+    They are unchanged, just no longer competing with the log for the page.
+- **The log toolbar gained a source filter and an explicit Follow control.** Filtering
+  by source was already implemented underneath but had no way to reach it. Following
+  the newest entries was also already happening — silently, and only while you were
+  scrolled to the bottom; it is now a state you can see and set, and scrolling away
+  pauses it and tells you how many entries arrived while you were reading.
+- **Export Support Bundle now lives in one place.** The Logs toolbar button called the
+  same code as the footer button that is on every page, so the duplicate is gone and
+  the remaining one is more prominent. The export itself is unchanged.
+- Alert entries pair their severity colour with a word and a glyph (`⚠ WARNING`,
+  `✖ CRITICAL`, `✓ RECOVERED`), so severity is never signalled by colour alone. The log
+  table already did this — its Level column has always shown `INFO`/`WARN`/`ERR` as
+  text — and is unchanged.
+
 ## [2.46.0] — 2026-08-24
 
 ### Changed

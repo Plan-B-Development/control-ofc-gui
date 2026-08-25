@@ -286,7 +286,9 @@ class MainWindow(QWidget):
         self._state.connection_changed.connect(self._on_connection_changed)
         self._state.mode_changed.connect(self.status_banner.set_operation_mode)
         self._state.active_profile_changed.connect(self.status_banner.set_active_profile)
-        self._state.warning_count_changed.connect(self.status_banner.set_warning_count)
+        # DEC-282: the banner is an attention indicator that hides at zero, so it
+        # tracks the UNACKNOWLEDGED count and goes quiet once the user has looked.
+        self._state.unacknowledged_count_changed.connect(self.status_banner.set_warning_count)
 
         # State → status ribbon + footer (DEC-208). The ribbon mirrors connection,
         # feeds a warnings count, and shows daemon uptime + thermal from
@@ -300,8 +302,25 @@ class MainWindow(QWidget):
         # Python wrapper past C++ deletion and leave its PulsingLed registered with
         # the global animation controller.
         self._state.connection_changed.connect(self._on_connection_for_footer)
-        self._state.warning_count_changed.connect(self.status_ribbon.set_warning_count)
+        # DEC-282 — the split. These two surfaces answer different questions, so they
+        # take different counts:
+        #   ribbon badge = "is there anything I have not looked at?" → unacknowledged,
+        #     including alerts that recovered before anyone saw them. Acknowledging
+        #     quietens it, which is what acknowledgement is for.
+        #   footer rollup = "is this machine healthy?" → active, acknowledged or not.
+        #     It must never claim "All systems nominal" over a fan that is still
+        #     stalled just because someone clicked a button.
+        self._state.unacknowledged_count_changed.connect(self.status_ribbon.set_warning_count)
         self._state.warning_count_changed.connect(self.footer.set_warning_count)
+        # Push the current values once, because a signal only carries *changes*.
+        # `main.py` raises profile-load failures before this window exists, so those
+        # alerts had already been emitted to nobody and the badge sat hidden over a
+        # real warning until something else happened to move the count. Pre-existing,
+        # but it defeats alert surfacing at precisely the moment it matters most, and
+        # these are the connections it belongs to.
+        self.status_banner.set_warning_count(self._state.unacknowledged_count)
+        self.status_ribbon.set_warning_count(self._state.unacknowledged_count)
+        self.footer.set_warning_count(self._state.warning_count)
         self._state.status_updated.connect(self._on_status_for_ribbon)
         self.status_ribbon.alerts_clicked.connect(self._open_logs)
         # DEC-222: four indicators re-homed from the retired DashboardStatusStrip.

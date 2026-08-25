@@ -156,7 +156,7 @@ Three concepts that look similar but answer different questions:
 | Surface | Question it answers | Persistence |
 |---------|---------------------|-------------|
 | **Event Log** (this page) | *What has the GUI been doing in this session?* | In-process only, capped at 200 |
-| **Active Warnings** (this page, right-hand panel) | *What is wrong right now?* | Cleared when the condition resolves, or via "Clear all warnings" |
+| **Alerts** (this page) | *What is wrong right now — and what was wrong a moment ago?* | An alert stops being active when the condition resolves, but stays listed as **recovered** until you acknowledge it, so one that clears before you look at it can still be read afterwards. **"Acknowledge all"** records that you have seen them; it does not claim the condition is fixed, and it never suppresses the same problem happening again |
 | **System Journal** (snapshot button below) | *What happened across restarts on the daemon side?* | Persisted by systemd |
 
 ### Filters

@@ -247,6 +247,21 @@ sidebar, the curve editor and curve-edit dialog, the fan-role, AIO and GPU-dedic
 dialogs, the fan wizard, the logs page, the timeline chart and the sensor-series
 panel.
 
+**DEC-282 added five controls to the Logs page and swept them in the same change**:
+the search box and source dropdown (both value controls with no label of their own —
+the dropdown is the DEC-269 case where `setAccessibleName` alone is discarded because
+it is not editable), the Follow toggle, the glyph-only inspector close button, and the
+"N new events" button, whose label is *empty until entries arrive* — so it is a bare
+glyph's problem in a different coat, and it carries an explicit name for the same
+reason. The Alert Centre's buttons all carry real words and need none.
+
+That page now also has the second kind of test the rule requires. An AST lint proves
+the `name_value_control` call was written; `test_logs_page.py::test_every_new_control_announces_a_name`
+resolves what a screen reader would actually read — explicit name, then buddy label,
+then a button's text if it contains a real word — and was verified to red when either
+name is removed. Keep both: DEC-269's whole lesson is that the call can be present and
+Qt can still announce nothing.
+
 **273-g phase 2 is closed.** The per-item controls — where one shared name would
 collide because there are many instances — are now named from their own item:
 `ThemeEditorWidget`'s ~54 per-token hex inputs from their token (and its chart-series

@@ -1,23 +1,27 @@
-"""Logs page — the event feed, a Log Inspector, and the active-warnings surface.
+"""Logs page — the event feed, with alerts and detail available on demand.
 
-A thin renderer over the Qt-free ``services.logs_view`` view-models, styled with
-the Stage-1 component library. Migrates the former Event Log tab (event stream +
-Diagnostic Snapshots) into its own page and adds a right-hand Log Inspector for
-the selected event. Fed by the shared ``DiagnosticsService`` event feed
-(``event_appended`` / ``events_cleared``) — the same deque every emitter writes
-to, so events logged anywhere appear here.
+A thin renderer over the Qt-free ``services.logs_view`` and ``services.alerts_view``
+view-models, styled with the Stage-1 component library. Fed by the shared
+``DiagnosticsService`` event feed (``event_appended`` / ``events_cleared``) — the same
+deque every emitter writes to, so events logged anywhere appear here.
 
-DEC-222 made this the single **active-warnings** surface too. The two are
-different things and are shown as such: the event feed on the left is *history*,
-while the Active Warnings panel on the right is ``AppState.active_warnings`` —
-the dedup-keyed, dismissable set of what is wrong *right now*. It previously
-opened as a dialog from the Dashboard status strip, which the Dashboard rebuild
-removed.
+**Layout (DEC-282).** Compact alert bar → filter toolbar → full-width log table →
+collapsed "Diagnostic tools". DEC-222 had put a permanent Active Warnings panel here
+and DEC-210 a permanent Log Inspector beside the table; with the four DEC-234 snapshot
+previews below it, seven areas competed for the page and the log table itself got about
+half of it — while two of those areas were usually empty, one of them reserving a
+quarter of the width to say "No active warnings."
 
-Presentation-only (DEC-210/DEC-222): no daemon/API/schema change. The only
-behavioural improvement is running the existing ``journalctl`` fetch on a
-background thread (``_JournalWorker``) so the 5 s subprocess no longer freezes
-the UI thread.
+Both permanent panels are gone. Alert detail opens in the scrim-backed
+:class:`AlertCenterDialog`, restoring substantially the pre-DEC-222 arrangement where
+warnings lived in a dialog; the inspector is a splitter child hidden until a row is
+selected. DEC-210's selection-restore-by-frozen-VM-equality is **preserved** — a live
+append must not clear the pane you are reading.
+
+No daemon/API/schema change. The ``journalctl`` fetch still runs on a background thread
+(``_JournalWorker``) so the 5 s subprocess cannot freeze the UI thread; its
+disconnect-first teardown ordering in ``cleanup()`` is load-bearing and must not be
+reordered.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -50,17 +55,22 @@ from control_ofc.services.logs_view import LogRowVM, build_log_row, build_log_ro
 from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
-from control_ofc.ui.components.cards import Card, SectionHeader
+from control_ofc.ui.components.cards import Card
 from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.qt_util import block_signals, style_splitter
 from control_ofc.ui.theme import active_theme
-from control_ofc.ui.widgets.warnings_view import WarningsView
+from control_ofc.ui.widgets.alert_center_dialog import AlertCenterDialog
+from control_ofc.ui.widgets.alert_status_bar import AlertStatusBar
+from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 
 if TYPE_CHECKING:
     from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.app_state import AppState
 
 log = logging.getLogger(__name__)
+
+# Dropdown entry meaning "no source restriction" — `filter_log_rows` wants "".
+_ALL_SOURCES = "All sources"
 
 _LOG_COLS = ["Time", "Level", "Source", "Message"]
 _COL_TIME = 0
@@ -114,6 +124,8 @@ class LogsPage(QWidget):
         self._rows: list[LogRowVM] = []  # current filtered view (1:1 with table rows)
         self._selected_vm: LogRowVM | None = None
         self._suppress_selection = False
+        # Entries that arrived while the user was reading older rows.
+        self._pending_new = 0
 
         # Journal worker (lazy).
         self._journal_thread: QThread | None = None
@@ -134,6 +146,7 @@ class LogsPage(QWidget):
         self._all_rows = build_log_rows(self._diag.events)
         self._rebuild_table()
         self._render_inspector()
+        self._refresh_follow_indicator()
 
     # ── Filter persistence (DEC-245) ─────────────────────────────────
 
@@ -156,6 +169,14 @@ class LogsPage(QWidget):
         if s.logs_search_text:
             with block_signals(self._search_edit):
                 self._search_edit.setText(s.logs_search_text)
+        if s.logs_source_filter:
+            # The feed is rebuilt from a capped deque at startup, so the saved source
+            # may not be among the current rows yet. Add it rather than dropping the
+            # filter — _sync_source_choices keeps the selection if it is still valid.
+            with block_signals(self._source_combo):
+                if self._source_combo.findText(s.logs_source_filter) < 0:
+                    self._source_combo.addItem(s.logs_source_filter)
+                self._source_combo.setCurrentText(s.logs_source_filter)
 
     def _persist_log_filters(self) -> None:
         if self._settings_service is None:
@@ -163,68 +184,67 @@ class LogsPage(QWidget):
         self._settings_service.update(
             logs_level_filters=[lv for lv, b in self._level_toggles().items() if b.isChecked()],
             logs_search_text=self._search_edit.text(),
+            logs_source_filter=self._selected_source(),
         )
 
     # ── UI construction ──────────────────────────────────────────────
 
     def _build_ui(self) -> None:
+        """Alert bar → toolbar → full-width table → collapsible diagnostics (DEC-282).
+
+        The page used to give permanent space to seven areas at once: the table, an
+        Active Warnings panel, a Log Inspector, and four snapshot cards. Between them
+        the log table — the reason the page exists — got about half the content area,
+        and two of the panels were usually empty. Everything that is not the table is
+        now either one line tall or opened on demand.
+        """
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(10)
+
+        self._alert_bar = AlertStatusBar(self._state, object_name="Logs_AlertBar")
+        self._alert_bar.view_alerts_clicked.connect(self.open_alert_center)
+        outer.addWidget(self._alert_bar)
+
         outer.addLayout(self._build_toolbar())
 
+        # The inspector is a splitter child that is hidden until a row is selected, so
+        # closing it returns the full width to the table rather than leaving a reserved
+        # empty column. Deliberately NOT a QStackedLayout: that lays out only its
+        # current page, and reading geometry from a page never navigated to has twice
+        # nearly shipped as data loss here.
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setObjectName("Logs_Splitter")
         splitter.addWidget(self._build_left_pane())
-        splitter.addWidget(self._build_right_column())
+        self._inspector = self._build_inspector()
+        splitter.addWidget(self._inspector)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
-        splitter.setSizes([820, 320])
+        splitter.setCollapsible(0, False)
         style_splitter(splitter)
+        self._splitter = splitter
+        self._inspector.setVisible(False)
         outer.addWidget(splitter, 1)
 
-    def _build_right_column(self) -> QWidget:
-        """Active warnings over the log inspector (DEC-222).
-
-        A vertical splitter rather than a fixed stack: the warnings list and the
-        selected-event detail both want height, and which one matters depends on
-        whether anything is currently wrong. The two are deliberately separate —
-        warnings are current state, the inspector is one historical event.
-        """
-        column = QSplitter(Qt.Orientation.Vertical)
-        column.setObjectName("Logs_Splitter_rightColumn")
-
-        warnings_panel = QWidget()
-        warnings_panel.setObjectName("Logs_Panel_warnings")
-        warnings_layout = QVBoxLayout(warnings_panel)
-        warnings_layout.setContentsMargins(12, 4, 4, 4)
-        warnings_layout.setSpacing(8)
-        warnings_layout.addWidget(
-            SectionHeader("Active Warnings", object_name="Logs_SectionHeader_warnings")
-        )
-        self._warnings_view = WarningsView(self._state)
-        self._warnings_view.setObjectName("Logs_View_warnings")
-        warnings_layout.addWidget(self._warnings_view, 1)
-
-        column.addWidget(warnings_panel)
-        column.addWidget(self._build_inspector())
-        column.setStretchFactor(0, 1)
-        column.setStretchFactor(1, 1)
-        column.setSizes([300, 380])
-        style_splitter(column)
-        return column
-
     def _build_toolbar(self) -> QHBoxLayout:
+        """Search · severity · source · follow · actions (brief §10, §11).
+
+        The Export Bundle button that used to sit here is gone. It called exactly the
+        same method as the global footer's "Export Support Bundle" (still wired at
+        ``MainWindow``), so the page carried a duplicate of an action already reachable
+        from every page — and the toolbar needed the room for the source filter and the
+        follow control. The export itself is unchanged.
+        """
         row = QHBoxLayout()
         row.setSpacing(8)
 
         self._search_edit = QLineEdit()
         self._search_edit.setObjectName("Logs_Edit_search")
-        self._search_edit.setPlaceholderText("Filter messages…")
+        self._search_edit.setPlaceholderText("Search logs…")
         # Placeholder text is NOT an accessible name — Qt exposes it as a
         # description at best, and it vanishes the moment anything is typed,
         # so the field goes anonymous exactly when it holds state (273-g).
-        name_value_control(self._search_edit, "Filter messages")
+        name_value_control(self._search_edit, "Search logs")
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.setMaximumWidth(280)
         row.addWidget(self._search_edit)
@@ -236,14 +256,36 @@ class LogsPage(QWidget):
         row.addWidget(self._toggle_warn)
         row.addWidget(self._toggle_error)
 
+        # Source filter. `filter_log_rows` already implemented exact-source matching;
+        # the page simply never offered a way to set it. Populated from the sources
+        # actually present in the feed rather than a hardcoded vocabulary, so a new
+        # emitter appears here without anyone remembering to add it.
+        self._source_combo = QComboBox()
+        self._source_combo.setObjectName("Logs_Combo_source")
+        self._source_combo.addItem(_ALL_SOURCES)
+        name_value_control(self._source_combo, "Filter by source")
+        row.addWidget(self._source_combo)
+
+        # Follow. The auto-scroll behaviour already existed but was invisible: the tail
+        # was followed only while the view happened to be at the bottom, with nothing
+        # telling the user that was the rule. Now it is a state they can see and set.
+        self._follow_btn = self._make_toggle("● Follow", "Logs_Toggle_follow")
+        self._follow_btn.setChecked(True)
+        name_value_control(self._follow_btn, "Follow new log entries")
+        row.addWidget(self._follow_btn)
+
+        self._new_events_btn = make_button(
+            "", "ghost", object_name="Logs_Btn_newEvents", accessible_name="Jump to newest entries"
+        )
+        self._new_events_btn.setVisible(False)
+        row.addWidget(self._new_events_btn)
+
         row.addStretch(1)
 
         self._clear_btn = make_button("Clear Logs", "secondary", object_name="Logs_Btn_clear")
         self._copy_btn = make_button("Copy", "secondary", object_name="Logs_Btn_copy")
-        self._export_btn = make_button("Export Bundle", "primary", object_name="Logs_Btn_export")
         row.addWidget(self._clear_btn)
         row.addWidget(self._copy_btn)
-        row.addWidget(self._export_btn)
         return row
 
     @staticmethod
@@ -261,14 +303,11 @@ class LogsPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Event table ↕ diagnostic-snapshot cards share this column's height
-        # through a drag handle (DEC-234): pull it down to shrink the table and
-        # grow the cards so more of a snapshot / journal is readable at once.
-        # Both panes scroll internally, so the split can fill the column.
-        column = QSplitter(Qt.Orientation.Vertical)
-        column.setObjectName("Logs_Splitter_leftColumn")
-        column.setChildrenCollapsible(False)
-
+        # DEC-282 replaces DEC-234's table↕snapshots drag handle with a collapsed
+        # section. The handle let you trade table height for snapshot height, but it
+        # started with the snapshots already taking about a third of the column — four
+        # narrow monospace panes side by side, permanently, on a page whose job is the
+        # log. Collapsed by default, the table simply gets the column.
         self._table = QTableWidget(0, len(_LOG_COLS))
         self._table.setObjectName("Logs_Table_events")
         self._table.setHorizontalHeaderLabels(_LOG_COLS)
@@ -286,27 +325,13 @@ class LogsPage(QWidget):
         header.setSectionResizeMode(_COL_SOURCE, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(_COL_MESSAGE, QHeaderView.ResizeMode.Stretch)
         self._table.setColumnWidth(_COL_LEVEL, 92)
-        column.addWidget(self._table)
+        layout.addWidget(self._table, 1)
 
-        snapshots = QWidget()
-        snapshots.setObjectName("Logs_Pane_snapshots")
-        snapshots.setMinimumHeight(140)
-        snap_layout = QVBoxLayout(snapshots)
-        snap_layout.setContentsMargins(0, 8, 0, 0)
-        snap_layout.setSpacing(10)
-        snap_layout.addWidget(
-            SectionHeader("Diagnostic Snapshots", object_name="Logs_SectionHeader_snapshots")
+        self._diag_section = CollapsibleSection(
+            "Diagnostic tools", "Logs_Section_diagnostics", expanded=False
         )
-        # Stretch the cards row so growing this pane grows the previews (the goal:
-        # read more of a snapshot without opening the full bundle).
-        snap_layout.addLayout(self._build_snapshot_cards(), 1)
-        column.addWidget(snapshots)
-
-        column.setStretchFactor(0, 1)
-        column.setStretchFactor(1, 0)
-        column.setSizes([420, 190])
-        style_splitter(column)
-        layout.addWidget(column, 1)
+        self._diag_section.add_layout(self._build_snapshot_cards())
+        layout.addWidget(self._diag_section)
         return pane
 
     def _build_snapshot_cards(self) -> QHBoxLayout:
@@ -382,20 +407,23 @@ class LogsPage(QWidget):
     def _build_inspector(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("Logs_Panel_inspector")
-        panel.setMinimumWidth(300)
+        panel.setMinimumWidth(280)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 4, 4, 4)
         layout.setSpacing(8)
 
-        title = QLabel("Log Inspector")
+        # Header with a close affordance: the panel is on-demand now, so there has to
+        # be a way back to the full-width table.
+        head = QHBoxLayout()
+        title = QLabel("Log detail")
         title.setProperty("class", "PageSubtitle")
-        layout.addWidget(title)
-
-        self._inspector_empty = QLabel("Select an event to inspect its full detail.")
-        self._inspector_empty.setObjectName("Logs_Label_inspectorEmpty")
-        self._inspector_empty.setProperty("class", "CardMeta")
-        self._inspector_empty.setWordWrap(True)
-        layout.addWidget(self._inspector_empty)
+        head.addWidget(title)
+        head.addStretch(1)
+        self._inspector_close = make_button(
+            "✕", "ghost", object_name="Logs_Btn_inspectorClose", accessible_name="Close log detail"
+        )
+        head.addWidget(self._inspector_close)
+        layout.addLayout(head)
 
         self._inspector_detail = QWidget()
         detail = QVBoxLayout(self._inspector_detail)
@@ -431,6 +459,9 @@ class LogsPage(QWidget):
         _mono(self._insp_message)
         detail.addWidget(self._insp_message, 1)
 
+        self._insp_copy = make_button("Copy", "secondary", object_name="Logs_Btn_inspectorCopy")
+        detail.addWidget(self._insp_copy)
+
         layout.addWidget(self._inspector_detail, 1)
         return panel
 
@@ -439,6 +470,15 @@ class LogsPage(QWidget):
         self._toggle_info.toggled.connect(self._rebuild_table)
         self._toggle_warn.toggled.connect(self._rebuild_table)
         self._toggle_error.toggled.connect(self._rebuild_table)
+        self._source_combo.currentTextChanged.connect(self._rebuild_table)
+        self._source_combo.currentTextChanged.connect(lambda _t: self._persist_log_filters())
+        self._follow_btn.toggled.connect(self._on_follow_toggled)
+        self._new_events_btn.clicked.connect(self._resume_following)
+        self._inspector_close.clicked.connect(self._close_inspector)
+        self._insp_copy.clicked.connect(self._copy_selected)
+        bar = self._table.verticalScrollBar()
+        if bar is not None:
+            bar.valueChanged.connect(self._on_table_scrolled)
 
         # DEC-245: an ERR-only filter used to revert to all-levels on every launch.
         # Toggles write immediately; the search box is debounced so a typed phrase
@@ -450,7 +490,6 @@ class LogsPage(QWidget):
 
         self._clear_btn.clicked.connect(self._diag.clear_events)
         self._copy_btn.clicked.connect(self._copy_visible)
-        self._export_btn.clicked.connect(self.export_bundle)
 
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
@@ -460,17 +499,88 @@ class LogsPage(QWidget):
     # ── Feed handlers ────────────────────────────────────────────────
 
     def _on_event_appended(self, ev) -> None:
-        was_at_bottom = self._is_at_bottom()
+        """Append, and follow the tail only if the user has not scrolled away.
+
+        Following is now an explicit, visible state rather than an emergent one. The
+        rule underneath is the same and deliberately kept: never yank someone back to
+        the newest row while they are reading older ones. What changed is that the
+        state is named, can be turned off, and that entries arriving while paused are
+        counted so the user knows there is something to come back to.
+        """
         self._all_rows.append(build_log_row(ev))
+        following = self._follow_btn.isChecked() and self._is_at_bottom()
         self._rebuild_table()
-        if was_at_bottom:
+        if following:
             self._scroll_to_bottom()
+        else:
+            self._pending_new += 1
+        self._refresh_follow_indicator()
 
     def _on_events_cleared(self) -> None:
         self._all_rows = []
         self._selected_vm = None
+        self._pending_new = 0
         self._rebuild_table()
         self._render_inspector()
+        self._refresh_follow_indicator()
+
+    # ── Follow / live tail ───────────────────────────────────────────
+
+    def _on_follow_toggled(self, checked: bool) -> None:
+        if checked:
+            self._resume_following()
+        else:
+            self._refresh_follow_indicator()
+
+    def _resume_following(self) -> None:
+        self._follow_btn.setChecked(True)
+        self._pending_new = 0
+        self._scroll_to_bottom()
+        self._refresh_follow_indicator()
+
+    def _on_table_scrolled(self, _value: int) -> None:
+        """Scrolling away pauses following; scrolling back to the bottom resumes it."""
+        if self._is_at_bottom():
+            self._pending_new = 0
+        self._refresh_follow_indicator()
+
+    def _refresh_follow_indicator(self) -> None:
+        paused = not (self._follow_btn.isChecked() and self._is_at_bottom())
+        self._follow_btn.setText("○ Follow paused" if paused else "● Follow")
+        show_pending = paused and self._pending_new > 0
+        if show_pending:
+            noun = "event" if self._pending_new == 1 else "events"
+            self._new_events_btn.setText(f"{self._pending_new} new {noun} ↓")
+        self._new_events_btn.setVisible(show_pending)
+
+    # ── Alert surfaces ───────────────────────────────────────────────
+
+    def open_alert_center(self) -> None:
+        """Open the on-demand Alert Centre (brief §8)."""
+        if self._state is None:
+            return
+        dialog = AlertCenterDialog(self._state, self)
+        dialog.show_related_logs.connect(self.show_related_logs)
+        dialog.exec()
+
+    def show_related_logs(self, source: str, component: str) -> None:
+        """Narrow the table to an alert's context (brief §14).
+
+        Deliberately simple. ``DiagEvent`` carries only a timestamp, level, source and
+        message — there is no alert id to correlate on — so this filters to the alert's
+        source and searches for its component, which is what the available data
+        supports. It is a narrowing, not a guarantee that every row shown is related.
+        """
+        for btn in self._level_toggles().values():
+            with block_signals(btn):
+                btn.setChecked(True)
+        idx = self._source_combo.findText(source)
+        with block_signals(self._source_combo):
+            self._source_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        with block_signals(self._search_edit):
+            self._search_edit.setText(component if component and component != source else "")
+        self._rebuild_table()
+        self._persist_log_filters()
 
     # ── Table rendering ──────────────────────────────────────────────
 
@@ -484,12 +594,49 @@ class LogsPage(QWidget):
             levels.add("error")
         return levels
 
+    def _selected_source(self) -> str:
+        """The source filter, or "" for no restriction (what ``filter_log_rows`` wants)."""
+        text = self._source_combo.currentText()
+        return "" if text == _ALL_SOURCES else text
+
+    def _sync_source_choices(self) -> None:
+        """Keep the dropdown's options equal to the sources present in the feed.
+
+        Rebuilt from the rows rather than a hardcoded list so a new emitter shows up
+        without anyone having to remember this widget.
+
+        The current selection is **always retained as an option even when no row
+        carries it**. Two things make that necessary rather than merely tidy: the feed
+        is a capped deque, so a source can age out of it while the user is still
+        filtering on it; and a filter restored from settings at startup is applied
+        before any matching event has been logged. Dropping it in either case would
+        silently reset a setting the user chose — the DEC-245 failure — and the
+        alternative it protects against (an unexplained empty table) does not arise,
+        because the dropdown is right there still reading "fan".
+        """
+        sources = sorted({r.source for r in self._all_rows if r.source})
+        current = self._source_combo.currentText()
+        if current and current != _ALL_SOURCES and current not in sources:
+            sources = sorted([*sources, current])
+        if [self._source_combo.itemText(i) for i in range(self._source_combo.count())] == [
+            _ALL_SOURCES,
+            *sources,
+        ]:
+            return
+        with block_signals(self._source_combo):
+            self._source_combo.clear()
+            self._source_combo.addItem(_ALL_SOURCES)
+            self._source_combo.addItems(sources)
+            idx = self._source_combo.findText(current)
+            self._source_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
     def _rebuild_table(self, *_args) -> None:
         prev = self._selected_vm
+        self._sync_source_choices()
         self._rows = filter_log_rows(
             self._all_rows,
             levels=self._active_levels(),
-            source="",
+            source=self._selected_source(),
             search=self._search_edit.text(),
         )
         self._suppress_selection = True
@@ -531,14 +678,35 @@ class LogsPage(QWidget):
             self._selected_vm = self._rows[idx]
             self._render_inspector()
 
-    def _render_inspector(self) -> None:
+    def _close_inspector(self) -> None:
+        """Dismiss the detail pane and give the width back to the table."""
+        self._selected_vm = None
+        self._suppress_selection = True
+        try:
+            self._table.clearSelection()
+        finally:
+            self._suppress_selection = False
+        self._render_inspector()
+
+    def _copy_selected(self) -> None:
         vm = self._selected_vm
         if vm is None:
-            self._inspector_empty.setVisible(True)
-            self._inspector_detail.setVisible(False)
             return
-        self._inspector_empty.setVisible(False)
-        self._inspector_detail.setVisible(True)
+        clip = QApplication.clipboard()
+        if clip is not None:
+            clip.setText(f"[{vm.detail_time_str}] [{vm.level_label}] [{vm.source}] {vm.message}")
+
+    def _render_inspector(self) -> None:
+        """Show the pane only while a row is selected (brief §12).
+
+        Hiding the whole splitter child, rather than emptying it, is what returns the
+        space: an empty-but-present panel is exactly the reserved dead width this
+        redesign set out to remove.
+        """
+        vm = self._selected_vm
+        self._inspector.setVisible(vm is not None)
+        if vm is None:
+            return
         self._insp_timestamp.setText(vm.detail_time_str)
         self._insp_pill.set_text(vm.level_label)
         self._insp_pill.set_state(vm.level_state)

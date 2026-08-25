@@ -204,7 +204,9 @@ class TestSplitterPersistence:
         w = MainWindow(settings_service=settings_service, demo_mode=True)
         qtbot.addWidget(w)
         named = {s.objectName() for s in w.findChildren(QS) if s.objectName()}
-        assert len(named) >= 9, f"expected all nine page splitters, got {sorted(named)}"
+        # Eight since DEC-282 retired the Logs left/right column handles along with
+        # the permanent snapshot pane and warnings panel they divided.
+        assert len(named) >= 8, f"expected every page splitter, got {sorted(named)}"
         assert named <= set(w._splitter_persistence._splitters)
 
 
@@ -601,8 +603,6 @@ def test_every_named_splitter_is_pinned_by_name(qtbot, settings_service):
         "Dashboard_Splitter_horizontal",
         "Dashboard_Splitter_vertical",
         "Logs_Splitter",
-        "Logs_Splitter_leftColumn",
-        "Logs_Splitter_rightColumn",
         "Overview_Splitter_sections",
         "SystemState_Splitter_row2",
         "SystemState_Splitter_sections",

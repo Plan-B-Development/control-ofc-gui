@@ -328,8 +328,8 @@ def test_add_warning_emits_signal_immediately(qtbot):
 
     # Active list must already contain the warning, count must be 1.
     assert state.warning_count == 1
-    assert len(state.active_warnings) == 1
-    assert state.active_warnings[0]["source"] == "control_loop"
+    assert len(state.unacknowledged_warnings) == 1
+    assert state.unacknowledged_warnings[0]["source"] == "control_loop"
     # And the signal must already have fired — no waiting for the next tick.
     assert signals == [1]
 
@@ -348,27 +348,74 @@ def test_remove_warning_emits_signal_immediately(qtbot):
     state.remove_warning("fan_write")
 
     assert state.warning_count == 0
-    assert state.active_warnings == []
     assert signals == [0]
+    # DEC-282: the health count drops immediately (the condition is gone), but the
+    # alert does NOT vanish — it was never acknowledged, so it stays listed as
+    # recovered until someone looks at it. Before DEC-282 this row was deleted
+    # outright, which is precisely how a warning could flash past and leave the user
+    # with no way to find out what it had been.
+    assert len(state.unacknowledged_warnings) == 1
+    row = state.unacknowledged_warnings[0]
+    assert row["_key"] == "fan_write"
+    assert row["recovered"] is True
+    assert row["recovered_at"] is not None
+    assert state.unacknowledged_count == 1
+
+    state.acknowledge_all()
+    assert state.unacknowledged_warnings == [], "acknowledged — now it may leave the list"
 
 
-def test_add_warning_no_signal_when_acknowledged(qtbot):
-    """An acknowledged warning must not re-emit when added again — the
-    immediate-emit fix must not regress this idempotency contract.
+def test_re_adding_a_continuously_present_warning_is_silent(qtbot):
+    """Re-adding a key whose condition never cleared must not re-emit.
+
+    This replaces ``test_add_warning_no_signal_when_acknowledged``, which asserted
+    the same silence for the wrong reason. Its docstring said "an acknowledged
+    warning must not re-emit when added again", and the implementation delivered that
+    by putting the key in a set that was never pruned — so the silence extended to
+    every *future* occurrence of the condition too, for the whole session (DEC-282
+    RC-3). See ``test_acknowledged_warning_re_alerts_after_recovery`` for the case
+    that silence used to swallow.
+
+    The idempotency contract underneath was real and is kept: while the condition is
+    continuously present it is one occurrence, so re-observing it is a no-op.
     """
     state = AppState()
     state.add_warning("error", "control_loop", "fan write failed", key="fan_write")
-    state.clear_warnings()
-    assert state.warning_count == 0
+    state.acknowledge_all()
+    assert state.unacknowledged_count == 0
+    assert state.warning_count == 1, "acknowledged, but the condition is still present"
 
     signals: list[int] = []
     state.warning_count_changed.connect(lambda c: signals.append(c))
+    changes: list[int] = []
+    state.warnings_changed.connect(lambda: changes.append(1))
 
-    # Re-adding the now-acknowledged key must be a silent no-op.
+    # Same key, condition never cleared → still the same occurrence.
     state.add_warning("error", "control_loop", "fan write failed", key="fan_write")
 
+    assert state.warning_count == 1
+    assert state.unacknowledged_count == 0
+    assert signals == [], "no count change"
+    assert changes == [], "and no content change either"
+
+
+def test_acknowledged_warning_re_alerts_after_recovery(qtbot):
+    """DEC-282 RC-3: acknowledgement must never permanently suppress a condition.
+
+    Fails against the pre-DEC-282 code, where ``fan_write`` was added to
+    ``_acknowledged`` and every later occurrence was discarded at the door.
+    """
+    state = AppState()
+    state.add_warning("error", "control_loop", "fan write failed", key="fan_write")
+    assert state.unacknowledged_count == 1, "presence first — an absence test needs one"
+    state.acknowledge_all()
+    state.remove_warning("fan_write")  # the condition clears
     assert state.warning_count == 0
-    assert signals == []
+
+    state.add_warning("error", "control_loop", "fan write failed", key="fan_write")
+
+    assert state.warning_count == 1
+    assert state.unacknowledged_count == 1, "a new occurrence must alert again"
 
 
 def test_set_active_profile(qtbot):

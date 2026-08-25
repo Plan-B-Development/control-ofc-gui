@@ -52,6 +52,7 @@ IMPLICIT_FIELDS: dict[str, str] = {
     ),
     "logs_level_filters": "set by the Logs page level toggles",
     "logs_search_text": "set by the Logs page search box",
+    "logs_source_filter": "set by the Logs page source dropdown (DEC-282)",
 }
 
 

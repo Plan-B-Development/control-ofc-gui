@@ -126,24 +126,42 @@ def test_startup_restores_divergent_page_and_highlights_nav(
 
 
 def test_warning_count_propagates_to_ribbon_and_footer(window, app_state):
-    """DEC-208: ``AppState.warning_count_changed`` must drive BOTH the ribbon alert
-    badge and the footer health rollup through the live MainWindow wiring. The two
-    setters are unit-tested in isolation; this pins the cross-component chain (audit
-    Rank 5). ``isHidden()`` is used (not ``isVisible()``) so the assertions don't
-    depend on the never-shown window's ancestor visibility."""
+    """DEC-208, as amended by DEC-282: both surfaces are still driven through the live
+    MainWindow wiring, but by **different counts**, because they answer different
+    questions.
+
+    DEC-208 fed both from one number and acknowledgement zeroed it, so clicking a
+    button made the footer announce "All systems nominal" over a condition that was
+    still happening. The ribbon badge is an attention indicator and legitimately goes
+    quiet when the user has looked; the footer is a health rollup and must not. That
+    split is what changed here — the ribbon half of this test is unchanged.
+
+    ``isHidden()`` is used (not ``isVisible()``) so the assertions don't depend on the
+    never-shown window's ancestor visibility.
+    """
     # No warnings → ribbon badge hidden, footer nominal.
     assert window.status_ribbon._alert_badge.isHidden() is True
     assert window.footer._health_label.text() == "All systems nominal"
 
     # One warning propagates to both surfaces.
-    app_state.add_warning("warning", "test", "sensor stale")
+    app_state.add_warning("warning", "test", "sensor stale", key="k1")
     assert window.status_ribbon._alert_badge.isHidden() is False
     assert window.footer._health_label.text() == "1 warning"
 
-    # Clearing it reverts both.
-    app_state.clear_warnings()
+    # Acknowledging quietens the attention badge ONLY. The condition is untouched, so
+    # the health rollup keeps reporting it — this is the DEC-282 change.
+    app_state.acknowledge_all()
     assert window.status_ribbon._alert_badge.isHidden() is True
+    assert window.footer._health_label.text() == "1 warning", (
+        "acknowledgement is not resolution — the footer must not claim health here"
+    )
+
+    # Only the condition actually clearing reverts the footer.
+    app_state.remove_warning("k1")
     assert window.footer._health_label.text() == "All systems nominal"
+    assert window.status_ribbon._alert_badge.isHidden() is True, (
+        "already acknowledged, so its recovery is not new attention"
+    )
 
 
 def test_thermal_state_propagates_to_ribbon(window, app_state):
@@ -180,3 +198,21 @@ def test_close_stops_the_poll_age_ticker(qtbot, settings_service):
 
     window.close()
     assert not window._poll_age_timer.isActive()
+
+
+def test_a_warning_raised_before_the_window_exists_still_reaches_the_badge(qtbot, app_state):
+    """A signal carries changes, so a listener that connects late hears nothing.
+
+    `main.py` raises profile-load failures before MainWindow is constructed, so those
+    alerts were emitted to no one and the ribbon badge stayed hidden over a real
+    warning until some unrelated change moved the count. Pre-existing before DEC-282
+    and fixed there, because an alert nobody can see is the defect that work is about.
+    """
+    app_state.add_warning("warning", "profile", "Failed to load profile 'x'", key="pl:x")
+    assert app_state.unacknowledged_count == 1
+
+    win = MainWindow(state=app_state, demo_mode=False)
+    qtbot.addWidget(win)
+
+    assert win.status_ribbon._alert_badge.isHidden() is False
+    assert win.footer._health_label.text() == "1 warning"

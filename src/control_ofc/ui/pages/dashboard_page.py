@@ -147,7 +147,6 @@ class DashboardPage(QWidget):
             self._state.sensors_updated.connect(self._on_sensors_updated)
             self._state.fans_updated.connect(self._on_fans_updated)
             self._state.active_profile_changed.connect(self._on_profile_changed)
-            self._state.warning_count_changed.connect(self._on_warnings_changed)
             self._state.connection_changed.connect(self._on_connection_changed)
             self._state.mode_changed.connect(self._on_mode_changed)
             self._state.capabilities_updated.connect(self._on_capabilities_updated)
@@ -1043,9 +1042,6 @@ class DashboardPage(QWidget):
         name, ok = QInputDialog.getText(self, "Rename Fan", "Fan name:", text=current)
         if ok:
             self._state.apply_fan_rename(fan_id, name)
-
-    def _on_warnings_changed(self, count: int) -> None:
-        del count  # the footer health rollup + the Logs page own warnings (DEC-222)
 
     def _on_profile_changed(self, name: str) -> None:
         self._annotate(f"Profile: {name}" if name else "Profile cleared")

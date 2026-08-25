@@ -8,6 +8,9 @@ the page handler is driven directly.
 
 from __future__ import annotations
 
+import re
+
+import pytest
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QPushButton, QWidget
 
@@ -151,10 +154,30 @@ def test_no_context_data_field(qtbot):
         assert "context" not in child.objectName().lower()
 
 
-def test_empty_inspector_before_selection(qtbot):
+def test_inspector_is_absent_until_a_row_is_selected(qtbot):
+    """DEC-282: the pane is hidden, not merely empty.
+
+    It used to be a permanent column showing "Select an event to inspect its full
+    detail." — roughly a fifth of the page width reserved to say nothing. Hiding the
+    splitter child is what actually returns the width to the table, so that is what
+    this asserts; an empty-but-present panel would pass an "is the detail blank?"
+    check while still occupying the space.
+    """
     page, _ = _page(qtbot)
-    assert not page._inspector_empty.isHidden()
-    assert page._inspector_detail.isHidden()
+    assert page._inspector.isHidden()
+
+
+def test_selecting_a_row_opens_the_inspector_and_closing_returns_the_width(qtbot):
+    page, diag = _page(qtbot)
+    diag.log_event("warning", "fan", "CPU_FAN stall detected")
+    page._table.selectRow(0)
+    assert not page._inspector.isHidden()
+    assert page._insp_message.toPlainText() == "CPU_FAN stall detected"
+
+    page._inspector_close.click()
+
+    assert page._inspector.isHidden()
+    assert page._selected_vm is None
 
 
 # ── Snapshot cards ─────────────────────────────────────────────────────────
@@ -264,7 +287,7 @@ def test_export_bundle_invokes_service(qtbot, monkeypatch, tmp_path):
     called: list = []
     diag.export_support_bundle = lambda p: called.append(p)  # type: ignore[method-assign]
     page, _ = _page(qtbot, diag)
-    page._export_btn.click()
+    page.export_bundle()
     assert called == [Path(str(target))]
 
 
@@ -276,7 +299,7 @@ def test_export_bundle_cancel_is_noop(qtbot, monkeypatch):
     called: list = []
     diag.export_support_bundle = lambda p: called.append(p)  # type: ignore[method-assign]
     page, _ = _page(qtbot, diag)
-    page._export_btn.click()
+    page.export_bundle()
     assert called == []
 
 
@@ -293,6 +316,144 @@ def test_export_bundle_failure_surfaces_into_feed(qtbot, monkeypatch, tmp_path):
 
     diag.export_support_bundle = boom  # type: ignore[method-assign]
     page, _ = _page(qtbot, diag)
-    page._export_btn.click()
+    page.export_bundle()
     assert page._table.rowCount() == 1  # the failure is logged as a visible event
     assert "export failed" in page._rows[0].message.lower()
+
+
+# ── Accessibility of the DEC-282 controls ──────────────────────────────────
+# Two kinds of test are needed and this is the second one. An AST lint proves the
+# `name_value_control` call was written; only a runtime sweep proves Qt actually
+# announces a name — DEC-269 established that `setAccessibleName` alone is discarded
+# on a non-editable QComboBox, and the helper written to encode that rule has already
+# reintroduced the bug once for a case its unit tests did not cover.
+
+
+def _announced_name(page, widget) -> str:
+    """What a screen reader would actually read for *widget*.
+
+    Three sources, in Qt's own order of precedence: an explicit accessible name, a
+    buddy label (how ``name_value_control`` names a QComboBox, whose own
+    ``setAccessibleName`` Qt discards when it is not editable — DEC-269), or, for a
+    button, its visible text.
+
+    A button's text only counts if it contains an actual word. A bare glyph announces
+    as the glyph, which is DEC-268's point: "✕" is not a name.
+    """
+    from PySide6.QtWidgets import QAbstractButton, QLabel
+
+    direct = widget.accessibleName()
+    if direct:
+        return direct
+    for label in page.findChildren(QLabel):
+        if label.buddy() is widget:
+            return label.text() or label.accessibleName()
+    if isinstance(widget, QAbstractButton) and re.search(r"[A-Za-z]{2,}", widget.text()):
+        return widget.text()
+    return ""
+
+
+@pytest.mark.parametrize(
+    "object_name",
+    [
+        "Logs_Edit_search",
+        "Logs_Combo_source",
+        "Logs_Toggle_follow",
+        "Logs_Btn_newEvents",
+        "Logs_Btn_inspectorClose",
+    ],
+)
+def test_every_new_control_announces_a_name(qtbot, object_name):
+    page, _ = _page(qtbot)
+    widget = page.findChild(QWidget, object_name)
+    assert widget is not None, f"{object_name} is missing from the page"
+    name = _announced_name(page, widget)
+    assert name.strip(), f"{object_name} announces as an anonymous control"
+
+
+def test_glyph_only_controls_do_not_rely_on_their_glyph(qtbot):
+    """A bare ✕ or a dynamically-filled label is not a name (DEC-268)."""
+    page, _ = _page(qtbot)
+    close = page.findChild(QWidget, "Logs_Btn_inspectorClose")
+    assert close.text() == "✕"
+    assert _announced_name(page, close) == "Close log detail"
+
+    jump = page.findChild(QWidget, "Logs_Btn_newEvents")
+    assert jump.text() == "", "starts empty — its label is filled only when paused"
+    assert _announced_name(page, jump) == "Jump to newest entries"
+
+
+def test_new_controls_have_unique_object_names(qtbot):
+    page, _ = _page(qtbot)
+    # Qt names its own internals (qt_scrollarea_viewport and friends) and reuses
+    # those names freely; only our own objectNames are ours to keep unique.
+    names = [
+        w.objectName()
+        for w in page.findChildren(QWidget)
+        if w.objectName() and not w.objectName().startswith("qt_")
+    ]
+    duplicated = {n for n in names if names.count(n) > 1}
+    assert not duplicated, f"objectName collisions break findChild/click tests: {duplicated}"
+
+
+def _settings_service_with(**overrides):
+    """A settings service seeded with *overrides* and unable to touch the real file.
+
+    Follows the pattern in test_overview_page.py rather than constructing one and
+    calling ``update()``: a default-constructed service still points ``save()`` at the
+    user's actual config, and three tests once wiped the developer's settings that way
+    (see AppSettingsService's docstring). Neutralising ``save`` is the guard.
+    """
+    from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
+
+    svc = AppSettingsService()
+    svc._settings = AppSettings(**overrides)
+    svc.save = lambda: None  # type: ignore[method-assign]
+    return svc
+
+
+# ── Source filter (DEC-282) ────────────────────────────────────────────────
+
+
+def test_source_dropdown_is_built_from_the_sources_actually_present(qtbot):
+    page, diag = _page(qtbot)
+    diag.log_event("info", "polling", "connected")
+    diag.log_event("warning", "fan", "stall")
+    diag.log_event("info", "polling", "again")
+
+    options = [page._source_combo.itemText(i) for i in range(page._source_combo.count())]
+
+    assert options == ["All sources", "fan", "polling"], "deduplicated and sorted"
+
+
+def test_selecting_a_source_narrows_the_table(qtbot):
+    page, diag = _page(qtbot)
+    diag.log_event("info", "polling", "connected")
+    diag.log_event("warning", "fan", "stall")
+    assert len(page._rows) == 2
+
+    page._source_combo.setCurrentText("fan")
+
+    assert [r.source for r in page._rows] == ["fan"]
+
+
+def test_a_restored_source_filter_survives_having_no_matching_rows_yet(qtbot):
+    """Regression: the filter used to be silently reset to "All sources".
+
+    `_sync_source_choices` rebuilds the options from the rows in the feed, and the feed
+    is a capped deque that at startup holds only a handful of breadcrumbs. A filter
+    restored from settings therefore names a source with no rows behind it — and
+    dropping it discards a setting the user deliberately chose (the DEC-245 failure).
+    """
+    settings = _settings_service_with(logs_source_filter="fan")
+    page = LogsPage(diagnostics_service=DiagnosticsService(), settings_service=settings)
+    qtbot.addWidget(page)
+
+    assert page._source_combo.currentText() == "fan"
+    assert page._selected_source() == "fan"
+    assert page._rows == [], "nothing matches yet, and the dropdown says why"
+
+    # And it still narrows correctly once a matching row does arrive.
+    page._diag.log_event("warning", "fan", "stall")
+    assert [r.source for r in page._rows] == ["fan"]
+    assert page._source_combo.currentText() == "fan"

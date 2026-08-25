@@ -86,11 +86,15 @@ def _build_paged_splitters(qtbot):
 def test_every_splitter_uses_shared_handle_width(qtbot):
     """The heart of the consistency fix: no page may skip style_splitter."""
     pages, splitters = _build_paged_splitters(qtbot)  # keep `pages` alive below
-    # Explicit count (Dashboard 2 + Controls 2 + Logs 3 + Overview 1 + System
+    # Explicit count (Dashboard 2 + Controls 2 + Logs 1 + Overview 1 + System
     # State 2) so a future page that gains a splitter without being added to
     # _build_paged_splitters — or a dropped splitter — fails loudly instead of
     # silently escaping this consistency check.
-    assert len(splitters) == 10, [f"{n}/{s.objectName()}" for n, s in splitters]
+    #
+    # Logs dropped from 3 to 1 in DEC-282: the left column's table-vs-snapshots
+    # handle went with the snapshots into a collapsed section, and the right
+    # column's warnings-vs-inspector handle went with the permanent panels.
+    assert len(splitters) == 8, [f"{n}/{s.objectName()}" for n, s in splitters]
     for name, sp in splitters:
         assert sp.handleWidth() == SPLITTER_HANDLE_WIDTH, (
             f"{name}/{sp.objectName() or '<unnamed>'} handleWidth={sp.handleWidth()}"
@@ -191,33 +195,35 @@ def test_system_state_advanced_actions_stay_out_of_the_splitter(qtbot):
 
 
 def test_logs_left_column_splitter(qtbot):
+    """DEC-282 retired this handle. It let you trade log-table height for snapshot
+    height, but only because the snapshots occupied a third of the column by default;
+    collapsed into "Diagnostic tools" there is nothing left to trade against, and the
+    table simply gets the column. The snapshots themselves are unchanged and still
+    reachable — that is what this now asserts."""
     page = LogsPage(DiagnosticsService(AppState()))
     qtbot.addWidget(page)
-    sp = page.findChild(QSplitter, "Logs_Splitter_leftColumn")
-    assert sp is not None
-    assert sp.orientation() == Qt.Orientation.Vertical
-    assert sp.count() == 2
-    assert not sp.childrenCollapsible()
+    assert page.findChild(QSplitter, "Logs_Splitter_leftColumn") is None
 
-    # Event table above; snapshot cards below — order is load-bearing.
-    table = sp.findChild(QTableWidget, "Logs_Table_events")
-    snap = page.findChild(QWidget, "Logs_Pane_snapshots")
-    assert table is not None and snap is not None
-    assert sp.widget(0) is table
-    assert sp.widget(1) is snap
-    # A snapshot preview (which grows as the pane grows) lives in the lower pane.
-    assert snap.findChild(QPlainTextEdit, "Logs_Text_daemonStatus") is not None
-    # Floors keep both usable when the handle is dragged toward one end.
+    table = page.findChild(QTableWidget, "Logs_Table_events")
+    section = page.findChild(QWidget, "Logs_Section_diagnostics")
+    assert table is not None and section is not None
+    # Collapsed by default (brief §15) — the previews exist but claim no space.
+    assert section.findChild(QPlainTextEdit, "Logs_Text_daemonStatus") is not None
+    # The table keeps its own floor; there is no longer a second pane to balance
+    # against it, so the paired snapshot floor went with the handle.
     assert table.minimumHeight() >= 120
-    assert snap.minimumHeight() >= 120
 
 
-def test_logs_keeps_its_existing_splitters(qtbot):
-    """The horizontal (events|inspector) and right-column handles still exist."""
+def test_logs_keeps_its_main_splitter(qtbot):
+    """The horizontal table|inspector handle survives; the right column does not.
+
+    DEC-282 removed the right column entirely (warnings panel above inspector). The
+    inspector it used to sit over is now the second child of the main splitter, hidden
+    until a row is selected.
+    """
     page = LogsPage(DiagnosticsService(AppState()))
     qtbot.addWidget(page)
     main = page.findChild(QSplitter, "Logs_Splitter")
-    right = page.findChild(QSplitter, "Logs_Splitter_rightColumn")
-    assert main is not None and right is not None
+    assert main is not None
     assert main.orientation() == Qt.Orientation.Horizontal
-    assert right.orientation() == Qt.Orientation.Vertical
+    assert page.findChild(QSplitter, "Logs_Splitter_rightColumn") is None

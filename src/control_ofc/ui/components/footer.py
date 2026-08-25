@@ -128,7 +128,13 @@ class StatusFooter(QWidget):
         layout.addWidget(self._rescan_btn)
 
         self._export_btn = make_button(
-            "Export Support Bundle", "secondary", object_name="StatusFooter_Btn_exportBundle"
+            # Primary since DEC-282: the Logs toolbar carried a duplicate of this
+            # exact action (same method, via MainWindow), and removing it left this as
+            # the one place to export a support bundle. §17 asks for one *prominent*
+            # version, so the surviving one is promoted rather than left secondary.
+            "Export Support Bundle",
+            "primary",
+            object_name="StatusFooter_Btn_exportBundle",
         )
         self._export_btn.clicked.connect(self.export_bundle_clicked)
         layout.addWidget(self._export_btn)

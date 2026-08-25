@@ -14,9 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, Slot
 
 from control_ofc.constants import EXPECTED_API_VERSION
+from control_ofc.services.alerts import transition_to_log
 from control_ofc.services.app_state import AppState
 
 if TYPE_CHECKING:
@@ -46,6 +47,7 @@ _BUNDLE_EXCLUDED_SETTING_KEYS = frozenset(
         # user typed — neither belongs in a bundle they may hand to someone else.
         "splitter_sizes",
         "logs_search_text",
+        "logs_source_filter",
     }
 )
 
@@ -125,6 +127,32 @@ class DiagnosticsService(QObject):
     @property
     def events(self) -> list[DiagEvent]:
         return list(self._events)
+
+    def attach_alert_source(self, state: AppState) -> None:
+        """Log alert onsets and recoveries into the event feed (DEC-282).
+
+        This is the observer half of the alert lifecycle: ``AppState`` computes
+        transitions and knows nothing about logging, and the dependency can only run
+        this way round — this module already imports ``AppState`` at runtime, so the
+        reverse import would be a cycle.
+
+        Only genuine transitions arrive here, so a condition that persists across
+        hundreds of polls still logs exactly one onset line and one recovery line.
+        That matters more than it looks: the feed is capped at ``MAX_EVENTS`` entries,
+        so logging per poll would flush every other diagnostic out of it within a
+        couple of minutes.
+
+        Generalises the hand-rolled dual-write at ``main.py``'s profile-load failure,
+        whose DEC-111 comment already stated the principle — record the transition in
+        the event log so the bundle carries it even after the user acknowledges.
+        """
+        state.alert_transitions.connect(self._on_alert_transitions)
+
+    @Slot(list)
+    def _on_alert_transitions(self, transitions: list) -> None:
+        for tr in transitions:
+            level, source, message = transition_to_log(tr)
+            self.log_event(level, source, message)
 
     def set_hw_diagnostics(self, result: HardwareDiagnosticsResult) -> None:
         """Record a ``GET /diagnostics/hardware`` result — the **only** writer.

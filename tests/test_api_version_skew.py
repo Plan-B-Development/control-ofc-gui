@@ -38,14 +38,21 @@ def test_dashboard_banner_shows_and_clears_on_skew(qtbot, app_state):
     # Mismatch → banner visible + a keyed "api" warning recorded.
     app_state.set_capabilities(Capabilities(daemon_version="9.9.9", api_version=SKEWED))
     assert not banner.isHidden()
-    assert any(w["source"] == "api" for w in app_state.active_warnings)
+    assert any(w["source"] == "api" for w in app_state.unacknowledged_warnings)
 
-    # Matching version → banner hidden + warning removed.
+    # Matching version → banner hidden and the condition no longer counts as active.
     app_state.set_capabilities(
         Capabilities(daemon_version="9.9.9", api_version=EXPECTED_API_VERSION)
     )
     assert banner.isHidden()
-    assert not any(w["source"] == "api" for w in app_state.active_warnings)
+    assert app_state.warning_count == 0, "the skew is genuinely gone"
+    # DEC-282: "gone" is not "never happened". The skew was never acknowledged, so it
+    # is retained as recovered history rather than deleted — this test used to assert
+    # its total disappearance, which is the behaviour the alert-lifecycle work exists
+    # to remove.
+    api_rows = [w for w in app_state.unacknowledged_warnings if w["source"] == "api"]
+    assert len(api_rows) == 1
+    assert api_rows[0]["recovered"] is True
 
 
 def test_diagnostics_text_bundle_flags_skew():

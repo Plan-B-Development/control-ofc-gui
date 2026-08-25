@@ -37,6 +37,7 @@ MACHINE_SPECIFIC_KEYS = frozenset(
         "splitter_sizes",
         "logs_level_filters",
         "logs_search_text",
+        "logs_source_filter",
     }
 )
 
@@ -307,6 +308,9 @@ class AppSettings:
     # is a real state (the user unticked everything) and is preserved.
     logs_level_filters: list[str] = field(default_factory=lambda: list(_LOG_LEVELS_ALL))
     logs_search_text: str = ""
+    # DEC-282: the Logs source dropdown. Machine-specific and a per-user view
+    # filter, like logs_search_text — excluded from exports and support bundles.
+    logs_source_filter: str = ""
 
     # DEC-156: user overrides forcing a sensor's classification, keyed by stable
     # sensor id -> source_class (only "coolant" today). GUI-owned policy — the
@@ -393,6 +397,7 @@ class AppSettings:
                 if lv in _LOG_LEVELS
             ],
             logs_search_text=_as_str(data.get("logs_search_text"), "", maxlen=200),
+            logs_source_filter=_as_str(data.get("logs_source_filter"), "", maxlen=64),
         )
 
     def portable_dict(self) -> dict:
