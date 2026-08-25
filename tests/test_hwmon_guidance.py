@@ -247,6 +247,58 @@ class TestNewVendorQuirks:
             "`msi_fan_brute_force=1` module parameter as a workaround"
         )
 
+    def test_msi_brute_force_names_the_nct6683_blacklist_prerequisite(self):
+        # 2026-08-25 (SIO-c): upstream states blacklisting `nct6683` as a
+        # REQUIREMENT for `msi_fan_brute_force` — if nct6683 binds the chip
+        # first, nct6687 never claims it and PWM writes fail with EIO. This
+        # was the literal resolution of Fred78290/nct6687d issue #202. Our
+        # guidance previously gave the modprobe line without the blacklist,
+        # so following it verbatim could silently no-op.
+        quirks = lookup_vendor_quirks("Micro-Star International Co., Ltd.", "nct6687")
+        brute = [q for q in quirks if any("brute_force" in d for d in q.details)]
+        assert brute, "expected at least one MSI quirk documenting msi_fan_brute_force"
+        for q in brute:
+            flat = " ".join(q.details)
+            assert "nct6683" in flat, (
+                "a quirk recommending msi_fan_brute_force must also name the "
+                f"required nct6683 blacklist; got: {q.summary}"
+            )
+
+    def test_msi_alt1_carries_the_do_not_force_counter_warning(self):
+        # 2026-08-25 (SIO-d): upstream warns against forcing
+        # `fan_config=msi_alt1` on non-NCT6687DR boards — B650/B660/X670/
+        # Z690/Z790 use the default mapping, and forcing alt1 there reads EC
+        # offsets that are zero on that silicon, so every SYS_FAN reports
+        # 0 RPM. This quirk renders on ANY MSI+nct6687 board, so the
+        # counter-warning has to travel with the recommendation.
+        quirks = lookup_vendor_quirks("Micro-Star International Co., Ltd.", "nct6687")
+        alt1 = [q for q in quirks if "msi_alt1" in " ".join(q.details)]
+        assert alt1, "expected an MSI quirk mentioning msi_alt1"
+        flat = " ".join(d for q in alt1 for d in q.details)
+        assert "DO NOT force" in flat, (
+            "the msi_alt1 guidance must carry the explicit do-not-force warning"
+        )
+        # Name the affected families — a generic 'be careful' would not tell
+        # a B650 owner that the warning is about them.
+        for family in ("B650", "X670", "Z690", "Z790"):
+            assert family in flat, (
+                f"the counter-warning must name {family} as a non-DR family "
+                "that must not have msi_alt1 forced"
+            )
+        assert "0 RPM" in flat, "the warning must state the observable symptom"
+
+    def test_brute_force_is_not_described_as_an_older_build_alternative(self):
+        # 2026-08-25 (SIO-b): `msi_fan_brute_force` is a CURRENT [BETA]
+        # parameter and is orthogonal to `fan_config` — upstream lists the
+        # same MSI boards for both. Our text used to call it the option for
+        # "older driver builds", which sent users to the wrong knob.
+        quirks = lookup_vendor_quirks("Micro-Star International Co., Ltd.", "nct6687")
+        flat = " ".join(d for q in quirks for d in q.details)
+        assert "older driver builds" not in flat, (
+            "msi_fan_brute_force is a current BETA parameter, not an "
+            "older-build alternative to fan_config=msi_alt1"
+        )
+
     def test_asrock_nct6686_quirk(self):
         quirks = lookup_vendor_quirks("ASRock", "nct6686d")
         assert len(quirks) == 1

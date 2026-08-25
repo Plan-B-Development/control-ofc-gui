@@ -347,8 +347,14 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "accepted with zero effect while a normal BIOS curve is active. The "
             "maintainer's documented stopgap (frankcrawford/it87 issue #96) is to set "
             "every IT8689E fan-curve vector's temperature to 90 — but that only "
-            "reliably restored the CPU-fan header; other headers still need the "
-            "pending driver-side fix (frankcrawford/it87 PR #114).",
+            "reliably restored the CPU-fan header.",
+            "A candidate driver-side fix (frankcrawford/it87 PR #128) merged on "
+            "2026-08-24, claiming manual-mode fixes for IT8688/IT8689/IT8790/"
+            "IT8792/IT8795/IT87952. It is NOT yet confirmed on IT8689E hardware — "
+            "its author could not test it on an IT8689 board, and issue #96 has no "
+            "post-merge confirmation. Updating it87-dkms-git is worth trying, but "
+            "verify writes actually take effect afterwards, and note the rebuild "
+            "pulls a large in-flux upstream change (PR #114 was rejected 2026-08-25).",
             "IT8689E Rev 2 (e.g. B650 Eagle AX): BIOS overrides PWM values unless "
             "'Full Speed' or degenerate fan curve is configured.",
             "Some Gigabyte boards have a separate fan-control chip — Linux can read "
@@ -654,8 +660,11 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "BIOS fan curve is active. The maintainer's documented stopgap "
             "(frankcrawford/it87 issue #96) is to flatten the BIOS curve by "
             "setting every fan-curve vector's temperature to 90 — but this "
-            "only reliably restored the CPU-fan header; other headers await "
-            "the driver-side fix (frankcrawford/it87 PR #114).",
+            "only reliably restored the CPU-fan header.",
+            "Driver status: a candidate fix (frankcrawford/it87 PR #128) merged "
+            "2026-08-24 but is unconfirmed on IT8689E hardware; the previously "
+            "cited PR #114 was rejected 2026-08-25. Updating it87-dkms-git may "
+            "help — verify writes take effect rather than assuming they do.",
             "IT8689E Rev 2 (e.g. B650 Eagle AX): BIOS overrides unless a "
             "degenerate fan curve is configured in BIOS Smart Fan settings.",
             "Workaround: In BIOS → Smart Fan 6, set every temperature point to "
@@ -757,10 +766,20 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "points rather than a single PWM register write for system fans to respond.",
             "CPU_FAN and PUMP_FAN headers typically work first; SYS_FAN support "
             "may lag behind or require the brute-force module parameter.",
-            "Workaround: Load the nct6687d driver with 'msi_fan_brute_force=1': "
+            "Workaround: Load the nct6687d driver with 'msi_fan_brute_force=1' "
+            "(upstream marks this parameter BETA): "
             "sudo modprobe nct6687 msi_fan_brute_force=1",
-            "Add 'options nct6687 msi_fan_brute_force=1' to "
-            "/etc/modprobe.d/nct6687.conf to persist across reboots.",
+            "REQUIRED alongside it: blacklist the in-kernel nct6683 driver. "
+            "Upstream states this as a prerequisite — if nct6683 binds the chip "
+            "first, nct6687 never claims it and PWM writes fail (commonly EIO). "
+            "echo 'blacklist nct6683' | sudo tee /etc/modprobe.d/nct6683_blacklist.conf",
+            "Persist across reboots with all three: "
+            "'options nct6687 msi_fan_brute_force=1' in /etc/modprobe.d/nct6687_msi.conf, "
+            "the nct6683 blacklist above, and 'nct6687' in "
+            "/etc/modules-load.d/nct6687.conf. Then reboot.",
+            "The driver snapshots all 7 original curve points before entering manual "
+            "control and restores them when automatic mode is written, when the module "
+            "is unloaded, or when its fan-control watchdog expires.",
             "3-pin DC chassis fans may remain problematic even when 4-pin PWM fans work.",
         ],
     ),
@@ -1019,13 +1038,28 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "authoritative, continuously-updated list; don't trust a point-in-time count). "
             "On listed boards the driver enables the alt1 register layout "
             "automatically — no module parameter required.",
-            "If your MSI X870/B850 board is NOT on the allowlist and "
-            "system fans don't respond to PWM writes, try loading with "
-            "fan_config=msi_alt1 (or msi_fan_brute_force=1 on older driver builds): "
-            "`sudo modprobe -r nct6687 && sudo modprobe nct6687 fan_config=msi_alt1`. "
-            "Persist via /etc/modprobe.d/nct6687.conf.",
-            "Per the same upstream source, `msi_fan_brute_force=1` remains "
-            "the manual override for unlisted boards.",
+            "DO NOT force fan_config=msi_alt1 on a board that is not on the "
+            "upstream allowlist. Only the NCT6687DR families (B840 / B850 / "
+            "B860 / X870 / X870E / Z890) use the alt1 layout. Earlier MSI series with "
+            "the plain NCT6687D chip — B650 / B660 / X670 / Z690 / Z790 — use "
+            "the DEFAULT mapping and are auto-detected correctly. Forcing alt1 "
+            "there reads EC offsets 0x154-0x15E, which are zero on non-DR "
+            "silicon, so every SYS_FAN reports 0 RPM while CPU_FAN keeps "
+            "working (upstream issue #167, MSI MPG B650 CARBON WIFI).",
+            "Check which mapping is active — the driver always prints it: "
+            "`dmesg | grep 'active fan config'`. That line reveals a stale "
+            "forced setting at a glance. If you previously added "
+            "fan_config=msi_alt1 to /etc/modprobe.d/ as a troubleshooting "
+            "attempt on a non-DR board, remove it.",
+            "If your board IS an NCT6687DR model but is missing from the "
+            "allowlist and system fans ignore PWM writes, fan_config=msi_alt1 "
+            "is the correct manual override: "
+            "`sudo modprobe -r nct6687 && sudo modprobe nct6687 fan_config=msi_alt1`.",
+            "msi_fan_brute_force=1 is a SEPARATE, current [BETA] parameter — "
+            "not an older-driver alternative to fan_config. It writes all 7 "
+            "fan-curve points for system fans (not CPU or pump) and requires "
+            "blacklisting nct6683. The two parameters are orthogonal and the "
+            "same MSI boards are listed for both.",
         ],
     ),
     VendorQuirk(
@@ -1285,7 +1319,9 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "IT8689E Rev 1 boards may exhibit the silent-PWM-writes "
             "behaviour even on Intel; check `cat /sys/.../in0_input` "
             "for a revision indicator and verify writes effective "
-            "before relying on Linux fan control.",
+            "before relying on Linux fan control. A candidate driver "
+            "fix (frankcrawford/it87 PR #128) merged 2026-08-24 but is "
+            "not yet confirmed on IT8689E hardware.",
         ],
     ),
     VendorQuirk(
@@ -1577,9 +1613,11 @@ def verification_guidance(
                 "control overrides manual mode while a normal BIOS fan curve is active. "
                 "The maintainer's stopgap (frankcrawford/it87 issue #96) is to flatten "
                 "the BIOS curve by setting every vector's temperature to 90 — but this "
-                "only reliably restored the CPU-fan header; other headers await the "
-                "driver-side fix (frankcrawford/it87 PR #114). Meanwhile use a different "
-                "fan header or an external fan controller."
+                "only reliably restored the CPU-fan header. A candidate driver fix "
+                "(frankcrawford/it87 PR #128) merged 2026-08-24 but is unconfirmed on "
+                "IT8689E hardware, so updating it87-dkms-git may or may not help — "
+                "re-run this test afterwards. Meanwhile use a different fan header or "
+                "an external fan controller."
             )
         if "asrock" in vendor_lower and chip_lower.startswith("nct6"):
             return (

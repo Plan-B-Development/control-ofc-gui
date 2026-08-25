@@ -1,5 +1,48 @@
 # Changelog
 
+## [2.47.1] — 2026-08-25
+
+### Fixed
+- **The app no longer tells MSI owners to try a setting that can stop their fan
+  readings working.** The Hardware-page advice for MSI Nuvoton boards suggested
+  loading the driver with `fan_config=msi_alt1` if system fans ignored PWM writes.
+  Upstream now documents that only the NCT6687**DR** boards (B840 / B850 / X870 /
+  X870E / Z890) use that register layout, and on those the driver selects it
+  automatically. On the earlier B650 / B660 / X670 / Z690 / Z790 boards — which this
+  advice card also appears on — forcing it makes the driver read EC registers that
+  read zero on that silicon, so **every system fan reports 0 RPM** while the CPU fan
+  keeps working. The suggestion is now scoped to the boards it is valid for, and the
+  card carries the counter-warning, the affected board families, and the `dmesg` line
+  that reveals a setting left behind from an earlier attempt.
+- **The `msi_fan_brute_force` instructions were incomplete and would silently do
+  nothing on some systems.** Upstream requires blacklisting the in-kernel `nct6683`
+  driver alongside it — without that, `nct6683` claims the chip first, `nct6687` never
+  binds, and PWM writes fail. The guidance now gives all three steps (blacklist,
+  module option, load-at-boot) instead of just the module option.
+- **`msi_fan_brute_force` is no longer described as something only older driver builds
+  need.** It is a current parameter (upstream marks it BETA) and is independent of
+  `fan_config` — the two solve different problems, and the same MSI boards are listed
+  for both. The previous wording sent people to the wrong setting.
+- **Gigabyte IT8689E advice no longer points at a fix that was rejected.** Every
+  surface that mentioned the pending driver-side fix named `frankcrawford/it87`
+  PR #114, which upstream **rejected on 2026-08-25**. The candidate fix is now PR #128
+  (merged 2026-08-24). The guidance names it — and is explicit that it is **not
+  confirmed on IT8689E hardware**, because the author states they could not test it on
+  an IT8689 board and the upstream issue has no post-merge confirmation. It tells you
+  to verify writes take effect rather than assuming the update fixed anything, and
+  notes that rebuilding `it87-dkms-git` right now pulls a large, still-settling
+  upstream change.
+
+### Changed
+- Hardware-compatibility documentation re-verified against the **kernel 7.2 release**
+  (2026-08-16). The mainline `it87` chip list was read at the `v7.2` tag and is
+  unchanged — IT8613E and IT8625E still have not landed upstream, so the DKMS
+  recommendation for those chips stands. Version stamps that said "7.2-rc4" now say
+  what was actually checked and when.
+- Recorded the newer `nct6687d` module parameters (`fan_mask`, `temp_mask`) and a
+  diagnostic note for the August 2026 AUR packaging regression that left some MSI
+  users with no fan readings at all — already fixed upstream by the `-2` rebuild.
+
 ## [2.47.0] — 2026-08-25
 
 ### Fixed

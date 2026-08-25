@@ -71,8 +71,8 @@ writes until resolved.
 
 | Chip Series | Kernel Driver | Mainline | Package |
 |-------------|--------------|----------|---------|
-| Legacy IT87xx (IT8603E/IT8620E/IT8622E/IT8628E, IT8705F–IT8795E) | `it87` | Yes (per the mainline `enum chips`, verified against v7.1 / 7.2-rc4, master 2026-07-21) | linux (built-in) |
-| IT8625E | `it87` | **No** (mainlining in flight on lore, not landed as of 7.1 / 7.2-rc4, July 2026) | `it87-dkms-git` (AUR) |
+| Legacy IT87xx (IT8603E/IT8620E/IT8622E/IT8628E, IT8705F–IT8795E) | `it87` | Yes (per the mainline `enum chips`, verified at the **v7.2** release tag, 2026-08-16) | linux (built-in) |
+| IT8625E | `it87` | **No** (mainlining in flight on lore; **still not landed in 7.2**, verified at the release tag 2026-08-25) | `it87-dkms-git` (AUR) |
 | IT8665E | `it87` | **No** | `it87-dkms-git` (AUR) — **update the driver**: [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged 2026-07-22) removes the MMIO path for IT8665E, fixing the fan-write regression ([issue #106](https://github.com/frankcrawford/it87/issues/106), closed). `mmio=off` is the fallback for builds older than the merge |
 | IT8686E | `it87` | **No** | `it87-dkms-git` (AUR) |
 | IT8688E | `it87` | **No** | `it87-dkms-git` (AUR) |
@@ -198,7 +198,7 @@ directory, or kernel `asus_*` driver allowlists.
 | | ASRock B550 Taichi Razer Edition | NCT6683 family | `asrock-nct6683` (out-of-tree, board-specific) |
 | **AM5 600-series** (B650 / X670 / A620) | ASUS (ROG STRIX X670E, ROG CROSSHAIR X670E EXTREME, PRIME X670) | NCT6798D + `asus_ec_sensors` (expanded allowlist) | mainline `nct6775` for PWM; `asus_ec_sensors` for sensor enrichment |
 | | MSI (MAG B650 TOMAHAWK, MAG X670E TOMAHAWK, MPG X670E CARBON, MEG X670E ACE) | NCT6687-R variants | out-of-tree `nct6687d-dkms-git` |
-| | Gigabyte AORUS (X670E AORUS MASTER, X670E AORUS PRO X) | **IT8689E** + IT87952E dual-chip — **Rev 1 silently ignores PWM writes while a normal BIOS curve is active** (issue #96) | out-of-tree `it87-dkms-git`; on Rev 1 the maintainer's stopgap (set every fan-curve vector's temperature to 90) restored **only the CPU-fan header** — other headers await the driver-side fix ([PR #114](https://github.com/frankcrawford/it87/pull/114)) |
+| | Gigabyte AORUS (X670E AORUS MASTER, X670E AORUS PRO X) | **IT8689E** + IT87952E dual-chip — **Rev 1 silently ignores PWM writes while a normal BIOS curve is active** (issue #96) | out-of-tree `it87-dkms-git`; on Rev 1 the maintainer's stopgap (set every fan-curve vector's temperature to 90) restored **only the CPU-fan header**. [PR #128](https://github.com/frankcrawford/it87/pull/128) (merged 2026-08-24) is a candidate driver-side fix, **unconfirmed on IT8689E hardware**; [PR #114](https://github.com/frankcrawford/it87/pull/114) was rejected 2026-08-25 |
 | | Gigabyte AORUS newer (X670 AORUS / B650 boards) | IT8696E **or** IT8689E (+ optional IT87952E dual; X670 AORUS ELITE AX confirmed IT8689E + IT87952E per the driver DMI table) | out-of-tree `it87-dkms-git` |
 | | ASRock A620/B650/X670 NCT6686D boards | NCT6686D | `nct6686d` or `asrock-nct6683` or `nct6687d` (board-specific — test before relying) |
 | **AM5 800-series** (B850 / X870 / B840) | ASUS (X870E variants, X870 series) | NCT6798D + expanded `asus_ec_sensors` allowlist (ROG STRIX X870E-E/-H, X870-F/-I and B850-I entries landed in kernel **6.18**, alongside the older ProArt X870E-CREATOR WIFI) | mainline `nct6775` + sensor enrichment |
@@ -282,10 +282,19 @@ build; older builds need `options it87 mmio=off`.
 silicon, e.g. X670E AORUS MASTER) ignore manual PWM writes while a normal
 BIOS fan curve is active — the EC's vector-curve control overrides the
 chip's manual-mode register. The maintainer's documented stopgap (set every
-fan-curve vector's temperature to 90) restored only the CPU-fan header;
-other headers await the driver-side fix — see doc 21 for details
-([issue #96](https://github.com/frankcrawford/it87/issues/96),
-[PR #114](https://github.com/frankcrawford/it87/pull/114)).
+fan-curve vector's temperature to 90) restored only the CPU-fan header
+([issue #96](https://github.com/frankcrawford/it87/issues/96)).
+
+A candidate driver-side fix landed on 2026-08-24:
+[PR #128](https://github.com/frankcrawford/it87/pull/128) claims to fix manual
+mode for IT8688/IT8689/IT8790/IT8792/IT8795/IT87952 and switches the Gigabyte
+path from WMI to SMI. **It is not yet confirmed on IT8689E hardware** — the
+author states in the PR that they could not test it on an IT8689 board, and
+issue #96 carries no post-merge confirmation. Treat the BIOS flat-curve stopgap
+as the current fallback and verify writes take effect before relying on control.
+The earlier [PR #114](https://github.com/frankcrawford/it87/pull/114) was
+**rejected on 2026-08-25** (superseded by #128) — it is not a pending fix.
+See doc 21 for details.
 
 **Separate fan-control chip:** Some newer Gigabyte boards use a dedicated
 fan-control chip in addition to the ITE Super I/O. On these boards, Linux
@@ -307,8 +316,54 @@ Without disabling Smart Fan Mode, all headers report as read-only.
 **X870/B850 7-point write quirk:** Newer MSI boards (X870, B850, Z890)
 require writing all 7 BIOS fan curve points rather than a single PWM value
 for system fan control. The `nct6687d` driver provides a
-`msi_fan_brute_force=1` module parameter for this. This only affects system
-fans — CPU and pump fans use standard PWM writes.
+`msi_fan_brute_force=1` module parameter (upstream marks it **BETA**) for
+this. This only affects system fans — CPU and pump fans use standard PWM
+writes. Before entering manual control the driver snapshots all 7 original
+curve points and restores them when automatic mode is written, when the
+module is unloaded, or when the optional fan-control watchdog expires.
+
+> **`msi_fan_brute_force=1` requires blacklisting `nct6683`.** Upstream
+> states this as a prerequisite: if the in-kernel `nct6683` binds the chip
+> first, `nct6687` never claims it and PWM writes fail (commonly with
+> `EIO`). Set all three:
+> ```sh
+> echo "blacklist nct6683" | sudo tee /etc/modprobe.d/nct6683_blacklist.conf
+> echo "options nct6687 msi_fan_brute_force=1" | sudo tee /etc/modprobe.d/nct6687_msi.conf
+> echo "nct6687" | sudo tee /etc/modules-load.d/nct6687.conf
+> ```
+> Then reboot. This exact sequence resolved
+> [issue #202](https://github.com/Fred78290/nct6687d/issues/202) (MSI PRO
+> B850M-P WIFI, PWM writes returning `EIO`).
+
+> **Do NOT force `fan_config=msi_alt1` on boards that are not on the
+> upstream allowlist.** Only the NCT6687**DR**-equipped MSI families —
+> B840 / B850 / B860 / X870 / X870E / Z890 — use the alt1 register layout, and on
+> those the driver enables it **automatically** (the allowlist
+> `nct6687_msi_alt_boards[]` carried 41 DMI entries on 2026-08-25). Earlier
+> MSI series with the plain NCT6687D chip — **B650 / B660 / X670 / Z690 /
+> Z790** — use the *default* mapping and are auto-detected correctly.
+> Forcing `msi_alt1` there makes the driver read EC offsets `0x154–0x15E`,
+> which read zero on non-DR silicon, so **every SYS_FAN reports 0 RPM**
+> while CPU_FAN keeps working. Confirm the active mapping in `dmesg`:
+> ```
+> nct6687 …: active fan config=msi_alt1, SYS_FAN reg_rpm=0x015E/0x015C/0x015A
+> ```
+> That line is always printed and will reveal a stale forced setting at a
+> glance. Reference: upstream issue #167 (MSI MPG B650 CARBON WIFI, MS-7D74).
+
+**Other module parameters** (added 2026-08): `fan_mask` (default `0xff`) and
+`temp_mask` (default `0x7f`) hide unpopulated channels. Masked channels are
+not read from the EC and numbering is never renumbered to fill gaps, so
+existing `sensors.d` / `fancontrol` configuration keeps referring to the
+same hardware.
+
+**If your MSI fans disappeared after an August 2026 driver update:** ensure
+`nct6687d-dkms-git` is at pkgrel **`-2` or newer**. The `r225.4864fd6-1`
+package shipped the upstream Kbuild rework, which moved the module install
+path and left no module to load — no RPM readings and no control
+([issue #198](https://github.com/Fred78290/nct6687d/issues/198)). Fixed by
+the AUR rebuild on 2026-08-22. Kernel 7.2 / GCC 16.2 build failures from the
+same window are also fixed upstream (issues #199, #201).
 
 Reference: https://github.com/Fred78290/nct6687d
 
@@ -621,13 +676,13 @@ directory and the driver DMI tables cited inline above):
 
 **Out-of-tree drivers**
 - [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) — MSI NCT6686D / NCT6687D, `fan_config=msi_alt1` & `msi_fan_brute_force` params (no tagged releases; DKMS off `main`, `MODULE_VERSION` 1.0.0); [PR #164](https://github.com/Fred78290/nct6687d/pull/164) removed the `0xd450` collision (merged 2026-05-19)
-- [frankcrawford/it87](https://github.com/frankcrawford/it87) — IT8625E+ support, `force_id` / `ignore_resource_conflict` / `mmio` params; [PR #95](https://github.com/frankcrawford/it87/pull/95) (MMIO default on, 2026-03), [PR #102](https://github.com/frankcrawford/it87/pull/102) (ISA-bridge MMIO/H2RAM merge, 2026-04); issues [#64](https://github.com/frankcrawford/it87/issues/64) (secondary-chip fan control, closed 2025-12), [#70](https://github.com/frankcrawford/it87/issues/70), [#81](https://github.com/frankcrawford/it87/issues/81), [#89](https://github.com/frankcrawford/it87/issues/89) (X870E AORUS ELITE X3D dual-chip report, closed 2026-01-13), [#92](https://github.com/frankcrawford/it87/issues/92) (B650 GAMING X AX V2 ACPI bind failure, closed 2026-02-23), [#94](https://github.com/frankcrawford/it87/issues/94) (DKMS module-path quirk on CachyOS-LTS/Tumbleweed), [#96](https://github.com/frankcrawford/it87/issues/96) (IT8689E Rev 1 — temps-to-90 partial stopgap, driver fix in PR #114), [#99](https://github.com/frankcrawford/it87/issues/99) (IT8792 suspend/resume, still open), [#103](https://github.com/frankcrawford/it87/issues/103) (X870E AORUS MASTER community label mapping), [#106](https://github.com/frankcrawford/it87/issues/106) (IT8665E mmio-default regression, closed — fixed by PR #120), [#108](https://github.com/frankcrawford/it87/issues/108) (`-Werror=unused-function` build failure); PRs [#114](https://github.com/frankcrawford/it87/pull/114) (IT8689E/IT8696E manual PWM, still open as of 2026-07-29), [#110](https://github.com/frankcrawford/it87/pull/110) (force_pwm, open), [#120](https://github.com/frankcrawford/it87/pull/120) (remove MMIO for IT8665E — fixes #106, **merged 2026-07-22**), [#119](https://github.com/frankcrawford/it87/pull/119) (GA-X570S-AERO-G sensors config, **merged 2026-07-24**)
+- [frankcrawford/it87](https://github.com/frankcrawford/it87) — IT8625E+ support, `force_id` / `ignore_resource_conflict` / `mmio` params; [PR #95](https://github.com/frankcrawford/it87/pull/95) (MMIO default on, 2026-03), [PR #102](https://github.com/frankcrawford/it87/pull/102) (ISA-bridge MMIO/H2RAM merge, 2026-04); issues [#64](https://github.com/frankcrawford/it87/issues/64) (secondary-chip fan control, closed 2025-12), [#70](https://github.com/frankcrawford/it87/issues/70), [#81](https://github.com/frankcrawford/it87/issues/81), [#89](https://github.com/frankcrawford/it87/issues/89) (X870E AORUS ELITE X3D dual-chip report, closed 2026-01-13), [#92](https://github.com/frankcrawford/it87/issues/92) (B650 GAMING X AX V2 ACPI bind failure, closed 2026-02-23), [#94](https://github.com/frankcrawford/it87/issues/94) (DKMS module-path quirk on CachyOS-LTS/Tumbleweed), [#96](https://github.com/frankcrawford/it87/issues/96) (IT8689E Rev 1 — temps-to-90 partial stopgap; candidate driver fix now PR #128, unconfirmed on IT8689E hardware), [#99](https://github.com/frankcrawford/it87/issues/99) (IT8792 suspend/resume, still open), [#103](https://github.com/frankcrawford/it87/issues/103) (X870E AORUS MASTER community label mapping), [#106](https://github.com/frankcrawford/it87/issues/106) (IT8665E mmio-default regression, closed — fixed by PR #120), [#108](https://github.com/frankcrawford/it87/issues/108) (`-Werror=unused-function` build failure); PRs [#114](https://github.com/frankcrawford/it87/pull/114) (IT8689E/IT8696E manual PWM — **closed/REJECTED 2026-08-25**, superseded by #128; never merged), [#128](https://github.com/frankcrawford/it87/pull/128) (fix control issues for many Gigabyte boards — IT8688/8689/8790/8792/8795/87952 manual mode, H2RAM extra fan channels, Gigabyte WMI→SMI, **merged 2026-08-24**; author reports it untested on IT8689 silicon), [#129](https://github.com/frankcrawford/it87/pull/129) (follow-up fixes to #128, **merged 2026-08-24**), [#125](https://github.com/frankcrawford/it87/pull/125) (write the updated tachometer-enable mask, **merged 2026-08-25**), [#126](https://github.com/frankcrawford/it87/pull/126) (ISA-bridge MMIO hardening, **open**), [#110](https://github.com/frankcrawford/it87/pull/110) (force_pwm, open), [#120](https://github.com/frankcrawford/it87/pull/120) (remove MMIO for IT8665E — fixes #106, **merged 2026-07-22**), [#119](https://github.com/frankcrawford/it87/pull/119) (GA-X570S-AERO-G sensors config, **merged 2026-07-24**)
 
 **Mainline it87 chip support (cross-checked against the kernel source)**
-- [torvalds/linux `drivers/hwmon/it87.c`](https://github.com/torvalds/linux/blob/master/drivers/hwmon/it87.c) — `enum chips` (v7.1 / 7.2-rc4 verified against master 2026-07-21: includes `it8622`, `it8689`, `it87952`; excludes `it8625`, `it8665`, `it8686`, `it8688`, `it8696`, `it8613`)
+- [torvalds/linux `drivers/hwmon/it87.c`](https://github.com/torvalds/linux/blob/master/drivers/hwmon/it87.c) — `enum chips` (read at the **v7.2** release tag on 2026-08-25, kernel 7.2 released 2026-08-16: includes `it8622`, `it8689`, `it87952`; excludes `it8625`, `it8665`, `it8686`, `it8688`, `it8696`, `it8613` — unchanged from the 7.2-rc4 reading)
 - IT87952E mainline since kernel **6.4** — commit [`d44cb4c`](https://github.com/torvalds/linux/commit/d44cb4c) (2023)
-- IT8689E mainline from kernel **7.1** — **fan control** (six PWM channels, `FEAT_SIX_PWM` + `FEAT_FANCTL_ONOFF`), not sensors-only; commit [`66b8eaf`](https://github.com/torvalds/linux/commit/66b8eaf) (author 2026-03-22, merged 2026-03-31), released in 7.1 on 2026-06-14. Separately, some Gigabyte **Rev 1** boards have an EC/BIOS quirk that overrides PWM writes ([issue #96](https://github.com/frankcrawford/it87/issues/96)); the maintainer's temps-to-90 stopgap is partial (CPU fan only), with the driver-side fix pending in [PR #114](https://github.com/frankcrawford/it87/pull/114)
-- IT8625E / IT8613E mainlining in flight: [lore IT8625E v2 thread](https://lore.kernel.org/lkml/b6c2731b-8fac-4e7a-ab0c-2f36e8a64a69@roeck-us.net/T/), [LWN: it87 IT8613E v4 series](https://lwn.net/Articles/1054427/) — neither landed as of 7.1 / 7.2-rc4 (July 2026)
+- IT8689E mainline from kernel **7.1** — **fan control** (six PWM channels, `FEAT_SIX_PWM` + `FEAT_FANCTL_ONOFF`), not sensors-only; commit [`66b8eaf`](https://github.com/torvalds/linux/commit/66b8eaf) (author 2026-03-22, merged 2026-03-31), released in 7.1 on 2026-06-14. Separately, some Gigabyte **Rev 1** boards have an EC/BIOS quirk that overrides PWM writes ([issue #96](https://github.com/frankcrawford/it87/issues/96)); the maintainer's temps-to-90 stopgap is partial (CPU fan only). The candidate driver-side fix is now [PR #128](https://github.com/frankcrawford/it87/pull/128) (merged 2026-08-24, **unconfirmed on IT8689E hardware**); [PR #114](https://github.com/frankcrawford/it87/pull/114) was rejected 2026-08-25
+- IT8625E / IT8613E mainlining in flight: [lore IT8625E v2 thread](https://lore.kernel.org/lkml/b6c2731b-8fac-4e7a-ab0c-2f36e8a64a69@roeck-us.net/T/), [LWN: it87 IT8613E v4 series](https://lwn.net/Articles/1054427/) — **neither landed in 7.2** (release-tag read, 2026-08-25)
 
 **GPU device IDs & kernel regressions**
 - AMD `amdgpu.ids` (libdrm) and `pci.ids` (hwdata) — Navi 48 `0x7550` (RX 9070 XT rev `0xC0` / RX 9070 rev `0xC3`) and `0x7551` (Radeon AI PRO R9700)

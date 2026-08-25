@@ -377,9 +377,27 @@ The maintainer's documented stopgap (frankcrawford/it87 issue #96) is to
 **flatten the BIOS fan curve by setting every curve vector's temperature
 to 90**. On the reporter's board this only reliably restored the
 **CPU-fan** header; the other headers stayed unresponsive, and the
-40%-flat-PWM curve alone was insufficient. The proper driver-side fix is
-pending in [PR #114](https://github.com/frankcrawford/it87/pull/114).
-Until it lands, treat this as partial and keep fallbacks ready:
+40%-flat-PWM curve alone was insufficient.
+
+**Driver-side fix status (2026-08-25).**
+[PR #128](https://github.com/frankcrawford/it87/pull/128) was **merged
+2026-08-24** and claims to fix manual mode for IT8688, IT8689, IT8790,
+IT8792/IT8795 and IT87952, add the H2RAM extra fan channels found on
+high-end Gigabyte boards, and move the Gigabyte path from WMI to SMI.
+**Do not treat this as confirmed control on IT8689E.** The author states
+in the PR that they had not verified it on any IT8689 board, and issue #96
+has recorded no post-merge confirmation. Updating `it87-dkms-git` is worth
+trying *and verifying*, but note that it is a `-git` package building
+upstream `master`: the 2026-08-24 change rewrote ~1250 lines, already
+required a follow-up fix ([#129](https://github.com/frankcrawford/it87/pull/129)),
+and a further hardening series
+([#126](https://github.com/frankcrawford/it87/pull/126)) is still open — so
+a rebuild in this window carries real regression risk as well as a possible
+fix. The earlier [PR #114](https://github.com/frankcrawford/it87/pull/114)
+was **rejected on 2026-08-25** and is not a pending fix.
+
+Until an exact-board confirmation exists, treat this as partial and keep
+fallbacks ready:
 
 - Use a different fan header on the secondary IT87952E if your board
   has one.
@@ -769,9 +787,14 @@ BIOS fan curve by setting **every curve vector's temperature to 90**, which
 stops the EC evaluating its own curve. On the reporter's board this only
 reliably restored the **CPU-fan** header — the other headers stayed
 unresponsive, and manipulating only the PWM percentages (e.g. a flat 40%
-curve) was **not** sufficient. Treat it as a partial workaround; the proper
-driver-side fix is pending in
-[PR #114](https://github.com/frankcrawford/it87/pull/114).
+curve) was **not** sufficient. Treat it as a partial workaround.
+
+A candidate driver-side fix, [PR #128](https://github.com/frankcrawford/it87/pull/128),
+merged on 2026-08-24 but is **not yet confirmed on IT8689E hardware** (its
+author could not test it on an IT8689 board). [PR #114](https://github.com/frankcrawford/it87/pull/114),
+previously cited here as the pending fix, was **rejected on 2026-08-25**.
+See the *Gigabyte (IT8689E or IT8696E + IT87952E)* section above for the
+full status and the regression caveat on rebuilding `it87-dkms-git`.
 
 A representative degenerate curve (all vector temperatures at 90; point 7
 pinned to 100% as a safety backstop):
@@ -827,7 +850,10 @@ Reference: https://github.com/frankcrawford/it87
   This is the IT8689E manual-control limitation — a different chip and
   different problem from the X870E AORUS MASTER below. As of 2026-03 the
   upstream thread documents the BIOS flat-curve workaround (7 points:
-  PWM 40×6, final 100) as restoring driver manual control.
+  PWM 40×6, final 100) as restoring driver manual control (CPU-fan header
+  only, per the reporter). **Status 2026-08-25:** the thread remains open at
+  21 comments with no confirmed exact-board fix; the candidate driver fix
+  (PR #128, merged 2026-08-24) has not been confirmed on this board.
   Reference: https://github.com/frankcrawford/it87/issues/96
 
 - **Gigabyte X870E AORUS MASTER (IT8696E rev 0 + IT87952E):** PWM fan
@@ -981,10 +1007,16 @@ limitations.
      current upstream snapshot, and many historical write failures are
      fixed there.
    - Check for module conflicts (two drivers claiming the same device).
-   - For MSI X870/B850: try `msi_fan_brute_force=1`.
+   - For MSI X870/B850: try `msi_fan_brute_force=1` — and **blacklist
+     `nct6683` at the same time**, which upstream requires for it to work
+     (see doc 19 § MSI for the three-file setup). Do **not** force
+     `fan_config=msi_alt1` on B650/B660/X670/Z690/Z790 boards: they use the
+     default mapping and forcing alt1 zeroes every SYS_FAN reading.
    - For Gigabyte IT8689E (Rev 1): flatten the BIOS curve (set every
      vector's temperature to 90) — a partial stopgap (CPU-fan header
-     only); the driver-side fix is pending (frankcrawford/it87 PR #114).
+     only). A candidate driver fix merged 2026-08-24
+     (frankcrawford/it87 PR #128) but is unconfirmed on IT8689E hardware;
+     PR #114 was rejected 2026-08-25.
    - For IT8665E (X399-era): the 2026-03+ MMIO default broke PWM writes;
      [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged
      2026-07-22) fixes it — **update `it87-dkms-git`**; older builds need
@@ -1035,7 +1067,10 @@ for the full table and mitigation guidance.
   - PR #95 (MMIO default on, 2026-03): https://github.com/frankcrawford/it87/pull/95
   - PR #102 (ISA-bridge MMIO/H2RAM merge, 2026-04): https://github.com/frankcrawford/it87/pull/102
   - PR #110 (force_pwm parameter, open): https://github.com/frankcrawford/it87/pull/110
-  - PR #114 (IT8689E/IT8696E manual PWM, open): https://github.com/frankcrawford/it87/pull/114
+  - PR #114 (IT8689E/IT8696E manual PWM — **closed/REJECTED 2026-08-25**, superseded by #128): https://github.com/frankcrawford/it87/pull/114
+  - PR #128 (fix control issues for many Gigabyte boards — IT8688/8689/8790/8792/8795/87952 manual mode, H2RAM channels, WMI→SMI; merged 2026-08-24, **untested on IT8689 silicon per its author**): https://github.com/frankcrawford/it87/pull/128
+  - PR #129 (follow-up fixes to #128, merged 2026-08-24): https://github.com/frankcrawford/it87/pull/129
+  - PR #126 (ISA-bridge MMIO hardening, open): https://github.com/frankcrawford/it87/pull/126
   - PR #120 (remove MMIO path for IT8665E — fixes #106, merged 2026-07-22): https://github.com/frankcrawford/it87/pull/120
   - issue #64 (secondary-chip fan control, closed 2025-12): https://github.com/frankcrawford/it87/issues/64
   - issue #89 (X870E AORUS ELITE X3D dual-chip report, closed 2026-01-13): https://github.com/frankcrawford/it87/issues/89

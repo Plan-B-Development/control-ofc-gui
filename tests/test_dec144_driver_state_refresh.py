@@ -9,8 +9,9 @@ Locks in the four behavioural commitments of the refresh:
    remediation for the maintainer-confirmed MMIO regression (issue #106).
 3. New/updated chip knowledge: IT8622E (mainline), IT87952E (mainline
    enumeration ≥ 6.4, DKMS for dual-chip control), IT8689E Rev 1
-   (control mainline since 7.1; temps-to-90 partial stopgap, real fix
-   pending frankcrawford/it87 PR #114).
+   (control mainline since 7.1; temps-to-90 partial stopgap. Candidate
+   fix is now frankcrawford/it87 PR #128, merged 2026-08-24 but
+   unverified on IT8689E silicon; PR #114 was rejected 2026-08-25).
 4. New vendor quirk: Gigabyte B650 GAMING X AX V2 ACPI bind failure
    (issue #92) — AMD-platform + board-scoped.
 """
@@ -150,10 +151,27 @@ class TestChipKnowledgeUpdates:
         flat = " ".join(g.known_issues)
         assert "No known software workaround" not in flat, "the Rev 1 dead-end framing is obsolete"
         # Corrected 2026-07: mainline 7.1 gives IT8689E fan *control*; the
-        # Rev 1 stopgap is partial (temps-to-90, CPU fan only) with the real
-        # driver-side fix pending in frankcrawford/it87 PR #114.
+        # Rev 1 stopgap is partial (temps-to-90, CPU fan only).
+        # Corrected 2026-08-25: PR #114 was REJECTED, superseded by PR #128
+        # (merged 2026-08-24). #128 is a *candidate* fix — its own author
+        # could not test it on IT8689 silicon — so the entry must name it
+        # without promising working control.
         assert "control" in flat
-        assert "PR #114" in flat, "must point to the pending driver-side fix"
+        assert "PR #128" in flat, "must name the current candidate driver-side fix"
+        # Guard the retraction: #114 may still be mentioned, but never as the
+        # fix that is still coming. A bare "PR #114 in flat" would now pass
+        # vacuously against the text that records its rejection.
+        assert "pending driver-side fix (frankcrawford/it87 PR #114)" not in flat, (
+            "PR #114 was rejected 2026-08-25 — it must not be framed as pending"
+        )
+        assert "rejected" in flat.lower(), (
+            "the #114 retraction must be stated, not silently dropped"
+        )
+        # Truthfulness: #128 is unverified on this silicon, so the entry must
+        # not tell the user control now works.
+        assert "not yet confirmed" in flat.lower() or "unconfirmed" in flat.lower(), (
+            "PR #128 is hardware-unverified on IT8689E — the entry must say so"
+        )
 
     def test_it8689_quirk_documents_partial_stopgap(self):
         quirks = lookup_vendor_quirks(VENDOR_GB, "it8689")
@@ -161,7 +179,13 @@ class TestChipKnowledgeUpdates:
         flat = " ".join(quirks[0].details)
         assert "No known software workaround" not in flat
         assert "temperature" in flat.lower(), "quirk must document the temps-to-90 stopgap"
-        assert "PR #114" in flat, "quirk must point to the pending driver-side fix"
+        # 2026-08-25: PR #114 rejected, superseded by the merged-but-unverified
+        # PR #128. The quirk must name the current candidate and must not sell
+        # it as confirmed control.
+        assert "PR #128" in flat, "quirk must point to the current candidate driver-side fix"
+        assert "unconfirmed" in flat.lower() or "not yet confirmed" in flat.lower(), (
+            "the quirk must state that PR #128 is unverified on IT8689E hardware"
+        )
 
     def test_it8883_entry_refreshed_not_stale_dated(self):
         g = lookup_chip_guidance("it8883")
