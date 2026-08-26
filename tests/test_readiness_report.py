@@ -17,6 +17,13 @@ from control_ofc.api.models import (
     ModuleCollisionInfo,
     ThermalSafetyInfo,
 )
+from control_ofc.ui.hwmon_guidance import (
+    VendorQuirk,
+    is_actionable_severity,
+    is_high_severity,
+    severity_display,
+)
+from control_ofc.ui.widgets import readiness_report
 from control_ofc.ui.widgets.readiness_report import (
     ReadinessReportDialog,
     board_identity_line,
@@ -377,3 +384,104 @@ class TestComboArrow:
         from control_ofc.ui.theme import combo_arrow_svg_path
 
         assert combo_arrow_svg_path("#123456") is None
+
+
+class TestUnknownSeverityRendersConsistently:
+    """DOC-g: one advisory must not read INFO on one surface and WARN on another.
+
+    ``severity_display`` degrades an unrecognised severity to the calm INFO
+    presentation, but ``detect_readiness_problems`` used to classify actionable
+    quirks with ``severity != "info"`` — a *string* test. An unknown tier is not
+    the literal string ``"info"``, so it passed that test, became "actionable",
+    and was rolled up as WARN on the problem card while the inline advisory panel
+    showed it as INFO. The split is now ranked off the same display metadata both
+    surfaces render from, so the two cannot disagree.
+    """
+
+    def test_genuinely_unknown_severity_is_not_actionable(self):
+        # An unrecognised tier renders as INFO, so it must not be counted as a
+        # problem — that mismatch is the whole defect.
+        assert is_actionable_severity("info") is False
+        assert is_actionable_severity("some-future-tier") is False
+
+    def test_known_problem_tiers_remain_actionable(self):
+        # "low" is included deliberately: it ships on a Gigabyte X870 quirk that
+        # tells the user their secondary chip needs mmio=on to be controllable.
+        # Fixing the render mismatch must NOT silence it — the first attempt at
+        # this fix made "low" non-actionable and would have dropped that advice
+        # from the problem card entirely.
+        for sev in ("critical", "high", "warn", "medium", "low"):
+            assert is_actionable_severity(sev) is True, f"{sev} must still raise a problem"
+
+    def test_low_is_ranked_between_info_and_medium(self):
+        assert (
+            severity_display("info").rank
+            < severity_display("low").rank
+            < severity_display("medium").rank
+        )
+
+    def test_low_does_not_render_as_info(self):
+        # It is calm, but it is not the same thing as an FYI note.
+        assert severity_display("low").word == "LOW"
+        assert severity_display("low").css_class != severity_display("info").css_class
+
+    def test_only_critical_and_high_escalate_the_rollup(self):
+        assert is_high_severity("critical") is True
+        assert is_high_severity("high") is True
+        for sev in ("warn", "medium", "info", "low", "some-future-tier"):
+            assert is_high_severity(sev) is False, f"{sev} must not escalate to critical"
+
+    def test_detect_readiness_problems_does_not_escalate_an_unknown_tier(self, monkeypatch):
+        """The CALL SITE, not the helper.
+
+        Testing ``is_actionable_severity`` alone proves nothing about
+        ``detect_readiness_problems``, which is where the string compare lived —
+        this test was green against the unfixed code until it went through the
+        real function (CLAUDE.md § Hard-won lessons: extracting a rule into a
+        testable function does NOT test the call site).
+
+        Injected rather than driven off a real board because every board
+        carrying the shipped ``severity="low"`` quirk also carries a ``high``
+        one, which would emit the problem regardless and mask the defect.
+        """
+        quirk = VendorQuirk(
+            vendor_pattern="acme",
+            chip_prefix="xyz",
+            severity="not-a-tier-we-ship",
+            summary="Injected advisory with an unrecognised severity",
+            details=["Renders as INFO in the advisory panel."],
+        )
+        monkeypatch.setattr(readiness_report, "lookup_vendor_quirks", lambda *a, **k: [quirk])
+        problems = detect_readiness_problems(_healthy())
+        assert "vendor_quirk" not in {p["key"] for p in problems}, (
+            "an advisory the panel paints as INFO was rolled up as a problem — "
+            "the two surfaces disagree about the same quirk"
+        )
+
+    def test_detect_readiness_problems_still_reports_a_known_tier(self, monkeypatch):
+        """Guard the other direction: the fix must not silence real problems."""
+        quirk = VendorQuirk(
+            vendor_pattern="acme",
+            chip_prefix="xyz",
+            severity="medium",
+            summary="Injected medium-severity advisory",
+            details=["Actionable."],
+        )
+        monkeypatch.setattr(readiness_report, "lookup_vendor_quirks", lambda *a, **k: [quirk])
+        problems = {p["key"]: p for p in detect_readiness_problems(_healthy())}
+        assert "vendor_quirk" in problems, "a medium-severity quirk must still raise a problem"
+        assert problems["vendor_quirk"]["severity"] == "warn", (
+            "medium must roll up as warn, not critical"
+        )
+
+    def test_the_two_predicates_agree_with_the_rendered_presentation(self):
+        # The actual coupling under test: anything the panel paints as INFO must
+        # not be counted as a problem by the card, for every severity either
+        # surface can see — including ones neither was written for.
+        for sev in ("critical", "high", "warn", "medium", "info", "low", "not-a-tier", ""):
+            painted_as_info = severity_display(sev).css_class == "InfoChip"
+            assert is_actionable_severity(sev) is not painted_as_info, (
+                f"severity {sev!r} paints as "
+                f"{severity_display(sev).css_class} but is_actionable_severity="
+                f"{is_actionable_severity(sev)} — the surfaces disagree"
+            )

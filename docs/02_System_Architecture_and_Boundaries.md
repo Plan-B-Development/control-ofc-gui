@@ -121,6 +121,12 @@ control_ofc/
     series_selection.py
     session_stats.py           # per-sensor session min/max tracker
     daemon_service_check.py    # systemd unit-state probe behind the no-daemon hint
+    alerts.py                  # alert lifecycle (raise / acknowledge / clear) — v2.47.0
+    alerts_view.py             # Qt-free alert-list VM, shared by the status bar + alert centre
+    fan_alias_seed.py          # first-run seeding of user fan aliases
+    id_migration.py            # stable-id migration across schema/daemon upgrades
+    layout_state.py            # persisted per-page layout state
+    orphan_prune.py            # prunes profile members whose hardware no longer exists
     fan_cards_view.py          # Dashboard per-control fan-card VM (DEC-222; replaced
                                #   the fan-zone grouping VM retired with the zone grid)
     # Qt-free view-models: headless-testable presentation logic the redesign
@@ -144,7 +150,19 @@ control_ofc/
     status_ribbon.py         # global top status ribbon — brand + daemon-status LED + thermal/warnings (DEC-208)
     status_banner.py
     cooling_readiness.py     # pure daemon-readiness → MergedReadinessItem mapping for the Hardware page (DEC-207)
-    readiness_merge.py       # pure merge of /inventory/readiness + /diagnostics/hardware into one actionable index (DEC-206)
+    readiness_merge.py       # shared MergedReadinessItem/ActionSpec model types only — the
+                             #   GUI-side merge engine was retired when the daemon's DEC-207
+                             #   shared assessment superseded it (DEC-224)
+    hwmon_guidance.py        # the in-app hardware-advice database — per-chip ChipGuidance,
+                             #   VendorQuirk table, severity vocabulary, remediation text
+    theme.py                 # ThemeTokens + QSS class definitions — the single source of colour
+    fonts.py                 # font-size multipliers (font_sizes(base)); no hardcoded sizes
+    branding.py
+    about_dialog.py
+    fan_display.py           # fan display-name tier resolution (DEC-227/229)
+    fan_presence.py
+    qt_util.py
+    splitter_persistence.py
     components/              # shared redesign component library (DEC-208) — import per-submodule
       badges.py             # filled status pill / badge
       buttons.py            # button-variant factory (primary / secondary / ghost / danger)
@@ -153,6 +171,8 @@ control_ofc/
                             #   at its CURRENT width — neither QSplitter nor QScrollArea
                             #   propagates heightForWidth, so a card of wrapped text is
                             #   otherwise squashed below its content and clipped (DEC-281)
+      a11y.py               # accessible-naming helpers — the DEC-268/269/271 rule, extracted
+                            #   out of SettingsPage so every surface can follow it (DEC-276)
       dialog.py             # modal-dialog base (header/body/footer + translucent scrim)
       footer.py             # global footer (version/kernel/arch + mode, poll age,
                             #   thermal + cooling-readiness chips, Rescan / Export)
@@ -178,7 +198,11 @@ control_ofc/
       fan_control_card.py      # dashboard per-control fan card — read-only status + Edit
                                #   deep-link (DEC-222; replaced summary_card, fan_zone_card,
                                #   quick_actions_panel and rpm_sparkline)
-      warnings_view.py         # active-warnings list, hosted by the Logs page (DEC-222)
+      alert_status_bar.py      # compact alert summary bar (replaced warnings_view in v2.47.0)
+      alert_center_dialog.py   # full alert-history dialog — the alert lifecycle surface
+      system_state_cards.py    # System State page card widgets
+      gpu_dedicate_dialog.py   # one-click zero-RPM GPU-fan setup
+      resizable_grid_card.py   # user-resizable grid card base (DEC-128/129)
       dashboard_inspector.py   # dashboard Sensors rail (always mounted since DEC-222)
       curve_editor.py
       curve_edit_dialog.py

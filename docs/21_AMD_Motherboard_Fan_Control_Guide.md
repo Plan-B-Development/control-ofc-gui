@@ -379,15 +379,26 @@ to 90**. On the reporter's board this only reliably restored the
 **CPU-fan** header; the other headers stayed unresponsive, and the
 40%-flat-PWM curve alone was insufficient.
 
-**Driver-side fix status (2026-08-25).**
+**Driver-side fix status (2026-08-26).**
 [PR #128](https://github.com/frankcrawford/it87/pull/128) was **merged
-2026-08-24** and claims to fix manual mode for IT8688, IT8689, IT8790,
-IT8792/IT8795 and IT87952, add the H2RAM extra fan channels found on
-high-end Gigabyte boards, and move the Gigabyte path from WMI to SMI.
-**Do not treat this as confirmed control on IT8689E.** The author states
-in the PR that they had not verified it on any IT8689 board, and issue #96
-has recorded no post-merge confirmation. Updating `it87-dkms-git` is worth
-trying *and verifying*, but note that it is a `-git` package building
+2026-08-24** and fixes manual mode for IT8688, IT8689, IT8790,
+IT8792/IT8795 and IT87952, adds the H2RAM extra fan channels found on
+high-end Gigabyte boards, and moves the Gigabyte path from WMI to SMI.
+
+**Three users confirmed working IT8689E manual PWM on 2026-08-23** — on a
+Z790 AORUS MASTER rev 1.0 carrying **IT8689E revision 1** (with a measured
+duty→RPM response across five duty steps, and clean restore to firmware
+control), on a single-IT8689 B650 Eagle AX, and on a B760M H — none of them
+needing BIOS-side tweaks. That is a substantial change from the previous
+"unverified by its own author" position, and it covers **Rev 1**, the
+revision this section is about.
+
+**But all three tested PR head `429d2b40`, not the merged commit.** The
+branch was amended to `27319db7` one minute after the last report, changing
+267 lines in the Intel H2RAM bridge save/restore path — the same mechanism
+the Z790 result exercised. So the evidence is that the approach works; it is
+not yet evidence about the code you install. Updating `it87-dkms-git` is
+worth trying *and verifying*, and note it is a `-git` package building
 upstream `master`: the 2026-08-24 change rewrote ~1250 lines, already
 required a follow-up fix ([#129](https://github.com/frankcrawford/it87/pull/129)),
 and a further hardening series
@@ -789,9 +800,10 @@ reliably restored the **CPU-fan** header — the other headers stayed
 unresponsive, and manipulating only the PWM percentages (e.g. a flat 40%
 curve) was **not** sufficient. Treat it as a partial workaround.
 
-A candidate driver-side fix, [PR #128](https://github.com/frankcrawford/it87/pull/128),
-merged on 2026-08-24 but is **not yet confirmed on IT8689E hardware** (its
-author could not test it on an IT8689 board). [PR #114](https://github.com/frankcrawford/it87/pull/114),
+A driver-side fix, [PR #128](https://github.com/frankcrawford/it87/pull/128),
+merged on 2026-08-24 and **has three positive IT8689E hardware reports
+(2026-08-23), including on revision 1** — but all three tested the pre-merge
+PR head, not the merged code. [PR #114](https://github.com/frankcrawford/it87/pull/114),
 previously cited here as the pending fix, was **rejected on 2026-08-25**.
 See the *Gigabyte (IT8689E or IT8696E + IT87952E)* section above for the
 full status and the regression caveat on rebuilding `it87-dkms-git`.
@@ -851,10 +863,12 @@ Reference: https://github.com/frankcrawford/it87
   different problem from the X870E AORUS MASTER below. As of 2026-03 the
   upstream thread documents the BIOS flat-curve workaround (7 points:
   PWM 40×6, final 100) as restoring driver manual control (CPU-fan header
-  only, per the reporter). **Status 2026-08-25:** the thread remains open at
-  21 comments with no confirmed exact-board fix; the candidate driver fix
-  (PR #128, merged 2026-08-24) has not been confirmed on this board.
-  Reference: https://github.com/frankcrawford/it87/issues/96
+  only, per the reporter). **Status 2026-08-26:** issue #96 itself remains open
+  at 21 comments with no post-merge report — but PR #128's own thread carries
+  three IT8689E confirmations from 2026-08-23 (including revision 1 on a Z790
+  AORUS MASTER), against the pre-merge PR head rather than the merged commit.
+  References: https://github.com/frankcrawford/it87/issues/96 and
+  https://github.com/frankcrawford/it87/pull/128
 
 - **Gigabyte X870E AORUS MASTER (IT8696E rev 0 + IT87952E):** PWM fan
   control **works** on `it87-dkms-git` 332.20f2f2f+ and BIOS F13a
@@ -1012,11 +1026,13 @@ limitations.
      (see doc 19 § MSI for the three-file setup). Do **not** force
      `fan_config=msi_alt1` on B650/B660/X670/Z690/Z790 boards: they use the
      default mapping and forcing alt1 zeroes every SYS_FAN reading.
-   - For Gigabyte IT8689E (Rev 1): flatten the BIOS curve (set every
-     vector's temperature to 90) — a partial stopgap (CPU-fan header
-     only). A candidate driver fix merged 2026-08-24
-     (frankcrawford/it87 PR #128) but is unconfirmed on IT8689E hardware;
-     PR #114 was rejected 2026-08-25.
+   - For Gigabyte IT8689E (Rev 1): **first update `it87-dkms-git`** — the
+     driver fix merged 2026-08-24 (frankcrawford/it87 PR #128) has three
+     positive IT8689E reports including Rev 1, though against the pre-merge
+     head. Verify with Test PWM Control. If writes still do not take effect,
+     fall back to flattening the BIOS curve (set every vector's temperature
+     to 90) — a partial stopgap (CPU-fan header only). PR #114 was rejected
+     2026-08-25.
    - For IT8665E (X399-era): the 2026-03+ MMIO default broke PWM writes;
      [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged
      2026-07-22) fixes it — **update `it87-dkms-git`**; older builds need

@@ -71,7 +71,10 @@ class TestSeverityDisplay:
         assert warn.css_class == "WarningChip"
         assert warn.word == "WARN"
 
-    @pytest.mark.parametrize("unknown", ["low", "bogus", "", "   "])
+    # "low" was in this list until 2026-08-26, when it became a real tier. It
+    # had been shipping on a Gigabyte X870 quirk while undefined, which is the
+    # bug: the panel painted it INFO while the problem card counted it a WARN.
+    @pytest.mark.parametrize("unknown", ["bogus", "", "   ", "not-a-tier"])
     def test_unknown_severity_degrades_to_calm_info_treatment(self, unknown):
         # D1: unknown / not-yet-emitted severities get the calm INFO treatment
         # rather than masquerading as a warning.
@@ -81,8 +84,17 @@ class TestSeverityDisplay:
         assert disp.bold is False
 
     def test_unknown_severity_keeps_its_own_word(self):
-        # A future "low" must not be mislabelled "INFO".
-        assert severity_display("low").word == "LOW"
+        # An unrecognised tier must not be mislabelled "INFO" — the word stays
+        # authoritative even when the styling degrades.
+        assert severity_display("someday-tier").word == "SOMEDAY-TIER"
+
+    def test_low_is_a_defined_tier_not_an_unknown_one(self):
+        disp = severity_display("low")
+        assert disp.word == "LOW"
+        assert disp.css_class == "CautionChip", (
+            "low is a real, actionable-but-calm tier — if it degrades to "
+            "InfoChip it is undefined again, and the panel/card mismatch returns"
+        )
 
     def test_case_insensitive(self):
         assert severity_display("CRITICAL").css_class == "CriticalChip"

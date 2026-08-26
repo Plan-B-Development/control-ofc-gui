@@ -1,5 +1,7 @@
 """Tests for the chip-family knowledge base and driver guidance module."""
 
+import pytest
+
 from control_ofc.ui.hwmon_guidance import (
     detect_module_conflicts,
     format_driver_status,
@@ -400,3 +402,145 @@ class TestVerificationGuidance:
         result = verification_guidance("rpm_unavailable", "Gigabyte", "it8696")
         assert result is not None
         assert "RPM" in result
+
+
+class TestOutOfTreeIteChips:
+    """The eight ITE parts that mainline it87 does not carry (verified 2026-08-26).
+
+    Before this, `it8785`/`it8736`/`it8738` matched the generic ``it87`` prefix
+    and were reported as mainline built-in — telling the user no DKMS driver was
+    needed when one is mandatory. The other five resolved to ``None``.
+    """
+
+    OUT_OF_TREE = ("it8698", "it8613", "it8785", "it8736", "it8738", "it8655", "it8606", "it8607")
+
+    @pytest.mark.parametrize("chip", OUT_OF_TREE)
+    def test_chip_is_not_reported_as_mainline(self, chip):
+        g = lookup_chip_guidance(chip)
+        assert g is not None, f"{chip} has no guidance entry — falls back to 'Unknown chip'"
+        assert g.in_mainline is False, f"{chip} is absent from the mainline it87 enum"
+        assert "dkms" in g.driver_package.lower(), (
+            f"{chip} needs the out-of-tree build; guidance offers {g.driver_package!r}"
+        )
+
+    @pytest.mark.parametrize("chip", OUT_OF_TREE)
+    def test_chip_matches_its_own_entry_not_the_generic_fallthrough(self, chip):
+        # The specific regression: a longest-prefix match onto "it87".
+        g = lookup_chip_guidance(chip)
+        assert g is not None
+        assert g.chip_prefix == chip, f"{chip} resolved to the {g.chip_prefix!r} entry, not its own"
+
+    @pytest.mark.parametrize("chip", OUT_OF_TREE)
+    def test_driver_status_does_not_claim_mainline(self, chip):
+        # Test the rendering path, not just the data (CLAUDE.md § Hard-won lessons:
+        # extracting a rule into a testable value does NOT test the call site).
+        status = format_driver_status(chip, loaded=True)
+        assert "mainline" not in status.lower(), (
+            f"format_driver_status({chip!r}) claims mainline: {status!r}"
+        )
+
+    @pytest.mark.parametrize("chip", ("it8705", "it8712", "it8716", "it8792"))
+    def test_genuinely_mainline_chips_are_unaffected(self, chip):
+        # Guard the other direction: the fix must not push DKMS onto chips the
+        # in-kernel driver has supported for years.
+        g = lookup_chip_guidance(chip)
+        assert g is not None
+        assert g.in_mainline is True, f"{chip} IS in the mainline it87 enum"
+
+    def test_generic_it87_entry_no_longer_asserts_mainline_unqualified(self):
+        g = lookup_chip_guidance("it8799")  # a plausible unknown future part
+        assert g is not None
+        assert g.chip_prefix == "it87"
+        # It may still resolve as mainline (correct for the old parts it covers),
+        # but it must warn that newer parts often are not.
+        blob = " ".join(g.known_issues).lower()
+        assert "out-of-tree" in blob or "dkms" in blob, (
+            "the generic it87 fallthrough gives an unqualified mainline claim"
+        )
+
+
+class TestIt8689eGuidanceReflectsHardwareReports:
+    """DOC-a: the advice must neither promise control nor deny the reports.
+
+    Three IT8689E confirmations landed 2026-08-23 (incl. Rev 1 on a Z790 AORUS
+    MASTER), but all three tested PR head 429d2b40 rather than the merged
+    27319db7, which reworked 267 lines of the same bridge path. Both halves have
+    to survive in the text.
+    """
+
+    def _it8689_text(self):
+        """Every IT8689E surface, on BOTH platforms.
+
+        The Intel-platform quirk is gated on ``cpu_vendor``, so a Gigabyte/AMD
+        lookup alone does not reach it — an earlier version of this test passed
+        while a stale claim still shipped in that quirk. Assert the presence of
+        both platform variants before asserting the absence of a claim in them
+        (CLAUDE.md § Hard-won lessons: a test asserting an absence must first
+        assert the presence).
+        """
+        g = lookup_chip_guidance("it8689")
+        assert g is not None
+        vendor = "Gigabyte Technology Co., Ltd."
+        amd = lookup_vendor_quirks(vendor, "it8689", cpu_vendor="AMD")
+        intel = lookup_vendor_quirks(vendor, "it8689", cpu_vendor="Intel")
+        assert amd, "no AMD-platform IT8689E quirk matched — the blob would be vacuous"
+        assert intel, "no Intel-platform IT8689E quirk matched — the blob would be vacuous"
+        intel_only = [q for q in intel if q not in amd]
+        assert intel_only, (
+            "the Intel lookup returned nothing the AMD lookup did not — the "
+            "platform-specific quirk is not being reached, so this test cannot "
+            "see the site that once shipped a stale claim"
+        )
+        parts = list(g.known_issues) + list(g.bios_tips)
+        for q in list(amd) + intel_only:
+            parts.extend(q.details)
+        for result in ("no_rpm_effect", "write_rejected", "no_readback"):
+            parts.append(verification_guidance(result, vendor, "it8689") or "")
+        return " ".join(parts).lower()
+
+    def test_does_not_claim_the_fix_is_unconfirmed_on_hardware(self):
+        blob = self._it8689_text()
+        for stale in ("not yet confirmed on it8689e", "unconfirmed on it8689e"):
+            assert stale not in blob, (
+                f"guidance still carries the retracted claim {stale!r} — "
+                "three hardware reports exist (2026-08-23)"
+            )
+
+    def test_keeps_the_verify_after_updating_caveat(self):
+        # The reports tested pre-merge code, so "verify" must not be dropped.
+        blob = self._it8689_text()
+        assert "verify" in blob, "the update-then-verify instruction was lost"
+
+    def test_recommends_updating_the_driver(self):
+        blob = self._it8689_text()
+        assert "it87-dkms-git" in blob
+
+
+class TestSecondaryIteChipIsNotDeclaredUnconditionallyReadOnly:
+    """DOC-b: IT8792E/IT87952E are not 'always read-only from Linux'."""
+
+    def test_no_quirk_claims_the_secondary_chip_is_always_read_only(self):
+        for chip in ("it8688", "it8689", "it8696", "it87952"):
+            for q in lookup_vendor_quirks("Gigabyte Technology Co., Ltd.", chip):
+                blob = " ".join(q.details).lower()
+                assert "always read-only" not in blob, (
+                    f"quirk {q.summary!r} still asserts unconditional read-only"
+                )
+
+
+class TestNct6683WritePathDiagnosis:
+    """DOC-c: pwm is mode 0444 except on Mitac, and there is no pwm_enable.
+
+    So the headers are *refused*, not accepted-and-ignored — a different thing
+    to tell a user, because the wrong one sends them into BIOS settings that
+    cannot help.
+    """
+
+    def test_nct6686_explains_read_only_rather_than_ignored_writes(self):
+        g = lookup_chip_guidance("nct6686")
+        assert g is not None
+        blob = " ".join(g.known_issues).lower()
+        assert "read-only" in blob
+        assert "silently ignored" not in blob, (
+            "still describes writes as accepted-then-ignored; they are refused"
+        )

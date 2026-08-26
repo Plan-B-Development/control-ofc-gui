@@ -166,29 +166,37 @@ class TestMsiNct6687PlatformDisambiguation:
 class TestAsusIntelLga1700Quirks:
     """ASUS ec_sensors / NCT6798D coverage for LGA1700 boards."""
 
-    def test_asus_ec_sensors_intel_quirk_mentions_kernel_allowlist(self):
-        # The Intel asus_ec_sensors quirk must cite the kernel-documented
-        # allowlist so users on those exact boards have confidence they
-        # are on a supported path.
+    def test_asus_ec_sensors_intel_quirk_points_at_the_live_kernel_allowlist(self):
+        """The quirk must send users to upstream, not to a frozen snapshot.
+
+        Until 2026-08-26 this asserted six specific board names. Upstream's
+        allowlist passed **55 boards at kernel 7.2 and 60 in development**, so
+        the enumeration was both stale and unmaintainable — every kernel release
+        invalidated it. The durable assertion is that the quirk names the chip
+        families and hands the user the kernel doc for the kernel they run,
+        which is the same framing already used for nct6687_msi_alt_boards[].
+        """
         quirks = lookup_vendor_quirks(
             "ASUSTeK COMPUTER INC.",
             "asus_ec_sensors",
             cpu_vendor="Intel",
             board_name="ROG STRIX Z790-E GAMING WIFI II",
         )
+        assert quirks, "the Intel asus_ec_sensors quirk must still fire"
         flat = " ".join(q.summary + " ".join(q.details) for q in quirks)
-        for board in [
-            "MAXIMUS Z690 FORMULA",
-            "STRIX Z690-A GAMING WIFI D4",
-            "STRIX Z690-E GAMING WIFI",
-            "STRIX Z790-E GAMING WIFI II",
-            "STRIX Z790-H GAMING WIFI",
-            "STRIX Z790-I GAMING WIFI",
-        ]:
-            assert board in flat, (
-                f"Intel asus_ec_sensors quirk must cite kernel allowlist "
-                f"board {board!r}; missing from quirk text"
-            )
+        assert "docs.kernel.org/hwmon/asus_ec_sensors.html" in flat, (
+            "the quirk must link the authoritative upstream allowlist"
+        )
+        assert "Z690" in flat and "Z790" in flat, (
+            "the quirk must still name the LGA1700 board families it covers"
+        )
+        # The point of the change: no frozen six-board list presented as complete.
+        assert "grows" in flat.lower() or "growing" in flat.lower(), (
+            "the quirk must tell the user the allowlist expands each release, "
+            "so an absent board is not proof of no support"
+        )
+        # It is sensor enrichment, never a PWM path — the load-bearing claim.
+        assert "PWM" in flat
 
     def test_asus_intel_nct6798_marked_as_supported(self):
         # ASUS LGA1700 boards with NCT6798D: surface an INFO quirk so users

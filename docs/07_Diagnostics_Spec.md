@@ -22,9 +22,9 @@ still exist — only their page homes changed:
   report: verdict + issue checklist, BIOS-interference monitor, dual-chip
   warnings, thermal safety & GPU, and the PWM/GPU verify + Rescan Hardware +
   Open Full Report actions.
-- **Hardware** (`pages/hardware_page.py`) — the daemon `/inventory/readiness`
-  go/no-go checklist, Super-I/O chip detection, and the opt-in Probe Ports
-  action.
+- **Hardware** (`pages/hardware_page.py`) — the daemon's go/no-go readiness
+  checklist and Super-I/O chip detection (both from the combined
+  `GET /inventory/hardware-readiness`), plus the opt-in Probe ports action.
 - **Logs** (`pages/logs_page.py`) — the event-log stream + filters, diagnostic
   snapshots, and Export Bundle.
 

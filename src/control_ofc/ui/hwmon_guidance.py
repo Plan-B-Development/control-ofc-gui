@@ -56,15 +56,45 @@ class SeverityDisplay:
 # Canonical map. "warn" is the issue-checklist vocabulary
 # (``detect_readiness_problems`` emits only "warn"/"critical"); it shares the
 # HIGH presentation but keeps its own word so the checklist still reads "WARN".
+# Ranks are compared RELATIVELY everywhere (sorting, ">= warn", "> info") and
+# never asserted as absolute values, so inserting a tier only requires keeping
+# the order right.
+#
+# "low" was added 2026-08-26. It had been shipping on a Gigabyte X870 quirk
+# without a tier, which made it *unknown*, and an unknown severity took the INFO
+# presentation in the advisory panel while `detect_readiness_problems` — testing
+# `severity != "info"`, a string — still counted it a problem and rolled it up as
+# WARN. Giving it a real tier fixes the mismatch without silencing it: it stays
+# actionable (rank above info), but reads calmly, which is what "low" means.
 _SEVERITY_DISPLAY: dict[str, SeverityDisplay] = {
-    "critical": SeverityDisplay("critical", "CRITICAL", "⛔︎", "CriticalChip", 5, True, True),
-    "high": SeverityDisplay("high", "HIGH", "⚠︎", "WarningChip", 4, True, True),
-    "warn": SeverityDisplay("warn", "WARN", "⚠︎", "WarningChip", 3, True, True),
-    "medium": SeverityDisplay("medium", "MEDIUM", "⚠︎", "CautionChip", 2, False, False),
+    "critical": SeverityDisplay("critical", "CRITICAL", "⛔︎", "CriticalChip", 6, True, True),
+    "high": SeverityDisplay("high", "HIGH", "⚠︎", "WarningChip", 5, True, True),
+    "warn": SeverityDisplay("warn", "WARN", "⚠︎", "WarningChip", 4, True, True),
+    "medium": SeverityDisplay("medium", "MEDIUM", "⚠︎", "CautionChip", 3, False, False),
+    "low": SeverityDisplay("low", "LOW", "⚠︎", "CautionChip", 2, False, False),
     "info": SeverityDisplay("info", "INFO", "ⓘ", "InfoChip", 1, False, False),
 }
 
 _INFO_DISPLAY = _SEVERITY_DISPLAY["info"]
+
+
+def is_actionable_severity(severity: str) -> bool:
+    """Does this advisory severity represent a problem the user should act on?
+
+    Ranked off :func:`severity_display`, never off a string compare against
+    ``"info"``. The two are not equivalent: an unrecognised severity degrades to
+    the calm INFO *presentation* but is not the literal string ``"info"``, so a
+    ``severity != "info"`` test classified it as actionable and the aggregated
+    problem card rendered it WARN while the inline panel rendered it INFO — the
+    same advisory reading at two different levels depending on the surface.
+    Ranking keeps every surface agreeing about an unknown tier.
+    """
+    return severity_display(severity).rank > _INFO_DISPLAY.rank
+
+
+def is_high_severity(severity: str) -> bool:
+    """Is this severity at or above the HIGH tier (i.e. escalates a rollup)?"""
+    return severity_display(severity).rank >= _SEVERITY_DISPLAY["high"].rank
 
 
 def severity_display(severity: str) -> SeverityDisplay:
@@ -246,8 +276,12 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "ASRock boards: disable 'Smart Fan' in BIOS if PWM writes have no effect.",
         ],
         known_issues=[
-            "In-kernel nct6683 driver supports NCT6686D monitoring, but PWM write "
-            "support on many ASRock AM5 boards is incomplete or non-functional.",
+            "The in-kernel nct6683 driver supports NCT6686D monitoring but does not "
+            "offer PWM control here at all: it exposes pwm as read-only (mode 0444) "
+            "for every board except Mitac OEM systems, and publishes no pwm_enable "
+            "attribute whatsoever. So the headers show up read-only and writes are "
+            "refused — this is a driver-capability limit, not a BIOS override, and "
+            "no BIOS setting will unlock it.",
             "If reads work but writes don't, consider out-of-tree drivers: "
             "nct6686d (github.com/s25g5d4/nct6686d) or "
             "asrock-nct6683 (github.com/branchmispredictor/asrock-nct6683).",
@@ -273,8 +307,9 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "works, but manual fan control is often incomplete on modern AMD boards.",
             "MSI boards: nct6683 may expose sensors but not functional PWM writes — "
             "nct6687d-dkms-git is the common fix.",
-            "ASRock boards: read-vs-write mismatch is common — sensors visible but "
-            "PWM writes may be silently ignored.",
+            "ASRock boards: read-vs-write mismatch is expected — sensors are visible "
+            "but the pwm attributes are read-only, because this driver grants write "
+            "permission only on Mitac OEM customer IDs and exposes no pwm_enable.",
         ],
         notes=(
             "Nuvoton NCT6683 family — in-kernel driver covering NCT6683D/NCT6686D/"
@@ -348,13 +383,16 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "maintainer's documented stopgap (frankcrawford/it87 issue #96) is to set "
             "every IT8689E fan-curve vector's temperature to 90 — but that only "
             "reliably restored the CPU-fan header.",
-            "A candidate driver-side fix (frankcrawford/it87 PR #128) merged on "
-            "2026-08-24, claiming manual-mode fixes for IT8688/IT8689/IT8790/"
-            "IT8792/IT8795/IT87952. It is NOT yet confirmed on IT8689E hardware — "
-            "its author could not test it on an IT8689 board, and issue #96 has no "
-            "post-merge confirmation. Updating it87-dkms-git is worth trying, but "
-            "verify writes actually take effect afterwards, and note the rebuild "
-            "pulls a large in-flux upstream change (PR #114 was rejected 2026-08-25).",
+            "A driver-side fix (frankcrawford/it87 PR #128) merged on 2026-08-24, "
+            "with manual-mode fixes for IT8688/IT8689/IT8790/IT8792/IT8795/IT87952. "
+            "Three users reported working IT8689E control on 2026-08-23 — including "
+            "on Rev 1 (Z790 AORUS MASTER, fan speed measurably tracking duty across "
+            "five steps, clean restore to firmware control) and on two boards that "
+            "needed no BIOS changes at all. So update it87-dkms-git FIRST. Two "
+            "caveats keep this short of proven: all three tested the pre-merge "
+            "version of the patch, and the merged commit reworked 267 lines of the "
+            "same bridge code path — so verify writes actually take effect rather "
+            "than assuming (PR #114 was rejected 2026-08-25; PR #126 is still open).",
             "IT8689E Rev 2 (e.g. B650 Eagle AX): BIOS overrides PWM values unless "
             "'Full Speed' or degenerate fan curve is configured.",
             "Some Gigabyte boards have a separate fan-control chip — Linux can read "
@@ -507,13 +545,86 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "#81/#70). Recover with mmio=on."
         ),
     ),
+    # ── Out-of-tree-only ITE parts (verified 2026-08-26) ────────────────
+    # Each of these appears in frankcrawford/it87's device list but is ABSENT
+    # from the mainline `enum chips`, byte-verified at both the v7.2 tag and
+    # master. Without an explicit entry, `it8785`/`it8736`/`it8738` matched the
+    # generic "it87" prefix below and were reported as mainline built-in — a
+    # false claim that tells the user no DKMS driver is needed when one is
+    # mandatory. The rest resolved to None ("Unknown chip"), which was honest
+    # but gave no guidance at all.
+    #
+    # Confidence limit, deliberately encoded in the notes: no primary source
+    # establishes which retail boards carry these parts, so every entry here is
+    # driver-level evidence only — never claim board-level support from them.
+    *[
+        ChipGuidance(
+            chip_prefix=prefix,
+            driver_name="it87",
+            in_mainline=False,
+            driver_package="it87-dkms-git (AUR)",
+            driver_url="https://github.com/frankcrawford/it87",
+            known_issues=[
+                f"{label} is not in the mainline it87 driver's chip list "
+                "(checked against kernel 7.2 and current development source on "
+                "2026-08-26), so the in-kernel driver will not bind to it. Fan "
+                "control requires the out-of-tree it87-dkms-git build.",
+                *extra,
+            ],
+            notes=(
+                f"ITE {label} — out-of-tree it87 support only. Which retail boards "
+                "carry this chip is not documented upstream, so treat driver "
+                "support as established and board behaviour as unverified until "
+                "you have tested your own header."
+            ),
+        )
+        for prefix, label, extra in (
+            (
+                "it8698",
+                "IT8698E",
+                (
+                    "Covered by the driver's MMIO/H2RAM path — if the chip is "
+                    "detected but headers are missing, load with mmio=on.",
+                ),
+            ),
+            (
+                "it8613",
+                "IT8613E",
+                (
+                    "Mainlining has been in flight on the kernel lists but had "
+                    "NOT landed as of 7.2. sensors-detect recognises device ID "
+                    "0x8613 but records its driver as 'to-be-written', so a "
+                    "sensors-detect run will not give you a usable driver name.",
+                ),
+            ),
+            ("it8785", "IT8785E", ()),
+            ("it8736", "IT8736F", ()),
+            ("it8738", "IT8738E", ()),
+            ("it8655", "IT8655E", ()),
+            ("it8606", "IT8606E", ()),
+            ("it8607", "IT8607E", ()),
+        )
+    ],
     ChipGuidance(
         chip_prefix="it87",
         driver_name="it87",
         in_mainline=True,
         driver_package="linux (built-in)",
         driver_url="https://www.kernel.org/doc/html/latest/hwmon/it87.html",
-        notes="ITE IT87xx (older models) — supported in mainline kernel.",
+        known_issues=[
+            "This is the fallback entry for older ITE parts that mainline has "
+            "long supported (IT8705/8712/8716/8718/8720/8721/8728/8732/8771/"
+            "8772/8781/8782/8783/8786/8790/8792). If your chip is NOT one of "
+            "those, do not read 'mainline' as settled: ITE ships new Super-I/O "
+            "parts faster than the in-kernel driver adopts them, and several "
+            "current ones need the out-of-tree it87-dkms-git build. Check your "
+            "exact model against the kernel's it87 documentation before "
+            "concluding no driver install is needed.",
+        ],
+        notes=(
+            "ITE IT87xx (older models) — supported in mainline kernel. Newer "
+            "IT86xx/IT87xx parts often are not; see the per-chip entries above."
+        ),
     ),
     ChipGuidance(
         chip_prefix="f71882",
@@ -661,10 +772,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "(frankcrawford/it87 issue #96) is to flatten the BIOS curve by "
             "setting every fan-curve vector's temperature to 90 — but this "
             "only reliably restored the CPU-fan header.",
-            "Driver status: a candidate fix (frankcrawford/it87 PR #128) merged "
-            "2026-08-24 but is unconfirmed on IT8689E hardware; the previously "
-            "cited PR #114 was rejected 2026-08-25. Updating it87-dkms-git may "
-            "help — verify writes take effect rather than assuming they do.",
+            "Driver status: the fix (frankcrawford/it87 PR #128) merged "
+            "2026-08-24 and has three IT8689E hardware reports from 2026-08-23, "
+            "including on Rev 1 with fan speed measurably tracking duty; the "
+            "previously cited PR #114 was rejected 2026-08-25. Update "
+            "it87-dkms-git first — then verify writes take effect, because those "
+            "reports tested the patch before it was merged.",
             "IT8689E Rev 2 (e.g. B650 Eagle AX): BIOS overrides unless a "
             "degenerate fan curve is configured in BIOS Smart Fan settings.",
             "Workaround: In BIOS → Smart Fan 6, set every temperature point to "
@@ -698,8 +811,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "Headers may appear read-only until this BIOS change is made.",
             "Workaround: In BIOS → Smart Fan 5, enable 'Full Speed' for each header. "
             "Ensure 'FAN Control by' is NOT set to 'Temperature'.",
-            "Note: Secondary ITE controller (IT8792E/IT87952E) on these boards "
-            "is always read-only from Linux — only the primary 3 headers are controllable.",
+            "Note: the secondary ITE controller (IT8792E/IT87952E) was historically "
+            "read-only on some of these boards, but that is not a fixed property — "
+            "the ISA-bridge MMIO path (PR #95/#102) and the manual-mode fixes in "
+            "PR #128 cover IT8792/IT8795/IT87952. Keep it87-dkms-git current and "
+            "verify per-header writability rather than assuming the secondary chip "
+            "cannot be controlled.",
         ],
     ),
     VendorQuirk(
@@ -733,9 +850,15 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         details=[
             "ASUS boards frequently claim Super I/O I/O port ranges (0x0290-0x0299) "
             "via ACPI OperationRegions, preventing the nct6775 driver from binding.",
-            "Workaround: Add 'acpi_enforce_resources=lax' to kernel boot parameters. "
-            "On newer kernels (5.17+), the nct6775 driver supports ACPI mutex-based "
-            "access that avoids this conflict.",
+            "On many supported ASUS boards no workaround is needed: nct6775 reaches "
+            "the chip through an ASUS ACPI WMI method (the WMBD path, matched on the "
+            "board's ASUS WMI device ID) instead of the contested I/O ports, which "
+            "sidesteps the conflict entirely.",
+            "If the bind still fails, add 'acpi_enforce_resources=lax' to the kernel "
+            "boot parameters. Unlike it87, nct6775 has NO driver-local escape — its "
+            "only module parameters are force_id and fan_debounce — so the "
+            "system-wide kernel parameter really is the only option here. Treat it "
+            "as the larger change it is.",
         ],
     ),
     VendorQuirk(
@@ -789,10 +912,13 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         severity="medium",
         summary="ASRock + NCT6686D — monitoring works but PWM writes may not",
         details=[
-            "ASRock A620/B650/X670 boards with NCT6686D commonly show sensors "
-            "and RPMs, but manual PWM writes are often silently ignored.",
-            "The in-kernel nct6683 driver provides monitoring but incomplete "
-            "write support on these boards.",
+            "ASRock A620/B650/X670 boards with NCT6686D show sensors and RPMs, "
+            "but the headers are read-only — manual PWM writes are refused, not "
+            "accepted-and-ignored.",
+            "That is by driver design, not a board fault: nct6683 makes pwm "
+            "writable only for Mitac OEM customer IDs and provides no pwm_enable "
+            "attribute, so there is no in-kernel path to fan control here. Changing "
+            "BIOS settings will not help; changing driver will.",
             "Workaround options (board-specific — try in order):\n"
             "  1. nct6686d driver: github.com/s25g5d4/nct6686d\n"
             "  2. asrock-nct6683 driver: github.com/branchmispredictor/asrock-nct6683\n"
@@ -1209,14 +1335,17 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         platform="intel",
         summary="ASUS Intel Z690/Z790 + asus_ec_sensors — kernel-documented allowlist",
         details=[
-            "Kernel docs (docs.kernel.org/hwmon/asus_ec_sensors.html) "
-            "list the following Intel LGA1700 boards as natively "
-            "supported by the in-tree asus_ec_sensors driver: ROG "
-            "MAXIMUS Z690 FORMULA, ROG STRIX Z690-A GAMING WIFI D4, "
-            "ROG STRIX Z690-E GAMING WIFI, ROG STRIX Z790-E GAMING "
-            "WIFI II, ROG STRIX Z790-H GAMING WIFI, ROG STRIX Z790-I "
-            "GAMING WIFI. The driver provides semantic sensor labels "
-            "(VRM, T_Sensor, Water_In/Out, Chipset).",
+            "The in-tree asus_ec_sensors driver carries a per-board "
+            "allowlist that GROWS with every kernel release — it "
+            "passed 55 boards in 7.2 and is already larger in "
+            "development kernels, so any list reproduced here would "
+            "be wrong within a release. Check your own board against "
+            "docs.kernel.org/hwmon/asus_ec_sensors.html for the "
+            "kernel you actually run. Intel LGA1700 coverage includes "
+            "the ROG MAXIMUS Z690/Z790 and ROG STRIX Z690/Z790 "
+            "families among others. Where supported, the driver "
+            "provides semantic sensor labels (VRM, T_Sensor, "
+            "Water_In/Out, Chipset).",
             "asus_ec_sensors is sensor enrichment only — it never "
             "provides the PWM write path. Fan control on these boards "
             "still uses nct6798 / nct6799 via the mainline nct6775 "
@@ -1319,9 +1448,13 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "IT8689E Rev 1 boards may exhibit the silent-PWM-writes "
             "behaviour even on Intel; check `cat /sys/.../in0_input` "
             "for a revision indicator and verify writes effective "
-            "before relying on Linux fan control. A candidate driver "
-            "fix (frankcrawford/it87 PR #128) merged 2026-08-24 but is "
-            "not yet confirmed on IT8689E hardware.",
+            "before relying on Linux fan control. The driver fix "
+            "(frankcrawford/it87 PR #128) merged 2026-08-24, and the "
+            "clearest hardware report for it is on an Intel board of "
+            "exactly this family — a Z790 AORUS MASTER rev 1.0 with "
+            "IT8689E revision 1, where fan speed tracked duty across "
+            "five steps. Update it87-dkms-git, then verify: that "
+            "report tested the patch before it was merged.",
         ],
     ),
     VendorQuirk(
@@ -1361,9 +1494,11 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "the affected header in BIOS, or set fan mode to 'Full "
             "Speed' / 'Performance'.",
             "Some ASRock Z690 Taichi-class boards expose monitoring "
-            "but not PWM writes via the in-kernel driver; if writes "
-            "are silently ignored, follow the verify-result diagnosis "
-            "in the System State page.",
+            "but not PWM writes via the in-kernel nct6683 driver, "
+            "which publishes pwm read-only on non-Mitac systems; the "
+            "headers will appear read-only rather than accepting "
+            "writes. Follow the verify-result diagnosis on the System "
+            "State page.",
         ],
     ),
 ]
@@ -1613,18 +1748,23 @@ def verification_guidance(
                 "control overrides manual mode while a normal BIOS fan curve is active. "
                 "The maintainer's stopgap (frankcrawford/it87 issue #96) is to flatten "
                 "the BIOS curve by setting every vector's temperature to 90 — but this "
-                "only reliably restored the CPU-fan header. A candidate driver fix "
-                "(frankcrawford/it87 PR #128) merged 2026-08-24 but is unconfirmed on "
-                "IT8689E hardware, so updating it87-dkms-git may or may not help — "
-                "re-run this test afterwards. Meanwhile use a different fan header or "
-                "an external fan controller."
+                "only reliably restored the CPU-fan header. Update it87-dkms-git "
+                "first: the driver fix (frankcrawford/it87 PR #128) merged 2026-08-24 "
+                "and three users reported working IT8689E control the day before, "
+                "including on Rev 1. They tested the pre-merge patch, so re-run this "
+                "test afterwards to confirm rather than assume. If it still fails, "
+                "use a different fan header or an external fan controller."
             )
         if "asrock" in vendor_lower and chip_lower.startswith("nct6"):
             return (
-                "PWM writes were accepted but fan speed did not change. On ASRock "
-                "boards, the in-kernel nct6683 driver often has incomplete write "
-                "support. Try an out-of-tree driver: nct6686d, asrock-nct6683, or "
-                "nct6687d (see the System State page for links)."
+                "PWM writes were accepted but fan speed did not change. Note this "
+                "is not the in-kernel nct6683 failure mode — that driver publishes "
+                "pwm read-only on ASRock systems, so its headers are refused "
+                "outright rather than accepted. Accepted-but-ineffective writes "
+                "point at an out-of-tree driver bound to a board it does not fully "
+                "match, or a BIOS override. Try another out-of-tree driver: "
+                "nct6686d, asrock-nct6683, or nct6687d (see the System State page "
+                "for links), and check BIOS fan settings."
             )
         return (
             "PWM writes were accepted but the fan did not respond. This could mean "

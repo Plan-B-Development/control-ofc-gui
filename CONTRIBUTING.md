@@ -18,16 +18,23 @@ All four must pass before merging:
 ruff format --check src/ tests/
 ruff check src/ tests/
 python -m compileall -q src/
-python -m pytest tests/ -v
+QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
 ```
 
 Run all at once:
 
 ```bash
-ruff format --check src/ tests/ && ruff check src/ tests/ && python -m compileall -q src/ && python -m pytest tests/ -v
+ruff format --check src/ tests/ && ruff check src/ tests/ && python -m compileall -q src/ && QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
 ```
 
-The whole set takes well under a minute (the suite is ~3,300 tests in roughly 45
+**`QT_QPA_PLATFORM=offscreen` is required, not optional.** Run the suite bare on a
+machine with a live Wayland/X session and three `TestKeyboardFocusVisibility` tests
+fail: the platform theme overrides the stylesheet's `:focus` rules, so the
+render-diff sees the native focus ring rather than the themed one. Those failures
+are an artefact of the environment, not a real regression — but they are
+indistinguishable from one, so always set the variable. CI sets it too.
+
+The whole set takes well under a minute (the suite is ~3,500 tests in roughly 45
 seconds; the three lint/compile gates are milliseconds). There is no "fast subset"
 to reach for — run all four.
 
@@ -37,17 +44,14 @@ CI enforces a branch-coverage floor of **88%** (`fail_under` in `pyproject.toml`
 To check it locally before pushing:
 
 ```bash
-python -m pytest --cov --cov-branch --cov-report=term-missing
+QT_QPA_PLATFORM=offscreen python -m pytest --cov --cov-branch --cov-report=term-missing
 ```
 
 ### Headless / no display
 
-Tests construct real Qt widgets. If you have no display, or see Qt platform-plugin
-errors, run with the offscreen backend:
-
-```bash
-QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
-```
+Tests construct real Qt widgets, so `QT_QPA_PLATFORM=offscreen` is already part of
+every command above — set it whether or not you have a display. If you see Qt
+platform-plugin errors, that variable is what fixes them.
 
 ## Running
 

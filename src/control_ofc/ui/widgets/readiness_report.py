@@ -41,6 +41,8 @@ from control_ofc.ui.hwmon_guidance import (
     detect_module_conflicts,
     dual_chip_warning_html,
     format_driver_status,
+    is_actionable_severity,
+    is_high_severity,
     lookup_vendor_quirks,
     severity_display,
 )
@@ -150,7 +152,7 @@ def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
     # Info-level quirks are FYI enrichment notes (e.g. asus_ec_sensors), not
     # problems — they still show in the alert stack, but they must not make a
     # healthy board read as "needs attention".
-    actionable_quirks = [q for q in quirks if q.severity != "info"]
+    actionable_quirks = [q for q in quirks if is_actionable_severity(q.severity)]
     if actionable_quirks:
         problems.append(
             {
@@ -164,7 +166,7 @@ def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
                 "doc_title": "Hardware Compatibility Guide",
                 "severity": (
                     "critical"
-                    if any(q.severity in ("critical", "high") for q in actionable_quirks)
+                    if any(is_high_severity(q.severity) for q in actionable_quirks)
                     else "warn"
                 ),
             }

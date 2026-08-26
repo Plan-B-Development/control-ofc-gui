@@ -97,15 +97,30 @@ misconfigure the chip.
 ## ACPI I/O-port conflicts
 
 If your firmware's ACPI tables claim the same I/O ports the Super-I/O driver needs,
-the driver may refuse to bind (under the default `acpi_enforce_resources=strict`).
-The page lists the affected driver(s). Relaxing the enforcement is possible but is a
-firmware-interaction change — research it for your specific board before proceeding,
-and prefer a BIOS update where one addresses the conflict.
+the driver may refuse to bind (under the default `acpi_enforce_resources=strict`),
+typically failing with *Device or resource busy*. The page lists the affected
+driver(s). Prefer a BIOS update where one addresses the conflict; otherwise the
+remedies differ by driver, and they are **not** equally safe:
+
+- **`it87` (ITE) — preferred: the driver-local option.** Add
+  `options it87 ignore_resource_conflict=1` to `/etc/modprobe.d/it87.conf`. This
+  relaxes the check for **this driver only**. Upstream recommends it over the
+  system-wide parameter, because there are reports that a system-wide
+  `acpi_enforce_resources=lax` can cause **boot failures** on some systems.
+- **`nct6775` / `nct6687` (Nuvoton) — no driver-local equivalent exists.** These
+  drivers expose no `ignore_resource_conflict` parameter, so the system-wide
+  `acpi_enforce_resources=lax` kernel parameter is the only kernel-side remedy.
+  Treat it as the larger hammer it is. On supported ASUS boards `nct6775`
+  sidesteps the conflict on its own through an ACPI WMI access path, so no
+  parameter is needed there.
+
+Either way this is a firmware-interaction change: make it deliberately, and
+re-run **Test PWM Control** afterwards to confirm it actually helped.
 
 ## Active port probing
 
 Passive detection is normally sufficient. When a Super-I/O chip is present but its
-driver is not loaded, the optional **Advanced detection ▸ Probe ports** action can
+driver is not loaded, the optional **Probe ports (advanced)** action can
 read the chip's configuration I/O ports directly to identify it. This:
 
 - requires the `CAP_SYS_RAWIO` capability (it is off by default and needs a daemon

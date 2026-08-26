@@ -167,10 +167,17 @@ class TestChipKnowledgeUpdates:
         assert "rejected" in flat.lower(), (
             "the #114 retraction must be stated, not silently dropped"
         )
-        # Truthfulness: #128 is unverified on this silicon, so the entry must
-        # not tell the user control now works.
-        assert "not yet confirmed" in flat.lower() or "unconfirmed" in flat.lower(), (
-            "PR #128 is hardware-unverified on IT8689E — the entry must say so"
+        # Truthfulness, 2026-08-26: #128 now HAS three IT8689E hardware reports
+        # (incl. Rev 1 on a Z790 AORUS MASTER), so "unconfirmed" would assert the
+        # opposite of the truth. But all three tested pre-merge head 429d2b40,
+        # and the merged 27319db7 reworked 267 lines of the same bridge path —
+        # so the entry must still tell the user to verify rather than assume.
+        assert "unconfirmed on it8689e" not in flat.lower(), (
+            "the retracted 'unconfirmed on IT8689E' claim must not return — "
+            "three hardware reports exist (2026-08-23)"
+        )
+        assert "verify" in flat.lower(), (
+            "the reports tested pre-merge code; the update-then-verify instruction must survive"
         )
 
     def test_it8689_quirk_documents_partial_stopgap(self):
@@ -179,13 +186,16 @@ class TestChipKnowledgeUpdates:
         flat = " ".join(quirks[0].details)
         assert "No known software workaround" not in flat
         assert "temperature" in flat.lower(), "quirk must document the temps-to-90 stopgap"
-        # 2026-08-25: PR #114 rejected, superseded by the merged-but-unverified
-        # PR #128. The quirk must name the current candidate and must not sell
-        # it as confirmed control.
-        assert "PR #128" in flat, "quirk must point to the current candidate driver-side fix"
-        assert "unconfirmed" in flat.lower() or "not yet confirmed" in flat.lower(), (
-            "the quirk must state that PR #128 is unverified on IT8689E hardware"
+        # 2026-08-25: PR #114 rejected, superseded by PR #128. 2026-08-26: #128
+        # gained three IT8689E hardware reports, so the quirk must name it as the
+        # fix and lead with "update the driver" — while keeping the verify step,
+        # because those reports tested the pre-merge patch.
+        assert "PR #128" in flat, "quirk must point to the current driver-side fix"
+        assert "unconfirmed on it8689e" not in flat.lower(), (
+            "the retracted 'unconfirmed on IT8689E' claim must not return"
         )
+        assert "it87-dkms-git" in flat, "quirk must tell the user which package to update"
+        assert "verify" in flat.lower(), "the update-then-verify instruction must survive"
 
     def test_it8883_entry_refreshed_not_stale_dated(self):
         g = lookup_chip_guidance("it8883")

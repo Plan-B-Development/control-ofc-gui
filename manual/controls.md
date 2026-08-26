@@ -18,13 +18,14 @@ A profile contains one or more fan roles, and each fan role references a curve f
 
 The page **header** carries the actions that apply to the whole profile:
 
-| Button | What it does |
+| Control | What it does |
 |--------|-------------|
-| **Auto-Connect Wizard** | Opens the Fan Wizard to identify and label your physical fans — see [Fan Wizard](fan-wizard.md) |
-| **Configure AIO** | One-click liquid-cooler setup — shown only when a liquid cooler is detected (see [Configuring an AIO](#configuring-an-aio--liquid-cooler)) |
-| **Dedicate GPU Fan** | One-click setup so a writable AMD GPU fan can idle at true 0 RPM — shown only when a zero-RPM-capable AMD GPU is detected (see [Dedicating a GPU fan](#dedicating-a-gpu-fan)) |
-| **Save Profile** | Writes the profile's changes to disk (`Ctrl+S`); saving the active profile also re-applies it to the daemon |
+| *Profile name* | A read-only label naming the profile these edits and **Save** apply to. Selection itself is sidebar-owned, so this is how you confirm what **Save** will write to |
 | **⋮** | Profile-management menu (create / rename / duplicate / delete) |
+| **Set up ▾** | The hardware-setup menu. It always offers **Auto-Connect Wizard…**, which opens the Fan Wizard to identify and label your physical fans (see [Fan Wizard](fan-wizard.md)). Two further entries appear only when the matching hardware is detected: **Configure AIO…**, one-click liquid-cooler setup (see [Configuring an AIO](#configuring-an-aio--liquid-cooler)), and **Dedicate GPU Fan…**, one-click setup so a writable AMD GPU fan can idle at true 0 RPM (see [Dedicating a GPU fan](#dedicating-a-gpu-fan)) |
+| **Revert** | Discards unsaved changes and restores the last saved version of the profile. Enabled only while there are unsaved edits |
+| **Save** | Writes the profile's changes to disk (`Ctrl+S`); saving the active profile also re-applies it to the daemon |
+| *Unsaved chip* | A warning chip that appears beside **Save** while the profile has unsaved edits |
 
 Below the header the page is a **three-pane** workspace:
 

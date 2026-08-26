@@ -1,5 +1,96 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Gigabyte IT8689E owners are no longer told the driver fix is unverified — it has
+  three hardware confirmations.** v2.47.1 said the `it87` fix (upstream PR #128) was
+  "not confirmed on IT8689E hardware", on the strength of the PR author's own note and
+  a quiet issue thread. The confirmations were in the pull request's comment thread:
+  three users reported working fan control on 2026-08-23, including on **IT8689E
+  revision 1** — the revision the app flags as broken — with fan speed measurably
+  tracking duty across five steps, and two of them needing **no BIOS changes at all**.
+  The advice now leads with "update the driver and verify" instead of "expect this not
+  to work". One caveat is kept deliberately: all three tested the patch *before* it was
+  merged, and the merged version reworked 267 lines of the very code path involved, so
+  the guidance still asks you to confirm with **Test PWM Control** rather than assume.
+  This is corrected everywhere it appeared — the Hardware-page advice cards, the
+  PWM-test result explanation, the hardware guides and the manual.
+- **Eight ITE chips now get correct driver advice instead of none, or the wrong
+  advice.** IT8698E, IT8613E, IT8785E, IT8736F, IT8738E, IT8655E, IT8606E and
+  IT8607E are supported only by the out-of-tree `it87` build. Three of them
+  (IT8785E, IT8736F, IT8738E) matched a generic rule and were reported as
+  **supported by the mainline kernel** — telling owners no driver install was
+  needed when one is mandatory. The other five produced "Unknown chip" and no
+  guidance at all. Each now names the DKMS package, and says plainly that which
+  retail boards carry it is undocumented upstream, so your own header still needs
+  testing. The generic fallback no longer implies mainline support for ITE parts
+  it does not recognise.
+- **ASRock/MSI boards using the in-kernel `nct6683` driver were given the wrong
+  diagnosis.** The advice said PWM writes were "silently ignored", which sends
+  people into BIOS fan settings. In fact the driver publishes those headers as
+  read-only for every board except Mitac OEM systems and offers no fan-mode
+  attribute at all, so writes are *refused*, and no BIOS change can help — a
+  different driver can. The guidance now says which it is.
+- **The secondary ITE chip on Gigabyte boards is no longer declared permanently
+  uncontrollable.** One advice card stated the IT8792E/IT87952E is "always
+  read-only from Linux", contradicting this app's own guidance elsewhere and
+  suppressing a fan-control path that current drivers do support.
+- ASUS ACPI-conflict advice now names the real mechanism (an ASUS ACPI WMI access
+  path, not a "mutex") and states that `nct6775` — unlike `it87` — has no
+  driver-local option, so the system-wide kernel parameter genuinely is the only
+  route there. The `asus_ec_sensors` board list is no longer frozen at six
+  boards; upstream passed 55 and keeps growing, so the advice points at the
+  kernel documentation for the kernel you actually run.
+- **An advisory could appear at two different severities depending on where you
+  looked.** A board quirk shipping a severity the display table does not define
+  rendered as a calm INFO note in the advisory panel while the problem summary
+  counted it as a warning. Both surfaces now rank severity through the same
+  table, so an unrecognised level cannot read as two different things at once.
+
+### Fixed
+- **The Controls page manual described buttons that have not existed since the DEC-233
+  redesign.** It listed *Auto-Connect Wizard*, *Configure AIO* and *Dedicate GPU Fan*
+  as separate header buttons — they are entries under one **Set up ▾** menu — and
+  called the save button *Save Profile* when it reads **Save**. The **Revert** button
+  and the edited-profile label were undocumented entirely.
+- **The Fan Wizard page sent you to the wrong pane.** It said to launch the wizard from
+  a *Fan Wizard* button in the Controls page's Fan Roles header. No such button exists,
+  and the Controls page of the same manual described the real location correctly — the
+  two pages contradicted each other.
+- **The Hardware page documentation named two daemon endpoints it does not call.** It
+  described the readiness checklist and Super-I/O report as separate fetches from
+  `/inventory/readiness` and `/inventory/superio`; both come from a single combined
+  request, which is *why* the two sections can never disagree.
+- **Contributors following `CONTRIBUTING.md` literally saw three unexplained test
+  failures.** The canonical quality-gate block omitted `QT_QPA_PLATFORM=offscreen`,
+  offering it further down as a fix for having no display. On a machine *with* a
+  display, running the documented command fails three keyboard-focus tests for
+  environmental reasons indistinguishable from a real regression. The variable is now
+  part of the gate, with the reason stated.
+- **The cooling-readiness guide gave weaker ACPI advice than the app itself.** The page
+  it is linked from recommends the driver-local `options it87 ignore_resource_conflict=1`
+  in preference to the system-wide `acpi_enforce_resources=lax` — upstream warns the
+  latter can cause boot failures — but the guide mentioned only "relaxing the
+  enforcement". It now gives the per-driver remedies, including that Nuvoton drivers
+  have no driver-local equivalent so the system-wide parameter is genuinely the only
+  option there.
+- Driver-setup guidance gained two `nct6687d` remedies it never carried (the ACPI
+  conflict, and the `softdep nct6687 pre: i2c_i801` fix for *"EC base I/O port
+  unconfigured"* at boot), and the `sensors-detect` warning now notes that the tool
+  cannot identify IT8688E/IT8689E/IT8696E/IT8698E or NCT6686D at all — so on the boards
+  where running it can wedge the Super-I/O bridge, it has nothing to offer in return.
+- GPU rules now distinguish *why* RDNA3 and RDNA4 both refuse `pwm1_enable=1`: RDNA4
+  registers no write callbacks at all, whereas **RX 7000 exposes a writable
+  `pwm1_enable` whose write can return success and do nothing**. A successful write is
+  therefore not evidence of fan control on RDNA3 — which matters, because claiming a
+  fan is controlled when it is not is the failure this project's truthfulness rule
+  exists to prevent.
+- Documentation index and module map corrections: `25_GPU_Support_Rules.md` was missing
+  from the docs index; the architecture module map listed a widget deleted in v2.47.0,
+  described a merge function removed in DEC-224, and omitted 21 modules including the
+  theme system, the accessibility helpers and the hardware-advice database itself.
+
 ## [2.47.1] — 2026-08-25
 
 ### Fixed

@@ -25,11 +25,45 @@ writes, PMFW handling, or GPU display naming.
   fan control MUST use the PMFW `fan_curve` sysfs interface. *(Safety-critical; also
   stated in `CLAUDE.md`.)*
 - Pre-RDNA3 GPUs (RX 6000 and older) use traditional `pwm1_enable=1` + `pwm1` control.
+
+  **The two generations reach that outcome by different mechanisms, and the
+  difference is safety-relevant** (kernel source re-read 2026-08-26):
+
+  - **RDNA4 (RX 9000, `smu_v14_0_2_ppt.c`)** registers *only* `.get_fan_speed_pwm` —
+    no `.set_fan_speed_pwm`, no `.get/.set_fan_control_mode`. `hwmon_attributes_visible()`
+    therefore strips the permissions outright: `pwm1` is read-only and `pwm1_enable`
+    is not exposed at all. The rule is **structurally enforced by the driver**.
+  - **RDNA3 (RX 7000, `smu_v13_0_0_ppt.c` / `smu_v13_0_7_ppt.c`)** *does* register all
+    three callbacks, so **`pwm1` and `pwm1_enable` exist at mode 0644 and are
+    writable**. The write lands in `smu_v13_0_auto_fan_control()`, which opens:
+
+    ```c
+    if (!smu_cmn_feature_is_supported(smu, SMU_FEATURE_FAN_CONTROL_BIT))
+    	return 0;   /* silent success — no-op */
+    ```
+
+    So on RX 7000 a `pwm1_enable=1` write **can return success and do nothing**
+    (the widely-reported "write 1, read back 2" symptom). **Never treat a successful
+    write as proof of control on RDNA3** — any capability probe that does will
+    falsely report an RX 7000 fan as writable, which is exactly the class of lie
+    the truthfulness rule in `CLAUDE.md` forbids. Confirm by reading the value back,
+    or use the `fan_curve` path, which is the supported interface either way.
 - GPU fan writes use an imperative model (`set_static_speed` via a flat PMFW curve);
   no lease is required.
 - The `amdgpu.ppfeaturemask` kernel parameter is required for PMFW `fan_curve` access.
 - ppfeaturemask bit 14 (`0x4000`) is required for PMFW — diagnostics must explain this
   when it is missing.
+- **A missing `fan_curve` is no longer proof that `ppfeaturemask` is wrong.** Since
+  kernel 7.0/7.1 (`470891606` for smu v13, `ab4905d46` for smu v14) the driver
+  **disables the `OD_FAN_CURVE` entries entirely** when the firmware reports an
+  invalid temperature or PWM range. So a correctly-configured system can legitimately
+  have no `fan_curve` file, and diagnostics must not tell that user to fix a kernel
+  parameter that is already right.
+- smu v14.0.x now parses OD-table upload failures into named dmesg messages
+  (`OD_FAN_CURVE_PWM_ERROR`, `OD_FAN_CURVE_TEMP_ERROR`, `OD_FAN_MIN_PWM_ERROR`,
+  `OD_FAN_ZERO_RPM_STOP_TEMP_ERROR`, …) — cheap, high-value diagnostic output to
+  surface when a curve write is rejected.
+- Kernel docs warn: **do not** drive `pwm1` and `fan[1-*]_target` at the same time.
 - GPU PMFW fan writes use a **5% threshold** (not 1%) to avoid SMU firmware churn
   during gaming (DEC-070).
 - The daemon auto-disables `fan_zero_rpm_enable` before writing a PMFW curve, and

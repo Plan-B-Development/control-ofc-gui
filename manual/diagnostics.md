@@ -113,11 +113,11 @@ This page is covered in depth on the [Hardware Troubleshooting](hardware-trouble
 
 ![Hardware page](../screenshots/auto/05_hardware.png)
 
-The **Hardware** page merges two daemon-sourced, read-only views of your cooling hardware: the **System Readiness Checklist** (the daemon's go/no-go assessment from `/inventory/readiness`) and the **Super-I/O Architecture** report (motherboard sensor/fan-chip detection from `/inventory/superio`). Neither view ever changes your system.
+The **Hardware** page shows two daemon-sourced, read-only views of your cooling hardware: the **System Readiness Checklist** (the daemon's go/no-go assessment) and the **Super-I/O Architecture** report (motherboard sensor/fan-chip detection). Both come from a *single* request to the daemon's combined `GET /inventory/hardware-readiness`, which serves one shared, coalesced hardware scan — so the two sections can never disagree with each other. Neither view ever changes your system.
 
 ### System Readiness Checklist
 
-The **System Readiness Checklist** shows the daemon's own structured assessment of your cooling hardware — its answer to *"what is ready, what needs attention, and what should I do next?"*. It reads `/inventory/readiness` and populates the first time you open the page (or via **Refresh Readiness**).
+The **System Readiness Checklist** shows the daemon's own structured assessment of your cooling hardware — its answer to *"what is ready, what needs attention, and what should I do next?"*. It populates the first time you open the page (or via **Refresh Readiness**).
 
 It is similar in spirit to the **System State** page but comes from a different source: the **System State** page is the GUI's own hardware-readiness report built from `/diagnostics/hardware` (drivers, chips, BIOS interference, PWM tests), while this checklist is the *daemon's* go/no-go assessment — CPU-sensor presence, default-CPU confidence, whether PWM controls are present / read-only / not-yet-verified, monitor-only fan tachometers, quarantined sensors, and any preferred sensor that has gone missing.
 
@@ -133,15 +133,15 @@ Each checklist item carries a recommended next step; the page gathers these into
 
 ### Super-I/O Architecture
 
-The **Super-I/O Architecture** section answers *"which motherboard sensor/fan chip do I have, and is its driver loaded?"*. Most desktop boards route their fan headers and temperature sensors through a Super-I/O chip (ITE, Nuvoton/Winbond, SMSC, …); if its kernel driver is not loaded, the daemon can't see those fans at all. This section reads the daemon's `/inventory/superio` detection and shows **one card per detected chip** — its vendor, a confidence level, and whether its driver is bound. For a chip whose driver is *not* loaded, the card expands a **How to enable** section with the exact driver name and a copy-paste command to load it.
+The **Super-I/O Architecture** section answers *"which motherboard sensor/fan chip do I have, and is its driver loaded?"*. Most desktop boards route their fan headers and temperature sensors through a Super-I/O chip (ITE, Nuvoton/Winbond, SMSC, …); if its kernel driver is not loaded, the daemon can't see those fans at all. This section renders the Super-I/O half of that same combined response and shows **one card per detected chip** — its vendor, a confidence level, and whether its driver is bound. For a chip whose driver is *not* loaded, the card expands a **How to enable** section with the exact driver name and a copy-paste command to load it.
 
 - The report is **passive and read-only** — the daemon composes signals it already has (DMI board table, bound hwmon chips, `/proc/modules`, `/dev/kmsg`, ACPI port overlaps). It never loads a module or changes your system.
 - **Detection is not control.** A card means a chip is present and a driver exists — it does *not* prove fan control works. Loading the driver (and the **System State** page's PWM test) is what confirms that.
 - On a non-x86 machine, or a daemon that predates the feature, the section reports that detection is unavailable.
 
-#### Probe Ports (advanced)
+#### Probe ports (advanced)
 
-Passive detection can't see a chip whose driver never loaded and that never appeared in the kernel log. For that case an **opt-in active probe** can read the Super-I/O configuration ports directly to identify an unbound chip. The **Probe Ports (advanced)** button runs it — but it is **off by default** and stays disabled (with the reason in its tooltip) unless the daemon operator has deliberately enabled it, because it requires a root-equivalent capability (`CAP_SYS_RAWIO`). Enabling it needs two steps on the daemon host: set `allow_port_probe = true` in `/etc/control-ofc/daemon.toml` **and** install the opt-in `superio-port-probe.conf.example` systemd drop-in (shipped in the daemon package's docs). Even when enabled, the probe only reads chip-ID registers, never touches a port a driver or the firmware is already using, and changes nothing. Clicking the button asks for confirmation first.
+Passive detection can't see a chip whose driver never loaded and that never appeared in the kernel log. For that case an **opt-in active probe** can read the Super-I/O configuration ports directly to identify an unbound chip. The **Probe ports (advanced)** button runs it — but it is **off by default** and stays disabled (with the reason in its tooltip) unless the daemon operator has deliberately enabled it, because it requires a root-equivalent capability (`CAP_SYS_RAWIO`). Enabling it needs two steps on the daemon host: set `allow_port_probe = true` in `/etc/control-ofc/daemon.toml` **and** install the opt-in `superio-port-probe.conf.example` systemd drop-in (shipped in the daemon package's docs). Even when enabled, the probe only reads chip-ID registers, never touches a port a driver or the firmware is already using, and changes nothing. Clicking the button asks for confirmation first.
 
 The Super-I/O Architecture section requires `control-ofc-daemon` ≥ v2.7.0.
 
