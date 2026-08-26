@@ -256,10 +256,10 @@ class SystemStatePage(QWidget):
 
         # Health overview ↕ row 2 share height through a drag handle (DEC-234).
         # The handle is inside the scroll area, so the page keeps its whole-page
-        # scroll: the splitter is content-sized (no stretch), so a taller health
-        # card grows the band past its floor and the page scrolls (rather than
-        # the splitter filling the viewport and clipping). The registry table
-        # scrolls inside its own pane; advanced actions stay fixed below.
+        # scroll: when the content needs more height than the viewport has, the
+        # band grows past the viewport and the PAGE scrolls rather than either
+        # pane clipping. The registry table scrolls inside its own pane;
+        # advanced actions stay fixed below.
         #
         # Caveat, unchanged: a QSplitter divides its total by proportion, not by
         # child sizeHint, so a pathologically long issue list can still clip.
@@ -278,12 +278,43 @@ class SystemStatePage(QWidget):
                 self._row2_splitter.minimumSizeHint().height(),
             ]
         )
+        # Surplus height belongs to row 2, not to the health pane (DEC-284).
+        # Row 2's registry table scrolls internally, so every extra pixel there
+        # is another visible chip row; the health card ends its own layout with
+        # a stretch, so anything handed to the top pane past its content becomes
+        # whitespace inside the card. Without this, Qt shares the surplus in
+        # proportion to the current sizes (neither child is vertically
+        # expansive) and the health pane took 65 → 196px of a 1400px window it
+        # could not use. Only the index-1 call does anything: the pane's
+        # vertical stretch is already 0, and `setStretchFactor(0, 0)` measured
+        # byte-identical to omitting it — a no-op beside a real fix is exactly
+        # what DEC-281 warns about, so it is not written here.
+        self._sections_splitter.setStretchFactor(1, 1)
         style_splitter(self._sections_splitter)
-        layout.addWidget(self._sections_splitter)
+        # Deleting the trailing `addStretch(1)` that used to close this method is
+        # the whole fix HERE (DEC-284) — a QBoxLayout gives surplus to any
+        # non-zero stretch factor, so that spacer froze the band at 430px at
+        # every window height above ~600.
+        #
+        # The `, 1` below is, measured, *currently redundant on this page*: the
+        # splitter is the only vertically expansive item in this body layout
+        # (labels and the collapsible section are not), so Qt hands it the whole
+        # surplus regardless — identical 771 / 971 / 1371px at 900 / 1100 /
+        # 1500px with the stretch dropped. It is written anyway, and that is not
+        # the no-op DEC-281 warns against: it stops being redundant the instant
+        # anything expansive is added below, which is exactly how the spacer
+        # broke this page. On `overview_page` the same argument is load-bearing
+        # *today* — dropping it there costs 531px at a 1500px window, because
+        # the cards row above expands too.
+        #
+        # None of this changes the constrained case: measured with three health
+        # issues, the band is 911px and the page scrolls at 400-1000px page
+        # heights exactly as before, so DEC-281's content floor is untouched.
+        # It only spends height the page had spare.
+        layout.addWidget(self._sections_splitter, 1)
 
         # Advanced actions (preserved PWM/GPU verify + open report).
         layout.addWidget(self._build_advanced_section())
-        layout.addStretch(1)
 
     def _build_advanced_section(self) -> QWidget:
         section = CollapsibleSection(

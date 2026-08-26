@@ -4,22 +4,36 @@ A `/frontend-design` pass gave every page's `QSplitter` one shared handle
 treatment (a hairline that lights up in the accent on hover, in a comfortable
 grab zone) and added the sections the user asked to be resizable:
 
-* Overview — Fan Status ↕ Sensor Intelligence (the top cards stay fixed above).
+* Overview — Fan Status ↕ Sensors (the top cards stay fixed above).
 * System State — health overview ↕ hardware registry.
 * Logs — event table ↕ diagnostic-snapshot cards (so the cards can be grown).
 
 These are presentation-only structural facts; the polling / VM layers are
 untouched, so the tests assert widget-tree outcomes, not behaviour.
+
+DEC-284 adds the geometry half at the foot of the file: a handle is only as
+useful as the height it has to trade, and both pages were handing their whole
+surplus to a trailing spacer.
 """
 
 from __future__ import annotations
 
+import itertools
+
+import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QPlainTextEdit, QSplitter, QTableWidget, QWidget
+from PySide6.QtWidgets import (
+    QPlainTextEdit,
+    QScrollArea,
+    QSplitter,
+    QTableWidget,
+    QWidget,
+)
 
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.profile_service import ProfileService
+from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.pages.controls_page import ControlsPage
 from control_ofc.ui.pages.dashboard_page import DashboardPage
 from control_ofc.ui.pages.logs_page import LogsPage
@@ -102,7 +116,7 @@ def test_every_splitter_uses_shared_handle_width(qtbot):
     assert len(pages) == 5  # reference `pages` so it outlives the assertions
 
 
-# ── Overview: Fan Status ↕ Sensor Intelligence, cards fixed above ─────────
+# ── Overview: Fan Status ↕ Sensors, cards fixed above ────────────────────
 
 
 def test_overview_sections_splitter(qtbot):
@@ -122,7 +136,7 @@ def test_overview_sections_splitter(qtbot):
     # Both panes floor at a usable height so the handle retrades a bounded band.
     assert fan_pane.minimumHeight() >= 100
     assert sensor_pane.minimumHeight() >= 100
-    # Order is load-bearing: Fan Status on top, Sensor Intelligence below.
+    # Order is load-bearing: Fan Status on top, Sensors below.
     assert sp.widget(0) is fan_pane
     assert sp.widget(1) is sensor_pane
 
@@ -227,3 +241,152 @@ def test_logs_keeps_its_main_splitter(qtbot):
     assert main is not None
     assert main.orientation() == Qt.Orientation.Horizontal
     assert page.findChild(QSplitter, "Logs_Splitter_rightColumn") is None
+
+
+# ── DEC-284: the splitter gets the surplus height, not a trailing spacer ──
+#
+# Both pages used to end `_build_ui` with `layout.addStretch(1)`. A QBoxLayout
+# distributes surplus by stretch factor the moment ANY factor is non-zero, so
+# that spacer took every spare pixel: the band measured a frozen 430px at page
+# heights of 760, 1000 AND 1400, with 744px of empty body below it at the
+# tallest, and the handle retraded a 430px band instead of the viewport.
+#
+# Everything below is an exact layout identity read from the same widgets at
+# runtime — never a measured pixel value. A height in px is a font metric, and
+# a font metric is not portable (CLAUDE.md § Hard-won lessons).
+
+FILLING_PAGES = ["overview", "system_state"]
+
+
+def _scroll_and_body(page):
+    scroll = page.findChild(QScrollArea)
+    return scroll, scroll.widget()
+
+
+def _resize(qtbot, page, height, width=1400):
+    page.resize(width, height)
+    qtbot.wait(20)
+
+
+def _fill_page(qtbot, kind):
+    """(page, sections splitter), shown and laid out, for either filling page."""
+    if kind == "overview":
+        page = OverviewPage(state=AppState())
+        name = "Overview_Splitter_sections"
+    else:
+        s = AppState()
+        page = SystemStatePage(state=s, diagnostics_service=DiagnosticsService(s))
+        name = "SystemState_Splitter_sections"
+    qtbot.addWidget(page)
+    page.resize(1400, 900)
+    page.show()
+    qtbot.waitExposed(page)
+    sp = page.findChild(QSplitter, name)
+    assert sp is not None
+    return page, sp
+
+
+@pytest.mark.parametrize("kind", FILLING_PAGES)
+def test_extra_window_height_goes_to_the_sections_splitter(qtbot, kind):
+    """Every pixel the window gains lands in the band the handle trades."""
+    page, sp = _fill_page(qtbot, kind)
+    scroll, _body = _scroll_and_body(page)
+    seen = []
+    for h in (900, 1100, 1500):
+        _resize(qtbot, page, h)
+        # Only a height with room to spare says anything about distributing
+        # surplus. On a font stack where the content is taller the page is
+        # meant to scroll instead — which is its own test below.
+        if scroll.verticalScrollBar().maximum() == 0:
+            seen.append((h, sp.height()))
+    assert len(seen) >= 2, f"{kind}: no window height had surplus to distribute ({seen})"
+    for (h0, band0), (h1, band1) in itertools.pairwise(seen):
+        assert band1 - band0 == h1 - h0, (
+            f"{kind}: window grew {h1 - h0}px but the band grew {band1 - band0}px — "
+            "a trailing spacer or a missing layout stretch is taking the rest"
+        )
+
+
+@pytest.mark.parametrize("kind", FILLING_PAGES)
+def test_no_dead_space_below_the_last_section(qtbot, kind):
+    """The last thing in the page bottoms out at the bottom margin, exactly."""
+    page, _sp = _fill_page(qtbot, kind)
+    scroll, body = _scroll_and_body(page)
+    # Enter the surplus regime by construction — from the body's own natural
+    # height, not from a page height that happens to be tall enough here.
+    _resize(qtbot, page, body.sizeHint().height() + 400)
+    assert scroll.verticalScrollBar().maximum() == 0, f"{kind}: expected room to spare"
+    layout = body.layout()
+    tail = layout.itemAt(layout.count() - 1)
+    assert tail.widget() is not None, (
+        f"{kind}: the body layout must end in a widget — a trailing addStretch() "
+        "claims the surplus that belongs to the sections splitter (DEC-284)"
+    )
+    last = tail.widget()
+    assert body.height() - (last.y() + last.height()) == layout.contentsMargins().bottom()
+
+
+@pytest.mark.parametrize("kind", FILLING_PAGES)
+def test_short_window_still_scrolls_the_whole_page(qtbot, kind):
+    """DEC-234 decision 1 survives the fill.
+
+    The over-correction this guards against is converting either page to a
+    fill-the-viewport layout, where the band shrinks to whatever is on screen
+    and the tables clip instead of the page scrolling.
+    """
+    page, _sp = _fill_page(qtbot, kind)
+    scroll, body = _scroll_and_body(page)
+    # Half the height the content asks for: constrained by construction on any
+    # font stack, rather than by a literal that only holds on this one.
+    _resize(qtbot, page, max(200, body.sizeHint().height() // 2))
+    assert scroll.verticalScrollBar().maximum() > 0, (
+        f"{kind}: a window too short for the content must scroll the whole page"
+    )
+
+
+def test_overview_surplus_is_shared_by_both_panes(qtbot):
+    """Both Overview tables scroll internally, so both gain from extra height —
+    which is why this page keeps Qt's proportional share rather than System
+    State's explicit stretch factor. An equal seed therefore stays equal, and a
+    dragged ratio survives a resize the same way."""
+    page, sp = _fill_page(qtbot, "overview")
+    scroll, body = _scroll_and_body(page)
+    base = body.sizeHint().height() + 200
+    _resize(qtbot, page, base)
+    assert scroll.verticalScrollBar().maximum() == 0
+    before = sp.sizes()
+    _resize(qtbot, page, base + 400)
+    assert scroll.verticalScrollBar().maximum() == 0
+    after = sp.sizes()
+    grown = [a - b for a, b in zip(after, before, strict=True)]
+    assert all(g > 0 for g in grown), f"both panes must grow: {before} -> {after}"
+    assert abs(grown[0] - grown[1]) <= 1, f"an equal seed must stay equal: {grown}"
+
+
+def test_system_state_surplus_goes_to_the_registry_row(qtbot):
+    """OVW-b: row 2's registry table scrolls internally, so height there is more
+    visible rows; the health card ends its own layout with a stretch, so height
+    there is whitespace inside a card. Without ``setStretchFactor(1, 1)`` Qt
+    shares the surplus in proportion to the current sizes and the health pane
+    took 65 → 196px of a 1400px window that it could not use."""
+    page, sp = _fill_page(qtbot, "system_state")
+    scroll, body = _scroll_and_body(page)
+    base = body.sizeHint().height() + 200
+    _resize(qtbot, page, base)
+    assert scroll.verticalScrollBar().maximum() == 0
+    before = sp.sizes()
+    _resize(qtbot, page, base + 400)
+    assert scroll.verticalScrollBar().maximum() == 0
+    after = sp.sizes()
+    assert after[0] == before[0], f"the health pane keeps its content height: {before} -> {after}"
+    assert after[1] - before[1] == 400, f"row 2 takes the whole surplus: {before} -> {after}"
+
+
+def test_overview_sensor_section_is_named_sensors(qtbot):
+    """ "Sensor Intelligence" over-promised: the section is a table of readings."""
+    page = OverviewPage(state=AppState())
+    qtbot.addWidget(page)
+    header = page.findChild(SectionHeader, "Overview_SectionHeader_sensors")
+    assert header is not None
+    assert header.title() == "SENSORS"  # SectionHeader renders its title uppercase
+    assert "INTELLIGENCE" not in header.title()

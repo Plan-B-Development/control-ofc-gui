@@ -158,25 +158,34 @@ class OverviewPage(QWidget):
         # resize handle — untouched by the drag (DEC-234).
         layout.addLayout(self._build_cards_row())
 
-        # Fan Status ↕ Sensor Intelligence share the remaining height through a
-        # drag handle; each table scrolls inside its own pane. The handle lives
-        # inside the scroll area, so the page keeps its whole-page scroll — a
-        # short window still scrolls rather than clipping, and the handle only
-        # retrades height between the two tables.
+        # Fan Status ↕ Sensors share the page's surplus height through a drag
+        # handle; each table scrolls inside its own pane. The handle lives inside
+        # the scroll area, so the page keeps its whole-page scroll — a short
+        # window still scrolls rather than clipping.
         self._sections_splitter = QSplitter(Qt.Orientation.Vertical)
         self._sections_splitter.setObjectName("Overview_Splitter_sections")
         self._sections_splitter.setChildrenCollapsible(False)
-        # A floor keeps the band usable and gives the handle drag slack on short
-        # windows; sizeHint can still grow past it, so a tall window scrolls the
-        # whole page rather than the splitter filling it (matches the page's
-        # existing top-aligned, scroll-when-tall behaviour).
+        # A floor keeps the band usable and gives the handle drag slack on a
+        # short window, where the page scrolls as a whole rather than clipping.
         self._sections_splitter.setMinimumHeight(420)
         self._sections_splitter.addWidget(self._build_fan_pane())
         self._sections_splitter.addWidget(self._build_sensor_pane())
         self._sections_splitter.setSizes([210, 210])
         style_splitter(self._sections_splitter)
-        layout.addWidget(self._sections_splitter)
-        layout.addStretch(1)
+        # The SPLITTER carries the layout stretch, not a trailing spacer
+        # (DEC-284). A QBoxLayout distributes surplus by stretch factor the
+        # moment ANY factor is non-zero, so the `addStretch(1)` that used to
+        # close this method took every spare pixel and froze the splitter at
+        # 430px whatever the window height — the handle retraded a 430px band
+        # instead of the viewport, and a tall window sat on hundreds of pixels
+        # of empty body. Unlike `system_state_page`, the stretch argument is
+        # load-bearing here and not merely a declaration: the cards row above is
+        # expansive too, so dropping it costs the band 531px at a 1500px window.
+        # Neither pane is vertically expansive, so Qt shares the surplus in
+        # proportion to the current sizes and a dragged (or DEC-245 restored)
+        # ratio survives a resize: measured 0.249 / 0.250 / 0.249 across
+        # 1000 → 1500 → 900px from a 25/75 drag.
+        layout.addWidget(self._sections_splitter, 1)
 
     def _build_fan_pane(self) -> QWidget:
         pane = QWidget()
@@ -204,9 +213,7 @@ class OverviewPage(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(6)
 
-        sensor_header = SectionHeader(
-            "Sensor Intelligence", object_name="Overview_SectionHeader_sensors"
-        )
+        sensor_header = SectionHeader("Sensors", object_name="Overview_SectionHeader_sensors")
         self._sensor_summary_label = QLabel("Sensors: —")
         self._sensor_summary_label.setObjectName("Overview_Label_sensorSummary")
         self._sensor_summary_label.setProperty("class", "CardMeta")

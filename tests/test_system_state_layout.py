@@ -30,6 +30,7 @@ from control_ofc.api.models import (
 )
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.services.layout_state import clamp_restored_sizes
 from control_ofc.ui.components.gauges import RadialGauge
 from control_ofc.ui.pages.system_state_page import SystemStatePage
 
@@ -430,3 +431,37 @@ def test_health_gets_more_width_than_it_used_to(qtbot):
     # Comfortably past the old stretch-2-of-3 share, so a regression to the
     # two-column row fails here rather than passing as "wide enough".
     assert health.width() > pane.width() * 0.9
+
+
+def test_a_restored_layout_never_clips_the_health_pane(qtbot):
+    """Register row 284-a, guarded at the property that actually matters.
+
+    DEC-245 restores a saved *ratio*, and DEC-284 made this page's fresh
+    distribution non-proportional, so a layout dragged before that release comes
+    back as a share of a much larger band. That mismatch is recorded and
+    deliberately unfixed: it costs whitespace, which is cosmetic, and the
+    correction is a design choice on DEC-245's shared surface.
+
+    What must hold whichever way that decision goes is this — no saved value may
+    squeeze the health pane below the height its findings need, because that is
+    exactly the clipping DEC-281 was written to end. Asserted against the pane's
+    own runtime minimum with the busy fixture rendered, so the floor is large
+    enough for the assertion to be capable of failing: with an empty page the
+    content minimum is ~64px and no plausible saved layout can go under it, so
+    the same test on an unpopulated page would pass vacuously.
+    """
+    page = _shown(qtbot, 1400)
+    splitter = page.findChild(QSplitter, "SystemState_Splitter_sections")
+    pane = page.findChild(QWidget, "SystemState_Pane_healthOverview")
+    floor = pane.minimumSizeHint().height()
+    assert floor > 200, f"fixture floor {floor}px is too small for this test to fail"
+    # Saved layouts far past anything a real drag could produce, both directions.
+    for saved in ([48, 10_000], [64, 358], [190, 240], [10_000, 48]):
+        restored = clamp_restored_sizes(saved, splitter.sizes())
+        assert restored is not None, saved
+        splitter.setSizes(restored)
+        qtbot.wait(1)
+        assert splitter.sizes()[0] >= floor, (
+            f"saved {saved} restored to {splitter.sizes()}, clipping the health "
+            f"pane below the {floor}px its content needs"
+        )

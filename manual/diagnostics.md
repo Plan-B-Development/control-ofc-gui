@@ -8,7 +8,7 @@ The application spreads the health and status of every subsystem across four sta
 
 ![Overview page](../screenshots/auto/03_overview.png)
 
-The **Overview** page answers *"is the daemon healthy, what hardware was found, and what are the sensors and fans doing?"*. It opens with two information cards — **Daemon Health** and **Device Discovery** — followed by the **Sensor Intelligence** and **Fan Status** sections.
+The **Overview** page answers *"is the daemon healthy, what hardware was found, and what are the sensors and fans doing?"*. It opens with two information cards — **Daemon Health** and **Device Discovery** — followed by the **Fan Status** and **Sensors** sections, in that order, separated by a drag handle that retrades height between the two tables. The two tables share whatever height the window has spare, so making the window taller shows more rows rather than more empty page; drag the handle to give one table more of that height than the other. (The two sections are documented below in the reverse order, sensors first.)
 
 ### Daemon Health
 
@@ -33,7 +33,7 @@ The **Overview** page answers *"is the daemon healthy, what hardware was found, 
 | **Liquid cooling** | Whether a liquid cooler (AIO) is detected via hwmon, and whether its pump/fan is writable, monitor-only (a read-only driver such as NZXT Kraken2), or not detected. USB-only coolers are out of scope and shown as not detected |
 | **Features** | Summary of write capabilities (OpenFan writes, hwmon writes) |
 
-### Sensor Intelligence
+### Sensors
 
 An 8-column diagnostic table of every temperature sensor reported by the daemon (`#`, Label, Sensor ID, Source class, Chip, Value, Age, Confidence — right-click a row for the full detail dialog). A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · Z GPU · W disk · K stale · J low-confidence · U unavailable · M hidden`.
 

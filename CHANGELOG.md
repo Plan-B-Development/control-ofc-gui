@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **The Overview and System State pages now use the height of your window.** Both
+  ended their layout with an invisible spacer, and a Qt box layout hands its spare
+  space to whatever carries a stretch factor — so the spacer took every spare pixel
+  and the resizable section band was frozen at 430px whether the window was 760px
+  tall or 1400px. On a 1400px-tall window that left **744px of empty page** below the
+  Overview tables while the sensor table itself was scrolling. The band now takes the
+  surplus: measured 430 → 518 / 758 / 1158px at 760 / 1000 / 1400px window heights,
+  with the page bottoming out exactly on its margin. This also fixes the second half
+  of the complaint — the drag handle between **Fan Status** and **Sensors** was
+  retrading a 430px band instead of the viewport, so it barely moved anything; it now
+  has the whole spare height to trade. Short windows are unchanged and still scroll
+  the whole page rather than clipping a table.
+- **System State gives that spare height to the Hardware Registry**, not to the health
+  card. The registry table scrolls inside its own card, so height there is more visible
+  chip rows; the health card sizes itself to its findings, so height there would just be
+  whitespace inside a card. When the health card already needs more room than the window
+  has — the case the page was rebuilt for in 2.46.0 — nothing changes at all: it keeps
+  its full content height and the page scrolls.
+
+### Changed
+- **The Overview page's "Sensor Intelligence" section is now called "Sensors".** It is a
+  table of sensor readings; the old name promised more than the section does.
+
 ## [2.48.0] — 2026-08-26
 
 ### Changed

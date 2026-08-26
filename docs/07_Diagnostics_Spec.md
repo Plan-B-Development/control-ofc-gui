@@ -37,6 +37,14 @@ discovered, and are the sensors fresh?" It carries what the retired
 Diagnostics ▸ Overview / Connection / Controller / Sensors sub-views showed,
 plus the live fan-status table.
 
+The two tables sit in `Overview_Splitter_sections` below the fixed cards row
+and share whatever height the window has spare (DEC-234 handle, DEC-284 fill).
+Both scroll internally, so both gain from extra height and neither is favoured:
+the splitter carries the layout stretch and Qt shares the surplus in proportion
+to the current sizes, which is also what keeps a dragged — or DEC-245 restored —
+ratio intact across a resize. A window too short for the content scrolls as a
+whole page rather than clipping either table.
+
 ### Summary cards
 Summary cards for:
 - overall daemon status
@@ -227,6 +235,16 @@ Below the combined minimum width the row keeps its floors and the page scrolls
 rather than reflowing into a stacked column — the same behaviour every other
 multi-pane page in the app has, and no orientation-swapping breakpoint exists
 (DEC-281).
+
+**Height the window has to spare goes to row 2, not to the health pane
+(DEC-284).** The sections splitter carries the body layout's vertical stretch,
+so the band grows with the window instead of a trailing spacer taking the
+surplus; `setStretchFactor(1, 1)` then routes that surplus to row 2, whose
+registry table scrolls internally and turns extra height into visible rows. The
+health card ends its own layout with a stretch, so height given to the top pane
+past its content is whitespace inside a card. None of this changes the
+constrained case: when the content already needs more than the viewport, the
+band is unchanged and the page scrolls exactly as DEC-281 describes.
 
 ## Logs page
 The **Logs** page provides a readable log/event view for:
