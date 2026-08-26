@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.48.1] — 2026-08-26
 
 ### Fixed
 - **The Overview and System State pages now use the height of your window.** Both
