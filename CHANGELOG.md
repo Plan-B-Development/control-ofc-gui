@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.48.0] — 2026-08-26
 
 ### Changed
 - **Gigabyte IT8689E owners are no longer told the driver fix is unverified — it has
