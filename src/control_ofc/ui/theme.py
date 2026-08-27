@@ -1350,6 +1350,14 @@ def build_stylesheet(t: ThemeTokens) -> str:
         border-radius: 4px;
     }}
 
+    /* DEC-251: a keyboard-navigable list is an interactive control, and the
+       stylesheet above removes Qt's native focus rect. Swap the existing
+       border's colour rather than adding one, so the ring cannot resize the
+       widget. */
+    QListWidget:focus {{
+        border-color: {t.input_border_focus};
+    }}
+
     QListWidget::item:selected {{
         background-color: {t.selected_bg};
     }}

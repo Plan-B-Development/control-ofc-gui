@@ -186,7 +186,8 @@ by role:
   app's primary-action language (see DEC-238), and deliberately distinct from
   `[variant="danger"]:hover`, which already swaps its border to `status_crit`. Focus
   and hover must not look alike.
-- **Inputs** (`QLineEdit`, `QSpinBox`, `QComboBox`) use `input_border_focus`.
+- **Inputs** (`QLineEdit`, `QSpinBox`, `QComboBox`) and **item views** (`QListWidget`)
+  use `input_border_focus`.
 - **Accent-filled controls** (`[variant="primary"]`, `#PrimaryButton`, and the
   `QSlider` handle) ring in `primary_btn_text`, the token that contrasts against
   that fill by construction. The slider was the exception until DEC-264 — it rang
@@ -317,6 +318,15 @@ read the property".
 Both rules are enforced by rendering, not by grepping the stylesheet: a `:focus` rule
 can be present and still draw nothing (an accent ring on an accent fill). See
 `tests/test_theme_system.py::TestKeyboardFocusVisibility`.
+
+**And "the render changed" is not always enough either.** The image-diff sweep is vacuous
+for any control whose focused render differs for some *other* reason: a `QLineEdit` or
+`QPlainTextEdit` draws a blinking caret, and a `QListWidget` draws a current-item
+indicator. Measured — with every `:focus` rule stripped from the built QSS, all of them
+still pass the diff. Those controls are asserted by **painted value** instead (the ring's
+outer edge must actually carry `input_border_focus`), in
+`test_focus_rings_a_diff_cannot_see_paint_the_focus_token`. When adding a control to the
+sweep, check which instrument it needs by deleting its rule and watching the test.
 
 The Theme Editor's "Contrast Warnings" panel lists any pair that falls
 below its threshold. A theme that produces no warnings can be considered

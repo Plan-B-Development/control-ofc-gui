@@ -9,7 +9,7 @@ from control_ofc.services.app_settings_service import AppSettings, AppSettingsSe
 
 def test_default_settings():
     s = AppSettings()
-    assert s.version == 3
+    assert s.version == 4
     assert s.default_startup_page == 0
     assert s.restore_last_page is True
     assert s.theme_name == "Default Dark"
@@ -49,16 +49,17 @@ def test_legacy_display_keys_ignored():
 
 def test_from_dict_handles_missing_keys():
     restored = AppSettings.from_dict({})
-    assert restored.version == 3
+    assert restored.version == 4
     assert restored.default_startup_page == 0
 
 
 def test_dec216_page_index_migration_decrements_shifted_indices():
     """DEC-216: removing the Diagnostics page (index 3) renumbered pages 4-8 down
     to 3-7. A version-1 file's persisted page indices >= 4 decrement by one so
-    restore lands on the same page; the version bumps to 2."""
+    restore lands on the same page; the version bumps to 2 (and on through the
+    later no-op migrations to the current schema version)."""
     m = AppSettings.from_dict({"version": 1, "last_page_index": 6, "default_startup_page": 7})
-    assert (m.last_page_index, m.default_startup_page, m.version) == (5, 6, 3)
+    assert (m.last_page_index, m.default_startup_page, m.version) == (5, 6, 4)
 
 
 def test_dec216_migration_boundaries_and_idempotence():
@@ -71,20 +72,22 @@ def test_dec216_migration_boundaries_and_idempotence():
     b = AppSettings.from_dict({"version": 1, "last_page_index": 4, "default_startup_page": 4})
     assert (b.last_page_index, b.default_startup_page) == (3, 3)
     # A versionless legacy file is treated as v1 and migrates (through v2's
-    # page shift, landing at the current v3).
+    # page shift, landing at the current v4).
     vless = AppSettings.from_dict({"last_page_index": 5})
-    assert (vless.last_page_index, vless.version) == (4, 3)
+    assert (vless.last_page_index, vless.version) == (4, 4)
     # An already-page-migrated (v2) file keeps its indices untouched —
-    # idempotent for DEC-216 — and advances to v3 (DEC-224 key drop).
+    # idempotent for DEC-216 — and advances through v3 (DEC-224 key drop) and
+    # v4 (DEC-285 daemon_startup_delay_secs drop), neither of which transforms
+    # any data.
     v2 = AppSettings.from_dict({"version": 2, "last_page_index": 6, "default_startup_page": 7})
-    assert (v2.last_page_index, v2.default_startup_page, v2.version) == (6, 7, 3)
+    assert (v2.last_page_index, v2.default_startup_page, v2.version) == (6, 7, 4)
 
 
 def test_service_load_creates_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     svc = AppSettingsService()
     svc.load()
-    assert svc.settings.version == 3
+    assert svc.settings.version == 4
     assert svc.settings.theme_name == "Default Dark"
 
 
@@ -441,14 +444,12 @@ def test_from_dict_coerces_wrong_types():
 
 def test_from_dict_rejects_bool_as_int():
     # JSON true must not become 1 for an int field.
-    assert AppSettings.from_dict({"daemon_startup_delay_secs": True}).daemon_startup_delay_secs == 0
+    assert AppSettings.from_dict({"wizard_spindown_seconds": True}).wizard_spindown_seconds == 8
 
 
 def test_from_dict_clamps_ranges():
     assert AppSettings.from_dict({"wizard_spindown_seconds": 99}).wizard_spindown_seconds == 12
     assert AppSettings.from_dict({"wizard_spindown_seconds": 1}).wizard_spindown_seconds == 5
-    assert AppSettings.from_dict({"daemon_startup_delay_secs": 999}).daemon_startup_delay_secs == 30
-    assert AppSettings.from_dict({"daemon_startup_delay_secs": -5}).daemon_startup_delay_secs == 0
     assert AppSettings.from_dict({"chart_default_range_index": -1}).chart_default_range_index == 0
 
 
@@ -537,7 +538,7 @@ def test_dec224_v3_drops_vestige_keys_on_load_and_resave():
         "show_hardware_guidance": False,
     }
     s = AppSettings.from_dict(legacy)
-    assert s.version == 3
+    assert s.version == 4
     assert s.theme_name == "Kept"
     out = s.to_dict()
     for dead in (
@@ -550,8 +551,10 @@ def test_dec224_v3_drops_vestige_keys_on_load_and_resave():
 
 
 def test_dec224_v3_migration_is_idempotent_and_gated():
-    # A v3 file passes through unchanged; a legacy versionless file still gets
-    # the DEC-216 page shift AND lands at v3.
-    assert AppSettings.from_dict({"version": 3}).version == 3
+    # A current file passes through unchanged; a legacy versionless file still
+    # gets the DEC-216 page shift AND lands at the current version.
+    assert AppSettings.from_dict({"version": 4}).version == 4
     m = AppSettings.from_dict({"last_page_index": 6})
-    assert (m.last_page_index, m.version) == (5, 3)
+    assert (m.last_page_index, m.version) == (5, 4)
+    # A v3 file (the previous schema) migrates forward without a data transform.
+    assert AppSettings.from_dict({"version": 3}).version == 4

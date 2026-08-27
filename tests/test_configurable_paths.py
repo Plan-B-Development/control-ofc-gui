@@ -91,12 +91,21 @@ def test_wizard_spindown_roundtrip():
     assert restored.wizard_spindown_seconds == 10
 
 
-def test_startup_delay_roundtrip():
-    """daemon_startup_delay_secs survives to_dict/from_dict serialization."""
-    original = AppSettings(daemon_startup_delay_secs=5)
-    data = original.to_dict()
-    restored = AppSettings.from_dict(data)
-    assert restored.daemon_startup_delay_secs == 5
+def test_startup_delay_is_not_an_app_setting():
+    """DEC-285: the daemon owns `startup.delay_secs`; the GUI keeps no mirror.
+
+    The mirror was the bug. It was seeded from this file at construction, so a
+    failed or absent `GET /config` left the Settings spinner showing a local
+    guess, and Save POSTed that guess unconditionally — writing `runtime.toml`
+    and permanently shadowing the operator's `daemon.toml`.
+    """
+    assert not hasattr(AppSettings(), "daemon_startup_delay_secs")
+    # A legacy file carrying the key must load cleanly and simply drop it, so
+    # the next save writes a clean v4 file (the DEC-224 v3 pattern).
+    restored = AppSettings.from_dict({"daemon_startup_delay_secs": 5, "version": 3})
+    assert not hasattr(restored, "daemon_startup_delay_secs")
+    assert restored.version == 4
+    assert "daemon_startup_delay_secs" not in restored.to_dict()
 
 
 def test_hide_toggles_roundtrip():
@@ -112,6 +121,5 @@ def test_defaults_preserve_current_behaviour():
     """Default AppSettings() must match the documented R65 defaults."""
     s = AppSettings()
     assert s.wizard_spindown_seconds == 8
-    assert s.daemon_startup_delay_secs == 0
     assert s.hide_igpu_sensors is True
     assert s.hide_unused_fan_headers is True

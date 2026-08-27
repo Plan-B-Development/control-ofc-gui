@@ -192,6 +192,16 @@ class ControlCapability:
     # the field, so it defaults False and the action stays hidden rather than
     # offering a button that can only 404.
     openfan_rescan: bool = False
+    # Daemon ≥ 2.23.0 accepts a ``remove`` array on
+    # ``POST /config/profile-search-dirs``, so a stale profile search directory
+    # can be pruned instead of only ever added.
+    #
+    # Gating on this flag is mandatory, and for a stronger reason than
+    # ``openfan_rescan``'s: an older daemon does not 404 a ``remove``, it parses
+    # only ``add`` and **silently ignores the rest**. Probing would read that
+    # partial success as a whole one and tell the user a directory had been
+    # pruned when it had not.
+    profile_search_dir_remove: bool = False
 
 
 @dataclass
@@ -676,16 +686,13 @@ class CalibrationResult:
 
 
 @dataclass
-class StartupDelayResult:
-    """Response from POST /config/startup-delay."""
-
-    updated: bool = False
-    delay_secs: int = 0
-
-
-@dataclass
 class ProfileSearchDirsResult:
-    """Response from POST /config/profile-search-dirs."""
+    """Response from POST /config/profile-search-dirs.
+
+    ``search_dirs`` is the daemon's resulting list — render *that*, never a
+    locally-predicted one: an edit can be partly idempotent (removing an entry
+    that was never registered, re-adding one already present).
+    """
 
     updated: bool = False
     search_dirs: list[str] = field(default_factory=list)
@@ -1645,13 +1652,6 @@ def parse_active_profile(data: dict) -> ActiveProfileInfo | None:
 
 def parse_gpu_fan_reset(data: dict) -> GpuFanResetResult:
     return GpuFanResetResult(gpu_id=data.get("gpu_id", ""), reset=data.get("reset", False))
-
-
-def parse_startup_delay(data: dict) -> StartupDelayResult:
-    return StartupDelayResult(
-        updated=data.get("updated", False),
-        delay_secs=int(data.get("delay_secs", 0)),
-    )
 
 
 def parse_profile_search_dirs(data: dict) -> ProfileSearchDirsResult:

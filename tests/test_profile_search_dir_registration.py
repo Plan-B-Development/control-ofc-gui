@@ -233,7 +233,7 @@ class TestSettingsPageSearchDirError:
         class _RefusingClient:
             socket_path = "/tmp/x.sock"
 
-            def update_profile_search_dirs(self, add):
+            def update_profile_search_dirs(self, add=None, remove=None):
                 raise DaemonError(
                     code="validation_error",
                     message=confinement_msg,
@@ -267,6 +267,52 @@ class TestSettingsPageSearchDirError:
         assert "Failed to update daemon" in text
         # The daemon's own message must reach the user verbatim.
         assert "within your home directory" in text
+
+
+class TestDirectoryChangeRetiresTheOldEntry:
+    """DEC-285: the picker must MOVE the registration, not add a second one.
+
+    ``_sync_profile_search_dir`` has its own tests; this is the **call site**,
+    which is the half that has been missed five separate times in this project
+    (``CLAUDE.md § Hard-won lessons``). A helper with thorough unit tests and
+    nothing asserting the production path calls it is an untested rule — and the
+    production path here is the only way a user ever changes this directory.
+    """
+
+    @staticmethod
+    def _page(app_state, settings_service, client, *, remove_supported=True):
+        from control_ofc.api.models import Capabilities, ControlCapability
+        from control_ofc.ui.pages.settings_page import SettingsPage
+
+        app_state.capabilities = Capabilities(
+            control=ControlCapability(profile_search_dir_remove=remove_supported)
+        )
+        return SettingsPage(state=app_state, settings_service=settings_service, client=client)
+
+    def test_the_picker_sends_add_and_remove_together(
+        self, qapp, app_state, settings_service, tmp_path
+    ):
+        client = MagicMock()
+        page = self._page(app_state, settings_service, client)
+        old_dir = tmp_path / "absent-old"
+        new_dir = tmp_path / "elsewhere"
+
+        page._handle_dir_change("profiles", page._profiles_dir_label, str(new_dir), old_dir)
+
+        client.update_profile_search_dirs.assert_called_once_with(
+            add=[str(new_dir)], remove=[str(old_dir)]
+        )
+
+    def test_an_old_daemon_still_gets_the_add(self, qapp, app_state, settings_service, tmp_path):
+        client = MagicMock()
+        page = self._page(app_state, settings_service, client, remove_supported=False)
+        new_dir = tmp_path / "elsewhere"
+
+        page._handle_dir_change(
+            "profiles", page._profiles_dir_label, str(new_dir), tmp_path / "absent-old"
+        )
+
+        client.update_profile_search_dirs.assert_called_once_with(add=[str(new_dir)], remove=None)
 
 
 class TestSearchDirDisclosure:

@@ -214,7 +214,9 @@ def _as_card_sizes(value: object, default: dict[str, list[int]]) -> dict[str, li
 class AppSettings:
     """GUI preferences. Persisted at ~/.config/control-ofc/app_settings.json."""
 
-    version: int = 3  # v2 = DEC-216 page-index renumber; v3 = DEC-224 vestige-key drop
+    # v2 = DEC-216 page-index renumber; v3 = DEC-224 vestige-key drop;
+    # v4 = daemon_startup_delay_secs dropped (the daemon owns it, DEC-285)
+    version: int = 4
     default_startup_page: int = 0  # PAGE_DASHBOARD
     restore_last_page: bool = True
     demo_on_disconnect: bool = False
@@ -263,7 +265,13 @@ class AppSettings:
 
     # Behaviour settings
     wizard_spindown_seconds: int = 8  # Fan Wizard spin-down timer (5-12s)
-    daemon_startup_delay_secs: int = 0  # Daemon startup delay (0-30s, daemon-side)
+    # NOTE: there is deliberately no `daemon_startup_delay_secs` here (DEC-285).
+    # It was the last daemon-owned key the GUI mirrored locally, and the mirror
+    # was the bug: it was seeded from this file at construction, so a failed or
+    # absent `GET /config` left the spinner showing a local guess, and pressing
+    # Save POSTed it unconditionally — writing `runtime.toml` and permanently
+    # shadowing the operator's `daemon.toml` with a value nobody chose. Do not
+    # reintroduce a field for a setting the daemon is the source of truth for.
     hide_igpu_sensors: bool = True  # Auto-hide iGPU sensors when dGPU present
     hide_unused_fan_headers: bool = True  # Auto-hide fan headers with 0 RPM
 
@@ -353,6 +361,12 @@ class AppSettings:
         # next save persists a clean v3 file. Idempotent.
         if raw_version < 3:
             raw_version = 3
+        # DEC-285 (v4): `daemon_startup_delay_secs` dropped — the daemon owns
+        # that setting and `GET /config` reports it. Same shape as the v3
+        # migration: no data transform, `from_dict` simply no longer reads the
+        # key, so the next save writes a clean v4 file. Idempotent.
+        if raw_version < 4:
+            raw_version = 4
         return AppSettings(
             version=raw_version,
             default_startup_page=startup_page,
@@ -377,9 +391,6 @@ class AppSettings:
             themes_dir_override=_as_str(data.get("themes_dir_override"), ""),
             export_default_dir=_as_str(data.get("export_default_dir"), ""),
             wizard_spindown_seconds=_as_int(data.get("wizard_spindown_seconds"), 8, lo=5, hi=12),
-            daemon_startup_delay_secs=_as_int(
-                data.get("daemon_startup_delay_secs"), 0, lo=0, hi=30
-            ),
             hide_igpu_sensors=_as_bool(data.get("hide_igpu_sensors"), True),
             hide_unused_fan_headers=_as_bool(data.get("hide_unused_fan_headers"), True),
             card_size=_as_enum(data.get("card_size"), _CARD_SIZES, "comfortable"),

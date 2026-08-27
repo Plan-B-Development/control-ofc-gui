@@ -70,22 +70,38 @@ class TestImportMerge:
         assert svc.settings.window_geometry == [11, 22, 333, 444]  # local preserved
         assert svc.settings.profiles_dir_override == "/local/x"  # local preserved
 
-    def test_import_pushes_startup_delay_with_client(self, tmp_path, qtbot, monkeypatch):
-        class _RecordingClient:
-            def __init__(self):
-                self.calls = []
+    def test_import_writes_nothing_to_the_daemon(self, tmp_path, qtbot, monkeypatch):
+        """DEC-285 (M6): an imported config must not reconfigure the daemon.
 
-            def set_startup_delay(self, delay_secs):
-                self.calls.append(delay_secs)
+        Import used to POST the file's `daemon_startup_delay_secs` to whatever
+        daemon this machine is running — so a config shared between two people
+        carried one machine's daemon setting onto the other's. That is the
+        DEC-140 concern (someone else's state changing yours) reaching past
+        window geometry to a daemon-owned key. The field is gone from
+        `AppSettings` entirely, which is why no `MACHINE_SPECIFIC_KEYS` entry is
+        needed for it.
 
-        client = _RecordingClient()
-        page, _svc = _make_page(tmp_path, qtbot, monkeypatch, client=client)
+        The stub raises on *any* attribute so a future daemon write added to the
+        import path fails loudly here rather than shipping.
+        """
+
+        class _NoWritesClient:
+            def __getattr__(self, name):
+                raise AssertionError(f"import must not call the daemon: {name}")
+
+        page, _svc = _make_page(tmp_path, qtbot, monkeypatch, client=_NoWritesClient())
         imp = tmp_path / "imp.json"
         imp.write_text(
-            json.dumps({"export_version": 1, "settings": {"daemon_startup_delay_secs": 7}})
+            json.dumps(
+                {
+                    "export_version": 1,
+                    "settings": {"daemon_startup_delay_secs": 7, "theme_name": "Imported"},
+                }
+            )
         )
-        _drive_import(page, monkeypatch, imp)
-        assert client.calls == [7]
+        _drive_import(page, monkeypatch, imp)  # must not raise
+        assert _svc.settings.theme_name == "Imported", "the portable half still applies"
+        assert not hasattr(_svc.settings, "daemon_startup_delay_secs")
 
 
 class TestImportRobustness:

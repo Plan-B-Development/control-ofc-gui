@@ -31,7 +31,6 @@ from control_ofc.api.models import (
     ProfileSearchDirsResult,
     SensorHistory,
     SensorReading,
-    StartupDelayResult,
     SuperIoReport,
     parse_active_profile,
     parse_capabilities,
@@ -55,7 +54,6 @@ from control_ofc.api.models import (
     parse_profile_search_dirs,
     parse_sensor_history,
     parse_sensors,
-    parse_startup_delay,
     parse_status,
     parse_superio_report,
 )
@@ -312,17 +310,45 @@ class DaemonClient:
         )
         return parse_profile_activate(self._post("/profile/activate", json=payload))
 
-    def set_startup_delay(self, delay_secs: int) -> StartupDelayResult:
-        """POST /config/startup-delay — set daemon startup delay (takes effect on restart)."""
-        return parse_startup_delay(
+    def set_startup_delay(self, delay_secs: int) -> ConfigWriteResult:
+        """POST /config/startup-delay — set daemon startup delay (takes effect on restart).
+
+        Parsed with the shared DEC-243 setter parser so this key can go through
+        the Settings page's single ``_write_daemon_key`` write path like every
+        other daemon config key. A daemon older than 2.23.0 omits ``key`` and
+        ``value`` from its reply (it predates that shape) — harmless, because the
+        caller supplies the key and only reads ``note``.
+        """
+        return parse_config_write(
             self._post("/config/startup-delay", json={"delay_secs": delay_secs})
         )
 
-    def update_profile_search_dirs(self, add: list[str]) -> ProfileSearchDirsResult:
-        """POST /config/profile-search-dirs — add directories to daemon's profile search path."""
-        return parse_profile_search_dirs(
-            self._post("/config/profile-search-dirs", json={"add": add})
-        )
+    def update_profile_search_dirs(
+        self,
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+    ) -> ProfileSearchDirsResult:
+        """POST /config/profile-search-dirs — edit the daemon's profile search path.
+
+        Pass ``add`` and/or ``remove``; at least one is required. The daemon
+        applies removals first, so ``add=[new], remove=[old]`` is a single
+        "move" — which is what stops the list growing by one dead entry every
+        time the user repoints their profiles directory.
+
+        ``remove`` requires daemon ≥ 2.23.0. **Gate on
+        ``capabilities.control.profile_search_dir_remove`` before sending it**:
+        an older daemon does not 404, it parses only ``add`` and silently
+        ignores the rest, so an ungated call reports success having pruned
+        nothing.
+        """
+        if add is None and remove is None:
+            raise ValueError("update_profile_search_dirs requires add and/or remove")
+        payload: dict[str, list[str]] = {}
+        if add is not None:
+            payload["add"] = add
+        if remove is not None:
+            payload["remove"] = remove
+        return parse_profile_search_dirs(self._post("/config/profile-search-dirs", json=payload))
 
     def get_daemon_config(self) -> DaemonConfig:
         """GET /config — the daemon's effective configuration (DEC-243).

@@ -1138,6 +1138,22 @@ class TestKeyboardFocusVisibility:
         return QLineEdit("sample", parent)
 
     @staticmethod
+    def _list(parent):
+        """A keyboard-navigable list — the Settings profile-search-dir editor.
+
+        Carries an item, because that is the shape it ships in. MEASURED: with
+        the `QListWidget:focus` rule deleted, focused and unfocused still differ
+        — Qt paints a current-item indicator when the list takes focus — so the
+        image diff is vacuous for it, exactly as the caret makes it vacuous for
+        a QLineEdit. It is asserted by painted value instead.
+        """
+        from PySide6.QtWidgets import QListWidget
+
+        w = QListWidget(parent)
+        w.addItems(["/etc/control-ofc/profiles"])
+        return w
+
+    @staticmethod
     def _focused_perimeter(make):
         """Render *make*'s widget focused; return the colours on its outer edge."""
         from PySide6.QtWidgets import QLineEdit, QWidget
@@ -1160,12 +1176,13 @@ class TestKeyboardFocusVisibility:
         edge += [(0, y) for y in range(h)] + [(w - 1, y) for y in range(h)]
         return {image.pixelColor(x, y).name() for x, y in edge}
 
-    def test_text_entry_focus_ring_paints_the_focus_token(self, restore_app_theme):
-        """The sweeps below compare images and so cannot see a lost focus ring
-        on a text entry: a QLineEdit or QPlainTextEdit renders a blinking CARET
-        when focused, so focused and unfocused differ whether or not any
-        ``:focus`` rule survives. Measured — strip every ``:focus`` rule from the
-        built QSS and both subjects still pass the diff.
+    def test_focus_rings_a_diff_cannot_see_paint_the_focus_token(self, restore_app_theme):
+        """The sweeps below compare images and so cannot see a lost focus ring on
+        a control that changes for some OTHER reason when focused. A QLineEdit or
+        QPlainTextEdit renders a blinking CARET; a QListWidget paints a
+        current-item indicator. Either way focused and unfocused differ whether or
+        not any ``:focus`` rule survives. Measured — strip every ``:focus`` rule
+        from the built QSS and every subject here still passes the diff.
 
         That is exactly the trap DEC-273 fixed one pseudo-class over, and
         ``docs/03`` asserts these rules are "enforced by rendering". So assert the
@@ -1202,11 +1219,12 @@ class TestKeyboardFocusVisibility:
                 ("QPlainTextEdit", self._focused_perimeter(_plain_text)),
                 ("QSpinBox", self._focused_perimeter(lambda p: QSpinBox(p))),
                 ("QDoubleSpinBox", self._focused_perimeter(lambda p: QDoubleSpinBox(p))),
+                ("QListWidget", self._focused_perimeter(self._list)),
             )
             if expected not in painted
         }
         assert not missing, (
-            f"a focused text entry must paint its ring in input_border_focus "
+            f"a focused control must paint its ring in input_border_focus "
             f"({expected}); these painted none of it on their outer edge, so the "
             f"ring is absent or has been defeated on specificity: {missing}"
         )
@@ -1229,6 +1247,10 @@ class TestKeyboardFocusVisibility:
             "QCheckBox": self._checkbox,
             "QComboBox": self._combo,
             "QLineEdit": self._line_edit,
+            # NOT QListWidget — measured vacuous here: a focused list draws a
+            # current-item indicator, so the images differ with the `:focus`
+            # rule deleted. It is asserted by painted VALUE in
+            # `test_focus_rings_a_diff_cannot_see_paint_the_focus_token`.
         }
 
         invisible = []
@@ -1623,6 +1645,9 @@ class TestKeyboardFocusContrast:
         "QComboBox:focus": "input_bg",
         "QSlider::handle:horizontal:focus": "accent_primary",
         "QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus": "input_bg",
+        # The list is filled with surface_1, not input_bg — Qt draws the border
+        # inside the widget rect, so the adjacent colour is the list's own fill.
+        "QListWidget:focus": "surface_1",
         "QPlainTextEdit:focus": "code_block_bg",
         "QCheckBox:focus, QRadioButton:focus": "app_bg",
         "QTabBar::tab:focus": "surface_1",
@@ -2325,6 +2350,7 @@ class TestAccessibleNames:
         # scan quietly under-reporting, and the staleness check below fails if any
         # entry stops matching.
         indirectly_named = {
+            "ui/pages/settings_page.py:_startup_delay_spin",
             "ui/pages/settings_page.py:_poll_interval_spin",
             "ui/pages/settings_page.py:_serial_port_edit",
             "ui/pages/settings_page.py:_serial_timeout_spin",

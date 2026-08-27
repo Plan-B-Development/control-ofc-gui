@@ -26,7 +26,6 @@ Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-pag
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
 | **Fan Wizard spin-down timer** | 8 seconds | 5-12s | How long each fan is stopped during the Fan Wizard identification test. Longer gives more time to observe which fan changed |
-| **Daemon startup delay** | 0 seconds | 0-30s | Tells the daemon to wait this many seconds after boot before detecting hardware. Useful if your fan controller initializes slowly. This setting is sent to the daemon and requires a daemon restart to take effect |
 | **Auto-hide integrated GPU sensors** | On | — | When both an integrated GPU (iGPU) and a discrete GPU (dGPU) are present, hide the less-useful iGPU temperature sensors from the Dashboard and the Overview page's sensor lists |
 | **Auto-hide unused fan headers** | On | — | Hide motherboard fan headers that report 0 RPM, indicating no fan is plugged into that header |
 
@@ -40,7 +39,33 @@ These let you override where the application stores its data. Each row has a **B
 | **Themes** | `~/.config/control-ofc/themes/` | Where custom theme files are stored |
 | **Default export** | Home directory | The default save location when exporting settings or support bundles |
 
-When you change the Profiles directory, the GUI also registers the new path with the daemon so it can find profiles for headless activation.
+When you change the Profiles directory, the GUI registers the new path with the daemon so it can find profiles for headless activation — and, on `control-ofc-daemon` ≥ v2.23.0, retires the old one in the same step so the daemon's search path does not collect a dead entry every time you move the directory. The daemon's full search path is shown and editable under **Daemon Configuration** below.
+
+## Daemon Configuration
+
+Settings that belong to the daemon rather than to this application. Every value shown here is read from the daemon, never guessed locally, and each row says where its value came from (`set in daemon.toml`, or `set here` when a change made from this card is shadowing the admin file) and whether a daemon restart is still owed. Changes save as you make them — there is no separate Save step for this card, and moving through the card without editing anything writes nothing.
+
+| Setting | Range | Description |
+|---------|-------|-------------|
+| **Startup delay** | 0-30s | Tells the daemon to wait this many seconds after boot before detecting hardware. Useful if your fan controller initialises slowly. Takes effect on the next daemon restart |
+| **Poll interval** | 250-2000 ms | How often the daemon reads your hardware |
+| **Serial port** | a `/dev/tty…` path | The OpenFan device path. Leave blank to auto-detect |
+| **Serial timeout** | 50-1000 ms | Read timeout for the OpenFan device |
+| **Super-I/O port probe** | on/off | Opt-in active chip detection. The switch is only half the requirement — it also needs a root systemd drop-in, and the row says so |
+| **NVIDIA telemetry** | on/off | Opt-in read-only NVML. Same drop-in caveat |
+
+### Profile search directories
+
+The list of directories the daemon looks in for profile files. Unlike everything else on this card, changes here apply **immediately** — no restart.
+
+- **Add…** registers another directory with the daemon.
+- **Remove** stops the daemon looking in the selected one.
+
+Two entries cannot be removed, and the button is disabled rather than failing: `/etc/control-ofc/profiles` (it holds system-installed profiles), and the last remaining directory (the daemon would then be unable to find any profile at all). On a daemon older than v2.23.0, **Remove** is unavailable entirely — that version is the one that added the ability to prune an entry.
+
+The card also shows the daemon's admin config path, its runtime config path, its socket and its state directory. Those four are deliberately read-only: a bad socket path would lock every client out of the daemon permanently.
+
+Requires `control-ofc-daemon` ≥ v2.16.0; on an older daemon the whole card stands down rather than showing values it would have to invent.
 
 ## Preferred Sensors
 
@@ -96,7 +121,7 @@ Machine-specific state is deliberately **excluded** so the file is safe to share
 
 1. The file is validated; a malformed or unsupported file is rejected with a clear message and nothing changes
 2. A timestamped **backup** of your current settings is created automatically
-3. Imported preferences are **merged** onto your current settings — your local machine-specific state (window size, data-directory overrides) is preserved, and directory overrides plus the daemon startup delay are applied immediately
+3. Imported preferences are **merged** onto your current settings — your local machine-specific state (window size, data-directory overrides) is preserved, and directory overrides are applied immediately. An import never changes your daemon's own configuration: daemon settings live on the daemon and are edited in the **Daemon Configuration** card, so a config shared with you cannot reconfigure your daemon
 4. Profiles from the export are written to disk (you are asked before overwriting existing ones); invalid profiles are skipped and counted
 5. Custom themes are copied to your themes directory; a theme containing an invalid colour is skipped
 

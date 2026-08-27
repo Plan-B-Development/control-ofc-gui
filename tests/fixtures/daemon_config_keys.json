@@ -1,0 +1,15 @@
+{
+  "description": "The declared GET /config key surface (DEC-243, extended by DEC-285). Every key the daemon reports, with the mutability it reports it under. Pinned on the daemon side by daemon/tests/ipc_integration.rs::get_config_key_set_and_mutability_are_pinned, which fails if this list and the handler disagree; pinned on this side by tests/test_daemon_config_coverage.py, which fails if a mutable key has no Settings control. Adding a daemon config key means updating both, plus docs/08 § Config management.",
+  "min_daemon_version": "2.16.0",
+  "keys": [
+    { "key": "profiles.search_dirs", "mutable": true },
+    { "key": "startup.delay_secs", "mutable": true },
+    { "key": "polling.poll_interval_ms", "mutable": true },
+    { "key": "serial.port", "mutable": true },
+    { "key": "serial.timeout_ms", "mutable": true },
+    { "key": "detection.allow_port_probe", "mutable": true },
+    { "key": "detection.enable_nvidia_telemetry", "mutable": true },
+    { "key": "ipc.socket_path", "mutable": false },
+    { "key": "state.state_dir", "mutable": false }
+  ]
+}

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from control_ofc.api.errors import DaemonError
 from control_ofc.paths import config_dir, profiles_dir, set_path_overrides, themes_dir
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 from control_ofc.ui.pages.settings_page import SettingsPage
@@ -55,21 +54,34 @@ def test_set_path_overrides_rejects_invalid_accepts_valid(tmp_path):
         set_path_overrides()  # cleanup
 
 
-# ── P2-J: daemon config 503 (persistence_failed) is handled, not crashed ──────
+# ── P2-J → DEC-285: "Save Changes" writes nothing to the daemon ──────────────
+#
+# P2-J made Save survive a `set_startup_delay` 503. DEC-285 removed the call
+# instead: `startup.delay_secs` is daemon-owned and is now written only by its
+# own control on the Daemon Configuration card, behind `_write_daemon_key`'s
+# no-op guard. The 503 path is still covered — by `_write_daemon_key`'s error
+# handling in `test_daemon_config_dec243.py` — and the stronger invariant is
+# that Save cannot reach the daemon at all.
 
 
-def test_save_app_settings_handles_daemon_persistence_error(tmp_path, qtbot, monkeypatch):
+def test_save_app_settings_writes_nothing_to_the_daemon(tmp_path, qtbot, monkeypatch):
+    """Save POSTing a daemon key unconditionally is the defect this removes.
+
+    It bypassed `_write_daemon_key`'s guard, so pressing Save once wrote
+    `startup.delay_secs` into `runtime.toml`, flipped its `source` to "runtime",
+    and permanently shadowed the operator's `daemon.toml` with a value nobody
+    had chosen.
+    """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     set_path_overrides()
     client = MagicMock()
-    client.set_startup_delay.side_effect = DaemonError(
-        code="persistence_failed", message="cannot persist runtime config"
-    )
     svc = AppSettingsService()
     svc.load()
     page = SettingsPage(settings_service=svc, client=client)
     qtbot.addWidget(page)
-    page._save_app_settings()  # must not raise
-    assert "not synced" in page._status_label.text().lower()
-    client.set_startup_delay.assert_called_once()
+
+    page._save_app_settings()
+
+    assert client.mock_calls == [], f"Save must not call the daemon: {client.mock_calls}"
+    assert "saved" in page._status_label.text().lower()
     set_path_overrides()

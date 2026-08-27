@@ -9,11 +9,10 @@ from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError
 from control_ofc.api.models import (
     ProfileSearchDirsResult,
-    StartupDelayResult,
     parse_capabilities,
+    parse_config_write,
     parse_hardware_diagnostics,
     parse_profile_search_dirs,
-    parse_startup_delay,
 )
 
 # ---------------------------------------------------------------------------
@@ -96,29 +95,42 @@ class TestHandle:
 
 
 # ---------------------------------------------------------------------------
-# parse_startup_delay
+# POST /config/startup-delay — parsed by the shared DEC-243 setter parser
+#
+# `parse_startup_delay` / `StartupDelayResult` were retired in DEC-285. The
+# route predated the DEC-243 setter shape and answered with only `delay_secs`,
+# which is why it needed its own parser — and why it could not go through the
+# Settings page's single `_write_daemon_key` write path. The daemon now also
+# sends `key`/`value`, so one parser covers every `POST /config/*`.
 # ---------------------------------------------------------------------------
 
 
 class TestParseStartupDelay:
-    def test_parse_startup_delay(self):
-        data = {"updated": True, "delay_secs": 15}
-        result = parse_startup_delay(data)
-        assert isinstance(result, StartupDelayResult)
+    def test_new_daemon_reply_carries_the_shared_setter_shape(self):
+        result = parse_config_write(
+            {
+                "updated": True,
+                "key": "startup.delay_secs",
+                "value": 15,
+                "delay_secs": 15,
+                "note": "Takes effect on next daemon restart",
+            }
+        )
         assert result.updated is True
-        assert result.delay_secs == 15
+        assert result.key == "startup.delay_secs"
+        assert result.value == 15
+        assert "restart" in result.note
 
-    def test_parse_startup_delay_defaults(self):
-        result = parse_startup_delay({})
-        assert result.updated is False
-        assert result.delay_secs == 0
-
-    def test_parse_startup_delay_coerces_to_int(self):
-        """The parser explicitly casts delay_secs to int."""
-        data = {"updated": True, "delay_secs": 10.0}
-        result = parse_startup_delay(data)
-        assert result.delay_secs == 10
-        assert isinstance(result.delay_secs, int)
+    def test_pre_2_23_0_reply_still_parses(self):
+        """An older daemon omits key/value. The caller supplies the key and only
+        reads `note`, so the write path stays correct — it must not raise."""
+        result = parse_config_write(
+            {"updated": True, "delay_secs": 15, "note": "Takes effect on next daemon restart"}
+        )
+        assert result.updated is True
+        assert result.key == ""
+        assert result.value is None
+        assert "restart" in result.note
 
 
 # ---------------------------------------------------------------------------

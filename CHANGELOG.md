@@ -1,5 +1,69 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Settings now shows and edits the daemon's profile search directories.** This
+  is the list the daemon actually looks in for profile files, and until now the
+  GUI fetched it and threw it away. Its only surface was a sentence on the Path
+  Management card printing *your* profiles directory — a different thing, and
+  wrong whenever the two had diverged, which was always: the daemon endpoint was
+  add-only, the GUI re-registered on every connect, and the directory picker
+  added another entry every time you changed it. Change your profiles folder
+  three times and the daemon was left searching three of them, with nothing in
+  any UI to say so and no way to prune one short of hand-editing a root-owned
+  file. The Daemon Configuration card now lists the live path with **Add…** and
+  **Remove**.
+- **Changing your profiles directory now retires the old registration.** The
+  picker sends the add and the removal as one request, so the daemon's search
+  path stops collecting a dead entry every time you move the folder. Needs
+  `control-ofc-daemon` v2.23.0; against an older daemon the new directory is
+  still registered and the old entry still lingers, and **Remove** is disabled
+  with a tooltip saying why — an older daemon silently ignores a removal rather
+  than refusing it, so offering the button would have reported a success that
+  did not happen.
+- **Remove says why it is unavailable** rather than failing after the fact. Four
+  entries cannot be removed and each explains itself in the button's tooltip:
+  the system profile directory, the last remaining directory, the daemon's own
+  profile store, and this application's own profiles directory — that last one
+  because it is re-registered on every connect, so removing it would appear to
+  work and then quietly come back. Change that one under **Path Management**,
+  which retires the old registration in the same step.
+
+### Changed
+- **The daemon startup delay moved from Operational Behavior to Daemon
+  Configuration**, where the rest of the daemon's settings live. It now saves
+  when you change it, like its neighbours, rather than on **Save Changes** — and
+  it gets the same "set in daemon.toml" / "restart required" annotation they
+  have, which it never had before.
+- **"Save Changes" no longer writes anything to the daemon.** It used to push
+  the startup delay on every press whether or not you had touched it, which
+  wrote the value into the daemon's runtime config and permanently shadowed the
+  system administrator's `daemon.toml` with a number nobody had chosen. Merely
+  opening Settings and pressing Save was enough to do it.
+- **Importing a shared config no longer reconfigures your daemon.** The startup
+  delay was carried in exported settings and pushed to whatever daemon the
+  importing machine was running, so someone else's config could change yours.
+  The setting is no longer stored by the GUI at all (settings schema v4) — it is
+  read from and written to the daemon directly. Nothing is lost: your daemon
+  keeps whatever delay it already had.
+
+### Fixed
+- **Changing your profiles directory can no longer fail to register the new
+  one.** The add and the removal travel as one request, and the daemon rejects
+  the whole request if it will not accept the removal — which it will not if your
+  previous profiles directory was outside your home. Since the profile files have
+  already been moved by that point, the daemon would have been left searching
+  only the old, now-empty location. It now falls back to registering the new
+  directory on its own and tells you the old entry is still there, so you can
+  remove it yourself.
+- The Path Management disclosure no longer reads as though it were reporting the
+  daemon's search path while actually printing the GUI's own directory. It now
+  says only what this side knows, and points at the card that shows the real
+  list.
+- A focused list gets a visible keyboard focus ring (WCAG 2.4.7), like every
+  other control.
+
 ## [2.48.1] — 2026-08-26
 
 ### Fixed

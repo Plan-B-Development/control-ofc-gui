@@ -29,7 +29,6 @@ Implemented settings:
   Dismissing it flips the key to `false`; before DEC-237 nothing could flip it
   back, unlike its GPU counterpart directly above.
 - Fan Wizard spin-down seconds
-- daemon startup delay (pushed to the daemon on save and on import)
 - auto-hide iGPU sensors / auto-hide unused fan headers (applied live)
 - configurable data directories (profiles / themes / export)
 
@@ -167,6 +166,23 @@ them, and it does so without a privileged helper. DEC-243 therefore surfaces
 Daemon Configuration card, each labelled with its source and a restart-required
 state (`GET /config` reports both).
 
+**Extended by DEC-285.** The card is now the home of *every* daemon key the
+daemon reports as `mutable: true`, and that completeness is enforced rather than
+intended — `tests/test_daemon_config_coverage.py` fails if a mutable key has no
+control, has one that does not exist on the page, or has one whose write is not
+wired. Two keys moved under that rule:
+
+- **`startup.delay_secs`** was on the Operational Behavior card, driven by an
+  `AppSettings` mirror and POSTed unconditionally on Save and on Import. It is a
+  daemon-owned key, so it belongs here, behind the same no-op-write guard as its
+  siblings; the mirror was deleted (settings schema v4). The old arrangement was
+  not merely untidy: pressing Save once wrote the key into `runtime.toml` and
+  permanently shadowed the operator's `daemon.toml` with a value nobody chose.
+- **`profiles.search_dirs`** had no surface at all. It gets a real list editor
+  (Add / Remove) rather than a single-value row, and it is the one key that
+  applies **live**, so the card renders the daemon's `running_value` rather than
+  its on-disk `value`.
+
 Still **not** editable, and not merely for want of daemon support:
 
 - **daemon IPC socket path** — a bad value permanently locks every client,
@@ -222,8 +238,8 @@ These belong to the daemon runtime/config:
 - importing malformed config/theme files must fail clearly with recoverable messaging
 - **`AppSettings.from_dict` is the trust boundary (DEC-137):** it never raises.
   Every field is type-checked and coerced — wrong types fall back to the field
-  default, numeric fields are clamped to their widget ranges (e.g. startup delay
-  0–30 s, wizard spin-down 5–12 s), `card_size` is an enum, `window_geometry`
+  default, numeric fields are clamped to their widget ranges (e.g. wizard
+  spin-down 5–12 s), `card_size` is an enum, `window_geometry`
   must be four sane ints, and `series_colors` keeps only valid hex entries. A
   non-dict payload yields all-defaults rather than a crash on the next launch.
 - **Theme tokens are hex-only (DEC-142):** colour tokens (and every

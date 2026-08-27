@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMessageBox,
     QScrollArea,
     QSpinBox,
@@ -81,7 +82,6 @@ SETTINGS_FIELD_WIDGETS: dict[str, str] = {
     "chart_default_range_index": "Settings_Combo_chartRange",
     # Operational Behavior
     "wizard_spindown_seconds": "Settings_Spin_wizardSpindown",
-    "daemon_startup_delay_secs": "Settings_Spin_startupDelay",
     "hide_igpu_sensors": "Settings_Check_hideIgpu",
     "hide_unused_fan_headers": "Settings_Check_hideUnusedFans",
     # Path Management
@@ -104,6 +104,71 @@ SETTINGS_FIELD_WIDGETS: dict[str, str] = {
     # Card Layout
     "controls_card_sizes": "Settings_Btn_resetCardSizes",
 }
+
+
+# DEC-285: the daemon-owned half of the same guarantee.
+#
+# ``GET /config`` reports a ``mutable`` flag per key. Every mutable key must have
+# a control on this page — otherwise the daemon exposes a setting the GUI can
+# neither show nor change. That is not hypothetical: ``profiles.search_dirs`` was
+# mutable from the day the endpoint shipped, the GUI fetched it and discarded it,
+# and meanwhile ``services/polling.py`` added an entry to it on every connect and
+# the directory picker added another on every change. The list only ever grew,
+# was displayed nowhere, and could be pruned only by hand-editing a root-owned
+# ``runtime.toml``.
+#
+# ``tests/test_daemon_config_coverage.py`` asserts this map against
+# ``tests/fixtures/daemon_config_keys.json`` — the declared ``GET /config``
+# surface, pinned on the daemon side by
+# ``get_config_key_set_and_mutability_are_pinned`` — and resolves every
+# objectName on a constructed page.
+DAEMON_CONFIG_WIDGETS: dict[str, str] = {
+    "profiles.search_dirs": "Settings_List_profileSearchDirs",
+    "startup.delay_secs": "Settings_Spin_startupDelay",
+    "polling.poll_interval_ms": "Settings_Spin_pollInterval",
+    "serial.port": "Settings_Edit_serialPort",
+    "serial.timeout_ms": "Settings_Spin_serialTimeout",
+    "detection.allow_port_probe": "Settings_Check_allowPortProbe",
+    "detection.enable_nvidia_telemetry": "Settings_Check_nvidiaTelemetry",
+}
+
+# Keys the daemon reports as ``mutable: false`` **by design** (DEC-243): a bad
+# socket path locks every client out permanently, and moving the state dir
+# orphans ``runtime.toml`` and the profile store. Still shown — read-only, in one
+# shared label — because they are diagnostic.
+DAEMON_CONFIG_READONLY_WIDGETS: dict[str, str] = {
+    "ipc.socket_path": "Settings_Label_daemonPaths",
+    "state.state_dir": "Settings_Label_daemonPaths",
+}
+
+#: The admin-owned system profile directory. The daemon always keeps it in the
+#: search path and refuses to prune it (``config::SYSTEM_PROFILE_DIR``), so the
+#: Remove button is disabled for it rather than offering an action that can only
+#: come back as a 400.
+_SYSTEM_PROFILE_DIR = "/etc/control-ofc/profiles"
+
+
+def _same_dir(a: str, b: str) -> bool:
+    """Whether two directory strings name the same directory.
+
+    Resolved, not compared literally. The daemon persists whatever raw spelling
+    the caller sent, so a trailing slash, a `.` segment or a symlinked spelling
+    all describe the same directory under different strings — and a literal
+    comparison of two of them silently answers "different". That matters where
+    this is used: the Settings page blocks removing *this* application's own
+    profiles directory, because `services/polling.py` re-registers it on the next
+    connect and the removal would undo itself. A guard that misses on a spelling
+    difference is a guard that lets exactly that happen.
+
+    `Path.resolve()` is non-strict, so a directory that no longer exists still
+    normalises; a symlink loop or an unreadable parent raises `OSError`, and
+    falling back to string equality there is the conservative answer (it can only
+    fail to block, never block wrongly).
+    """
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return a == b
 
 
 def _safe_import_name(name: str, dest_dir: Path) -> str | None:
@@ -183,6 +248,10 @@ class SettingsPage(QWidget):
         # ``_prefs_loaded`` gates the one-time lazy fetch on first show.
         self._populating_prefs = False
         self._prefs_loaded = False
+        # Set by `_sync_profile_search_dir` when the new profiles directory was
+        # registered but the old one could not be retired, so the status line can
+        # say so instead of reporting an unqualified success.
+        self._stale_search_dir = ""
 
         self.setObjectName("Settings_Root")
 
@@ -399,20 +468,11 @@ class SettingsPage(QWidget):
             )
         )
 
-        self._startup_delay_spin = QSpinBox()
-        self._startup_delay_spin.setObjectName("Settings_Spin_startupDelay")
-        self._startup_delay_spin.setRange(0, 30)
-        self._startup_delay_spin.setSuffix(" seconds")
-        self._startup_delay_spin.setToolTip(
-            "Delay before daemon begins device detection after boot (takes effect on restart)"
-        )
-        v.addLayout(
-            self._setting_row(
-                "Daemon startup delay",
-                "Delay before device detection after boot (restart to apply)",
-                self._startup_delay_spin,
-            )
-        )
+        # NOTE: the daemon startup delay used to sit here, driven by an
+        # AppSettings mirror. It is a daemon-owned key and now lives on the
+        # Daemon Configuration card behind `_write_daemon_key` (DEC-285) — see
+        # `_DAEMON_ROWS`. Do not move it back: on this card it bypassed the
+        # no-op-write guard and Save POSTed it unconditionally.
 
         self._hide_igpu_cb = ToggleSwitch()
         self._hide_igpu_cb.setObjectName("Settings_Check_hideIgpu")
@@ -488,9 +548,10 @@ class SettingsPage(QWidget):
 
         # Disclosure: ``services/polling.py`` registers the profiles directory
         # with the daemon on first poll and again on every reconnect, so the
-        # daemon can discover GUI-authored profiles. The call is additive and
-        # deduplicated daemon-side, but it is a write to daemon config that the
-        # operator otherwise never sees anywhere in the UI.
+        # daemon can discover GUI-authored profiles. That is a write to daemon
+        # config the operator would otherwise never see. The *daemon's* actual
+        # list now has a real editor on the Daemon Configuration card (DEC-285);
+        # this sentence discloses the automatic write and points at it.
         self._search_dir_note = QLabel()
         self._search_dir_note.setObjectName("Settings_Label_searchDirNote")
         self._search_dir_note.setWordWrap(True)
@@ -499,12 +560,20 @@ class SettingsPage(QWidget):
         return card
 
     def _refresh_search_dir_note(self) -> None:
-        """Update the profile-search-dir disclosure to match the current path."""
+        """Update the profile-search-dir disclosure to match the current path.
+
+        Deliberately says only what this side knows. It used to read as though
+        it were reporting the daemon's search path while printing the GUI's own
+        directory, which is a different thing and was wrong whenever the two had
+        diverged — and they always had, because every change added an entry and
+        nothing ever removed one. The daemon's real list is on the Daemon
+        Configuration card, read from ``GET /config``.
+        """
         path = self._profiles_dir_label.text() or str(profiles_dir())
         self._search_dir_note.setText(
-            f"Automatically registered with the daemon as a profile search "
-            f"directory: {path}. The GUI re-registers this on connect and on "
-            f"every reconnect."
+            f"This directory is registered with the daemon as a profile search "
+            f"directory ({path}), on connect and on every reconnect. The daemon's "
+            f"full search path is under Daemon Configuration."
         )
 
     # ─── DEC-237: mirrored + reset surfaces ──────────────────────────
@@ -797,8 +866,16 @@ class SettingsPage(QWidget):
     # values now come from the daemon, and `restart_pending` is the daemon's own
     # verdict (on-disk vs running), never something inferred here.
 
-    #: Rows rendered by the card: (config key, label, sublabel).
+    #: Single-control rows rendered by the card: (config key, label, sublabel).
+    #: Ordered to match the daemon's own ``keys[]`` emission order, minus
+    #: ``profiles.search_dirs`` — that key is a list, so it gets its own block
+    #: below rather than a one-control row.
     _DAEMON_ROWS = (
+        (
+            "startup.delay_secs",
+            "Startup delay",
+            "Wait before detecting devices after boot — for slow USB/hwmon enumeration",
+        ),
         ("polling.poll_interval_ms", "Poll interval", "How often the daemon reads hardware"),
         ("serial.port", "Serial port", "OpenFan device path — blank to auto-detect"),
         ("serial.timeout_ms", "Serial timeout", "Read timeout for the OpenFan device"),
@@ -831,6 +908,21 @@ class SettingsPage(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         v.addWidget(self._daemon_restart_banner)
+
+        self._startup_delay_spin = QSpinBox()
+        self._startup_delay_spin.setObjectName("Settings_Spin_startupDelay")
+        self._startup_delay_spin.setRange(0, 30)
+        self._startup_delay_spin.setSuffix(" seconds")
+        self._startup_delay_spin.setToolTip(
+            "Delay before daemon begins device detection after boot (takes effect on restart)"
+        )
+        self._startup_delay_spin.editingFinished.connect(
+            lambda: self._write_daemon_key(
+                "startup.delay_secs",
+                self._startup_delay_spin.value(),
+                lambda c: c.set_startup_delay(self._startup_delay_spin.value()),
+            )
+        )
 
         self._poll_interval_spin = QSpinBox()
         self._poll_interval_spin.setObjectName("Settings_Spin_pollInterval")
@@ -881,6 +973,7 @@ class SettingsPage(QWidget):
         )
 
         controls = {
+            "startup.delay_secs": self._startup_delay_spin,
             "polling.poll_interval_ms": self._poll_interval_spin,
             "serial.port": self._serial_port_edit,
             "serial.timeout_ms": self._serial_timeout_spin,
@@ -903,6 +996,65 @@ class SettingsPage(QWidget):
             v.addWidget(note)
             self._daemon_row_notes[key] = note
 
+        # ── Profile search directories (DEC-285) ──────────────────────
+        # The one daemon key that applies *live*, and the one this card used to
+        # fetch and throw away. Its only previous surface was a sentence on the
+        # Path Management card printing the GUI's own directory — never the
+        # daemon's list, which is what actually decides whether a profile
+        # resolves.
+        dirs_title = QLabel("Profile search directories")
+        v.addWidget(dirs_title)
+        dirs_sub = QLabel(
+            "Where the daemon looks for profile files. Applies immediately — no restart."
+        )
+        dirs_sub.setWordWrap(True)
+        dirs_sub.setProperty("class", "CardMeta")
+        v.addWidget(dirs_sub)
+
+        self._search_dirs_list = QListWidget()
+        self._search_dirs_list.setObjectName("Settings_List_profileSearchDirs")
+        self._search_dirs_list.setMaximumHeight(110)
+        # `name_value_control` deliberately covers value controls only — an item
+        # view announces its current item, not a value, so it is not in
+        # VALUE_CONTROLS. The two calls are the same pair that helper makes, for
+        # the same reason (DEC-269): the buddy is the half AT-SPI actually reads
+        # on Linux, and the name is for platforms that honour the property.
+        self._search_dirs_list.setAccessibleName("Profile search directories")
+        dirs_title.setBuddy(self._search_dirs_list)
+        self._search_dirs_list.currentRowChanged.connect(
+            lambda _row: self._refresh_search_dir_buttons()
+        )
+        v.addWidget(self._search_dirs_list)
+
+        dir_btns = QHBoxLayout()
+        self._add_search_dir_btn = make_button(
+            "Add...",
+            "secondary",
+            object_name="Settings_Btn_addSearchDir",
+            accessible_name="Add a profile search directory",
+        )
+        self._add_search_dir_btn.clicked.connect(self._add_search_dir)
+        dir_btns.addWidget(self._add_search_dir_btn)
+        self._remove_search_dir_btn = make_button(
+            "Remove",
+            "secondary",
+            object_name="Settings_Btn_removeSearchDir",
+            accessible_name="Remove the selected profile search directory",
+        )
+        self._remove_search_dir_btn.clicked.connect(self._remove_search_dir)
+        dir_btns.addWidget(self._remove_search_dir_btn)
+        dir_btns.addStretch()
+        v.addLayout(dir_btns)
+
+        dirs_note = QLabel("")
+        dirs_note.setObjectName("Settings_Label_daemonNote_profiles_search_dirs")
+        dirs_note.setTextFormat(Qt.TextFormat.PlainText)  # DEC-231
+        dirs_note.setWordWrap(True)
+        dirs_note.setProperty("class", "CardMeta")
+        dirs_note.setVisible(False)
+        v.addWidget(dirs_note)
+        self._daemon_row_notes["profiles.search_dirs"] = dirs_note
+
         # Read-only by design (DEC-243): a bad socket path locks the GUI out of
         # the daemon permanently, and moving the state dir orphans runtime.toml
         # and the daemon-owned profile store. Shown so they stay diagnosable.
@@ -922,15 +1074,24 @@ class SettingsPage(QWidget):
         self._daemon_cfg_result.setWordWrap(True)
         self._daemon_cfg_result.setVisible(False)
         v.addWidget(self._daemon_cfg_result)
+        # Nothing has been read from the daemon yet, so the search-dir buttons
+        # must start in their unavailable state rather than at Qt's default
+        # (enabled) — an Add that can only open a dialog and then do nothing is
+        # worse than a disabled one.
+        self._refresh_search_dir_buttons()
         return card
 
     def _daemon_config_controls(self) -> list[QWidget]:
         return [
+            self._startup_delay_spin,
             self._poll_interval_spin,
             self._serial_port_edit,
             self._serial_timeout_spin,
             self._port_probe_toggle,
             self._nvidia_toggle,
+            self._search_dirs_list,
+            self._add_search_dir_btn,
+            self._remove_search_dir_btn,
         ]
 
     def _refresh_daemon_config(self) -> None:
@@ -978,6 +1139,9 @@ class SettingsPage(QWidget):
     def _render_daemon_config(self, cfg) -> None:
         self._populating_daemon_cfg = True
         try:
+            delay = cfg.get("startup.delay_secs")
+            if delay is not None and isinstance(delay.value, int):
+                self._show_spin_value(self._startup_delay_spin, delay.value)
             poll = cfg.get("polling.poll_interval_ms")
             if poll is not None and isinstance(poll.value, int):
                 self._show_spin_value(self._poll_interval_spin, poll.value)
@@ -994,11 +1158,7 @@ class SettingsPage(QWidget):
             if nvidia is not None:
                 self._nvidia_toggle.setChecked(bool(nvidia.value))
 
-            # The startup-delay spinner on the Operational card was a local
-            # guess; seed it from the daemon so the two cannot disagree.
-            delay = cfg.get("startup.delay_secs")
-            if delay is not None and isinstance(delay.value, int):
-                self._startup_delay_spin.setValue(delay.value)
+            self._render_search_dirs(cfg.get("profiles.search_dirs"))
 
             # Snapshot what the daemon reported for the editable keys, so the
             # write guard can tell a real edit from a focus-out.
@@ -1010,14 +1170,17 @@ class SettingsPage(QWidget):
         finally:
             self._populating_daemon_cfg = False
 
-        for key, _title, _sub in self._DAEMON_ROWS:
-            self._render_daemon_row_note(cfg.get(key), self._daemon_row_notes[key])
+        for key, label in self._daemon_row_notes.items():
+            self._render_daemon_row_note(
+                cfg.get(key),
+                label,
+                extra=self._search_dir_divergence(cfg) if key == "profiles.search_dirs" else "",
+            )
 
         if cfg.restart_pending:
-            # Name the keys rather than showing a bare count. Not every pending
-            # key has a row on this card — `startup.delay_secs` lives on the
-            # Operational Behavior card — so a count alone can read as "1 change
-            # pending" with nothing on screen to explain which.
+            # Name the keys rather than showing a bare count: a count alone reads
+            # as "1 change pending" with nothing on screen to explain which, and
+            # a future daemon key may well have no row here at all.
             pending = [k.key for k in cfg.keys if k.restart_pending]
             self._daemon_restart_banner.setText(
                 f"Saved but not yet in effect: {', '.join(pending)}. "
@@ -1055,8 +1218,13 @@ class SettingsPage(QWidget):
         entry = cfg.get(key)
         return "—" if entry is None else str(entry.value)
 
-    def _render_daemon_row_note(self, entry, label: QLabel) -> None:
-        """Annotate a row with where its value came from and what it still needs."""
+    def _render_daemon_row_note(self, entry, label: QLabel, extra: str = "") -> None:
+        """Annotate a row with where its value came from and what it still needs.
+
+        ``extra`` is an already-composed sentence the caller wants appended —
+        used for the one key whose divergence the daemon does not flag (see
+        ``_search_dir_divergence``).
+        """
         if entry is None:
             label.setVisible(False)
             return
@@ -1072,8 +1240,252 @@ class SettingsPage(QWidget):
             parts.append(entry.requires_privilege)
         if entry.key == "detection.allow_port_probe" and self._port_probe_reason:
             parts.append(self._port_probe_reason)
+        if extra:
+            parts.append(extra)
         label.setText(" · ".join(parts))
         label.setVisible(bool(parts))
+
+    # ── Profile search directories (DEC-285) ─────────────────────────
+
+    def _render_search_dirs(self, entry) -> None:
+        """Fill the list from the daemon's **running** search path.
+
+        ``running_value``, not ``value``. For every other key those are "what a
+        restart would give" vs "what is live", and ``value`` is the right thing
+        to edit against. This key applies immediately, so the live list *is* the
+        answer to "where does the daemon look?" — and the daemon reports it from
+        its in-process lock precisely so a client can show that.
+        """
+        self._search_dirs_list.clear()
+        if entry is None:
+            self._refresh_search_dir_buttons()
+            return
+        running = entry.running_value
+        dirs = running if isinstance(running, list) else entry.value
+        if isinstance(dirs, list):
+            self._search_dirs_list.addItems([str(d) for d in dirs])
+        self._refresh_search_dir_buttons()
+
+    @staticmethod
+    def _search_dir_divergence(cfg) -> str:
+        """Report a config-file list the running daemon has not picked up.
+
+        The daemon reports ``requires_restart: false`` for this key — correct,
+        because an API write applies live — so it never raises
+        ``restart_pending`` for it. But a hand-edited ``daemon.toml`` with no
+        runtime override *does* leave the files and the process disagreeing, with
+        nothing anywhere to say so. This is the only place that can notice.
+        """
+        entry = cfg.get("profiles.search_dirs")
+        if entry is None or not isinstance(entry.value, list):
+            return ""
+        if not isinstance(entry.running_value, list):
+            return ""
+        # Compare in ONE direction only: entries the config files list that the
+        # running daemon is not using. The reverse is normal and permanent — the
+        # daemon injects its own profile store into the running list at boot
+        # (`main.rs::with_store_dir`) and never writes it into the files unless a
+        # runtime override happens to capture it, so an equality test reports a
+        # divergence on every fresh daemon and advises a restart that cannot
+        # resolve it. Extra running entries are never something a restart fixes;
+        # missing ones are exactly what a restart would apply.
+        missing = [d for d in entry.value if d not in entry.running_value]
+        if not missing:
+            return ""
+        return (
+            f"the configuration files also list {', '.join(str(d) for d in missing)} — "
+            f"restart the daemon to apply that"
+        )
+
+    def _daemon_supports_dir_removal(self) -> bool:
+        """Whether this daemon accepts a ``remove`` on the search-dir endpoint.
+
+        Must be checked, not probed. A pre-2.23.0 daemon does not 404 a
+        ``remove`` — it parses only ``add`` and silently ignores the rest — so an
+        ungated call would report success having pruned nothing.
+        """
+        caps = self._state.capabilities if self._state else None
+        control = getattr(caps, "control", None)
+        return bool(control and getattr(control, "profile_search_dir_remove", False))
+
+    def _search_dir_removal_block(self) -> str:
+        """Why the selected search dir cannot be removed, or ``""`` if it can.
+
+        Four entries are un-removable, and every one of them would otherwise
+        offer an action that does not do what the button says:
+
+        * **the system directory** — the daemon refuses it (it holds the
+          admin-installed profiles);
+        * **the last remaining entry** — the daemon refuses it; profile
+          activation resolves against this list, so emptying it is a soft-lock;
+        * **the first entry** — that is *by definition* the daemon's profile
+          store of record (`profile.rs::store_dir()` is
+          `profile_search_dirs.first()`, and it is the write target for profile
+          create and delete). The daemon refuses it too;
+        * **this GUI's own profiles directory** — the daemon would accept it,
+          and ``services/polling.py`` would silently register it again on the
+          next connect. The removal would appear to work and then undo itself,
+          which is exactly the silent-partial-success failure this whole change
+          exists to remove. Change it under Path Management instead — that path
+          retires the old registration in the same request.
+
+        The first three are the honest local form of a rule the daemon enforces;
+        the fourth is a rule only this side can know.
+        """
+        item = self._search_dirs_list.currentItem()
+        if item is None:
+            return "no directory selected"
+        if item.text() == _SYSTEM_PROFILE_DIR:
+            return "the system profile directory cannot be removed"
+        if self._search_dirs_list.count() <= 1:
+            return "at least one profile search directory must remain"
+        if self._search_dirs_list.currentRow() == 0:
+            return "the daemon's own profile store cannot be removed"
+        if _same_dir(item.text(), self._profiles_dir_label.text() or str(profiles_dir())):
+            return (
+                "this application registers its own profiles directory on every "
+                "connect, so removing it here would not stick — change it under "
+                "Path Management instead"
+            )
+        return ""
+
+    def _refresh_search_dir_buttons(self) -> None:
+        """Enable Remove only when removing the selection is actually possible."""
+        connected = (
+            self._client is not None
+            and not self._daemon_config_unsupported
+            and self._daemon_cfg_loaded
+        )
+        self._add_search_dir_btn.setEnabled(connected)
+        supported = self._daemon_supports_dir_removal()
+        block = self._search_dir_removal_block()
+        self._remove_search_dir_btn.setEnabled(connected and supported and not block)
+        if connected and not supported:
+            self._remove_search_dir_btn.setToolTip(
+                "This daemon is too old to remove a profile search directory "
+                "(requires control-ofc-daemon 2.23.0 or newer)."
+            )
+        elif block:
+            self._remove_search_dir_btn.setToolTip(f"Cannot remove: {block}.")
+        else:
+            self._remove_search_dir_btn.setToolTip(
+                "Stop the daemon looking for profiles in the selected directory"
+            )
+
+    def _add_search_dir(self) -> None:
+        start = self._profiles_dir_label.text() or str(profiles_dir())
+        path = QFileDialog.getExistingDirectory(self, "Add Profile Search Directory", start)
+        if path:
+            self._edit_search_dirs(add=[path], done=f"Added {path}")
+
+    def _remove_search_dir(self) -> None:
+        # Re-checked here, not merely reflected in the button's enabled state:
+        # the enabled state is a rendering of this rule, and a rule that lives
+        # only in a rendering is one a future caller can walk around.
+        block = self._search_dir_removal_block()
+        if block:
+            self._set_daemon_cfg_result(f"Cannot remove: {block}.", "CautionChip")
+            return
+        path = self._search_dirs_list.currentItem().text()
+        self._edit_search_dirs(remove=[path], done=f"Removed {path}")
+
+    def _edit_search_dirs(
+        self,
+        *,
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+        done: str,
+    ) -> None:
+        """POST one search-dir edit, then re-read so the list shows daemon truth.
+
+        Never predicts the result: an edit can be legitimately idempotent
+        (removing an entry that was never registered, re-adding one already
+        present), so the daemon's returned list is the only honest thing to
+        render.
+        """
+        if self._client is None or self._daemon_config_unsupported:
+            return
+        if remove and not self._daemon_supports_dir_removal():
+            self._set_daemon_cfg_result(
+                "This daemon is too old to remove a profile search directory "
+                "(requires control-ofc-daemon 2.23.0 or newer).",
+                "CautionChip",
+            )
+            return
+        try:
+            self._client.update_profile_search_dirs(add=add, remove=remove)
+        except DaemonError as e:
+            self._set_daemon_cfg_result(
+                f"Could not update profile search directories: {e.message}", "CriticalChip"
+            )
+            self._refresh_daemon_config()
+            return
+        except (ConnectionError, OSError):
+            self._set_daemon_cfg_result("Daemon unavailable — not saved.", "CautionChip")
+            self._refresh_daemon_config()
+            return
+        self._set_daemon_cfg_result(f"{done}.", "SuccessChip")
+        self._refresh_daemon_config()
+
+    def _sync_profile_search_dir(self, old_path: str, new_path: str) -> str | None:
+        """Register *new_path* with the daemon and retire *old_path* in one call.
+
+        Returns a user-facing error message, or ``None`` on success (and when
+        there is no client to talk to).
+
+        The retire half is what stops the daemon's list growing without bound.
+        ``services/polling.py`` re-registers the GUI's profiles directory on
+        every connect, so before this each directory change left the previous
+        one behind **permanently** — the endpoint was add-only, so three changes
+        meant three live entries, visible in no UI and removable only by hand-
+        editing a root-owned ``runtime.toml``. Against a pre-2.23.0 daemon the
+        add still happens and the old entry still leaks; that is the honest
+        degradation, and the capability flag is why we know which one we got.
+        """
+        self._stale_search_dir = ""
+        if self._client is None:
+            return None
+        retire = (
+            [old_path]
+            if old_path and old_path != new_path and self._daemon_supports_dir_removal()
+            else None
+        )
+        error = self._post_search_dir_edit(add=[new_path], remove=retire)
+        if error is None or retire is None:
+            return error
+        # The retire half can be refused on its own terms — the old directory may
+        # be outside this user's home (a `profiles_dir_override` the daemon never
+        # accepted), or one the daemon protects — and the daemon rejects the
+        # WHOLE request when it is. By this point `_handle_dir_change` has already
+        # moved the profile files into the new directory, so losing the *add* is
+        # the one outcome that must not happen: the daemon would be left
+        # searching only the old, now-empty location and GUI-authored profiles
+        # would stop resolving. Fall back to the pre-DEC-285 behaviour — register
+        # the new directory alone and leave the stale entry behind, which is also
+        # exactly what happens against a daemon too old to remove anything.
+        add_only = self._post_search_dir_edit(add=[new_path])
+        if add_only is not None:
+            return add_only
+        log.warning(
+            "Registered profile search dir %s but could not retire %s: %s",
+            new_path,
+            old_path,
+            error,
+        )
+        self._stale_search_dir = old_path
+        return None
+
+    def _post_search_dir_edit(
+        self, *, add: list[str] | None = None, remove: list[str] | None = None
+    ) -> str | None:
+        """One `POST /config/profile-search-dirs`. Returns a message, or None."""
+        try:
+            self._client.update_profile_search_dirs(add=add, remove=remove)
+        except DaemonError as exc:
+            return exc.message
+        except (ConnectionError, OSError) as exc:
+            return str(exc)
+        return None
 
     def _refresh_port_probe_availability(self) -> None:
         """Ask the daemon whether the probe can actually run right now.
@@ -1475,7 +1887,9 @@ class SettingsPage(QWidget):
         self._gpu_zero_rpm_warn_cb.setChecked(s.show_gpu_zero_rpm_warning)
         self._aio_pump_info_cb.setChecked(s.show_aio_pump_info)
         self._wizard_spindown_spin.setValue(s.wizard_spindown_seconds)
-        self._startup_delay_spin.setValue(s.daemon_startup_delay_secs)
+        # No startup-delay seed here: the daemon owns that key and
+        # `_refresh_daemon_config` is the only thing allowed to fill the spinner
+        # (DEC-285). Seeding it locally is what let the card display a guess.
         self._hide_igpu_cb.setChecked(s.hide_igpu_sensors)
         self._hide_unused_fans_cb.setChecked(s.hide_unused_fan_headers)
 
@@ -1516,7 +1930,6 @@ class SettingsPage(QWidget):
             show_gpu_zero_rpm_warning=self._gpu_zero_rpm_warn_cb.isChecked(),
             show_aio_pump_info=self._aio_pump_info_cb.isChecked(),
             wizard_spindown_seconds=self._wizard_spindown_spin.value(),
-            daemon_startup_delay_secs=self._startup_delay_spin.value(),
             hide_igpu_sensors=self._hide_igpu_cb.isChecked(),
             hide_unused_fan_headers=self._hide_unused_fans_cb.isChecked(),
             profiles_dir_override=profiles_override,
@@ -1531,17 +1944,12 @@ class SettingsPage(QWidget):
             export_dir=export_override,
         )
 
-        # Push startup delay to daemon if connected
-        if self._client:
-            from control_ofc.api.errors import DaemonError
-
-            try:
-                self._client.set_startup_delay(self._startup_delay_spin.value())
-            except DaemonError as e:
-                log.warning("Failed to sync startup delay to daemon: %s", e.message)
-                self._set_status("Application settings saved (startup delay not synced to daemon)")
-                return
-
+        # No daemon write here (DEC-285). Save used to POST `startup.delay_secs`
+        # unconditionally, bypassing `_write_daemon_key`'s no-op guard — so
+        # pressing Save once wrote the key into runtime.toml, flipped its source
+        # to "runtime", and permanently shadowed the operator's daemon.toml with
+        # a value nobody chose. Every daemon key is now written only by the
+        # control that edits it, and only when it actually changed.
         self._set_status("Application settings saved")
 
     # ─── Preferred sensors (daemon, DEC-200) ───────────────────────
@@ -1793,22 +2201,33 @@ class SettingsPage(QWidget):
 
         label.setText(new_path)
 
-        # If profiles dir changed, update daemon via API
+        # If profiles dir changed, update daemon via API. Register the new
+        # directory AND retire the old one in the same call — otherwise the
+        # daemon's search path gains an entry on every change and never loses
+        # one (DEC-285).
         if kind == "profiles" and self._client:
-            from control_ofc.api.errors import DaemonError
-
-            try:
-                self._client.update_profile_search_dirs(add=[new_path])
-                self._set_status("Profile search dirs updated on daemon")
-            except DaemonError as exc:
-                QMessageBox.warning(
-                    self, "Daemon Config", f"Failed to update daemon: {exc.message}"
+            error = self._sync_profile_search_dir(str(old_dir), new_path)
+            if error is not None:
+                QMessageBox.warning(self, "Daemon Config", f"Failed to update daemon: {error}")
+            elif self._stale_search_dir:
+                # Registered, but the old entry is still there. Say so — a silent
+                # leak is the thing this whole change exists to stop, and the
+                # user can prune it from Daemon Configuration.
+                self._set_status(
+                    f"Profile search dirs updated on daemon — the previous directory "
+                    f"({self._stale_search_dir}) is still registered and can be removed "
+                    f"under Daemon Configuration"
                 )
+            else:
+                self._set_status("Profile search dirs updated on daemon")
         elif kind == "profiles":
             self._set_status("Daemon not connected — update profile search dirs manually")
 
         if kind == "profiles":
             self._refresh_search_dir_note()
+            # The daemon card's list is now stale — re-read it if it is loaded.
+            if self._daemon_cfg_loaded:
+                self._refresh_daemon_config()
 
     # ── Daemon profile import (DEC-161) ──────────────────────────────────
 
@@ -1998,20 +2417,22 @@ class SettingsPage(QWidget):
                 imported = self._settings_svc.import_settings_from_dict(merged)
                 self._settings_svc.apply_imported(imported)
                 self._load_current_settings()
-                # Apply live side effects, mirroring a manual Save (F11):
-                # data-dir overrides and the daemon startup delay.
+                # Apply live side effects, mirroring a manual Save (F11): the
+                # data-dir overrides. An import no longer pushes anything to the
+                # daemon (DEC-285) — `daemon_startup_delay_secs` is gone from
+                # AppSettings, so a shared config can no longer carry one
+                # machine's daemon setting onto another's, which was the DEC-140
+                # concern reaching a daemon-owned key.
+                #
+                # `profiles_dir_override` is a MACHINE_SPECIFIC_KEY and is
+                # stripped from the incoming data above, so the profiles
+                # directory cannot move on import and no search-dir sync is owed
+                # here.
                 set_path_overrides(
                     profiles_dir=imported.profiles_dir_override,
                     themes_dir=imported.themes_dir_override,
                     export_dir=imported.export_default_dir,
                 )
-                if self._client:
-                    from control_ofc.api.errors import DaemonError
-
-                    try:
-                        self._client.set_startup_delay(imported.daemon_startup_delay_secs)
-                    except DaemonError as e:
-                        log.warning("Failed to sync startup delay on import: %s", e.message)
 
             # Apply profiles if present.
             skipped = 0
