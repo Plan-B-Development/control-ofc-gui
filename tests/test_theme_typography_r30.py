@@ -156,11 +156,6 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
 
     @staticmethod
     def _apply(pt: int):
-        """Apply the theme application-wide. Costs O(every live widget).
-
-        Only for assertions that read *realised* geometry — see `_style_tree`
-        for why the cheap form cannot serve those.
-        """
         from control_ofc.ui.theme import apply_theme, default_dark_theme
 
         tokens = default_dark_theme()
@@ -168,81 +163,10 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
         apply_theme(tokens)
         return tokens
 
-    @staticmethod
-    def _activate(pt: int):
-        """Register the theme without touching the application.
-
-        `set_active_theme` is a plain module-level assignment — no widget walk —
-        so a widget constructed afterwards reads the right tokens (`ControlCard`
-        does, via `active_theme()`) at a cost that does not scale with the suite.
-        """
-        from control_ofc.ui.theme import default_dark_theme, set_active_theme
-
-        tokens = default_dark_theme()
-        tokens.base_font_size_pt = pt
-        set_active_theme(tokens)
-        return tokens
-
-    @staticmethod
-    def _style_tree(widget, tokens) -> None:
-        """Push the theme's three channels at ONE widget tree, not the application.
-
-        `apply_theme` sets the palette, stylesheet and font on the QApplication,
-        and Qt re-polishes every live widget for each of the three. Its cost
-        therefore tracks the number of widgets the whole suite has left alive
-        rather than the size of the thing under test — measured at this point in
-        the suite: **20,412 live widgets across 420 top-level trees, 507ms per
-        `apply_theme` call**. That coupling is what makes a test here get slower
-        every time a feature adds widgets somewhere else, and it is what timed
-        out CI at v2.49.0 after the Settings page grew (26.03s, against the 40s
-        mark below, from 14.81s at v2.48.1).
-
-        Scoping the same three channels to the widget makes the cost the
-        widget's own. Verified equivalent to the application-wide push for what
-        these two tests measure: identical `need`/`have` across the full 30-cell
-        (font size x density) matrix, and identical size hints and maximums for
-        all three capped widgets at 7/10/16pt.
-
-        **The caller must clear the application stylesheet first.** Qt MERGES a
-        widget's sheet with the application's, and the widget's does not fully
-        dominate: measured, a leftover `QLabel { padding: 30px }` moves `need`
-        from 161 to 289 and shifts all 30 cells. Leftover *font-size* rules and a
-        leftover application font do not leak (the explicit `setFont` and the
-        card's own font-size rules win), so the stylesheet is the only channel
-        that needs clearing — but it does need it, or a test that stopped being
-        slow starts being order-dependent instead.
-
-        **Not equivalent for realised geometry read before a widget is shown.**
-        `test_theme_editor_reset_glyphs_scale_with_the_font` measures
-        `button.width()`, which is settled during construction under the
-        application font; styling the tree afterwards leaves every glyph at 29px
-        at both 7pt and 16pt (against 24px and 45px), which would invert its
-        "grows with the font" assertion into a vacuous one. That test keeps
-        `_apply` deliberately — see 285-e in `DECISIONS_OPEN_ITEMS.md`.
-
-        The font construction below mirrors `theme.apply_theme_font`, which is
-        the source of truth for it — there is no shared QFont builder to call
-        today. If that function gains a channel (weight, style, DPI handling) or
-        a return value, update this in lockstep: the equivalence these two tests
-        rely on is equivalence *with production*, and it would go on passing
-        against a drifted copy.
-        """
-        from PySide6.QtGui import QFont, QFontDatabase
-
-        from control_ofc.ui.theme import build_palette, build_stylesheet
-
-        family = tokens.font_family
-        if not family:
-            family = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family()
-        widget.setFont(QFont(family, tokens.base_font_size_pt))
-        widget.setPalette(build_palette(tokens))
-        widget.setStyleSheet(build_stylesheet(tokens))
-
     # Well under the global 60s ini cap, so cost creep reddens here as an early
-    # warning rather than at the wire. Since this test stopped applying the theme
-    # application-wide its runtime is its own, not the suite's — but the fixture
-    # teardown still restores three application-level channels, so the margin is
-    # not infinite and this mark stays as the tripwire.
+    # warning rather than at the wire. The dominant cost is `apply_theme`, which
+    # scales with the number of live widgets in the application — a figure that
+    # grows as the suite grows — so this needs to fire before CI does.
     @pytest.mark.timeout(40)
     def test_the_control_card_details_row_fits_every_density(
         self, qtbot, restore_app_theme, monkeypatch
@@ -299,26 +223,15 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
 
         monkeypatch.setattr(theme_mod, "apply_theme", _counting_apply_theme)
 
-        # Clear the APPLICATION stylesheet once, because this test no longer
-        # overwrites it. `_style_tree` merges the card's sheet with whatever is
-        # installed application-wide, and the merge does not fully dominate:
-        # measured, a leftover `QLabel { padding: 30px }` moves `need` from 161 to
-        # 289 and shifts all 30 cells, while leftover *font-size* rules and a
-        # leftover app font do not leak at all. Without this the measurement would
-        # depend on whichever test ran before — trading a slow test for an
-        # order-dependent one. `restore_app_theme` yields the QApplication and puts
-        # the sheet back afterwards. One application-wide call, against the ten this
-        # test used to make.
-        restore_app_theme.setStyleSheet("")
-
-        # The theme is REGISTERED once per font size (cheap, no widget walk) and
-        # PUSHED at each card's own tree (cost proportional to that card). Nothing
-        # here touches the application, so this test's runtime no longer depends on
-        # how many widgets the rest of the suite has left alive — which is the
-        # coupling that made it slower every time a feature added widgets
-        # elsewhere, and that reddened all three CI legs at v2.49.0.
+        # Font size is the OUTER loop and the theme is applied once per size, not
+        # once per (tier, size) pair. `apply_theme` is application-wide — Qt
+        # re-polishes every live widget — so at suite scale (~12k widgets alive by
+        # the time this runs) one call costs ~1.5s. Nesting it inside the tier loop
+        # bought 30 applies where 10 cover the same matrix, and the resulting ~47s
+        # test blew the 60s pytest-timeout on every CI runner while passing here.
+        # Nothing in the tier loop mutates the theme, so this is a pure reordering.
         for pt in range(7, 17):
-            tokens = self._activate(pt)
+            self._apply(pt)
             for tier in (CARD_SIZE_COMPACT, *must_fit):
                 curves = [CurveConfig(id="c1", name="Aggressive Ramp", type=CurveType.GRAPH)]
                 control = LogicalControl(
@@ -337,7 +250,6 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
                 )
                 card = ControlCard(control, curves, card_size=tier)
                 qtbot.addWidget(card)
-                self._style_tree(card, tokens)
                 width, _height = card_dimensions(pt, tier)
                 card.setFixedWidth(width)
                 card.show()
@@ -360,60 +272,30 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
             "compact's elision has grown beyond a trim — the curve name is being "
             f"cut back too far: worst deficit {max(compact_deficits, default=0)}px"
         )
-        # ZERO application-wide applies. This is the guard that keeps the fix
-        # fixed: the previous version of this test asserted "ten applies, one per
-        # font size", which bounded the count but left the per-apply cost growing
-        # with the suite — ten cheap calls at v2.41.0 were ten 507ms calls by
-        # v2.49.0. Asserting *none* pins the property that actually matters, and
-        # catches a reintroduced `self._apply(pt)` on any machine, where the
-        # wall-clock mark above only catches it on a slow enough one.
-        assert applies == [], (
-            "this test must not apply the theme application-wide — its cost would "
-            "again scale with every widget the rest of the suite leaves alive. Use "
-            f"_activate + _style_tree; got {len(applies)} applies: {applies}"
+        # One apply per font size, covering all three tiers. Moving `_apply` back
+        # inside the tier loop triples this and is what timed out CI at v2.41.0;
+        # asserting the count catches that on any machine, where the wall-clock
+        # guard above only catches it on a slow enough one.
+        assert applies == list(range(7, 17)), (
+            "the theme must be applied once per font size, outside the tier loop — "
+            f"got {len(applies)} applies: {applies}"
         )
 
-    def test_no_fixed_size_caps_a_widget_below_its_hint(
-        self, qtbot, restore_app_theme, monkeypatch
-    ):
+    def test_no_fixed_size_caps_a_widget_below_its_hint(self, qtbot, restore_app_theme):
         """The sites that hardcoded a pixel size against growing content."""
-        from control_ofc.ui import theme as theme_mod
         from control_ofc.ui.about_dialog import AboutDialog
         from control_ofc.ui.components.footer import StatusFooter
         from control_ofc.ui.widgets.error_banner import ErrorBanner
 
-        # Same zero-apply guard as the details-row test. This one needs it MORE,
-        # not less: it carries no `pytest.mark.timeout`, and reverting it to
-        # `_apply` would add only ~1.5s (3 applies) — invisible against the 60s
-        # ini cap and lost in the suite total, so the regression would land
-        # silently. The sibling's wall-clock mark would at least eventually
-        # notice; here the count assertion is the only thing that can.
-        real_apply_theme = theme_mod.apply_theme
-        applies: list[int] = []
-
-        def _counting_apply_theme(tokens):
-            applies.append(tokens.base_font_size_pt)
-            return real_apply_theme(tokens)
-
-        monkeypatch.setattr(theme_mod, "apply_theme", _counting_apply_theme)
-
-        # Same isolation as the details-row test, and for the same measured
-        # reason — see the comment there.
-        restore_app_theme.setStyleSheet("")
-
         offenders = []
         for pt in (7, 10, 16):
-            # Scoped for the same reason as the details-row test above, and
-            # verified the same way: identical hints and maximums for all three
-            # widgets at all three sizes.
-            tokens = self._activate(pt)
+            self._apply(pt)
             for name, widget in (
                 ("ErrorBanner", ErrorBanner()),
                 ("StatusFooter", StatusFooter()),
                 ("AboutDialog", AboutDialog()),
             ):
                 qtbot.addWidget(widget)
-                self._style_tree(widget, tokens)
                 hint = widget.sizeHint()
                 maxi = widget.maximumSize()
                 if maxi.width() < hint.width() or maxi.height() < hint.height():
@@ -422,23 +304,10 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
                         f"below its hint {hint.width()}x{hint.height()}"
                     )
         assert not offenders, offenders
-        assert applies == [], (
-            "this test must not apply the theme application-wide — use "
-            f"_activate + _style_tree; got {len(applies)} applies: {applies}"
-        )
 
     def test_theme_editor_reset_glyphs_scale_with_the_font(self, qtbot, restore_app_theme):
         """~50 of these down the page; they were a hard 24x24 and clipped at the
-        shipped default, not only at large sizes.
-
-        Keeps the application-wide `_apply` on purpose. This is the one test in
-        the class that reads *realised* geometry (`b.width()`) rather than a size
-        hint, and that width is settled during construction under the application
-        font — under `_style_tree` every glyph measures 29px at both 7pt and
-        16pt, which would turn the `sizes[16] > sizes[7]` assertion below into a
-        false one. Two applies, so it is ~3s rather than ~26s, but it does still
-        scale with the suite; tracked as 285-e in `DECISIONS_OPEN_ITEMS.md`.
-        """
+        shipped default, not only at large sizes."""
         from PySide6.QtWidgets import QPushButton
 
         from control_ofc.ui.widgets.theme_editor import ThemeEditorWidget

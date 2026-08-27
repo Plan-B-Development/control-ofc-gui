@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 
 import pytest
@@ -258,6 +259,78 @@ def _flush_deferred_deletes():
     app = QApplication.instance()
     if app is not None:
         app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.fixture(autouse=True)
+def _reap_orphaned_top_levels():
+    """Delete top-level widgets a test created but never registered (DEC-287).
+
+    ``_flush_deferred_deletes`` above destroys trees that were *already
+    scheduled* for deletion — it dispatches the ``DeferredDelete`` events
+    pytest-qt posts for widgets passed to ``qtbot.addWidget``. A widget
+    constructed with no parent and never registered is never scheduled, so it is
+    never flushed: nothing owns it, nothing deletes it, and it survives to the
+    end of the session. Measured before this fixture: **420 orphaned top-level
+    trees holding 20,412 widgets** by the end of the run, from just two classes
+    (336 ``QFrame``, 84 ``SettingsPage``).
+
+    That is not merely untidy. Every application-wide Qt operation is O(live
+    widgets) because Qt re-polishes each one, so the residue is charged to
+    whichever test happens to run last: one ``apply_theme`` call cost **507ms**
+    at the end of the suite, and a theme test making ten of them blew its
+    timeout on CI and blocked a release. The cost lands on an innocent test and
+    grows every time a feature adds widgets somewhere else entirely.
+
+    Reaping per test keeps the population flat instead. Three details matter:
+
+    * **Strong references, compared with ``is``.** Holding the pre-existing
+      wrappers alive for the test's duration is what makes the comparison sound:
+      a wrapper that were allowed to be collected could have its ``id()``
+      recycled onto a widget created during the test, which would make a
+      *pre-existing* widget look new and get it deleted out from under its
+      owner.
+    * **``deleteLater()``, never ``shiboken.delete()``.** Destroying a live C++
+      object out from under its wrapper is precisely the use-after-free DEC-230
+      exists to prevent. Posting the event lets the flush above destroy the tree
+      top-down with wrappers consistent.
+    * **Defined *after* ``_flush_deferred_deletes``**, so it is set up second and
+      therefore torn down *first* — the deletes posted here are still pending
+      when that fixture dispatches them. Reversing the two would leave every
+      reaped tree queued until the next test, which defeats the purpose.
+
+    Safe because no fixture **in this repository** outlives a test: `tests/` and
+    the root `conftest.py` declare no module-, class- or session-scoped fixtures
+    (``grep -c 'scope="module"\\|scope="session"\\|scope="class"'`` returns 0), so
+    a top-level widget absent at setup is owned by the test that just finished
+    and by nothing else.
+
+    That argument is deliberately scoped to this repository, because it is the
+    part we control. A third-party plugin holding a session-scoped ``QWidget``
+    would be reaped on the first test and break. **pytest-qt does not** — its
+    ``qapp``/``qtbot`` machinery holds the ``QApplication`` singleton, which is
+    not a widget and never appears in ``topLevelWidgets()`` — so this is a
+    constraint on future plugin choices, not a live hazard. If a plugin ever does
+    introduce one, exempt it here by name; `285-i` records the limit.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    pre_existing = list(app.topLevelWidgets()) if app is not None else []
+
+    yield
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        if any(widget is known for known in pre_existing):
+            continue
+        # RuntimeError: the C++ side is already gone and only the wrapper
+        # remains, so there is nothing left to schedule. See 285-i — this is
+        # broader than that one case by construction, and narrowing it would
+        # mean matching on the exception message, which is its own fragility.
+        with contextlib.suppress(RuntimeError):
+            widget.deleteLater()
 
 
 @pytest.fixture(autouse=True)
