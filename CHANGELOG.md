@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.49.0] — 2026-08-27
 
 ### Added
 - **Settings now shows and edits the daemon's profile search directories.** This
@@ -63,6 +63,13 @@
   list.
 - A focused list gets a visible keyboard focus ring (WCAG 2.4.7), like every
   other control.
+
+Pairs with `control-ofc-daemon` ≥ v2.11.0 (unchanged floor; no contract break,
+`EXPECTED_API_VERSION` stays 1). v2.23.0 or newer is required for **Remove** on
+the Daemon Configuration card and for retiring the old registration when you
+change your profiles directory — both are gated on the
+`control.profile_search_dir_remove` capability, and against an older daemon the
+button is disabled with a tooltip saying why.
 
 ## [2.48.1] — 2026-08-26
 

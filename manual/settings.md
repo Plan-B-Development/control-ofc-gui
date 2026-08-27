@@ -61,7 +61,7 @@ The list of directories the daemon looks in for profile files. Unlike everything
 - **Add…** registers another directory with the daemon.
 - **Remove** stops the daemon looking in the selected one.
 
-Two entries cannot be removed, and the button is disabled rather than failing: `/etc/control-ofc/profiles` (it holds system-installed profiles), and the last remaining directory (the daemon would then be unable to find any profile at all). On a daemon older than v2.23.0, **Remove** is unavailable entirely — that version is the one that added the ability to prune an entry.
+Four entries cannot be removed, and the button is disabled with a tooltip saying which rule applies rather than failing after the fact: `/etc/control-ofc/profiles` (it holds system-installed profiles); the last remaining directory (the daemon would then be unable to find any profile at all); the first entry in the list, which is the daemon's own profile store and the place it writes new profiles; and this application's own profiles directory, which is re-registered on every connect, so removing it here would appear to work and then quietly come back — change that one under **Path Management**, which retires the old registration in the same step. On a daemon older than v2.23.0, **Remove** is unavailable entirely — that version is the one that added the ability to prune an entry.
 
 The card also shows the daemon's admin config path, its runtime config path, its socket and its state directory. Those four are deliberately read-only: a bad socket path would lock every client out of the daemon permanently.
 
