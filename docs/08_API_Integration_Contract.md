@@ -1020,10 +1020,26 @@ Response (daemon `HwmonVerifyResponse` ↔ GUI `HwmonVerifyResult`):
   rpm}`, each sub-field optional
 - `test_pwm_percent: int`, `wait_seconds: int`, `details: str`
 - `restore_failed: bool` — omitted when false (`skip_serializing_if`);
-  when true, the header was left at the test value because the
-  restore-to-original write failed, so the caller should write the
-  desired PWM explicitly rather than trust the verify call to have
-  restored it.
+  when true, do not trust the verify to have put the header back. Two
+  causes: the restore write failed (the header is left at the test
+  value), or — daemon ≥ 2.23.3, DEC-290 — the daemon began shutting down
+  mid-verify, in which case the restore is **deliberately skipped** and
+  the header is left to the daemon's own hardware restore, i.e. firmware
+  control. The second case is the safer outcome, not a failure: a fixed
+  duty that no writer will ever revise is worse than handing the header
+  back to the BIOS.
+
+**Abandoning the request does not abandon the restore (daemon ≥ 2.23.3, DEC-290).**
+The whole test-write → settle → restore sequence runs as one uncancellable unit, so
+a client that disconnects — or whose own timeout fires before `wait_seconds`
+elapses — still gets the header put back. Before DEC-290 the restore sat after an
+`await` and was simply skipped on cancellation, leaving the header pinned at
+`test_pwm_percent` (20% for any header previously above 50%) with nothing to
+recover it when no active profile owned that header. Clients need no change; what
+changed is that the previous behaviour was unsafe to rely on and is now safe.
+Note the corollary: the engine write-pause is held for the remainder of the settle
+even after a disconnect, rather than releasing early. The 105 °C emergency is
+unaffected — `force_all` runs before the pause gate, by design.
 
 Errors: `404 validation_error` (unknown header — the wire `code` is
 `validation_error`, not `not_found`, which is reserved for unknown routes),
