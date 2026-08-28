@@ -377,7 +377,13 @@ stop/restore + deadman lifecycle and is not driven from poll state.
 `unavailable_sensors` (daemon ≥ 2.3.0, additive — `api_version` unchanged, omitted when empty) lists
 sensors the daemon discovered but currently cannot read — the canonical case is an `ath12k` WiFi
 temperature returning `ENETDOWN` while the radio is soft-blocked. Each entry is `{id, label, reason,
-unavailable_for_ms}` where `reason` is the daemon's hwmon read error and `unavailable_for_ms` is the
+unavailable_for_ms}` where `reason` is the daemon's hwmon read error, formatted as
+`read error: <path>: <cause>`. Two classes of cause occur: an I/O failure (`ENETDOWN`, `ENODATA`),
+and — since **DEC-288**, daemon ≥ 2.23.1 — a reading rejected as implausible, e.g.
+`read error: /sys/.../temp2_input: implausible temperature 2147483.6°C outside [-50, 250]°C`.
+The second class is why a **CPU** sensor can now appear here: before DEC-288 an out-of-range value
+was clamped to 250 °C and served as a live reading, which latched a permanent thermal emergency.
+Treat `reason` as free text — render it, never parse it. `unavailable_for_ms` is the
 time since the sensor was quarantined. These are evicted from `/sensors` (so a stale value is never
 served) and the daemon suppresses its own per-tick read-failure logging for them (DEC-193). The GUI
 consumes this **display-only**: the Overview page shows a low-key panel + an "N unavailable"
