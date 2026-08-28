@@ -408,3 +408,67 @@ def test_sensor_context_menu_row_with_no_sensor_shows_nothing(qtbot, monkeypatch
     page._on_sensor_context_menu(QPoint(1, 1))
 
     assert created == []  # sensor-is-None early exit: no menu built
+
+
+class TestDaemonClassificationRetry:
+    """DEC-293: a transient failure must not permanently disable enrichment.
+
+    `_ensure_daemon_classifications` set its latch BEFORE the fetch, so one
+    timeout or a daemon restart during the user's first visit disabled sensor
+    classification for the whole session — the flag is the only guard on the only
+    caller, so nothing could ever trigger another attempt. Identical to the defect
+    already fixed in `SettingsPage._refresh_daemon_config`.
+    """
+
+    def test_a_transient_failure_leaves_the_next_attempt_free_to_retry(self, qtbot):
+        from unittest.mock import MagicMock
+
+        inv = MagicMock(temp_sensors=[MagicMock(id="hwmon:k10temp:Tctl")])
+        client = MagicMock(
+            inventory_hwmon=MagicMock(side_effect=[ConnectionError("daemon restarted"), inv])
+        )
+        page, _ = _page(qtbot, client=client)
+
+        page._ensure_daemon_classifications()
+        assert page._daemon_classifications == {}
+        assert not page._daemon_classifications_loaded, (
+            "a failed fetch latched the flag — enrichment is now disabled for the "
+            "whole session with no way back"
+        )
+
+        # The next attempt must actually reach the daemon again.
+        page._ensure_daemon_classifications()
+        assert page._daemon_classifications_loaded
+        assert set(page._daemon_classifications) == {"hwmon:k10temp:Tctl"}
+        assert client.inventory_hwmon.call_count == 2
+
+    def test_a_success_latches_so_the_fetch_happens_once(self, qtbot):
+        from unittest.mock import MagicMock
+
+        inv = MagicMock(temp_sensors=[MagicMock(id="hwmon:k10temp:Tctl")])
+        client = MagicMock(inventory_hwmon=MagicMock(return_value=inv))
+        page, _ = _page(qtbot, client=client)
+
+        page._ensure_daemon_classifications()
+        page._ensure_daemon_classifications()
+        assert client.inventory_hwmon.call_count == 1, "the successful fetch must latch"
+
+    def test_a_404_latches_permanently_because_that_answer_cannot_change(self, qtbot):
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+
+        client = MagicMock(
+            inventory_hwmon=MagicMock(
+                side_effect=DaemonError(status=404, code="not_found", message="no such route")
+            )
+        )
+        page, _ = _page(qtbot, client=client)
+
+        page._ensure_daemon_classifications()
+        page._ensure_daemon_classifications()
+        assert client.inventory_hwmon.call_count == 1, (
+            "an older daemon without the endpoint must be asked once, not on every "
+            "sensor-detail open — the answer cannot change without a restart"
+        )
+        assert not page._daemon_classifications_loaded

@@ -1,5 +1,32 @@
 # Changelog
 
+## [2.49.1] — 2026-08-28
+
+### Fixed
+- **One failed lookup permanently disabled the extra sensor detail, for the rest
+  of the session.** Opening a sensor's detail dialog enriches it with the
+  daemon's own classification of that sensor. The flag saying "we already asked"
+  was set *before* the request rather than after it, so a single timeout — or a
+  daemon restart while the dialog was first opened — left the GUI believing it
+  had already fetched. It never asked again, because that flag is the only guard
+  on the only place that asks. The enrichment stayed missing until the GUI was
+  relaunched, with nothing to indicate why.
+
+  The flag now latches on a real answer. A transient failure simply retries next
+  time the dialog opens. A daemon too old to have the endpoint at all is latched
+  separately and permanently, because that answer genuinely cannot change without
+  a restart — the same two-flag shape already used by the Settings page's daemon
+  configuration card, which had this identical defect and was fixed the same way.
+  (DEC-293)
+
+### Fixed (tests)
+- Two diagnostics workers had **no test of their success path at all** — the
+  hardware-diagnostics fetch behind the System State panel, and the GPU fan
+  verify. Every existing test either fed the page's handler directly or exercised
+  only error branches, so a forgotten signal emission would have left both
+  surfaces silently blank with the whole suite green. Both now drive the real
+  worker and assert the real signal fires. (DEC-293)
+
 ## [2.49.0] — 2026-08-27
 
 ### Added

@@ -118,6 +118,11 @@ class OverviewPage(QWidget):
         self._sensor_detail_dialog: SensorDetailDialog | None = None
         self._daemon_classifications: dict = {}
         self._daemon_classifications_loaded = False
+        # Separate from the success latch above, deliberately: a 404 is permanent
+        # (a daemon does not gain an endpoint without restarting) while a timeout
+        # is not, and collapsing the two is the DEC-293 defect. Mirrors
+        # `SettingsPage._daemon_config_unsupported`.
+        self._daemon_classifications_unsupported = False
         self._preferred_sensor_unsupported = False
 
         self._build_ui()
@@ -745,16 +750,37 @@ class OverviewPage(QWidget):
             set_chip_class(self._pref_result_label, css, skip_if_unchanged=True)
 
     def _ensure_daemon_classifications(self) -> None:
-        if self._daemon_classifications_loaded or self._client is None:
+        """Fetch the daemon's sensor classifications once, lazily.
+
+        Latches on a *real answer*, never on the attempt (DEC-293). Setting the
+        flag before the call — as it did — meant a single timeout or a daemon
+        restart during the user's first visit disabled classification enrichment
+        for the whole session, with no way back: this is the flag's only consumer
+        and it is guarded by it, so nothing could trigger another fetch. Exactly
+        the defect already fixed in `SettingsPage._refresh_daemon_config`, and
+        fixed the same way here.
+        """
+        if (
+            self._daemon_classifications_loaded
+            or self._daemon_classifications_unsupported
+            or self._client is None
+        ):
             return
-        self._daemon_classifications_loaded = True
         from control_ofc.api.errors import DaemonError
 
         try:
             inv = self._client.inventory_hwmon()
-        except (DaemonError, ConnectionError, OSError):
+        except DaemonError as e:
+            if getattr(e, "status", None) == 404:
+                # Older daemon without the endpoint. Latch permanently, or every
+                # sensor-detail open re-asks a question whose answer cannot change.
+                self._daemon_classifications_unsupported = True
+            return
+        except (ConnectionError, OSError):
+            # Transient. Deliberately does NOT latch — the next open retries.
             return
         self._daemon_classifications = {s.id: s for s in inv.temp_sensors}
+        self._daemon_classifications_loaded = True
 
     def _open_sensor_detail(self, sensor_id: str) -> None:
         sensor = next((s for s in self._all_sensors if s.id == sensor_id), None)
