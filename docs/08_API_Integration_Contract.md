@@ -177,10 +177,13 @@ upper bounds:
   client timeout is **12 s**.
 - `verify_gpu_fan` — daemon sleeps the same **6 s** settle (shared
   `VERIFY_WAIT_SECONDS` constant); client timeout is **12 s**.
-- `openfan_rescan` — the daemon opens and identity-probes every candidate
-  `ttyACM*`/`ttyUSB*` at `serial.timeout_ms` (500 ms default, up to 1000 ms) and
-  re-verifies the winner, so the sweep scales with how many USB-serial devices
-  are attached; client timeout is **25 s** (`OPENFAN_RESCAN_TIMEOUT_S`). Aborting
+- `openfan_rescan` — the daemon opens and identity-probes candidate
+  `ttyACM*`/`ttyUSB*` at `serial.timeout_ms` (500 ms default, up to 1000 ms)
+  until one identifies, so the sweep scales with how many USB-serial devices are
+  attached. **On daemon ≥ 2.23.4 each candidate is opened once, not twice**
+  (DEC-291 removed a redundant identifying probe that ran while merely
+  *enumerating* the ports), and a rescan refused by the cooldown opens nothing at
+  all; client timeout is **25 s** (`OPENFAN_RESCAN_TIMEOUT_S`). Aborting
   early is merely slow, not lossy — the daemon performs the adoption in a
   detached task, so a client that gives up does not discard a controller that was
   found (DEC-266).
@@ -1236,16 +1239,32 @@ Old daemons predating the route answer `404`, which the GUI treats as
   - Response `200`: `{"api_version": int, "adopted": bool,
     "already_connected": bool, "port": str, "message": str}`. `port` is present
     only when a controller was newly adopted. Rescanning while one is already
-    connected is a **no-op success** (`adopted:false, already_connected:true`),
-    not an error — it probes nothing and leaves the existing controller in
-    place. (`api_version` was missing from the 2.18.0 pre-release shape,
-    breaking General Rule 6 above; added in DEC-266 before it shipped.)
+    connected is normally a **no-op success** (`adopted:false,
+    already_connected:true`) — it probes nothing and leaves the existing
+    controller in place. **On daemon ≥ 2.23.4 the cooldown below outranks it**
+    (DEC-291): a rescan within the cooldown window over an unchanged port set
+    answers `409` even when a controller is connected, so do not treat
+    `already_connected` as guaranteed for a repeat call. (`api_version` was
+    missing from the 2.18.0 pre-release shape, breaking General Rule 6 above;
+    added in DEC-266 before it shipped.)
   - `503 hardware_unavailable` — no candidate port both opened *and* identified
     as an OpenFanController. This is the normal answer on a machine with no
     OpenFan hardware.
-  - `409 validation_error` — a rescan is already in progress (single-flight;
-    two racing probes would open the same tty and the loser would install a
-    controller over the winner's).
+  - `409 validation_error` — **two distinct causes, same status by design** (the
+    code set here is a contract, so neither invents a `429`); only the message
+    separates them.
+    - *"an OpenFan rescan is already in progress"* — single-flight; two racing
+      probes would open the same tty and the loser would install a controller
+      over the winner's. `retryable` is the `validation_error` default.
+    - *"…was attempted moments ago"* — the repeat-probe cooldown (10-e), which
+      applies only while the candidate **port set is unchanged**: a newly
+      attached controller enumerates a new tty, so a genuine retry proceeds at
+      once. This one sets **`retryable: true`**, because it clears in seconds
+      and a client keying its backoff off that field must not read the wait as
+      permanent. Since DEC-291 it is evaluated **before** the already-connected
+      no-op, and the ports are enumerated *without opening them*, so a refused
+      rescan no longer resets Arduino-class boards — which is the entire point
+      of rationing it.
   - `404 not_found` on any daemon before 2.18.0. **Gate on
     `capabilities.control.openfan_rescan`.**
   - **Why this exists.** The daemon adopts its controller during startup only.
@@ -1301,7 +1320,7 @@ Error codes and HTTP statuses:
 
 Two things distinguish the cooldown 409 from the single-flight 409, and a client that retries automatically should read the second one. The `message` differs — the cooldown says "over the same ports was attempted moments ago" and names the seconds to wait. More usefully, the cooldown carries **`retryable: true`** while the single-flight 409 carries `retryable: false`; that field is the documented signal for exactly this decision, and a condition that clears in ten seconds must not present as permanent. No `429` was added: the documented code set is a contract and no client would branch differently on the status alone.
 
-**The cooldown applies only while the candidate port set is unchanged.** Attaching a controller enumerates a new tty, so plugging one in and rescanning immediately is *not* refused — that retry is the endpoint's primary purpose and rate-limiting it on elapsed time alone was a defect corrected before release. What is spaced is a client re-probing hardware that has not changed, which cannot succeed and does reset boards. A *successful* rescan never meets the check at all: the handler returns 200 `already_connected` once a controller is adopted, before it.
+**The cooldown applies only while the candidate port set is unchanged.** Attaching a controller enumerates a new tty, so plugging one in and rescanning immediately is *not* refused — that retry is the endpoint's primary purpose and rate-limiting it on elapsed time alone was a defect corrected before release. What is spaced is a client re-probing hardware that has not changed, which cannot succeed and does reset boards. **Since DEC-291 (daemon ≥ 2.23.4) the cooldown is checked FIRST**, so this is no longer true: a successful rescan followed by another within the window answers `409`, not `200 already_connected`. It still never re-probes or re-adopts — idempotent in effect, not in status code. The reason for the change is that the port list the cooldown compares used to be built by *opening* every candidate, so the boards were reset before the cooldown could refuse anything; enumeration no longer opens, and the check now runs before any other branch can step in front of it.
 - 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
 - 500 `internal_error` (source: `"internal"`, retryable: true)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)
