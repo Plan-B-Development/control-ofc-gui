@@ -824,6 +824,16 @@ class AmdPciDeviceInfo:
 
 @dataclass
 class ThermalSafetyInfo:
+    """Thermal-emergency state and thresholds, as reported by the daemon.
+
+    The two threshold defaults are **fallbacks for a daemon that omits the
+    fields**, not a source of truth — the daemon owns these values and DEC-292
+    made it report them from one place rather than restating them. Read
+    ``emergency_threshold_c`` (the Overview/System State surfaces already do);
+    never hardcode the number beside it, or the GUI becomes a sixth copy of a
+    threshold that has just been reduced to one.
+    """
+
     state: str = "normal"
     cpu_sensor_found: bool = False
     emergency_threshold_c: float = 105.0
