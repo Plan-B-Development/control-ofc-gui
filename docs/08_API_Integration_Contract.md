@@ -272,6 +272,18 @@ has not finished a pass"`, `"not ticking — fan control and thermal safety are
 stalled"`, `"never ticked"`. `age_ms` is always time since the last **completed**
 pass, so a client can read "mid-tick, last full pass N ms ago" coherently.
 
+**Two further reasons on daemon ≥ 2.23.2 (DEC-289):** `"a backend write has not
+returned — fans are holding their last duty"` (`warn`) and `"writes wedged — the
+engine is ticking but nothing is reaching the fans"` (`crit`). These describe a
+state that could not previously be reported at all. Before DEC-289 a write wedged
+in a kernel driver froze the whole engine loop, so the condition surfaced — if at
+all — as a stuck *tick*. The loop is now bounded and keeps running, which is the
+fix; the cost is that both tick stamps then advance normally and the engine would
+otherwise look perfectly healthy while nothing reached the hardware. These two
+reasons are that missing signal. **Treat `reason` as free text and render it** —
+the set has now grown twice, and a client that matches on exact strings will
+silently stop reporting the newest and most serious cases.
+
 A `crit` engine escalates `overall_status` to `"crit"` — that escalation is the
 point of the surface. Daemons < 2.17.0 emit two entries and no `engine`; a client
 must treat its absence as "unknown", never as healthy.
