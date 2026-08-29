@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.49.2] — 2026-08-29
 
 ### Fixed
 - **A fan verify refused for thermal safety no longer looks like a hardware
