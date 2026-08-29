@@ -81,3 +81,71 @@ def test_gpu_verify_404_is_unsupported(qapp):
     seen = _capture(worker)
     worker.do_verify("0000:03:00.0")
     assert seen == [("unsupported", "This daemon version does not support GPU fan verification.")]
+
+
+def test_hwmon_verify_thermal_forcing_refusal_is_soft(qapp):
+    """DEC-297: the second safety refusal, which uses a different code.
+
+    While the ladder is forcing a duty the daemon returns `validation_error`
+    with `retryable: true` — the 85 degC test cannot see the latched 80-85 degC
+    band. It is protection, not failure, so it must be softened exactly like a
+    `thermal_abort`; showing "Verify error: ..." would tell the user their
+    hardware failed while the daemon was protecting it.
+    """
+    worker = _VerifyWorker("/tmp/x.sock")
+    client = MagicMock()
+    client.verify_hwmon_pwm.side_effect = DaemonError(
+        code="validation_error",
+        message="thermal safety is forcing fan output (emergency); a fan verify cannot run",
+        status=409,
+        retryable=True,
+    )
+    worker._ensure_client = MagicMock(return_value=client)
+    seen = _capture(worker)
+    worker.do_verify("hwmon:x")
+    assert seen == [
+        (
+            "unavailable",
+            "thermal safety is forcing fan output (emergency); a fan verify cannot run",
+        )
+    ]
+
+
+def test_gpu_verify_thermal_forcing_refusal_is_soft(qapp):
+    """DEC-297: the GPU arm shares `verify_thermal_guard`, so it shares the code."""
+    worker = _GpuVerifyWorker("/tmp/x.sock")
+    client = MagicMock()
+    client.verify_gpu_fan.side_effect = DaemonError(
+        code="validation_error",
+        message="thermal safety is forcing fan output (recovery); a fan verify cannot run",
+        status=409,
+        retryable=True,
+    )
+    worker._ensure_client = MagicMock(return_value=client)
+    seen = _capture(worker)
+    worker.do_verify("0000:03:00.0")
+    assert seen == [
+        (
+            "unavailable",
+            "thermal safety is forcing fan output (recovery); a fan verify cannot run",
+        )
+    ]
+
+
+def test_a_non_retryable_validation_error_stays_hard(qapp):
+    """The gate is `retryable`, not the code alone.
+
+    `validation_error` is also the daemon's code for a genuinely malformed
+    request and for the single-flight "already in progress" refusal, which is
+    NOT retryable. Softening every `validation_error` would hide a real client
+    bug behind a reassuring notice, so this pins the discriminator.
+    """
+    worker = _VerifyWorker("/tmp/x.sock")
+    client = MagicMock()
+    client.verify_hwmon_pwm.side_effect = DaemonError(
+        code="validation_error", message="unknown header id", status=400, retryable=False
+    )
+    worker._ensure_client = MagicMock(return_value=client)
+    seen = _capture(worker)
+    worker.do_verify("hwmon:x")
+    assert seen == [("error", "unknown header id")]

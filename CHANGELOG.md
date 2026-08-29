@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **A fan verify refused for thermal safety no longer looks like a hardware
+  failure.** The daemon gained a second safety refusal (paired daemon change,
+  DEC-297): while thermal safety is actively forcing the fans it declines to run
+  a verify, because the verify would drive the fan away from the duty the daemon
+  is holding. The GUI only recognised the older "too hot" refusal as a safety
+  notice, so this new one was shown as *"Verify error: …"* — telling the user
+  their hardware had failed at the moment the daemon was protecting it. Both the
+  motherboard and GPU verify buttons now show it as the soft notice it is.
+
+  The two verify workers share one predicate for what counts as a safety refusal
+  rather than each testing codes for itself, and it keys on the daemon's
+  `retryable` flag rather than on the wording of the message, which is daemon
+  prose and not part of the contract. (DEC-297)
+
 ## [2.49.1] — 2026-08-28
 
 ### Fixed

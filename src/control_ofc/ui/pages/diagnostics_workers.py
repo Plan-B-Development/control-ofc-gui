@@ -22,6 +22,28 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _is_soft_safety_refusal(err: object) -> bool:
+    """True for a daemon refusal that is protection, not failure (DEC-201/297).
+
+    Two codes mean the same thing to a user: the daemon declined to disturb a fan
+    because of thermal state, and it will accept the same request later.
+
+    - ``thermal_abort`` — above the 85 degC verify limit (DEC-201).
+    - ``validation_error`` with ``retryable`` — the thermal ladder is actively
+      forcing a duty (DEC-297). The 85 degC test cannot see this: the emergency
+      latches at 105 degC and releases only at 80 degC, so the band between is
+      hot enough to be forcing and cool enough to pass the limit check.
+
+    Keyed on ``retryable`` rather than on the message text, which is daemon prose
+    and not part of the contract. Shared by both verify workers so the two cannot
+    drift on what counts as a refusal.
+    """
+    code = getattr(err, "code", "")
+    if code == "thermal_abort":
+        return True
+    return code == "validation_error" and bool(getattr(err, "retryable", False))
+
+
 class _SocketWorker(QObject):
     """Shared base for the Diagnostics QThread workers.
 
@@ -81,9 +103,9 @@ class _VerifyWorker(_SocketWorker):
         except DaemonUnavailable:
             self.verify_error.emit("unavailable", "Daemon unavailable during verify")
         except DaemonError as e:
-            # DEC-201: a thermal_abort is a safety refusal, not a failure — show
-            # the daemon's "let it cool" message verbatim (soft), not as an error.
-            if getattr(e, "code", "") == "thermal_abort":
+            # A safety refusal is not a failure — show the daemon's message
+            # verbatim (soft), not as an error. See `_is_soft_safety_refusal`.
+            if _is_soft_safety_refusal(e):
                 self.verify_error.emit("unavailable", e.message)
             else:
                 self.verify_error.emit("error", e.message)
@@ -131,8 +153,9 @@ class _GpuVerifyWorker(_SocketWorker):
                     "unsupported",
                     "This daemon version does not support GPU fan verification.",
                 )
-            elif getattr(e, "code", "") == "thermal_abort":
-                # DEC-201: safety refusal — show the "let it cool" message verbatim.
+            elif _is_soft_safety_refusal(e):
+                # Safety refusal — show the daemon's message verbatim, not as an
+                # error. See `_is_soft_safety_refusal`.
                 self.verify_error.emit("unavailable", e.message)
             else:
                 self.verify_error.emit("error", e.message)
