@@ -571,6 +571,14 @@ non-standard measurement device on affected ASUS boards.
 **GUI handling:** Classifies as `bogus` with `low` confidence and a note
 citing the kernel documentation.
 
+**Daemon handling (DEC-294):** classifies the same
+chip+vendor+label as `mb` rather than `cpu`, so it is excluded from the thermal
+ladder's hottest-CPU reduction. Before this the 115 C symptom above was not
+merely cosmetic — it is plausible enough to pass the reader's range check, so it
+latched the 105 C emergency permanently (release requires <= 80 C) and pinned
+every fan at 100%. The chip's `PECI`/`TSI` channels became `cpu` in the same
+change.
+
 Reference: https://docs.kernel.org/hwmon/nct6775.html
 
 ### Quirk 3: ASUS WMI polling can cause hardware misbehaviour

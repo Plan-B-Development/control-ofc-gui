@@ -38,6 +38,14 @@ class SensorClassification:
 
 # Quirk: ASUS boards with NCT6776F can report bogus CPUTIN
 # Kernel docs: "On various ASUS boards with NCT6776F, CPUTIN is not really connected"
+#
+# MIRRORED IN THE DAEMON (DEC-294): `hwmon/discovery.rs::ASUS_CPUTIN_BOGUS_CHIPS`
+# uses the same chip set and the same vendor-substring + lowercase-label gates,
+# but acts on it — it classifies the sensor `MbTemp` so it never reaches the
+# thermal ladder, where a false high reading latches a permanent 100% force.
+# This copy is display-only. Change one and you must change the other: a chip
+# added here alone gets a bogus warning and no protection, and one added there
+# alone protects a sensor the GUI still presents as a trustworthy CPU reading.
 _ASUS_CPUTIN_BOGUS_CHIPS = {"nct6776"}
 
 # AIO Phase 1 (DEC-156): liquid-cooler recognition mirrors the daemon's
