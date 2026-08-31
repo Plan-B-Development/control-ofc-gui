@@ -380,6 +380,12 @@ class TestResizeFloorTracksTheTierWidths:
     `_WIDTH_PER_PT` from 280/11 to 299/23 and the real smallest became 212. The
     floor then sat *above* a size the app ships by default, so a user who
     resized a card could never return it to its neighbours' width.
+
+    285-h re-anchored them a second time, 299/23 -> **305/27**, and the smallest
+    is now **206**. That the floor still lands on 200 with nothing re-tuned is
+    the whole point of deriving it: the test below imports the live constants and
+    recomputes, so it cannot go stale the way the comment it replaced did — which
+    is also why this paragraph is history rather than an expectation.
     """
 
     def test_the_floor_is_below_every_width_the_tiers_ship(self):

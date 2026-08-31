@@ -38,25 +38,43 @@ _TIER_SCALE: dict[str, float] = {
 # ~55px of surplus that the layouts spread between text rows, reading as
 # bloated line spacing.
 _REF_PT = 10
-_BASE_WIDTH = 299
+_BASE_WIDTH = 305
 _BASE_HEIGHT = 132
 # Per-point growth so cards track the theme's text size across the 7-16 range.
 #
 # DEC-258: was 11, which was measurably too small — the ControlCard's details
 # block clipped from 11pt in the default tier and from 9pt in compact, worsening
 # to a 79px deficit at 15pt. Re-derived by rendering the card at every size and
-# measuring the block's own hint: it needs ~23px/pt (161px at 7pt rising to 372px
-# at 15-16pt, plus 42px of card padding), so the reference 280px at 10pt is
-# right in isolation, but a steeper slope shrinks the small end too — 7pt began
-# eliding where it had not before — so the base is re-anchored to 299 as well.
-# 299/23 dominates the measured requirement at every size in the default tier
-# (need = hint + 42px padding: 203px at 7pt, 279 at 10, 414 at 15-16).
+# measuring the block's own hint, which gave 280/11 -> 299/23.
+#
+# 285-h: 23 was still under-provisioned, and 299/23 shipped a card whose headroom
+# DECAYED to exactly zero. Two compounding reasons, both measured:
+#
+#   * The DEC-258 sweep measured the WRONG FONT. `ThemeTokens.font_family` is
+#     "DM Sans", bundled at `ui/fonts/DMSans.ttf` and registered by `main.py`
+#     before any theme is applied — but the test harness never called
+#     `register_bundled_fonts()`, so it measured whatever fallback the host
+#     resolved (Noto Sans here; DejaVu Sans on a minimal container). Every
+#     machine therefore derived the constant from a different font.
+#   * Against the font production actually uses, the details block needs
+#     ~26.4px/pt (158px at 7pt rising to 369px at 15-16pt, plus 42px of card
+#     padding). Provisioning 23px/pt against a 26.4px/pt requirement means the
+#     margin shrinks with every point of font size, so the promise "comfortable
+#     and large never elide" held at 7pt and was a 0px tie at 15pt — passing on
+#     CI by luck of the font stack rather than by design.
+#
+# 305/27 provisions ABOVE the measured slope, so the margin no longer decays:
+# the worst must-fit cell is +20px (comfortable@9pt) instead of +0px, and the
+# minimum has moved off the top end entirely. The harness now registers the
+# bundled fonts, so that figure is the same on every machine — and the test
+# asserts the resolved family, because a silent registration failure would put
+# the old variance straight back without saying so.
 #
 # A constant alone cannot close this class, which is why the curve label now
 # elides: curve names are profile-authored and arbitrary-length, so no width is
 # ever sufficient for the widest possible content. This makes the *typical* card
 # fit; elision makes the worst case survivable.
-_WIDTH_PER_PT = 23
+_WIDTH_PER_PT = 27
 _HEIGHT_PER_PT = 10
 
 # Font range mirrors theme.ThemeTokens.base_font_size_pt (7-16).
@@ -81,7 +99,8 @@ def _smallest_tier_width() -> int:
     DEC-258 re-anchored `_BASE_WIDTH`/`_WIDTH_PER_PT` from 280/11 to 299/23.
     The real smallest became 212, i.e. *below* the resize floor, so a user who
     resized a card could never return it to the size its unresized neighbours
-    were already using: dragging down snapped to 220 and stopped.
+    were already using: dragging down snapped to 220 and stopped. (285-h moved
+    it again, to 206 — which is the point: nothing here had to be re-tuned.)
 
     Deriving it means the next re-anchor cannot reintroduce that skew.
     """

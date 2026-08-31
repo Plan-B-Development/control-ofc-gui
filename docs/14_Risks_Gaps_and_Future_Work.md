@@ -233,14 +233,26 @@ It also could not be closed by a constant. The dominant contributor is the curve
 label, whose text is **profile-authored and arbitrary-length** — 286 px of a
 304 px content area at 16 pt for an ordinary name — so no card width is ever
 sufficient for the widest possible content. The fix is therefore both halves: the
-metric re-derived from measurement (base 299, 23 px/pt, so the default and large
-densities never elide at any size 7–16 pt), and the curve label switched to the
-existing `ElidedLabel` primitive so the unbounded case degrades to an ellipsis
-instead of a clip. Compact still elides above ~9 pt, which is the honest meaning
-of that density once the content is fixed-width.
+metric re-derived from measurement, and the curve label switched to the existing
+`ElidedLabel` primitive so the unbounded case degrades to an ellipsis instead of
+a clip. Compact still elides above ~9 pt, which is the honest meaning of that
+density once the content is fixed-width.
 
-Guarded by `test_the_control_card_details_row_fits_the_default_tier`, which
-sweeps every font size rather than pinning the one reported symptom.
+**Re-opened and re-closed 2026-08-31 (285-h).** The re-derived metric was
+*itself* measured against the wrong font: the test harness never called
+`register_bundled_fonts()`, so the sweep resolved the host's fallback rather than
+the bundled DM Sans the running app uses. Against the real font the requirement
+is ~26.4 px/pt, not the 23 px/pt provisioned — so the headroom shrank with every
+point of font size and reached exactly **0 px** at comfortable/15 pt. The claim
+"the default and large densities never elide at any size 7–16 pt" was therefore
+true only by a tie, and only on machines whose fallback font happened to be no
+wider than this one's. Now base **305**, **27 px/pt**, worst must-fit cell +20 px,
+with the harness pinning the font so the figure means the same thing everywhere.
+
+Guarded by `test_the_control_card_details_row_fits_every_density`, which sweeps
+every font size *and* every density rather than pinning the one reported symptom,
+asserts a minimum **headroom** rather than a bare fit, and asserts the resolved
+font family before trusting any of it.
 
 <details><summary>Original report (2026-08-08)</summary>
 

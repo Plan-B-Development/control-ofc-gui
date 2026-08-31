@@ -1,5 +1,55 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Controls cards were one pixel from eliding text they promise never to
+  elide.** The card width metric is derived from a measured sweep of the details
+  row, and DEC-258 re-derived it as `299 + 23px per point of font size`. That
+  sweep measured the wrong font: the app renders in the bundled **DM Sans**
+  (`ui/fonts/DMSans.ttf`, registered at startup), but the test harness never
+  registered it, so the sweep resolved whatever the host machine had installed.
+
+  Against the font the app actually uses, the row needs ~26.4px/pt. Provisioning
+  23px/pt against that means the spare width shrank with every point of font
+  size — from 27px at 7pt to exactly **0px** at the comfortable density at 15pt.
+  The "comfortable and large never elide" promise held by a tie, and only on
+  machines whose fallback font was no wider than the developer's; measured
+  against the nine families installed here it already failed under three of
+  them, including the usual minimal-container default.
+
+  The metric is now `305 + 27px per point`, which provisions *above* the measured
+  slope, so the margin no longer decays: the tightest cell has **20px** of
+  headroom and it is no longer at the top of the font range. Cards are 6px wider
+  at the default text size and 26px wider at 15pt. The test harness registers the
+  bundled fonts, so every machine measures the same bytes, and the test now
+  asserts a minimum headroom (with the resolved font family checked first) rather
+  than a bare fit. (285-h)
+
+- **The API contract quoted two daemon engine-health reasons that no released
+  daemon has ever emitted.** `docs/08` documented `"a backend write has not
+  returned — fans are holding their last duty"` and `"writes wedged — the engine
+  is ticking but nothing is reaching the fans"`. Both are draft wording that was
+  narrowed before DEC-289 shipped; the daemon emits `"…has not returned yet — it
+  is still in flight"` and `"…a backend write has not returned and nothing is
+  reaching those fans"`. The other six engine reasons were re-checked against the
+  daemon source and are correct.
+
+  No GUI behaviour was affected — nothing in `src/` matches on these strings, and
+  the Dashboard renders `reason` as free text exactly as the contract requires —
+  but a third-party client following the contract would have matched neither.
+  Corrected in `docs/08`, in the daemon's own CHANGELOG entry for the same
+  feature, and in the daemon source comment that described the narrower wording
+  as a removal rather than as a draft that never shipped. (298-a)
+
+- **The contract advertised five daemon versions that do not exist.** Six version
+  gates in `docs/08` (and one in the daemon's `daemon.md`) required daemon
+  `≥ 2.23.1`, `≥ 2.23.2`, `≥ 2.23.3` or `≥ 2.23.4`. Only `v2.23.0` and `v2.23.5`
+  were ever tagged — those four were incremental steps within one session. Every
+  feature so gated shipped in **2.23.5**, and all seven gates now say so. Harmless
+  under a `>=` comparison, since no daemon could report those versions, but the
+  contract was naming releases a reader cannot obtain. (298-a)
+
 ## [2.49.3] — 2026-08-31
 
 ### Fixed

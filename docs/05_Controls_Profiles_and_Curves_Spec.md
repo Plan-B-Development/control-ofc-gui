@@ -366,7 +366,9 @@ Every card has a bottom-right **resize grip** (`ui/widgets/card_resize.py`):
 - **Drag** resizes that card live; sizes snap to an **absolute lattice**
   (multiples of `card_metrics.SNAP_STEP_PX = 20`) so nearby sizes land on
   exactly the same value — the affordance that makes equal-sized cards easy.
-- **Clamping** — width ≥ `MIN_USER_CARD_WIDTH_PX` (220); height ≥ the card
+- **Clamping** — width ≥ `MIN_USER_CARD_WIDTH_PX` (200, *derived* from the
+  narrowest width the tier system itself ships — do not restate it as a
+  literal here, which is how this line came to say 220); height ≥ the card
   layout's `minimumSize()` rounded up to the lattice, so a shrink can never
   clip rows. With an override the card is fixed in *both* dimensions;
   without one, DEC-128 fixed-width + min-height semantics apply unchanged.

@@ -180,7 +180,7 @@ upper bounds:
 - `openfan_rescan` — the daemon opens and identity-probes candidate
   `ttyACM*`/`ttyUSB*` at `serial.timeout_ms` (500 ms default, up to 1000 ms)
   until one identifies, so the sweep scales with how many USB-serial devices are
-  attached. **On daemon ≥ 2.23.4 each candidate is opened once, not twice**
+  attached. **On daemon ≥ 2.23.5 each candidate is opened once, not twice**
   (DEC-291 removed a redundant identifying probe that ran while merely
   *enumerating* the ports), and a rescan refused by the cooldown opens nothing at
   all; client timeout is **25 s** (`OPENFAN_RESCAN_TIMEOUT_S`). Aborting
@@ -306,17 +306,18 @@ has not finished a pass"`, `"not ticking — fan control and thermal safety are
 stalled"`, `"never ticked"`. `age_ms` is always time since the last **completed**
 pass, so a client can read "mid-tick, last full pass N ms ago" coherently.
 
-**Two further reasons on daemon ≥ 2.23.2 (DEC-289):** `"a backend write has not
-returned — fans are holding their last duty"` (`warn`) and `"writes wedged — the
-engine is ticking but nothing is reaching the fans"` (`crit`). These describe a
-state that could not previously be reported at all. Before DEC-289 a write wedged
-in a kernel driver froze the whole engine loop, so the condition surfaced — if at
-all — as a stuck *tick*. The loop is now bounded and keeps running, which is the
-fix; the cost is that both tick stamps then advance normally and the engine would
-otherwise look perfectly healthy while nothing reached the hardware. These two
-reasons are that missing signal. **Treat `reason` as free text and render it** —
-the set has now grown twice, and a client that matches on exact strings will
-silently stop reporting the newest and most serious cases.
+**Two further reasons on daemon ≥ 2.23.5 (DEC-289):** `"a backend write has not
+returned yet — it is still in flight"` (`warn`) and `"writes wedged — a backend
+write has not returned and nothing is reaching those fans"` (`crit`). These
+describe a state that could not previously be reported at all. Before DEC-289 a
+write wedged in a kernel driver froze the whole engine loop, so the condition
+surfaced — if at all — as a stuck *tick*. The loop is now bounded and keeps
+running, which is the fix; the cost is that both tick stamps then advance
+normally and the engine would otherwise look perfectly healthy while nothing
+reached the hardware. These two reasons are that missing signal. **Treat
+`reason` as free text and render it** — the set has now grown twice, and a
+client that matches on exact strings will silently stop reporting the newest
+and most serious cases.
 
 A `crit` engine escalates `overall_status` to `"crit"` — that escalation is the
 point of the surface. Daemons < 2.17.0 emit two entries and no `engine`; a client
@@ -425,7 +426,7 @@ sensors the daemon discovered but currently cannot read — the canonical case i
 temperature returning `ENETDOWN` while the radio is soft-blocked. Each entry is `{id, label, reason,
 unavailable_for_ms}` where `reason` is the daemon's hwmon read error, formatted as
 `read error: <path>: <cause>`. Two classes of cause occur: an I/O failure (`ENETDOWN`, `ENODATA`),
-and — since **DEC-288**, daemon ≥ 2.23.1 — a reading rejected as implausible, e.g.
+and — since **DEC-288**, daemon ≥ 2.23.5 — a reading rejected as implausible, e.g.
 `read error: /sys/.../temp2_input: implausible temperature 2147483.6°C outside [-50, 250]°C`.
 The second class is why a **CPU** sensor can now appear here: before DEC-288 an out-of-range value
 was clamped to 250 °C and served as a live reading, which latched a permanent thermal emergency.
@@ -1056,14 +1057,14 @@ Response (daemon `HwmonVerifyResponse` ↔ GUI `HwmonVerifyResult`):
 - `restore_failed: bool` — omitted when false (`skip_serializing_if`);
   when true, do not trust the verify to have put the header back. Two
   causes: the restore write failed (the header is left at the test
-  value), or — daemon ≥ 2.23.3, DEC-290 — the daemon began shutting down
+  value), or — daemon ≥ 2.23.5, DEC-290 — the daemon began shutting down
   mid-verify, in which case the restore is **deliberately skipped** and
   the header is left to the daemon's own hardware restore, i.e. firmware
   control. The second case is the safer outcome, not a failure: a fixed
   duty that no writer will ever revise is worse than handing the header
   back to the BIOS.
 
-**Abandoning the request does not abandon the restore (daemon ≥ 2.23.3, DEC-290).**
+**Abandoning the request does not abandon the restore (daemon ≥ 2.23.5, DEC-290).**
 The whole test-write → settle → restore sequence runs as one uncancellable unit, so
 a client that disconnects — or whose own timeout fires before `wait_seconds`
 elapses — still gets the header put back. Before DEC-290 the restore sat after an
@@ -1272,7 +1273,7 @@ Old daemons predating the route answer `404`, which the GUI treats as
     only when a controller was newly adopted. Rescanning while one is already
     connected is normally a **no-op success** (`adopted:false,
     already_connected:true`) — it probes nothing and leaves the existing
-    controller in place. **On daemon ≥ 2.23.4 the cooldown below outranks it**
+    controller in place. **On daemon ≥ 2.23.5 the cooldown below outranks it**
     (DEC-291): a rescan within the cooldown window over an unchanged port set
     answers `409` even when a controller is connected, so do not treat
     `already_connected` as guaranteed for a repeat call. (`api_version` was
@@ -1351,7 +1352,7 @@ Error codes and HTTP statuses:
 
 Two things distinguish the cooldown 409 from the single-flight 409, and a client that retries automatically should read the second one. The `message` differs — the cooldown says "over the same ports was attempted moments ago" and names the seconds to wait. More usefully, the cooldown carries **`retryable: true`** while the single-flight 409 carries `retryable: false`; that field is the documented signal for exactly this decision, and a condition that clears in ten seconds must not present as permanent. No `429` was added: the documented code set is a contract and no client would branch differently on the status alone.
 
-**The cooldown applies only while the candidate port set is unchanged.** Attaching a controller enumerates a new tty, so plugging one in and rescanning immediately is *not* refused — that retry is the endpoint's primary purpose and rate-limiting it on elapsed time alone was a defect corrected before release. What is spaced is a client re-probing hardware that has not changed, which cannot succeed and does reset boards. **Since DEC-291 (daemon ≥ 2.23.4) the cooldown is checked FIRST**, so this is no longer true: a successful rescan followed by another within the window answers `409`, not `200 already_connected`. It still never re-probes or re-adopts — idempotent in effect, not in status code. The reason for the change is that the port list the cooldown compares used to be built by *opening* every candidate, so the boards were reset before the cooldown could refuse anything; enumeration no longer opens, and the check now runs before any other branch can step in front of it.
+**The cooldown applies only while the candidate port set is unchanged.** Attaching a controller enumerates a new tty, so plugging one in and rescanning immediately is *not* refused — that retry is the endpoint's primary purpose and rate-limiting it on elapsed time alone was a defect corrected before release. What is spaced is a client re-probing hardware that has not changed, which cannot succeed and does reset boards. **Since DEC-291 (daemon ≥ 2.23.5) the cooldown is checked FIRST**, so this is no longer true: a successful rescan followed by another within the window answers `409`, not `200 already_connected`. It still never re-probes or re-adopts — idempotent in effect, not in status code. The reason for the change is that the port list the cooldown compares used to be built by *opening* every candidate, so the boards were reset before the cooldown could refuse anything; enumeration no longer opens, and the check now runs before any other branch can step in front of it.
 - 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
 - 500 `internal_error` (source: `"internal"`, retryable: true)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)

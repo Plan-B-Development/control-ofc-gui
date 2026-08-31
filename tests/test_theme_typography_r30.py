@@ -8,7 +8,8 @@ save/load roundtrip for typography fields.
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QFontInfo
+from PySide6.QtWidgets import QApplication, QWidget
 
 from control_ofc.ui.theme import (
     ThemeTokens,
@@ -16,6 +17,24 @@ from control_ofc.ui.theme import (
     default_dark_theme,
     font_sizes,
 )
+
+# Minimum spare width the ControlCard details row must have in the densities
+# that promise no elision (285-h).
+#
+# Chosen against a measured matrix, not picked: with `card_metrics` at 305/27 and
+# the bundled DM Sans pinned by the conftest fixture, the tightest must-fit cell
+# is comfortable@9pt at +20px, and the minimum no longer sits at the top of the
+# font range — which is the actual repair, because the old 299/23 provisioned
+# 23px/pt against a ~26.4px/pt requirement and therefore DECAYED to a 0px tie at
+# 15pt.
+#
+# Set at half the measured worst case rather than at it. Asserting 20 would red
+# on a 1px layout jitter and teach the next person to edit the number; asserting
+# 0 is what shipped the tie. 10px is far enough above a tie to be a real margin
+# and far enough below the measurement to be about the DESIGN promise rather than
+# today's pixel count. Erosion past it means the slope has drifted again — fix
+# the slope, do not lower this.
+_MIN_HEADROOM_PX = 10
 
 
 class TestFontSizesComputation:
@@ -188,6 +207,29 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
           content, and since DEC-258 it degrades to an ellipsis rather than a
           hard clip. Asserted as *bounded* rather than ignored, so a future change
           that turns a graceful elision into a gross one still fails here.
+
+        285-h: this asserted `need > have` — one boolean conflating two promises
+        that are not the same shape, and it passed by exactly **0px** at
+        comfortable@15pt. A tie is not a margin: any change to card padding, to
+        the details-row content, or to the resolved font tipped it, presenting as
+        a release-blocking failure in a diff that looked unrelated. It is now
+        three separate assertions:
+
+        1. **Structural, absolute, every density.** The row's
+           `minimumSizeHint()` must fit. This is the promise that nothing can be
+           *clipped*, and it holds by a wide margin at every cell because the
+           curve label is an `ElidedLabel` whose minimum is tiny. Worth asserting
+           on its own precisely because it is the strong promise and it is NOT
+           what `need > have` was measuring.
+        2. **Quality, must-fit densities.** The `sizeHint()` must fit with real
+           headroom, not merely fit. Asserted as a minimum margin so a re-decay
+           reds here — locally, with a number attached — rather than at the wire.
+        3. **The measurement is of the right font.** `_MIN_HEADROOM_PX` is a font
+           metric, and a font metric is portable only while the font is pinned.
+           `tests/conftest.py::_register_bundled_fonts` pins it; a silent
+           registration failure would restore the old per-machine variance with
+           nothing to say so, which is exactly the failure mode being closed. So
+           the resolved family is asserted before any of the numbers are trusted.
         """
         from control_ofc.services.profile_service import (
             ControlMember,
@@ -205,8 +247,13 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
         from control_ofc.ui.widgets.control_card import ControlCard
 
         must_fit = (CARD_SIZE_COMFORTABLE, CARD_SIZE_LARGE)
-        clipped: list[str] = []
+        # (margin_px, cell) for the densities that promise no elision. Collected
+        # rather than thresholded in the loop so the failure can report the trend.
+        headroom: list[tuple[int, str]] = []
         compact_deficits: list[int] = []
+        # The structural promise, asserted for ALL three densities including
+        # compact: compact is allowed to elide, never to clip.
+        would_clip: list[str] = []
 
         # Count REAL application-wide applies, not calls to the `_apply` helper —
         # the timeout above is machine-dependent, this is not. `_apply` imports
@@ -231,7 +278,19 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
         # test blew the 60s pytest-timeout on every CI runner while passing here.
         # Nothing in the tier loop mutates the theme, so this is a pure reordering.
         for pt in range(7, 17):
-            self._apply(pt)
+            tokens = self._apply(pt)
+            if pt == 7:
+                # Everything below is a font metric. Prove the harness pinned the
+                # font before trusting a single number — `register_bundled_fonts`
+                # is best-effort by design (a missing TTF is logged and skipped),
+                # so it can fail into the host's fallback silently.
+                resolved = QFontInfo(QApplication.instance().font()).family()
+                assert resolved == tokens.font_family, (
+                    f"the suite is measuring {resolved!r}, not the bundled "
+                    f"{tokens.font_family!r} this app actually renders in — "
+                    "tests/conftest.py::_register_bundled_fonts did not take "
+                    "effect, so every margin below is a property of this machine"
+                )
             for tier in (CARD_SIZE_COMPACT, *must_fit):
                 curves = [CurveConfig(id="c1", name="Aggressive Ramp", type=CurveType.GRAPH)]
                 control = LogicalControl(
@@ -255,17 +314,30 @@ class TestNoWidgetIsCappedBelowItsOwnContent:
                 card.show()
                 details = card.findChild(QWidget, "ControlCard_Details_ctl")
                 need = details.sizeHint().width()
+                floor = details.minimumSizeHint().width()
                 have = width - 42  # measured card padding
-                if need > have:
-                    if tier in must_fit:
-                        clipped.append(f"{tier}@{pt}pt: needs {need}, has {have}")
-                    else:
-                        compact_deficits.append(need - have)
+                if floor > have:
+                    would_clip.append(f"{tier}@{pt}pt: floor {floor}, has {have}")
+                if tier in must_fit:
+                    headroom.append((have - need, f"{tier}@{pt}pt"))
+                elif need > have:
+                    compact_deficits.append(need - have)
                 card.hide()
 
-        assert not clipped, (
+        # Promise 1 — structural, absolute, every density. Nothing may CLIP.
+        assert not would_clip, (
+            "the details row cannot be squeezed below its own minimum at any "
+            f"density or font size — these would be clipped, not elided: {would_clip}"
+        )
+        # Promise 2 — quality, must-fit densities. Real headroom, not a tie.
+        worst_margin, worst_cell = min(headroom)
+        assert worst_margin >= _MIN_HEADROOM_PX, (
             "the comfortable and large densities must hold their own details row "
-            f"at every theme font size: {clipped}"
+            "with room to spare at every theme font size, not scrape past it: "
+            f"worst cell {worst_cell} has {worst_margin}px of headroom, "
+            f"minimum is {_MIN_HEADROOM_PX}px. If this is a deliberate content "
+            "change, re-derive card_metrics._BASE_WIDTH/_WIDTH_PER_PT against the "
+            "measured slope rather than lowering this bound."
         )
         # Compact elides by design; keep it a trim, not a truncation.
         assert max(compact_deficits, default=0) <= 60, (

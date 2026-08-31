@@ -334,6 +334,58 @@ def _reap_orphaned_top_levels():
 
 
 @pytest.fixture(autouse=True)
+def _register_bundled_fonts():
+    """Measure the font production uses, not whatever the host falls back to (285-h).
+
+    ``ThemeTokens.font_family`` is "DM Sans" and ``font_family_heading`` is
+    "Space Grotesk". Both ship in-repo under ``ui/fonts/`` and ``main.py``
+    registers them with ``register_bundled_fonts()`` before any theme is
+    applied — so every running GUI lays text out in those fonts. The suite never
+    called it, so every text measurement in every test resolved to whatever the
+    host happened to have (Noto Sans on the dev box, DejaVu Sans on a minimal
+    container), and no two machines measured the same thing.
+
+    That is not a tidiness point. It is why a card-sizing constant derived from
+    a measured sweep (DEC-258's ``_WIDTH_PER_PT``) came out too small, and why
+    the details-row test passed by exactly **0px** on this host while failing
+    under three of the nine families installed on it. Holding everything else
+    fixed and varying only the resolved family moved that margin from +17
+    (Cantarell) to -31 (DejaVu Sans) — so the test's verdict was a property of
+    the machine, not of the code. Registering the bundled TTFs makes every
+    machine measure the same bytes.
+
+    Two constraints, both load-bearing:
+
+    * **Never ``scope="session"``.** DEC-287's orphan reaper is sound only
+      because nothing in this repository outlives a test; a session-scoped
+      fixture here would falsify that argument for every fixture, not just this
+      one. Function scope costs ~66us per test after the first (the helper is
+      idempotent and then only re-checks the family list), i.e. ~0.2s across the
+      suite.
+    * **Skip when there is no ``QApplication``**, rather than calling the helper
+      and letting it fail. ``addApplicationFont`` needs a live app, and
+      ``register_bundled_fonts`` latches an idempotence flag as soon as it runs —
+      so calling it too early would permanently record "registered" having
+      registered nothing. Any test that measures text has an app by this point
+      (pytest-qt's ``qapp`` is session-scoped and therefore set up before every
+      function-scoped fixture), so this only skips the pure-logic tests that
+      cannot care either way.
+
+    Defined **after** the two DEC-230/287 fixtures on purpose: `285-i` records
+    that nothing pins their relative order, and inserting between them would
+    break the invariant silently. This one has no teardown, so it cannot affect
+    them from here.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    if QApplication.instance() is None:
+        return
+    from control_ofc.ui.fonts import register_bundled_fonts
+
+    register_bundled_fonts()
+
+
+@pytest.fixture(autouse=True)
 def _neutralize_modals(monkeypatch):
     """Stop any modal dialog from blocking the test run.
 
