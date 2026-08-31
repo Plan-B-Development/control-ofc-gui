@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.49.3] — 2026-08-31
 
 ### Fixed
 - **Controls cards were one pixel from eliding text they promise never to
@@ -26,6 +26,22 @@
   asserts a minimum headroom (with the resolved font family checked first) rather
   than a bare fit. (285-h)
 
+- **The Overview page explained the subsystem age with a sentence that is no
+  longer true.** It read *"Age = time since daemon last polled this hardware
+  subsystem"*. On daemon ≥ 2.24.2 the `openfan` and `hwmon` entries report the
+  worse of two things — whether the poll loop is alive, and whether the data it
+  returned is fresh — so when a poll is running but not covering every channel,
+  the age shown is the **oldest reading's**, not the poll's (paired daemon
+  change, DEC-302).
+
+  The old wording described exactly the number that used to let a frame covering
+  three of ten fan channels report *"readings fresh"* while the other seven aged
+  without bound. Leaving it in place would have pointed the user at the poll at
+  the very moment the new signal is trying to tell them the poll is fine and the
+  data is not. It now reads *"Age = how long ago this subsystem's data was last
+  refreshed"*. (DEC-302)
+
+### Documentation
 - **The API contract quoted two daemon engine-health reasons that no released
   daemon has ever emitted.** `docs/08` documented `"a backend write has not
   returned — fans are holding their last duty"` and `"writes wedged — the engine
@@ -49,24 +65,6 @@
   feature so gated shipped in **2.23.5**, and all seven gates now say so. Harmless
   under a `>=` comparison, since no daemon could report those versions, but the
   contract was naming releases a reader cannot obtain. (298-a)
-
-## [2.49.3] — 2026-08-31
-
-### Fixed
-- **The Overview page explained the subsystem age with a sentence that is no
-  longer true.** It read *"Age = time since daemon last polled this hardware
-  subsystem"*. On daemon ≥ 2.24.2 the `openfan` and `hwmon` entries report the
-  worse of two things — whether the poll loop is alive, and whether the data it
-  returned is fresh — so when a poll is running but not covering every channel,
-  the age shown is the **oldest reading's**, not the poll's (paired daemon
-  change, DEC-302).
-
-  The old wording described exactly the number that used to let a frame covering
-  three of ten fan channels report *"readings fresh"* while the other seven aged
-  without bound. Leaving it in place would have pointed the user at the poll at
-  the very moment the new signal is trying to tell them the poll is fine and the
-  data is not. It now reads *"Age = how long ago this subsystem's data was last
-  refreshed"*. (DEC-302)
 
 ## [2.49.2] — 2026-08-29
 
