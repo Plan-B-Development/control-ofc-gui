@@ -251,3 +251,28 @@ def test_build_device_discovery_none():
     vm = ov.build_device_discovery_vm(None, None)
     assert vm.openfan == "OpenFan: —"
     assert vm.hwmon_warn is False
+
+
+def test_the_age_note_does_not_claim_age_is_the_poll_time():
+    """DEC-302 retraction guard.
+
+    The note used to read "Age = time since daemon last polled this hardware
+    subsystem". On daemon >= 2.24.2 that is false whenever a poll is running but
+    not covering everything: the openfan/hwmon entries report the worse of poll
+    liveness and data freshness, so `age_ms` is then the OLDEST READING's age.
+
+    The old wording described precisely the number that let a 3-of-10-channel
+    frame report "readings fresh" while seven channels aged without bound — so a
+    note asserting it would send a user to the wrong conclusion at exactly the
+    moment the new signal is trying to correct them.
+
+    Asserts the absence AND the replacement: absence alone would pass against an
+    empty string, which is the vacuous-assertion trap in CLAUDE.md.
+    """
+    vm = ov.build_daemon_health_vm(None, None)
+    assert "last polled" not in vm.age_note.lower(), (
+        f"the note must not claim age is the poll time, got {vm.age_note!r}"
+    )
+    assert "refreshed" in vm.age_note.lower(), (
+        f"the note must still explain what age means, got {vm.age_note!r}"
+    )

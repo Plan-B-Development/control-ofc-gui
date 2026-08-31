@@ -320,8 +320,17 @@ The `age_ms` values shown in the Overview subsystems area are **daemon-side cach
 These differences are **expected behavior**, not a bug. The GUI poll cycle (1000ms) adds an additional 0-1000ms of staleness that is not reflected in the daemon's `age_ms` value.
 
 ### Display rules
-- Show subsystem `reason` text from daemon alongside age (e.g., "readings fresh", "readings stale")
-- Include an explanatory note: "Age = time since daemon last polled this hardware subsystem"
+- Show subsystem `reason` text from daemon alongside age (e.g., "readings fresh", "readings stale").
+  Treat it as **daemon prose, not contract** — render it, never match on it. On daemon ≥ 2.24.2 a
+  partial-coverage wording also appears ("N of M readings stale — the poll loop is running but is
+  not refreshing them"), and an absent OpenFanController reads "no OpenFanController connected"
+  (DEC-302)
+- Include an explanatory note: "Age = how long ago this subsystem's data was last refreshed".
+  **Not** "time since the daemon last polled it": on daemon ≥ 2.24.2 the **`openfan`** entry reports
+  the worse of poll *liveness* and data *freshness*, so when a poll is running but not covering every
+  channel, `age_ms` is the **oldest reading's** age rather than the poll's (DEC-302). That is the
+  whole point of the change — the old wording described the number that made a 3-of-10 frame read
+  as "readings fresh". `hwmon` still reports poll liveness only, deliberately (see `docs/08`)
 - Show daemon uptime when available
 - Do not force subsystem ages to match — they reflect different I/O paths
 

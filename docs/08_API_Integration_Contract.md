@@ -238,6 +238,37 @@ needs no change to display either. The first two report *data* freshness from th
 poll loops. `engine` reports the profile engine's **liveness**: the daemon's sole
 PWM writer also evaluates the 105 °C rule.
 
+On daemon ≥ 2.24.2 the **`openfan`** entry reports the **worse** of two limbs
+(DEC-302): poll-loop *liveness* (a poll returned) and *data* freshness (reduced over
+each channel's own `updated_at`, counting only channels a poll has actually measured).
+Before that it reported liveness alone while this document promised freshness, so a
+frame covering three of ten channels reported `ok — readings fresh` while `/poll`
+showed seven channels ageing without bound.
+
+**`hwmon` deliberately keeps reporting poll liveness alone**, and that asymmetry is a
+decision rather than an omission. Every cached OpenFan channel is expected to be
+refreshed by every poll and nothing else prunes them; hwmon coverage is instead owned
+end to end by sensor discovery, `retain_sensors`, and the DEC-193 quarantine, which
+publishes what it drops as `unavailable_sensors[]`. hwmon also holds some readings
+frozen **on purpose** — DEC-272 exempts a chip's cached readings from eviction when
+its metadata will not read — so on that subsystem a reading's age is not a freshness
+signal. A client wanting hwmon per-sensor freshness should read `sensors[].age_ms`
+and `unavailable_sensors[]`, which answer it directly.
+
+Two consequences for a client:
+
+- A new `reason` wording appears for the partial case — `"N of M readings stale — the
+  poll loop is running but is not refreshing them"`. `reason` is **daemon prose, not
+  contract**: render it, never match on it. `status` and `age_ms` carry the meaning,
+  and `age_ms` is now the *oldest reading's* age when the freshness limb is the worse
+  one, rather than the poll stamp's.
+- On a machine with **no OpenFanController**, `subsystems[0]` now reports
+  `ok — "no OpenFanController connected"` with `age_ms` absent. It previously reported
+  `crit — "never received data"` for the process lifetime, which pinned
+  `overall_status` to `"crit"` on every hwmon-only machine. The entry is still
+  present at index 0 — the wire shape is unchanged — and still reports `crit`
+  normally when a controller *is* attached and its poll loop has died.
+
 On daemon ≥ 2.18.0 the engine task is **supervised** (DEC-266): if it ends —
 including by a panic inside a tick, which the runtime otherwise contains — the
 daemon restores every fan to firmware control and exits non-zero so systemd

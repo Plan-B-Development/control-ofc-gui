@@ -351,7 +351,12 @@ class SensorRowVM:
 
 # ─── Builders (mirror the current renderers exactly) ───────────────────────
 
-_AGE_NOTE = "Age = time since daemon last polled this hardware subsystem"
+# DEC-302: NOT "time since the daemon last polled it". On daemon >= 2.24.2 the
+# openfan/hwmon entries report the worse of poll liveness and data freshness, so
+# when a poll is running but not covering every channel/sensor, age_ms is the
+# OLDEST READING's age rather than the poll's. The old wording described exactly
+# the number that let a 3-of-10 frame read as "readings fresh".
+_AGE_NOTE = "Age = how long ago this subsystem's data was last refreshed"
 
 
 def build_daemon_health_vm(
