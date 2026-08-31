@@ -8,17 +8,19 @@ the page handler is driven directly.
 
 from __future__ import annotations
 
+import random
 import re
 
 import pytest
+from PySide6.QtCore import QEvent
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 from control_ofc.api.models import ConnectionState
 from control_ofc.services.app_state import AppState
-from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.services.diagnostics_service import MAX_EVENTS, DiagnosticsService
 from control_ofc.ui.components.badges import StatusPill
-from control_ofc.ui.pages.logs_page import LogsPage, _JournalWorker
+from control_ofc.ui.pages.logs_page import _COL_MESSAGE, LogsPage, _JournalWorker
 from control_ofc.ui.theme import active_theme
 
 
@@ -457,3 +459,206 @@ def test_a_restored_source_filter_survives_having_no_matching_rows_yet(qtbot):
     page._diag.log_event("warning", "fan", "stall")
     assert [r.source for r in page._rows] == ["fan"]
     assert page._source_combo.currentText() == "fan"
+
+
+# ── Bounded, incremental live feed (OFS-d) ─────────────────────────────────
+#
+# `_all_rows` used to be an unbounded list and every event rebuilt every row, so
+# cost per event grew without bound for the life of the session: measured 4.36 ms
+# per append at 100 rows, 144.87 ms at 1000, with the page's copy at 1003 rows
+# while the service deque it mirrors held 200.
+
+
+def test_the_pages_row_store_is_capped_like_the_service_feed(qtbot):
+    """The page mirrors the service's capped feed, so it must be capped identically.
+
+    Fails with the defect present: `_all_rows` and the table both reach 250.
+    """
+    page, diag = _page(qtbot)
+
+    for i in range(MAX_EVENTS + 50):
+        diag.log_event("info", "gui", f"event {i}")
+
+    assert len(diag.events) == MAX_EVENTS, "precondition: the service feed is capped"
+    assert len(page._all_rows) == MAX_EVENTS, "the page's copy is capped to the same depth"
+    assert page._table.rowCount() == MAX_EVENTS
+    # Not merely the right count — the right *window*: the oldest 50 aged out.
+    assert page._all_rows[0].message == "event 50"
+    assert page._all_rows[-1].message == f"event {MAX_EVENTS + 49}"
+    assert page._rows[0].message == "event 50"
+    assert page._rows[-1].message == f"event {MAX_EVENTS + 49}"
+
+
+def test_a_live_append_never_rebuilds_the_whole_table(qtbot, monkeypatch):
+    """Assert **zero** rebuilds, not "one per event".
+
+    "One rebuild per event" is exactly what the defect did, so a test asserting it
+    would stay green with the bug present. What must be bounded is the thing that
+    grows (CLAUDE.md § Hard-won lessons), and the only bound that means anything
+    here is none at all.
+
+    Patched on the class, not the instance: `_connect_signals` binds
+    `self._rebuild_table` at construction, so an instance attribute would not
+    intercept a signal-driven rebuild — the very thing worth counting.
+    """
+    calls: list[int] = []
+    original = LogsPage._rebuild_table
+
+    def counting(self, *args):
+        calls.append(1)
+        return original(self, *args)
+
+    monkeypatch.setattr(LogsPage, "_rebuild_table", counting)
+    page, diag = _page(qtbot)
+    calls.clear()  # construction backfills once, legitimately
+
+    for i in range(50):
+        diag.log_event("info", "gui", f"event {i}")
+
+    assert calls == [], f"a live append must not rebuild the table ({len(calls)} rebuilds)"
+    assert page._table.rowCount() == 50, "and the rows must still arrive"
+
+    # A filter change still rebuilds — that is the path the rebuild is *for*.
+    page._toggle_info.setChecked(False)
+    assert calls, "a filter change must still rebuild"
+
+
+def test_selection_and_inspector_stay_on_the_same_event_when_the_head_is_evicted(qtbot):
+    """DEC-210 across the trim: the pane you are reading survives an eviction.
+
+    `removeRow(0)` emits `selectionChanged` *during* the removal carrying the
+    pre-shift index, so an unguarded `_on_selection_changed` re-reads the
+    already-trimmed `self._rows` at a stale index. The failure is silent: the
+    highlight stays where it was while the inspector quietly describes the *next*
+    event. So this asserts all three agree, not just that a selection exists.
+    """
+    page, diag = _page(qtbot)
+    for i in range(MAX_EVENTS):
+        diag.log_event("info", "gui", f"event {i}")
+    page._table.selectRow(3)
+    assert page._selected_vm.message == "event 3"
+
+    diag.log_event("warning", "gui", "overflow")  # evicts "event 0"
+
+    assert page._all_rows[0].message == "event 1", "precondition: the head was evicted"
+    selected = page._table.selectionModel().selectedRows()
+    assert selected, "the highlight must survive the trim"
+    assert page._table.item(selected[0].row(), _COL_MESSAGE).text() == "event 3"
+    assert page._selected_vm.message == "event 3"
+    assert page._insp_message.toPlainText() == "event 3"
+
+
+def test_evicting_the_selected_row_drops_the_highlight_and_keeps_the_detail(qtbot):
+    """The boundary case of the test above: the evicted row IS the selected one.
+
+    Found in review — the non-boundary case passes for a reason that does not
+    generalise. Qt shifts the highlight *with* the item for every row except the
+    one being removed, where it instead re-anchors onto whatever slides into that
+    index. So the highlight would silently move to the next event while
+    `_selected_vm` and the inspector stayed on the evicted one, which is the same
+    highlight/inspector disagreement the `_suppress_selection` guard exists to
+    prevent — one row over.
+
+    Correct behaviour is DEC-210's rule for a row that leaves the view, the one
+    `_rebuild_table` already applies to a filtered-out row: no highlight, detail
+    retained.
+    """
+    page, diag = _page(qtbot)
+    for i in range(MAX_EVENTS):
+        diag.log_event("info", "gui", f"event {i}")
+    page._table.selectRow(0)
+    assert page._selected_vm.message == "event 0"
+
+    diag.log_event("warning", "gui", "overflow")  # evicts the selected "event 0"
+
+    assert page._all_rows[0].message == "event 1", "precondition: the head was evicted"
+    assert page._table.item(0, _COL_MESSAGE).text() == "event 1", "row 0 is a different event"
+    assert page._table.selectionModel().selectedRows() == [], (
+        "the highlight must drop rather than re-anchor onto the next event"
+    )
+    # The detail pane is deliberately retained — you were reading it.
+    assert page._selected_vm.message == "event 0"
+    assert page._insp_message.toPlainText() == "event 0"
+    assert not page._inspector.isHidden()
+
+
+def test_an_appended_row_failing_the_active_filter_is_stored_but_not_shown(qtbot):
+    """The incremental path must apply the filter exactly as a rebuild would —
+    hidden in the table, still held in `_all_rows`, and back on re-enabling."""
+    page, diag = _page(qtbot)
+    diag.log_event("info", "gui", "kept")
+    page._toggle_error.setChecked(False)
+    assert page._table.rowCount() == 1
+
+    diag.log_event("error", "gpu", "hidden while ERR is off")
+
+    assert len(page._all_rows) == 2, "still recorded"
+    assert page._table.rowCount() == 1, "but not shown"
+    assert [r.message for r in page._rows] == ["kept"]
+
+    page._toggle_error.setChecked(True)
+
+    assert [r.message for r in page._rows] == ["kept", "hidden while ERR is off"]
+    assert page._table.rowCount() == 2
+
+
+def test_evicted_rows_do_not_leak_their_level_pill(qtbot):
+    """Each surviving row owns exactly one `StatusPill`, however many aged out.
+
+    The flush is not optional: `processEvents()` does **not** dispatch
+    `DeferredDelete`, and without it the backlog counts as live widgets and
+    invents a leak that is not there.
+    """
+    page, diag = _page(qtbot)
+    for i in range(MAX_EVENTS + 100):
+        diag.log_event("info", "gui", f"event {i}")
+
+    app = QApplication.instance()
+    assert app is not None
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    pills = page._table.findChildren(StatusPill)
+    assert page._table.rowCount() == MAX_EVENTS
+    assert len(pills) == MAX_EVENTS, "one pill per surviving row, none from the 100 evicted"
+
+
+def test_the_incremental_path_agrees_with_a_full_rebuild(qtbot):
+    """The oracle: whatever the incremental path builds, a rebuild must reproduce.
+
+    Two paths now decide what is on screen — `_append_row` per event and
+    `_rebuild_table` per filter change — and the failure mode of splitting them is
+    that they drift somewhere neither path's own tests look. So drive a mixed,
+    *seeded* (deterministic) sequence of appends, level toggles, searches, source
+    changes and selections across the eviction boundary, check the store/table
+    invariant at every step, and finish by asserting a full rebuild produces
+    exactly what the appends did.
+    """
+    rng = random.Random(20260831)
+    page, diag = _page(qtbot)
+    levels = ["info", "warning", "error"]
+    sources = ["gui", "polling", "fan", "gpu", "sensor"]
+
+    for step in range(800):
+        action = rng.random()
+        if action < 0.80:
+            diag.log_event(rng.choice(levels), rng.choice(sources), f"message {step}")
+        elif action < 0.86:
+            btn = rng.choice([page._toggle_info, page._toggle_warn, page._toggle_error])
+            btn.setChecked(not btn.isChecked())
+        elif action < 0.92:
+            page._search_edit.setText(rng.choice(["", "message", "1", "zzz"]))
+        elif action < 0.97:
+            page._source_combo.setCurrentIndex(rng.randrange(page._source_combo.count()))
+        else:
+            page._table.selectRow(rng.randrange(max(page._table.rowCount(), 1)))
+
+        # The filtered view is 1:1 with table rows — `_on_selection_changed` indexes
+        # `_rows` by table row, so a drift here mis-reports which event is selected.
+        assert len(page._rows) == page._table.rowCount(), f"desync at step {step}"
+        assert len(page._all_rows) <= MAX_EVENTS, f"overflow at step {step}"
+
+    assert len(page._all_rows) == MAX_EVENTS, "the sequence must cross the eviction boundary"
+
+    built_incrementally = list(page._rows)
+    page._rebuild_table()
+    assert built_incrementally == page._rows, "the two paths disagree about what is visible"

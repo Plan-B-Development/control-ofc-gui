@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.49.4] — 2026-08-31
+
+### Fixed
+- **The GUI got progressively less responsive the longer it ran, and the Logs
+  page was why.** The page kept its own copy of the event feed in an *unbounded*
+  list, and rebuilt every row of the table on every single event — tearing down
+  and reconstructing three widgets per row, per event. Cost per event therefore
+  grew with the number of events already logged: measured **4.4 ms** per event
+  at 100 rows, **23.8 ms** at 400, and **144.9 ms** at 1000, with no ceiling. A
+  single poll in which ten OpenFan channels flapped cost roughly **1.4 s** of
+  frozen UI, and the page is built at startup, so this was paid on every page,
+  not just while Logs was open.
+
+  The page now mirrors the service feed's existing 200-event cap and adds new
+  rows **incrementally** instead of rebuilding. Per-event cost is flat at
+  **~0.09 ms** measured from 100 through 6000 events — about 1600× cheaper at
+  1000 events, and it no longer grows at all.
+
+  **One visible consequence:** the Logs table now holds the most recent 200
+  events, the same depth the underlying feed has always kept. Previously it
+  accumulated every event of the session, so it could scroll back further than
+  the feed backing it — a support bundle exported at the same moment already
+  contained only 200. Startup backfill, export, and the table now agree.
+  (OFS-d)
+
 ## [2.49.3] — 2026-08-31
 
 ### Fixed

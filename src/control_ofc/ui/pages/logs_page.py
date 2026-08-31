@@ -27,6 +27,7 @@ reordered.
 from __future__ import annotations
 
 import logging
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -50,7 +51,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.services.diagnostics_service import JOURNAL_TIMEOUT_S, DiagnosticsService
+from control_ofc.services.diagnostics_service import (
+    JOURNAL_TIMEOUT_S,
+    MAX_EVENTS,
+    DiagnosticsService,
+)
 from control_ofc.services.logs_view import LogRowVM, build_log_row, build_log_rows, filter_log_rows
 from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.badges import StatusPill
@@ -119,8 +124,13 @@ class LogsPage(QWidget):
         self._state = state
         self._settings_service = settings_service
 
-        # Poll/feed-driven state.
-        self._all_rows: list[LogRowVM] = []
+        # Poll/feed-driven state. `_all_rows` mirrors the service's own capped feed
+        # (`DiagnosticsService._events`) and is bounded the same way and to the same
+        # depth: a deque, so over-append is impossible by construction rather than by
+        # a trim call nothing checks. Unbounded, it made every append quadratic in
+        # session length — 145 ms per event at 1000 rows — because `_rebuild_table`
+        # rebuilds every row.
+        self._all_rows: deque[LogRowVM] = deque(maxlen=MAX_EVENTS)
         self._rows: list[LogRowVM] = []  # current filtered view (1:1 with table rows)
         self._selected_vm: LogRowVM | None = None
         self._suppress_selection = False
@@ -143,7 +153,7 @@ class LogsPage(QWidget):
         self._restore_log_filters()
 
         # Backfill from any events already in the deque (startup breadcrumbs).
-        self._all_rows = build_log_rows(self._diag.events)
+        self._all_rows = deque(build_log_rows(self._diag.events), maxlen=MAX_EVENTS)
         self._rebuild_table()
         self._render_inspector()
         self._refresh_follow_indicator()
@@ -506,10 +516,22 @@ class LogsPage(QWidget):
         the newest row while they are reading older ones. What changed is that the
         state is named, can be turned off, and that entries arriving while paused are
         counted so the user knows there is something to come back to.
+
+        The table is updated **incrementally** (`_append_row`), never rebuilt. A full
+        rebuild per event is O(rows) over a list that grows with events, i.e. quadratic
+        in session length; it is reserved for a filter/search/theme change, where the
+        whole view genuinely changes.
         """
-        self._all_rows.append(build_log_row(ev))
+        # The head about to be pushed out by `maxlen`, captured before the append
+        # because afterwards it is unrecoverable. The bound is read off the deque
+        # rather than restated as `== MAX_EVENTS`, so the two cannot disagree about
+        # when an eviction happens (an unbounded deque has `maxlen is None`, which
+        # compares unequal to any length and correctly evicts nothing).
+        evicted = self._all_rows[0] if len(self._all_rows) == self._all_rows.maxlen else None
+        vm = build_log_row(ev)
+        self._all_rows.append(vm)
         following = self._follow_btn.isChecked() and self._is_at_bottom()
-        self._rebuild_table()
+        self._append_row(vm, evicted)
         if following:
             self._scroll_to_bottom()
         else:
@@ -517,7 +539,7 @@ class LogsPage(QWidget):
         self._refresh_follow_indicator()
 
     def _on_events_cleared(self) -> None:
-        self._all_rows = []
+        self._all_rows.clear()
         self._selected_vm = None
         self._pending_new = 0
         self._rebuild_table()
@@ -631,6 +653,8 @@ class LogsPage(QWidget):
             self._source_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
     def _rebuild_table(self, *_args) -> None:
+        """Re-derive the whole filtered view. For a filter/search/theme change only —
+        a live append takes the O(1) `_append_row` path instead."""
         prev = self._selected_vm
         self._sync_source_choices()
         self._rows = filter_log_rows(
@@ -646,19 +670,7 @@ class LogsPage(QWidget):
             theme = active_theme()
             muted = QColor(theme.text_secondary)
             for r, vm in enumerate(self._rows):
-                _ensure_items(self._table, r, len(_LOG_COLS))
-                time_item = self._table.item(r, _COL_TIME)
-                time_item.setText(vm.time_str)
-                time_item.setForeground(muted)
-                src_item = self._table.item(r, _COL_SOURCE)
-                src_item.setText(vm.source)
-                src_item.setForeground(muted)
-                msg_item = self._table.item(r, _COL_MESSAGE)
-                msg_item.setText(vm.message)
-                msg_item.setForeground(QColor(_message_color(theme, vm.level_state)))
-                for col in (_COL_TIME, _COL_SOURCE, _COL_MESSAGE):
-                    self._table.item(r, col).setToolTip(vm.message)
-                self._set_pill(self._table, r, _COL_LEVEL, vm.level_label, vm.level_state)
+                self._paint_row(r, vm, theme, muted)
             # Restore selection by frozen-VM equality so a live append / refilter
             # never clears the inspector (DEC-210). A prev row filtered out keeps
             # the inspector showing its detail, only without a highlighted row.
@@ -666,6 +678,87 @@ class LogsPage(QWidget):
                 self._table.selectRow(self._rows.index(prev))
         finally:
             self._suppress_selection = False
+
+    def _append_row(self, vm: LogRowVM, evicted: LogRowVM | None) -> None:
+        """Add one row and drop the evicted head, without rebuilding the table.
+
+        Three things make this safe to do incrementally rather than by rebuild:
+
+        - **The filter verdict comes from `filter_log_rows` itself**, over a
+          one-element sequence, so the incremental path and the bulk path cannot
+          drift into disagreeing about what is visible.
+        - **`_suppress_selection` is load-bearing, and its absence is silent.**
+          `removeRow(0)` emits `selectionChanged` *during* the removal carrying the
+          pre-shift index (measured: selected row 3 → the signal reports 3, and only
+          afterwards does Qt shift the highlight to row 2). `_on_selection_changed`
+          would therefore re-read `self._rows` — already trimmed — at a stale index
+          and silently move `_selected_vm` and the inspector one event forward while
+          the highlight stayed put, breaking DEC-210's promise that the pane you are
+          reading survives a live append.
+        - **No explicit `removeCellWidget` is needed**: `removeRow` destroys the
+          level column's pill holder with the row (measured after flushing
+          `DeferredDelete` — without that flush the backlog looks like a leak).
+
+        Qt shifts the highlight with the item for every row *except* the one being
+        removed, where it re-anchors onto whatever slides into that index instead —
+        so the boundary case is handled explicitly below rather than assumed.
+        """
+        self._sync_source_choices()
+        matched = filter_log_rows(
+            [vm],
+            levels=self._active_levels(),
+            source=self._selected_source(),
+            search=self._search_edit.text(),
+        )
+        self._suppress_selection = True
+        try:
+            # `self._rows` preserves feed order, so an evicted row that is visible at
+            # all is visible at index 0. Identity, not equality: two identical
+            # messages in the same second produce equal VMs.
+            if evicted is not None and self._rows and self._rows[0] is evicted:
+                # Qt does not drop the highlight when the highlighted row is removed
+                # — it re-anchors it onto the row that slides into that index. Left
+                # alone, the highlight would move to the *next* event while
+                # `_selected_vm` and the inspector (correctly) stay on the evicted
+                # one, so the two would describe different events. Dropping the
+                # highlight and keeping the detail is DEC-210's rule for a row that
+                # leaves the view, and is what `_rebuild_table` does when the
+                # selected row is filtered out.
+                losing_highlight = self._selected_table_row() == 0
+                del self._rows[0]
+                self._table.removeRow(0)
+                if losing_highlight:
+                    self._table.clearSelection()
+            if matched:
+                r = self._table.rowCount()
+                self._rows.append(vm)
+                self._table.insertRow(r)
+                theme = active_theme()
+                self._paint_row(r, vm, theme, QColor(theme.text_secondary))
+        finally:
+            self._suppress_selection = False
+
+    def _paint_row(self, r: int, vm: LogRowVM, theme, muted: QColor) -> None:
+        """Render one row's cells. Shared by `_rebuild_table` and `_append_row` so an
+        incrementally added row cannot be painted differently from a rebuilt one."""
+        _ensure_items(self._table, r, len(_LOG_COLS))
+        time_item = self._table.item(r, _COL_TIME)
+        time_item.setText(vm.time_str)
+        time_item.setForeground(muted)
+        src_item = self._table.item(r, _COL_SOURCE)
+        src_item.setText(vm.source)
+        src_item.setForeground(muted)
+        msg_item = self._table.item(r, _COL_MESSAGE)
+        msg_item.setText(vm.message)
+        msg_item.setForeground(QColor(_message_color(theme, vm.level_state)))
+        for col in (_COL_TIME, _COL_SOURCE, _COL_MESSAGE):
+            self._table.item(r, col).setToolTip(vm.message)
+        self._set_pill(self._table, r, _COL_LEVEL, vm.level_label, vm.level_state)
+
+    def _selected_table_row(self) -> int | None:
+        """The highlighted table row, or None when nothing is highlighted."""
+        rows = self._table.selectionModel().selectedRows()
+        return rows[0].row() if rows else None
 
     def _on_selection_changed(self, *_args) -> None:
         if self._suppress_selection:
