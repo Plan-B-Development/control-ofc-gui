@@ -2168,7 +2168,7 @@ class ControlsPage(QWidget):
 
         **An absent control is not a zero.** The daemon omits any control it did
         not evaluate — no profile, a listed skip, or the whole of a thermal event,
-        where `force_all` drives the fans directly and bypasses every control. A
+        where the daemon publishes no per-control output at all. A
         card with no entry is left alone rather than being told `0`, so it keeps
         showing whatever it last had rather than claiming the fans stopped.
         """
@@ -2196,8 +2196,8 @@ class ControlsPage(QWidget):
         # "must not carry a previous value forward ... Render absence as
         # 'unknown' (the reference GUI's '—'), never as 0". A control is absent
         # whenever the daemon did not evaluate it — no profile, a listed skip, or
-        # the whole of a thermal event, where `force_all` drives the fans directly
-        # and bypasses every control. Carrying "Now: 42%" through a thermal emergency
+        # the whole of a thermal event, where the daemon
+        # publishes no per-control output at all. Carrying "Now: 42%" through a thermal emergency
         # while the fans run at 100% is precisely what that clause forbids, so
         # every card the daemon did not report is reset here rather than left.
         for control_id, card in self._control_cards.items():

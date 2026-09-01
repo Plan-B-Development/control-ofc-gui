@@ -154,7 +154,7 @@ class TestSubsystemHealth:
         added `warn` in DEC-259 for exactly this reason: reporting a slow tick
         as a stopped engine is, in the daemon's own words, "exactly inverted".
 
-        The canonical slow tick is the 105 C force_all walking ten OpenFan
+        The canonical slow tick is the thermal force walking ten OpenFan
         channels at up to a second each — so the critical wording claimed
         thermal protection was off, and told the user to restart the sole PWM
         writer, at the moment it was saving their hardware.

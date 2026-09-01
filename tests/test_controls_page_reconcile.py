@@ -746,7 +746,7 @@ class TestLiveControlOutputs:
         violation it was meant to prevent: it required the card to KEEP its last
         figure, on the strawman reasoning that the only alternative was rendering
         0. The contract never asked for 0 — it asked for "—". A card left reading
-        "Now: 42%" through a 105 °C event, while `force_all` drives the fans at
+        "Now: 42%" through a 105 °C event, while the thermal force drives the fans at
         100%, is exactly the "confidently display a duty nothing is applying"
         failure that clause exists to forbid.
         """
@@ -988,7 +988,7 @@ class TestPreviewExemptionIsReleasedOnClose:
         card.update_output_preview("C", "cpu", 55.0, 40.0)
         page._close_editor()
 
-        # A thermal event: force_all drives the fans directly, so the daemon
+        # A thermal event: the daemon publishes no per-control output, so it
         # reports no control output at all.
         page._on_status_reconcile(parse_status({"control_outputs": []}))
 

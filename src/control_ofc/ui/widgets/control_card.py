@@ -339,8 +339,8 @@ class ControlCard(ResizableGridCard):
         is MEANINGFUL and that a client "must not carry a previous value forward
         ... Render absence as 'unknown' (the reference GUI's '—'), never as 0".
         A control is absent whenever the daemon did not evaluate it: no profile,
-        a listed skip, or the whole of a thermal event, where `force_all` drives
-        the fans directly and bypasses every control.
+        a listed skip, or the whole of a thermal event, where the daemon
+        publishes no per-control output at all.
 
         Carrying the last figure was the bug this method exists to fix. It left a
         card reading "Now: 42%" for the duration of a thermal emergency while the fans

@@ -53,7 +53,7 @@ The daemon's `profile_engine` carries the behaviour that used to live in the GUI
 - applies the tuning pipeline (offset, step-rate, start/stop) and per-member floors (GPU 0 %, DEC-119; pump/CPU ≥ 30 %, DEC-162)
 - coalesces writes (identical PWM skips sysfs; `pwm_enable` written once per lease — DEC-073; GPU PMFW uses a 5 % threshold — DEC-070)
 - manages the hwmon lease internally
-- enforces the thermal ladder (recover at 60 %), which supersedes overrides and curves
+- enforces the thermal ladder (recover at a 60 % floor), whose duties **floor** overrides and curves rather than replacing them (DEC-307)
 
 The GUI and daemon evaluators are pinned together by the shared `parity_vectors.json` golden-vector oracle (DEC-126). Post-cutover the GUI keeps only the **stateless** `curve_eval` tier of that oracle (it still has `CurveConfig.interpolate()` for demo and card previews); the daemon owns the full oracle including the stateful tuning sequence.
 
@@ -82,12 +82,14 @@ The Fan Wizard's "stop a fan to find it" flow calls `POST /fans/{id}/identify {a
 **The GUI no longer holds an hwmon lease.** The daemon owns the lease lifecycle internally (its engine takes/renews it; hwmon write-verify runs under the daemon's own internal verify lease, so the GUI's `verify_hwmon_pwm` call carries no `lease_id`). The diagnostics Lease tab and the lease-status poll were removed at the cutover.
 
 ## Thermal protection (supersedes the DEC-132 GUI stand-down)
-The daemon owns the thermal ladder: at 105 °C it forces all OpenFan + writable hwmon fans to 100 %, holds until 80 °C, recovers at 60 %, and forces 40 % if no CPU sensor is found for 5 cycles (GPU fans are excluded by design — DEC-130). Thermal force supersedes overrides and curves.
+The daemon owns the thermal ladder: at 105 °C it forces all OpenFan + writable hwmon fans to 100 %, holds until 80 °C, recovers at a 60 % floor, and applies a 40 % floor if no CPU sensor is found for 5 cycles (GPU fans are excluded by design — DEC-130).
+
+**Thermal force is a FLOOR over overrides and curves, not a replacement for them (DEC-307, daemon ≥ 2.26.0).** Each OpenFan channel and writable hwmon header receives `max(commanded, forced)`, and an output no control commands still receives the forced duty — that second half is what gives the emergency its reach. So the ladder can only ever raise a fan. Before DEC-307 the forced duty replaced the profile's output, which meant the 60 % and 40 % rungs could drive a fan *down* below what its curve was asking for; the 100 % emergency was never affected, because 100 is the maximum.
 
 The old **DEC-132 GUI stand-down** (where `ControlLoopService` paused its own writes while `thermal_state != "normal"`) is **gone** — there is no GUI loop to stand down. The GUI now uses `status.thermal_state` only to **show** a poll-driven thermal-protection banner (DEC-165), never to gate a write. `thermal_state` (`normal | recovery | emergency | no_sensor_fallback`) remains in `GET /status`.
 
 ## Sensor freshness handling
-The GUI surfaces freshness for display, not for control gating (the daemon owns the conservative fallback — e.g. the no-CPU-sensor 40 % force). If a sensor is stale or invalid the GUI should:
+The GUI surfaces freshness for display, not for control gating (the daemon owns the conservative fallback — e.g. the no-CPU-sensor 40 % floor). If a sensor is stale or invalid the GUI should:
 - mark the affected reading/target unhealthy in the UI
 - surface a warning
 - not present a stale value as live
@@ -102,7 +104,7 @@ What lives where as of 2.0.0:
 - **all runtime control** — curve evaluation (always, not only headless), hysteresis, tuning, write coalescing, and every PWM write to every backend (DEC-159, DEC-165)
 - **profile storage + CRUD/validate** — `/var/lib/control-ofc/profiles/`, `GET/POST/PUT/DELETE /profiles`, `?validate_only` (DEC-160); activation via `POST /profile/activate`
 - the **hwmon lease** lifecycle (internal)
-- the **thermal ladder** (recover at 60 %) and the no-CPU-sensor fallback
+- the **thermal ladder** (recover at a 60 % floor) and the no-CPU-sensor fallback
 - **manual override** (DEC-163) and **fan identify** (DEC-166), each with a daemon-clock deadman
 - **role-floor enforcement** — validate-time reject + eval-time clamp (DEC-162); GPU per-member floor (DEC-119)
 - hardware rescan — `POST /hwmon/rescan`

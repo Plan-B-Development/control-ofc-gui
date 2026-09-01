@@ -775,7 +775,7 @@ class DashboardPage(QWidget):
         # three must NOT collapse into one message, and that is DEC-259's whole
         # point: the daemon added `warn` precisely because reporting a slow tick
         # as a dead engine is, in its own words, "exactly inverted". The
-        # canonical slow tick is the 105 \u00b0C force_all walking ten OpenFan
+        # canonical slow tick is the thermal force walking ten OpenFan
         # channels at up to a second each, so the critical wording would claim
         # thermal protection was off, and tell the user to restart the sole PWM
         # writer, at the exact moment it was saving their hardware.
