@@ -464,3 +464,132 @@ class TestIdentifyFanPageLifecycle:
         page._label_combo.setCurrentText("CPU Cooler")
         assert page.validatePage() is True
         assert wizard._labels["openfan:ch00"] == "CPU Cooler"
+
+
+class TestPumpSafeIdentifyCopy:
+    """DEC-311 / AIO-MB Phase 1: the wizard must not tell a user their pump is
+    about to stop.
+
+    The daemon decides stop-vs-perturb from the header role; these tests pin
+    that the *copy* follows that decision, and — critically — that it does NOT
+    follow it against a daemon too old to honour it.
+    """
+
+    @staticmethod
+    def _state_with_pump(*, header_roles: bool, role: str = "pump"):
+        from control_ofc.api.models import (
+            Capabilities,
+            ControlCapability,
+            HwmonHeader,
+        )
+
+        state = AppState()
+        state.set_connection(ConnectionState.CONNECTED)
+        state.set_mode(OperationMode.AUTOMATIC)
+        state.set_fans(
+            [
+                FanReading(id="hwmon:it8696:isa:pwm5:pwm5", source="hwmon", rpm=2400, age_ms=50),
+                FanReading(id="openfan:ch00", source="openfan", rpm=1200, age_ms=50),
+            ]
+        )
+        state.set_sensors(
+            [SensorReading(id="cpu", label="Tctl", kind="CpuTemp", value_c=45.0, age_ms=50)]
+        )
+        state.set_hwmon_headers(
+            [
+                HwmonHeader(
+                    id="hwmon:it8696:isa:pwm5:pwm5",
+                    label="pwm5",
+                    chip_name="it8696",
+                    pwm_index=5,
+                    role=role,
+                    role_source="user_assigned",
+                )
+            ]
+        )
+        state.set_capabilities(
+            Capabilities(
+                control=ControlCapability(
+                    autonomous_control=True,
+                    fan_identify=True,
+                    header_roles=header_roles,
+                )
+            )
+        )
+        return state
+
+    def test_pump_header_is_recognised_as_a_pump_target(self, qtbot):
+        state = self._state_with_pump(header_roles=True)
+        wiz = FanConfigWizard(state)
+        qtbot.addWidget(wiz)
+        assert wiz.is_pump_target("hwmon:it8696:isa:pwm5:pwm5") is True
+        assert wiz.identify_verb("hwmon:it8696:isa:pwm5:pwm5") == "change speed"
+
+    def test_non_pump_fans_still_stop(self, qtbot):
+        state = self._state_with_pump(header_roles=True)
+        wiz = FanConfigWizard(state)
+        qtbot.addWidget(wiz)
+        # An OpenFan channel has no header at all, so it can never be a pump.
+        assert wiz.is_pump_target("openfan:ch00") is False
+        assert wiz.identify_verb("openfan:ch00") == "stop"
+
+    def test_a_chassis_role_is_not_a_pump(self, qtbot):
+        state = self._state_with_pump(header_roles=True, role="chassis_fan")
+        wiz = FanConfigWizard(state)
+        qtbot.addWidget(wiz)
+        assert wiz.is_pump_target("hwmon:it8696:isa:pwm5:pwm5") is False
+
+    def test_an_unrecognised_role_token_is_not_treated_as_a_pump(self, qtbot):
+        # Forward-compat: a role this GUI has never heard of must not silently
+        # acquire pump semantics. Render it, do not act on it (the 273-i rule).
+        state = self._state_with_pump(header_roles=True, role="impeller")
+        wiz = FanConfigWizard(state)
+        qtbot.addWidget(wiz)
+        assert wiz.is_pump_target("hwmon:it8696:isa:pwm5:pwm5") is False
+
+    def test_without_the_capability_the_copy_stays_honest(self, qtbot):
+        """The load-bearing case.
+
+        A pre-2.28.0 daemon drives every identified fan to 0, pumps included.
+        Even though the header says `role="pump"`, promising "the pump will
+        briefly change speed" would be a LIE about what that daemon does — so
+        the wizard must keep the "stop" wording.
+        """
+        state = self._state_with_pump(header_roles=False)
+        wiz = FanConfigWizard(state)
+        qtbot.addWidget(wiz)
+        assert wiz.is_pump_target("hwmon:it8696:isa:pwm5:pwm5") is False
+        assert wiz.identify_verb("hwmon:it8696:isa:pwm5:pwm5") == "stop"
+
+    def test_missing_capabilities_object_does_not_crash(self, qtbot):
+        state = self._state_with_pump(header_roles=True)
+        state.capabilities = None
+        wiz = FanConfigWizard(state)
+        qtbot.addWidget(wiz)
+        assert wiz.is_pump_target("hwmon:it8696:isa:pwm5:pwm5") is False
+
+    def test_intro_page_warns_that_a_pump_is_never_stopped(self, qtbot):
+        # The intro is shown before any per-fan role is known, so it describes
+        # both behaviours rather than promising a stop.
+        state = self._state_with_pump(header_roles=True)
+        page = IntroPage(state)
+        qtbot.addWidget(page)
+        from PySide6.QtWidgets import QLabel
+
+        text = " ".join(w.text() for w in page.findChildren(QLabel))
+        assert "never stopped" in text.lower(), text
+        assert "coolant keeps flowing" in text.lower(), text
+
+    def test_test_page_prompt_names_the_pump_behaviour(self, qtbot):
+        state = self._state_with_pump(header_roles=True)
+        wiz = FanConfigWizard(state)
+        qtbot.addWidget(wiz)
+        # Select the pump target and initialise the identify page.
+        pump_idx = next(
+            i for i, t in enumerate(wiz._targets) if t["id"] == "hwmon:it8696:isa:pwm5:pwm5"
+        )
+        wiz._selected_indices = [pump_idx]
+        wiz._current_test_idx = 0
+        page = wiz._test_page
+        page.initializePage()
+        assert "change speed" in page._status_msg.text().lower(), page._status_msg.text()

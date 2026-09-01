@@ -1,5 +1,38 @@
 # Changelog
 
+## [2.50.0] — 2026-09-01
+
+Pairs with `control-ofc-daemon` ≥ v2.11.0 (unchanged floor). The new behaviour below is
+capability-gated on `control.header_roles`, so this release is safe against any supported
+daemon — it simply keeps the old wording where the daemon keeps the old behaviour.
+
+AIO-MB Phase 1 (DEC-311), GUI half: consume the daemon's new header roles and stop telling
+users their pump is about to stop.
+
+### Added
+- **`HwmonHeader.role` / `.role_source`** and the same pair on `InventoryPwmControl`
+  (daemon ≥ 2.28.0). Per-channel, and distinct from the chip-level `is_aio` — a pump on a
+  motherboard `AIO_PUMP` header is `role="pump", is_aio=False`. Treated as an **opaque token**:
+  an unrecognised value is preserved and rendered, never coerced or dropped (the 273-i rule),
+  and never granted pump semantics.
+- **`IdentifyResult.mode` / `.identify_pwm_percent` / `.baseline_pwm_percent`**, and `mode` +
+  `identify_pwm_percent` on each `IdentifyStatusEntry`. All default to the pre-2.28.0
+  behaviour when a daemon omits them.
+- **`ControlCapability.header_roles`.**
+
+### Changed
+- **The Fan Wizard no longer says a pump will stop.** The daemon perturbs a `role="pump"`
+  header rather than stopping it, so the wizard's copy now matches: the intro explains both
+  behaviours ("a pump is never stopped — its speed is shifted instead, so coolant keeps
+  flowing"), and the per-fan prompt, progress and failure messages name what will actually
+  happen to *that* fan.
+
+  **All of it is gated on `control.header_roles`, and that gate is the feature.** Against a
+  pre-2.28.0 daemon — which drives every identified fan to 0, pumps included — the wizard keeps
+  its original "stop" wording, because that is what that daemon does. Promising a speed change
+  there would be a lie, which is the failure this gate exists to prevent.
+
+
 ## [2.49.7] — 2026-09-01
 
 Pairs with `control-ofc-daemon` ≥ v2.11.0 (unchanged floor).

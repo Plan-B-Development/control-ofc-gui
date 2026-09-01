@@ -103,7 +103,7 @@ On the **System State** page:
 
 ## Step 7 — Create your first profile
 
-1. Run the [Fan Wizard](fan-wizard.md) to identify and label each fan — it stops one fan at a time so you can match headers to physical fans.
+1. Run the [Fan Wizard](fan-wizard.md) to identify and label each fan — it changes one fan at a time so you can match headers to physical fans. Ordinary fans are stopped briefly; a pump has its speed shifted instead, never stopped.
 2. On [Controls](controls.md), create fan roles and assign curves. Concepts: [Profiles and Curves](profiles-and-curves.md).
 
 ## When to redo what

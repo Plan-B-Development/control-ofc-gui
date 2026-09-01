@@ -1,8 +1,19 @@
 """Fan Configuration Wizard — guided fan identification and labelling.
 
-Stops each controllable fan one at a time so the user can observe which
-physical fan changed, then assign a human-readable label. Labels persist
-via AppSettings.fan_aliases and propagate across the entire UI.
+Changes one controllable fan at a time so the user can observe which physical
+fan responded, then assign a human-readable label. Labels persist via
+AppSettings.fan_aliases and propagate across the entire UI.
+
+Ordinary fans are stopped. A header the daemon knows to be a pump is **never**
+stopped (DEC-311) — it shifts the speed instead, so coolant keeps flowing. The
+daemon makes that decision from the header's role and reports which it did; this
+wizard only mirrors it, gated on ``control.header_roles`` so the copy stays
+truthful against an older daemon that stops everything.
+
+Note the limit, because it is the normal case on many boards: a header the daemon
+cannot classify is an ordinary fan to it, and *is* stopped. Assigning the pump
+role is what changes that, and there is no GUI affordance for it yet (register row
+``AIO1-c``) — until Phase 2 it is a daemon-side action.
 
 Uses QWizard for standard multi-step navigation with Back/Next/Finish/Cancel.
 """
@@ -121,6 +132,29 @@ class FanConfigWizard(QWizard):
         self._review_page = ReviewPage(self)
         self.setPage(PAGE_REVIEW, self._review_page)
 
+    def is_pump_target(self, fan_id: str) -> bool:
+        """Whether the daemon will *perturb* this fan rather than stop it (DEC-311).
+
+        Gated on ``control.header_roles``, and that gate is the point. A
+        pre-2.28.0 daemon drives every identified fan to 0 — pumps included —
+        so promising the user "the pump will briefly change speed" against one
+        would be a lie. When the capability is absent we keep the original
+        "the fan will stop" wording, which is what that daemon actually does.
+
+        The role is read from the matching hwmon header, which already carries
+        the user's ``POST /config/header-role`` assignment applied daemon-side.
+        Only hwmon fans can be pumps: OpenFan channels have no header, and GPU
+        fans are never pumps.
+        """
+        caps = self._state.capabilities
+        if caps is None or not getattr(caps.control, "header_roles", False):
+            return False
+        return any(h.id == fan_id and h.role == "pump" for h in self._state.hwmon_headers)
+
+    def identify_verb(self, fan_id: str) -> str:
+        """ "change speed" for a pump, "stop" for everything else."""
+        return "change speed" if self.is_pump_target(fan_id) else "stop"
+
     def _build_targets(self) -> list[dict]:
         targets = []
         for fan in self._state.fans:
@@ -200,13 +234,22 @@ class FanConfigWizard(QWizard):
                 log.warning("Failed to restore fan %s: %s", target["id"], e.message)
 
     def stop_fan(self, target: dict) -> str | None:
-        """Stop a single fan for identification via the daemon's per-fan
+        """Hold a single fan at its identify duty via the daemon's per-fan
         identify API (DEC-166). Returns an error message, or None on success.
 
-        The daemon forces just this fan to 0 (floor-exempt — even a pump) with a
-        deadman auto-restore, and keeps every other fan curve-controlled, so
-        there is no global automation freeze and no hwmon lease. Works for every
-        source type (openfan / amd_gpu / hwmon) addressed by fan id.
+        The daemon holds just this fan with a deadman auto-restore and keeps
+        every other fan curve-controlled, so there is no global automation
+        freeze and no hwmon lease. Works for every source type (openfan /
+        amd_gpu / hwmon) addressed by fan id.
+
+        **The daemon chooses the duty, not this method** (DEC-311). An ordinary
+        fan is forced to 0, floor-exempt. A ``role: "pump"`` header is perturbed
+        instead — shifted well clear of its baseline but never below the 30%
+        pump floor and never to 0, because losing coolant flow to find a header
+        is not a trade worth making. This supersedes DEC-166's "floor-exempt,
+        even a pump". The request is unchanged either way, which is what makes
+        an older GUI safe against a newer daemon: it cannot ask for a pump stop
+        even by accident.
         """
         if not self._client:
             return "No daemon client available"
@@ -270,9 +313,15 @@ class IntroPage(QWizardPage):
 
         layout = QVBoxLayout(self)
 
+        # DEC-311: a pump is never stopped — the daemon perturbs its speed
+        # instead. Say so here rather than only at the moment it happens, so a
+        # user with a liquid cooler is not told their pump is about to stop.
         warning = QLabel(
-            "This wizard will <b>stop each fan one at a time</b> for several "
-            "seconds so you can observe which physical fan changed.\n\n"
+            "This wizard will <b>change one fan at a time</b> for several "
+            "seconds so you can observe which physical fan responded.\n\n"
+            "• Ordinary fans are <b>stopped</b> briefly.\n"
+            "• A <b>pump is never stopped</b> — its speed is shifted instead, so "
+            "coolant keeps flowing. Watch the RPM reading or listen for the change.\n"
             "• Your system should be <b>idle and cool</b> before starting.\n"
             "• You can <b>abort at any time</b> — fans will be restored to their prior speed.\n"
             "• Only one fan is tested at a time.\n"
@@ -476,7 +525,9 @@ class IdentifyFanPage(QWizardPage):
         )
         self._progress.setValue(0)
         self._rpm_label.setText("RPM: —")
-        self._status_msg.setText("Press 'Start Test' to stop this fan for identification.")
+        # DEC-311: name what will actually happen to THIS fan.
+        verb = self._wizard.identify_verb(target["id"])
+        self._status_msg.setText(f"Press 'Start Test' to {verb} this fan for identification.")
         self._test_btn.setEnabled(True)
         self._abort_btn.setEnabled(False)
         self._label_combo.setCurrentText("")
@@ -514,12 +565,21 @@ class IdentifyFanPage(QWizardPage):
             self._testing = False
             self._test_btn.setEnabled(True)
             self._abort_btn.setEnabled(False)
-            self._status_msg.setText(f"Failed to stop fan: {error}")
+            verb = "change pump speed" if self._wizard.is_pump_target(target["id"]) else "stop fan"
+            self._status_msg.setText(f"Failed to {verb}: {error}")
             self._status_msg.setProperty("class", "CriticalChip")
             log.warning("Wizard: test failed to start for %s: %s", target["id"], error)
             return
 
-        self._status_msg.setText("Fan stopped — observe which physical fan changed...")
+        # DEC-311: reported from the daemon's own answer where we have it, not
+        # re-derived — the daemon decides stop-vs-perturb, so it is the only
+        # thing that actually knows.
+        if self._wizard.is_pump_target(target["id"]):
+            self._status_msg.setText(
+                "Pump speed changed — watch the RPM reading or listen for the change..."
+            )
+        else:
+            self._status_msg.setText("Fan stopped — observe which physical fan changed...")
         self._timer.start()
         log.info("Wizard: test started for %s (%ds)", target["id"], self._wizard.spindown_seconds)
 

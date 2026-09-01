@@ -564,10 +564,18 @@ class DaemonClient:
         ttl_secs: int | None = None,
         timeout: float | None = None,
     ) -> IdentifyResult:
-        """POST /fans/{id}/identify — stop/restore one fan for identification (DEC-166).
+        """POST /fans/{id}/identify — hold/restore one fan for identification (DEC-166).
 
-        ``action`` is ``"stop"`` (forces the fan to 0 with a deadman auto-restore)
-        or ``"restore"``. Only the named fan is affected; others keep curve control.
+        ``action`` is ``"stop"`` or ``"restore"``. Only the named fan is
+        affected; others keep curve control.
+
+        The *daemon* decides what ``"stop"`` means (DEC-311): an ordinary fan is
+        forced to 0 with a deadman auto-restore, while a ``role: "pump"`` header
+        is perturbed to a duty that never goes below the pump floor. The result's
+        ``mode`` field says which happened — ``"stop"`` or ``"pump_perturb"`` —
+        and it is the only thing that actually knows, so prefer it over
+        re-deriving the answer client-side. A pre-2.28.0 daemon omits ``mode``
+        and always stops.
         """
         payload: dict[str, Any] = {"action": action}
         if ttl_secs is not None:

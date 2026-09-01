@@ -192,6 +192,17 @@ class ControlCapability:
     # the field, so it defaults False and the action stays hidden rather than
     # offering a button that can only 404.
     openfan_rescan: bool = False
+    # DEC-311 (daemon >= 2.28.0): the daemon classifies PWM headers by role,
+    # refuses to STOP a role="pump" header during identify (perturbing it
+    # instead), keeps verify above the pump floor, and accepts
+    # POST /config/header-role.
+    #
+    # Gating on this is a TRUTHFULNESS requirement, not a cosmetic one: the
+    # wizard's "the pump will briefly change speed" copy is a LIE against an
+    # older daemon, which drives the pump to 0. When this is False the wizard
+    # keeps its original "the fan will stop" wording, which is the honest
+    # description of what that daemon actually does.
+    header_roles: bool = False
     # Daemon ≥ 2.23.0 accepts a ``remove`` array on
     # ``POST /config/profile-search-dirs``, so a stale profile search directory
     # can be pruned instead of only ever added.
@@ -253,6 +264,11 @@ class IdentifyStatusEntry:
 
     fan_id: str = ""
     expires_in_secs: int = 0
+    # DEC-311: so a GUI polling into an identify it did not initiate still
+    # describes it truthfully. "stop" (pre-2.28.0 daemons omit it) or
+    # "pump_perturb".
+    mode: str = "stop"
+    identify_pwm_percent: int = 0
 
 
 @dataclass
@@ -559,6 +575,20 @@ class HwmonHeader:
     is_writable: bool = True
     pwm_mode: int | None = None  # 0=DC, 1=PWM, None=not exposed
     is_aio: bool = False  # liquid-cooler header (daemon >= 1.18.0, DEC-156)
+    # DEC-311 (AIO-MB Phase 1, daemon >= 2.28.0): what this channel DRIVES.
+    # Per-channel, unlike the chip-level `is_aio` — a pump on a motherboard
+    # AIO_PUMP header is `role="pump", is_aio=False`, which is the whole point.
+    # Already has the user's `POST /config/header-role` assignment applied.
+    #
+    # Treat as an OPAQUE TOKEN: render an unrecognised value rather than
+    # dropping the header (the 273-i rule). Known values are "unknown",
+    # "cpu_fan", "pump", "radiator_fan", "chassis_fan"; a pre-2.28.0 daemon
+    # omits the field entirely, hence the "unknown" default.
+    role: str = "unknown"
+    # How `role` was established: "none" | "label" | "chip_mapping" |
+    # "user_assigned". Lets the UI distinguish a confident classification from
+    # a guess worth asking the user about.
+    role_source: str = "none"
 
 
 # ---------------------------------------------------------------------------
@@ -618,6 +648,15 @@ class IdentifyResult:
     fan_id: str = ""
     action: str = ""
     expires_in_secs: int | None = None
+    # DEC-311: which behaviour the DAEMON chose. The client always asks for
+    # "stop"; the daemon substitutes a safe perturbation for a pump-role header
+    # and reports back what it did. "stop" | "pump_perturb"; None on restore,
+    # and None from a pre-2.28.0 daemon (which always stops).
+    mode: str | None = None
+    # The duty the fan is held at: 0 for a stop, >= 30 for a pump perturbation.
+    identify_pwm_percent: int | None = None
+    # What it was running at beforehand, so the UI can say "60% -> 85%".
+    baseline_pwm_percent: int | None = None
 
 
 @dataclass
@@ -1074,6 +1113,11 @@ class InventoryPwmControl:
     # field's 1.18.0 introduction); the False default is a forward-compat
     # safety net only.
     is_aio: bool = False
+    # DEC-311: per-channel role, with the user's assignment applied. Same
+    # opaque-token rule as `HwmonHeader.role` — render what you do not
+    # recognise, never drop the row.
+    role: str = "unknown"
+    role_source: str = "none"
 
 
 @dataclass

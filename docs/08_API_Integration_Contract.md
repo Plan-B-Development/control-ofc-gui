@@ -127,6 +127,16 @@ GUI treats every flag as false / old behaviour (AIP-180):
 - `fan_identify` (bool) — daemon exposes the fan-identify API (DEC-166);
   `false` in 1.19–1.20, **`true` since 1.21.0**. Gates the Fan Wizard's
   daemon-mediated identify.
+- `header_roles` (bool, DEC-311) — the daemon classifies PWM headers by role, refuses to *stop*
+  a `role: "pump"` header during identify (perturbing it instead), keeps `/hwmon/{id}/verify`
+  above the pump floor, and accepts `POST /config/header-role`. **`true` since 2.28.0**; absent
+  → `false`.
+
+  Gating on this is a **truthfulness** requirement, not merely a way to hide a button. A
+  pre-2.28.0 daemon drives every identified fan to 0 — pumps included — so a GUI that says "the
+  pump will only change speed" is lying against one, *even though the header may still report
+  `role: "pump"`* (an older daemon simply omits the field, but a mixed-version client could hold
+  a cached one). Keep the "the fan will stop" wording whenever this is `false`.
 - `autonomous_control` (bool) — the daemon engine is the sole authoritative
   fan writer (the `gui_active` defer was deleted at the 2.0.0 cutover, DEC-165),
   so it writes every tick a profile is active. **The single safety-critical
@@ -709,6 +719,29 @@ Use to discover:
   liquid cooler (NZXT Kraken / Aquacomputer). Daemon-authoritative hint so the GUI can
   cluster and floor pumps without re-deriving hardware knowledge; per-driver pump
   writability still rides `is_writable`. Omitted/`false` on daemons that predate it.
+  **Chip-level.** It answers "is this hwmon *device* a liquid cooler?", which is the wrong
+  question for the commonest AIO topology — a pump on a motherboard header, where the device
+  is a Super-I/O chip. `role` below answers the per-channel question instead. Both ship; neither
+  replaces the other.
+- `role` (string, DEC-311, daemon ≥ 2.28.0) — what this channel **drives**:
+  `"unknown"` | `"cpu_fan"` | `"pump"` | `"radiator_fan"` | `"chassis_fan"`, with the user's
+  `POST /config/header-role` assignment already applied. A pump on a motherboard `AIO_PUMP`
+  header is `role: "pump", is_aio: false`.
+
+  **Treat it as an opaque token.** Render a value you do not recognise rather than dropping the
+  header (the 273-i rule), and never grant an unknown token pump semantics. Omitted by daemons
+  before 2.28.0 → default `"unknown"`.
+
+  Deliberately conservative: `CPU_OPT` classifies `"unknown"`, not `"pump"`. It is both where an
+  AIO pump most often lands *and* where a second CPU-radiator fan lands, and there is nothing in
+  the label to tell them apart — guessing `pump` would floor a radiator fan at 30 %, guessing
+  `radiator_fan` would let identify stop a pump. `CPU_FAN` is `"cpu_fan"`, never `"pump"`.
+- `role_source` (string, DEC-311, daemon ≥ 2.28.0) — how `role` was established:
+  `"none"` | `"label"` | `"chip_mapping"` | `"user_assigned"`. Lets a client distinguish a
+  confident classification from a header worth asking the user about. Note that on boards whose
+  Super-I/O publishes no `pwmN_label`/`fanN_label` files — common; measured on `it8696`, which
+  exposes five channels and zero label files — *every* header comes back
+  `role: "unknown", role_source: "none"` until the user assigns one.
 
 ### GET /poll
 Combined batch endpoint returning status + sensors + fans in one call.
@@ -1171,7 +1204,7 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
     deactivation relinquishes curve-driven control, so standing manual
     overrides are dropped symmetrically with activation (DEC-189). A client
     renewing a pre-deactivate override receives `404 override_expired`
-    (re-take, don't renew). Fan-identify stops are **not** cleared.
+    (re-take, don't renew). Fan-identify holds are **not** cleared.
   - Idempotent: returns `{"deactivated": true, "previous_profile_id": null,
     "previous_profile_name": null}` when no profile was active. With an
     active profile, the previous values are populated.
@@ -1207,7 +1240,7 @@ renewing GUI holds indefinitely.
 `POST /profile/activate` — including a same-id re-apply — reverts every pinned control to its curve,
 so an override taken against the previous profile cannot bleed onto a same-id control in the new one.
 The GUI is poll-only and already drops its Manual cards when `/poll` no longer reports the override;
-no client action is required. Fan-identify stops (below) are per physical fan and are **not** cleared
+no client action is required. Fan-identify holds (below) are per physical fan and are **not** cleared
 by an activation.
 
 **Deactivating a profile also clears all active control-overrides (DEC-218, daemon ≥ 2.12.0),**
@@ -1222,17 +1255,39 @@ Per-fan stop/restore for the Fan Wizard, with a deadman auto-restore. Replaces t
 freeze + raw writes.
 
 - `POST /fans/{fan_id}/identify` — body `{"action": "stop" | "restore", "ttl_secs"?: N}` →
-  `200 {"fan_id","action","expires_in_secs"?}` (`expires_in_secs` present only for `stop`).
-  `stop` forces the fan to 0 (floor-exempt — even a pump) and auto-restores after the deadman;
-  `restore` clears it (the engine resumes the fan's curve value). `404` if the fan id is unknown on
-  `stop`; `400` on a bad action. Only the named fan is affected — others keep curve-controlling.
+  `200 {"fan_id","action","expires_in_secs"?,"mode"?,"identify_pwm_percent"?,"baseline_pwm_percent"?}`
+  (`expires_in_secs` and the three DEC-311 fields are present only for `stop`).
+  `restore` clears the hold (the engine resumes the fan's curve value). `404` if the fan id is
+  unknown on `stop`; `400` on a bad action. Only the named fan is affected — others keep
+  curve-controlling.
 
-The floor-exempt `stop` on a world-writable socket (0666, DEC-049) means any local user can hold a
-pump-class header stopped by re-issuing `stop` inside the deadman window. This is an **accepted,
-bounded risk** (2026-07-21 audit): identification requires stopping any fan by design (DEC-166),
-the deadman limits an abandoned stop to one TTL, and a thermal emergency outranks the overlay —
-the daemon's thermal `force_all_with_floor` (and the no-sensor 40 % fallback) drives every OpenFan + writable
-hwmon header directly, spinning a stalled pump back up regardless of standing identify-stops.
+**The client asks for `stop`; the daemon decides what that means (DEC-311, daemon ≥ 2.28.0).**
+`mode` reports which it did:
+
+| `mode` | When | Behaviour |
+| --- | --- | --- |
+| `"stop"` | every non-pump role | forces the fan to 0, **floor-exempt** — unchanged since DEC-166 |
+| `"pump_perturb"` | the header's resolved `role` is `"pump"` | shifts the duty ~25 points clear of `baseline_pwm_percent`, **upward wherever there is headroom**, clamped into `[30, 100]`. Never 0, never below the pump floor. |
+
+This supersedes DEC-166's "floor-exempt — even a pump". Keeping the decision server-side is what
+makes an older GUI safe against a newer daemon: it can only ever send `action: "stop"`, so it
+cannot request a pump stop even by accident. A pre-2.28.0 daemon omits `mode` and stops
+everything — gate any "the pump will only change speed" wording on `control.header_roles`, or the
+copy is a lie against that daemon.
+
+`stop` on a world-writable socket (0666, DEC-049) means any local user can hold a fan at its
+identify duty by re-issuing `stop` inside the deadman window. This is an **accepted, bounded risk**
+(2026-07-21 audit): identification requires changing any fan by design (DEC-166), the deadman
+limits an abandoned hold to one TTL, and a thermal emergency outranks the overlay — the daemon's
+thermal `force_all_with_floor` (and the no-sensor 40 % fallback) drives every OpenFan + writable
+hwmon header directly, spinning a stalled fan back up regardless of standing identify holds.
+DEC-311 narrows this further for the case that mattered most: a header the daemon knows to be a
+pump can no longer be held at 0 by anyone. "Knows to be a pump" is a **union** — the header's own
+label/chip evidence OR the user's assignment — so `POST /config/header-role {"role": "chassis_fan"}`
+on an `AIO_PUMP` header does **not** hand back permission to stop it. A header with neither evidence
+nor an assignment is an ordinary fan and is still stopped; on a board that publishes no fan labels
+that is every header until the user assigns one, which is what makes `POST /config/header-role` part
+of setting such a machine up rather than an optional refinement.
 
 ### GPU fan reset
 - `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM). **AMD GPUs only** — `gpu_id` is a bare PCI BDF; a BDF that resolves to an NVIDIA/Intel GPU (read-only fans) is not among the daemon's AMD GPUs, so it returns `404 validation_error` ("GPU not found").
@@ -1617,6 +1672,12 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
 - `POST /config/startup-delay` — `{"delay_secs": 0..30}`; persisted to `runtime.toml`, takes effect on next restart. Daemon ≥ 2.23.0 answers with the **shared DEC-243 setter shape** (`{"updated", "key", "value", "note"}`) as well as the original `delay_secs`, so one client-side parser covers every `POST /config/*`; older daemons send `delay_secs` and `note` only, which parses fine because the caller supplies the key and reads only `note`.
   - **The GUI no longer pushes this on Settings → Save or Settings → Import (DEC-285).** It is an ordinary row on the Daemon Configuration card, written only by its own control and only when the value actually changed. The old best-effort push bypassed the no-op-write guard, so pressing Save once wrote the key into `runtime.toml`, flipped its `source` to `runtime`, and permanently shadowed the operator's `daemon.toml` with a value nobody had chosen. `AppSettings.daemon_startup_delay_secs` was deleted with it (settings schema v4), so an imported/shared config can no longer carry one machine's daemon setting onto another's.
 - `POST /config/preferred-cpu-sensor` / `POST /config/preferred-mb-sensor` — persist the user's preferred CPU / motherboard temperature sensor by stable id (body `{"sensor_id": string | null}`; `null` clears the preference). The id is validated against the live sensor set — an unknown id (or a missing key) is `400 validation_error`; a persistence failure is `503 persistence_failed`. Advisory only (thermal safety still keys off `kind`) — reflected in `/inventory/hwmon` `default_cpu` (`source: "user"`) + `preferences` and the readiness `selected_cpu_sensor_missing` item. Daemon ≥ 2.6.0 (DEC-200); older daemons answer `404` and the GUI hides the feature for the session. The GUI offers these from the Overview page's sensor-table context menu and the Settings page.
+- `POST /config/header-role` (DEC-311, daemon ≥ 2.28.0) — assign or clear one PWM header's role. Body `{"header_id": string, "role": "unknown"|"cpu_fan"|"pump"|"radiator_fan"|"chassis_fan" | null}`; `null` clears and the header falls back to its detected role. An unrecognised role token is `400 validation_error` — **never silently defaulted**, because a typo that became `"unknown"` would drop a pump's protection while the response said "updated". Assigning to a header the daemon has not discovered is also `400`; *clearing* is always permitted, even for a vanished id, so a stale assignment can never become unreachable. Persistence failure is `503 persistence_failed`. Persist-first: on a write failure nothing the daemon acts on changes.
+
+  **Not advisory, unlike the preferred-sensor writes above.** A `"pump"` assignment is a safety input: it earns that header the 30 % hard floor and the DEC-167 stop-snap exemption, protects it from being stopped by identify, and keeps `/hwmon/{id}/verify` above the floor. It is a **union term** — it can add a floor, never remove one, so assigning `"chassis_fan"` to a header whose label already says `PUMP` does not strip that header's floor. It takes effect **immediately** rather than at next start (a safety floor that waited for a reboot would be a trap), and persists in `runtime.toml` under `[hardware.header_roles]`.
+
+  This is the endpoint that makes header roles usable at all on a large class of boards: where the Super-I/O publishes no `pwmN_label`/`fanN_label` files, every header reads `role: "unknown"` and the user's assignment is the only evidence a header drives a pump.
+  Response: `200 {"api_version", "updated": true, "header_id", "role", "effective_role"}` — `effective_role` is what the header resolves to *after* the change, so a clear reports the detected role rather than `null`.
 
 ## GUI startup behaviour
 

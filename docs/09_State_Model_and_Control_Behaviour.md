@@ -70,13 +70,15 @@ Live manual control is an **expiring, fencing-guarded daemon override**, not a G
 - `POST /control/{id}/override` pins the control's members to a fixed PWM and returns an `override_token` + `renew_secs`
 - the Controls page renews on a `QTimer` (interval from `renew_secs`, ~5 s); a **rejected renew is the expiry signal** — the card reverts to showing curve control
 - on release (`DELETE`) or expiry the daemon resumes curve control automatically and resets that control's hysteresis
-- the override PWM is still **floor-clamped** (pump/CPU ≥ 30 %, GPU 0 %); deliberately stopping a fan is the floor-exempt identify path
+- the override PWM is still **floor-clamped** (pump/CPU ≥ 30 %, GPU 0 %); deliberately stopping a fan is the identify path, which is floor-exempt for ordinary fans but never stops a pump (DEC-311)
 - a frozen/crashed GUI cannot strand fans — the daemon's deadman reverts to the curve when renewals stop
 
 The override must be explicit, obvious in the Controls page, and offer a clear **Return to Automatic** action; it must never silently persist after the user thinks profile control resumed.
 
 ## Fan identify (daemon API — DEC-166)
-The Fan Wizard's "stop a fan to find it" flow calls `POST /fans/{id}/identify {action: "stop"|"restore"}` for every source type. `stop` is floor-exempt (you must be able to stop a pump to find it) and auto-restores on a deadman; only the named fan is affected — every other fan keeps curve-controlling. The old global automation freeze and raw stop/restore writes are gone.
+The Fan Wizard's "change a fan to find it" flow calls `POST /fans/{id}/identify {action: "stop"|"restore"}` for every source type. It auto-restores on a deadman; only the named fan is affected — every other fan keeps curve-controlling. The old global automation freeze and raw stop/restore writes are gone.
+
+**The daemon chooses the hold duty from the header's role (DEC-311).** An ordinary fan is forced to 0 and stays floor-exempt. A `role: "pump"` header is *perturbed* instead — shifted clear of its current duty, upward where there is headroom, and never below the 30 % pump floor. This supersedes DEC-166's "you must be able to stop a pump to find it": an audible RPM change identifies a pump just as well, and losing coolant flow to find a header is not a trade worth making. The response's `mode` says which happened; gate any pump-specific wording on `control.header_roles`, since an older daemon still stops everything.
 
 ## Lease behaviour for hwmon
 **The GUI no longer holds an hwmon lease.** The daemon owns the lease lifecycle internally (its engine takes/renews it; hwmon write-verify runs under the daemon's own internal verify lease, so the GUI's `verify_hwmon_pwm` call carries no `lease_id`). The diagnostics Lease tab and the lease-status poll were removed at the cutover.

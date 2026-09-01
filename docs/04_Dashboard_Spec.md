@@ -49,8 +49,11 @@ A wide temperature / fan-speed-over-time chart with:
 ### Fan cards (DEC-222, bottom-left)
 A responsive flow of compact cards, **one per logical control** — not per fan. That
 granularity is forced by the API: live intent is `POST /control/{id}/override`
-(DEC-163) and `fan_identify` is stop/restore only, so there is no per-fan speed
-surface a per-fan card could reflect or act on.
+(DEC-163), which is per-control. `fan_identify` is per-fan but is not a speed
+surface — it is a transient, deadman-bounded identification hold whose duty the
+daemon chooses (0 for a fan, a floored perturbation for a pump — DEC-311), not a
+value a client sets. So there is still no per-fan speed surface a per-fan card
+could reflect or act on.
 
 Each card shows:
 - the control name, with **Edit** beside it (DEC-238) — a ghost button opening the

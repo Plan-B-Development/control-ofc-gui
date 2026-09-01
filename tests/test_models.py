@@ -907,3 +907,78 @@ class TestWireValueCoercion:
             f"not a duty — both must drop rather than render. Got {got!r}"
         )
         assert all(isinstance(v, float) for v in got.values())
+
+
+class TestHeaderRolesDec311:
+    """AIO-MB Phase 1 wire fields. Every one is additive and must default to the
+    pre-2.28.0 behaviour when a daemon omits it (AIP-180)."""
+
+    def test_hwmon_header_parses_role_and_role_source(self):
+        from control_ofc.api.models import parse_hwmon_headers
+
+        headers = parse_hwmon_headers(
+            {
+                "headers": [
+                    {
+                        "id": "hwmon:it8696:isa:pwm5:pwm5",
+                        "label": "pwm5",
+                        "chip_name": "it8696",
+                        "pwm_index": 5,
+                        "role": "pump",
+                        "role_source": "user_assigned",
+                    }
+                ]
+            }
+        )
+        assert headers[0].role == "pump"
+        assert headers[0].role_source == "user_assigned"
+
+    def test_pre_2_28_daemon_defaults_to_unknown(self):
+        from control_ofc.api.models import parse_hwmon_headers
+
+        headers = parse_hwmon_headers(
+            {"headers": [{"id": "hwmon:x:pwm1:CPU_FAN", "label": "CPU_FAN"}]}
+        )
+        assert headers[0].role == "unknown"
+        assert headers[0].role_source == "none"
+
+    def test_an_unrecognised_role_token_is_preserved_not_dropped(self):
+        # 273-i rule: render what you do not recognise. Dropping the header, or
+        # coercing the token to "unknown", would both lose information the user
+        # can see in the daemon's own logs.
+        from control_ofc.api.models import parse_hwmon_headers
+
+        headers = parse_hwmon_headers(
+            {"headers": [{"id": "hwmon:x:pwm1:A", "label": "A", "role": "impeller"}]}
+        )
+        assert len(headers) == 1
+        assert headers[0].role == "impeller"
+
+    def test_identify_result_carries_the_mode_and_duties(self):
+        from control_ofc.api.models import parse_identify_result
+
+        r = parse_identify_result(
+            {
+                "fan_id": "hwmon:x:pwm1:PUMP",
+                "action": "stop",
+                "expires_in_secs": 15,
+                "mode": "pump_perturb",
+                "identify_pwm_percent": 85,
+                "baseline_pwm_percent": 60,
+            }
+        )
+        assert r.mode == "pump_perturb"
+        assert r.identify_pwm_percent == 85
+        assert r.baseline_pwm_percent == 60
+
+    def test_identify_result_from_an_older_daemon_has_no_mode(self):
+        from control_ofc.api.models import parse_identify_result
+
+        r = parse_identify_result({"fan_id": "openfan:ch00", "action": "stop"})
+        assert r.mode is None
+        assert r.identify_pwm_percent is None
+
+    def test_capability_defaults_false_so_the_copy_stays_honest(self):
+        from control_ofc.api.models import ControlCapability
+
+        assert ControlCapability().header_roles is False
