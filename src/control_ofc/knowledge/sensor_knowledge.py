@@ -46,7 +46,25 @@ class SensorClassification:
 # This copy is display-only. Change one and you must change the other: a chip
 # added here alone gets a bogus warning and no protection, and one added there
 # alone protects a sensor the GUI still presents as a trustworthy CPU reading.
-_ASUS_CPUTIN_BOGUS_CHIPS = {"nct6776"}
+# Widened from `nct6776` alone by `AUD-x`: the kernel's remedy is board-scoped
+# ("The CPU temperature on ASUS boards is reported from PECI 0 or TSI 0") while
+# the gate was chip-scoped, so every sibling fell through and CPUTIN was promoted
+# to a CPU sensor. lm-sensors#283 is the nct6775 instance: CPUTIN 123.5 C beside
+# a coretemp Package id 0 of 42.0 C. Vendor gate is unchanged — the same chip on
+# a non-ASUS board wires CPUTIN normally and keeps its CPU classification.
+_ASUS_CPUTIN_BOGUS_CHIPS = {
+    "nct6775",
+    "nct6776",
+    "nct6779",
+    "nct6791",
+    "nct6792",
+    "nct6793",
+    "nct6795",
+    "nct6796",
+    "nct6797",
+    "nct6798",
+    "nct6799",
+}
 
 # AIO Phase 1 (DEC-156): liquid-cooler recognition mirrors the daemon's
 # `hwmon::aio`. NZXT Kraken devices expose a single temp = coolant, so they

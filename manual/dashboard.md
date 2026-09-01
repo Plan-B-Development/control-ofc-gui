@@ -33,7 +33,7 @@ Below it, four banners appear only when they apply:
 - **Thermal protection active** — the daemon has overridden fan control to protect the
   hardware, and will hand control back to your profile once temperatures recover
 - **Fan control engine** — how the daemon's control loop itself is doing. It is the
-  only thing writing fan speeds, and it owns the 105 °C emergency, so this is the
+  only thing writing fan speeds, and it owns the thermal emergency, so this is the
   banner worth reading first. *Running slowly* means it is late but still driving
   your fans, and needs no action unless it persists — a thermal emergency legitimately
   slows a tick down, because the daemon writes to every fan in turn. *Stopped* means

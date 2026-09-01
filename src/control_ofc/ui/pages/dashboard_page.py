@@ -448,7 +448,7 @@ class DashboardPage(QWidget):
         content_layout.addWidget(self._api_version_banner)
 
         # Thermal-protection banner (DEC-132): surfaced from /status poll diffs
-        # when the daemon's thermal_state leaves "normal" (105 °C emergency /
+        # when the daemon's thermal_state leaves "normal" (thermal emergency /
         # recovery). Poll is the authoritative transition source now the GUI
         # has no control loop watching thermal_state itself.
         self._thermal_banner = ErrorBanner()
@@ -749,7 +749,7 @@ class DashboardPage(QWidget):
             )
 
     def _on_status_updated(self, status: DaemonStatus) -> None:
-        # Thermal-protection transition (poll-diff): the daemon's 105 °C
+        # Thermal-protection transition (poll-diff): the daemon's thermal
         # emergency / recovery overrides fan control. Surface it the moment
         # thermal_state leaves "normal", and clear it on the return.
         thermal = status.thermal_state or "normal"
@@ -799,7 +799,7 @@ class DashboardPage(QWidget):
                 # about a dead engine is the worse failure.
                 self._engine_banner.show_error(
                     f"Fan control engine has stopped{reason} \u2014 the daemon is not "
-                    "driving your fans, and its 105 \u00b0C emergency protection is not "
+                    "driving your fans, and its thermal emergency protection is not "
                     "running. Restart control-ofc-daemon."
                 )
 

@@ -575,7 +575,7 @@ citing the kernel documentation.
 chip+vendor+label as `mb` rather than `cpu`, so it is excluded from the thermal
 ladder's hottest-CPU reduction. Before this the 115 C symptom above was not
 merely cosmetic — it is plausible enough to pass the reader's range check, so it
-latched the 105 C emergency permanently (release requires <= 80 C) and pinned
+latched the thermal emergency permanently (release requires <= 80 C) and pinned
 every fan at 100%. The chip's `PECI`/`TSI` channels became `cpu` in the same
 change.
 

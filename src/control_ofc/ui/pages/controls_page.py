@@ -2197,7 +2197,7 @@ class ControlsPage(QWidget):
         # 'unknown' (the reference GUI's '—'), never as 0". A control is absent
         # whenever the daemon did not evaluate it — no profile, a listed skip, or
         # the whole of a thermal event, where `force_all` drives the fans directly
-        # and bypasses every control. Carrying "Now: 42%" through a 105 °C event
+        # and bypasses every control. Carrying "Now: 42%" through a thermal emergency
         # while the fans run at 100% is precisely what that clause forbids, so
         # every card the daemon did not report is reset here rather than left.
         for control_id, card in self._control_cards.items():

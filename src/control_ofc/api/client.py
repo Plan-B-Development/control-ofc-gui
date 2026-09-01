@@ -268,7 +268,7 @@ class DaemonClient:
         The daemon adopts its controller during startup. A device that
         enumerated a moment too late, or that failed its identity handshake
         once, therefore left the daemon with no OpenFan backend for the rest of
-        the process — and, because the 105 °C thermal emergency reaches OpenFan
+        the process — and, because the thermal emergency reaches OpenFan
         fans through that same backend, without its OpenFan leg either. This
         recovers both without a daemon restart (DEC-265).
 

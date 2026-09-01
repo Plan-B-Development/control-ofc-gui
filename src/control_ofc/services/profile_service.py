@@ -386,7 +386,7 @@ class ControlMember:
 # below ~20%. These per-role floors are GUI policy via
 # ``LogicalControl.minimum_pct`` (see DEC-095); the daemon independently
 # enforces the pump/CPU 30% floor as a hard backstop at both validate time and
-# every eval tick (DEC-162), plus the 105°C thermal-emergency rule. The 20%
+# every eval tick (DEC-162), plus the thermal-emergency rule. The 20%
 # chassis / 0% GPU floors stay GUI-only. Roles are inferred from member labels
 # because the *resolved* display name is the best classifier we have — DEC-229
 # retired the older claim that the daemon's header label was the authoritative

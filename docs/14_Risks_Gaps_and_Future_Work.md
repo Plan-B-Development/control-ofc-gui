@@ -50,8 +50,8 @@ The thermal safety rule monitors CPU Tctl only (105C trigger). GPU temperatures 
 ### 3. GUI/daemon simultaneous control conflict (RESOLVED — 2.0.0 single-writer, DEC-159/DEC-165)
 The dual-writer hazard is eliminated at 2.0.0: the daemon's engine is the **sole** writer of every
 backend and the GUI no longer writes PWM, so there is nothing to conflict. The 30 s `gui_active` defer
-window (and the brief reconnect gap it implied) was deleted along with the GUI control loop. The
-105 °C thermal force remains the absolute backstop.
+window (and the brief reconnect gap it implied) was deleted along with the GUI control loop.
+The thermal force remains the absolute backstop.
 
 *History (pre-2.0):* hwmon used `force_take` lease preemption (GUI wins); GPU used a 30 s
 profile-engine defer (DEC-070/DEC-071) so both writers didn't churn PMFW and stutter games.
@@ -312,7 +312,7 @@ padding tweak, and DEC-128/129 own that surface.
 | hwmon fans displayed `pwm1`, not `CPU_FAN` (§16, opened 2026-07-23) | **Two independent blockers** (§16's "likely fix" covered only the first): (a) the daemon *synthesises* `pwmN` when the chip publishes no label file, so "non-empty label" was wrongly read as "authoritative" — an exact-match `is_placeholder_hwmon_label` now skips it and the resolver owns tiers 2-5; (b) `AppState.board_info`, which keys the DMI fallback table, had had **no production writer** since `090370e`/v2.22.0 dropped it from the retired `DiagnosticsPage` — `DiagnosticsService.set_hw_diagnostics` is now its single writer and polling prefetches `/diagnostics/hardware` once at startup. Also fixes the DEC-095/162 30% CPU/pump floor on these boards (DEC-229) | GUI v2.30.0 |
 | GUI rescan button (endpoint existed, never wired) | Diagnostics ▸ Troubleshooting "Rescan Hardware" + restored `hwmon_rescan` wrapper + chained diagnostics refetch (DEC-147) | GUI v1.35.0 |
 | GUI surface for `reset_gpu_fan` (§11) | Diagnostics ▸ Troubleshooting "Restore GPU Fan to Automatic", gated against the active profile owning an `amd_gpu:` member (DEC-147; re-keyed off the loop at 2.0.0, DEC-165) | GUI v1.35.0 |
-| Emergency ↔ GUI lease ping-pong (alternating curve/forced PWM during 105°C events) | `thermal_state` in GET /status + GUI control-loop/lease stand-down (DEC-132) | GUI v1.30.0 / daemon v1.13.0 |
+| Emergency ↔ GUI lease ping-pong (alternating curve/forced PWM during thermal emergencies) | `thermal_state` in GET /status + GUI control-loop/lease stand-down (DEC-132) | GUI v1.30.0 / daemon v1.13.0 |
 | Per-tick sensor re-discovery (~340 sysfs ops/s; asus_wmi_sensors polling risk) | Descriptor cache + triggered re-discovery (DEC-133) | daemon v1.13.0 |
 | GPU GUI-priority lapse on slow ramps (coalesced writes didn't count as liveness; engine used exact-match suppression) | record_gui_write on coalesced returns + shared 5% threshold (DEC-131) | daemon v1.13.0 |
 | Calibration could park a fan on mid-sweep write failure; dead duplicate sweep implementation | Handler delegates to single tested helper; restore on every exit path (DEC-134) | daemon v1.13.0 |

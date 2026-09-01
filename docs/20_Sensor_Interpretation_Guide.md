@@ -349,7 +349,7 @@ issue. This is a well-documented kernel driver quirk, not a GUI assumption.
 GUI *display* classification only: the daemon still returned `kind: "cpu"` for
 that channel, and its thermal ladder takes the **hottest** CPU sensor — so a pin
 reporting a plausible-looking constant 115 C outranked every healthy CPU sensor,
-latched the 105 C emergency, and never released (release requires <= 80 C). Every
+latched the thermal emergency, and never released (release requires <= 80 C). Every
 fan sat at 100% on a cold machine until the daemon restarted. The daemon now
 classifies the same chip+vendor+label as `mb`, so the channel never reaches the
 ladder. `nct6776`'s `PECI`/`TSI` labels — the sources the kernel docs tell you to

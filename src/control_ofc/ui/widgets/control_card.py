@@ -343,7 +343,7 @@ class ControlCard(ResizableGridCard):
         the fans directly and bypasses every control.
 
         Carrying the last figure was the bug this method exists to fix. It left a
-        card reading "Now: 42%" for the duration of a 105 °C event while the fans
+        card reading "Now: 42%" for the duration of a thermal emergency while the fans
         were actually at 100% — confidently displaying a duty nothing was
         applying, on the page whose job is "what are the fans doing?". Zero would
         be a different lie; "—" is the honest answer.

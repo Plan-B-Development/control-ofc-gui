@@ -236,7 +236,7 @@ Emitted by the daemon's `HealthStatus::Display` and pinned on both sides by
 inserted, so an index-based reader is unaffected; the GUI iterates the array and
 needs no change to display either. The first two report *data* freshness from the
 poll loops. `engine` reports the profile engine's **liveness**: the daemon's sole
-PWM writer also evaluates the 105 °C rule.
+PWM writer also evaluates the thermal-emergency rule.
 
 On daemon ≥ 2.24.2 the **`openfan`** entry reports the **worse** of two limbs
 (DEC-302): poll-loop *liveness* (a poll returned) and *data* freshness (reduced over
@@ -295,7 +295,7 @@ That second case is why the pair exists. A thermal `force_all` walks all ten
 OpenFan channels, each bounded by `serial.timeout_ms` (up to 1 s), so a
 degraded-but-open link makes a **legitimate** tick take 5–10 s. With a single
 timestamp the daemon reported `crit` / "not ticking — fan control and thermal
-safety are stalled" *while it was actively driving the 105 °C emergency* — the
+safety are stalled" *while it was actively driving the thermal emergency* — the
 inverse of the truth, in the state where a client can least afford to be misled.
 Widening the threshold would have traded that false alarm for blindness to a real
 death; splitting the stamps distinguishes the cases instead.
@@ -331,7 +331,7 @@ unresolved control — a flapping one must not mask a permanent one) and a reaso
 the form `"N controls not being commanded — their fans hold their last speed"`.
 
 **It is `warn` and never `crit`, deliberately.** Those fans are not stopped, and
-the 105 °C rule bypasses controls entirely (`force_all`), so it still reaches every
+the thermal-emergency rule bypasses controls entirely (`force_all`), so it still reaches every
 OpenFan channel and writable hwmon header regardless of what is listed. `crit`
 stays reserved for a subsystem that has actually failed. But it *does* move
 `overall_status` to `"warn"`, so a client whose ribbon reads only `overall_status`
@@ -357,7 +357,7 @@ Older daemons omit the field — the GUI defaults it to `"normal"`.
 On daemon ≥ 2.19.0, `"no_sensor_fallback"` has a **second trigger**: a CPU
 reading that is merely *stale* now counts as no reading (DEC-267). The safety
 rule reads a cached sensor map with no freshness filter of its own, so a sensor
-that stopped updating used to freeze the last temperature — the 105 °C ladder
+that stopped updating used to freeze the last temperature — the thermal ladder
 then evaluated forever against a number that could not rise, the no-sensor
 fallback never engaged because the sensor was present rather than missing, and
 the engine's liveness heartbeat stayed green because the engine genuinely was
@@ -1035,7 +1035,7 @@ deleted as dead code in daemon v2.5.0.
 The calibration endpoint runs a long-running sweep (steps × hold_seconds) that sets PWM from 0→100%, reads RPM at each step, and returns a mapping. Safety: aborts on thermal limit (85°C), and restores pre-calibration PWM on every exit path — completion, thermal abort, or a failed PWM write mid-sweep (DEC-134) — **except while thermal safety is itself forcing a duty** (DEC-295). The 85°C abort is a *temperature* test, but the thermal emergency **latches** at 105°C and releases only at ≤80°C, so between 80 and 85°C it would otherwise pass while the engine is still forcing every fan to 100%. In that state the endpoint refuses to start or continue with **`409 validation_error`, `retryable: true`** — the same shape as the single-flight refusal below, because this is a transient state of the daemon rather than a malformed request, and it clears by itself. It is deliberately **not** `thermal_abort`, which means "too hot to calibrate": this fires on a machine that may be perfectly cool, since the emergency latches at 105 °C and releases only at ≤80 °C. **Two consequences a client must handle.** The `no_sensor_fallback` state (no CPU temperature sensor at all, DEC-190) forces indefinitely, so on such a machine calibration is refused permanently — the message names the state so it is diagnosable. And a sweep already under way skips its restore: the channel is left at the forced duty, and is **not** restored automatically once the force clears, because an idle daemon with no active profile commands nothing. Re-running calibration or activating a profile restores normal control. For the sweep's duration the daemon pauses its profile-engine write phase — the same single-flight pause used by hardware verify — so an active profile cannot overwrite each step's test PWM and corrupt the readback (DEC-191, daemon ≥ 2.2.2). A hardware verify already in progress is therefore rejected with `409` (and an in-progress calibration likewise blocks a verify).
 
 ### Hwmon PWM verify
-- `POST /hwmon/{header_id}/verify` — empty body (no `lease_id` as of 2.0.0 — DEC-165). Returns `409 thermal_abort` when any sensor exceeds the 85 °C verify limit, because a verify drives the header **away** from its commanded duty and must not do so while the system is hot (DEC-201, daemon ≥ 2.6.0). **Corrected in DEC-297:** this previously said a verify "pauses the engine (incl. the 105 °C thermal force)". It does not, and never did — `force_all` runs before the engine's verify gate, so a thermal emergency always outranks a verify. Also returns **`409 validation_error`, `retryable: true`** while the thermal ladder is actively forcing a duty (DEC-297): the 85 °C test is a *temperature* check, but the emergency latches at 105 °C and releases only at ≤80 °C, so the band 80-85 °C would otherwise pass it while every fan is still being forced. Same shape and reasoning as the calibrate refusal above; the message names the forcing state. The GUI shows this as a soft "let it cool, then retry" notice. Also returns `409 validation_error` if a hardware verify or calibration is already in progress (single-flight — the verify shares the calibration pause). That refusal is **bounded**: the slot carries a deadman, so it frees itself once the window elapses even if the holder never released it, and a client that retries will eventually succeed (DEC-296). Before that fix the deadman freed only the engine pause and not the slot, so a single leaked holder made this endpoint — and `/gpu/{id}/fan/verify` and `/fans/openfan/{ch}/calibrate` — return `409` for the rest of the daemon's process lifetime.
+- `POST /hwmon/{header_id}/verify` — empty body (no `lease_id` as of 2.0.0 — DEC-165). Returns `409 thermal_abort` when any sensor exceeds the 85 °C verify limit, because a verify drives the header **away** from its commanded duty and must not do so while the system is hot (DEC-201, daemon ≥ 2.6.0). **Corrected in DEC-297:** this previously said a verify "pauses the engine (incl. the thermal force)". It does not, and never did — `force_all` runs before the engine's verify gate, so a thermal emergency always outranks a verify. Also returns **`409 validation_error`, `retryable: true`** while the thermal ladder is actively forcing a duty (DEC-297): the 85 °C test is a *temperature* check, but the emergency latches at 105 °C and releases only at ≤80 °C, so the band 80-85 °C would otherwise pass it while every fan is still being forced. Same shape and reasoning as the calibrate refusal above; the message names the forcing state. The GUI shows this as a soft "let it cool, then retry" notice. Also returns `409 validation_error` if a hardware verify or calibration is already in progress (single-flight — the verify shares the calibration pause). That refusal is **bounded**: the slot carries a deadman, so it frees itself once the window elapses even if the holder never released it, and a client that retries will eventually succeed (DEC-296). Before that fix the deadman freed only the engine pause and not the slot, so a single leaked holder made this endpoint — and `/gpu/{id}/fan/verify` and `/fans/openfan/{ch}/calibrate` — return `409` for the rest of the daemon's process lifetime.
 
 Probes whether a `pwmN` write actually moves the fan, to detect BIOS/EC
 interference. The daemon writes a test PWM, sleeps
@@ -1073,7 +1073,7 @@ elapses — still gets the header put back. Before DEC-290 the restore sat after
 recover it when no active profile owned that header. Clients need no change; what
 changed is that the previous behaviour was unsafe to rely on and is now safe.
 Note the corollary: the engine write-pause is held for the remainder of the settle
-even after a disconnect, rather than releasing early. The 105 °C emergency is
+even after a disconnect, rather than releasing early. The thermal emergency is
 unaffected — `force_all` runs before the pause gate, by design.
 
 Errors: `404 validation_error` (unknown header — the wire `code` is
@@ -1169,7 +1169,7 @@ daemon's clock); a stale token cannot re-pin (fencing).
   `200 {"control_id","released": bool}` (reverts immediately; `released:false` = nothing was held,
   idempotent). `409 stale_fencing_token` on a stale token.
 
-The 105 °C thermal force always overrides an active override. No absolute max-duration cap — a live
+The thermal force always overrides an active override. No absolute max-duration cap — a live
 renewing GUI holds indefinitely.
 
 **Activating a profile clears all active control-overrides (DEC-189, daemon ≥ 2.2.1).** A
@@ -1200,7 +1200,7 @@ The floor-exempt `stop` on a world-writable socket (0666, DEC-049) means any loc
 pump-class header stopped by re-issuing `stop` inside the deadman window. This is an **accepted,
 bounded risk** (2026-07-21 audit): identification requires stopping any fan by design (DEC-166),
 the deadman limits an abandoned stop to one TTL, and a thermal emergency outranks the overlay —
-the daemon's 105 °C `force_all` (and the no-sensor 40 % fallback) drives every OpenFan + writable
+the daemon's thermal `force_all` (and the no-sensor 40 % fallback) drives every OpenFan + writable
 hwmon header directly, spinning a stalled pump back up regardless of standing identify-stops.
 
 ### GPU fan reset
@@ -1219,7 +1219,7 @@ when false the fan spins continuously at the commanded speed. The default for om
 profiles is false.
 
 ### GPU fan verify
-- `POST /gpu/{gpu_id}/fan/verify` — empty body, **no lease** (DEC-120, daemon v1.11.0+). **AMD GPUs only** — an `nvidia_gpu:` / `intel_gpu:` BDF returns `404 validation_error` (those fans are read-only). Also returns `409 thermal_abort` while hot — because the verify drives the fan **away** from its commanded speed, **not** because it pauses the 105 °C thermal force, which it has never done (DEC-201; claim corrected in DEC-297). It shares `verify_thermal_guard` with the hwmon verify, so it likewise returns **`409 validation_error`, `retryable: true`** while the thermal ladder is actively forcing a duty (DEC-297), and `409 validation_error` if a verify or calibration is already in progress (single-flight).
+- `POST /gpu/{gpu_id}/fan/verify` — empty body, **no lease** (DEC-120, daemon v1.11.0+). **AMD GPUs only** — an `nvidia_gpu:` / `intel_gpu:` BDF returns `404 validation_error` (those fans are read-only). Also returns `409 thermal_abort` while hot — because the verify drives the fan **away** from its commanded speed, **not** because it pauses the thermal force, which it has never done (DEC-201; claim corrected in DEC-297). It shares `verify_thermal_guard` with the hwmon verify, so it likewise returns **`409 validation_error`, `retryable: true`** while the thermal ladder is actively forcing a duty (DEC-297), and `409 validation_error` if a verify or calibration is already in progress (single-flight).
 
 Probes whether a GPU fan-control write actually takes effect, catching the
 silent failures static diagnostics miss (`ppfeaturemask` bit 14 unset, SMU
@@ -1302,7 +1302,7 @@ Old daemons predating the route answer `404`, which the GUI treats as
   - **Why this exists.** The daemon adopts its controller during startup only.
     A device that enumerated a moment too late, or that failed the DEC-250
     identity handshake once, previously left the daemon with no OpenFan backend
-    for the whole process lifetime — and since the profile engine's 105 °C
+    for the whole process lifetime — and since the profile engine's thermal
     `force_all` reaches OpenFan fans through that same backend, the thermal
     emergency silently lost its OpenFan leg too. A failed boot connect only
     logs a warning, so `Restart=on-failure` never fired and nothing recovered
@@ -1389,7 +1389,7 @@ According to the provided daemon notes:
 - PWM 0–100 passed through — no per-header floors in the daemon
   (`min_pwm_percent: 0` on every header). The role-aware pump/CPU floor is
   baked into the profile by the GUI and enforced by the daemon engine
-  (DEC-162); the 105 °C thermal force (`safety.rs`) is the absolute backstop.
+  (DEC-162); the thermal force (`safety.rs`) is the absolute backstop.
   See DEC-022 and the "No per-header PWM floors" rule in `CLAUDE.md`.
 - the daemon engine auto-sets `pwmN_enable` to manual mode on the first write per lease
 - identical writes coalesced at daemon level (DEC-073)
@@ -1544,7 +1544,7 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
     are deliberate. The floor: the control loop, serial I/O and sysfs writes all
     run on this cadence, so a tiny value is a self-inflicted DoS on the hardware
     the daemon exists to protect. **The ceiling is [SAFETY]**: this drives the
-    sensor poll loop, and the 105 °C rule's staleness budget is derived from it
+    sensor poll loop, and the thermal-emergency rule's staleness budget is derived from it
     (5×, DEC-267 — see § Freshness above; the leg is *not* unfiltered, and this
     ceiling bounds that budget rather than substituting for it). The API is
     tighter than the admin file because it is reachable by any local user (0666
@@ -1561,7 +1561,7 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
     looser copy of this check previously accepted `/dev/shm/...`. `null` clears
     the override and returns to auto-detection. Note the daemon **falls back to
     auto-detection when a configured port cannot be opened**, so a bad value
-    cannot durably remove OpenFan control (and with it the 105 °C emergency's
+    cannot durably remove OpenFan control (and with it the thermal emergency's
     only path to those fans).
   - `POST /config/serial-timeout` — `{"timeout_ms": 50..1000}`. **The ceiling is
     [SAFETY]**: an emergency `force_all` awaits the OpenFan backend before the

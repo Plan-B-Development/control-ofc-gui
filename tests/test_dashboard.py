@@ -131,7 +131,17 @@ class TestSubsystemHealth:
         text = dash._engine_banner._message_label.text()
         assert "stopped" in text
         assert "no tick for 31s" in text
-        assert "105" in text, "the user must be told thermal protection is gone too"
+        # Asserts the INTENT — that the banner tells the user thermal protection
+        # is gone — not a literal threshold. This assertion used to read
+        # `"105" in text`, and DEC-305 moving the trip point to 110 broke it: the
+        # banner string had spelled the constant out, so a safety-threshold change
+        # silently made a user-facing message wrong and only this test noticed.
+        # The message no longer names a temperature at all; if one is ever wanted
+        # it must be interpolated from `ThermalSafetyInfo.emergency_threshold_c`,
+        # which the GUI already receives, never hardcoded here or there.
+        assert "thermal emergency protection is not running" in text, (
+            "the user must be told thermal protection is gone too"
+        )
 
     def test_a_slow_engine_is_not_reported_as_a_dead_one(self, qtbot, window, app_state):
         """Release review round 2, 2026-08-10 — a P1 in the round-1 fix.

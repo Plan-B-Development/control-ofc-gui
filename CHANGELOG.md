@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.49.5] — 2026-09-01
+
+Pairs with daemon **2.25.0** (DEC-305). No API change.
+
+### Fixed
+- **`CPUTIN` on any Nuvoton `nct67xx` chip is now flagged as unreliable on ASUS
+  boards, not just on `nct6776`.** The GUI's warning list mirrors the daemon's,
+  and the daemon's covered one chip while the kernel documentation it comes from
+  is scoped to the *board* — so on an ASUS board with any of ten sibling chips
+  the GUI presented a sensor as a trustworthy CPU reading while the daemon had
+  no protection against it either. The vendor gate is unchanged: on a non-ASUS
+  board these chips keep their normal CPU classification.
+
+### Changed
+- Documentation throughout both repos no longer spells the thermal trip point into
+  the *name* of the rule ("the 105 °C emergency"). A name that embeds a threshold is
+  falsified the moment the threshold moves — which is exactly what happened across
+  roughly thirty sites when a trigger change was trialled during this work. The
+  threshold itself is **unchanged**; see the daemon 2.25.0 notes.
+
 ## [2.49.4] — 2026-08-31
 
 ### Fixed

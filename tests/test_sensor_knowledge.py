@@ -1,5 +1,7 @@
 """Tests for the sensor reading interpretation knowledge base."""
 
+import pytest
+
 from control_ofc.knowledge.sensor_knowledge import (
     SensorClassification,
     classify_sensor,
@@ -94,6 +96,50 @@ class TestNct6775:
         c = classify_sensor("nct6776", "CPUTIN", board_vendor="Gigabyte")
         assert c.source_class == "cpu_board_side"
         assert c.confidence == "medium"
+
+    @pytest.mark.parametrize(
+        "chip",
+        [
+            "nct6775",
+            "nct6779",
+            "nct6791",
+            "nct6792",
+            "nct6793",
+            "nct6795",
+            "nct6796",
+            "nct6797",
+            "nct6798",
+            "nct6799",
+        ],
+    )
+    def test_every_nct67xx_sibling_is_bogus_on_asus(self, chip):
+        """AUD-x: the quirk covers the whole nct67xx family, not just nct6776.
+
+        The kernel's remedy is scoped to the BOARD ("The CPU temperature on ASUS
+        boards is reported from PECI 0 or TSI 0") while the gate was scoped to
+        one chip, so every sibling fell through and CPUTIN was presented as a
+        trustworthy CPU reading. lm-sensors#283 is the nct6775 instance: CPUTIN
+        123.5 C beside a coretemp Package id 0 of 42.0 C.
+
+        This must stay in step with the daemon's `ASUS_CPUTIN_BOGUS_CHIPS` — a
+        chip listed here alone gets a warning and no protection; one listed there
+        alone is protected while this GUI still calls it trustworthy.
+        """
+        c = classify_sensor(chip, "CPUTIN", board_vendor="ASUSTeK COMPUTER INC.")
+        assert c.source_class == "bogus"
+        assert c.confidence == "low"
+
+    @pytest.mark.parametrize("chip", ["nct6775", "nct6799"])
+    def test_the_vendor_gate_survives_the_widening(self, chip):
+        """Widening the CHIP set must not widen the BOARD set.
+
+        Asserts the presence of the gate, not merely the absence of the quirk:
+        on a non-ASUS board these chips keep their normal CPU classification, so
+        a future edit that dropped the vendor condition would red here rather
+        than silently discarding a real CPU sensor on every Gigabyte board.
+        """
+        c = classify_sensor(chip, "CPUTIN", board_vendor="Gigabyte")
+        assert c.source_class == "cpu_board_side"
 
 
 class TestAsusEc:
