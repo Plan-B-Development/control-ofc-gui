@@ -1187,6 +1187,26 @@ class PreferredSensorResult:
     preferred_sensor: str | None = None
 
 
+@dataclass
+class HeaderRoleResult:
+    """Response from POST /config/header-role (DEC-311/312).
+
+    role echoes the assignment and is None after a clear; effective_role
+    is what the daemon actually resolved, which is NOT the same thing — a cleared
+    header falls back to the daemon's own inference, and an assignment on a header
+    whose label already says "pump" resolves to the assignment. Read
+    effective_role to confirm what happened; role only says what was stored.
+
+    effective_role is an OPAQUE TOKEN (the 273-i rule): render an unrecognised
+    value rather than dropping it, and never grant it pump semantics.
+    """
+
+    updated: bool = False
+    header_id: str = ""
+    role: str | None = None
+    effective_role: str = "unknown"
+
+
 # ---------------------------------------------------------------------------
 # Daemon configuration (DEC-243) — GET /config + the extended POST /config/*
 #
@@ -1872,6 +1892,18 @@ def parse_inventory_readiness(data: dict) -> InventoryReadiness:
             for i in data.get("items", [])
             if isinstance(i, dict)
         ],
+    )
+
+
+def parse_header_role(data: dict) -> HeaderRoleResult:
+    """Parse POST /config/header-role. role stays None when the daemon
+    reports a cleared assignment; it is never coerced to a string."""
+    raw_role = data.get("role")
+    return HeaderRoleResult(
+        updated=bool(data.get("updated", False)),
+        header_id=str(data.get("header_id", "")),
+        role=raw_role if isinstance(raw_role, str) else None,
+        effective_role=str(data.get("effective_role", "unknown")),
     )
 
 

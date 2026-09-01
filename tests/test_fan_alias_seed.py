@@ -669,6 +669,9 @@ class TestPersistedLabelKeepsItsRole:
                 rad = next(c for c in captured["candidates"] if c["id"] == rad_id)
                 return {
                     "pump_pct": 80,
+                    "pump_strategy": "fixed",
+                    "pump_member_id": pump_id,
+                    "role_assignments": [],
                     "radiator_members": [rad],  # what the user picked
                     "radiator_sensor_id": "hwmon:z53:d:Coolant",
                 }

@@ -108,6 +108,7 @@ class TestFanWizardGpuBranch:
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
         wizard._state = _make_state()
+        wizard._last_identify_mode = {}  # DEC-312: stop_fan records the daemon's mode
 
         wizard.stop_fan({"id": "amd_gpu:0000:03:00.0", "source": "amd_gpu"})
 
@@ -151,6 +152,7 @@ class TestFanWizardGpuBranch:
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
         wizard._state = _make_state()
+        wizard._last_identify_mode = {}  # DEC-312: stop_fan records the daemon's mode
 
         wizard.stop_fan({"id": "openfan:ch02", "source": "openfan"})
 

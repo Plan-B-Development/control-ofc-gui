@@ -14,6 +14,7 @@ from collections.abc import Iterable, Sequence
 
 from control_ofc.knowledge.sensor_knowledge import classify_sensor_with_overrides
 from control_ofc.services.profile_service import (
+    AIO_PUMP_TAG,
     CONTROL_ROLE_GPU,
     _label_indicates_cpu_or_pump,
     control_minimum_pct,
@@ -227,10 +228,23 @@ def role_preserving_label(display_name: str, fallback_label: str, source: str) -
     return display_name
 
 
-def aio_tag_for(label: str) -> str:
+def aio_tag_for(label: str, role: str = "") -> str:
     """The ``(AIO pump)``/``(AIO radiator)`` suffix for a liquid-cooler header
-    (DEC-157). Role-bearing, so it is appended to the persisted label too."""
-    return " (AIO pump)" if "pump" in label.lower() else " (AIO radiator)"
+    (DEC-157). Role-bearing, so it is appended to the persisted label too.
+
+    ``role`` is the daemon's per-channel ``HwmonHeader.role`` (DEC-311). It wins
+    over the label guess, because it is evidence rather than inference: a Kraken
+    ``pwm1`` whose chip publishes no label reads as the placeholder ``pwm1`` and
+    would otherwise be tagged "(AIO radiator)" — and on a motherboard AIO the
+    user's header-role assignment is the ONLY thing that knows.
+
+    Only ``pump`` is honoured. ``radiator_fan`` is behaviourally inert daemon-side
+    (nothing branches on it; every safety decision goes through ``is_pump()``), so
+    reading it here would imply a guarantee that does not exist.
+    """
+    if role == "pump":
+        return AIO_PUMP_TAG
+    return AIO_PUMP_TAG if "pump" in label.lower() else " (AIO radiator)"
 
 
 def build_member_candidates(
@@ -289,10 +303,17 @@ def build_member_candidates(
             label = f"{label} ({badge})"
 
         h_aio = header_by_id.get(fan.id)
-        if fan.source == "hwmon" and h_aio is not None and h_aio.is_aio:
-            aio_tag = aio_tag_for(label)
-            label += aio_tag
-            clean_label += aio_tag  # role-bearing — see above
+        # DEC-312: `role == "pump"` joins `is_aio` as a reason to tag. A pump on a
+        # motherboard AIO_PUMP header is `is_aio=False` by construction — the chip
+        # is the Super-I/O, not the cooler — so without the role term the tag never
+        # fires and the persisted `member_label` loses the 30% pump floor the
+        # daemon independently enforces.
+        if fan.source == "hwmon" and h_aio is not None:
+            h_role = h_aio.role
+            if h_aio.is_aio or h_role == "pump":
+                aio_tag = aio_tag_for(label, h_role)
+                label += aio_tag
+                clean_label += aio_tag  # role-bearing — see above
 
         entry = {
             "id": fan.id,
@@ -321,8 +342,9 @@ def build_member_candidates(
         presence = classify_fan_presence(None, header)
         if PRESENCE_BADGE.get(presence):
             label = f"{label} ({PRESENCE_BADGE[presence]})"
-        if header.is_aio:
-            aio_tag = aio_tag_for(label)
+        header_role = header.role
+        if header.is_aio or header_role == "pump":
+            aio_tag = aio_tag_for(label, header_role)
             label += aio_tag
             clean_label += aio_tag  # role-bearing — see above
 
@@ -418,6 +440,39 @@ def build_radiator_candidates(
         )
 
     return candidates
+
+
+def build_pump_role_candidates(headers, *, display_name) -> list[dict]:
+    """Rows for the Configure-AIO pump picker (DEC-312).
+
+    Every writable hwmon header, because on the boards this exists for nothing
+    distinguishes them: an ``it87`` with no ``pwmN_label`` files reports five
+    identical ``unknown`` channels, and which one the pump is plugged into is a
+    fact only the person who built the machine has. Filtering by any heuristic
+    would hide the right answer on exactly the hardware that needs it.
+
+    The current role is rendered as its RAW token rather than a mapped display
+    string (the 273-i rule): a token this GUI does not recognise — because it was
+    added by a newer daemon — must still be visible, never silently dropped or
+    shown as "unknown".
+    """
+    rows: list[dict] = []
+    for h in headers:
+        if not h.is_writable:
+            continue
+        label = display_name(h.id) or h.id
+        role = h.role or "unknown"
+        if role != "unknown":
+            label = f"{label} — {role}"
+        rows.append(
+            {
+                "id": h.id,
+                "label": label,
+                "role": role,
+                "role_source": h.role_source,
+            }
+        )
+    return rows
 
 
 def build_sensor_choices(sensors, overrides: dict) -> list[dict]:

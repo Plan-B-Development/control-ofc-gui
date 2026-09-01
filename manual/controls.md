@@ -64,10 +64,20 @@ Each fan role appears as a card:
 
 ### Configuring an AIO / liquid cooler
 
-When a liquid cooler (e.g. an NZXT Kraken or an Aquacomputer pump) is detected, a **Configure AIO** button appears in the page header. It sets your cooler up in one step:
+**Configure AIO** lives in the **Set up ▾** menu in the page header. It sets your cooler up in one step:
 
-- A **pump** control at a **constant speed** — choose Low (30%), Mid (60%), High (80%, the default), or Max (100%). A pump runs best at a steady speed rather than a temperature curve, so these are fixed levels with a 30% minimum floor.
-- A **radiator-fan** control bound to a temperature sensor — the **coolant** sensor by default (recommended, since the radiator's job is to cool the loop), though any sensor is selectable and coolant/CPU are highlighted as preferred.
+- A **pump** control, driven one of three ways. **Automatic** (the default) follows temperature on a gentle curve; **Fixed speed** holds one level — Low (30%), Mid (60%), High (80%), or Max (100%); **Custom curve** starts from the automatic curve and opens the editor. Whichever you choose, the pump is never driven below 30%.
+
+  Which is right depends on your cooler, and there is no universal answer — check its documentation. Many pumps are happiest at a steady speed; some vendors recommend the opposite for their own hardware, and at least one ignores PWM below 20% and boosts itself when the coolant gets hot regardless of what you ask for.
+- A **radiator-fan** control bound to a temperature sensor — the **coolant** sensor by default (recommended, since the radiator's job is to cool the loop), though any sensor is selectable and coolant/CPU are highlighted as preferred. If your machine has no coolant sensor, CPU package temperature is used instead; that is normal, not a problem to fix.
+
+### If your AIO is plugged into the motherboard
+
+A USB cooler (NZXT Kraken, Aquacomputer) identifies itself, so its pump is found automatically. A pump plugged into an **AIO_PUMP** or **CPU_OPT** header on the motherboard cannot be: it looks exactly like any other fan to the system, and on many boards the chip publishes no channel names at all, so every header reads as "unknown".
+
+So Configure AIO **asks**. Its first step lists your controllable headers and you pick the one the pump is on. If you are not sure, use the **Fan Wizard** first to identify each header, then come back.
+
+Telling it which header is the pump is worth doing even if you do not change anything else — it is what earns that header its 30% minimum speed, and what stops it being stopped during fan identification. Choose "No pump on a motherboard header" if your pump is not connected this way, and only the radiator fans are set up.
 
 A read-only / monitor-only cooler (one whose pump the kernel cannot drive, such as an older NZXT Kraken2) skips the pump step and offers radiator + coolant monitoring only — it never offers control that would fail. The controls it creates are ordinary fan roles you can edit afterward.
 
@@ -134,7 +144,7 @@ The curve library is the middle **Link Logic** pane. Its **+** button offers the
 | **Graph Curve** | Multiple draggable points defining a custom temperature-to-speed shape | Full control over the response |
 | **Stepped Curve** | The same draggable points as a graph, but the output *holds* each point's value until the next point's temperature is reached — a staircase, not a ramp | A fixed fan speed per temperature band, with fewer speed changes |
 | **Linear Curve** | Two-point ramp: start temp/speed to end temp/speed | Simple "ramp up between X and Y" |
-| **Flat Curve** | Constant output regardless of temperature | Pumps, AIO coolers, always-on fans |
+| **Flat Curve** | Constant output regardless of temperature | Always-on fans, and pumps you want held at one speed |
 | **Trigger Curve** | A two-state latch: an idle speed below the idle temperature, a load speed above the load temperature, holding its state in between (its own hysteresis) | "Stay quiet, then ramp hard past X°" |
 | **Mix Curve** | Combines several *other* curves — each evaluated at its own sensor — into one output using a function: **Max**, **Min**, **Average**, **Sum**, or **Subtract** (result clamped 0–100%). Has no sensor of its own | "Drive this fan from whichever of CPU/GPU/VRM is hottest" |
 | **Sync Curve** | Mirrors another fan role's current output, plus an optional offset (−100…+100%). Has no sensor of its own | "Keep the rear fans a few percent above the front fans" |

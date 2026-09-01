@@ -214,7 +214,15 @@ The GUI **bakes** a role-aware default minimum PWM into each control's
 the daemon then **enforces and backstops** that floor (DEC-162 — validate-time
 reject + an independent eval-time clamp). The GUI-side defaults are:
 - **30%** for any control whose members include a CPU- or pump-labelled
-  hwmon header (label contains `CPU`, `PUMP`, or `AIO`).
+  hwmon header (label contains `CPU`, `PUMP`, or `AIO`), **or a header the user
+  has assigned the `pump` role to** (DEC-312). The assignment is unioned into the
+  persisted `member_label` at authoring time, because a persisted member carries
+  no live header to consult later. Union only — a `chassis_fan` assignment on a
+  `PUMP`-labelled header does not strip the floor the label already earned — and
+  the tag is deliberately not removed when the role is later cleared, since
+  clearing an assignment is not a request to lower a floor. Note the daemon
+  reaches the same 30% independently via `assigned_role_is_pump`, so this is
+  what the GUI *displays*, not what protects the hardware.
 - **20%** for chassis / OpenFan-only controls.
 - **0%** for GPU-only controls (PMFW enforces its own OD_RANGE
   minimum, typically 15%; see DEC-053).

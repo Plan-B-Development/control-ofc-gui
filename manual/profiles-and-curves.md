@@ -127,7 +127,9 @@ Good for simple "ramp from 30% at 35C to 100% at 80C" use cases.
 
 A constant output regardless of temperature. No sensor binding needed.
 
-Good for pumps, AIO coolers, or fans that should run at a fixed speed.
+Good for fans that should run at a fixed speed, and for a pump you want held at one
+level — though a pump can equally follow a curve; see **Configure AIO** in the
+Controls guide, which offers both.
 
 ### Trigger (Two-State Latch)
 

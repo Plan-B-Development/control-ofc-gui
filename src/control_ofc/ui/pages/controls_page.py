@@ -35,6 +35,7 @@ from control_ofc.services.controls_view import (
     aio_tag_for,
     assigned_elsewhere_map,
     build_member_candidates,
+    build_pump_role_candidates,
     build_radiator_candidates,
     build_sensor_choices,
     curve_min_output_floor,
@@ -689,7 +690,8 @@ class ControlsPage(QWidget):
         self._configure_aio_action = setup_menu.addAction("Configure AIO…", self._on_configure_aio)
         self._configure_aio_action.setObjectName("Controls_Act_configureAio")
         self._configure_aio_action.setToolTip(
-            "One-click setup for a liquid cooler — a constant-speed pump and a radiator-fan group"
+            "One-click setup for a liquid cooler — name the pump header, choose how "
+            "the pump is driven, and group the radiator fans"
         )
         self._configure_aio_action.setVisible(False)
         self._dedicate_gpu_action = setup_menu.addAction("Dedicate GPU Fan…", self._on_dedicate_gpu)
@@ -1064,14 +1066,65 @@ class ControlsPage(QWidget):
         # Alias persistence is handled by MainWindow via AppState.fan_alias_changed
         wizard.exec()
 
+    def _supports_header_roles(self) -> bool:
+        """Whether the daemon accepts ``POST /config/header-role`` (DEC-311)."""
+        caps = getattr(self._state, "capabilities", None) if self._state else None
+        control = getattr(caps, "control", None) if caps else None
+        return bool(getattr(control, "header_roles", False))
+
+    def _apply_header_roles(self, assignments) -> bool:
+        """POST each header-role change, refreshing headers on success (DEC-312).
+
+        Returns False when an *assignment* failed — the daemon then does not know
+        the header drives a pump, so it would neither floor it at 30% nor refuse to
+        stop it for fan identification, and creating a profile that claims
+        otherwise would be a lie about hardware safety. A failed *clear* is logged
+        and tolerated: a stale assignment only ever adds a floor.
+
+        Headers are re-fetched immediately rather than waiting for the periodic
+        refresh, which runs every 300 s — long enough that the role the user just
+        set would otherwise be invisible to the rest of this function.
+        """
+        if not assignments or self._client is None:
+            return True
+        for header_id, role in assignments:
+            try:
+                self._client.set_header_role(header_id, role)
+            except (DaemonError, OSError, ConnectionError) as e:
+                if role is None:
+                    self._log.warning("Could not clear header role for %s: %s", header_id, e)
+                    continue
+                self._log.error("Could not set header role %s for %s: %s", role, header_id, e)
+                QMessageBox.warning(
+                    self,
+                    "Could not set the pump role",
+                    f"The daemon rejected the pump assignment for {header_id}:\n\n{e}\n\n"
+                    "No controls were created. Without this the daemon cannot know "
+                    "the header drives a pump, so it would not hold it above 30% or "
+                    "protect it from being stopped during fan identification.",
+                )
+                return False
+        try:
+            self._state.set_hwmon_headers(self._client.hwmon_headers())
+        except (DaemonError, OSError, ConnectionError) as e:
+            # The write succeeded; only our view of it is stale. Detection below
+            # falls back to the pre-assignment headers, which is why the pump
+            # member is rebuilt from the id the user picked rather than inferred.
+            self._log.warning("Header re-fetch after a role assignment failed: %s", e)
+        return True
+
     def _on_configure_aio(self) -> None:
-        """DEC-157: one-click liquid-cooler setup — build a constant-speed pump
-        control + a coolant-bound radiator control via the shared creation path."""
+        """DEC-157/312: one-click liquid-cooler setup — name the pump header, pick
+        how the pump is driven, and build it plus a radiator control via the shared
+        creation path."""
         profile = self._get_current_profile()
         if not profile or not self._state:
             return
         from control_ofc.services.profile_service import (
+            AIO_PUMP_STRATEGY_CUSTOM,
+            AIO_PUMP_STRATEGY_FIXED,
             ControlMember,
+            aio_member_for_header,
             build_aio_controls,
             detect_aio_setup,
         )
@@ -1090,18 +1143,58 @@ class ControlsPage(QWidget):
             display_name=self._state.fan_display_name,
         )
         sensor_choices = build_sensor_choices(self._state.sensors, overrides)
+        # An empty list hides the picker entirely, which is what an older daemon
+        # gets: no capability, no role step, and the flow behaves as it did before.
+        pump_candidates = (
+            build_pump_role_candidates(
+                self._state.hwmon_headers, display_name=self._state.fan_display_name
+            )
+            if self._supports_header_roles()
+            else []
+        )
 
         dlg = AioConfigDialog(
             pump_label=det.pump_member.member_label if det.pump_member else None,
             monitor_only=det.monitor_only,
             fan_candidates=candidates,
             sensor_choices=sensor_choices,
-            default_sensor_id=det.coolant_sensor_id,
+            default_sensor_id=det.control_sensor_id,
+            pump_candidates=pump_candidates,
+            detected_pump_id=pump_id,
+            has_coolant=det.has_coolant,
             parent=self,
         )
         if not dlg.exec():
             return
         res = dlg.get_result()
+        if not self._apply_header_roles(res["role_assignments"]):
+            return
+        # Rebuild the pump member from the refreshed header, so a role just
+        # assigned is reflected in `member_label` — that label is the DEC-095/162
+        # floor input, and a member built before the assignment would stamp 20% for
+        # a header the daemon now floors at 30%.
+        strategy = res["pump_strategy"]
+        pump_member = None
+        if strategy:
+            wanted_id = res["pump_member_id"]
+            if not wanted_id:
+                # The dialog knows a pump exists but not which header it is (it was
+                # given a label only). Detection already resolved that.
+                pump_member = det.pump_member
+            else:
+                header = next((h for h in self._state.hwmon_headers if h.id == wanted_id), None)
+                if header is not None:
+                    pump_member = aio_member_for_header(header, "Pump")
+                elif det.pump_member is not None and det.pump_member.member_id == wanted_id:
+                    pump_member = det.pump_member
+                else:
+                    # Never substitute a different header for the one the user
+                    # picked — that would bind the pump curve to the wrong fan.
+                    self._log.warning(
+                        "Configure AIO: header %s vanished before the pump control "
+                        "could be built; skipping the pump",
+                        wanted_id,
+                    )
         # DEC-229: this was the one member-persisting path in the file that did
         # NOT go through _role_preserving_label, so it stored the alias-first
         # display name verbatim. A header whose real label carries a role word
@@ -1121,24 +1214,39 @@ class ControlsPage(QWidget):
         ]
         created = build_aio_controls(
             profile,
-            pump_member=det.pump_member if res["pump_pct"] is not None else None,
+            pump_member=pump_member if strategy else None,
             pump_pct=res["pump_pct"] or 0,
             radiator_members=radiator_members,
             radiator_sensor_id=res["radiator_sensor_id"],
+            pump_strategy=strategy or AIO_PUMP_STRATEGY_FIXED,
+            sensor_is_coolant=det.has_coolant,
         )
         if not created:
             return
         self._refresh_controls_grid(profile)
         self._refresh_curves_grid(profile)
         self._set_unsaved(True)
+        pump_control = None
+        if pump_member is not None:
+            pump_control = next(
+                (
+                    c
+                    for c in created
+                    if any(m.member_id == pump_member.member_id for m in c.members)
+                ),
+                None,
+            )
         # One-time pump-info popup when a pump control was created.
         if (
-            res["pump_pct"] is not None
-            and det.pump_member is not None
+            pump_control is not None
             and self._settings_service
             and self._settings_service.settings.show_aio_pump_info
         ):
             self._show_aio_pump_info()
+        # "Custom curve" seeds the automatic curve and hands it straight to the
+        # editor — the whole point of that choice is to shape it.
+        if strategy == AIO_PUMP_STRATEGY_CUSTOM and pump_control is not None:
+            self._on_edit_curve(pump_control.curve_id)
 
     def _on_dedicate_gpu(self) -> None:
         """DEC-221: give a writable AMD GPU fan its own GPU-only control + 0-floor
@@ -1529,6 +1637,11 @@ class ControlsPage(QWidget):
                 sensor_items,
                 mix_candidates=mix_candidates,
                 sync_candidates=sync_candidates,
+                # DEC-312: the same strictest-role floor the embedded point editor
+                # gets below. A Flat curve is how the Fixed pump strategy is
+                # stored, so without this the modal branch was the one place a
+                # pump's speed could be authored below its 30% floor.
+                min_output=self._curve_min_output_floor(profile, curve.id),
                 parent=self,
             )
             if dlg.exec():
@@ -1679,19 +1792,22 @@ class ControlsPage(QWidget):
             self._settings_service.update(show_gpu_zero_rpm_warning=False)
 
     def _show_aio_pump_info(self) -> None:
-        """One-time popup explaining the AIO pump floor (DEC-157)."""
+        """One-time popup explaining how the pump is protected (DEC-157/312)."""
         from PySide6.QtWidgets import QCheckBox, QMessageBox
 
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Icon.Information)
         msg.setWindowTitle("AIO Pump")
-        msg.setText("The pump runs at a constant speed")
+        msg.setText("Your pump has a 30% minimum speed")
         msg.setInformativeText(
-            "Your AIO pump is set to a constant speed with a 30% minimum floor.\n\n"
-            "Pumps cool best at a steady speed — running a pump too low reduces "
-            "coolant flow and cooling and can stress the pump. Keep it at a constant "
-            "level (around 80% is a good default) rather than curving it down with "
-            "temperature."
+            "Whatever speed is asked for, the daemon never drives this pump below "
+            "30%. Running a pump very low reduces coolant flow and cooling and can "
+            "stress the pump, so that floor is enforced and cannot be edited.\n\n"
+            "It is also never stopped for fan identification — it briefly changes "
+            "speed instead, so coolant keeps moving.\n\n"
+            "Whether a pump is better at a fixed speed or following temperature "
+            "depends on the cooler: check its documentation. You can change the "
+            "pump's curve at any time from the Controls page."
         )
         dont_show = QCheckBox("Don't show this again")
         msg.setCheckBox(dont_show)
@@ -1818,11 +1934,24 @@ class ControlsPage(QWidget):
             pane.setMinimumWidth(pane_min)
 
     def _on_capabilities_updated(self, caps) -> None:
-        # DEC-157/233: surface the Configure AIO entry (now a "Set up ▾" menu
-        # action) only when a liquid cooler is detected (idempotent — capabilities
-        # re-fire on every refresh).
+        # DEC-157/233/312: surface the Configure AIO entry (a "Set up ▾" menu
+        # action) when a liquid cooler is detected — OR when the daemon supports
+        # header roles, because a motherboard-connected AIO is undetectable by
+        # construction and a detection-gated entry would hide the feature from
+        # exactly the users who need it. Its pump hangs off the Super-I/O chip like
+        # any other fan, so no capability, chip name or label distinguishes it: the
+        # user telling us IS the detection, and that happens inside the dialog.
+        #
+        # Deliberately not also gated on "at least one writable hwmon header".
+        # `headers_ready` and `capabilities_ready` are emitted in the same poll
+        # cycle, so a header-count test here reads the PREVIOUS cycle's list —
+        # empty on the first poll — and the entry would stay hidden for a further
+        # 300 s. The dialog already degrades gracefully with nothing to offer.
+        # (Idempotent — capabilities re-fire on every refresh.)
         aio = getattr(caps, "aio_hwmon", None)
-        self._configure_aio_action.setVisible(bool(getattr(aio, "present", False)))
+        self._configure_aio_action.setVisible(
+            bool(getattr(aio, "present", False)) or self._supports_header_roles()
+        )
         # DEC-221/233: surface "Dedicate GPU Fan" only for a present, writable,
         # zero-RPM-capable AMD GPU (idempotent — capabilities re-fire on refresh).
         gpu = getattr(caps, "amd_gpu", None)

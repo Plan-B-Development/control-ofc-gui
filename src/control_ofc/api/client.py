@@ -18,6 +18,7 @@ from control_ofc.api.models import (
     GpuVerifyResult,
     HardwareDiagnosticsResult,
     HardwareReadiness,
+    HeaderRoleResult,
     HwmonHeader,
     HwmonInventory,
     HwmonVerifyResult,
@@ -41,6 +42,7 @@ from control_ofc.api.models import (
     parse_gpu_verify_result,
     parse_hardware_diagnostics,
     parse_hardware_readiness,
+    parse_header_role,
     parse_hwmon_headers,
     parse_hwmon_inventory,
     parse_hwmon_verify_result,
@@ -437,6 +439,32 @@ class DaemonClient:
         preferred motherboard temperature sensor (DEC-200)."""
         return parse_preferred_sensor(
             self._post("/config/preferred-mb-sensor", json={"sensor_id": sensor_id})
+        )
+
+    def set_header_role(self, header_id: str, role: str | None) -> HeaderRoleResult:
+        """POST /config/header-role — assign (token) or clear (None) what a PWM
+        header DRIVES (DEC-311, daemon >= 2.28.0; capability control.header_roles).
+
+        This is the only evidence a pump exists on a board whose Super-I/O publishes
+        no pwmN_label files, where every header is inferred unknown. The
+        assignment earns that header the 30% floor, the stop-snap exemption,
+        pump-safe identify and the role-aware verify duty.
+
+        role is sent as an explicit null to clear — the daemon requires the
+        KEY to be present and treats a missing one as a 400, distinct from a null.
+        Tokens are exact-case ("pump", not "PUMP") and are NOT normalised
+        here: an unrecognised token must surface the daemon's 400 rather than being
+        silently coerced into something weaker.
+
+        Takes effect immediately (no restart) and persists to runtime.toml.
+        Raises on 400 (unknown token, unknown header id on a set) and 503
+        (persistence_failed — persist-first, so nothing changed daemon-side).
+
+        Note the daemon releases any live identify hold on a header it is told is a
+        pump, so an identify "stop" in progress ends when this returns.
+        """
+        return parse_header_role(
+            self._post("/config/header-role", json={"header_id": header_id, "role": role})
         )
 
     def verify_hwmon_pwm(self, header_id: str) -> HwmonVerifyResult:

@@ -25,7 +25,10 @@ Implemented settings:
 - chart default time range — labels are driven by the chart's own `TIME_RANGES`,
   so the Settings label always matches what the dashboard opens (F6)
 - GPU zero-RPM warning toggle
-- AIO pump info toggle — the one-time "constant-speed pump" popup (DEC-157).
+- AIO pump info toggle — the one-time pump popup shown when Configure AIO creates
+  a pump control. Since DEC-312 it explains the enforced 30% minimum and that the
+  pump is never stopped for fan identification; it no longer states that a pump
+  must run at a constant speed, which was retracted as a claim about hardware.
   Dismissing it flips the key to `false`; before DEC-237 nothing could flip it
   back, unlike its GPU counterpart directly above.
 - Fan Wizard spin-down seconds

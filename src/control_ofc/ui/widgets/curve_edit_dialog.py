@@ -36,12 +36,14 @@ class CurveEditDialog(QDialog):
         *,
         mix_candidates: list[tuple[str, str]] | None = None,
         sync_candidates: list[tuple[str, str]] | None = None,
+        min_output: float = 0.0,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Edit Curve: {curve.name}")
         self.setMinimumWidth(400)
         self._curve = curve
+        self._min_output = max(0.0, min(100.0, min_output))
         self._sensor_combo: QComboBox | None = None
 
         layout = QVBoxLayout(self)
@@ -132,9 +134,18 @@ class CurveEditDialog(QDialog):
         flat_label = QLabel("Output (%):")
         row.addWidget(flat_label)
         self._flat_spin = QDoubleSpinBox()
-        self._flat_spin.setRange(0, 100)
+        # DEC-312: the strictest role floor across the controls using this curve,
+        # matching what the embedded point editor already enforces via
+        # `set_min_output`. A Flat curve is how the Fixed pump strategy is stored,
+        # and without this the one pump strategy that names an explicit number was
+        # the one place the number could be authored below the 30% pump floor.
+        #
+        # A legacy curve stored below the floor is raised to it on open, which is
+        # the safe direction and is what the daemon enforces at eval time anyway —
+        # the dialog stops showing a value that was never going to be honoured.
+        self._flat_spin.setRange(self._min_output, 100)
         self._flat_spin.setDecimals(1)
-        self._flat_spin.setValue(curve.flat_output_pct)
+        self._flat_spin.setValue(max(curve.flat_output_pct, self._min_output))
         self._flat_spin.setObjectName("CurveEditDialog_Spin_flatOutput")
         name_value_control(self._flat_spin, flat_label)
         row.addWidget(self._flat_spin)

@@ -125,11 +125,28 @@ class TestDetectAioSetup:
             apply_role_floor(ctl)
             assert ctl.minimum_pct == 30
 
-    def test_motherboard_chips_never_reach_aio_detection(self):
-        """The filter that makes the test above the correct scope.
+    def test_unclassified_motherboard_header_is_not_guessed_as_a_pump(self):
+        """A motherboard header with no role evidence is still never proposed.
 
-        Pins the `h.is_aio` gate itself: a motherboard header, even one the user
-        has an AIO plugged into, is dropped before pump/radiator construction.
+        REWRITTEN by DEC-312, and the old version is worth recording because it
+        pinned the opposite rule for a good reason. It read:
+
+            "Pins the `h.is_aio` gate itself: a motherboard header, even one the
+            user has an AIO plugged into, is dropped before pump/radiator
+            construction."
+
+        That was correct while `is_aio` was the only evidence available — a
+        chip-level flag meaning "this header hangs off a Kraken/Aquacomputer
+        cooler". Reading a motherboard header as an AIO pump on that evidence
+        would have been a guess. DEC-311 added real per-channel evidence
+        (`role`), so the gate moved from the CHIP to the EVIDENCE: a motherboard
+        header is proposed when something actually says it is a pump, and never
+        otherwise.
+
+        This still holds the line the old test was protecting — the case below is
+        the ambiguous one (a `CPU_OPT`-style header the daemon leaves `unknown`,
+        equally likely to be a pump or a second radiator fan), and it must stay
+        unproposed. The daemon refuses to classify it for exactly this reason.
         """
         headers = [_header("hwmon:nct6798:x:pwm1:pwm1", "pwm1", "nct6798", is_aio=False)]
         det = detect_aio_setup(headers, [], {})
@@ -171,7 +188,7 @@ class TestBuildAioControls:
         assert pump_ctrl.minimum_pct == 30.0  # pump floor (DEC-095)
         pump_curve = profile.get_curve(pump_ctrl.curve_id)
         assert pump_curve.type == CurveType.FLAT
-        assert pump_curve.flat_output_pct == 80.0  # constant, not a temp curve
+        assert pump_curve.flat_output_pct == 80.0  # the Fixed strategy: one level
 
         rad_ctrl = next(c for c in created if c.name == "AIO Radiator")
         assert rad_ctrl.minimum_pct == 20.0  # chassis floor
@@ -256,7 +273,11 @@ def test_aio_dialog_result_with_pump(qtbot):
     )
     qtbot.addWidget(dlg)
     res = dlg.get_result()
-    assert res["pump_pct"] == AIO_PUMP_DEFAULT_PCT  # High default checked
+    # DEC-312: the default strategy is Automatic, so no fixed percentage is
+    # returned unless the user picks "Fixed speed". The High preset is still the
+    # preselected fixed level — asserted in the Fixed-strategy test.
+    assert res["pump_strategy"] == "automatic"
+    assert res["pump_pct"] is None
     assert res["radiator_sensor_id"] == "c1"
     ids = {m["id"] for m in res["radiator_members"]}
     assert ids == {"f1"}  # only the preselected fan is checked
@@ -322,6 +343,9 @@ def test_configure_aio_creates_pump_control(qtbot, app_state, profile_service, m
         def get_result(self):
             return {
                 "pump_pct": 80,
+                "pump_strategy": "fixed",
+                "pump_member_id": "hwmon:z53:d:pwm1:Pump",
+                "role_assignments": [],
                 "radiator_members": [],
                 "radiator_sensor_id": "hwmon:z53:d:Coolant",
             }

@@ -415,6 +415,42 @@ def _label_indicates_cpu_or_pump(label: str) -> bool:
     return any(hint in lower for hint in _CPU_PUMP_LABEL_HINTS)
 
 
+# The role-bearing suffix for a liquid-cooler pump header. "pump" is one of
+# _CPU_PUMP_LABEL_HINTS, so appending this is what makes a persisted
+# member_label classify as CONTROL_ROLE_CPU_PUMP on both sides of the API.
+AIO_PUMP_TAG = " (AIO pump)"
+
+
+def role_tagged_member_label(label: str, header_role: str) -> str:
+    """Ensure a persisted member_label carries the pump role when the DAEMON
+    says this header drives a pump (DEC-312).
+
+    header_role is HwmonHeader.role — the daemon's resolved per-channel
+    role, which already includes the user's POST /config/header-role
+    assignment. On a board whose Super-I/O publishes no pwmN_label files that
+    assignment is the *only* evidence a pump exists, and without this the GUI
+    stamped minimum_pct = 20 on a header the daemon independently floors at
+    30% (assigned_role_is_pump -> member_effective_floor). The floor was
+    never actually at risk; the displayed number was a lie, which is the DEC-257
+    failure repeated one evidence-source later.
+
+    Union only, and it can never lower a floor: a label that already carries a
+    cpu/pump/aio hint is returned untouched, and only "pump" is acted on —
+    radiator_fan is behaviourally inert daemon-side (nothing branches on it;
+    only is_pump() matters), so tagging it would imply a guarantee that does
+    not exist.
+
+    Deliberate asymmetry, and it is the safe direction: once this tag is baked
+    into a saved profile, later *clearing* the role does not remove the 30% floor
+    from that profile. Clearing an assignment is not a request to lower a floor,
+    and a profile that keeps a pump floor it no longer strictly needs costs
+    nothing but a little airflow.
+    """
+    if header_role != "pump" or _label_indicates_cpu_or_pump(label):
+        return label
+    return f"{label}{AIO_PUMP_TAG}"
+
+
 def _daemon_label_from_member_id(member_id: str) -> str:
     """The label the DAEMON discovered, parsed out of the member's stable id.
 
@@ -1007,8 +1043,24 @@ _AIO_RADIATOR_CURVE_POINTS: tuple[tuple[float, float], ...] = (
     (55.0, 100.0),
 )
 
-# Pump constant-speed presets (DEC-157). A pump runs best at a CONSTANT speed —
-# never a temperature curve — so "Configure AIO" offers these flat levels.
+# The same curves re-calibrated for CPU package temperature (DEC-312). A
+# motherboard-connected AIO publishes no coolant reading, so the curves bind to
+# the CPU instead — and CPU package runs 20-30 C hotter than coolant for the same
+# thermal state. Reusing the coolant points there put the radiator fans at 100%
+# by 55 C, which an ordinary desktop reaches while browsing: the seed would have
+# been effectively "always maximum" on exactly the hardware this feature exists
+# for. Anchored on real CPU behaviour instead — idle 35-45, light 45-60, gaming
+# 60-75, sustained load 75-90.
+_AIO_RADIATOR_CURVE_POINTS_CPU: tuple[tuple[float, float], ...] = (
+    (40.0, 20.0),
+    (55.0, 35.0),
+    (70.0, 70.0),
+    (85.0, 100.0),
+)
+
+# Fixed-speed pump presets. Originally the ONLY option (DEC-157, on the premise
+# that a pump must never follow temperature); since DEC-312 one of three
+# strategies the user picks between. The levels themselves are unchanged.
 AIO_PUMP_PRESETS: tuple[tuple[str, int], ...] = (
     ("Low", 30),
     ("Mid", 60),
@@ -1017,15 +1069,61 @@ AIO_PUMP_PRESETS: tuple[tuple[str, int], ...] = (
 )
 AIO_PUMP_DEFAULT_PCT = 80
 
+# Pump strategies offered by Configure AIO (DEC-312). Whether a pump should hold
+# a fixed speed or follow temperature is a property of the COOLER, not a hardware
+# truth: broad enthusiast/vendor consensus favours a fixed speed, while some
+# vendors state the opposite for their own pumps outright (Noctua NL-LC1: a fixed
+# constant speed is explicitly not recommended; PWM below 20% is ignored, and it
+# self-boosts above 45 C coolant). So the GUI offers all three and asserts
+# neither as fact — see the dialog copy.
+AIO_PUMP_STRATEGY_AUTOMATIC = "automatic"
+AIO_PUMP_STRATEGY_FIXED = "fixed"
+AIO_PUMP_STRATEGY_CUSTOM = "custom"
+AIO_PUMP_STRATEGIES = (
+    AIO_PUMP_STRATEGY_AUTOMATIC,
+    AIO_PUMP_STRATEGY_FIXED,
+    AIO_PUMP_STRATEGY_CUSTOM,
+)
+AIO_PUMP_DEFAULT_STRATEGY = AIO_PUMP_STRATEGY_AUTOMATIC
+
+# Seed curve for the Automatic / Custom pump strategies. Every point sits at or
+# above the 30% hard pump floor BY CONSTRUCTION, so the curve is already safe
+# before minimum_pct clamps it — a seed that relied on the clamp would look
+# unsafe in the editor and would author an unsafe profile if the floor ever moved.
+# The low end is 40% rather than 30% because a real pump ignores very low duty
+# (the validation cooler ignores anything under 20% PWM) and a floor-hugging seed
+# would read as "the pump is barely running".
+_AIO_PUMP_CURVE_POINTS: tuple[tuple[float, float], ...] = (
+    (30.0, 40.0),
+    (45.0, 55.0),
+    (60.0, 75.0),
+    (75.0, 100.0),
+)
+
+# The pump seed re-calibrated for CPU package temperature, for the same reason as
+# the radiator pair above. Every point is still at or above the 30% pump floor by
+# construction.
+_AIO_PUMP_CURVE_POINTS_CPU: tuple[tuple[float, float], ...] = (
+    (40.0, 40.0),
+    (60.0, 55.0),
+    (75.0, 75.0),
+    (90.0, 100.0),
+)
+
 
 @dataclass
 class AioDetection:
-    """What a one-click AIO setup found on this machine (DEC-157)."""
+    """What a one-click AIO setup found on this machine (DEC-157/312)."""
 
-    pump_member: ControlMember | None  # writable AIO pump header, else None
-    radiator_members: list[ControlMember]  # other writable AIO fan headers
-    coolant_sensor_id: str | None  # best coolant sensor for the radiator curve
-    monitor_only: bool  # an AIO is present but no writable pump exists
+    pump_member: ControlMember | None  # writable pump header, else None
+    radiator_members: list[ControlMember]  # other writable radiator fan headers
+    coolant_sensor_id: str | None  # coolant sensor, None when the loop has none
+    monitor_only: bool  # a liquid cooler is present but no writable pump exists
+    # The sensor the created curves actually bind to: the coolant sensor where one
+    # exists, else the CPU package temperature. A motherboard-connected AIO has no
+    # coolant sensor at all — that is normal, not an error (DEC-312).
+    control_sensor_id: str | None = None
+    has_coolant: bool = False
 
 
 def _real_header_label(header: HwmonHeader) -> str:
@@ -1052,41 +1150,104 @@ def _real_header_label(header: HwmonHeader) -> str:
     return label
 
 
+_CPU_PACKAGE_LABEL_HINTS = ("package", "tctl", "tdie")
+_CPU_SENSOR_KINDS = ("cpu_temp", "CpuTemp")
+
+
+def _pick_cpu_sensor_id(sensors: list) -> str | None:
+    """The best CPU temperature sensor to drive an AIO with, or None.
+
+    Prefers a package-level reading (``Package id 0`` / ``Tctl`` / ``Tdie``) over a
+    per-core one: a single core spikes on any brief load and would make the pump
+    and radiator fans chase noise. Falls back to the first CPU sensor of any kind.
+    """
+    cpu_sensors = [s for s in sensors if getattr(s, "kind", "") in _CPU_SENSOR_KINDS]
+    if not cpu_sensors:
+        return None
+    for s in cpu_sensors:
+        label = (getattr(s, "label", "") or "").lower()
+        if any(hint in label for hint in _CPU_PACKAGE_LABEL_HINTS):
+            return s.id
+    return cpu_sensors[0].id
+
+
+def aio_member_for_header(header, default_name: str) -> ControlMember:
+    """A ``ControlMember`` for one AIO header, with a role-truthful label.
+
+    ``member_label`` is a safety input (DEC-095/162), so the daemon-reported role
+    is unioned into it here — on a label-less board the user's header-role
+    assignment is the only thing that says "pump", and without it the GUI would
+    stamp and display 20% for a header the daemon floors at 30% (DEC-312).
+    """
+    return ControlMember(
+        source="hwmon",
+        member_id=header.id,
+        member_label=role_tagged_member_label(
+            _real_header_label(header) or default_name, header.role
+        ),
+    )
+
+
 def detect_aio_setup(
     headers: list, sensors: list, sensor_overrides: dict | None = None
 ) -> AioDetection:
-    """Pure detection for the Configure-AIO flow (DEC-157).
+    """Pure detection for the Configure-AIO flow (DEC-157, rewritten by DEC-312).
 
-    ``headers`` are live ``HwmonHeader``s (with ``is_aio``/``is_writable``),
+    ``headers`` are live ``HwmonHeader``s (with ``is_aio``/``is_writable``/``role``),
     ``sensors`` are live ``SensorReading``s, ``sensor_overrides`` is the user
-    coolant-override map. The pump is the writable AIO header labelled "pump"
-    (else the lowest pwm index); other writable AIO headers are radiator fans.
+    coolant-override map.
+
+    This used to open with ``[h for h in headers if h.is_aio]``, which made a
+    motherboard-connected AIO undetectable by construction: ``is_aio`` is a
+    CHIP-level fact (the header hangs off a Kraken/Aquacomputer USB cooler), and a
+    pump plugged into an ``AIO_PUMP`` header on the motherboard hangs off the
+    Super-I/O chip like every other fan. Two evidence routes now feed it, unioned
+    rather than substituted:
+
+    * the daemon's per-channel ``role`` (DEC-311), which carries the user's
+      explicit ``POST /config/header-role`` assignment — the only evidence
+      available on a board whose Super-I/O publishes no ``pwmN_label`` files;
+    * the original chip-level ``is_aio`` route, unchanged, so a Kraken keeps
+      being detected exactly as before.
+
+    Ambiguity is never resolved by guessing. A ``CPU_OPT`` header stays
+    ``unknown`` daemon-side precisely because it is equally likely to be a pump or
+    a second radiator fan, and nothing here promotes it — mirroring that refusal
+    is what keeps the GUI from confidently binding the wrong header to a pump
+    curve. The lowest-pwm-index fallback stays scoped to ``is_aio`` chips, where
+    channel 1 genuinely is the pump by the cooler's own convention.
     """
     overrides = sensor_overrides or {}
+    writable = [h for h in headers if h.is_writable]
     aio_headers = [h for h in headers if h.is_aio]
-    writable = [h for h in aio_headers if h.is_writable]
+    aio_writable = [h for h in writable if h.is_aio]
 
-    pump_header = None
-    if writable:
-        pumps = [h for h in writable if "pump" in _real_header_label(h).lower()]
-        pump_header = pumps[0] if pumps else min(writable, key=lambda h: h.pwm_index)
+    # Route 1 — an explicit role assignment (or a daemon-inferred pump label).
+    role_pumps = [h for h in writable if h.role == "pump"]
+    # An explicit assignment outranks an inferred pump when a machine somehow has
+    # both, so the dialog preselects what the user actually chose. Selection only —
+    # both headers are floored at 30% either way, so nothing safety-relevant turns
+    # on the order.
+    user_pumps = [h for h in role_pumps if h.role_source == "user_assigned"]
+    pump_header = (user_pumps or role_pumps or [None])[0]
 
-    pump_member = (
-        ControlMember(
-            source="hwmon",
-            member_id=pump_header.id,
-            member_label=_real_header_label(pump_header) or "Pump",
-        )
-        if pump_header is not None
-        else None
-    )
-    radiator_members = [
-        ControlMember(
-            source="hwmon", member_id=h.id, member_label=_real_header_label(h) or "Radiator"
-        )
+    # Route 2 — the original chip-level route, unchanged.
+    if pump_header is None and aio_writable:
+        labelled = [h for h in aio_writable if "pump" in _real_header_label(h).lower()]
+        pump_header = labelled[0] if labelled else min(aio_writable, key=lambda h: h.pwm_index)
+
+    pump_member = aio_member_for_header(pump_header, "Pump") if pump_header is not None else None
+
+    # Radiator candidates: liquid-cooler headers as before, plus headers the user
+    # assigned a fan role to. `radiator_fan` is behaviourally inert daemon-side, so
+    # this is a picker hint only — it preselects a row, it grants no guarantee.
+    rad_headers = [
+        h
         for h in writable
-        if pump_header is None or h.id != pump_header.id
+        if (h.is_aio or h.role in ("radiator_fan", "cpu_fan"))
+        and (pump_header is None or h.id != pump_header.id)
     ]
+    radiator_members = [aio_member_for_header(h, "Radiator") for h in rad_headers]
 
     coolant_sensor_id = None
     for s in sensors:
@@ -1100,9 +1261,29 @@ def detect_aio_setup(
             coolant_sensor_id = s.id
             break
 
+    # A motherboard AIO exposes no coolant sensor — the cooler is not a USB device
+    # and publishes no telemetry — so the curves bind to CPU package temperature
+    # instead. That is the normal configuration for this hardware, not a
+    # degradation, and nothing downstream may present it as an error. It is also
+    # not a safety change: coolant temperature has never been a safety input
+    # (the thermal emergency is CPU-only, by design).
+    control_sensor_id = coolant_sensor_id or _pick_cpu_sensor_id(sensors)
+
+    # `monitor_only` keeps its exact original meaning: a real liquid cooler is
+    # present and none of its headers can be written. It deliberately does NOT
+    # cover "this looks like a motherboard board and nothing has been assigned
+    # yet" — that is not a monitor-only cooler, it is an unfinished setup, and the
+    # dialog answers it with the role step rather than a dead end.
     aio_present = bool(aio_headers) or coolant_sensor_id is not None
     monitor_only = aio_present and pump_member is None
-    return AioDetection(pump_member, radiator_members, coolant_sensor_id, monitor_only)
+    return AioDetection(
+        pump_member,
+        radiator_members,
+        coolant_sensor_id,
+        monitor_only,
+        control_sensor_id=control_sensor_id,
+        has_coolant=coolant_sensor_id is not None,
+    )
 
 
 def build_aio_controls(
@@ -1112,21 +1293,45 @@ def build_aio_controls(
     pump_pct: int,
     radiator_members: list[ControlMember],
     radiator_sensor_id: str,
+    pump_strategy: str = AIO_PUMP_STRATEGY_FIXED,
+    sensor_is_coolant: bool = True,
 ) -> list[LogicalControl]:
     """Create the pump + radiator controls (and their curves) for a one-click
     AIO setup, append them to ``profile``, and return the created controls
-    (DEC-157).
+    (DEC-157, extended by DEC-312).
 
-    The pump runs at a CONSTANT speed (a Flat curve), never a temperature curve,
-    floored at 30% by role policy. The radiator fans get a coolant-range graph
-    curve bound to ``radiator_sensor_id``.
+    ``pump_strategy`` picks how the pump is driven — ``fixed`` builds the original
+    Flat curve at ``pump_pct``, while ``automatic`` and ``custom`` build the same
+    gentle Graph curve bound to ``radiator_sensor_id`` (the caller opens the editor
+    afterwards for ``custom``). Either way role policy floors the control at 30%,
+    and the seeded curve sits above that floor by construction.
+
+    Whether a pump *should* hold a fixed speed is a property of the cooler, not a
+    fact about pumps — see ``AIO_PUMP_STRATEGY_*``. This function asserts nothing
+    either way; it builds what it is asked for.
+
+    The radiator fans get a graph curve bound to ``radiator_sensor_id``, which is
+    the coolant sensor where the loop has one and CPU package temperature where it
+    does not (a motherboard-connected AIO). ``sensor_is_coolant`` selects which
+    calibration the seeded curves use — the two ranges are not interchangeable,
+    since CPU package sits 20-30 C above coolant for the same thermal state.
     """
     created: list[LogicalControl] = []
+    pump_points = _AIO_PUMP_CURVE_POINTS if sensor_is_coolant else _AIO_PUMP_CURVE_POINTS_CPU
+    rad_points = _AIO_RADIATOR_CURVE_POINTS if sensor_is_coolant else _AIO_RADIATOR_CURVE_POINTS_CPU
 
     if pump_member is not None:
-        pump_curve = CurveConfig(
-            name="AIO Pump", type=CurveType.FLAT, flat_output_pct=float(pump_pct)
-        )
+        if pump_strategy == AIO_PUMP_STRATEGY_FIXED:
+            pump_curve = CurveConfig(
+                name="AIO Pump", type=CurveType.FLAT, flat_output_pct=float(pump_pct)
+            )
+        else:
+            pump_curve = CurveConfig(
+                name="AIO Pump",
+                type=CurveType.GRAPH,
+                sensor_id=radiator_sensor_id,
+                points=[CurvePoint(t, o) for t, o in pump_points],
+            )
         profile.curves.append(pump_curve)
         pump_control = LogicalControl(
             name="AIO Pump",
@@ -1143,7 +1348,7 @@ def build_aio_controls(
             name="AIO Radiator",
             type=CurveType.GRAPH,
             sensor_id=radiator_sensor_id,
-            points=[CurvePoint(t, o) for t, o in _AIO_RADIATOR_CURVE_POINTS],
+            points=[CurvePoint(t, o) for t, o in rad_points],
         )
         profile.curves.append(rad_curve)
         rad_control = LogicalControl(

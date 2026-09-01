@@ -266,6 +266,7 @@ class TestStopFanErrorSurfacing:
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
         wizard._state = _make_wizard_state()
+        wizard._last_identify_mode = {}  # DEC-312: stop_fan records the daemon's mode
 
         result = wizard.stop_fan({"id": "openfan:ch00", "source": "openfan"})
         assert result is None
@@ -279,6 +280,7 @@ class TestStopFanErrorSurfacing:
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
         wizard._state = _make_wizard_state()
+        wizard._last_identify_mode = {}  # DEC-312: stop_fan records the daemon's mode
 
         result = wizard.stop_fan({"id": "hwmon:nct6798:pwm2", "source": "hwmon"})
         assert result is None
@@ -305,6 +307,7 @@ class TestStopFanErrorSurfacing:
         wizard = FanConfigWizard.__new__(FanConfigWizard)
         wizard._client = client
         wizard._state = _make_wizard_state()
+        wizard._last_identify_mode = {}  # DEC-312: stop_fan records the daemon's mode
 
         result = wizard.stop_fan({"id": "openfan:ch09", "source": "openfan"})
         assert result is not None

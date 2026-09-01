@@ -1,5 +1,74 @@
 # Changelog
 
+## [2.51.0] — 2026-09-02
+
+Pairs with `control-ofc-daemon` ≥ v2.11.0 (unchanged floor). Every new path is
+capability-gated on `control.header_roles`, so against a pre-2.28.0 daemon this release
+behaves exactly as v2.50.0 did.
+
+AIO-MB Phase 2 (DEC-312): a motherboard-connected AIO is configurable, and the pump is no
+longer assumed to want a constant speed.
+
+### Added
+- **Configure AIO can set up a motherboard-connected AIO.** Its first step asks which
+  header the pump is on and records the answer via `POST /config/header-role`. This is a
+  chicken-and-egg fix as much as a UX one: a pump plugged into an `AIO_PUMP` header hangs
+  off the Super-I/O chip like any other fan, so nothing can infer it — on the boards this
+  matters for (measured: `it8696`, five channels, zero label files) every header reads
+  `unknown`. The dialog now *asks*, and telling the daemon is what earns that header the
+  30% floor, the stop-snap exemption and pump-safe identify.
+- **Three pump strategies — Automatic (new default), Fixed speed, Custom curve.**
+  Automatic follows temperature on a gentle curve whose every point sits at or above 30%
+  by construction; Fixed keeps the existing Low/Mid/High/Max presets unchanged; Custom
+  seeds the automatic curve and opens the editor. The default applies only to *new*
+  Configure-AIO runs — existing saved profiles keep the Flat pump curves they have.
+- **`DaemonClient.set_header_role()`**, closing a shipped daemon capability the GUI could
+  not reach (register row `AIO1-c`). Clearing sends an explicit `"role": null`; the daemon
+  treats a *missing* key as a 400, so the usual "drop the Nones" payload idiom would have
+  made clearing impossible.
+- The Configure AIO menu entry now also appears when the daemon supports header roles, not
+  only when a liquid cooler is detected. A motherboard AIO is undetectable by
+  construction, so a detection-gated entry hid the feature from exactly the users who
+  needed it.
+
+### Changed
+- **Retracted: "a pump runs best at a constant speed, not a temperature curve."** It was
+  stated as a fact about pumps and is a property of the *cooler* — the broad
+  enthusiast/vendor consensus favours a fixed speed, while at least one vendor explicitly
+  recommends against a fixed speed for its own pumps. The GUI now offers all three
+  strategies and asserts none of them, pointing at the cooler's documentation instead.
+  A test guards the retraction.
+- **Discovery no longer filters on the chip-level `is_aio` flag.** It reads the daemon's
+  per-channel `role` as well, unioned rather than substituted, so a Kraken is detected
+  exactly as before. An ambiguous header is still never guessed: a `CPU_OPT` the daemon
+  leaves `unknown` is not proposed as a pump, mirroring the daemon's own refusal.
+- **A missing coolant sensor is normal, not an error.** A motherboard AIO reports no
+  coolant temperature, so the curves bind to CPU package temperature (package, not a
+  single core, which would make the pump chase noise) and the dialog says so plainly.
+  The seeded curves are **calibrated for whichever sensor they bind to**: CPU package runs
+  20-30 °C above coolant for the same thermal state, so reusing the coolant points there
+  would have put the radiator fans at 100% by 55 °C — a temperature an ordinary desktop
+  reaches while browsing.
+
+### Fixed
+- **A user-assigned pump displayed a 20% floor while the daemon enforced 30%.** The GUI
+  classified members from the label alone, so a pump on a header whose real label carries
+  no role word (`SYS_FAN5`) stamped the chassis floor. The floor itself was never at risk —
+  the daemon unions the assignment in independently — but the number shown was a lie, the
+  same class of defect as DEC-257 one evidence-source later. **This closes the *authoring*
+  path only:** a member created *before* its header was assigned the pump role keeps the
+  old floor in the saved profile until it is re-added, because floors are derived from
+  `member_label` at authoring time and never re-derived on load. Recorded as `AIO1-g`
+  rather than fixed here — re-deriving floors at load would mutate existing profiles.
+- **The Fan Wizard promised to stop a pump it could not stop.** `is_pump_target` read the
+  wire `role`, which is the *display* role: a user assignment fully substitutes for
+  inference there, downgrades included, so assigning `chassis_fan` to a header the
+  hardware labels `PUMP` made the wizard say "the fan will stop" while the daemon
+  perturbed it instead. It now reconstructs the daemon's union, and the message shown at
+  the moment of action reads the `mode` the daemon actually reported.
+- **A Flat pump curve could be authored below its 30% floor.** The modal curve editor
+  never received the role floor the embedded point editor already enforced.
+
 ## [2.50.0] — 2026-09-01
 
 Pairs with `control-ofc-daemon` ≥ v2.11.0 (unchanged floor). The new behaviour below is

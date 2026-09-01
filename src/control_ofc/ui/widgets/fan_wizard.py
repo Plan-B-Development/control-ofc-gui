@@ -12,8 +12,8 @@ truthful against an older daemon that stops everything.
 
 Note the limit, because it is the normal case on many boards: a header the daemon
 cannot classify is an ordinary fan to it, and *is* stopped. Assigning the pump
-role is what changes that, and there is no GUI affordance for it yet (register row
-``AIO1-c``) — until Phase 2 it is a daemon-side action.
+role is what changes that, and since DEC-312 the Configure-AIO dialog can make
+that assignment (it was a daemon-side action only, register row ``AIO1-c``).
 
 Uses QWizard for standard multi-step navigation with Back/Next/Finish/Cancel.
 """
@@ -41,7 +41,23 @@ from PySide6.QtWidgets import (
 from control_ofc.api.errors import DaemonError, DaemonUnavailable
 from control_ofc.api.models import ConnectionState
 from control_ofc.constants import THERMAL_ABORT_C
+from control_ofc.knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from control_ofc.ui.components.a11y import name_value_control
+
+# Mirrors the daemon's `classify_header_role` label branches (`hwmon/roles.rs`).
+# A label matching any of these classifies the header BEFORE chip mapping is
+# consulted, so the liquid-cooler channel-1 → pump mapping never runs for it.
+_CPU_FAN_LABEL_PREFIXES = ("cpu_fan", "cpufan")
+_CHASSIS_LABEL_HINTS = ("cha_fan", "chafan", "sys_fan", "sysfan", "chassis")
+
+
+def _label_outranks_chip_mapping(lowered_label: str) -> bool:
+    """True when the daemon would classify this label without reaching chip mapping."""
+    normalised = lowered_label.replace("-", "_").replace(" ", "_").replace(".", "_")
+    if normalised.startswith(_CPU_FAN_LABEL_PREFIXES):
+        return True
+    return any(hint in normalised for hint in _CHASSIS_LABEL_HINTS)
+
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
@@ -118,6 +134,15 @@ class FanConfigWizard(QWizard):
         # the wizard restores any fan still stopped. Identify is per-fan and
         # daemon-owned (DEC-166): no global automation freeze, no hwmon lease.
         self._identify_active = False
+        # What the daemon reported it ACTUALLY did on the last identify take
+        # (DEC-311): "stop" | "pump_perturb", None before any take and from a
+        # pre-2.28.0 daemon. Prediction is unavoidable BEFORE the call; after it,
+        # this is ground truth and outranks the prediction.
+        # Keyed by fan id, NOT a bare mode: `last_identify_perturbed_pump` takes a
+        # fan_id, and a single wizard-wide value would let it answer for a fan the
+        # caller did not ask about — a discriminator that looks load-bearing and
+        # is not (the DEC-301 pattern).
+        self._last_identify_mode: dict[str, str | None] = {}
 
         # Pages
         self._intro_page = IntroPage(state)
@@ -141,19 +166,71 @@ class FanConfigWizard(QWizard):
         would be a lie. When the capability is absent we keep the original
         "the fan will stop" wording, which is what that daemon actually does.
 
-        The role is read from the matching hwmon header, which already carries
-        the user's ``POST /config/header-role`` assignment applied daemon-side.
+        This must reconstruct the daemon's ``header_is_pump_protected``, which is
+        a **union** of the inferred role and the resolved one — not the wire
+        ``role`` field on its own (DEC-312). ``role`` is the *display* role, and a
+        user assignment fully substitutes for inference there, downgrades
+        included: assign ``chassis_fan`` to a header the hardware labels ``PUMP``
+        and ``role`` reads ``chassis_fan`` while the daemon still refuses to stop
+        it. Reading ``role`` alone therefore promised a stop that never came, and
+        the user could not identify the fan. The daemon's own comment on that
+        union is explicit that collapsing either side to "the assignment wins" is
+        the bug.
+
+        Three terms, matching the daemon's:
+
+        * the resolved role says ``pump``;
+        * the RAW daemon label carries a pump hint. Raw, never the resolved
+          display name: a user *alias* of "Pump" on an unlabelled header is
+          invisible to the daemon, so trusting it would promise a perturbation the
+          daemon will not perform — the unsafe direction. The DEC-229 synthesised
+          ``pwmN`` placeholder is skipped for the same reason it always is.
+        * the header is a liquid-cooler channel 1, which the daemon maps to a pump
+          — but ONLY where no recognised non-pump label outranks that. The daemon
+          consults the label first and falls through to chip mapping only when the
+          label says nothing it knows, so a cooler channel 1 labelled ``CPU_FAN1``
+          infers ``cpu_fan`` and IS stopped. Skipping that precedence made the GUI
+          promise a perturbation the daemon would not perform, which is the unsafe
+          direction of the two.
+
         Only hwmon fans can be pumps: OpenFan channels have no header, and GPU
         fans are never pumps.
         """
         caps = self._state.capabilities
         if caps is None or not getattr(caps.control, "header_roles", False):
             return False
-        return any(h.id == fan_id and h.role == "pump" for h in self._state.hwmon_headers)
+        header = next((h for h in self._state.hwmon_headers if h.id == fan_id), None)
+        if header is None:
+            return False
+        if header.role == "pump":
+            return True
+        raw_label = header.label or ""
+        if is_placeholder_hwmon_label(raw_label, header.pwm_index):
+            raw_label = ""
+        lowered = raw_label.lower()
+        if "pump" in lowered:
+            return True
+        if _label_outranks_chip_mapping(lowered):
+            return False
+        return bool(header.is_aio) and header.pwm_index == 1
 
     def identify_verb(self, fan_id: str) -> str:
         """ "change speed" for a pump, "stop" for everything else."""
         return "change speed" if self.is_pump_target(fan_id) else "stop"
+
+    def last_identify_perturbed_pump(self, fan_id: str) -> bool:
+        """Whether the daemon actually perturbed rather than stopped (DEC-312).
+
+        Prefers the ``mode`` the daemon reported on the take just made — it is the
+        only thing that truly knows, and reading it means the message shown at the
+        moment of action cannot drift from the daemon's predicate. Falls back to
+        the prediction only where the daemon reported nothing (pre-2.28.0, which
+        always stops, and where ``is_pump_target`` is already False).
+        """
+        mode = self._last_identify_mode.get(fan_id)
+        if mode is not None:
+            return mode == "pump_perturb"
+        return self.is_pump_target(fan_id)
 
     def _build_targets(self) -> list[dict]:
         targets = []
@@ -256,10 +333,12 @@ class FanConfigWizard(QWizard):
         fan_id = target["id"]
         log.info("Wizard: stopping fan %s for identification", fan_id)
         try:
-            self._client.fan_identify(fan_id, "stop")
+            result = self._client.fan_identify(fan_id, "stop")
+            self._last_identify_mode[fan_id] = result.mode
             return None
         except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
             log.warning("Failed to stop fan %s: %s", fan_id, e)
+            self._last_identify_mode.pop(fan_id, None)
             return str(e)
 
     def restore_fan(self, target: dict) -> None:
@@ -574,7 +653,7 @@ class IdentifyFanPage(QWizardPage):
         # DEC-311: reported from the daemon's own answer where we have it, not
         # re-derived — the daemon decides stop-vs-perturb, so it is the only
         # thing that actually knows.
-        if self._wizard.is_pump_target(target["id"]):
+        if self._wizard.last_identify_perturbed_pump(target["id"]):
             self._status_msg.setText(
                 "Pump speed changed — watch the RPM reading or listen for the change..."
             )
