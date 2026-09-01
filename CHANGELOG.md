@@ -1,5 +1,41 @@
 # Changelog
 
+## [2.49.6] — 2026-09-01
+
+Pairs with `control-ofc-daemon` ≥ v2.11.0 (unchanged floor). **No behaviour change
+in this release** — it is documentation, comments and developer tooling only.
+
+### Fixed
+- **The documented `mutmut` gate could not run, and two claims about it were
+  wrong.** `[tool.mutmut]` now carries `also_copy = ["src/control_ofc"]`, without
+  which mutmut populated `mutants/` with a single module, removed the real `src`
+  from `sys.path`, and killed the run on `conftest.py`'s first import before any
+  mutant was evaluated. The dev-dependency floor moves to `mutmut>=3.6` (3.5.0
+  genuinely does collide with Python 3.14's start method; 3.6 ships the upstream
+  guard). Two claims in `CLAUDE.md § Quality gates` are retracted: no fork wrapper
+  is needed, and `mutmut run` does not rewrite your working tree — the ~68k-line
+  trampolined file people mistake for corrupted source is generated and gitignored.
+  (DEC-306.)
+
+### Changed
+- **Documentation now describes the thermal ladder as the daemon actually
+  implements it**, mirroring daemon 2.26.0. Two claims had gone stale across
+  `docs/`, `manual/` and several source comments:
+  - The forced duties are **floors** over the active profile's output, not
+    replacements for it (DEC-307). Each fan receives `max(commanded, forced)`, and
+    a fan no control commands still receives the forced duty. Text saying the
+    emergency "bypasses every control" was wrong and is corrected.
+  - The emergency trip point is **per-machine**, not a fixed 105 °C (DEC-308). It
+    is at least 105 °C, raised to match the CPU's own kernel-reported design
+    ceiling where one is published. `emergency_threshold_c` on
+    `/diagnostics/hardware` reports the value in use — **render it; never assume
+    105**. `docs/08` and `docs/09` now say so explicitly.
+
+  No GUI code changed: no wire shape moved, and both consumers already render that
+  field verbatim rather than comparing it to a literal. Five places that had baked
+  the number into the *name* of the rule ("the 105 °C emergency") were neutralised,
+  per the DEC-292 naming rule.
+
 ## [2.49.5] — 2026-09-01
 
 Pairs with daemon **2.25.0** (DEC-305). No API change.
