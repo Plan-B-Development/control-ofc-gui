@@ -110,7 +110,7 @@ class TestSubsystemHealth:
         """Release review, 2026-08-10.
 
         DEC-249 added an `engine` subsystem because the profile engine is the
-        sole PWM writer and owns the 105 C emergency, so its death had been
+        sole PWM writer and owns the thermal emergency, so its death had been
         invisible behind a green /status. The Dashboard loop matched only
         openfan/hwmon, so the new signal was dropped on the page CLAUDE.md
         designates for "is the system healthy?" — the ADR's whole point, undone
@@ -136,9 +136,9 @@ class TestSubsystemHealth:
         # `"105" in text`, and DEC-305's trialled trip-point move to 110 broke it:
         # the banner string had spelled the constant out, so a safety-threshold
         # change silently made a user-facing message wrong and only this test
-        # noticed. The move was withdrawn and the trigger stays at 105 °C; the
-        # lesson stands, which is why this assertion was re-anchored rather than
-        # reverted.
+        # noticed. The move was withdrawn, and DEC-308 then made the trigger
+        # PER-MACHINE, which vindicates the re-anchor completely: there is now no
+        # single number a banner string could have spelled out correctly.
         # The message no longer names a temperature at all; if one is ever wanted
         # it must be interpolated from `ThermalSafetyInfo.emergency_threshold_c`,
         # which the GUI already receives, never hardcoded here or there.
@@ -582,7 +582,7 @@ class TestThermalBanner:
         assert not dash._thermal_banner.isHidden()
         assert "Thermal protection" in dash._thermal_banner._message_label.text()
         # Contract pin (TEST-1, 2026-07-21 audit): "emergency" is the daemon's
-        # real 105 °C-force string (safety_tick.rs). The old test sent a
+        # real thermal-force string (safety_tick.rs). The old test sent a
         # phantom "force" state that only exercised the catch-all branch — a
         # regression breaking the banner for the real emergency state stayed
         # green. Pin the literal so the wire string can't silently drift.

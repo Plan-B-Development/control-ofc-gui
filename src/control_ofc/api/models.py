@@ -836,6 +836,11 @@ class ThermalSafetyInfo:
 
     state: str = "normal"
     cpu_sensor_found: bool = False
+    # DEC-308: PER-MACHINE, not a constant. The daemon derives the trip point
+    # from the CPU's own reported design ceiling and reports what it actually
+    # acted on, so this default is only what a daemon that reports nothing
+    # implies — it is the daemon's floor, never an upper bound. Render the
+    # reported value; do not compare it to a literal.
     emergency_threshold_c: float = 105.0
     release_threshold_c: float = 80.0
 

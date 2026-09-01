@@ -26,7 +26,7 @@ When you fetch hardware diagnostics, the report populates with:
 | **ACPI conflicts** | Warnings if an ACPI region claims the same I/O ports as a hwmon driver (most common with `it87` on AMD AM5 boards — driver may need `acpi_enforce_resources=lax`) |
 | **Module conflicts** | Warnings when two modules try to claim the same chip (e.g., both `it87` and `nct6775`) |
 | **BIOS interference** | Per-header `pwm_enable` reclaim count and severity colour |
-| **Thermal safety** | Whether the daemon found a CPU sensor it can use for the 105°C / 80°C / 60°C safety logic |
+| **Thermal safety** | Whether the daemon found a CPU sensor it can use for the emergency / release / recovery safety logic. The panel shows the emergency limit this machine is actually using |
 | **GPU diagnostics** | AMD discrete GPU detection, fan control method, and the `amdgpu.ppfeaturemask` state required for PMFW fan curves |
 
 ## Test PWM Control
@@ -216,7 +216,7 @@ If the warning persists after these steps, see the upstream tracker thread at [f
 
 The daemon's thermal failsafe has two distinct triggers, with different fan speeds:
 
-- **Emergency (100%):** any CPU sensor reports ≥ 105°C. All OpenFan and writable hwmon fans are forced to 100% and held there until the hottest CPU sensor falls to 80°C or below, then run at a 60% recovery floor for two cycles (the release cycle and one more) before the active profile resumes. GPU fans are deliberately excluded — the GPU's own firmware handles GPU thermal protection.
+- **Emergency (100%):** any CPU sensor reports at or above the emergency limit. That limit is at least 105°C, and on CPUs whose own design ceiling is higher the daemon raises it to match — a modern Intel part is *meant* to run at its ceiling under load, so a fixed limit would trip on a perfectly healthy machine. The Hardware page shows the limit in use. All OpenFan and writable hwmon fans are forced to 100% and held there until the hottest CPU sensor falls to 80°C or below, then run at a 60% recovery floor for two cycles (the release cycle and one more) before the active profile resumes. GPU fans are deliberately excluded — the GPU's own firmware handles GPU thermal protection.
 - **No-sensor fallback (40%):** no CPU sensor has been seen for 5 consecutive poll cycles. OpenFan and writable hwmon fans are set to a 40% safe floor — so fans sitting at a uniform ~40% (rather than 100%) usually mean a missing CPU sensor, not an overheat.
 
 Both overrides are owned and driven entirely by the daemon — it forces the fan speeds and holds them itself. The GUI simply reflects what the daemon reports: while an override is active it shows a "Daemon thermal override active" warning (in the Dashboard warning count and the event log on the **Logs** page), driven by the `thermal_state` field in the daemon's 1 Hz poll. Normal profile control resumes automatically once the daemon reports a normal thermal state again — fans pinned during an override are the daemon protecting the system, not a stuck profile.

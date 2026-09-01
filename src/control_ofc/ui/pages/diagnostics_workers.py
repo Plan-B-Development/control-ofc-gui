@@ -31,8 +31,10 @@ def _is_soft_safety_refusal(err: object) -> bool:
     - ``thermal_abort`` — above the 85 degC verify limit (DEC-201).
     - ``validation_error`` with ``retryable`` — the thermal ladder is actively
       forcing a duty (DEC-297). The 85 degC test cannot see this: the emergency
-      latches at 105 degC and releases only at 80 degC, so the band between is
-      hot enough to be forcing and cool enough to pass the limit check.
+      latches at a trip point of at least 105 degC and releases only at 80 degC,
+      so the band between is hot enough to be forcing and cool enough to pass the
+      limit check. Since DEC-308 the trip point is per-machine (derived from the
+      CPU's own reported ceiling, floored at 105), which only widens that band.
 
     Keyed on ``retryable`` rather than on the message text, which is daemon prose
     and not part of the contract. Shared by both verify workers so the two cannot

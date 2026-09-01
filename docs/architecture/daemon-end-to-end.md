@@ -37,7 +37,7 @@ The Control-OFC daemon (`control-ofc-daemon`) is a Rust service that provides ha
 **Key architectural themes:** *(⚠️ superseded — see top banner; the dual-control and lease bullets below describe the pre-2.0.0 model)*
 - Daemon owns all hardware access — GUI never touches hardware directly
 - Dual control model: imperative (GUI drives) or profile (daemon drives autonomously)
-- Thermal safety rule: CPU Tctl 105°C → force OpenFan+hwmon fans to 100% (GPU excluded — DEC-130), hold until 80°C
+- Thermal safety rule: CPU Tctl at the trip point → force OpenFan+hwmon fans to 100% (GPU excluded — DEC-130), hold until 80°C. The trip point is per-machine since DEC-308: 105°C is the floor, raised to `min(CPU-reported ceiling + 5, 115)` where the kernel publishes one
 - Lease-based exclusive write access for hwmon
 - Atomic state persistence for restart/reboot recovery
 
@@ -241,7 +241,7 @@ The `age_ms` field in `/status` subsystem entries and `/sensors`/`/fans` respons
 ### Thermal Safety (safety.rs)
 - **Implemented and tested** with 8 unit tests
 - Evaluates CPU Tctl from cache each engine cycle
-- State machine: Normal → Emergency (105°C) → Hold (>80°C) → Recovery (≤80°C, 60% for 2 cycles) → Normal
+- State machine: Normal → Emergency (trip point, ≥105°C) → Hold (>80°C) → Recovery (≤80°C, 60% floor for 2 cycles) → Normal
 
 ---
 
@@ -364,7 +364,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 
 | Condition | Detection | Response | User impact | Gaps |
 |-----------|-----------|----------|-------------|------|
-| CPU Tctl ≥ 105°C | Profile engine polls cache | Force all OpenFan+hwmon fans 100% (auto-lease via force_take, R43) | Fans max until 80°C | GPU fans excluded by design — PMFW self-protects (DEC-130) |
+| CPU Tctl ≥ trip point (≥105°C, per-machine — DEC-308) | Profile engine polls cache | Force all OpenFan+hwmon fans 100% (auto-lease via force_take, R43) | Fans max until 80°C | GPU fans excluded by design — PMFW self-protects (DEC-130) |
 | CPU Tctl ≤ 80°C (after emergency) | Safety rule evaluate() | Release + 60% recovery for 2 cycles (release + 1) | Fans drop to 60% for two cycles, then profile resumes | None |
 | Serial device not found | Retry loop (5×, exponential backoff) | Daemon starts without OpenFan | GUI shows "not connected" | ~~Auto-reconnect at runtime not implemented~~ — **shipped in R43**: after 5 consecutive errors the daemon enters reconnect mode (auto-detect + backoff) |
 | Serial timeout (no response) | Per-read serialport timeout (500ms) | Returns `SerialError::Timeout` | Write skipped for this cycle | No automatic retry of failed commands |
@@ -406,7 +406,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Lease-based hwmon exclusivity | 60s TTL, take/release/renew | Prevents GUI↔daemon write conflicts |
 | parking_lot instead of std::sync | All mutexes/rwlocks non-poisoning | V2 audit P0-6 fix — prevents daemon crash cascade |
 | Stable device IDs (not hwmonN) | PCI/platform path extraction | Survives reboots — `hwmon:k10temp:0000:03:00.0:Tctl` |
-| Thermal safety hardcoded | 105°C/80°C/60% not configurable | Safety floors must not be user-adjustable |
+| Thermal safety not user-configurable | Trip point derived from the CPU's own ceiling (≥105°C), 80°C release, 60% recovery floor — none settable via API or GUI | Safety thresholds must not be user-adjustable |
 | Atomic state persistence | tmp file + `rename()` | POSIX atomicity guarantee |
 | Profile precedence: CLI > env > persisted > none | `resolve_initial_profile()` | Explicit priority documented in main.rs |
 | hwmon write coalescing | Per-header `last_commanded_pct` + `manual_mode_set` | 0 sysfs ops in steady state (was 4/sec/header) |
@@ -427,7 +427,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | hwmon PWM writing (via GUI lease) | **Removed at 2.0.0** | GUI no longer writes PWM or holds a lease (DEC-165) |
 | hwmon PWM writing (headless/profile) | **Implemented** | Daemon profile engine self-leases and writes headlessly (DEC-159/165) |
 | Thermal safety evaluation | **Implemented** | Evaluates in profile engine loop |
-| Thermal safety fan writes | **Implemented** | Forces all OpenFan channels + writable hwmon headers to 100% at 105°C; GPU excluded (DEC-130) |
+| Thermal safety fan writes | **Implemented** | Forces all OpenFan channels + writable hwmon headers to at least 100% at the trip point (≥105°C, DEC-308); the lower rungs are floors over profile output (DEC-307); GPU excluded (DEC-130) |
 | Profile persistence across reboot | **Implemented** | `/var/lib/control-ofc/daemon_state.json` |
 | Profile activation via API | **Implemented** | `POST /profile/activate` |
 | Auto-reconnect on serial disconnect | **Implemented (R43)** | After 5 consecutive errors the daemon enters reconnect mode (auto-detect + backoff); no restart needed |

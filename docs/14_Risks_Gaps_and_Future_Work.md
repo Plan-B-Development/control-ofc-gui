@@ -13,7 +13,7 @@ column therefore reads N/A throughout. Live manual override and fan identify are
 
 | Backend | GUI Imperative | Daemon Profile (Headless) | Thermal Safety Emergency |
 |---------|---------------|--------------------------|-------------------------|
-| **OpenFan** | N/A (removed at 2.0.0) | Full | Full (105C→100%) |
+| **OpenFan** | N/A (removed at 2.0.0) | Full | Full (trip point→100%) |
 | **hwmon (motherboard)** | N/A (removed at 2.0.0) | **Full (daemon self-leases)** | **Full (force_take)** |
 | **AMD GPU (PMFW)** | N/A (removed at 2.0.0) | Full | Relies on PMFW firmware |
 
@@ -45,7 +45,7 @@ column therefore reads N/A throughout. Live manual override and fan identify are
 Sensor descriptors are discovered at startup and cached (DEC-133); `POST /hwmon/rescan` now also refreshes the cached sensor set (labels, types, thresholds), and the loop self-refreshes on read-failure streaks or while no CpuTemp sensor is cached. PWM-control headers and GPU detection are still captured only at daemon startup — a device plugged in later needs a daemon restart for *control* (its sensors appear after a rescan).
 
 ### 2. No GPU-specific thermal safety rule
-The thermal safety rule monitors CPU Tctl only (105C trigger). GPU temperatures rely on PMFW firmware protection. If a daemon-level GPU thermal rule is needed, it would require reading GPU junction temp from the cache and adding a separate threshold.
+The thermal safety rule monitors CPU Tctl only (trigger >=105C, per-machine since DEC-308). GPU temperatures rely on PMFW firmware protection. If a daemon-level GPU thermal rule is needed, it would require reading GPU junction temp from the cache and adding a separate threshold.
 
 ### 3. GUI/daemon simultaneous control conflict (RESOLVED — 2.0.0 single-writer, DEC-159/DEC-165)
 The dual-writer hazard is eliminated at 2.0.0: the daemon's engine is the **sole** writer of every

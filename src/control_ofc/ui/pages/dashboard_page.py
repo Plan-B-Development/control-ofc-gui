@@ -768,7 +768,7 @@ class DashboardPage(QWidget):
                 )
 
         # Engine liveness (DEC-249). The profile engine is the sole PWM writer
-        # and owns the 105 C emergency, so its death is the most consequential
+        # and owns the thermal emergency, so its death is the most consequential
         # thing this page can report — and the daemon reports it ONLY here, as a
         # subsystem entry. Older daemons omit it; absence is not a failure.
         # Wire values are ok | warn | crit (daemon `HealthStatus::Display`). The

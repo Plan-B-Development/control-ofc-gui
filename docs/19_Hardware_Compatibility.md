@@ -638,7 +638,7 @@ which modules are currently loaded by reading `/proc/modules`.
 ## Thermal Safety
 
 The daemon implements a hardware-independent thermal safety rule:
-- **Emergency:** hottest CPU temperature >= 105°C → force all OpenFan + writable hwmon fans to 100% PWM (GPU fans excluded — PMFW firmware self-protects, DEC-130)
+- **Emergency:** hottest CPU temperature >= the trip point → force all OpenFan + writable hwmon fans to 100% PWM (GPU fans excluded — PMFW firmware self-protects, DEC-130). The trip point is 105°C, raised per-machine to `min(CPU-reported ceiling + 5, 115)` where the kernel publishes the ceiling (DEC-308)
 - **Release:** hottest CPU temperature drops below 80°C → exit emergency
 - **Recovery:** apply a 60% PWM recovery floor for two cycles (the release cycle and one more), then resume active profile control
 - **Failsafe:** if no CPU sensor is reachable for 5 consecutive cycles → force 40%

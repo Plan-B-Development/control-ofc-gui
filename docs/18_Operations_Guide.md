@@ -252,11 +252,12 @@ If writes still fail **after** upgrading, the cause is hardware prerequisites ra
 ## Safety behaviour
 
 The daemon enforces a single thermal safety rule (non-negotiable, not configurable):
-- **Trigger**: hottest CPU temperature reaches 105°C
+- **Trigger**: hottest CPU temperature reaches the emergency limit. That limit is **per-machine** (DEC-308): 105°C is the floor and the fallback, raised to `min(CPU-reported design ceiling + 5°C, 115°C)` where the kernel publishes the ceiling (`tempN_crit`). `GET /diagnostics/hardware` reports the value in use — read it there, never assume 105
 - **Action**: Force all OpenFan channels and writable hwmon headers to 100% PWM. GPU fans are excluded — there is no GPU emergency threshold; AMD PMFW firmware protects the GPU independently (DEC-130)
 - **Hold**: Until temperature drops below 80°C
 - **Recovery**: Apply a 60% PWM recovery floor for two cycles (the release cycle and one more), then resume active profile control
-- **Fallback**: Force 40% PWM (OpenFan + hwmon) if no CPU sensor is reachable for 5 consecutive poll cycles
+- **Fallback**: Apply a 40% PWM floor (OpenFan + hwmon) if no CPU sensor is reachable for 5 consecutive poll cycles
+- **Floors, not replacements** (DEC-307): every duty above is a floor over the active profile's output — each fan gets `max(commanded, forced)`, and a fan no control commands still gets the forced duty. The ladder can only ever raise a fan
 - **Visibility**: `GET /status` reports `thermal_state` (`normal` / `recovery` / `emergency` / `no_sensor_fallback`); the GUI has no fan control to pause and only **shows** a poll-driven thermal-protection banner while protection is active (DEC-165, superseding the retired DEC-132 GUI stand-down)
 
 There are no per-*header* PWM floors: the daemon reports `min_pwm_percent: 0` for every hwmon header. The **role-aware minimum** is different. The GUI *bakes* a role-aware default into each control's `LogicalControl.minimum_pct` (30% for CPU/pump-labelled members, 20% for chassis/openfan, 0% for GPU-only — DEC-095), and as of 2.0.0 the **daemon enforces and backstops** it (DEC-162): a profile whose pump/CPU control sets `minimum_pct` below the hard 30% floor (`HARD_PUMP_CPU_FLOOR_PCT`) is rejected with `400 validation_error` (`FLOOR_TOO_LOW`), and the profile engine independently re-clamps every eval tick (`member_effective_floor` → `max(minimum_pct, 30%)`). So floor enforcement is **not** purely the GUI's responsibility — the daemon does refuse and re-floor on the role-aware minimum.

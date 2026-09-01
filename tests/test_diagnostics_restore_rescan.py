@@ -167,7 +167,7 @@ def test_do_rescan_asks_the_daemon_to_look_for_an_openfan_controller():
     """DEC-265: the hwmon rescan carries the OpenFan leg.
 
     The gap it closes is not cosmetic — a controller adopted only at boot means
-    the 105 °C emergency has no path to those fans for the rest of the daemon's
+    the thermal emergency has no path to those fans for the rest of the daemon's
     life. If this call is dropped, the route exists and nothing ever calls it.
     """
     worker = _HwDiagWorker("/tmp/x.sock")

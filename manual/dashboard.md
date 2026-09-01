@@ -169,7 +169,7 @@ fans stay controlled whether the GUI is open or closed. See
 
 ## Thermal Safety States
 
-If the daemon engages its thermal failsafe (a CPU sensor at ≥ 105°C, or no CPU sensor
+If the daemon engages its thermal failsafe (a CPU sensor at or above the emergency limit, or no CPU sensor
 found), the daemon forces OpenFan and writable hwmon fans itself and holds them until
 it reports normal again. This shows in the footer's **thermal state** chip (click it
 for the detail) and as a banner across the top of the Dashboard, and raises a warning
