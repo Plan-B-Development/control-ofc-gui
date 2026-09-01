@@ -664,6 +664,22 @@ The limit is worth stating: where a chip publishes no label file the daemon synt
 the only signal. This is a backstop, not an independent pump detector — `member_label`
 remains a safety input.
 
+**Fan telemetry is only reported when it was actually measured (DEC-309, daemon ≥ 2.27.0).** Three
+consequences a client must handle, none of which change a field's type or presence rules:
+
+- **`rpm` is absent, not `0`, for an OpenFan channel nothing has polled.** The daemon tracks whether a
+  channel's RPM was ever read; a channel it has only ever *written* now omits `rpm` rather than
+  publishing the struct's initial `0`, which was indistinguishable on the wire from a genuinely
+  stalled fan. `stall_detected` was already absent in that state and is unchanged. A channel that
+  *was* polled and genuinely read zero still reports `rpm: 0` with `stall_detected: true`.
+- **`age_ms` on a GPU fan no longer resets when the daemon commands it.** It is the age of the
+  *reading*, and a command is not a reading. Before this it could report ~0 beside an `rpm`/`duty_pct`
+  frozen at whatever the last poll saw. Same rule the OpenFan path adopted in DEC-302.
+- **A hwmon fan can disappear from the list.** An entry nothing has refreshed for 5 poll intervals is
+  evicted, rather than being published forever with an `age_ms` climbing without bound. A fan under
+  active control cannot vanish this way — every engine write refreshes its entry. Treat a fan's
+  absence as "not currently readable", exactly as for a sensor.
+
 Fan `source` is `"openfan"`, `"hwmon"`, `"amd_gpu"`, `"intel_gpu"`, or `"nvidia_gpu"`. GPU fan IDs embed the PCI BDF: `amd_gpu:{bdf}`, `intel_gpu:{bdf}`, and `nvidia_gpu:{bdf}`. OpenFan fan IDs are `openfan:ch{NN}`, where `NN` is the **zero-padded** channel index (hardware-fixed range 0–9, `NUM_CHANNELS = 10`). The GUI parses that index for tier 3 above, so the padding and decimal form are part of the contract; a non-decimal suffix falls through to the raw id rather than being guessed at. Intel (DEC-121) and NVIDIA (DEC-204) GPU fans are **read-only** — `rpm` is reported when available (and NVIDIA additionally reports a measured `duty_pct`), but `last_commanded_pwm` is always absent; the GUI must never issue a write to an `intel_gpu:`/`nvidia_gpu:` target.
 
 ### GET /hwmon/headers
