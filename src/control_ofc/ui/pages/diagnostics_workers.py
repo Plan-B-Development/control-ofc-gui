@@ -439,3 +439,65 @@ class _HardwareReadinessWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.probe_error.emit("unavailable", "Connection lost during Super-I/O port probe")
+
+
+class _CharacterizationWorker(_SocketWorker):
+    """Runs the PWM/RPM characterisation calls off the UI thread (AIO-MB Phase 3).
+
+    All three are short: the daemon returns ``202`` immediately and runs the
+    sweep itself, so nothing here blocks for the length of a run. The polling
+    cadence is the dialog's QTimer, matching the GUI's poll-only architecture —
+    there is no long-lived request to hold open, and a GUI that dies mid-sweep
+    does not strand the header because the restore is the daemon's job.
+    """
+
+    run_updated = Signal(object)  # CharacterizationRun | None
+    run_error = Signal(str, str)  # category ('unavailable'|'error'), message
+
+    def _guard(self, call, what: str) -> None:
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            self.run_updated.emit(call())
+        except DaemonTimeout:
+            self.run_error.emit(
+                "unavailable",
+                f"The daemon did not answer the {what} in time. The sweep may "
+                "still be running — it restores the header either way.",
+            )
+        except DaemonUnavailable:
+            self.run_error.emit("unavailable", f"Daemon unavailable during {what}")
+        except DaemonError as e:
+            # Reuses the shared refusal taxonomy: `thermal_abort` and a retryable
+            # `validation_error` are protection, not failure, and this endpoint
+            # returns exactly those two for the same reasons a verify does.
+            if _is_soft_safety_refusal(e):
+                self.run_error.emit("unavailable", e.message)
+            else:
+                self.run_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Characterization worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.run_error.emit("unavailable", f"Connection lost during {what}")
+
+    @Slot(str, object, object)
+    def do_start(self, header_id: str, points: object, settle: object) -> None:
+        self._guard(
+            lambda: self._ensure_client().start_characterization(
+                header_id,
+                points_pct=points if isinstance(points, list) else None,
+                settle_seconds=settle if isinstance(settle, int) else None,
+            ),
+            "characterisation start",
+        )
+
+    @Slot()
+    def do_poll(self) -> None:
+        self._guard(lambda: self._ensure_client().characterization_status(), "status poll")
+
+    @Slot()
+    def do_cancel(self) -> None:
+        self._guard(lambda: self._ensure_client().cancel_characterization(), "cancellation")

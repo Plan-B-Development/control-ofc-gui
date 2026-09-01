@@ -41,23 +41,8 @@ from PySide6.QtWidgets import (
 from control_ofc.api.errors import DaemonError, DaemonUnavailable
 from control_ofc.api.models import ConnectionState
 from control_ofc.constants import THERMAL_ABORT_C
-from control_ofc.knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
+from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.ui.components.a11y import name_value_control
-
-# Mirrors the daemon's `classify_header_role` label branches (`hwmon/roles.rs`).
-# A label matching any of these classifies the header BEFORE chip mapping is
-# consulted, so the liquid-cooler channel-1 → pump mapping never runs for it.
-_CPU_FAN_LABEL_PREFIXES = ("cpu_fan", "cpufan")
-_CHASSIS_LABEL_HINTS = ("cha_fan", "chafan", "sys_fan", "sysfan", "chassis")
-
-
-def _label_outranks_chip_mapping(lowered_label: str) -> bool:
-    """True when the daemon would classify this label without reaching chip mapping."""
-    normalised = lowered_label.replace("-", "_").replace(" ", "_").replace(".", "_")
-    if normalised.startswith(_CPU_FAN_LABEL_PREFIXES):
-        return True
-    return any(hint in normalised for hint in _CHASSIS_LABEL_HINTS)
-
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
@@ -160,59 +145,20 @@ class FanConfigWizard(QWizard):
     def is_pump_target(self, fan_id: str) -> bool:
         """Whether the daemon will *perturb* this fan rather than stop it (DEC-311).
 
-        Gated on ``control.header_roles``, and that gate is the point. A
-        pre-2.28.0 daemon drives every identified fan to 0 — pumps included —
-        so promising the user "the pump will briefly change speed" against one
-        would be a lie. When the capability is absent we keep the original
-        "the fan will stop" wording, which is what that daemon actually does.
+        Thin wrapper over the shared predicate in
+        ``services.pump_protection``. The rule moved there when the AIO-MB
+        Phase 3 characterisation dialog became its second consumer — a safety
+        predicate living in a private method on one widget is one the other
+        surfaces cannot follow (CLAUDE.md; DEC-276's precedent).
 
-        This must reconstruct the daemon's ``header_is_pump_protected``, which is
-        a **union** of the inferred role and the resolved one — not the wire
-        ``role`` field on its own (DEC-312). ``role`` is the *display* role, and a
-        user assignment fully substitutes for inference there, downgrades
-        included: assign ``chassis_fan`` to a header the hardware labels ``PUMP``
-        and ``role`` reads ``chassis_fan`` while the daemon still refuses to stop
-        it. Reading ``role`` alone therefore promised a stop that never came, and
-        the user could not identify the fan. The daemon's own comment on that
-        union is explicit that collapsing either side to "the assignment wins" is
-        the bug.
-
-        Three terms, matching the daemon's:
-
-        * the resolved role says ``pump``;
-        * the RAW daemon label carries a pump hint. Raw, never the resolved
-          display name: a user *alias* of "Pump" on an unlabelled header is
-          invisible to the daemon, so trusting it would promise a perturbation the
-          daemon will not perform — the unsafe direction. The DEC-229 synthesised
-          ``pwmN`` placeholder is skipped for the same reason it always is.
-        * the header is a liquid-cooler channel 1, which the daemon maps to a pump
-          — but ONLY where no recognised non-pump label outranks that. The daemon
-          consults the label first and falls through to chip mapping only when the
-          label says nothing it knows, so a cooler channel 1 labelled ``CPU_FAN1``
-          infers ``cpu_fan`` and IS stopped. Skipping that precedence made the GUI
-          promise a perturbation the daemon would not perform, which is the unsafe
-          direction of the two.
-
-        Only hwmon fans can be pumps: OpenFan channels have no header, and GPU
-        fans are never pumps.
+        The capability gate is inside the shared rule, and it is the point: a
+        pre-2.28.0 daemon drives every identified fan to 0 — pumps included — so
+        promising "the pump will briefly change speed" against one would be a
+        lie. When the capability is absent this is False and the wizard keeps its
+        original "the fan will stop" wording, which is what that daemon does.
         """
-        caps = self._state.capabilities
-        if caps is None or not getattr(caps.control, "header_roles", False):
-            return False
         header = next((h for h in self._state.hwmon_headers if h.id == fan_id), None)
-        if header is None:
-            return False
-        if header.role == "pump":
-            return True
-        raw_label = header.label or ""
-        if is_placeholder_hwmon_label(raw_label, header.pwm_index):
-            raw_label = ""
-        lowered = raw_label.lower()
-        if "pump" in lowered:
-            return True
-        if _label_outranks_chip_mapping(lowered):
-            return False
-        return bool(header.is_aio) and header.pwm_index == 1
+        return header_is_pump_protected(header, self._state.capabilities)
 
     def identify_verb(self, fan_id: str) -> str:
         """ "change speed" for a pump, "stop" for everything else."""

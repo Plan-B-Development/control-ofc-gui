@@ -519,6 +519,8 @@ top-to-bottom:
   unless a header reports a non-zero revert count**, DEC-116), *Thermal safety &
   GPU*, *Guidance & documentation* (chip BIOS tips / known issues + doc link),
   and *PWM control test* (verify combo, Test PWM Control, Verify All Writable,
+  **Characterise PWM Response** — DEC-313, the deeper PWM/RPM sweep, gated on
+  `control.pwm_characterization` and hidden entirely without it,
   progress + result, and — DEC-120 — **Test GPU Fan Control** with its own
   result label, shown only when a writable AMD GPU is present and the daemon
   supports the verify route, ≥ 1.11.0). Beside the GPU verify button sits

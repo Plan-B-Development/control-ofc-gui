@@ -44,6 +44,9 @@ SYSTEM_STATE_OBJECTNAMES = frozenset(
         "SystemState_Btn_openReport",
         "SystemState_Btn_restoreGpu",
         "SystemState_Btn_verifyAll",
+        # AIO-MB Phase 3 (DEC-313): the deeper PWM/RPM sweep, added beside the
+        # quick verify. A deliberate addition, not a refactor artefact.
+        "SystemState_Btn_characterize",
         "SystemState_Btn_verifyGpu",
         "SystemState_Btn_verifyPwm",
         "SystemState_Card_health",

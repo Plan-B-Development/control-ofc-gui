@@ -10,6 +10,7 @@ from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import (
     ActiveProfileInfo,
     Capabilities,
+    CharacterizationRun,
     ConfigWriteResult,
     DaemonConfig,
     DaemonStatus,
@@ -35,6 +36,7 @@ from control_ofc.api.models import (
     SuperIoReport,
     parse_active_profile,
     parse_capabilities,
+    parse_characterization_run,
     parse_config_write,
     parse_daemon_config,
     parse_fans,
@@ -480,6 +482,62 @@ class DaemonClient:
         """
         data = self._post(f"/hwmon/{header_id}/verify", timeout=VERIFY_TIMEOUT_S)
         return parse_hwmon_verify_result(data)
+
+    def start_characterization(
+        self,
+        header_id: str,
+        *,
+        points_pct: list[int] | None = None,
+        settle_seconds: int | None = None,
+    ) -> CharacterizationRun:
+        """POST /hwmon/{header_id}/characterize — start a PWM/RPM sweep.
+
+        Returns as soon as the daemon has accepted the run (``202``); the sweep
+        itself runs daemon-side and is read back with
+        :meth:`characterization_status`. Gate the call on
+        ``capabilities.control.pwm_characterization`` — an older daemon 404s this
+        route, the same *status* it returns for an unknown header id. They differ
+        only in ``error.code``, and feature detection must not be coupled to that;
+        a probe would also need a valid header id to aim at first.
+
+        ``points_pct`` and ``settle_seconds`` are advisory: the **daemon** clamps
+        both, and a pump-protected header is never swept below its 30% floor
+        whatever is sent. Do not pre-clamp here — a client-side floor would be a
+        second copy of a safety rule the daemon already owns, and the two would
+        drift (DEC-252's discipline).
+
+        A body is always sent, even when empty, matching the calibrate endpoint:
+        the daemon's extractor requires JSON.
+        """
+        body: dict[str, Any] = {}
+        if points_pct is not None:
+            body["points_pct"] = points_pct
+        if settle_seconds is not None:
+            body["settle_seconds"] = settle_seconds
+        return parse_characterization_run(self._post(f"/hwmon/{header_id}/characterize", json=body))
+
+    def characterization_status(self) -> CharacterizationRun | None:
+        """GET /diagnostics/characterization — the current or most recent run.
+
+        ``None`` when the daemon has never run one (``404``), which is a normal
+        state and not an error. Every other failure still raises.
+        """
+        try:
+            return parse_characterization_run(self._get("/diagnostics/characterization"))
+        except DaemonError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def cancel_characterization(self) -> CharacterizationRun:
+        """DELETE /diagnostics/characterization — ask the running sweep to stop.
+
+        Cooperative: the daemon finishes the point it is settling on, then
+        restores the header's original duty. The restore is the daemon's job on
+        every exit path, so a GUI that dies mid-sweep does not strand the header
+        — which is why the sequence lives daemon-side at all.
+        """
+        return parse_characterization_run(self._delete("/diagnostics/characterization"))
 
     def active_profile(self) -> ActiveProfileInfo | None:
         """GET /profile/active — query the daemon's currently active profile."""

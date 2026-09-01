@@ -213,6 +213,17 @@ class ControlCapability:
     # partial success as a whole one and tell the user a directory had been
     # pruned when it had not.
     profile_search_dir_remove: bool = False
+    # AIO-MB Phase 3 (daemon >= 2.29.0): the daemon exposes
+    # POST /hwmon/{id}/characterize plus the GET/DELETE
+    # /diagnostics/characterization pair — the deeper PWM/RPM response sweep
+    # that sits ALONGSIDE the quick "Test PWM Control" verify.
+    #
+    # Gate on this rather than probing. An older daemon 404s the POST — the same
+    # status this route returns for an unknown header id. They differ only in
+    # error.code ("not_found" from the route fallback vs "validation_error" from
+    # the handler), and keying feature detection on that is exactly the
+    # undocumented coupling the capability exists to replace.
+    pwm_characterization: bool = False
 
 
 @dataclass
@@ -2002,6 +2013,111 @@ def parse_hardware_readiness(data: dict) -> HardwareReadiness:
         superio=superio,
         scanned_age_ms=_int(data.get("scanned_age_ms")),
         generation=_int(data.get("generation")),
+    )
+
+
+@dataclass
+class CharPoint:
+    """One measured point of a PWM/RPM characterisation sweep (AIO-MB Phase 3).
+
+    The three axes stay separate — ``command_accepted`` (did the write land),
+    ``readback_verdict`` (did the header report the duty back), and
+    ``rpm_verdict`` (did the fan physically respond). ``AIO-Phase3.md`` is
+    explicit that collapsing them into one pass/fail is a defect: a pump whose
+    firmware overrides PWM during startup reports a correct readback with RPM
+    pinned high, and calling that a write failure is the wrong conclusion.
+
+    ``readback_verdict`` and ``rpm_verdict`` are **opaque tokens**. Render an
+    unrecognised value rather than dropping the point (the 273-i rule) — a newer
+    daemon may add one, and a dropped row is a silently shortened sweep.
+    """
+
+    requested_pct: int = 0
+    command_accepted: bool = False
+    readback_pct: int | None = None
+    readback_raw: int | None = None
+    pwm_enable: int | None = None
+    rpm_before: int | None = None
+    rpm_after: int | None = None
+    settle_ms: int = 0
+    first_change_ms: int | None = None
+    readback_verdict: str = ""
+    rpm_verdict: str = ""
+
+
+@dataclass
+class CharSummary:
+    """Derived diagnostics over a whole characterisation sweep.
+
+    ``possible_device_override`` is NOT a fault verdict — it means PWM was
+    accepted and read back correctly while RPM never moved, which is exactly what
+    a pump in its startup/self-bleeding period looks like. The UI must say so
+    rather than reporting a broken fan.
+    """
+
+    command_acceptance: str = ""
+    pwm_readback: str = ""
+    rpm_response: str = ""
+    min_tested_pct: int | None = None
+    max_tested_pct: int | None = None
+    min_rpm: int | None = None
+    max_rpm: int | None = None
+    monotonic: bool | None = None
+    dead_zone_upper_pct: int | None = None
+    clamp_pct: int | None = None
+    possible_device_override: bool = False
+    interference_detected: bool = False
+
+
+@dataclass
+class CharacterizationRun:
+    """A characterisation run — the body of ``GET /diagnostics/characterization``
+    and of the ``202`` from ``POST /hwmon/{id}/characterize``.
+
+    ``state`` is an opaque token (``running``/``complete``/``cancelled``/
+    ``aborted``/``failed`` today). ``len(points)`` against
+    ``len(requested_points_pct)`` is the progress indicator; ``summary`` is
+    ``None`` until the run reaches a terminal state.
+    """
+
+    run_id: str = ""
+    header_id: str = ""
+    state: str = ""
+    requested_points_pct: list[int] = field(default_factory=list)
+    settle_seconds: int = 0
+    points: list[CharPoint] = field(default_factory=list)
+    summary: CharSummary | None = None
+    original_pct: int | None = None
+    restore_failed: bool = False
+    detail: str | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self.state == "running"
+
+
+def parse_characterization_run(data: dict) -> CharacterizationRun:
+    """Parse a characterisation run, tolerating unknown tokens and new fields."""
+    raw_points = data.get("points") or []
+    points = [CharPoint(**_filter_fields(CharPoint, p)) for p in raw_points if isinstance(p, dict)]
+    raw_summary = data.get("summary")
+    summary = (
+        CharSummary(**_filter_fields(CharSummary, raw_summary))
+        if isinstance(raw_summary, dict)
+        else None
+    )
+    requested = data.get("requested_points_pct") or []
+    return CharacterizationRun(
+        run_id=str(data.get("run_id", "")),
+        header_id=str(data.get("header_id", "")),
+        state=str(data.get("state", "")),
+        requested_points_pct=[int(p) for p in requested if isinstance(p, (int, float))],
+        settle_seconds=int(data.get("settle_seconds") or 0),
+        points=points,
+        summary=summary,
+        original_pct=data.get("original_pct"),
+        restore_failed=bool(data.get("restore_failed", False)),
+        detail=data.get("detail"),
     )
 
 

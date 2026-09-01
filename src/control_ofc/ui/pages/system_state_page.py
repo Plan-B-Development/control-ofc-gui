@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
 from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.system_state_view import (
     build_system_state_vm,
     build_verify_headers,
@@ -40,9 +41,15 @@ from control_ofc.services.system_state_view import (
 from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.hwmon_guidance import dual_chip_verify_hint, verification_guidance
-from control_ofc.ui.pages.diagnostics_workers import _GpuVerifyWorker, _HwDiagWorker, _VerifyWorker
+from control_ofc.ui.pages.diagnostics_workers import (
+    _CharacterizationWorker,
+    _GpuVerifyWorker,
+    _HwDiagWorker,
+    _VerifyWorker,
+)
 from control_ofc.ui.qt_util import set_chip_class, style_splitter
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
+from control_ofc.ui.widgets.pwm_characterization_dialog import PwmCharacterizationDialog
 from control_ofc.ui.widgets.readiness_report import (
     ReadinessReportDialog,
     build_readiness_report_html,
@@ -91,6 +98,10 @@ class SystemStatePage(QWidget):
     _gpu_reset_request = Signal(str)
     _hw_diag_request = Signal()
     _rescan_request = Signal()  # DEC-216: footer Rescan Hardware (relocated from Diagnostics)
+    # AIO-MB Phase 3 — the deeper PWM/RPM sweep.
+    _char_start_request = Signal(str, object, object)
+    _char_poll_request = Signal()
+    _char_cancel_request = Signal()
 
     def __init__(
         self,
@@ -123,6 +134,9 @@ class SystemStatePage(QWidget):
         self._gpu_verify_bdf: str | None = None
         self._gpu_verify_unsupported = False
         self._report_dialog: ReadinessReportDialog | None = None
+        self._char_worker: _CharacterizationWorker | None = None
+        self._char_thread: QThread | None = None
+        self._char_dialog: PwmCharacterizationDialog | None = None
         self._hw_diag_fetched = False
         self._rescan_in_flight = False  # DEC-216: guards the footer Rescan action
 
@@ -337,6 +351,20 @@ class SystemStatePage(QWidget):
         )
         self._verify_all_btn.clicked.connect(self._run_pwm_verify_all)
         pwm_row.addWidget(self._verify_all_btn)
+        # AIO-MB Phase 3. A SIBLING of "Test PWM Control", never a replacement —
+        # the quick verify answers "does a write do anything?" in ~6 s; this walks
+        # the header across several duties and takes minutes. Hidden entirely
+        # against a daemon without the capability: that daemon 404s the route, and
+        # probing to find out would couple feature detection to which error.code
+        # came back.
+        self._characterize_btn = make_button(
+            "Characterise PWM Response",
+            "secondary",
+            object_name="SystemState_Btn_characterize",
+        )
+        self._characterize_btn.clicked.connect(self._open_characterization)
+        self._characterize_btn.setVisible(False)
+        pwm_row.addWidget(self._characterize_btn)
         section.add_layout(pwm_row)
 
         self._verify_result_label = QLabel("")
@@ -444,6 +472,16 @@ class SystemStatePage(QWidget):
         for text, hid in build_verify_headers(headers, resolve):
             self._verify_combo.addItem(text, hid)
         self._verify_btn.setEnabled(self._verify_combo.count() > 0)
+        self._update_characterize_availability()
+
+    def _supports_characterization(self) -> bool:
+        caps = getattr(self._state, "capabilities", None) if self._state else None
+        return bool(caps is not None and getattr(caps.control, "pwm_characterization", False))
+
+    def _update_characterize_availability(self) -> None:
+        show = self._supports_characterization() and self._verify_combo.count() > 0
+        self._characterize_btn.setVisible(show)
+        self._characterize_btn.setEnabled(show)
 
     # ── Worker lifecycle (ported) ────────────────────────────────────
 
@@ -601,7 +639,68 @@ class SystemStatePage(QWidget):
                 thread.terminate()
                 thread.wait(1000)
 
+    # ── PWM/RPM characterisation (AIO-MB Phase 3) ────────────────────
+
+    def _ensure_char_worker(self) -> bool:
+        def connect(w: _CharacterizationWorker) -> None:
+            self._char_start_request.connect(w.do_start, Qt.ConnectionType.QueuedConnection)
+            self._char_poll_request.connect(w.do_poll, Qt.ConnectionType.QueuedConnection)
+            self._char_cancel_request.connect(w.do_cancel, Qt.ConnectionType.QueuedConnection)
+            w.run_updated.connect(self._on_char_update, Qt.ConnectionType.QueuedConnection)
+            w.run_error.connect(self._on_char_error, Qt.ConnectionType.QueuedConnection)
+
+        self._char_worker, self._char_thread, ok = self._ensure_worker(
+            self._char_worker, self._char_thread, _CharacterizationWorker, connect
+        )
+        return ok
+
+    def _open_characterization(self) -> None:
+        header_id = self._verify_combo.currentData()
+        if not header_id or not self._supports_characterization():
+            return
+        if not self._ensure_char_worker():
+            return
+        headers = self._state.hwmon_headers if self._state else []
+        header = next((h for h in headers if h.id == header_id), None)
+        resolve = self._state.fan_display_name if self._state else None
+        label = resolve(header_id) if resolve else header_id
+        # The UNION predicate, never the wire `role` (DEC-312): a user who
+        # relabelled a PUMP header `chassis_fan` still gets the pump copy,
+        # because the daemon still protects it.
+        dialog = PwmCharacterizationDialog(
+            header_id,
+            label,
+            is_pump=header_is_pump_protected(header, getattr(self._state, "capabilities", None)),
+            header=header,
+            parent=self,
+        )
+        dialog.start_requested.connect(self._char_start_request.emit)
+        dialog.poll_requested.connect(self._char_poll_request.emit)
+        dialog.cancel_requested.connect(self._char_cancel_request.emit)
+        self._char_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            dialog.stop_polling()
+            self._char_dialog = None
+
+    @Slot(object)
+    def _on_char_update(self, run: object) -> None:
+        if self._char_dialog is not None:
+            self._char_dialog.apply_run(run)
+
+    @Slot(str, str)
+    def _on_char_error(self, category: str, message: str) -> None:
+        if self._char_dialog is not None:
+            self._char_dialog.apply_error(category, message)
+
     def cleanup(self) -> None:
+        if self._char_dialog is not None:
+            self._char_dialog.stop_polling()
+            self._char_dialog.close()
+            self._char_dialog = None
+        self._teardown_worker(self._char_worker, self._char_thread, "Characterization")
+        self._char_worker = self._char_thread = None
         self._teardown_worker(self._verify_worker, self._verify_thread, "Verify")
         self._verify_worker = self._verify_thread = None
         self._teardown_worker(self._hw_diag_worker, self._hw_diag_thread, "HW diagnostics")

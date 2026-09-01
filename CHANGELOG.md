@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.52.0] — 2026-09-02
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). The new action is
+capability-gated on `control.pwm_characterization`, so against a pre-2.29.0 daemon this
+release behaves exactly as v2.51.0 did — the button is not shown at all.
+
+AIO-MB Phase 3: "Characterise PWM Response", a deeper diagnostic **alongside** the existing
+"Test PWM Control".
+
+### Added
+- **Characterise PWM Response** on System State > Advanced actions, beside the existing
+  quick test. It holds the selected header at a series of duties and fills a table live —
+  requested PWM, what the header reported back, RPM, and a per-point result — then
+  summarises with **three independent verdicts**: PWM command, PWM readback, RPM response.
+  Cancel stops it at any point.
+- **The observed range, and the diagnostics behind it** — measured RPM span across the
+  tested PWM span, plus notes for a non-monotonic response, a low-end dead zone, a
+  suspected PWM clamp, and interference from another controller.
+- **Honest wording when a pump ignores PWM.** A correct readback with a motionless fan is
+  reported as a possible device override, with the brief's guidance that some pumps
+  override PWM during startup or internal thermal protection and that the user should let
+  that finish before concluding control is unavailable — never as a failed PWM write.
+- The dialog states up front that curve control for every fan is paused for the run's
+  duration, that each fan holds its last duty, and that thermal safety still overrides
+  everything.
+
+### Changed
+- **The pump-protection predicate moved out of the Fan Wizard into
+  `services/pump_protection.py`** and is now shared. It was a private method on one widget;
+  the characterisation dialog is its second consumer, and re-deriving a *safety* predicate
+  locally is the failure this project has recorded repeatedly. Behaviour is unchanged — the
+  wizard delegates to it and its tests pass untouched.
+
+### Safety
+- The GUI sends **no point list and no floor**. The daemon owns both, including the 30%
+  pump floor, so there is no second copy of a safety rule to drift. The dialog's pump
+  wording reads the reconstructed **union** predicate rather than the wire `role`
+  (DEC-312), so a header the user relabelled `chassis_fan` that the daemon still protects
+  is described truthfully.
+- Closing the dialog, or the GUI dying mid-sweep, does not strand the header: the sweep and
+  its restore live daemon-side.
+
 ## [2.51.0] — 2026-09-02
 
 Pairs with `control-ofc-daemon` ≥ v2.11.0 (unchanged floor). Every new path is

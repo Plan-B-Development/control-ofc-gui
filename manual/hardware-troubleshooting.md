@@ -6,6 +6,7 @@ This page covers the **Hardware Readiness** report on the **System State** page 
 > - The Hardware Readiness report lives on the **System State** page.
 > - Click **Rescan Hardware** in the global footer to fetch current state from the daemon.
 > - Click **Test PWM Control** to run a ~6-second write test against a selected motherboard header.
+> - Click **Characterise PWM Response** for the deeper sweep — how a header responds across 30-100%, reported as three separate verdicts (daemon 2.29.0+).
 > - Click **Test GPU Fan Control** to verify an AMD GPU fan actually responds (~6 s, no lease).
 
 If the report tells you a **driver is missing**, the step-by-step install walkthrough (prerequisites, DKMS, verify, rollback) is on the [Driver Setup](driver-setup.md) page. For the chip and driver matrix, see [Hardware Compatibility](../docs/19_Hardware_Compatibility.md). For vendor-by-vendor BIOS notes, see the [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md). For sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
@@ -48,6 +49,45 @@ The result panel also shows the initial → final RPM and `pwm_enable` values, p
 ### Prerequisites
 
 Just a connected daemon and a writable header to test. The daemon performs the write test under its own internal hwmon lease and coordinates it with its profile engine, so its own per-second writes never collide with the verify wait — the GUI sends no lease and holds none. Earlier versions asked you to "activate a profile to acquire the lease" first; that step is gone in 2.0.0.
+
+## Characterise PWM Response
+
+**Test PWM Control** answers one question at one duty: does a write reach the fan at all? **Characterise PWM Response** answers the fuller one — *how* does this header respond across its range. It holds the header at a series of duties (30%, 40%, … 100% by default), waits for each to settle, and records what came back. Rows appear as they are measured, and you can stop it at any point.
+
+It is a *deeper* test beside the quick one, not a replacement. Use it when a fan or pump behaves oddly rather than plainly not working: it will not tell you anything new about a header that is clearly reverted.
+
+**Requires daemon 2.29.0 or newer.** On an older daemon the button is not shown.
+
+### The three verdicts, and why they are separate
+
+The summary reports three things independently, and this matters more than it looks:
+
+| Verdict | Question it answers |
+|---------|--------------------|
+| **PWM command** | Did the write itself succeed? |
+| **PWM readback** | Did the header report the duty back correctly? |
+| **RPM response** | Did the fan actually change speed? |
+
+A pump can accept a PWM command, report it back perfectly, and still run at whatever speed it likes — because many AIO pumps drive themselves during startup or when their own thermal protection kicks in. That combination is reported as a possible device override, **not** as a failed PWM write, and the dialog says so:
+
+> Some pumps temporarily override PWM during startup or internal thermal-protection behaviour. If RPM does not follow PWM, allow that behaviour to finish before concluding that control is unavailable.
+
+If you have just powered the machine on, give the pump a minute and run it again before drawing conclusions.
+
+### What else it reports
+
+- **Observed range** — the measured RPM span across the tested PWM span. One noisy sample is not a hardware specification; treat it as what this run saw.
+- **A non-monotonic response** — speed that does not rise steadily with PWM. Reported as an observation. Plenty of healthy pumps and fans are non-linear or hysteretic; it is not a fault on its own.
+- **A dead zone** — speed flat at the low end before it starts rising.
+- **A PWM clamp** — the header reporting the same duty back for several different requests, which suggests the hardware pins it there.
+- **Interference** — another controller (BIOS, EC, or board firmware) taking the header back mid-test. The run stops and says so, because readings taken while something else is driving the header do not mean anything.
+
+### Safety
+
+- **A pump is never driven below 30%, and no header is ever driven to 0%.** The daemon clamps every duty itself; nothing the GUI sends can lower that floor.
+- Duties are tested from low to high, so a run that stops early leaves the fan running faster, never slower.
+- **Curve control for every fan is paused while the test runs**, and each fan holds its last duty. Thermal safety is unaffected and still overrides everything — the test refuses to start while the system is hot or while thermal protection is active, and stops if either happens mid-run.
+- The header's original speed is restored on every exit path: finishing, cancelling, a failed write, interference, or a thermal stop. **This happens in the daemon**, so closing the window — or the GUI crashing — does not leave a fan stuck at a test speed.
 
 ## Test GPU Fan Control
 
