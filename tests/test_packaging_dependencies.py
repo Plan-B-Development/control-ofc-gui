@@ -105,6 +105,31 @@ def test_bundled_fonts_shipped_in_wheel():
     assert ttfs, f"no .ttf fonts found under {fonts_dir} — the package-data glob would ship nothing"
 
 
+def test_mutmut_also_copies_the_whole_package():
+    """DEC-306: without `also_copy`, the documented mutation gate cannot run at all.
+
+    mutmut copies only what `source_paths` names into `mutants/`, then prepends
+    `mutants/src` to sys.path and REMOVES the real `src`. `source_paths` here is a
+    single module, so without `also_copy` the package under test is a namespace
+    package holding one file and `tests/conftest.py`'s first `control_ofc` import
+    dies with ModuleNotFoundError before any mutant is evaluated.
+
+    This is the pin for a config line nothing else checks — deleting `also_copy`
+    breaks `/ofc:test-tests` and nothing else goes red (CLAUDE.md: "a pinning
+    mechanism nothing checks is not a pin").
+    """
+    mutmut_cfg = tomllib.loads(PYPROJECT.read_text())["tool"]["mutmut"]
+    also_copy = mutmut_cfg.get("also_copy", [])
+    assert "src/control_ofc" in also_copy, (
+        "[tool.mutmut] must also_copy the whole package (DEC-306), else `mutmut run` "
+        f"dies at collection with ModuleNotFoundError; got {also_copy!r}"
+    )
+    # `source_paths` naming a single file is exactly what makes also_copy necessary;
+    # if it is ever widened to the package, this test should be revisited, not deleted.
+    for path in mutmut_cfg["source_paths"]:
+        assert (REPO_ROOT / path).exists(), f"[tool.mutmut] source_paths entry missing: {path}"
+
+
 def test_desktop_entry_declares_spec_version():
     """The `.desktop` file must declare `Version` — the freedesktop Desktop
     Entry *Specification* version, not the app version (audit 2026-07-29).

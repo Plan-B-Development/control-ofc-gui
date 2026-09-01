@@ -40,7 +40,12 @@ dev = [
     # was not part of the reproducible surface (DEC-258).
     "vulture>=2.16",
     # 3.x reads scope from [tool.mutmut]; the old 2.5 `--paths-to-mutate` CLI is gone.
-    "mutmut>=3.5",
+    # Floor is 3.6, not 3.5: 3.5.0 calls `set_start_method('fork')` unconditionally at
+    # import, which raises `RuntimeError: context has already been set` on Python 3.14
+    # when `mutmut.__main__` is executed twice. 3.6 added the GH-466 guard
+    # (`if get_start_method(allow_none=True) is None`), so no fork wrapper is needed —
+    # verified by running the gate unwrapped on 3.6.0 / py3.14.7 (DEC-306).
+    "mutmut>=3.6",
     # tests/test_packaging_dependencies.py parses .github/workflows/release.yml to
     # guard the release-asset wiring. Declared explicitly rather than leaned on as
     # a transitive of pip-audit/mutmut — that is precisely the DEC-103 mistake.
@@ -80,6 +85,16 @@ timeout_method = "thread"
 # mutmut 3.6 renamed these keys (paths_to_mutate -> source_paths,
 # tests_dir -> pytest_add_cli_args_test_selection); same list format.
 source_paths = ["src/control_ofc/services/profile_service.py"]
+# REQUIRED, and the gate does not run without it (DEC-306). mutmut copies only what
+# `source_paths` names into `mutants/`, then puts `mutants/src` on sys.path and REMOVES
+# the real `src` — so with a single-file scope, `mutants/src/control_ofc` is a namespace
+# package containing one module, and `tests/conftest.py`'s `from control_ofc.services.
+# alerts import ...` dies with ModuleNotFoundError before a single mutant is tested.
+# `also_copy` fills the rest of the package in; it runs before mutant generation, so the
+# trampolined `source_paths` file still wins. tests/, pyproject.toml and setup.cfg are
+# already copied by mutmut's own defaults — only the package is missing.
+# Keep this pointed at the whole package when re-pointing `source_paths` at a new module.
+also_copy = ["src/control_ofc"]
 pytest_add_cli_args_test_selection = [
     "tests/test_profile_service.py",
     "tests/test_profile_service_daemon.py",
