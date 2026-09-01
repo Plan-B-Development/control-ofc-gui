@@ -477,6 +477,54 @@ class TestManualOverrideLiveWiring:
         assert "lc1" not in page._overrides
         assert not page._control_cards["lc1"]._manual_btn.isChecked()
 
+    def test_take_worker_crash_still_delivers_result_and_does_not_latch_manual(
+        self, qtbot, app_state, profile_service
+    ):
+        """AUD-m: a non-DaemonError escape from `take` must still produce a take
+        result, shaped as internal_error — the same rule CONC-4 gave `renew`.
+
+        `take_result` is the only thing that resolves a take, so emitting nothing
+        left `_manual_intent` latched with no token: the card sat in Manual,
+        nothing was pinned daemon-side, no renew was ever scheduled, and
+        `_on_status_reconcile` permanently excluded the card because it believes a
+        manual intent is still pending. A failed take must land as a FAILED take,
+        never as silence.
+        """
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.side_effect = RuntimeError("boom")
+        page = self._live_page(qtbot, app_state, profile_service, client)
+
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        assert "lc1" not in page._overrides, "no override may be recorded for a failed take"
+        assert not page._control_cards["lc1"]._manual_btn.isChecked(), (
+            "the card must fall back out of Manual — a latched toggle with no token "
+            "is the phantom state this fix removes"
+        )
+        assert "lc1" not in page._manual_intent, (
+            "the manual intent must be cleared, or _on_status_reconcile excludes this "
+            "card from reconciliation for the rest of the session"
+        )
+
+    def test_release_worker_crash_is_contained(self, qtbot, app_state, profile_service):
+        """AUD-m: `release` is fire-and-forget, so a non-DaemonError escape has no
+        result to deliver — but it must not propagate out of the worker slot. The
+        daemon's deadman reverts the override either way."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        client.override_release.side_effect = RuntimeError("boom")
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        page._release_override("lc1")
+
+        assert "lc1" not in page._overrides
+        assert "lc1" not in page._renew_in_flight
+
     def test_release_clears_in_flight_flag(self, qtbot, app_state, profile_service):
         """Releasing an override drops any pending-renew marker so a fresh
         take/renew cycle starts clean."""

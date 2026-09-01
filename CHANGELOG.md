@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.49.7] — 2026-09-01
+
+Pairs with `control-ofc-daemon` ≥ v2.11.0 (unchanged floor).
+
+### Fixed
+- **A failed manual-override take could latch a Controls card into a Manual state
+  nothing backed.** `_OverrideWorker.take` caught only `DaemonError`, so any other
+  escape — a malformed-but-200 grant body raising during parse, say — emitted no
+  result signal at all. `take_result` is the only thing that resolves a take, so
+  the card stayed toggled into Manual with no override token: nothing was pinned
+  daemon-side, no renew was ever scheduled, and `_on_status_reconcile` excluded
+  that card from reconciliation for the rest of the session because it believed a
+  manual intent was still pending. A failed take now lands as a **failed** take —
+  the card falls back out of Manual and the intent clears — which is the rule
+  CONC-4 already gave the sibling `renew` path. `release` is fire-and-forget and
+  has no result to deliver, but its exception no longer escapes the worker slot;
+  the daemon's deadman reverts the override either way. (DEC-310, register row
+  `AUD-m`.)
+
 ## [2.49.6] — 2026-09-01
 
 Pairs with `control-ofc-daemon` ≥ v2.11.0 (unchanged floor). **No behaviour change

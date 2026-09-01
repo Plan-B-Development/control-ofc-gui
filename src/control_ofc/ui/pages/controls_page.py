@@ -127,6 +127,23 @@ class _OverrideWorker(QObject):
             self.take_result.emit(control_id, pct, grant, None)
         except DaemonError as exc:
             self.take_result.emit(control_id, pct, None, exc)
+        except Exception as exc:
+            # AUD-m: the same rule CONC-4 gave `renew` below, and the reason it
+            # matters more here. A non-DaemonError escape — a malformed-but-200
+            # grant body raising during parse, say — used to emit NO signal at
+            # all, and `take_result` is the only thing that resolves the take.
+            # `_manual_intent` therefore stayed latched with no token: the card
+            # sat in Manual, nothing was pinned daemon-side, no renew was ever
+            # scheduled, and `_on_status_reconcile` permanently excluded the card
+            # from reconciliation because it believes a manual intent is pending.
+            # A failed take must land as a FAILED take, never as silence.
+            logging.getLogger(__name__).warning("Override take crashed for %s: %s", control_id, exc)
+            self.take_result.emit(
+                control_id,
+                pct,
+                None,
+                DaemonError(code="internal_error", message=str(exc), status=0),
+            )
 
     @Slot(str, object)
     def renew(self, control_id: str, token: int) -> None:
@@ -156,8 +173,22 @@ class _OverrideWorker(QObject):
     @Slot(str, object)
     def release(self, control_id: str, token: int) -> None:
         # Fire-and-forget: on failure the daemon deadman reverts the override.
-        with contextlib.suppress(DaemonError):
+        #
+        # AUD-m: suppress every exception, not just `DaemonError`. Nothing awaits
+        # a result here, so the cost of a non-DaemonError escape is not a stuck
+        # card as it is in `take` — it is an unhandled exception raised inside a
+        # worker-thread slot, which is a failure mode nothing in this page is
+        # positioned to handle and which buys nothing over a logged warning. The
+        # override still lapses either way: the daemon's deadman is what actually
+        # reverts it, and that runs regardless of whether this call was heard.
+        try:
             self._get_client().override_release(control_id, token, timeout=_OVERRIDE_HTTP_TIMEOUT_S)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Override release failed for %s (the daemon deadman will revert it): %s",
+                control_id,
+                exc,
+            )
 
     @Slot()
     def shutdown(self) -> None:
