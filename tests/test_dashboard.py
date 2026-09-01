@@ -133,9 +133,12 @@ class TestSubsystemHealth:
         assert "no tick for 31s" in text
         # Asserts the INTENT — that the banner tells the user thermal protection
         # is gone — not a literal threshold. This assertion used to read
-        # `"105" in text`, and DEC-305 moving the trip point to 110 broke it: the
-        # banner string had spelled the constant out, so a safety-threshold change
-        # silently made a user-facing message wrong and only this test noticed.
+        # `"105" in text`, and DEC-305's trialled trip-point move to 110 broke it:
+        # the banner string had spelled the constant out, so a safety-threshold
+        # change silently made a user-facing message wrong and only this test
+        # noticed. The move was withdrawn and the trigger stays at 105 °C; the
+        # lesson stands, which is why this assertion was re-anchored rather than
+        # reverted.
         # The message no longer names a temperature at all; if one is ever wanted
         # it must be interpolated from `ThermalSafetyInfo.emergency_threshold_c`,
         # which the GUI already receives, never hardcoded here or there.
