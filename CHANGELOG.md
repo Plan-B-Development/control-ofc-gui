@@ -31,6 +31,12 @@ Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). Three defect fixes
   message. (`AUD2-c`, DEC-315)
 
 ### Changed
+- **The application's minimum window width now tracks its widest page instead of a
+  literal.** A consequence worth knowing: because Qt lays out only the *current* page of
+  a stacked layout, that minimum rises the first time you open System State — measured
+  1336 → 1398 here, once per session, then stable. At the default 1400 window size there
+  is usually no visible change; it only moves the window if you had shrunk it below the
+  new figure. Content is never squeezed to fit, which is the point.
 - Narrowed the user-facing claim that the header's original speed is "restored on every
   exit path" to the two deliberate exceptions it always had, in `manual/`, the API
   contract, the client docstring and the dialog's own copy. Both exceptions leave the
