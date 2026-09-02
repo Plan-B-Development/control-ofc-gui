@@ -397,3 +397,98 @@ def test_a_collapsed_run_is_still_counted_once_per_event_in_the_histogram(qtbot)
     assert len(collapse_repeats(rows)) == 1, "precondition: these collapse to one row"
     buckets = make_buckets(rows, span=time_span(rows), bucket_count=2)
     assert sum(b.total for b in buckets) == 5
+
+
+# ── Sparse-feed column bounding (release-screenshot defect 4) ──────────────
+
+
+def test_a_sparse_feeds_columns_are_neither_slivers_nor_slabs(qtbot):
+    """Both bounds, asserted as a COLUMN WIDTH — which is the thing the eye judges.
+
+    Bounding only the count failed twice in opposite directions: width alone spread one
+    event over 229 slivers, and a fixed floor of 8 columns then gave it a 148px
+    full-height slab that read as a rendering glitch. Asserting the width catches both,
+    where asserting the count caught neither.
+    """
+    widget = ActivityHistogram()
+    qtbot.addWidget(widget)
+    widget.resize(1400, 60)
+    assert widget.preferred_bucket_count() > 100, "precondition: width alone allows many"
+
+    for events in (1, 3, 10):
+        n = widget.preferred_bucket_count(events)
+        assert n >= 1
+        column_px = widget.width() / n
+        assert column_px <= 32, f"{events} event(s) -> {column_px:.0f}px columns (a slab)"
+        assert column_px >= 4, f"{events} event(s) -> {column_px:.0f}px columns (slivers)"
+
+
+def test_a_dense_feed_still_gets_the_full_width_resolution(qtbot):
+    """The data bound must never cost resolution once there is data to show — the
+    width cap has to win again as soon as the feed is large."""
+    widget = ActivityHistogram()
+    qtbot.addWidget(widget)
+    widget.resize(1400, 60)
+    assert widget.preferred_bucket_count(200) == widget.preferred_bucket_count()
+
+
+def test_a_sparse_strip_keeps_its_columns_narrow_at_every_width(qtbot):
+    """The slab was width-dependent — it only looked wrong once the widget was wide.
+    A single fixed size would not have caught it."""
+    widget = ActivityHistogram()
+    qtbot.addWidget(widget)
+    for w in (400, 900, 1400, 1900):
+        widget.resize(w, 60)
+        n = widget.preferred_bucket_count(1)
+        assert widget.width() / n <= 32, f"one event at {w}px -> {widget.width() / n:.0f}px column"
+
+
+def test_the_column_count_never_decreases_as_events_arrive(qtbot):
+    """Monotonic, so the strip does not visibly re-shard backwards while you watch it."""
+    widget = ActivityHistogram()
+    qtbot.addWidget(widget)
+    widget.resize(1400, 60)
+    counts = [widget.preferred_bucket_count(n) for n in (1, 2, 5, 20, 60, 200)]
+    assert counts == sorted(counts)
+
+
+def test_an_empty_feed_asks_for_no_columns(qtbot):
+    """Zero rows means the strip paints its "no activity" text, not zero-width bars."""
+    widget = ActivityHistogram()
+    qtbot.addWidget(widget)
+    widget.resize(1400, 60)
+    assert widget.preferred_bucket_count(0) == 0
+
+
+def test_a_sparse_strip_is_meaningfully_filled(qtbot, default_theme):
+    """The visual consequence: with one event the painted column has to actually be
+    drawn, and drawn at its full column width rather than as a sliver.
+
+    Asserted against **the widget's own column width**, not a share of the strip. The
+    first version of this test demanded the bar cover 1/16 of the whole strip, which
+    was really a restatement of the slab bug — it passed only while one event owned a
+    148px block, and correctly failed the moment the column width was bounded.
+    """
+    widget = _histogram(qtbot, [_ev(0, "error")], buckets=1, width=400)
+    widget.set_buckets(
+        make_buckets(
+            build_log_rows([_ev(0, "error")]),
+            span=time_span(build_log_rows([_ev(0, "error")])),
+            bucket_count=widget.preferred_bucket_count(1),
+        )
+    )
+    image = QImage(400, 60, QImage.Format.Format_ARGB32)
+    image.fill(QColor(default_theme.app_bg))
+    widget.render(image)
+
+    crit = QColor(default_theme.status_crit).name()
+    row = [QColor(image.pixel(x, 58)).name() for x in range(400)]
+    painted = row.count(crit)
+    column_px = widget.width() / widget.preferred_bucket_count(1)
+    assert painted >= column_px * 0.7, (
+        f"the event's column is {column_px:.0f}px wide but only {painted}px was painted"
+    )
+    assert painted <= column_px * 1.5, (
+        f"{painted}px painted for a {column_px:.0f}px column — one event is claiming more "
+        "of the strip than its own slice"
+    )

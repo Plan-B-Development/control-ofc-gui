@@ -33,6 +33,16 @@ from control_ofc.ui.widgets.log_row_delegate import severity_color
 # being separable by eye and the strip becomes noise. A marker dimension, not page
 # composition (brief §13) — it bounds resolution, it does not position anything.
 _MIN_BUCKET_PX = 6
+# Widest a column may be. This is the LOWER bound on the count, and it is the half that
+# matters for a sparse feed: bounding only the count let one event own a 148px-wide
+# full-height block that read as a rendering glitch rather than a bar. Bounding the
+# width instead gives the normal shape — a narrow bar in a mostly-empty strip — which
+# is what a histogram of one event honestly looks like.
+_MAX_BUCKET_PX = 24
+# How many columns each event may claim, between those two bounds. Sparse feeds sit on
+# the width floor; as the feed fills, this pulls the count up until _MIN_BUCKET_PX caps
+# it and the strip is back at full resolution.
+_BUCKETS_PER_EVENT = 2
 # Gap between adjacent columns, and the floor height of a non-empty column so a single
 # event is still visible rather than rounding away to nothing.
 _BUCKET_GAP = 1
@@ -85,9 +95,29 @@ class ActivityHistogram(QWidget):
     def selected_index(self) -> int | None:
         return self._selected
 
-    def preferred_bucket_count(self) -> int:
-        """Columns that fit the current width at a readable pitch (brief §3)."""
-        return max(1, self.width() // _MIN_BUCKET_PX)
+    def preferred_bucket_count(self, row_count: int | None = None) -> int:
+        """How many columns to divide the span into (brief §3).
+
+        Brief §3 asks for the count to come from the available width, the retained
+        span **and** a minimum bucket width. The width half alone produced a 229-column
+        strip for a one-event feed; bounding the *count* alone then over-corrected to
+        eight 148px slabs. So both bounds are on the column **width**: never narrower
+        than :data:`_MIN_BUCKET_PX` (the legibility cap on the count) and never wider
+        than :data:`_MAX_BUCKET_PX` (the floor under it). Between them the count tracks
+        the data.
+
+        The bound lives here rather than at the call site because legibility is the
+        widget's business — the page knows how much data it has, not how wide a column
+        has to be to be seen. Called with no argument (the resize path) it answers the
+        pure width question, which is what a capacity check wants.
+        """
+        capacity = max(1, self.width() // _MIN_BUCKET_PX)
+        if row_count is None:
+            return capacity
+        if row_count <= 0:
+            return 0
+        floor = max(1, self.width() // _MAX_BUCKET_PX)
+        return max(1, min(capacity, max(floor, row_count * _BUCKETS_PER_EVENT)))
 
     # ── Geometry ─────────────────────────────────────────────────────
 

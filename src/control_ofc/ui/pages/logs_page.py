@@ -289,8 +289,19 @@ class LogsPage(QWidget):
         # for. `max(...)` with the panel's own hint, deliberately: `setMinimumWidth`
         # *replaces* the computed minimum rather than raising a floor under it
         # (DEC-281), so taking the larger of the two is what makes this a raise.
+        # The floor has to clear the **tab bar**, not the tab widget's sizeHint: the
+        # latter measured 264px while the four tabs needed 310, so Qt fell back to
+        # scroll arrows and rendered "Journal" as "Jo". A tab the user cannot see is
+        # not a tab. `max(...)` over all three so this stays a raise, never a DEC-281
+        # cap, and the layout's own left margin is included because the tabs sit
+        # inside it.
+        left_margin = self._inspector.layout().contentsMargins().left()
         self._inspector.setMinimumWidth(
-            max(self._inspector.minimumSizeHint().width(), self._tabs.sizeHint().width())
+            max(
+                self._inspector.minimumSizeHint().width(),
+                self._tabs.sizeHint().width(),
+                self._tabs.tabBar().sizeHint().width() + left_margin,
+            )
         )
         splitter.setSizes([900, 560])
         style_splitter(splitter)
@@ -344,7 +355,17 @@ class LogsPage(QWidget):
         self._table.setWordWrap(False)
         self._table.setMouseTracking(True)  # the delegate paints a hover state
         self._table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self._table.verticalHeader().setVisible(False)
+        v_header = self._table.verticalHeader()
+        v_header.setVisible(False)
+        # **Load-bearing.** With the default `Interactive` mode a QTableView sizes every
+        # row from `defaultSectionSize` and never asks the delegate at all — measured:
+        # delegate sizeHint 45px, actual rowHeight 30px, so the two-line row rendered
+        # with its meta line sliced in half. `ResizeToContents` is what makes the view
+        # ask. Chosen over computing `setDefaultSectionSize` once because that value
+        # would have to be recomputed on every theme change, and a number that must be
+        # refreshed is the pinning-mechanism-nothing-checks trap; this cannot go stale.
+        # Cost is bounded by MAX_EVENTS (200 rows) and measured below the noise floor.
+        v_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header = self._table.horizontalHeader()
         # One column painted whole by the delegate — the row's internal layout is the
         # delegate's business, not a header's.
@@ -381,6 +402,19 @@ class LogsPage(QWidget):
         name_value_control(self._search_edit, "Search logs")
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.setMaximumWidth(280)
+        # A maximum without a minimum let the toolbar squeeze the page's primary
+        # control to 108px inside a real window — it rendered as "Sea…".
+        #
+        # `Policy.Minimum` means "sizeHint is the floor, may grow", and QLineEdit's own
+        # sizeHint is computed from the *current* font. So the floor tracks the theme's
+        # font size with no number to recompute and nothing to go stale — which matters
+        # here more than usual, because the first attempt at this WAS a font metric and
+        # was still wrong: it was measured at construction, before the theme's font had
+        # been applied, so it floored the field at the fallback font's width (DEC-303's
+        # trap, in a timing coat rather than a portability one).
+        self._search_edit.setSizePolicy(
+            QSizePolicy.Policy.Minimum, self._search_edit.sizePolicy().verticalPolicy()
+        )
         row.addWidget(self._search_edit)
 
         # "All" plus three INDEPENDENT severity toggles, not the mock's mutually
@@ -489,7 +523,8 @@ class LogsPage(QWidget):
         ls_row.addStretch(1)
         detail.addLayout(ls_row)
 
-        detail.addWidget(_caption("Timestamp"))
+        self._timestamp_caption = _caption("Timestamp")
+        detail.addWidget(self._timestamp_caption)
         self._insp_timestamp = QLabel("—")
         self._insp_timestamp.setObjectName("Logs_Label_inspectorTimestamp")
         self._insp_timestamp.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -504,7 +539,8 @@ class LogsPage(QWidget):
         self._insp_repeat.setVisible(False)
         detail.addWidget(self._insp_repeat)
 
-        detail.addWidget(_caption("Message"))
+        self._message_caption = _caption("Message")
+        detail.addWidget(self._message_caption)
         self._insp_message = QPlainTextEdit()
         self._insp_message.setObjectName("Logs_Text_inspectorMessage")
         name_value_control(self._insp_message, "Full message")
@@ -570,11 +606,17 @@ class LogsPage(QWidget):
         self._insp_empty.setProperty("class", "SmallLabel")
         detail.addWidget(self._insp_empty, 1)
 
-        # Everything that describes an event, hidden together when none is selected.
+        # Everything that describes an event — **including its captions**. The two
+        # section captions below were anonymous locals and so were never hidden with
+        # the values they label, leaving a bare "TIMESTAMP / MESSAGE" stack above
+        # "Select an event to inspect": exactly the empty placeholder rows brief §7.1
+        # forbids.
         self._detail_widgets = [
             self._insp_pill,
             self._insp_source,
+            self._timestamp_caption,
             self._insp_timestamp,
+            self._message_caption,
             self._insp_message,
             self._fields_caption,
             self._fields_panel,
@@ -809,7 +851,9 @@ class LogsPage(QWidget):
         hist_rows = filter_log_rows(rows, levels=levels, source=source, search=search, window=None)
         span = time_span(hist_rows)
         buckets = histogram_buckets(
-            hist_rows, span=span, bucket_count=self._histogram.preferred_bucket_count()
+            hist_rows,
+            span=span,
+            bucket_count=self._histogram.preferred_bucket_count(len(hist_rows)),
         )
         self._histogram.set_buckets(buckets)
         # Re-derived, not remembered: the boundaries move with the span (see
@@ -1212,7 +1256,9 @@ class LogsPage(QWidget):
 
     def set_theme(self, _tokens) -> None:
         """Repaint the delegate-drawn surfaces; both read the live theme at paint time,
-        so nothing needs re-plumbing — only a repaint request."""
+        so nothing needs re-plumbing — only a repaint request. The search field's floor
+        needs nothing here either: it is Qt's own sizeHint, which already tracks the
+        font."""
         viewport = self._table.viewport()
         if viewport is not None:
             viewport.update()

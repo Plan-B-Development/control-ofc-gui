@@ -20,7 +20,16 @@ import random
 import re
 
 import pytest
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QWidget
+from PySide6.QtCore import QRect
+from PySide6.QtGui import QFontMetrics
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QStyleOptionViewItem,
+    QWidget,
+)
 
 from control_ofc.api.models import ConnectionState
 from control_ofc.constants import PAGE_SYSTEM_STATE
@@ -51,6 +60,15 @@ def _page(qtbot, diag=None):
     page = LogsPage(diagnostics_service=diag)
     qtbot.addWidget(page)
     return page, diag
+
+
+def _visible_detail_captions(page) -> list[str]:
+    """Uppercase section captions currently visible in the Details tab."""
+    return [
+        w.text()
+        for w in page._tabs.widget(0).findChildren(QLabel)
+        if w.text().isupper() and w.isVisibleTo(page)
+    ]
 
 
 def _messages(page) -> list[str]:
@@ -331,10 +349,25 @@ def test_row_select_populates_the_inspector(qtbot):
 
 
 def test_nothing_selected_shows_the_empty_inspector_state(qtbot):
-    """Brief §12."""
-    page, _ = _page(qtbot)
+    """Brief §12 — and §7.1's ban on empty placeholder rows, which is the half this
+    test originally missed.
+
+    It asserted the empty state was *present* and never that the detail was *absent*,
+    so two section captions rendered as a bare "TIMESTAMP / MESSAGE" stack above
+    "Select an event to inspect" and shipped as far as a release screenshot. Presence
+    before absence, both directions.
+    """
+    page, diag = _page(qtbot)
     assert page._insp_empty.isVisibleTo(page)
     assert page._insp_empty.text() == "Select an event to inspect"
+    assert _visible_detail_captions(page) == [], "no caption may label an absent value"
+
+    diag.log_event("info", "gui", "now there is one")
+    page._table.selectRow(0)
+
+    assert not page._insp_empty.isVisibleTo(page)
+    assert "TIMESTAMP" in _visible_detail_captions(page), "…and they must come back"
+    assert "MESSAGE" in _visible_detail_captions(page)
 
 
 def test_selection_survives_live_appends(qtbot):
@@ -1084,3 +1117,113 @@ def test_related_events_use_the_feed_the_refresh_already_collapsed(qtbot):
     assert page._collapsed == collapse_repeats(build_log_rows(diag.events))
     assert page._related is not None
     assert [r.repeat_count for r in page._related.rows] == [3]
+
+
+# ── Realised geometry (the release-screenshot defects) ─────────────────────
+#
+# Every defect in this block rendered wrong on screen while the unit tests were green,
+# and all four were caught by a release screenshot rather than by the suite. What they
+# have in common is that each asserted a *computed* value and none asserted the value
+# the widget actually ended up with — so these tests read realised geometry from a shown
+# page, and only ever as a relationship (CLAUDE.md § Hard-won lessons: a px literal is
+# not portable across font stacks).
+
+
+def _shown(qtbot, width=1000, height=700):
+    """A page laid out at roughly the content width a 1200px window leaves after the
+    sidebar — the app's supported minimum, which is where a toolbar squeeze bites."""
+    page, diag = _page(qtbot)
+    page.resize(width, height)
+    page.show()
+    qtbot.waitExposed(page)
+    QApplication.processEvents()
+    return page, diag
+
+
+def _row_size_hint(page) -> int:
+    opt = QStyleOptionViewItem()
+    opt.rect = QRect(0, 0, page._table.width(), 40)
+    opt.font = page._table.font()
+    return page._delegate.sizeHint(opt, page._model.index(0, 0)).height()
+
+
+def test_the_view_actually_uses_the_delegates_row_height(qtbot):
+    """The **call site**, not the delegate.
+
+    `test_the_row_height_is_two_lines_of_the_themed_fonts` asserts the delegate
+    *returns* two lines; this asserts the view *uses* it. With the default Interactive
+    vertical header a QTableView sizes rows from `defaultSectionSize` and never asks —
+    measured 45px hinted, 30px used, so the meta line was sliced in half on screen and
+    every existing test stayed green. Sixth recorded instance of "extracting a rule
+    into a testable function does not test the call site".
+    """
+    page, diag = _shown(qtbot)
+    diag.log_event("info", "gui", "an event with a meta line")
+    QApplication.processEvents()
+
+    assert page._model.rowCount() == 1, "precondition: there is a row to measure"
+    assert page._table.rowHeight(0) >= _row_size_hint(page), (
+        "the view is sizing rows itself and ignoring the delegate"
+    )
+
+
+def test_the_row_is_tall_enough_for_both_of_its_lines(qtbot):
+    """The user-facing consequence, stated independently of the delegate: whatever the
+    view decides, two lines of themed text have to fit inside it."""
+    page, diag = _shown(qtbot)
+    diag.log_event("info", "gui", "an event with a meta line")
+    QApplication.processEvents()
+
+    two_lines = 2 * QFontMetrics(page._table.font()).height()
+    assert page._table.rowHeight(0) >= two_lines
+
+
+def test_the_search_field_stays_wide_enough_for_its_own_placeholder(qtbot):
+    """It had a maximum and no minimum, so the toolbar squeezed it to "Sea…".
+
+    Measured against the placeholder's advance in the *live* font, minus the field's
+    own frame and padding — a relationship, never a pixel count.
+    """
+    page, _ = _shown(qtbot)
+    edit = page._search_edit
+    needed = QFontMetrics(edit.font()).horizontalAdvance(edit.placeholderText())
+
+    assert edit.width() > needed, (
+        f"search field {edit.width()}px cannot show its {needed}px placeholder"
+    )
+    assert edit.width() <= edit.maximumWidth(), "…and it must still respect its cap"
+
+
+def test_the_search_field_floor_follows_the_font_rather_than_a_constant(qtbot):
+    """The first fix for this WAS a font metric and was still wrong — it was measured
+    at construction, before the theme's font landed. Qt's own sizeHint tracks the
+    current font, so the floor cannot drift out of step with it."""
+    page, _ = _shown(qtbot)
+    assert page._search_edit.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Minimum
+    assert page._search_edit.width() >= page._search_edit.sizeHint().width()
+
+
+def test_every_inspector_tab_is_reachable_without_scroll_arrows(qtbot):
+    """A tab the user cannot see is not a tab.
+
+    The inspector's floor was taken from `QTabWidget.sizeHint()` (264px) while the four
+    tabs needed 310, so Qt fell back to scroll buttons and rendered "Journal" as "Jo" —
+    visible in a release screenshot, invisible to every test. Asserted as the
+    relationship between the tab bar's own hint and the width it is actually given,
+    both read at runtime.
+    """
+    page, _ = _shown(qtbot, width=1000, height=700)
+    bar = page._tabs.tabBar()
+
+    assert bar.count() == 4, "precondition: all four tabs exist"
+    assert bar.sizeHint().width() <= page._tabs.width(), (
+        f"tab bar needs {bar.sizeHint().width()}px but has {page._tabs.width()}px — "
+        "Qt will truncate the last tab behind scroll arrows"
+    )
+
+
+def test_the_inspector_floor_clears_its_own_tab_bar(qtbot):
+    """The floor must be derived from the tab bar, not from the tab widget's hint —
+    the latter under-measures by ~46px, which is exactly how this shipped."""
+    page, _ = _page(qtbot)
+    assert page._inspector.minimumWidth() >= page._tabs.tabBar().sizeHint().width()
