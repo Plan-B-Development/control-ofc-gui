@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QPushButton
 
 from control_ofc.api.models import DaemonStatus
@@ -22,6 +23,7 @@ from control_ofc.constants import (
     PAGE_THEME,
 )
 from control_ofc.ui.main_window import MainWindow
+from tests.layout_helpers import settle_at_minimum
 
 
 @pytest.fixture()
@@ -216,3 +218,80 @@ def test_a_warning_raised_before_the_window_exists_still_reaches_the_badge(qtbot
 
     assert win.status_ribbon._alert_badge.isHidden() is False
     assert win.footer._health_label.text() == "1 warning"
+
+
+# ── The app's minimum window size must be one every page can survive ───────
+#
+# `AUD2-b`: `setMinimumSize(1200, 750)` did not raise a floor under the layout's
+# own minimum, it CAPPED it (the DEC-281 family, one axis over). Three pages
+# needed more than the 1010px a 1200px window leaves after the sidebar, so the
+# literal licensed each of them to be squeezed below its content — measured, the
+# Logs toolbar rendered its search box as "Sea…" at the app's own declared
+# minimum. Both tests below read REALISED geometry from a shown window and
+# assert relationships, never pixel counts (CLAUDE.md § Hard-won lessons).
+
+
+def test_the_apps_minimum_window_is_one_every_page_actually_fits_in(qtbot, window):
+    """The invariant the literal was violating, stated per page.
+
+    `QStackedLayout` lays out ONLY the current page, so each page is navigated to
+    before it is measured — a width read from a page the test never showed is a
+    phantom (CLAUDE.md § Hard-won lessons).
+    """
+    window.show()
+    qtbot.waitExposed(window)
+    settle_at_minimum(window)
+
+    too_narrow = []
+    for idx in range(window.page_stack.count()):
+        window.page_stack.setCurrentIndex(idx)
+        settle_at_minimum(window)
+        page = window.page_stack.widget(idx)
+        needs = page.minimumSizeHint().width()
+        if page.width() < needs:
+            too_narrow.append(f"{type(page).__name__}: {page.width()}px < {needs}px needed")
+
+    assert not too_narrow, (
+        "at the app's own minimum window width these pages are squeezed below "
+        "what their content asks for: " + "; ".join(too_narrow)
+    )
+
+
+def test_the_logs_search_box_shows_its_placeholder_at_the_apps_minimum(qtbot, window):
+    """`AUD2-b` in the terms the user saw it: the search box rendered as "Sea…".
+
+    The end-to-end statement of the invariant above — a real window at its own
+    minimum, the real Logs page, and the placeholder measured in the live font
+    rather than assumed (CLAUDE.md § Hard-won lessons: a font metric is not a
+    portable constant).
+    """
+    window.show()
+    qtbot.waitExposed(window)
+    window.page_stack.setCurrentIndex(PAGE_LOGS)
+    settle_at_minimum(window)
+
+    edit = window.logs_page._search_edit
+    needed = QFontMetrics(edit.font()).horizontalAdvance(edit.placeholderText())
+
+    assert edit.width() > needed, (
+        f"at the app's minimum window width the search field is {edit.width()}px "
+        f"and its placeholder needs {needed}px — it renders elided"
+    )
+
+
+def test_the_window_minimum_is_not_capped_below_its_own_layout(qtbot, window):
+    """The mechanism, so a future literal cannot quietly reintroduce the cap.
+
+    Asserted as a relationship against the layout's own computed minimum rather
+    than against a number — the widest page is a font metric, so the figure
+    differs on every font stack (DEC-303).
+    """
+    window.show()
+    qtbot.waitExposed(window)
+    settle_at_minimum(window)
+
+    assert window.minimumWidth() >= window.layout().minimumSize().width(), (
+        "the window's minimum width is capped below what its own layout needs — "
+        "a literal `setMinimumSize` width overrides `minimumSizeHint` rather "
+        "than raising a floor under it"
+    )

@@ -6,8 +6,10 @@ worker thread, the 1 Hz poll timer, and nothing else.
 
 The sweep itself runs **daemon-side**, which is what ``AIO-Phase3.md`` asks for:
 closing this dialog — or the whole GUI crashing — does not strand the header,
-because the daemon restores it on every exit path. Cancelling is therefore a
-courtesy to the user, not the mechanism that keeps hardware safe.
+because the daemon restores it on every exit path on which nothing else owns it.
+Cancelling is therefore a courtesy to the user, not the mechanism that keeps
+hardware safe. Where the restore is deliberately skipped — a thermal force, or
+daemon shutdown — the run reports which, and the header is left high, never low.
 """
 
 from __future__ import annotations
@@ -157,9 +159,28 @@ class PwmCharacterizationDialog(ModalDialog):
 
     # ── rendering ────────────────────────────────────────────────────
 
+    def _is_ours(self, run) -> bool:
+        """Is this snapshot about the header this dialog was opened for?
+
+        `GET /diagnostics/characterization` serves ONE process-global slot, so a
+        snapshot can legitimately describe a different header: a poll queued
+        behind our own blocking POST returns the *previous* run, and any second
+        client owning the slot has the same effect. Rendering it under this
+        dialog's label would attribute another header's points, verdicts and
+        notes to this one — in the single feature whose whole purpose is a
+        per-header verdict (`AUD2-a`).
+
+        An empty `header_id` is accepted: it is what a daemon too old to send one
+        would produce, and refusing those would blank the dialog instead.
+        """
+        theirs = getattr(run, "header_id", "") or ""
+        return not theirs or theirs == self._header_id
+
     @Slot(object)
     def apply_run(self, run) -> None:
         """Render a run snapshot. Safe to call with ``None`` (nothing started)."""
+        if run is not None and not self._is_ours(run):
+            return
         # A run we started that the daemon no longer knows about (it restarted
         # mid-sweep, so GET now 404s -> None) is terminal, not "not started yet".
         # Without this the poll timer runs forever against a dialog that reads
@@ -170,8 +191,8 @@ class PwmCharacterizationDialog(ModalDialog):
             self._start_btn.setEnabled(True)
             self._status_lbl.setText(
                 "The daemon no longer has this run — it may have restarted. "
-                "It restores the header on every exit path, so nothing is left "
-                "at a test speed."
+                "It restores the header whenever it ends a sweep itself, and a "
+                "restarted daemon takes control back on its next tick."
             )
             return
         view = build_characterization_view(run, header_label=self._header_label)

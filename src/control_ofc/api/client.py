@@ -534,8 +534,11 @@ class DaemonClient:
 
         Cooperative: the daemon finishes the point it is settling on, then
         restores the header's original duty. The restore is the daemon's job on
-        every exit path, so a GUI that dies mid-sweep does not strand the header
-        — which is why the sequence lives daemon-side at all.
+        every exit path on which nothing else owns the header, so a GUI that dies
+        mid-sweep does not strand it — which is why the sequence lives
+        daemon-side at all. Where the restore IS skipped (a thermal force, or
+        daemon shutdown) the run says so in `restore_outcome`, and the header is
+        left high rather than low.
         """
         return parse_characterization_run(self._delete("/diagnostics/characterization"))
 

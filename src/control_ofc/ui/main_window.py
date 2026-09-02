@@ -87,7 +87,17 @@ class MainWindow(QWidget):
         # surfaces (DEC-225), so the window fill is anchored explicitly here.
         self.setObjectName("MainWindow")
         self.setWindowTitle("Control-OFC — Fan Control")
-        self.setMinimumSize(1200, 750)
+        # A literal WIDTH here does not raise a floor under the layout's own
+        # minimum — it CAPS it (the DEC-281 family, in the width axis). Three
+        # pages need more than the 1010px a 1200px window leaves after the
+        # sidebar — Controls 1118, Theme 1132, Logs 1146 — so the literal was
+        # licensing every one of them to be squeezed below its content, which is
+        # how the Logs toolbar rendered its search box as "Sea…" (`AUD2-b`).
+        # Qt uses `minimumSizeHint()` when no explicit minimum is set, so leaving
+        # the width alone makes the app's minimum track the widest page instead
+        # of contradicting it. The height literal IS a raise (the layout asks for
+        # 617) and stays.
+        self.setMinimumHeight(750)
         self.resize(1400, 850)
 
         self._state = state or AppState()

@@ -55,6 +55,67 @@ def _humanise_token(token: str) -> str:
     return token.replace("_", " ").strip().capitalize() or "Unknown"
 
 
+#: What to tell the user for each `restore_outcome`, keyed by the daemon's token.
+#: The advice differs per reason, which is the whole point of the token: under a
+#: thermal force "re-activate your profile" is the one thing the user must not
+#: do, and that is exactly what the single "restore failed" note used to say
+#: (`AUD2-c`).
+_RESTORE_NOTE = {
+    "write_failed": (
+        "Restoring the original speed failed, so the header is still at the "
+        "last tested duty. Re-activate your profile to take control back."
+    ),
+    "skipped_thermal_force": (
+        "Thermal safety is forcing fan output, so the original speed was not "
+        "restored — the header is being held above the tested duty on purpose. "
+        "It is released automatically once temperatures fall."
+    ),
+    "skipped_shutting_down": (
+        "The daemon was shutting down, so the original speed was not restored. "
+        "The header is handed back to the motherboard as part of shutdown."
+    ),
+    "no_original_duty": (
+        "This header's speed could not be read before the sweep, so there was "
+        "nothing to restore it to and it is still at the last tested duty. "
+        "Re-activate your profile to take control back."
+    ),
+}
+
+#: Said when the daemon reports the header was left moved but names a reason this
+#: build does not know — 273-i: render the unrecognised token, never drop it.
+_RESTORE_NOTE_FALLBACK = (
+    "The original speed was not restored ({reason}), so the header is still at "
+    "the last tested duty."
+)
+
+
+#: Tokens that mean the header IS back where the sweep found it. Everything else
+#: — including one this build has never seen — means it is not.
+_RESTORE_OK = frozenset({"", "pending", "restored"})
+
+
+def restore_note(run: CharacterizationRun) -> str:
+    """What to say about the pre-sweep duty, or ``""`` when it was put back.
+
+    Derived from BOTH fields rather than from the boolean alone. The daemon
+    computes one from the other so they cannot disagree — but taking a remote
+    field's word for a truthfulness decision is exactly what `AUD2-c` was, and a
+    version-skewed or partial response that named a skip while saying
+    ``restore_failed: false`` would fall silent in precisely the old way. Same
+    reconstruct-don't-trust discipline as DEC-312's pump predicate.
+    """
+    if not run.restore_failed and run.restore_outcome in _RESTORE_OK:
+        return ""
+    known = _RESTORE_NOTE.get(run.restore_outcome)
+    if known:
+        return known
+    if not run.restore_outcome:
+        # Pre-2.30.0: `restore_failed: true` meant the restore write failed, and
+        # nothing else could set it.
+        return _RESTORE_NOTE["write_failed"]
+    return _RESTORE_NOTE_FALLBACK.format(reason=_humanise_token(run.restore_outcome))
+
+
 @dataclass(frozen=True)
 class CharRow:
     """One table row: the duty asked for, what came back, and a verdict."""
@@ -214,11 +275,9 @@ def build_characterization_view(
                 "requested duty, which suggests the hardware pins PWM there."
             )
 
-    if run.restore_failed:
-        notes.append(
-            "Restoring the original speed failed, so the header is still at the "
-            "last tested duty. Re-activate your profile to take control back."
-        )
+    note = restore_note(run)
+    if note:
+        notes.append(note)
 
     return CharacterizationView(
         header_label=header_label,

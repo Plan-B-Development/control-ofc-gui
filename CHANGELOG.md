@@ -1,5 +1,52 @@
 # Changelog
 
+## [2.53.1] — 2026-09-02
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). Three defect fixes from the
+2026-09-02 audit, plus the guard work that should have caught two of them.
+
+### Fixed
+- **Characterise PWM Response could render another header's sweep as this one's result.**
+  `GET /diagnostics/characterization` serves one process-global run slot, and the dialog
+  never checked whose run came back — so a poll queued behind its own blocking `POST`
+  (or any second client owning the slot) painted a different header's points, verdicts
+  and notes under this header's name. A user could pronounce a pump healthy on the
+  strength of a chassis-fan sweep, in the one feature whose whole purpose is a per-header
+  verdict. The dialog now ignores a snapshot whose `header_id` is not its own; an empty
+  `header_id` (a daemon too old to send one) is still accepted. (`AUD2-a`, DEC-315)
+- **The Logs toolbar squeezed its own search box at the app's minimum window size.** The
+  window's `setMinimumSize(1200, 750)` did not raise a floor under the layout's minimum,
+  it *capped* it — the DEC-281 trap one axis over — and three pages need more than the
+  1010px a 1200px window leaves after the sidebar (Controls 1118, Theme 1132, Logs 1146).
+  The search field rendered at 66px against a 77px placeholder, i.e. "Sea…": the very
+  defect v2.53.0 said it had fixed. The width is now taken from the layout itself, so the
+  app's minimum tracks its widest page instead of contradicting it; the height floor
+  (a genuine raise, 617 → 750) is unchanged. **The minimum window width therefore grows
+  from 1200 to whatever the widest page needs (~1400 here).** (`AUD2-b`, DEC-315)
+- **"Restoring the original speed failed" was shown for restores that were deliberately
+  skipped**, telling the user to re-activate their profile — which, when thermal safety
+  is what skipped it, is the one thing they should not do. Each reason now has its own
+  wording, taken from the daemon's new `restore_outcome`, and an unrecognised reason is
+  rendered rather than dropped (273-i). A daemon too old to send one keeps the previous
+  message. (`AUD2-c`, DEC-315)
+
+### Changed
+- Narrowed the user-facing claim that the header's original speed is "restored on every
+  exit path" to the two deliberate exceptions it always had, in `manual/`, the API
+  contract, the client docstring and the dialog's own copy. Both exceptions leave the
+  fan running *faster*, and the run now says which happened.
+
+### Testing
+- The guard for the Logs toolbar squeeze could not fail: its harness resized a *top-level*
+  page, and Qt clamps a window up to its own layout minimum, so a request for 1000px
+  realised 1208px and the assertions ran at a width the app never produces. It now fixes
+  the width explicitly and derives the default from a real `MainWindow` at its settled
+  minimum. Both search-field tests fail against the pre-fix window minimum. (`AUD2-h`)
+- New `layout_helpers.settle_at_minimum`: a window's layout minimum keeps growing for a
+  pass or two after `show()` as stylesheet polish lands (measured 1336 → 1398 on the third
+  pass), so realised geometry read too early is premature — and two such values compared
+  against each other can agree while the layout is visibly squeezed.
+
 ## [2.53.0] — 2026-09-02
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). **GUI only** — no daemon

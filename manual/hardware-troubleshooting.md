@@ -87,7 +87,8 @@ If you have just powered the machine on, give the pump a minute and run it again
 - **A pump is never driven below 30%, and no header is ever driven to 0%.** The daemon clamps every duty itself; nothing the GUI sends can lower that floor.
 - Duties are tested from low to high, so a run that stops early leaves the fan running faster, never slower.
 - **Curve control for every fan is paused while the test runs**, and each fan holds its last duty. Thermal safety is unaffected and still overrides everything — the test refuses to start while the system is hot or while thermal protection is active, and stops if either happens mid-run.
-- The header's original speed is restored on every exit path: finishing, cancelling, a failed write, interference, or a thermal stop. **This happens in the daemon**, so closing the window — or the GUI crashing — does not leave a fan stuck at a test speed.
+- The header's original speed is restored on every exit path on which nothing else owns the fan: finishing, cancelling, a failed write, interference, or a thermal stop. **This happens in the daemon**, so closing the window — or the GUI crashing — does not leave a fan stuck at a test speed.
+- The two exceptions are both deliberate, and both leave the fan running *faster* rather than slower: if thermal protection kicks in it keeps the fan high and the original speed is not put back until it releases, and if the daemon is shutting down the header is handed to the motherboard instead. The result tells you which happened, so the window never claims a speed was restored when it was not.
 
 ## Test GPU Fan Control
 

@@ -477,3 +477,132 @@ class TestClientContract:
         client = DaemonClient.__new__(DaemonClient)
         assert client.cancel_characterization().state == "cancelled"
         assert seen["path"] == "/diagnostics/characterization"
+
+
+class TestForeignRunSnapshots:
+    """`AUD2-a`: `GET /diagnostics/characterization` serves ONE process-global
+    slot, so a snapshot can legitimately be about a different header — a poll
+    queued behind our own blocking POST returns the *previous* run, and a second
+    client owning the slot does the same. Rendering it under this dialog's label
+    attributes another header's measurements to this one, in the one feature
+    whose entire purpose is a per-header verdict.
+    """
+
+    def test_a_snapshot_for_another_header_is_not_rendered(self, qtbot):
+        dlg = PwmCharacterizationDialog("h1", "AIO_PUMP", is_pump=True)
+        qtbot.addWidget(dlg)
+        dlg._started = True
+
+        dlg.apply_run(_run(header_id="h1", state="running", points=[_point(30, rpm=900)]))
+        assert dlg._table.rowCount() == 1, "precondition: our own run renders"
+
+        dlg.apply_run(
+            _run(
+                header_id="h2",
+                state="complete",
+                points=[_point(p, rpm=100 * p) for p in (30, 60, 100)],
+            )
+        )
+        assert dlg._table.rowCount() == 1, (
+            "a completed run on h2 was rendered as this dialog's result for h1"
+        )
+
+    def test_a_foreign_terminal_snapshot_does_not_end_our_run(self, qtbot):
+        """The damage is not only the table: a foreign *terminal* snapshot also
+        stops the poll timer and relabels Start as "Run again", so our own live
+        sweep goes unwatched and reads as finished."""
+        dlg = PwmCharacterizationDialog("h1", "AIO_PUMP", is_pump=True)
+        qtbot.addWidget(dlg)
+        dlg._start_btn.click()
+        assert dlg._timer.isActive(), "precondition: our run is being polled"
+
+        dlg.apply_run(_run(header_id="h2", state="complete", points=[_point(30, rpm=900)]))
+
+        assert dlg._timer.isActive(), "another header's finished run stopped our polling"
+        assert not dlg._finished
+
+    def test_a_snapshot_without_a_header_id_is_still_rendered(self, qtbot):
+        """A daemon too old to send one must not blank the dialog — refusing an
+        empty id would trade a wrong reading for no reading."""
+        dlg = PwmCharacterizationDialog("h1", "AIO_PUMP", is_pump=True)
+        qtbot.addWidget(dlg)
+        dlg._started = True
+
+        dlg.apply_run(_run(header_id="", state="running", points=[_point(30, rpm=900)]))
+
+        assert dlg._table.rowCount() == 1
+
+
+class TestRestoreOutcomeNotes:
+    """`AUD2-c`: the daemon used to publish `restore_failed: false` on three
+    exits that deliberately did NOT restore, so the GUI said nothing about a
+    header parked at a test duty. It now says which — and the wording has to
+    differ per reason, because the single old note's advice ("re-activate your
+    profile") is the one thing a user must not act on under a thermal force.
+    """
+
+    def _notes(self, **kw) -> str:
+        run = _run(state="aborted", points=[_point(30, rpm=900)], **kw)
+        return "\n".join(build_characterization_view(run, header_label="AIO_PUMP").notes)
+
+    def test_a_restored_header_says_nothing_about_the_restore(self):
+        assert "restor" not in self._notes(restore_failed=False, restore_outcome="restored").lower()
+
+    def test_a_failed_restore_still_tells_the_user_to_retake_control(self):
+        notes = self._notes(restore_failed=True, restore_outcome="write_failed")
+        assert "Re-activate your profile" in notes
+
+    def test_a_thermal_skip_does_not_tell_the_user_to_retake_control(self):
+        """The wrong-advice case, stated as an absence AND a presence — an
+        absence assertion on its own passes vacuously (CLAUDE.md § Hard-won
+        lessons)."""
+        notes = self._notes(restore_failed=True, restore_outcome="skipped_thermal_force")
+        assert "Thermal safety" in notes, "the reason must be surfaced at all"
+        assert "Re-activate your profile" not in notes, (
+            "telling the user to retake control while the ladder is forcing is "
+            "exactly the action the reason token exists to prevent"
+        )
+
+    def test_a_shutdown_skip_is_explained_rather_than_called_a_failure(self):
+        notes = self._notes(restore_failed=True, restore_outcome="skipped_shutting_down")
+        assert "shutting down" in notes
+        assert "failed" not in notes.lower()
+
+    def test_an_unreadable_pre_sweep_duty_is_explained(self):
+        notes = self._notes(restore_failed=True, restore_outcome="no_original_duty")
+        assert "could not be read" in notes
+
+    def test_an_unrecognised_reason_is_rendered_not_dropped(self):
+        """273-i: the client owns the wording, so a token this build has never
+        seen must still produce a note rather than silence."""
+        notes = self._notes(restore_failed=True, restore_outcome="seized_by_firmware")
+        assert "Seized by firmware" in notes
+
+    def test_an_older_daemon_that_sends_no_reason_keeps_the_failure_note(self):
+        """Pre-2.30.0 `restore_failed: true` could only mean the write failed."""
+        notes = self._notes(restore_failed=True)
+        assert "Re-activate your profile" in notes
+
+
+class TestRestoreNoteDoesNotTrustOneField:
+    """`restore_note` reconstructs "was it put back?" from both fields.
+
+    The daemon derives one from the other, so they cannot disagree today. Taking
+    its word for it is the thing `AUD2-c` was, though: a version-skewed or
+    partial response naming a skip while reporting `restore_failed: false` would
+    fall silent in exactly the old way.
+    """
+
+    def _notes(self, **kw) -> str:
+        run = _run(state="aborted", points=[_point(30, rpm=900)], **kw)
+        return "\n".join(build_characterization_view(run, header_label="AIO_PUMP").notes)
+
+    def test_a_skip_reason_is_surfaced_even_if_the_boolean_says_otherwise(self):
+        notes = self._notes(restore_failed=False, restore_outcome="skipped_thermal_force")
+        assert "Thermal safety" in notes
+
+    def test_a_running_or_absent_outcome_with_a_false_boolean_stays_silent(self):
+        for outcome in ("", "pending", "restored"):
+            assert (
+                "restor" not in self._notes(restore_failed=False, restore_outcome=outcome).lower()
+            ), f"{outcome!r} must not produce a note"

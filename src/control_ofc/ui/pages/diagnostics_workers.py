@@ -463,7 +463,8 @@ class _CharacterizationWorker(_SocketWorker):
             self.run_error.emit(
                 "unavailable",
                 f"The daemon did not answer the {what} in time. The sweep may "
-                "still be running — it restores the header either way.",
+                "still be running — the daemon restores the header itself when "
+                "it ends.",
             )
         except DaemonUnavailable:
             self.run_error.emit("unavailable", f"Daemon unavailable during {what}")

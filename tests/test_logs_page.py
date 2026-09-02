@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.api.models import ConnectionState
-from control_ofc.constants import PAGE_SYSTEM_STATE
+from control_ofc.constants import PAGE_LOGS, PAGE_SYSTEM_STATE
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import MAX_EVENTS, DiagnosticsService
 from control_ofc.services.logs_view import (
@@ -47,6 +47,7 @@ from control_ofc.ui.pages.logs_page import (
     LogsPage,
     _JournalWorker,
 )
+from tests.layout_helpers import settle_at_minimum
 
 
 def _diag() -> DiagnosticsService:
@@ -1129,15 +1130,63 @@ def test_related_events_use_the_feed_the_refresh_already_collapsed(qtbot):
 # not portable across font stacks).
 
 
-def _shown(qtbot, width=1000, height=700):
-    """A page laid out at roughly the content width a 1200px window leaves after the
-    sidebar — the app's supported minimum, which is where a toolbar squeeze bites."""
+def _shown(qtbot, width=None, height=700):
+    """A page laid out at the content width the app's minimum window really leaves.
+
+    Two things here are load-bearing, and this helper got both wrong (`AUD2-h`):
+
+    * **The page must be inside a fixed-width host.** It used to `resize()` a
+      *top-level* `LogsPage`, and Qt clamps a window up to its own layout
+      minimum — so a request for 1000px realised 1208px and the tests below
+      asserted at a width the app never produces. The guard for the toolbar
+      squeeze therefore could not see the squeeze.
+    * **The default width is derived, not written down.** The figure is the
+      widest page's minimum minus the sidebar, i.e. a font metric, so a literal
+      would mean something different on every font stack (DEC-303). Taken from a
+      real `MainWindow` at its own minimum, it tracks the app by construction.
+    """
+    if width is None:
+        width = _app_content_width(qtbot)
     page, diag = _page(qtbot)
+    # `setFixedWidth`, not `resize`: a top-level window is clamped UP to its own
+    # layout minimum, which is why the old harness realised 1208px for a
+    # requested 1000px. An explicit fixed width overrides that minimum — the same
+    # DEC-281 mechanism that caused `AUD2-b`, used deliberately here.
+    page.setFixedWidth(width)
     page.resize(width, height)
     page.show()
     qtbot.waitExposed(page)
     QApplication.processEvents()
+    assert page.width() == width, (
+        f"the harness did not realise the width it asked for: wanted {width}px, "
+        f"got {page.width()}px — every assertion below would be about a layout "
+        "the test never actually produced"
+    )
     return page, diag
+
+
+_APP_CONTENT_WIDTH: int | None = None
+
+
+def _app_content_width(qtbot) -> int:
+    """How much width the Logs page gets in the real app at its minimum size.
+
+    Cached: it is a pure function of the font stack, and building a whole
+    `MainWindow` per test is not free.
+    """
+    global _APP_CONTENT_WIDTH
+    if _APP_CONTENT_WIDTH is not None:
+        return _APP_CONTENT_WIDTH
+    from control_ofc.ui.main_window import MainWindow
+
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.show()
+    qtbot.waitExposed(win)
+    win.page_stack.setCurrentIndex(PAGE_LOGS)
+    settle_at_minimum(win)
+    _APP_CONTENT_WIDTH = win.page_stack.widget(PAGE_LOGS).width()
+    return _APP_CONTENT_WIDTH
 
 
 def _row_size_hint(page) -> int:
@@ -1212,7 +1261,7 @@ def test_every_inspector_tab_is_reachable_without_scroll_arrows(qtbot):
     relationship between the tab bar's own hint and the width it is actually given,
     both read at runtime.
     """
-    page, _ = _shown(qtbot, width=1000, height=700)
+    page, _ = _shown(qtbot)
     bar = page._tabs.tabBar()
 
     assert bar.count() == 4, "precondition: all four tabs exist"

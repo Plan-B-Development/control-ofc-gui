@@ -2088,7 +2088,17 @@ class CharacterizationRun:
     points: list[CharPoint] = field(default_factory=list)
     summary: CharSummary | None = None
     original_pct: int | None = None
+    #: The header was NOT put back where the sweep found it — a failed restore
+    #: write, a deliberately skipped one, or an unreadable pre-sweep duty.
+    #: ``restore_outcome`` says which; daemon < 2.30.0 reported ``False`` on the
+    #: three non-write exits, so an older daemon under-reports rather than lies
+    #: in a new way.
     restore_failed: bool = False
+    #: Stable token: ``pending`` | ``restored`` | ``write_failed`` |
+    #: ``skipped_shutting_down`` | ``skipped_thermal_force`` |
+    #: ``no_original_duty``. Empty from a daemon that predates it. The client
+    #: owns the wording and must render an unrecognised token (273-i).
+    restore_outcome: str = ""
     detail: str | None = None
 
     @property
@@ -2117,6 +2127,7 @@ def parse_characterization_run(data: dict) -> CharacterizationRun:
         summary=summary,
         original_pct=data.get("original_pct"),
         restore_failed=bool(data.get("restore_failed", False)),
+        restore_outcome=str(data.get("restore_outcome", "")),
         detail=data.get("detail"),
     )
 
