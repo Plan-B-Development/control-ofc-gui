@@ -1,5 +1,71 @@
 # Changelog
 
+## [2.53.0] — 2026-09-02
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). **GUI only** — no daemon
+change, no API change, no schema change. Your saved log filters carry over untouched.
+
+The Logs page is rebuilt as a **List + Inspector** workflow: find an event on the left,
+understand it on the right.
+
+### Added
+- **An activity strip** across the top of the page, showing event volume over the
+  retained feed with severity stacked inside each column, so a burst of errors is visible
+  without reading a line. Click a column to narrow the list to that slice of time; click
+  it again, press `Esc`, or use **Clear time filter** to go back. Keyboard-operable with
+  `←`/`→` and `Space`.
+- **A tabbed inspector** — **Details**, **Raw**, **Diagnostics**, **Journal**. Details
+  shows severity, the precise timestamp, source and the full untruncated message; Raw
+  shows the stored event record, selectable and copyable.
+- **Structured fields on an event, where the emitter genuinely had them.** An alert now
+  carries its component, key and how long it lasted; an uncaught exception carries its
+  type; a hardware rescan carries the header count and any adopted port. Events with no
+  structured data show none — there are no empty placeholder rows.
+- **Related events**, correlating on an event's component where it has one and on its
+  source otherwise — and the panel says which, because "same source" is a weaker claim
+  than "related". **Filter to these** narrows the list to that group.
+- **Repeat collapsing.** Consecutive identical events collapse into one row with a `×N`
+  badge; the inspector reports how many times and when the run started.
+- **Copy event + context**, and a contextual **Open Hardware** / **Open Controls** button
+  for events from a source with an obvious next place to look.
+- **Keyboard shortcuts on the event list**: `↑`/`↓` to move the selection, `/` to jump to
+  search, `f` to toggle Follow, `Esc` to clear the selection.
+- **An "All" chip** beside the severity filters, and **live counts on each chip** so you
+  can see what turning one back on would bring.
+
+### Changed
+- **Newest entries are now at the top.** Follow holds the view at the top and the pending
+  indicator reads `N new events ↑`; you are still never yanked away from older rows you
+  are reading.
+- **Rows are two lines** — a severity edge and the message, then a quieter meta line with
+  the time, the source, and the component where there is one — instead of four fixed
+  columns that spent most of their width on short fields.
+- **The Diagnostic tools section at the bottom of the page is gone.** Daemon Status,
+  Controller (OpenFan) and GPU State are the **Diagnostics** tab and the system journal is
+  the **Journal** tab. Both load the first time you open them, so opening Logs no longer
+  risks running a probe you did not ask for. Everything they did, they still do.
+- **The inspector is always present** (it holds those tools now), and its **✕** still
+  gives the list the full width.
+
+### Fixed
+- **Selecting a log row could quietly re-anchor onto a different event.** Selection was
+  matched by the row's *contents*, so two identical messages logged in the same second
+  were indistinguishable and the detail pane could end up describing the wrong one. Every
+  event now carries a stable id.
+
+### Internal
+- All Logs derivation — repeat collapsing, filtering, facet counts, histogram bucketing,
+  correlation — is pure and Qt-free in `services/logs_view.py`, with a **single** entry
+  point in the page. The previous page had two code paths deciding what was on screen and
+  a seeded fuzz test whose job was to prove they had not drifted apart; the seam is gone.
+- The event list is a `QTableView` + `QAbstractTableModel` with a painting delegate, so
+  rows own no widgets. Three new components (`log_event_model`, `log_row_delegate`,
+  `activity_histogram`), each with headless tests.
+- DEC-314. See `DECISIONS_OPEN_ITEMS.md` `314-a` (merging the daemon journal into the
+  event feed — considered and declined) and `314-b` (the sensor-at-event-time trace —
+  omitted rather than faked, because no event carries a sensor id and the two clock
+  domains do not join).
+
 ## [2.52.0] — 2026-09-02
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). The new action is

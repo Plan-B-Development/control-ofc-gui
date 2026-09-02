@@ -587,10 +587,18 @@ class SystemStatePage(QWidget):
                 "requires a daemon restart."
             )
         self._show_rescan_message(message, "SuccessChip")
-        self._diag.log_event("info", "hwmon", f"Hardware rescan: {n} PWM header(s) found")
+        self._diag.log_event(
+            "info",
+            "hwmon",
+            f"Hardware rescan: {n} PWM header(s) found",
+            fields={"headers_found": str(n)},
+        )
         if adopted_port:
             self._diag.log_event(
-                "info", "openfan", f"OpenFanController adopted on {adopted_port} via rescan"
+                "info",
+                "openfan",
+                f"OpenFanController adopted on {adopted_port} via rescan",
+                fields={"component": adopted_port},
             )
         self._rescan_in_flight = False
         self._fetch_hardware_diagnostics()

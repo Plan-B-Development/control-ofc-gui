@@ -247,7 +247,16 @@ constrained case: when the content already needs more than the viewport, the
 band is unchanged and the page scrolls exactly as DEC-281 describes.
 
 ## Logs page
-The **Logs** page provides a readable log/event view for:
+The **Logs** page is a **List + Inspector** event workflow (DEC-314): find an event on
+the left, understand it on the right. Three regions, top to bottom:
+
+1. **Alert bar** (`Logs_AlertBar`, DEC-282) — one line, opening the Alert Centre.
+2. **Activity strip** (`Logs_Histogram_activity`) — event volume over the retained feed,
+   severity-stacked; selecting a column filters the list to that time slice.
+3. **Splitter** (`Logs_Splitter`) — the event list (`Logs_Table_events`) beside the
+   tabbed inspector (`Logs_Tabs_inspector`: Details · Raw · Diagnostics · Journal).
+
+It provides a readable log/event view for:
 - recent app events
 - recent API failures
 - validation errors
@@ -339,7 +348,7 @@ These differences are **expected behavior**, not a bug. The GUI poll cycle (1000
 - **WARN**: age > 2× and <= 5× interval
 - **CRIT**: age > 5× interval or never updated
 
-## Implementation: Event log + diagnostic snapshots (DEC-111)
+## Implementation: Event log + diagnostic probes (DEC-111, redesigned DEC-314)
 
 ### Three distinct concepts
 The Logs page surfaces three closely-related but distinct streams. Confusing them is the original sin the DEC-111 rewrite cleared up:
@@ -352,42 +361,113 @@ The Logs page surfaces three closely-related but distinct streams. Confusing the
 
 ### Event stream
 The event stream lives on the Logs page (`pages/logs_page.py`) as the
-`Logs_Table_events` table — the standalone `EventLogView` widget was retired in
-the redesign. It renders one row per `DiagEvent` from the shared
-`DiagnosticsService` deque (`event_appended` / `events_cleared`), filtered by
-three ANDed controls:
+`Logs_Table_events` **`QTableView`** — a `LogEventModel` (`widgets/log_event_model.py`)
+painted by `LogRowDelegate` (`widgets/log_row_delegate.py`). It was a `QTableWidget`
+with four text columns and a `StatusPill` child widget per row until DEC-314; the
+standalone `EventLogView` widget was retired before that, in the DEC-216 redesign.
 
-- **Severity** — multi-select (`info` / `warning` / `error`) toggle buttons.
-- **Source** — single-select `QComboBox`; populates dynamically from observed sources, starting with "All sources".
-- **Search** — `QLineEdit` substring match against both message and source columns (case-insensitive) (`Logs_Edit_search`).
+**One derivation, not two.** Every visible surface is re-derived by
+`LogsPage._refresh_view()` from the pure functions in `services/logs_view.py`. The
+pipeline is fixed and its order is load-bearing:
 
-Severity foreground colours read from `active_theme()` so a theme switch picks
-up the new `status_ok` / `status_warn` / `status_crit` values without a restart
-(refreshed via the Logs page's `set_theme`).
+```
+build_log_rows → collapse_repeats → filter_log_rows → newest_first
+```
 
-Auto-scroll behaviour: the view follows the bottom only when the user is already at the bottom before the new event lands. Scrolling up pauses the follow; scrolling back down resumes it.
+Collapsing runs **before** filtering, so "consecutive" means consecutive in the real
+feed rather than in the filtered view, and a run's repeat count does not change as the
+user types in the search box. Ordering is flipped exactly once, at the end — the list
+is **newest first**.
+
+Each row is two lines: a severity edge and message, then a subdued meta line (time ·
+source · `component` where the event carries one), with a `×N` badge for a collapsed
+run. Filters are four ANDed controls:
+
+- **Severity** — three *independent* toggles (`info` / `warning` / `error`), each
+  showing a live count, plus an `All` chip (`Logs_Btn_levelAll`) that checks all three.
+  Independent rather than the mutually exclusive `All | WARN | ERR` of the design
+  reference, which cannot express "INFO only" or "WARN + ERR".
+- **Source** — single-select `QComboBox`; populates dynamically from observed sources,
+  starting with "All sources". A restored-but-absent selection is retained as an option
+  (DEC-245).
+- **Search** — `QLineEdit` substring match against message and source
+  (case-insensitive) (`Logs_Edit_search`).
+- **Time window** — set by clicking a column of the activity strip; cleared with
+  `Logs_Btn_clearWindow`, by clicking the selected column again, or with Escape.
+
+**Counts differ between widgets, by design.** The filter chips count *rows* (a
+collapsed run counts once — what checking the chip will show you); the activity strip
+counts *events* (real volume). The `×N` badge is what explains the difference.
+
+Colours read from `active_theme()` at paint time, so a theme switch is picked up on the
+next repaint with no plumbing; `set_theme` only asks for that repaint.
+
+**Selection is keyed by `DiagEvent.seq`, never by row position.** Under newest-first
+ordering every row's index changes whenever an event arrives, so an index is
+meaningless a moment after it is read. A selected row that is filtered out or aged out
+of the feed keeps its detail in the inspector (DEC-210's rule) while losing its
+highlight.
+
+Follow behaviour: the tail is the **top** of the list. Following holds the view at the
+top; scrolling to older events suspends it and counts arrivals into
+`Logs_Btn_newEvents`; clicking that resumes.
+
+Keyboard (brief §9), scoped to the list with `WidgetShortcut` so it cannot fire while
+the user is typing in the search box: `/` focuses search, `f` toggles Follow, `Esc`
+clears the selection, Up/Down move it.
 
 ### Emitter contract
-`DiagnosticsService.log_event(level, source, message)` is called from production services at *state transitions only*, never per cycle:
+`DiagnosticsService.log_event(level, source, message, *, fields=None)` is called from
+production services at *state transitions only*, never per cycle:
 
 | Source | Emits when |
 |--------|------------|
-| `gui` | GUI start/exit; theme changed; demo mode activated; kernel warning acknowledged |
+| `gui` | GUI start/exit; theme changed; demo mode activated; kernel warning acknowledged; fan-name re-match; uncaught exception |
 | `polling` | First connection established; disconnected (after a prior connect); daemon-reported active profile detected |
 | `profile` | Activated/deactivated; profile load error |
+| `hwmon` / `openfan` / `gpu` | Hardware rescan result; OpenFan adoption; GPU fan restore |
+| `sensor` / `fan` / `api` | Alert onsets and recoveries, via `attach_alert_source` |
+
+`fields` (DEC-314) is optional structured metadata, carried **only where the emitter
+genuinely holds it** and would otherwise flatten it into the sentence — the alert
+ledger's `component` / `alert_key` / `duration_s`, an exception's type and value, a
+rescan's header count, an adopted port. It is never synthesised from message text, and
+an empty mapping renders nothing: the inspector shows no placeholder rows for absent
+data. `component` is the one field promoted onto the row and is the inspector's
+correlation key.
 
 Per-cycle work (every poll, every write attempt) must continue to use Python `logging` directly — the in-process event log is for breadcrumbs the user opens the Logs page to see, not the daemon journal.
 
-### Diagnostic Snapshots sub-section
-The four on-demand snapshots (Daemon Status, Controller Status, GPU State,
-System Journal) each live in their own card below the event table on the Logs
-page (`Logs_Card_daemonStatus` / `Logs_Card_controllerStatus` /
-`Logs_Card_gpuStatus` / `Logs_Card_systemJournal`), writing to that card's own
-`QPlainTextEdit` (`Logs_Text_daemonStatus`, …) via its own Refresh/Fetch button
-(`Logs_Btn_daemonStatus`, …). `Clear Logs` (`Logs_Btn_clear`) only clears the
-event-log table; the per-card snapshots are independent, so clearing the log can
-never wipe a journal block the user just fetched — the original DEC-111 bug (one
-shared `QPlainTextEdit` wiped by Clear Log) is structurally impossible now.
+### Inspector tabs (DEC-314)
+The four probes moved off the page body into `Logs_Tabs_inspector`. There is no
+permanent bottom section any more.
+
+| Tab | Contents | Loading |
+|-----|----------|---------|
+| **Details** | Severity, precise timestamp, source, full message, structured fields (only when present), repeat count + first/most-recent occurrence (only for a run), related events, `Copy event + context`, and a contextual action for sources with a known follow-up page | With the selection |
+| **Raw** | `Logs_Text_raw` — the **stored event record** in full, selectable and copyable. A GUI event was never a line of text, so this serialises the record rather than assembling a syslog-shaped string out of display fields and labelling it "raw". A row carrying a genuine verbatim source line is shown untouched | With the selection |
+| **Diagnostics** | Daemon Status, Controller (OpenFan), GPU State — `Logs_Text_daemonStatus` / `…controllerStatus` / `…gpuStatus`, each with its own Refresh (`Logs_Btn_daemonStatus`, …), all from the existing `DiagnosticsService.format_*` providers | **Lazy**, on first activation only |
+| **Journal** | `Logs_Text_systemJournal` + `Logs_Btn_systemJournal`, unchanged fetch/error/permission handling | **Lazy**, on first activation only |
+
+Neither probe tab polls: opening Logs must not spawn a `journalctl` subprocess, and
+re-selecting a tab does not silently re-run a probe — Refresh/Fetch is how a stale one
+is renewed.
+
+**Related events** correlate on `fields["component"]` where the event has one, else on
+`source`, and the panel *says which*. The design reference's preferred first tier — a
+stable sensor/channel/device id — does not exist in the event model; see
+`DECISIONS_OPEN_ITEMS.md`. `Filter to these` routes through the same public
+`LogsPage.show_related_logs(source, component)` the Alert Centre uses.
+
+`Clear Logs` (`Logs_Btn_clear`) only clears the event feed; the probe panes are
+independent, so clearing the log can never wipe a journal block the user just fetched —
+the original DEC-111 bug (one shared `QPlainTextEdit` wiped by Clear Log) remains
+structurally impossible.
+
+### Empty and error states
+`Waiting for events…` (nothing logged yet) · `No events match this filter` ·
+`Select an event to inspect` · the probe panes surface the real error text returned by
+the existing diagnostic/journal paths, with their Refresh/Fetch button as the retry.
 
 ### Journal access
 - Uses `subprocess.run()` with `--lines=100 --no-pager --output=short-iso`
@@ -395,8 +475,8 @@ shared `QPlainTextEdit` wiped by Clear Log) is structurally impossible now.
 - Permission failure → message explaining `systemd-journal` group requirement
 - `journalctl` not found → message explaining systemd dependency
 
-### Snapshot widget
-`QPlainTextEdit` with `setMaximumBlockCount(2000)` and a monospace font. The high cap is appropriate for journal pastes; the event-log table has its own 200-row cap that mirrors the deque.
+### Probe widget
+`QPlainTextEdit` with `setMaximumBlockCount(2000)` and a monospace font. The high cap is appropriate for journal pastes; the event list has its own 200-row cap that mirrors the deque.
 
 ## Implementation: Lease tab (removed at 2.0.0 — DEC-165)
 

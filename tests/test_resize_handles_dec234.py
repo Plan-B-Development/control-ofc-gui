@@ -7,6 +7,8 @@ grab zone) and added the sections the user asked to be resizable:
 * Overview — Fan Status ↕ Sensors (the top cards stay fixed above).
 * System State — health overview ↕ hardware registry.
 * Logs — event table ↕ diagnostic-snapshot cards (so the cards can be grown).
+  *(Retired: DEC-282 removed this handle, DEC-314 the pane it balanced against.
+  The Logs tests below now assert the absence, which is the surviving contract.)*
 
 These are presentation-only structural facts; the polling / VM layers are
 untouched, so the tests assert widget-tree outcomes, not behaviour.
@@ -23,10 +25,12 @@ import itertools
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QPlainTextEdit,
     QScrollArea,
     QSplitter,
     QTableWidget,
+    QTabWidget,
     QWidget,
 )
 
@@ -205,35 +209,44 @@ def test_system_state_advanced_actions_stay_out_of_the_splitter(qtbot):
     assert sp.findChild(QWidget, "SystemState_Section_advanced") is None
 
 
-# ── Logs: event table ↕ snapshot cards (grow the cards to read more) ──────
+# ── Logs: the retired left-column handle (DEC-282, then DEC-314) ──────────
 
 
 def test_logs_left_column_splitter(qtbot):
-    """DEC-282 retired this handle. It let you trade log-table height for snapshot
-    height, but only because the snapshots occupied a third of the column by default;
-    collapsed into "Diagnostic tools" there is nothing left to trade against, and the
-    table simply gets the column. The snapshots themselves are unchanged and still
-    reachable — that is what this now asserts."""
+    """DEC-282 retired this handle; DEC-314 retired the pane it used to balance.
+
+    The handle let you trade log-table height for snapshot height. DEC-282 collapsed
+    the snapshots into a "Diagnostic tools" section, leaving nothing to trade against;
+    DEC-314 moved the probes into the inspector's Diagnostics tab, so there is no
+    bottom section at all — which is what brief §2 asks for ("the old large Diagnostic
+    tools strip must no longer occupy a permanent bottom section").
+
+    **The DEC-234 contract under test is the absence of the left-column splitter**,
+    and it is unchanged. The widget lookups either side of it are scaffolding for
+    finding the pane, which is why the event list is matched on ``QAbstractItemView``
+    rather than the concrete class: DEC-314 moved it from ``QTableWidget`` to a
+    model/view ``QTableView`` and that is not a resize-handle fact.
+    """
     page = LogsPage(DiagnosticsService(AppState()))
     qtbot.addWidget(page)
     assert page.findChild(QSplitter, "Logs_Splitter_leftColumn") is None
 
-    table = page.findChild(QTableWidget, "Logs_Table_events")
-    section = page.findChild(QWidget, "Logs_Section_diagnostics")
-    assert table is not None and section is not None
-    # Collapsed by default (brief §15) — the previews exist but claim no space.
-    assert section.findChild(QPlainTextEdit, "Logs_Text_daemonStatus") is not None
-    # The table keeps its own floor; there is no longer a second pane to balance
-    # against it, so the paired snapshot floor went with the handle.
-    assert table.minimumHeight() >= 120
+    table = page.findChild(QAbstractItemView, "Logs_Table_events")
+    assert table is not None
+    # No permanent bottom section survives (brief §2).
+    assert page.findChild(QWidget, "Logs_Section_diagnostics") is None
+    # The probes moved rather than being removed — brief §15 forbids losing them.
+    assert page.findChild(QPlainTextEdit, "Logs_Text_daemonStatus") is not None
+    assert page.findChild(QTabWidget, "Logs_Tabs_inspector") is not None
 
 
 def test_logs_keeps_its_main_splitter(qtbot):
     """The horizontal table|inspector handle survives; the right column does not.
 
     DEC-282 removed the right column entirely (warnings panel above inspector). The
-    inspector it used to sit over is now the second child of the main splitter, hidden
-    until a row is selected.
+    inspector it used to sit over is the second child of the main splitter; DEC-314
+    made it permanent, because it now hosts the Diagnostics and Journal probes as well
+    as the selected event's detail.
     """
     page = LogsPage(DiagnosticsService(AppState()))
     qtbot.addWidget(page)

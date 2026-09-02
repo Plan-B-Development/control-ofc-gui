@@ -554,7 +554,9 @@ def test_on_rescan_ok_reports_an_adopted_openfan_and_drops_the_restart_caveat(qt
     monkeypatch.setattr(page, "_fetch_hardware_diagnostics", lambda: None)
     events: list[tuple] = []
     monkeypatch.setattr(
-        page._diag, "log_event", lambda lvl, sub, msg: events.append((lvl, sub, msg))
+        page._diag,
+        "log_event",
+        lambda lvl, sub, msg, **kw: events.append((lvl, sub, msg, kw.get("fields"))),
     )
 
     page._on_rescan_ok([], "/dev/ttyACM1")
@@ -567,7 +569,12 @@ def test_on_rescan_ok_reports_an_adopted_openfan_and_drops_the_restart_caveat(qt
         "here is the exact mis-direction DEC-266 removed"
     )
     assert page._rescan_result_label.property("class") == "SuccessChip"
-    assert ("info", "openfan", "OpenFanController adopted on /dev/ttyACM1 via rescan") in events
+    assert (
+        "info",
+        "openfan",
+        "OpenFanController adopted on /dev/ttyACM1 via rescan",
+        {"component": "/dev/ttyACM1"},
+    ) in events, "DEC-314: the adopted port is carried as a field, not only in the sentence"
 
 
 def test_on_rescan_ok_keeps_the_restart_caveat_when_nothing_was_adopted(qtbot, monkeypatch):
@@ -577,7 +584,9 @@ def test_on_rescan_ok_keeps_the_restart_caveat_when_nothing_was_adopted(qtbot, m
     monkeypatch.setattr(page, "_fetch_hardware_diagnostics", lambda: None)
     events: list[tuple] = []
     monkeypatch.setattr(
-        page._diag, "log_event", lambda lvl, sub, msg: events.append((lvl, sub, msg))
+        page._diag,
+        "log_event",
+        lambda lvl, sub, msg, **kw: events.append((lvl, sub, msg, kw.get("fields"))),
     )
 
     page._on_rescan_ok([], "")

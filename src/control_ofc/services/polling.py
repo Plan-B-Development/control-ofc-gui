@@ -381,7 +381,10 @@ class PollingService(QObject):
             self._state.set_active_profile(info.profile_name)
             if self._diag is not None:
                 self._diag.log_event(
-                    "info", "polling", f"Daemon active profile: {info.profile_name}"
+                    "info",
+                    "polling",
+                    f"Daemon active profile: {info.profile_name}",
+                    fields={"profile": info.profile_name, "profile_id": info.profile_id or ""},
                 )
         else:
             log.debug("Daemon has no active profile")

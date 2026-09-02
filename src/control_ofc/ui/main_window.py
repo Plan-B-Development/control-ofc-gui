@@ -208,7 +208,9 @@ class MainWindow(QWidget):
             client=self._client,
         )
         # DEC-210: Logs is now its own page (migrated Diagnostics Event Log +
-        # a Log Inspector). Shares the same DiagnosticsService feed.
+        # an inspector). DEC-314 made it a List + Inspector workflow and moved the
+        # diagnostic probes into its inspector tabs. Shares the same
+        # DiagnosticsService feed.
         # DEC-222: Logs is now the single active-warnings surface, so it needs
         # AppState (the warnings live there, not in the diagnostics event feed).
         self.logs_page = LogsPage(
@@ -336,6 +338,10 @@ class MainWindow(QWidget):
         # visible) then runs there; Export reuses the Logs page's bundle handler.
         self.footer.rescan_clicked.connect(self._on_footer_rescan)
         self.footer.export_bundle_clicked.connect(self.logs_page.export_bundle)
+        # DEC-314: the Logs inspector's contextual action leaves the page. The page
+        # names a destination; the stack and the sidebar are MainWindow's to move,
+        # exactly as for the Dashboard's Edit → Controls hop.
+        self.logs_page.navigate_requested.connect(self._navigate_to_page)
 
         # Sidebar active-profile selector (DEC-208): a third profile surface that
         # populates + reflects + applies via the same ProfileService path.
@@ -749,6 +755,15 @@ class MainWindow(QWidget):
         self.sidebar.activate_nav(NAV_SETTINGS)
         self.settings_page.focus_preferred_sensors(role)
 
+    def _navigate_to_page(self, page_id: int) -> None:
+        """Switch the stack and the sidebar together (DEC-314).
+
+        Both halves are required: setting the stack alone leaves the sidebar
+        highlighting the page the user just left.
+        """
+        self.page_stack.setCurrentIndex(page_id)
+        self.sidebar.select_page(page_id)
+
     def _open_control(self, control_id: str) -> None:
         """A Dashboard fan card's Edit was clicked (DEC-222).
 
@@ -825,6 +840,10 @@ class MainWindow(QWidget):
             f"{len(moves)} saved fan name(s) were re-matched after a hardware id change "
             f"(a driver update renamed the headers): "
             + ", ".join(f"{updated[new]} → {new}" for _old, new in sorted(moves.items())),
+            fields={
+                "remapped": str(len(moves)),
+                **{old: new for old, new in sorted(moves.items())},
+            },
         )
         # Repaint the affected rows; the file has just been written in full, so the
         # per-row persist slot is stood down for the burst (as DEC-228 does).
@@ -1084,7 +1103,12 @@ class MainWindow(QWidget):
             if box.clickedButton() is dismiss:
                 acknowledged.add(warning.id)
                 log.info("Acknowledged kernel warning %s", warning.id)
-                self._diag.log_event("info", "kernel", f"Kernel warning acknowledged: {warning.id}")
+                self._diag.log_event(
+                    "info",
+                    "kernel",
+                    f"Kernel warning acknowledged: {warning.id}",
+                    fields={"component": warning.id},
+                )
 
         if acknowledged != set(settings.acknowledged_kernel_warnings):
             self._settings_service.update(acknowledged_kernel_warnings=sorted(acknowledged))

@@ -877,8 +877,9 @@ class TestUnstyledSurfacesRenderThemed:
         assert colour == t.app_bg.lower()
 
     def test_readonly_output_pane_is_the_code_surface(self, qtbot, restore_app_theme):
-        """The Logs snapshot panes. ``QPlainTextEdit`` had no QSS rule at all, so
-        its viewport painted the palette's Base role — pure white until DEC-226."""
+        """The Logs page's read-only probe panes. ``QPlainTextEdit`` had no QSS rule
+        at all, so its viewport painted the palette's Base role — pure white until
+        DEC-226."""
         from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
 
         from control_ofc.ui.theme import apply_theme
@@ -1027,9 +1028,9 @@ class TestSettingsPathLabelsFollowTheme:
 
 class TestReadOnlyPaneStyling:
     """The one unstyled widget class that earned a rule rather than just palette
-    backing. Every ``QPlainTextEdit`` in the app — the four Logs snapshot
-    previews and the log inspector's raw-message pane — is read-only monospace
-    command/log output, which is what code_block_bg is for (DEC-226)."""
+    backing. Every ``QPlainTextEdit`` in the app — the Logs inspector's probe panes
+    and its message/raw panes — is read-only monospace command/log output, which is
+    what code_block_bg is for (DEC-226)."""
 
     def test_plain_text_edit_uses_the_code_block_surface(self):
         t = default_dark_theme()

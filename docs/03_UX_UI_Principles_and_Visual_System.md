@@ -256,6 +256,18 @@ it is not editable), the Follow toggle, the glyph-only inspector close button, a
 glyph's problem in a different coat, and it carries an explicit name for the same
 reason. The Alert Centre's buttons all carry real words and need none.
 
+**DEC-314 added five more and swept them the same way**: the event list and the
+related-events list (both item views — `name_value_control` deliberately covers only
+value-shaped controls, and Qt's `QAccessibleTable` does not fall through to the current
+item the way a non-editable combo does, so a plain `setAccessibleName` is both sufficient
+and correct there), the Raw pane, the keyboard-operable activity histogram, and the
+contextual action button. That last one is the DEC-268 rule one step further than the AST
+lint can see: it starts label-less and is filled only for a source with a known follow-up,
+so it needs a name for the moment before that — but Qt's `QAccessibleButton` *prefers*
+`accessibleName` over the visible text, so a static generic name would **replace** the
+good specific label rather than back it up. The name is therefore re-set alongside the
+text, and always says what the button does.
+
 That page now also has the second kind of test the rule requires. An AST lint proves
 the `name_value_control` call was written; `test_logs_page.py::test_every_new_control_announces_a_name`
 resolves what a screen reader would actually read — explicit name, then buddy label,

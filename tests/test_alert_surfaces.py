@@ -142,9 +142,9 @@ class TestLogsPageAlertSurface:
         qtbot.addWidget(page)
         diag.log_event("warning", "fan", "CPU_FAN stall detected")
         diag.log_event("info", "polling", "Daemon connected")
-        assert len(page._rows) == 2
+        assert len(page._model.rows()) == 2
 
         page.show_related_logs("fan", "cpu_fan")
 
-        assert [r.source for r in page._rows] == ["fan"]
+        assert [r.source for r in page._model.rows()] == ["fan"]
         assert page._source_combo.currentText() == "fan"

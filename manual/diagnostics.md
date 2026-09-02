@@ -149,9 +149,16 @@ The Super-I/O Architecture section requires `control-ofc-daemon` ≥ v2.7.0.
 
 ![Logs page](../screenshots/auto/08_logs.png)
 
-A live, filterable table of in-process GUI events: daemon connect/disconnect, profile activations and override actions, alert onsets and recoveries, theme changes, and the like. The log retains up to 200 entries (oldest discarded first).
+A live, filterable list of in-process GUI events: daemon connect/disconnect, profile activations and override actions, alert onsets and recoveries, theme changes, and the like. The log retains up to 200 entries (oldest discarded first).
 
-The table is the page. Everything else is either one line tall or opens when you ask for it: a compact alert bar sits above it, log detail opens beside it when you select a row, and the diagnostic snapshots live in a collapsed section beneath.
+The page is a **find it, then understand it** workflow: a compact alert bar and an
+activity strip across the top, the event list on the left, and an inspector on the right
+that explains whichever event you have selected — and which also holds the diagnostic
+probes, so they no longer take a strip along the bottom.
+
+**Newest entries are at the top.** Repeated identical events collapse into a single row
+carrying a `×N` badge rather than filling the list; the inspector tells you how many
+times it happened and when it started.
 
 Three concepts that look similar but answer different questions:
 
@@ -159,7 +166,19 @@ Three concepts that look similar but answer different questions:
 |---------|---------------------|-------------|
 | **Event Log** (this page) | *What has the GUI been doing in this session?* | In-process only, capped at 200 |
 | **Alerts** (this page) | *What is wrong right now — and what was wrong a moment ago?* | An alert stops being active when the condition resolves, but stays listed as **recovered** until you acknowledge it, so one that clears before you look at it can still be read afterwards. **"Acknowledge all"** records that you have seen them; it does not claim the condition is fixed, and it never suppresses the same problem happening again |
-| **System Journal** (snapshot button below) | *What happened across restarts on the daemon side?* | Persisted by systemd |
+| **System Journal** (inspector tab) | *What happened across restarts on the daemon side?* | Persisted by systemd |
+
+### Activity strip
+
+A row of columns above the list showing how many events arrived over the retained feed,
+coloured by severity so a burst of errors is visible without reading a single line.
+Click a column to narrow the list to that slice of time; click it again, press
+<kbd>Esc</kbd>, or use **Clear time filter** to go back to everything. It is keyboard
+operable — <kbd>←</kbd>/<kbd>→</kbd> to move, <kbd>Space</kbd> to apply.
+
+The column heights count *events*, while the severity chips beside the search box count
+*rows*. Those differ whenever a run has collapsed, which is what the `×N` badge is
+telling you.
 
 ### Alert bar
 
@@ -182,37 +201,52 @@ same problem happening again later always raises a fresh alert.
 
 | Control | Behaviour |
 |---------|-----------|
-| **Info / Warning / Error toggles** | Multi-select severity filter. Uncheck a level to hide every row at that severity. |
+| **All** | Re-checks every severity in one click. |
+| **INFO / WARN / ERR chips** | Independent severity filters, each showing how many rows it holds. Uncheck a level to hide every row at that severity; uncheck all three and the list is empty, which is a real state rather than a reset. The counts stay put when you uncheck a chip, so you can see what turning it back on would bring. |
 | **Source dropdown** | Single-select source filter — `gui`, `polling`, `profile`, `kernel`, etc. New sources appear automatically the first time they fire. |
 | **Search** | Case-insensitive substring match against message text and source. |
-| **Follow** | Follows new entries as they arrive. Scroll away from the bottom and it pauses, showing `N new events ↓` — click that to jump back to the newest and resume. You are never yanked back to the bottom while reading older rows. |
+| **Follow** | Follows new entries as they arrive at the top of the list. Scroll away and it pauses, showing `N new events ↑` — click that to jump back to the newest and resume. You are never yanked back while reading older rows. |
 
-Selecting a row opens a **Log detail** pane on the right with the full timestamp, level,
-source and untruncated message, and a **Copy** button. Close it with **✕** and the table
-takes the full width back; nothing is reserved for it while no row is selected.
+Keyboard shortcuts, active while the list has focus: <kbd>↑</kbd>/<kbd>↓</kbd> to move
+the selection, <kbd>/</kbd> to jump to the search box, <kbd>f</kbd> to toggle Follow,
+<kbd>Esc</kbd> to clear the selection.
 
-### Log Actions
+### Inspector
+
+The pane on the right. Selecting a row fills its first two tabs; the last two are
+session tools that do not depend on which event is selected. Close it with **✕** to give
+the list the full width. Selecting an event again brings it back.
+
+| Tab | What it shows |
+|-----|---------------|
+| **Details** | Severity, the precise timestamp, source, and the full untruncated message. Where the event carried structured data — an alert's component, an exception type, a rescan's header count — it is listed as named fields; where it did not, nothing is shown rather than empty rows. A repeated event also reports how many times and when it started. Below that, **related events** and one-click actions. |
+| **Raw** | The stored event record in full, selectable and copyable. This is the event as it was recorded, not a reconstructed log line. |
+| **Diagnostics** | The three on-demand probes — **Daemon Status**, **Controller (OpenFan)**, **GPU State** — each with its own **Refresh**. |
+| **Journal** | Recent entries from the `control-ofc-daemon.service` systemd journal, with **Fetch** / **Refresh**. |
+
+Diagnostics and Journal are fetched the first time you open their tab, not when you open
+the page — so simply visiting Logs never shells out to the system journal. Clearing the
+event log never wipes a probe you just fetched.
+
+#### Related events, and what "related" means here
+
+An event carrying a **component** (an alert about a specific fan or sensor, say) lists
+other events about that same component. Otherwise it falls back to other events from the
+same source, and the panel says so — because "same source tag" is a weaker claim than
+"related", and it should not pretend otherwise. **Filter to these** narrows the list to
+that group.
+
+#### Actions
 
 | Button | Action |
 |--------|--------|
-| **Clear Logs** | Empty the event log table (does not affect the diagnostic tools below). |
-| **Copy** | Copy the *currently-visible* rows, after filters and search are applied. |
+| **Copy event + context** | Copy the full record plus its related events. |
+| **Open Hardware / Open Controls** | Appears for events from a source with an obvious next place to look, and takes you there. |
+| **Clear Logs** (toolbar) | Empty the event log (does not affect the inspector's probes). |
+| **Copy** (toolbar) | Copy the *currently-visible* rows, after filters, search and time window are applied. |
 
 Exporting a support bundle is the footer's **Export Support Bundle** button, which is
 available from every page.
-
-### Diagnostic tools
-
-A collapsed section below the table, expanded with the `▸ Diagnostic tools` header. Each
-tool fetches an on-demand detail dump into its own monospace view, so clearing the event
-log never wipes a snapshot you just fetched.
-
-| Button | What it Fetches |
-|--------|----------------|
-| **Daemon Status** | Current daemon health snapshot formatted as text |
-| **Controller (OpenFan)** | OpenFan controller detection and capability details |
-| **GPU State** | AMD GPU detection, fan capabilities, and current fan state |
-| **System Journal** | Recent entries from the `control-ofc-daemon.service` systemd journal |
 
 ### Export Support Bundle
 

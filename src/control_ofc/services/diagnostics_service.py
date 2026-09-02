@@ -10,14 +10,15 @@ import subprocess
 import sys
 import time
 from collections import deque
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from control_ofc.constants import EXPECTED_API_VERSION
-from control_ofc.services.alerts import transition_to_log
+from control_ofc.services.alerts import transition_to_fields, transition_to_log
 from control_ofc.services.app_state import AppState
 
 if TYPE_CHECKING:
@@ -84,12 +85,28 @@ def format_uptime(seconds: int) -> str:
 
 @dataclass
 class DiagEvent:
-    """A timestamped diagnostic event."""
+    """A timestamped diagnostic event.
+
+    ``seq`` is the event's **stable identity** (DEC-314) and is assigned by
+    :meth:`DiagnosticsService.log_event` from a monotonic per-session counter. The
+    Logs page keys selection off it. Before it existed, selection was restored by
+    frozen-view-model *equality*, which two identical messages logged in the same
+    second satisfy — so the inspector could silently re-anchor onto the wrong
+    event. A default of ``0`` keeps hand-built events (tests, fixtures) valid;
+    only the service mints real ones.
+
+    ``fields`` is optional structured metadata, carried **only where an emitter
+    genuinely has it** and would otherwise flatten it into the message string. It
+    is never synthesised from the message, and an empty mapping renders nothing —
+    the Logs inspector shows no placeholder rows for absent data.
+    """
 
     timestamp: float
     level: str  # "info", "warning", "error"
     source: str  # emitter tag, e.g. "polling", "api"
     message: str
+    seq: int = 0
+    fields: dict[str, str] = field(default_factory=dict)
 
     @property
     def time_str(self) -> str:
@@ -122,6 +139,11 @@ class DiagnosticsService(QObject):
         self._settings_service = settings_service
         self._profile_service = profile_service
         self._events: deque[DiagEvent] = deque(maxlen=MAX_EVENTS)
+        # Monotonic event identity (DEC-314). Never reset by ``clear_events``: an id
+        # that is reused after a clear can collide with one the Logs page is still
+        # holding as its selection, which is the exact ambiguity ``seq`` exists to
+        # remove.
+        self._seq = 0
         self.last_hw_diagnostics: HardwareDiagnosticsResult | None = None
 
     @property
@@ -152,7 +174,7 @@ class DiagnosticsService(QObject):
     def _on_alert_transitions(self, transitions: list) -> None:
         for tr in transitions:
             level, source, message = transition_to_log(tr)
-            self.log_event(level, source, message)
+            self.log_event(level, source, message, fields=transition_to_fields(tr))
 
     def set_hw_diagnostics(self, result: HardwareDiagnosticsResult) -> None:
         """Record a ``GET /diagnostics/hardware`` result — the **only** writer.
@@ -183,12 +205,29 @@ class DiagnosticsService(QObject):
         if (incoming.vendor or incoming.name) or not (known.vendor or known.name):
             self._state.board_info = incoming
 
-    def log_event(self, level: str, source: str, message: str) -> None:
+    def log_event(
+        self,
+        level: str,
+        source: str,
+        message: str,
+        *,
+        fields: Mapping[str, str] | None = None,
+    ) -> None:
+        """Append one event to the session feed.
+
+        ``fields`` is structured metadata the emitter already holds. Pass it only
+        when it is real: the Logs inspector renders exactly the keys given and
+        nothing when there are none (DEC-314). Values are coerced to ``str`` here so
+        a caller may hand over ints, floats or enums without formatting them first.
+        """
+        self._seq += 1
         event = DiagEvent(
             timestamp=time.time(),
             level=level,
             source=source,
             message=message,
+            seq=self._seq,
+            fields={str(k): str(v) for k, v in (fields or {}).items()},
         )
         self._events.append(event)
         log.log(

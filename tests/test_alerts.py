@@ -14,8 +14,10 @@ from control_ofc.api.models import FanReading, SensorReading
 from control_ofc.services.alerts import (
     AlertCondition,
     AlertLedger,
+    AlertOccurrence,
     AlertState,
     AlertTransition,
+    transition_to_fields,
     transition_to_log,
 )
 from control_ofc.services.app_state import AppState
@@ -338,3 +340,49 @@ def test_observer_is_opt_in(qtbot, attached):
 
     logged = [e for e in diag.events if "stall detected" in e.message]
     assert len(logged) == (1 if attached else 0)
+
+
+class TestTransitionToFields:
+    """DEC-314: the structured half of a transition, for ``DiagEvent.fields``."""
+
+    @staticmethod
+    def _occ(**overrides):
+        base = {
+            "key": "fan:stall:cpu_fan",
+            "activation_epoch": 1_700_000_000.0,
+            "level": "error",
+            "source": "fan",
+            "component": "cpu_fan",
+            "title": "CPU_FAN stall",
+            "detail": "Fan 'cpu_fan' stall detected",
+            "last_detected": 1_700_000_003.0,
+        }
+        return AlertOccurrence(**{**base, **overrides})
+
+    def test_onset_carries_the_occurrences_identity(self):
+        fields = transition_to_fields(AlertTransition("onset", self._occ()))
+        assert fields["alert"] == "CPU_FAN stall"
+        assert fields["alert_key"] == "fan:stall:cpu_fan"
+        assert fields["component"] == "cpu_fan"
+        assert "first_detected" in fields
+
+    def test_onset_omits_duration(self):
+        """On an onset it is ~0 by construction and would read as real data."""
+        assert "duration_s" not in transition_to_fields(AlertTransition("onset", self._occ()))
+
+    def test_recovery_reports_how_long_it_lasted(self):
+        occ = self._occ(recovered_at=1_700_000_003.0)
+        fields = transition_to_fields(AlertTransition("recovered", occ))
+        assert fields["duration_s"] == "3.0"
+
+    def test_a_componentless_alert_omits_the_key_rather_than_emitting_a_blank(self):
+        """Brief §7.1 forbids placeholder rows — an empty component would render as
+        one, and would also make the inspector correlate on "" ."""
+        fields = transition_to_fields(AlertTransition("onset", self._occ(component="")))
+        assert "component" not in fields
+
+    def test_it_does_not_change_the_log_triple(self):
+        """Deliberately a separate function rather than a wider tuple: the two answer
+        different questions and have different callers."""
+        tr = AlertTransition("onset", self._occ())
+        assert transition_to_log(tr) == ("error", "fan", "Fan 'cpu_fan' stall detected")

@@ -18,6 +18,7 @@ from control_ofc.api.models import (
     SensorReading,
     SubsystemStatus,
 )
+from control_ofc.services.alerts import AlertOccurrence, AlertTransition
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import (
     DiagnosticsService,
@@ -420,3 +421,74 @@ class TestExportSupportBundle:
         data = json.loads(bundle_path.read_text())
         assert "gpu" in data
         assert data["gpu"]["model"] == "RX 7900 XTX"
+
+
+class TestEventIdentityAndFields:
+    """DEC-314: a stable per-event id and optional structured metadata."""
+
+    def test_seq_increases_monotonically(self):
+        svc = DiagnosticsService()
+        for i in range(3):
+            svc.log_event("info", "gui", f"m{i}")
+        assert [e.seq for e in svc.events] == [1, 2, 3]
+
+    def test_seq_is_not_reset_by_clearing_the_feed(self):
+        """An id reused after a clear can collide with one a view still holds as its
+        selection — the exact ambiguity ``seq`` exists to remove."""
+        svc = DiagnosticsService()
+        svc.log_event("info", "gui", "before")
+        svc.clear_events()
+        svc.log_event("info", "gui", "after")
+        assert svc.events[0].seq == 2
+
+    def test_two_identical_messages_in_one_instant_are_distinguishable(self):
+        """The latent bug this closes: selection used to be restored by frozen
+        view-model equality, which identical messages logged in the same second
+        satisfy."""
+        svc = DiagnosticsService()
+        svc.log_event("warning", "fan", "stall")
+        svc.log_event("warning", "fan", "stall")
+        a, b = svc.events
+        assert (a.level, a.source, a.message) == (b.level, b.source, b.message)
+        assert a.seq != b.seq
+
+    def test_fields_default_to_an_empty_mapping(self):
+        svc = DiagnosticsService()
+        svc.log_event("info", "gui", "no metadata here")
+        assert svc.events[0].fields == {}
+
+    def test_fields_are_coerced_to_strings(self):
+        """So a caller may hand over ints or enums without formatting them first."""
+        svc = DiagnosticsService()
+        svc.log_event("info", "hwmon", "rescan", fields={"headers_found": 7})
+        assert svc.events[0].fields == {"headers_found": "7"}
+
+    def test_alert_transitions_carry_their_structured_context(self):
+        """The richest structured context the GUI holds, and the one it used to
+        flatten into a sentence and discard."""
+        state = AppState()
+        svc = DiagnosticsService(state)
+        svc.attach_alert_source(state)
+        svc._on_alert_transitions(
+            [
+                AlertTransition(
+                    "onset",
+                    AlertOccurrence(
+                        key="fan:stall:cpu_fan",
+                        activation_epoch=1_700_000_000.0,
+                        level="error",
+                        source="fan",
+                        component="cpu_fan",
+                        title="CPU_FAN stall",
+                        detail="Fan stalled",
+                        last_detected=1_700_000_000.0,
+                    ),
+                )
+            ]
+        )
+        event = svc.events[-1]
+        assert event.source == "fan"
+        assert event.fields["component"] == "cpu_fan"
+        assert event.fields["alert_key"] == "fan:stall:cpu_fan"
+        assert event.fields["alert"] == "CPU_FAN stall"
+        assert "duration_s" not in event.fields, "an onset has not lasted any time yet"

@@ -135,7 +135,9 @@ control_ofc/
     overview_view.py           # Overview page VM — DEC-209
     system_state_view.py       # System State page VM — DEC-211
     hardware_view.py           # Hardware / cooling-readiness page VM — DEC-212
-    logs_view.py               # Logs page VM — DEC-210
+    logs_view.py               # Logs page VM — DEC-210; the whole List+Inspector
+                               #   derivation since DEC-314 (collapse, filter, facet
+                               #   counts, histogram buckets, correlation)
     dashboard_view.py          # Dashboard page VM — DEC-219 (Phase 7.2)
     controls_view.py           # Controls page VM — DEC-214, grown DEC-219 (Phase 7.3)
   knowledge/                   # pure (stdlib-only) hardware-knowledge modules — no Qt/services deps (moved out of ui/ in v2.8.0)
@@ -186,7 +188,9 @@ control_ofc/
       controls_page.py
       settings_page.py
       overview_page.py         # Overview page — daemon health + device discovery + sensor & fan tables (DEC-209)
-      logs_page.py             # Logs page — event stream + filters + diagnostic snapshots + Export Bundle (DEC-210)
+      logs_page.py             # Logs page — List + Inspector: activity strip, event list,
+                               #   tabbed inspector (Details/Raw/Diagnostics/Journal),
+                               #   Export Bundle (DEC-210, redesigned DEC-314)
       system_state_page.py     # System State page — /diagnostics/hardware report + PWM/GPU verify + Rescan (DEC-211)
       hardware_page.py         # Hardware page — /inventory/readiness checklist + Super-I/O + Probe Ports (DEC-212)
       theme_page.py            # Theme page — theme editor + presets + typography + app-wide apply (DEC-215)
@@ -199,6 +203,9 @@ control_ofc/
                                #   deep-link (DEC-222; replaced summary_card, fan_zone_card,
                                #   quick_actions_panel and rpm_sparkline)
       alert_status_bar.py      # compact alert summary bar (replaced warnings_view in v2.47.0)
+      log_event_model.py       # QAbstractTableModel over the Logs view-model rows (DEC-314)
+      log_row_delegate.py      # painted two-line Logs row: severity edge, message, meta (DEC-314)
+      activity_histogram.py    # Logs activity-over-time strip, statically painted (DEC-314)
       alert_center_dialog.py   # full alert-history dialog — the alert lifecycle surface
       system_state_cards.py    # System State page card widgets
       gpu_dedicate_dialog.py   # one-click zero-RPM GPU-fan setup

@@ -35,6 +35,7 @@ runs the other way.
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -267,3 +268,32 @@ def transition_to_log(tr: AlertTransition) -> tuple[str, str, str]:
     if tr.kind == "onset":
         return (occ.level, occ.source, occ.detail)
     return ("info", occ.source, f"{occ.title} recovered after {occ.duration_s:.1f}s")
+
+
+def transition_to_fields(tr: AlertTransition) -> dict[str, str]:
+    """The structured half of a transition, for ``DiagEvent.fields`` (DEC-314).
+
+    Deliberately separate from :func:`transition_to_log` rather than widening its
+    tuple: the two answer different questions (what sentence to show vs what the
+    occurrence actually was), and the callers of each are different.
+
+    This is the richest structured context the GUI holds and previously threw away.
+    An ``AlertOccurrence`` carries ``key``, ``component``, ``title`` and
+    ``activation_epoch`` — all of which were flattened into one sentence and lost, so
+    the Logs page had nothing to correlate on but the source tag. ``component`` in
+    particular is the second tier of the inspector's related-events ordering.
+
+    ``duration_s`` is emitted on recovery only: on an onset it is the time since
+    activation, which is ~0 by construction and would read as meaningful data.
+    """
+    occ = tr.occurrence
+    fields = {
+        "alert": occ.title,
+        "alert_key": occ.key,
+        "first_detected": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(occ.activation_epoch)),
+    }
+    if occ.component:
+        fields["component"] = occ.component
+    if tr.kind != "onset":
+        fields["duration_s"] = f"{occ.duration_s:.1f}"
+    return fields

@@ -102,7 +102,10 @@ def _handle_uncaught(exc_type, exc, tb) -> None:
     if _diagnostics is not None:
         try:
             _diagnostics.log_event(
-                "error", "gui", f"Uncaught exception: {exc_type.__name__}: {exc}"
+                "error",
+                "gui",
+                f"Uncaught exception: {exc_type.__name__}: {exc}",
+                fields={"exception": exc_type.__name__, "detail": str(exc)},
             )
         except Exception:
             log.debug("Failed to record uncaught exception in diagnostics", exc_info=True)

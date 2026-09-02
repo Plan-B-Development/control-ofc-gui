@@ -34,17 +34,21 @@ def test_handle_uncaught_records_diagnostics(monkeypatch):
     recorded = []
 
     class FakeDiag:
-        def log_event(self, level, source, message):
-            recorded.append((level, source, message))
+        def log_event(self, level, source, message, *, fields=None):
+            recorded.append((level, source, message, fields))
 
     monkeypatch.setattr(main_mod, "_diagnostics", FakeDiag())
     main_mod._handle_uncaught(*_exc_info(RuntimeError("kaboom")))
     assert recorded, "expected a diagnostics breadcrumb"
-    level, source, message = recorded[0]
+    level, source, message, fields = recorded[0]
     assert level == "error"
     assert source == "gui"
     assert "RuntimeError" in message
     assert "kaboom" in message
+    # DEC-314: the hook holds the exception type and value as objects; flattening
+    # them into the sentence and discarding the structure is what the fields
+    # parameter exists to stop.
+    assert fields == {"exception": "RuntimeError", "detail": "kaboom"}
 
 
 def test_handle_uncaught_survives_diagnostics_failure(monkeypatch, caplog):
