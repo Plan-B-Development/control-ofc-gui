@@ -143,6 +143,13 @@ control_ofc/
     characterization_view.py   # PWM/RPM characterisation dialog VM — DEC-313/315
     cooling_device_view.py     # Cooling-device topology VM — DEC-316 (AIO-MB Phase 4).
                                #   Phase 4 builds the model; Phase 6 owns the card.
+    validation_view.py         # Validation-session VM — DEC-317 (AIO-MB Phase 5).
+                               #   Owns WORDING only: result meaning arrives
+                               #   pre-decided from the daemon and is never
+                               #   recalculated here. Phase 6 owns the panel.
+    validation_export.py       # Validation JSON + CSV serializers — DEC-317.
+                               #   Returns text; never writes a file. Phase 6 owns
+                               #   the Export button and the save dialog.
     pump_protection.py         # THE pump-protection predicate + the enforced-floor
                                #   lookup. Daemon-first since DEC-316: prefers the
                                #   header's reported stop_permitted /

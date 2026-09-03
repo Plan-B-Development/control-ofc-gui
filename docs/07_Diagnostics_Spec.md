@@ -768,6 +768,40 @@ links are `RichText`. Doc links use the existing `doc_url`/`doc_title` mechanism
 ordinary hwmon chips (amdgpu/k10temp/nvme/spd5118) are never listed as Super-I/O, so
 the section shows a concise result rather than a card per device.
 
+## Implementation: Validation sessions (DEC-317, AIO-MB Phase 5 — backend only)
+
+**There is no UI for this yet, deliberately.** Phase 5 ships the data model, the API client
+and the serializers; **Phase 6 owns the panel, the live status, the charts, the export
+button and the external-measurement form.** Nothing on any page changes in GUI v2.55.0, and
+there is no debug hook to remove.
+
+What exists GUI-side, for Phase 6 to build on:
+
+- `api/models.py` — `ValidationSession` and its parts, `parse_validation_session`,
+  `parse_validation_session_summary` (the miniature on `/status` + `/poll`), and
+  `parse_validation_session_index`.
+- `api/client.py` — start / read / stop / cancel, `add_validation_marker`,
+  `add_validation_measurement`, `validation_sessions`, `validation_session_by_id`. All
+  capability-gated on `control.validation_sessions`; nothing is clamped or defaulted
+  client-side.
+- `services/validation_view.py` — the Qt-free VM: finding rows, evidence rows and
+  per-member telemetry ranges.
+- `services/validation_export.py` — the Qt-free serializers: the JSON session document, and
+  CSV for samples, events and findings. They return **text**; the save dialog is Phase 6's.
+
+Three presentation rules the VM already encodes, which a Phase 6 renderer must not undo:
+
+1. **`unavailable` and `not_tested` are neutral, never error-styled.** Hardware that does
+   not expose a capability has not failed, and a diagnostic nobody ran has not failed
+   either. A red row would tell the user their cooler is broken when nothing of the sort was
+   established.
+2. **A possible device-side control is `observed` evidence, not a fault.** Reporting working
+   motherboard PWM control as a failed write is the specific outcome the classification
+   exists to prevent.
+3. **An unrecognised finding id or result token renders humanised, and an unknown state maps
+   to a muted tone** (the 273-i rule). A newer daemon's token must not make evidence vanish,
+   and must not paint a red row on a GUI that has not learned the word.
+
 ## Nice-to-have later
 - background self-checks
 - one-click diagnostics redaction

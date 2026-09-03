@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.55.0] — 2026-09-03
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor); the new surface is gated on
+the daemon's `control.validation_sessions` capability and is simply absent against
+anything older.
+
+**No user-visible UI in this release, by design.** AIO-MB Phase 5 owns the validation
+data model, the API client and the serializers; **Phase 6 owns every panel, chart, dialog
+and export button** that will draw them. Nothing on any page changes.
+
+### Added
+- **Typed models for validation sessions** (AIO-MB Phase 5, DEC-317) — session, metadata,
+  samples, event timeline, referenced diagnostics, external measurements and the evidence
+  summary, with unknown-field tolerance so a newer daemon cannot break parsing.
+- **Client methods** for the whole session surface: start, read, stop, cancel, place a
+  marker, attach an external measurement, and list or fetch a retained session. Nothing is
+  clamped or defaulted client-side — the daemon owns the pump floor, the thermal refusal
+  and the sweep-member default, and a copy here would be a second definition that drifts.
+- **`FanReading.pwm_readback_pct`** — the hardware readback of `pwmN`, distinct from
+  `last_commanded_pwm`. `None` means "the daemon did not say", never 0%.
+- **A Qt-free view-model** (`services/validation_view.py`) deriving finding rows, evidence
+  rows and per-member telemetry ranges. It owns wording only: result meaning arrives
+  pre-decided from the daemon and is never recalculated here. An unrecognised finding id
+  or result token renders humanised rather than being dropped, and both `unavailable` and
+  `not_tested` are styled neutrally — neither is a fault.
+- **Qt-free serializers** (`services/validation_export.py`) producing the JSON session
+  document and CSV for samples, events and findings. Absent telemetry writes an empty
+  cell, never `0`; each member keeps its own row, so two radiators are never averaged into
+  one invented series. The CSV column set is derived from the sample dataclass, so a field
+  added to the model cannot silently go missing from the export.
+
 ## [2.54.0] — 2026-09-03
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor); the new surface is gated on

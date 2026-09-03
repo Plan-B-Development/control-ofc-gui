@@ -230,6 +230,11 @@ class ControlCapability:
     # additive `HwmonHeader` fields that shipped alongside need no flag, since
     # each is optional and absence already means "fall back".
     cooling_devices: bool = False
+    # AIO-MB Phase 5 (daemon >= 2.32.0): the validation-session surface.
+    # Gate on this rather than probing — an older daemon 404s these routes from
+    # the route fallback, which is indistinguishable from a genuine "no such
+    # session" without inspecting `error.code`.
+    validation_sessions: bool = False
 
 
 @dataclass
@@ -441,6 +446,12 @@ class DaemonStatus:
     # to []. Display-only; surfaced on the Controls page card for the control.
     skipped_controls: list[SkippedControl] = field(default_factory=list)
     control_outputs: list[ControlOutput] = field(default_factory=list)
+    # AIO-MB Phase 5: the current or most recent validation session, in
+    # miniature, so a live panel needs no second request. `None` when no session
+    # has ever run OR the daemon predates 2.32.0 — absence is not an error, and
+    # the two cases are deliberately indistinguishable because nothing should
+    # behave differently between them.
+    validation_session: ValidationSessionSummary | None = None
     # DEC-194: the daemon's active profile, mirrored onto every /poll status so an
     # external activation (CLI --profile, another client, systemd) shows within
     # ~1 s instead of the slow /profile/active refresh. `None` (not "") when the
@@ -556,6 +567,17 @@ class FanReading:
     duty_pct: int | None = None
     age_ms: int = 0
     stall_detected: bool | None = None
+    # AIO-MB Phase 5: the hardware readback of `pwmN`, as a percent.
+    #
+    # Distinct from ``last_commanded_pwm``, which for an hwmon header carries
+    # whichever of the poll's readback and the engine's command wrote last
+    # (register row AIO5-a). Phase 5 needs the two as separate columns, and a
+    # device-side override is classified from `command low + readback low + RPM
+    # high` — neither is expressible while they share a field.
+    #
+    # hwmon only. ``None`` means "the daemon did not say" — never 0% — and is
+    # what a pre-2.32 daemon, an OpenFan channel and a GPU fan all report.
+    pwm_readback_pct: int | None = None
     # AIO-MB Phase 4: the driver's own `fanN_alarm` bit, sampled at 1 Hz.
     # `None` means "not known" — either the driver exposes no alarm attribute,
     # or the entry was refreshed by a PWM write without re-reading it. Never
@@ -1692,6 +1714,9 @@ def parse_status(data: dict) -> DaemonStatus:
             # to 0.0 would invent a duty the daemon never reported.
             if isinstance(entry.output_pct, (int, float)) and not isinstance(entry.output_pct, bool)
         ],
+        # AIO-MB Phase 5: omitted when no session has ever run, and absent
+        # entirely before daemon 2.32.0 — `None` either way.
+        validation_session=parse_validation_session_summary(data),
         # DEC-194: absent key (older daemon, or no active profile) → None, so the
         # polling fast-path leaves the /profile/active fallback authoritative. A
         # present value updates the active profile every poll.
@@ -2308,3 +2333,386 @@ def parse_gpu_verify_result(data: dict) -> GpuVerifyResult:
         details=data.get("details", ""),
         restore_failed=bool(data.get("restore_failed", False)),
     )
+
+
+# ---------------------------------------------------------------------------
+# Validation sessions (AIO-MB Phase 5, daemon >= 2.32.0)
+# ---------------------------------------------------------------------------
+#
+# A validation session records what an already-configured cooler actually did,
+# and may orchestrate the existing PWM verify and characterisation to produce
+# evidence about it. Phase 5 ships the model and the serializers; **Phase 6 owns
+# every pixel** — there is deliberately no page, dialog or button here.
+#
+# Two rules run through all of it, and both are the daemon's semantics rather
+# than the GUI's to reinterpret:
+#
+#   * The daemon owns result meaning. A finding arrives pre-decided; the GUI
+#     renders wording for a token and never recalculates PASS/FAIL/override.
+#   * Every enum-ish value is an opaque token. An unrecognised one is RENDERED
+#     humanised, never dropped (273-i) — a newer daemon may add one.
+
+# Session lifecycle tokens.
+VALIDATION_STATE_IDLE = "idle"
+VALIDATION_STATE_RECORDING = "recording"
+VALIDATION_STATE_COMPLETED = "completed"
+VALIDATION_STATE_CANCELLED = "cancelled"
+VALIDATION_STATE_INTERRUPTED = "interrupted"
+VALIDATION_STATE_ERROR = "error"
+
+# Result tokens. `UNAVAILABLE` is NOT a failure — the hardware simply does not
+# expose what the finding would need — and absence of a diagnostic is
+# `NOT_TESTED`, never `PASS`.
+VALIDATION_RESULT_PASS = "pass"
+VALIDATION_RESULT_FAIL = "fail"
+VALIDATION_RESULT_OBSERVED = "observed"
+VALIDATION_RESULT_NOT_OBSERVED = "not_observed"
+VALIDATION_RESULT_NOT_TESTED = "not_tested"
+VALIDATION_RESULT_UNKNOWN = "unknown"
+VALIDATION_RESULT_UNAVAILABLE = "unavailable"
+VALIDATION_RESULT_INTERRUPTED = "interrupted"
+
+# Orchestratable diagnostics.
+VALIDATION_DIAG_CHARACTERIZATION = "pwm_characterization"
+VALIDATION_DIAG_VERIFY = "pwm_verify"
+
+# Session kinds.
+VALIDATION_KIND_VALIDATION = "validation"
+VALIDATION_KIND_LIFECYCLE = "lifecycle"
+
+
+@dataclass
+class ValidationMemberRole:
+    """A member's role and safety posture, snapshotted at session start."""
+
+    member_id: str = ""
+    label: str = ""
+    # The DISPLAY role. For any safety or truthfulness decision use
+    # ``pump_protected`` below, which is the daemon's own union predicate
+    # (DEC-312) — a user may assign `chassis_fan` to a header the hardware
+    # labels `PUMP`, and the display role then lies about what the daemon does.
+    role: str = "unknown"
+    # "pump" | "radiator" | "auxiliary" — this member's place in the device.
+    member_kind: str = ""
+    pump_protected: bool = False
+    effective_min_pwm_pct: int | None = None
+    stop_permitted: bool | None = None
+    writable: bool = False
+
+
+@dataclass
+class ValidationDevicePolicy:
+    """The compiled-in device policy in force for a session."""
+
+    id: str = ""
+    display_name: str = ""
+    minimum_safe_pwm_pct: float = 0.0
+    supports_stop: bool = False
+    startup_override_seconds: int | None = None
+    expected_rpm_min: int | None = None
+    expected_rpm_max: int | None = None
+    internal_control_possible: bool = False
+
+
+@dataclass
+class ValidationMetadata:
+    """Everything fixed at session start — topology, roles, policy, profile."""
+
+    cooling_device_id: str = ""
+    device_name: str = ""
+    device_kind: str = "unknown"
+    pump_member: str | None = None
+    radiator_members: list[str] = field(default_factory=list)
+    auxiliary_members: list[str] = field(default_factory=list)
+    temperature_sensor: str | None = None
+    coolant_sensor: str | None = None
+    # "available" | "unavailable". Unavailable is the NORMAL case for a
+    # motherboard-connected AIO and is never an error.
+    coolant_telemetry: str = "unavailable"
+    device_policy: ValidationDevicePolicy = field(default_factory=ValidationDevicePolicy)
+    members: list[ValidationMemberRole] = field(default_factory=list)
+    active_profile_id: str | None = None
+    active_profile_name: str | None = None
+    daemon_version: str = ""
+    # User/test metadata. Metadata only — it reaches no safety decision, and the
+    # daemon does not claim to have detected any of it electronically.
+    user_metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class ValidationMemberSample:
+    """One member's telemetry at one instant.
+
+    ``requested_pct`` and ``readback_pct`` are separate on purpose and must never
+    be conflated: the first is what the daemon commanded, the second what the
+    hardware reports. A device-side override is exactly the case where they agree
+    with each other and disagree with the RPM.
+    """
+
+    member_id: str = ""
+    role: str = ""
+    requested_pct: int | None = None
+    readback_pct: int | None = None
+    rpm: int | None = None
+    pwm_enable_mode: int | None = None
+    alarm: bool | None = None
+    enable_revert_count: int = 0
+    # "daemon" | "external" | "unknown"
+    ownership: str = "unknown"
+
+
+@dataclass
+class ValidationSample:
+    elapsed_ms: int = 0
+    unix_ms: int = 0
+    temperature_c: float | None = None
+    temperature_sensor: str | None = None
+    coolant_c: float | None = None
+    thermal_state: str = "normal"
+    members: list[ValidationMemberSample] = field(default_factory=list)
+
+
+@dataclass
+class ValidationEvent:
+    """A point on the session timeline. Phase 6 places these as chart markers."""
+
+    elapsed_ms: int = 0
+    unix_ms: int = 0
+    kind: str = ""
+    detail: str | None = None
+    member_id: str | None = None
+
+
+@dataclass
+class ValidationVerifyEvidence:
+    header_id: str = ""
+    write_ok: bool = False
+    readback_pct: int | None = None
+    requested_pct: int | None = None
+    rpm_before: int | None = None
+    rpm_after: int | None = None
+    detail: str | None = None
+
+
+@dataclass
+class ValidationEvidence:
+    """One orchestrated diagnostic, carried by reference.
+
+    ``characterization`` is the Phase 3 run verbatim — every verdict on it is the
+    daemon's, and the GUI recomputes none of them.
+    """
+
+    kind: str = ""
+    member_id: str = ""
+    run_id: str | None = None
+    started_unix_ms: int = 0
+    completed_unix_ms: int | None = None
+    # How the ORCHESTRATION went, not a verdict on the hardware. A diagnostic the
+    # daemon refused is `unavailable`, which never means failure.
+    outcome: str = "unknown"
+    detail: str | None = None
+    characterization: CharacterizationRun | None = None
+    verify: ValidationVerifyEvidence | None = None
+
+
+@dataclass
+class ValidationFinding:
+    """One line of the evidence summary.
+
+    ``id`` is a stable token and the GUI owns the wording. An unrecognised id
+    must be rendered humanised, never dropped.
+    """
+
+    id: str = ""
+    state: str = "unknown"
+    detail: str | None = None
+    member_id: str | None = None
+    evidence_kind: str | None = None
+
+
+@dataclass
+class ValidationExternalMeasurement:
+    """A meter reading typed in by a person. Explicitly untrusted; the daemon
+    stores and returns these and no control path consults one."""
+
+    unix_ms: int = 0
+    kind: str = ""
+    value: float = 0.0
+    unit: str = ""
+    member_id: str | None = None
+    note: str | None = None
+
+
+@dataclass
+class ValidationSession:
+    session_id: str = ""
+    kind: str = VALIDATION_KIND_VALIDATION
+    state: str = VALIDATION_STATE_IDLE
+    started_unix_ms: int = 0
+    completed_unix_ms: int | None = None
+    metadata: ValidationMetadata = field(default_factory=ValidationMetadata)
+    requested_diagnostics: list[str] = field(default_factory=list)
+    sweep_members: list[str] = field(default_factory=list)
+    samples: list[ValidationSample] = field(default_factory=list)
+    events: list[ValidationEvent] = field(default_factory=list)
+    evidence: list[ValidationEvidence] = field(default_factory=list)
+    external_measurements: list[ValidationExternalMeasurement] = field(default_factory=list)
+    findings: list[ValidationFinding] = field(default_factory=list)
+    sample_limit_reached: bool = False
+    interrupted_reason: str | None = None
+    truncated_at_unix_ms: int | None = None
+
+    @property
+    def is_recording(self) -> bool:
+        return self.state == VALIDATION_STATE_RECORDING
+
+
+@dataclass
+class ValidationSessionSummary:
+    """The miniature that rides ``/status`` + ``/poll``."""
+
+    session_id: str = ""
+    kind: str = VALIDATION_KIND_VALIDATION
+    state: str = VALIDATION_STATE_IDLE
+    elapsed_ms: int = 0
+    sample_count: int = 0
+    event_count: int = 0
+    sample_limit_reached: bool = False
+    cooling_device_id: str = ""
+
+    @property
+    def is_recording(self) -> bool:
+        return self.state == VALIDATION_STATE_RECORDING
+
+
+@dataclass
+class ValidationSessionIndexEntry:
+    """One row of ``GET /validation/sessions`` — enough to pick a session."""
+
+    session_id: str = ""
+    kind: str = VALIDATION_KIND_VALIDATION
+    state: str = VALIDATION_STATE_IDLE
+    started_unix_ms: int = 0
+    completed_unix_ms: int | None = None
+    cooling_device_id: str = ""
+    device_name: str = ""
+    sample_count: int = 0
+    event_count: int = 0
+    sample_limit_reached: bool = False
+    interrupted_reason: str | None = None
+
+
+def parse_validation_session(data: dict) -> ValidationSession:
+    """Parse a full session body from ``GET/POST /validation/session``.
+
+    A pre-2.32 daemon 404s the route, so the caller gates on
+    ``capabilities.control.validation_sessions``; this assumes a 200 body.
+    """
+    session = ValidationSession(**_filter_fields(ValidationSession, data))
+
+    # Unconditional, unlike the `isinstance` guards below it. An explicit
+    # ``"metadata": null`` on the wire passes straight through ``_filter_fields``
+    # and overwrites the default factory with ``None``, which every consumer then
+    # dereferences — the view-model raises ``AttributeError`` on the first field
+    # it reads. The list fields are already reassigned unconditionally; this one
+    # was the exception.
+    meta_raw = data.get("metadata")
+    session.metadata = (
+        _validation_metadata_from(meta_raw) if isinstance(meta_raw, dict) else ValidationMetadata()
+    )
+
+    # Same defensiveness for the two token lists: a non-list here would be
+    # iterated character-by-character by anything rendering it.
+    for name in ("requested_diagnostics", "sweep_members"):
+        value = getattr(session, name)
+        if not isinstance(value, list):
+            setattr(session, name, [])
+        else:
+            setattr(session, name, [str(v) for v in value])
+
+    session.samples = [
+        _validation_sample_from(s) for s in data.get("samples", []) if isinstance(s, dict)
+    ]
+    session.events = [
+        ValidationEvent(**_filter_fields(ValidationEvent, e))
+        for e in data.get("events", [])
+        if isinstance(e, dict)
+    ]
+    session.evidence = [
+        _validation_evidence_from(e) for e in data.get("evidence", []) if isinstance(e, dict)
+    ]
+    session.external_measurements = [
+        ValidationExternalMeasurement(**_filter_fields(ValidationExternalMeasurement, m))
+        for m in data.get("external_measurements", [])
+        if isinstance(m, dict)
+    ]
+    session.findings = [
+        ValidationFinding(**_filter_fields(ValidationFinding, f))
+        for f in data.get("findings", [])
+        if isinstance(f, dict)
+    ]
+    return session
+
+
+def _validation_metadata_from(raw: dict) -> ValidationMetadata:
+    meta = ValidationMetadata(**_filter_fields(ValidationMetadata, raw))
+    policy = raw.get("device_policy")
+    if isinstance(policy, dict):
+        meta.device_policy = ValidationDevicePolicy(
+            **_filter_fields(ValidationDevicePolicy, policy)
+        )
+    meta.members = [
+        ValidationMemberRole(**_filter_fields(ValidationMemberRole, m))
+        for m in raw.get("members", [])
+        if isinstance(m, dict)
+    ]
+    user_meta = raw.get("user_metadata")
+    meta.user_metadata = (
+        {str(k): str(v) for k, v in user_meta.items()} if isinstance(user_meta, dict) else {}
+    )
+    return meta
+
+
+def _validation_sample_from(raw: dict) -> ValidationSample:
+    sample = ValidationSample(**_filter_fields(ValidationSample, raw))
+    sample.members = [
+        ValidationMemberSample(**_filter_fields(ValidationMemberSample, m))
+        for m in raw.get("members", [])
+        if isinstance(m, dict)
+    ]
+    return sample
+
+
+def _validation_evidence_from(raw: dict) -> ValidationEvidence:
+    ev = ValidationEvidence(**_filter_fields(ValidationEvidence, raw))
+    char = raw.get("characterization")
+    if isinstance(char, dict):
+        # Reuse the Phase 3 parser rather than a second copy — the run is the
+        # daemon's verbatim, and parsing it differently here is how the two would
+        # drift.
+        ev.characterization = parse_characterization_run(char)
+    verify = raw.get("verify")
+    if isinstance(verify, dict):
+        ev.verify = ValidationVerifyEvidence(**_filter_fields(ValidationVerifyEvidence, verify))
+    return ev
+
+
+def parse_validation_session_summary(data: dict) -> ValidationSessionSummary | None:
+    """Parse the ``validation_session`` block from ``/status`` or ``/poll``.
+
+    ``None`` when the daemon omitted it — no session has ever run, or the daemon
+    predates Phase 5. Absence is not an error.
+    """
+    raw = data.get("validation_session")
+    if not isinstance(raw, dict):
+        return None
+    return ValidationSessionSummary(**_filter_fields(ValidationSessionSummary, raw))
+
+
+def parse_validation_session_index(data: dict) -> list[ValidationSessionIndexEntry]:
+    """Parse ``GET /validation/sessions``, newest first."""
+    return [
+        ValidationSessionIndexEntry(**_filter_fields(ValidationSessionIndexEntry, s))
+        for s in data.get("sessions", [])
+        if isinstance(s, dict)
+    ]

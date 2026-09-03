@@ -35,6 +35,8 @@ from control_ofc.api.models import (
     SensorHistory,
     SensorReading,
     SuperIoReport,
+    ValidationSession,
+    ValidationSessionIndexEntry,
     parse_active_profile,
     parse_capabilities,
     parse_characterization_run,
@@ -62,6 +64,8 @@ from control_ofc.api.models import (
     parse_sensors,
     parse_status,
     parse_superio_report,
+    parse_validation_session,
+    parse_validation_session_index,
 )
 from control_ofc.constants import (
     API_TIMEOUT_S,
@@ -545,6 +549,126 @@ class DaemonClient:
         Raises on 404 (no such device) and 503 (persistence_failed).
         """
         return self._delete(f"/config/cooling-device/{device_id}")
+
+    # ------------------------------------------------------------------
+    # Validation sessions (AIO-MB Phase 5, daemon >= 2.32.0)
+    # ------------------------------------------------------------------
+    #
+    # Gate every call below on ``capabilities.control.validation_sessions`` — an
+    # older daemon 404s these routes from the route fallback, which is
+    # indistinguishable from a genuine "no such session" without inspecting
+    # ``error.code``.
+
+    def start_validation_session(
+        self,
+        cooling_device_id: str,
+        *,
+        kind: str | None = None,
+        diagnostics: list[str] | None = None,
+        sweep_members: list[str] | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> ValidationSession:
+        """POST /validation/session — begin recording against a cooling device.
+
+        ``diagnostics`` names what the session should RUN — an empty or omitted
+        list is a legitimate passive recording session, and yields ``not_tested``
+        rather than ``pass``. ``sweep_members`` names which members those
+        diagnostics sweep; omitted, the daemon defaults to the pump member.
+
+        Nothing here is pre-clamped or pre-validated beyond shape. The **daemon**
+        decides what a diagnostic may drive: it owns the pump floor, the thermal
+        refusal and the hwmon lease, and a client-side copy of any of them would
+        be a second definition of a safety rule that would then drift (DEC-252).
+
+        Raises 409 ``already_exists`` when a session is already recording, 404
+        for an unknown device, and 503 ``persistence_failed``. 400
+        ``validation_error`` covers an unknown diagnostic, a member that does not
+        belong to the named device, **and every bound**: more than 8
+        ``sweep_members``, more than 16 ``metadata`` keys, or a metadata value
+        over 512 bytes.
+        """
+        body: dict[str, Any] = {"cooling_device_id": cooling_device_id}
+        if kind is not None:
+            body["kind"] = kind
+        if diagnostics is not None:
+            body["diagnostics"] = diagnostics
+        if sweep_members is not None:
+            body["sweep_members"] = sweep_members
+        if metadata is not None:
+            body["metadata"] = metadata
+        return parse_validation_session(self._post("/validation/session", json=body))
+
+    def validation_session(self) -> ValidationSession | None:
+        """GET /validation/session — the current or most recent session.
+
+        ``None`` when the daemon has never run one (``404``), which is a normal
+        state and not an error. Every other failure still raises.
+        """
+        try:
+            return parse_validation_session(self._get("/validation/session"))
+        except DaemonError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def stop_validation_session(self) -> ValidationSession:
+        """POST /validation/session/stop — finalise and compute the summary."""
+        return parse_validation_session(self._post("/validation/session/stop"))
+
+    def cancel_validation_session(self) -> ValidationSession:
+        """DELETE /validation/session — end without finalising."""
+        return parse_validation_session(self._delete("/validation/session"))
+
+    def add_validation_marker(
+        self, detail: str | None = None, member_id: str | None = None
+    ) -> dict:
+        """POST /validation/session/event — place a user marker on the timeline."""
+        body: dict[str, Any] = {}
+        if detail is not None:
+            body["detail"] = detail
+        if member_id is not None:
+            body["member_id"] = member_id
+        return self._post("/validation/session/event", json=body)
+
+    def add_validation_measurement(
+        self,
+        kind: str,
+        value: float,
+        *,
+        unit: str = "",
+        member_id: str | None = None,
+        note: str | None = None,
+    ) -> dict:
+        """POST /validation/session/measurement — attach an external reading.
+
+        Explicitly untrusted: the daemon stores and returns these, and no control
+        or safety path consults one. This exists so a future manual-entry UI has
+        somewhere to put a meter reading, not so the daemon can act on it.
+        """
+        body: dict[str, Any] = {"kind": kind, "value": value}
+        if unit:
+            body["unit"] = unit
+        if member_id is not None:
+            body["member_id"] = member_id
+        if note is not None:
+            body["note"] = note
+        return self._post("/validation/session/measurement", json=body)
+
+    def validation_sessions(self) -> list[ValidationSessionIndexEntry]:
+        """GET /validation/sessions — the retained index, newest first."""
+        return parse_validation_session_index(self._get("/validation/sessions"))
+
+    def validation_session_by_id(self, session_id: str) -> ValidationSession | None:
+        """GET /validation/sessions/{id} — one completed session in full.
+
+        ``None`` when there is no such session; every other failure raises.
+        """
+        try:
+            return parse_validation_session(self._get(f"/validation/sessions/{session_id}"))
+        except DaemonError as exc:
+            if exc.status == 404:
+                return None
+            raise
 
     def verify_hwmon_pwm(self, header_id: str) -> HwmonVerifyResult:
         """POST /hwmon/{header_id}/verify — test PWM write effectiveness (~6s).

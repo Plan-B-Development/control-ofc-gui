@@ -143,6 +143,13 @@ GUI treats every flag as false / old behaviour (AIP-180):
 
   Gate on this rather than probing: an older daemon `404`s the POST, which is the same *status*
   a `DELETE` returns for an unknown device id.
+- `validation_sessions` (bool, DEC-317) — the daemon exposes the validation-session surface:
+  `POST`/`GET`/`DELETE /validation/session`, `/validation/session/stop`,
+  `/validation/session/event`, `/validation/session/measurement`, `GET /validation/sessions`
+  and `GET /validation/sessions/{id}`. **`true` since 2.32.0**; absent → `false`.
+
+  Gate on this rather than probing, for the same reason: an older daemon `404`s these routes
+  from the route fallback, which is indistinguishable from a genuine "no such session".
 
   It gates the **endpoints only**. The additive `PwmHeaderEntry` fields that shipped alongside
   (`effective_min_pwm_pct`, `stop_permitted`, `cooling_device_id`, and the capability-audit
@@ -522,6 +529,17 @@ nothing else would clear it, and an offline GUI does not know whether it is stil
 user-owned Manual state wins the chip. Older daemons omit the array — the GUI defaults it to empty,
 so it never needs to know the daemon's version to read this field.
 
+`validation_session` (daemon ≥ 2.32.0, additive — omitted when no session has ever run) carries the
+current or most recent validation session in miniature (DEC-317): `{session_id, kind, state,
+elapsed_ms, sample_count, event_count, sample_limit_reached, cooling_device_id}`. It rides the poll so
+a live panel needs no second request — the static-vs-dynamic split DEC-316 established, applied again:
+the session's *topology* is fetched once from `GET /validation/session`, while its progress is state
+and belongs here. Deliberately tiny — the samples are megabytes and must never ride a 1 Hz poll.
+
+`state` is an opaque token; render an unrecognised one rather than dropping the row. Absence means no
+session has ever run **or** the daemon predates 2.32.0, and the two are deliberately
+indistinguishable, because nothing should behave differently between them.
+
 `control_outputs` (daemon ≥ 2.22.0, additive — `api_version` unchanged, omitted when empty) carries
 the output each logical control is currently applying (277-k, DEC-279). Each entry is
 `{control_id, output_pct}`, sorted by `control_id`, `output_pct` a float 0–100.
@@ -533,8 +551,9 @@ is already on the same response.
 
 **It is not a per-fan duty.** An individual member can sit *above* it on a role-aware floor (the
 DEC-095/162 30% CPU/pump floor) or *below* it on a GPU that diverges (DEC-119). Per-fan commanded
-duty is `last_commanded_pwm` on `/fans` + `/poll`, which remains the only authority for what any
-single fan was told to do. Nor is it a *measured* value — `rpm` is the measured one, and the two must
+duty is `last_commanded_pwm` on `/fans` + `/poll`, which remains the only authority on the wire for
+what any single fan was told to do — with the hwmon caveat noted under `GET /fans` below, where that
+field also carries the readback (`AIO5-a`). Nor is it a *measured* value — `rpm` is the measured one, and the two must
 never be conflated.
 
 **Absence is meaningful and a client must not carry a previous value forward.** A control is absent
@@ -622,11 +641,12 @@ Expected fields:
 - id
 - source
 - rpm (optional, omitted when unavailable)
-- last_commanded_pwm (optional, omitted until first write)
+- last_commanded_pwm (optional, omitted until first write). **For an hwmon header this field has two producers and they mean different things** (register row `AIO5-a`): the daemon's poll writes the sysfs *readback* here, and the engine writes the value it *commanded*, so for an uncontrolled header it reports the readback despite its name. They agree while writes are landing, which is why it went unnoticed. Where the distinction matters, read `pwm_readback_pct` (readback, one producer) rather than inferring it from this field. Unambiguous for OpenFan and GPU sources, which have no readback attribute.
 - duty_pct (optional; DEC-204) — firmware-**measured** current fan duty %, present only for sources with a duty readback (NVIDIA via NVML). Distinct from `last_commanded_pwm` (commanded) — never conflate. May exceed 100 (NVML expresses it as a % of max noise tolerance), but it is a `u8` on the wire (`responses.rs`) and so saturates at **255** — a larger reading is not representable. Omitted when absent (and on pre-DEC-204 daemons).
 - age_ms
 - stall_detected (optional bool) — daemon-asserted; set when commanded PWM is above the daemon's `STALL_PWM_THRESHOLD` (20%, i.e. ≥21%) but measured RPM is zero. Evaluated per-tick from the latest snapshot (no multi-cycle counter); `null`/omitted when RPM is not polled. Surfaced by the GUI as an `error`-level warning.
 - fan_alarm (optional bool, DEC-316, daemon ≥ 2.31.0) — the driver's own `fanN_alarm` bit for an hwmon header. Carried on the **1 Hz poll** rather than on `/hwmon/headers` deliberately: it is *state*, and clients refetch headers only occasionally, so an alarm frozen into the discovery snapshot would read "clear" while a fan is failing. `null`/absent means **not known** — either the driver exposes no alarm attribute, or the cache entry was refreshed by a PWM write without re-reading it — and must never be rendered as "no alarm". Distinct from `stall_detected`, which the daemon infers; this is what the hardware itself asserts.
+- pwm_readback_pct (optional int, DEC-317, daemon ≥ 2.32.0) — the **hardware readback** of `pwmN`, as a percent, for an hwmon header. Distinct from `last_commanded_pwm`, which for an hwmon header carries whichever of the poll's readback and the engine's command wrote last (register row `AIO5-a`) — the two axes are separable only through this field. It is what makes a device-side override diagnosable at all: that classification is `command low + readback low + RPM high`, which cannot be expressed while command and readback share a value. `null`/absent means **the daemon did not say** — never 0% — and is what a pre-2.32 daemon, an OpenFan channel and a GPU fan all report, since neither of the latter has an equivalent attribute. Do not synthesise one by echoing the command back.
 - pwm_enable_mode (optional int, DEC-316, daemon ≥ 2.31.0) — the **live** `pwmN_enable` mode for an hwmon header: 0 = no control / full speed, 1 = manual, 2+ = driver-specific automatic modes. On the poll rather than on `/hwmon/headers` because the daemon writes this attribute itself when it takes a header over; a value captured at discovery would report the pre-takeover mode forever, while the field's whole diagnostic value is answering "is something else controlling this header *now*?" (a BIOS reclaim, say). `null`/absent means not known. Use `PwmHeaderEntry.supported_pwm_enable_modes` to interpret a value above 1.
 
 Note: fans do **not** include `label` or `kind` from the daemon — every display name is
@@ -981,6 +1001,142 @@ construct one — "a normal user profile must not be able to submit `minimum_saf
 compile-time property, not a review convention. 2.31.0 ships generic policies only
 (`generic_pump`, whose floor *is* the engine's hard pump floor, and `generic_fan`), so **no floor
 moves in this release**; the mechanism exists so a validated device policy can later land as data.
+
+### Validation sessions (DEC-317, daemon ≥ 2.32.0)
+
+A validation session records what an already-configured cooling device actually did, and
+produces typed evidence about it. Capability-gated on `control.validation_sessions`.
+**Gate on the flag rather than probing** — an older daemon 404s these routes from the route
+fallback, which a client cannot distinguish from a genuine "no such session" without
+inspecting `error.code`.
+
+**What a session is, and what it is not.** The engine is an observer that may orchestrate.
+It samples the state the daemon's poll already collects and, where a session was asked for
+one, invokes the **existing** PWM verify or PWM/RPM characterisation. It acquires no second
+PWM ownership path and contains no code that commands a duty: everything that drives
+hardware is machinery that already owned the hwmon lease, the pump floor clamp, the thermal
+refusal and restore-on-drop. A session therefore cannot lower a floor and cannot stop a pump.
+
+**Do not clamp or default anything client-side.** The daemon owns the pump floor, the
+thermal refusal, and the `sweep_members` default. A client-side copy of any of them would be
+a second definition of a safety rule, and the two would drift.
+
+#### POST /validation/session — start
+
+Body:
+- `cooling_device_id` (string, **required**) — must name a configured device.
+- `kind` (string, optional) — `"validation"` (default) or `"lifecycle"`. One engine and one
+  wire type; the discriminator selects which findings matter and what a client presets.
+- `diagnostics` (string[], optional) — what the session should **run**: `"pwm_verify"`
+  and/or `"pwm_characterization"`. **Empty or omitted is legitimate** — a passive recording
+  session — and yields `not_tested`, never `pass`. An unrecognised token is
+  `400 validation_error` rather than a silent skip, which would look like a diagnostic that
+  ran and found nothing.
+- `sweep_members` (string[], optional) — which members those diagnostics sweep. **Omitted
+  defaults to the device's `pump_member`.** Capped at 8; each adds roughly three minutes. An
+  entry not belonging to the named device is `400 validation_error`; a non-writable one is
+  recorded `unavailable` and not swept.
+- `metadata` (object of string→string, optional) — free-form user/test metadata: physical
+  pump mode, workload name, ambient notes. **Metadata only** — it reaches no safety decision,
+  and the daemon does not claim to have detected any of it electronically. Capped at 16 keys
+  × 512 bytes.
+
+Returns `200` with the full session. `409 already_exists` if one is already recording
+(single-flight), `404 not_found` for an unknown device, `503 persistence_failed` if it
+cannot be written to disk.
+
+Orchestration order is `pwm_verify` then `pwm_characterization`, per member. **A failed
+diagnostic does not abort the session**: a header that fails verify is exactly the
+device-side-override signature, so the sweep after it is more valuable, not less.
+
+#### GET /validation/session — current or most recent
+
+`404 not_found` when none has ever run, which is a normal state and not an error.
+
+The body carries `session_id`, `kind`, `state`, `started_unix_ms`, `completed_unix_ms`,
+`requested_diagnostics`, `sweep_members`, `sample_limit_reached`, `interrupted_reason`,
+`truncated_at_unix_ms`, plus:
+
+- `metadata` — everything fixed at session start: the topology, each member's
+  `member_kind` / `role` / **`pump_protected`** / `effective_min_pwm_pct` /
+  `stop_permitted` / `writable`, the resolved `device_policy`, the temperature and coolant
+  sensors, the active profile, and `user_metadata`. **`pump_protected` is the daemon's union
+  predicate, not the display role** (DEC-312) — read it, not `role`, for anything that must
+  be true.
+- `samples[]` — one per second: `elapsed_ms`, `unix_ms`, `temperature_c`,
+  `temperature_sensor`, `coolant_c`, `thermal_state`, and `members[]` each carrying
+  `member_id`, `role`, `requested_pct`, `readback_pct`, `rpm`, `pwm_enable_mode`, `alarm`,
+  `enable_revert_count` and `ownership` (`"daemon" | "external" | "unknown"`).
+  **`requested_pct` and `readback_pct` are separate on purpose and must never be conflated.**
+  Every optional field absent means *not known*, never zero — a member with no tach reports
+  no RPM, which is not the same as a stopped fan.
+- `events[]` — the timeline: `elapsed_ms`, `unix_ms`, `kind`, `detail`, `member_id`. Kinds
+  are stable tokens (`session_started`, `profile_activated`, `manual_override_started`,
+  `thermal_failsafe_entered`, `control_reclaimed`, `suspend`, `resume`,
+  `daemon_restart_observed`, `characterization_started`, `user_marker`, …). **Only events
+  the daemon can genuinely observe** — a cold boot and a physical switch position are
+  deliberately never emitted.
+- `evidence[]` — referenced diagnostics: `kind`, `member_id`, `run_id`, timestamps,
+  `outcome`, and either `characterization` (the Phase 3 run **verbatim**) or `verify`.
+  `outcome` describes how the *orchestration* went, not the hardware: a diagnostic the
+  daemon refused is `unavailable`, which never means failure.
+- `findings[]` — the summary: `{id, state, detail, member_id, evidence_kind}`.
+- `external_measurements[]` — see the measurement endpoint below.
+
+#### Result semantics — the part a client must not reinterpret
+
+`state` on a finding is one of `pass`, `fail`, `observed`, `not_observed`, `not_tested`,
+`unknown`, `unavailable`, `interrupted`. Two rules are the daemon's and are not the client's
+to override:
+
+- **`unavailable` is never a failure.** The hardware does not expose what the finding would
+  need. Rendering it as an error tells the user their cooler is broken when nothing of the
+  sort was established.
+- **`not_tested` is never a pass.** Nobody ran the diagnostic that would decide it.
+
+A possible device-side control is reported as `observed` evidence, never `fail` — motherboard
+PWM control must not be misclassified as a failed write.
+
+`id` is a stable token and **the client owns the wording**. Known ids: `pwm_header_control`,
+`pwm_readback`, `pump_rpm_telemetry`, `radiator_rpm_telemetry`,
+`pwm_response_characterization`, `response_latency`, `startup_lifecycle_behaviour`,
+`pwm_rpm_divergence`, `possible_device_override`, `bios_ec_control_reclaim`,
+`thermal_safety`, `control_restoration`, `coolant_telemetry`, `daemon_restart_recovery`.
+**An unrecognised id or state must be rendered humanised, not dropped** (the 273-i rule), and
+an unrecognised state should read neutrally rather than as an error.
+
+#### The remaining routes
+
+- `POST /validation/session/stop` — finalise and compute the summary. Returns the session.
+- `DELETE /validation/session` — end without finalising.
+- `POST /validation/session/event` — place a user marker: `{detail?, member_id?}`.
+- `POST /validation/session/measurement` — attach an externally measured observation:
+  `{kind, value, unit?, member_id?, note?}`. **Explicitly untrusted**: the daemon stores and
+  returns these and no control or safety path consults one. Capped at 512 per session.
+- `GET /validation/sessions` — the retained index, newest first: `session_id`, `kind`,
+  `state`, timestamps, `cooling_device_id`, `device_name`, `sample_count`, `event_count`,
+  `sample_limit_reached`, `interrupted_reason`.
+- `GET /validation/sessions/{id}` — one retained session in full.
+
+Both read from disk, **except for the session that is still recording**, which is served
+live. The on-disk copy is only flushed every 30 s, so without that the index would report a
+sample count tens of seconds behind the one `/poll` and `GET /validation/session` show for
+the same session — two different numbers for one thing, with nothing saying which is stale.
+A client can treat every one of these routes as current.
+
+#### Bounds, retention, and what `interrupted` means
+
+Sampling is 1 Hz with a hard cap of **7200 samples (two hours)**, after which the session
+finalises itself with `sample_limit_reached: true`. This is deliberately cap-and-stop rather
+than a ring buffer: a ring evicts the *oldest* samples, which are the startup evidence a
+session exists to capture.
+
+The last **five** completed sessions are retained under `{state_dir}/validation/`. At startup
+the daemon rewrites any session still marked `recording` as `interrupted`, stamped with
+`truncated_at_unix_ms` — the timestamp of its last real sample. **No telemetry is fabricated
+for the gap.** A client restart cannot corrupt a session, because the session lives entirely
+daemon-side; a client that vanishes and reconnects finds the same session still recording,
+and a naive second start is refused with `409`.
 
 ### GET /inventory/hwmon (DEC-200, daemon ≥ 2.6.0)
 
