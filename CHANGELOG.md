@@ -1,6 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [2.57.1] — 2026-09-04
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). **No shipped GUI code
+changed — this release is the contract document, this changelog entry, and one test.**
+It is the GUI half of `control-ofc-daemon` v2.33.1 (DEC-320), which fixed two P1
+defects on the AIO-MB write paths. Both were daemon-side: the GUI was already correct
+and the daemon was rejecting what it offered. Nothing on any page behaves differently,
+and no new daemon version is required to run this release.
 
 ### Changed
 - **No shipped-code change — the contract doc, plus one test.**
