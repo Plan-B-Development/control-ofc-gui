@@ -226,6 +226,39 @@ class TestBuildRadiatorCandidates:
         )
         assert rows == []
 
+    def test_openfan_fans_are_offered_as_radiator_candidates(self):
+        """The GUI half of the `AUD3-h` contract (daemon >= 2.33.1, DEC-320).
+
+        An OpenFan channel has **no** ``HwmonHeader`` at all, and this picker
+        offers it anyway — that is deliberate and is what
+        ``cooling_device_view`` documents as a load-bearing assumption. The
+        daemon validated cooling-device members against hwmon PWM headers only,
+        so every id this test asserts is offered was rejected with
+        ``400 unknown hwmon header id`` on any machine that had hwmon headers.
+
+        This pins the premise rather than the fix: if the picker ever stops
+        offering OpenFan outputs, the daemon's per-source membership check
+        becomes dead code and this test is what says so.
+        """
+        fans = [_fan("openfan:ch00", source="openfan"), _fan("h1")]
+        headers = [_header("h1", is_writable=True)]
+        rows = build_radiator_candidates(
+            fans,
+            headers,
+            pump_id=None,
+            preselect_ids=set(),
+            display_name=_names({}),
+        )
+        by_id = {r["id"]: r for r in rows}
+        assert "openfan:ch00" in by_id, (
+            "an OpenFan fan must be offered as a radiator candidate even though "
+            "it has no HwmonHeader"
+        )
+        assert by_id["openfan:ch00"]["source"] == "openfan"
+        # And the hwmon header alongside it, so this is not passing because the
+        # picker returned everything indiscriminately.
+        assert "h1" in by_id
+
 
 class TestBuildSensorChoices:
     def test_cpu_sensor_is_preferred(self):

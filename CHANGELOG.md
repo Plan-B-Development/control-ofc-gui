@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **No shipped-code change — the contract doc, plus one test.**
+  `docs/08_API_Integration_Contract.md` records
+  two daemon fixes shipped in `control-ofc-daemon` v2.33.1 (DEC-320), flagged here per the
+  cross-repo contract rule:
+  - `POST /config/cooling-device` now validates members **per source**, across hwmon PWM
+    headers *and* OpenFan channels. Until v2.33.1 it checked hwmon headers alone, so an
+    OpenFan radiator fan — one this GUI's own radiator picker offers, and which the Fan
+    Wizard posts verbatim — was rejected on every motherboard-AIO machine (`AUD3-h`). **No
+    GUI change was needed: the GUI was already right and the daemon was rejecting it.** A
+    test now pins that premise (`test_openfan_fans_are_offered_as_radiator_candidates`):
+    if this picker ever stops offering OpenFan outputs, the daemon's per-source membership
+    check becomes dead code, and that test is what says so.
+  - A validation session's sample cap is now bounded in bytes as well as rows (`AUD3-i`).
+    No visible difference for any realistic cooler — a pump plus up to four radiator fans
+    still records the full 7200 samples — but a client must not hardcode 7200 as a
+    completed session's `sample_count`; read `sample_limit_reached`.
+
 ## [2.57.0] — 2026-09-03
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). GUI-only — no daemon
