@@ -224,6 +224,12 @@ class ControlCapability:
     # the handler), and keying feature detection on that is exactly the
     # undocumented coupling the capability exists to replace.
     pwm_characterization: bool = False
+    # DEC-316 (AIO-MB Phase 4, daemon >= 2.31.0): the daemon exposes
+    # `GET /inventory/cooling-devices`, `POST /config/cooling-device` and
+    # `DELETE /config/cooling-device/{id}`. Gates those ENDPOINTS only — the
+    # additive `HwmonHeader` fields that shipped alongside need no flag, since
+    # each is optional and absence already means "fall back".
+    cooling_devices: bool = False
 
 
 @dataclass
@@ -550,6 +556,17 @@ class FanReading:
     duty_pct: int | None = None
     age_ms: int = 0
     stall_detected: bool | None = None
+    # AIO-MB Phase 4: the driver's own `fanN_alarm` bit, sampled at 1 Hz.
+    # `None` means "not known" — either the driver exposes no alarm attribute,
+    # or the entry was refreshed by a PWM write without re-reading it. Never
+    # treat None as "no alarm".
+    fan_alarm: bool | None = None
+    # AIO-MB Phase 4: the LIVE `pwmN_enable` mode for an hwmon header. On the
+    # poll rather than on the header because the daemon writes this attribute
+    # when it takes a header over, so a discovery-time value would report the
+    # pre-takeover mode forever — and the field's diagnostic value is answering
+    # "is something else controlling this header *now*?". `None` = not known.
+    pwm_enable_mode: int | None = None
 
     @property
     def freshness(self) -> Freshness:
@@ -558,6 +575,69 @@ class FanReading:
         if self.age_ms < 10000:
             return Freshness.STALE
         return Freshness.INVALID
+
+
+# ---------------------------------------------------------------------------
+# Cooling-device topology (AIO-MB Phase 4, DEC-316, daemon >= 2.31.0)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DevicePolicySummary:
+    """The resolved device policy a cooling device operates under.
+
+    Read-only: these values are compiled into the daemon and selected by id.
+    The GUI displays them and never sends them — the daemon rejects a payload
+    carrying any of these keys by name.
+    """
+
+    id: str = ""
+    display_name: str = ""
+    # The policy's own declared floor. The floor a given HEADER actually gets is
+    # `HwmonHeader.effective_min_pwm_pct`, which also applies the absolute pump
+    # backstop — prefer that when showing what a specific fan will do.
+    minimum_safe_pwm_pct: int = 0
+    supports_stop: bool = False
+    startup_override_seconds: int | None = None
+    expected_rpm_min: int | None = None
+    expected_rpm_max: int | None = None
+    internal_control_possible: bool = False
+
+
+@dataclass
+class CoolingDevice:
+    """One cooling assembly: a pump, its radiator fans, and a temperature source.
+
+    Metadata. The daemon's profile engine never reads a cooling device, so this
+    changes nothing about what a fan does — it exists so the GUI can present a
+    cooler as one thing instead of re-inferring it from labels.
+    """
+
+    id: str = ""
+    name: str = ""
+    # Opaque token: "unknown" | "aio_liquid" | "air_cooler" | "custom_loop".
+    # Render an unrecognised value rather than dropping the device (273-i).
+    kind: str = "unknown"
+    pump_member: str | None = None
+    radiator_members: list[str] = field(default_factory=list)
+    auxiliary_members: list[str] = field(default_factory=list)
+    # Advisory only — a curve keeps its own `sensor_id`. Nothing in the control
+    # path reads these.
+    preferred_sensor: str | None = None
+    fallback_sensor: str | None = None
+    coolant_sensor: str | None = None
+    # "available" | "unavailable". Unavailable is the NORMAL case for a
+    # motherboard-connected AIO and is not an error or a readiness item.
+    coolant_telemetry: str = "unavailable"
+    device_policy: DevicePolicySummary = field(default_factory=DevicePolicySummary)
+
+
+@dataclass
+class CoolingDeviceInventory:
+    cooling_devices: list[CoolingDevice] = field(default_factory=list)
+    # Every policy the daemon ships, so the GUI offers the real choices rather
+    # than a hardcoded list that drifts from the binary.
+    available_policies: list[DevicePolicySummary] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -600,6 +680,43 @@ class HwmonHeader:
     # "user_assigned". Lets the UI distinguish a confident classification from
     # a guess worth asking the user about.
     role_source: str = "none"
+
+    # ── AIO-MB Phase 4 (DEC-316, daemon >= 2.31.0) ───────────────────────────
+    # Every field below defaults to None/empty meaning "this daemon did not
+    # say", NEVER "zero". That distinction is load-bearing for
+    # `effective_min_pwm_pct` in particular: typed `int` with a 0 default, a
+    # pre-2.31 daemon (which omits the key) would make the GUI believe a 0%
+    # floor on a pump. `None` routes callers to the client-side reconstruction
+    # in `services/pump_protection.py` instead.
+    #
+    # The daemon-enforced duty floor for this header, in percent. Prefer this
+    # over re-deriving the floor from labels and chip names.
+    effective_min_pwm_pct: int | None = None
+    # Whether this header may be driven to 0 at all. False wherever the daemon's
+    # pump-protection union holds. `None` = unknown, fall back.
+    stop_permitted: bool | None = None
+    # The cooling device that claims this header, if any.
+    cooling_device_id: str | None = None
+    # ── Header capability audit (read-only driver introspection) ──
+    # PWM base frequency in Hz from `pwmN_freq`.
+    pwm_freq_hz: int | None = None
+    # NOTE: the header carries no `pwm_enable_mode`. The header's CURRENT mode is
+    # state, not a capability — the daemon writes `pwmN_enable` itself when it
+    # takes a header over — so it rides the 1 Hz poll as `FanReading.pwm_enable_mode`.
+    # `supports_enable` above is the static half: whether the attribute exists.
+    #
+    # The `pwmN_enable` values this chip's driver accepts. EMPTY MEANS UNKNOWN:
+    # nothing in sysfs reports this, so the daemon derives it from driver
+    # knowledge and has none for unrecognised chips. Never render an empty list
+    # as "no modes supported".
+    supported_pwm_enable_modes: list[int] = field(default_factory=list)
+    # Low RPM alarm threshold from `fanN_min`.
+    rpm_min_threshold: int | None = None
+    # High RPM threshold from `fanN_max`. Absent on most Super-I/O chips.
+    rpm_max_threshold: int | None = None
+    # Tach pulses per revolution from `fanN_pulses`. Absent on it87 — the
+    # validation board — so `None` is the common case, not an anomaly.
+    tach_pulses_per_rev: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1645,6 +1762,32 @@ def parse_fans(data: dict) -> list[FanReading]:
 
 def parse_hwmon_headers(data: dict) -> list[HwmonHeader]:
     return [HwmonHeader(**_filter_fields(HwmonHeader, h)) for h in data.get("headers", [])]
+
+
+def parse_cooling_devices(data: dict) -> CoolingDeviceInventory:
+    """Parse ``GET /inventory/cooling-devices`` (DEC-316).
+
+    A pre-2.31 daemon 404s the route, so the caller gates on
+    ``capabilities.control.cooling_devices``; this parser assumes a 200 body.
+    """
+    devices = data.get("cooling_devices", [])
+    policies = data.get("available_policies", [])
+    return CoolingDeviceInventory(
+        cooling_devices=[_cooling_device_from(d) for d in devices if isinstance(d, dict)],
+        available_policies=[
+            DevicePolicySummary(**_filter_fields(DevicePolicySummary, p))
+            for p in policies
+            if isinstance(p, dict)
+        ],
+    )
+
+
+def _cooling_device_from(d: dict) -> CoolingDevice:
+    dev = CoolingDevice(**_filter_fields(CoolingDevice, d))
+    policy = d.get("device_policy")
+    if isinstance(policy, dict):
+        dev.device_policy = DevicePolicySummary(**_filter_fields(DevicePolicySummary, policy))
+    return dev
 
 
 def parse_override_grant(data: dict) -> OverrideGrant:

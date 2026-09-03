@@ -65,10 +65,34 @@ def header_is_pump_protected(
 
     Only hwmon headers can be pumps — OpenFan channels have no header, and GPU
     fans are never pumps.
+
+    **Since DEC-316 this reconstruction is the FALLBACK, not the primary answer.**
+    A daemon >= 2.31.0 reports ``stop_permitted`` per header, computed from the
+    same union on the side that actually enforces it, and that is authoritative
+    when present. The reconstruction below still runs for older daemons and
+    whenever the field is absent — which is why it is kept rather than deleted,
+    and why ``None`` must never be read as ``False``: a defaulted "stoppable"
+    would offer to stop a real pump.
     """
-    if capabilities is None or not getattr(capabilities.control, "header_roles", False):
-        return False
     if header is None:
+        return False
+    # Prefer what the daemon says it will do over what we can infer it will do,
+    # and check it BEFORE the capability gate.
+    #
+    # `stop_permitted` is self-describing — absent means "this daemon did not
+    # say" — which is exactly why `docs/08` states it needs no capability flag.
+    # Gating it behind `header_roles` would contradict that, and would fail in
+    # the unsafe direction: a header the daemon reports as unstoppable would be
+    # read as stoppable whenever that flag was absent. Today both flags ship
+    # together, so this is unreachable; nothing enforces that pairing, and the
+    # cost of not relying on it is one reordered branch.
+    #
+    # `None` falls through to the reconstruction below — it is NOT a "no".
+    if header.stop_permitted is not None:
+        return not header.stop_permitted
+    # The reconstruction DOES need the gate: a pre-2.28.0 daemon has no role
+    # model at all, so there is nothing to reconstruct from.
+    if capabilities is None or not getattr(capabilities.control, "header_roles", False):
         return False
     if header.role == "pump":
         return True
@@ -81,3 +105,41 @@ def header_is_pump_protected(
     if label_outranks_chip_mapping(lowered):
         return False
     return bool(header.is_aio) and header.pwm_index == 1
+
+
+def header_effective_floor_pct(
+    header: HwmonHeader | None,
+    capabilities: Capabilities | None,
+) -> int | None:
+    """The duty floor the daemon will actually enforce for this header, or None.
+
+    Daemon-first (DEC-316). A daemon >= 2.31.0 computes this from the resolved
+    device policy clamped by the absolute pump backstop and publishes it as
+    ``effective_min_pwm_pct``; that is the number to show, because it is the one
+    the engine will enforce. Re-deriving it client-side is what this phase
+    exists to stop: the GUI had no way to know about a policy at all, so any
+    number it computed would silently diverge the moment a validated device
+    policy shipped.
+
+    ``None`` means "not known" and callers must render it as such rather than
+    substituting 0 — that is the whole reason the wire field is optional.
+
+    The fallback keeps older daemons honest: with no reported value, a
+    pump-protected header still shows the hard 30% floor those daemons enforce.
+    An ordinary header gets ``None`` rather than 0, because the daemon applies
+    no per-role floor of its own there — the control's own ``minimum_pct``
+    governs, and claiming 0 would misrepresent that as "no floor at all".
+    """
+    if header is None:
+        return None
+    if header.effective_min_pwm_pct is not None:
+        return header.effective_min_pwm_pct
+    if header_is_pump_protected(header, capabilities):
+        # Deferred import: `profile_service` is heavy and imports widely, and
+        # this is the only value needed from it. Referenced rather than
+        # restated so the two cannot drift — CLAUDE.md's "a threshold spelled
+        # into a name drifts every time the threshold moves".
+        from .profile_service import CONTROL_ROLE_CPU_PUMP, ROLE_MINIMUM_PCT
+
+        return int(ROLE_MINIMUM_PCT[CONTROL_ROLE_CPU_PUMP])
+    return None

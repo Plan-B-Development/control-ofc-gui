@@ -140,6 +140,14 @@ control_ofc/
                                #   counts, histogram buckets, correlation)
     dashboard_view.py          # Dashboard page VM — DEC-219 (Phase 7.2)
     controls_view.py           # Controls page VM — DEC-214, grown DEC-219 (Phase 7.3)
+    characterization_view.py   # PWM/RPM characterisation dialog VM — DEC-313/315
+    cooling_device_view.py     # Cooling-device topology VM — DEC-316 (AIO-MB Phase 4).
+                               #   Phase 4 builds the model; Phase 6 owns the card.
+    pump_protection.py         # THE pump-protection predicate + the enforced-floor
+                               #   lookup. Daemon-first since DEC-316: prefers the
+                               #   header's reported stop_permitted /
+                               #   effective_min_pwm_pct and reconstructs only when
+                               #   an older daemon says nothing. One rule, one place.
   knowledge/                   # pure (stdlib-only) hardware-knowledge modules — no Qt/services deps (moved out of ui/ in v2.8.0)
     sensor_knowledge.py        # sensor classification + board-override database
     hwmon_label_resolver.py    # libsensors / hwmon fan-header label resolution

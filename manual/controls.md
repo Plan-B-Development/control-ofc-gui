@@ -79,6 +79,8 @@ So Configure AIO **asks**. Its first step lists your controllable headers and yo
 
 Telling it which header is the pump is worth doing even if you do not change anything else — it is what earns that header its 30% minimum speed, and what stops it being stopped during fan identification. Choose "No pump on a motherboard header" if your pump is not connected this way, and only the radiator fans are set up.
 
+The dialog also asks what to **name** the cooler. The name is presentation only — it does not change how the pump or fans are controlled — but it is what lets Control-OFC treat the pump, its radiator fans and its temperature source as one cooling device rather than three unrelated channels. Naming confers nothing on its own: the 30% minimum and identify protection come from telling it which header is the pump, above.
+
 A read-only / monitor-only cooler (one whose pump the kernel cannot drive, such as an older NZXT Kraken2) skips the pump step and offers radiator + coolant monitoring only — it never offers control that would fail. The controls it creates are ordinary fan roles you can edit afterward.
 
 ### Dedicating a GPU fan

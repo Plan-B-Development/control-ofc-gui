@@ -12,6 +12,7 @@ from control_ofc.api.models import (
     Capabilities,
     CharacterizationRun,
     ConfigWriteResult,
+    CoolingDeviceInventory,
     DaemonConfig,
     DaemonStatus,
     FanReading,
@@ -38,6 +39,7 @@ from control_ofc.api.models import (
     parse_capabilities,
     parse_characterization_run,
     parse_config_write,
+    parse_cooling_devices,
     parse_daemon_config,
     parse_fans,
     parse_gpu_fan_reset,
@@ -468,6 +470,81 @@ class DaemonClient:
         return parse_header_role(
             self._post("/config/header-role", json={"header_id": header_id, "role": role})
         )
+
+    def get_cooling_devices(self) -> CoolingDeviceInventory:
+        """GET /inventory/cooling-devices — the configured cooling assemblies
+        (DEC-316, daemon >= 2.31.0; capability control.cooling_devices).
+
+        Metadata only: the daemon's profile engine never reads a cooling device,
+        so nothing here changes what a fan does. Also returns every device policy
+        the daemon ships, so the GUI offers the real choices rather than a
+        hardcoded list that drifts from the binary.
+
+        Gate on capabilities.control.cooling_devices — an older daemon 404s this
+        route, which is indistinguishable from a genuine not_found.
+        """
+        return parse_cooling_devices(self._get("/inventory/cooling-devices"))
+
+    def set_cooling_device(
+        self,
+        device_id: str,
+        *,
+        name: str = "",
+        kind: str = "",
+        pump_member: str | None = None,
+        radiator_members: list[str] | None = None,
+        auxiliary_members: list[str] | None = None,
+        preferred_sensor: str | None = None,
+        fallback_sensor: str | None = None,
+        coolant_sensor: str | None = None,
+        device_policy_id: str | None = None,
+    ) -> dict:
+        """POST /config/cooling-device — create or replace one device by id.
+
+        Persists to runtime.toml and takes effect immediately.
+
+        This does NOT confer pump protection. Naming a header as `pump_member`
+        is a description; the 30% floor and pump-safe identify come from
+        `set_header_role(..., "pump")`, which is a separate call the AIO flow
+        makes first. Do not present this as protecting a pump.
+
+        Safety numbers are not settable here by design: a policy is selected by
+        `device_policy_id` and the values it names are compiled into the daemon.
+        A payload carrying `minimum_safe_pwm` (or any sibling) is REJECTED with
+        400 rather than ignored, so a caller cannot believe it tightened a floor
+        it did not.
+
+        Raises on 400 (bad id/kind/policy id, unknown header id, a duplicate
+        member), 409 (device limit reached) and 503 (persistence_failed —
+        persist-first, so nothing changed daemon-side).
+        """
+        payload: dict = {"id": device_id}
+        if name:
+            payload["name"] = name
+        if kind:
+            payload["kind"] = kind
+        if pump_member:
+            payload["pump_member"] = pump_member
+        if radiator_members:
+            payload["radiator_members"] = radiator_members
+        if auxiliary_members:
+            payload["auxiliary_members"] = auxiliary_members
+        if preferred_sensor:
+            payload["preferred_sensor"] = preferred_sensor
+        if fallback_sensor:
+            payload["fallback_sensor"] = fallback_sensor
+        if coolant_sensor:
+            payload["coolant_sensor"] = coolant_sensor
+        if device_policy_id:
+            payload["device_policy_id"] = device_policy_id
+        return self._post("/config/cooling-device", json=payload)
+
+    def delete_cooling_device(self, device_id: str) -> dict:
+        """DELETE /config/cooling-device/{id} — remove one cooling device.
+
+        Raises on 404 (no such device) and 503 (persistence_failed).
+        """
+        return self._delete(f"/config/cooling-device/{device_id}")
 
     def verify_hwmon_pwm(self, header_id: str) -> HwmonVerifyResult:
         """POST /hwmon/{header_id}/verify — test PWM write effectiveness (~6s).

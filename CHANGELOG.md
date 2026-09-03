@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.54.0] — 2026-09-03
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor); the new surface is gated on
+the daemon's `control.cooling_devices` capability and is simply absent against anything
+older. AIO-MB Phase 4 (DEC-316).
+
+### Added
+- **Configure AIO now records the cooler as one device.** The dialog gains a name field,
+  and the assembly it has always collected — pump header, radiator fans, sensor — is saved
+  to the daemon instead of being discarded once the profile controls were built. The write
+  runs last and is non-fatal: topology is metadata, so a daemon that is older, busy or
+  read-only costs a presentation nicety, never your AIO setup.
+- **Client support for the cooling-device API** — `get_cooling_devices()`,
+  `set_cooling_device()` and `delete_cooling_device()`. There is deliberately no parameter
+  for a safety number: a policy is selected by id, and the values it names are compiled
+  into the daemon.
+- **A Qt-free cooling-device view-model** (`services/cooling_device_view.py`) for the
+  topology card Phase 6 will render. An unknown floor renders as "—" rather than 0%, an
+  unrecognised device kind renders rather than being dropped, and a member the daemon
+  cannot find is flagged.
+
+### Changed
+- **The pump floor and stop-protection shown in the UI now come from the daemon where the
+  daemon offers them.** `services/pump_protection.py` keeps its client-side reconstruction
+  only as a fallback for older daemons. This matters beyond tidiness: the GUI had no way
+  to know about a device policy at all, so any floor it computed would silently diverge
+  the moment a validated policy shipped.
+
+  An absent value is treated as **unknown**, never as "stoppable" or "0%" — a defaulted
+  zero would have claimed a pump may idle at 0% against every pre-2.31.0 daemon.
+
 ## [2.53.1] — 2026-09-02
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). Three defect fixes from the

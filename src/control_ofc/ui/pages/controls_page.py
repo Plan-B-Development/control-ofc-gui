@@ -199,6 +199,15 @@ class _OverrideWorker(QObject):
             self._client = None
 
 
+#: Stable id for the single cooling device the Configure-AIO flow manages.
+#:
+#: Fixed rather than generated: re-running Configure AIO must REPLACE the
+#: assembly it created last time, not accumulate a new one on every pass. The
+#: daemon keys devices by id and upserts, so a fixed id makes the flow
+#: idempotent. Managing several coolers is a Phase 6 concern.
+_COOLING_DEVICE_ID = "aio-1"
+
+
 class ControlsPage(QWidget):
     """FanControl-style controls: profile bar, control cards grid, curve cards grid."""
 
@@ -1243,10 +1252,51 @@ class ControlsPage(QWidget):
             and self._settings_service.settings.show_aio_pump_info
         ):
             self._show_aio_pump_info()
+        # AIO-MB Phase 4: record the assembly itself. LAST and NON-FATAL, both
+        # deliberately — the controls and curves above are the user's actual
+        # request, and a failed topology write must never undo or abort them.
+        # Topology is metadata: the daemon's engine never reads a cooling
+        # device, so failing to save one costs presentation, not control.
+        self._save_cooling_device(res.get("cooling_device"))
+
         # "Custom curve" seeds the automatic curve and hands it straight to the
         # editor — the whole point of that choice is to shape it.
         if strategy == AIO_PUMP_STRATEGY_CUSTOM and pump_control is not None:
             self._on_edit_curve(pump_control.curve_id)
+
+    def _supports_cooling_devices(self) -> bool:
+        caps = self._state.capabilities
+        return bool(caps and getattr(caps.control, "cooling_devices", False))
+
+    def _save_cooling_device(self, spec: dict | None) -> None:
+        """POST the cooling-device topology, best-effort (DEC-316).
+
+        Silent on failure by design. This runs after the profile controls are
+        already built, and the topology is metadata the engine never reads —
+        so a daemon that is older, busier or read-only costs the user a
+        presentation nicety, not their AIO setup. Surfacing a modal here would
+        make a cosmetic write look like the profile had failed.
+
+        Skipped entirely against a pre-2.31.0 daemon, which 404s the route.
+        """
+        if not spec or not self._client or not self._supports_cooling_devices():
+            return
+        if not spec.get("pump_member") and not spec.get("radiator_members"):
+            return  # nothing worth describing
+        try:
+            self._client.set_cooling_device(
+                _COOLING_DEVICE_ID,
+                name=spec.get("name", ""),
+                kind=spec.get("kind", ""),
+                pump_member=spec.get("pump_member"),
+                radiator_members=spec.get("radiator_members") or [],
+                preferred_sensor=spec.get("preferred_sensor"),
+                coolant_sensor=spec.get("coolant_sensor"),
+            )
+        except (DaemonError, ConnectionError, OSError) as e:
+            logging.getLogger(__name__).warning(
+                "Could not save cooling-device topology (non-fatal): %s", e
+            )
 
     def _on_dedicate_gpu(self) -> None:
         """DEC-221: give a writable AMD GPU fan its own GPU-only control + 0-floor

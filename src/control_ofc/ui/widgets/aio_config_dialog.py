@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -76,6 +77,13 @@ _STRATEGY_ROWS: tuple[tuple[str, str, str], ...] = (
 
 _NO_PUMP_DATA = ""
 
+#: Default name for the cooling device this dialog creates (AIO-MB Phase 4).
+DEFAULT_COOLING_DEVICE_NAME = "AIO Cooling System"
+
+#: Wire token for the device kind this dialog always produces. Exact-case — the
+#: daemon rejects an unrecognised token rather than defaulting it.
+COOLING_DEVICE_KIND_AIO = "aio_liquid"
+
 
 class AioConfigDialog(QDialog):
     """Collect a pump header + pump strategy + radiator fans + sensor for AIO setup."""
@@ -110,6 +118,10 @@ class AioConfigDialog(QDialog):
         # behaves exactly as it did before this change.
         self._pump_candidates = list(pump_candidates or [])
         self._has_detected_pump = bool(pump_label) and not monitor_only
+        # Kept for `get_result`: whether the chosen sensor is genuinely a
+        # coolant reading decides whether the saved topology may claim
+        # coolant telemetry at all.
+        self._has_coolant = has_coolant
 
         layout = QVBoxLayout(self)
 
@@ -121,6 +133,28 @@ class AioConfigDialog(QDialog):
         intro.setWordWrap(True)
         intro.setProperty("class", "PageSubtitle")
         layout.addWidget(intro)
+
+        # ── Device name (AIO-MB Phase 4) ──────────────────────────────
+        # The one new input this phase adds. Everything else the topology
+        # needs — pump, radiators, sensor — the dialog already collected and
+        # then threw away; only the assembly's *name* had nowhere to come from.
+        name_row = QHBoxLayout()
+        name_label = QLabel("Name")
+        name_label.setObjectName("AioConfig_Label_deviceName")
+        self._name_edit = QLineEdit(DEFAULT_COOLING_DEVICE_NAME)
+        self._name_edit.setObjectName("AioConfig_Edit_deviceName")
+        self._name_edit.setPlaceholderText(DEFAULT_COOLING_DEVICE_NAME)
+        self._name_edit.setToolTip(
+            "What to call this cooler. Naming is presentation only — it does not "
+            "change how the pump or fans are controlled."
+        )
+        # DEC-251/276: the shared helper, not a hand-rolled setAccessibleName —
+        # it also wires `setBuddy`, which is the half that actually works on
+        # Linux, and routes control types Qt would ignore a name on.
+        name_value_control(self._name_edit, name_label)
+        name_row.addWidget(name_label)
+        name_row.addWidget(self._name_edit, 1)
+        layout.addLayout(name_row)
 
         # ── Pump section ──────────────────────────────────────────────
         pump_group = QGroupBox("Pump")
@@ -384,13 +418,28 @@ class AioConfigDialog(QDialog):
             if item.checkState() == Qt.CheckState.Checked:
                 radiator_members.append(item.data(Qt.ItemDataRole.UserRole))
 
+        sensor_id = self._sensor_combo.currentData() or ""
         return {
             "pump_pct": pump_pct,
             "pump_strategy": strategy,
             "pump_member_id": pump_id or None,
             "role_assignments": self._role_assignments(pump_id),
             "radiator_members": radiator_members,
-            "radiator_sensor_id": self._sensor_combo.currentData() or "",
+            "radiator_sensor_id": sensor_id,
+            # AIO-MB Phase 4: the assembly itself. The dialog has always
+            # collected every part of this and discarded it — the topology was
+            # reconstructible from the created controls only by re-inferring it
+            # from labels. `coolant_sensor` is set only when the chosen sensor
+            # really is a coolant reading, so a CPU-package fallback is not
+            # mislabelled as coolant telemetry the machine does not have.
+            "cooling_device": {
+                "name": self._name_edit.text().strip() or DEFAULT_COOLING_DEVICE_NAME,
+                "kind": COOLING_DEVICE_KIND_AIO,
+                "pump_member": pump_id or None,
+                "radiator_members": [m.get("id", "") for m in radiator_members if m.get("id")],
+                "preferred_sensor": sensor_id or None,
+                "coolant_sensor": sensor_id if self._has_coolant and sensor_id else None,
+            },
         }
 
     def _role_assignments(self, pump_id: str) -> list[tuple[str, str | None]]:

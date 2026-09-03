@@ -137,6 +137,18 @@ GUI treats every flag as false / old behaviour (AIP-180):
   pump will only change speed" is lying against one, *even though the header may still report
   `role: "pump"`* (an older daemon simply omits the field, but a mixed-version client could hold
   a cached one). Keep the "the fan will stop" wording whenever this is `false`.
+- `cooling_devices` (bool, DEC-316) — the daemon exposes the cooling-device topology surface:
+  `GET /inventory/cooling-devices`, `POST /config/cooling-device`, `DELETE /config/cooling-device/{id}`.
+  **`true` since 2.31.0**; absent → `false`.
+
+  Gate on this rather than probing: an older daemon `404`s the POST, which is the same *status*
+  a `DELETE` returns for an unknown device id.
+
+  It gates the **endpoints only**. The additive `PwmHeaderEntry` fields that shipped alongside
+  (`effective_min_pwm_pct`, `stop_permitted`, `cooling_device_id`, and the capability-audit
+  fields) need no flag: each is optional on the wire, so absence already means "this daemon did
+  not say" and a client falls back rather than believing a defaulted zero.
+
 - `pwm_characterization` (bool, DEC-313) — the daemon exposes `POST /hwmon/{id}/characterize`
   plus the `GET`/`DELETE /diagnostics/characterization` pair: the deeper PWM/RPM response sweep
   that sits **alongside** the quick verify. **`true` since 2.29.0**; absent → `false`.
@@ -614,6 +626,8 @@ Expected fields:
 - duty_pct (optional; DEC-204) — firmware-**measured** current fan duty %, present only for sources with a duty readback (NVIDIA via NVML). Distinct from `last_commanded_pwm` (commanded) — never conflate. May exceed 100 (NVML expresses it as a % of max noise tolerance), but it is a `u8` on the wire (`responses.rs`) and so saturates at **255** — a larger reading is not representable. Omitted when absent (and on pre-DEC-204 daemons).
 - age_ms
 - stall_detected (optional bool) — daemon-asserted; set when commanded PWM is above the daemon's `STALL_PWM_THRESHOLD` (20%, i.e. ≥21%) but measured RPM is zero. Evaluated per-tick from the latest snapshot (no multi-cycle counter); `null`/omitted when RPM is not polled. Surfaced by the GUI as an `error`-level warning.
+- fan_alarm (optional bool, DEC-316, daemon ≥ 2.31.0) — the driver's own `fanN_alarm` bit for an hwmon header. Carried on the **1 Hz poll** rather than on `/hwmon/headers` deliberately: it is *state*, and clients refetch headers only occasionally, so an alarm frozen into the discovery snapshot would read "clear" while a fan is failing. `null`/absent means **not known** — either the driver exposes no alarm attribute, or the cache entry was refreshed by a PWM write without re-reading it — and must never be rendered as "no alarm". Distinct from `stall_detected`, which the daemon infers; this is what the hardware itself asserts.
+- pwm_enable_mode (optional int, DEC-316, daemon ≥ 2.31.0) — the **live** `pwmN_enable` mode for an hwmon header: 0 = no control / full speed, 1 = manual, 2+ = driver-specific automatic modes. On the poll rather than on `/hwmon/headers` because the daemon writes this attribute itself when it takes a header over; a value captured at discovery would report the pre-takeover mode forever, while the field's whole diagnostic value is answering "is something else controlling this header *now*?" (a BIOS reclaim, say). `null`/absent means not known. Use `PwmHeaderEntry.supported_pwm_enable_modes` to interpret a value above 1.
 
 Note: fans do **not** include `label` or `kind` from the daemon — every display name is
 derived GUI-side by `AppState.fan_display_name` / `fan_fallback_name`, in this order:
@@ -746,6 +760,41 @@ Use to discover:
   AIO pump most often lands *and* where a second CPU-radiator fan lands, and there is nothing in
   the label to tell them apart — guessing `pump` would floor a radiator fan at 30 %, guessing
   `radiator_fan` would let identify stop a pump. `CPU_FAN` is `"cpu_fan"`, never `"pump"`.
+- **AIO-MB Phase 4 fields (DEC-316, daemon ≥ 2.31.0).** Every one is **optional on the wire and
+  absent when the daemon or the driver cannot answer**. That is load-bearing, not tidiness:
+  `effective_min_pwm_pct` typed as a plain integer would parse as `0` against a pre-2.31.0
+  daemon, i.e. the GUI would believe a **0% floor on a pump**. Absent means "fall back to your
+  own reconstruction", never "zero".
+
+  - `effective_min_pwm_pct` (int, optional) — the duty floor the daemon **will actually
+    enforce** for this header: its resolved device policy, clamped by the absolute pump
+    backstop (20%). Prefer this over re-deriving a floor from labels and chip names. With the
+    generic-only policy table shipped in 2.31.0 this is `30` for every pump-protected header
+    and `0` otherwise — identical to what the engine already enforced.
+  - `stop_permitted` (bool, optional) — whether the header may be driven to 0 at all. `false`
+    wherever the daemon's pump-protection union holds, whatever a policy claims. **`null`/absent
+    is not `false`** — read it as unknown and fall back, or an older daemon's pump becomes
+    "stoppable".
+  - `cooling_device_id` (string, optional) — the cooling device claiming this header, if any.
+  - `pwm_freq_hz` (int, optional) — PWM base frequency from `pwmN_freq`.
+  - **There is deliberately no `pwm_enable_mode` here.** The header's *current* `pwmN_enable`
+    value is state, not a capability: the daemon writes that attribute itself when it takes a
+    header over, so a discovery-time snapshot would report the pre-takeover mode for the whole
+    process lifetime — and `/hwmon/rescan`, which maps freshly discovered descriptors, would
+    disagree with `/hwmon/headers` in the same second. It rides the 1 Hz poll as
+    `FanEntry.pwm_enable_mode` instead. `supports_enable` is the static half of the question
+    (does the attribute exist), and `pwm_mode` is a different attribute again (`pwmN_mode`,
+    DC vs PWM).
+  - `supported_pwm_enable_modes` (int[], optional) — the `pwmN_enable` values this chip's driver
+    accepts. **Empty means UNKNOWN, not "no modes supported".** Nothing in sysfs reports this, so
+    the daemon derives it from driver knowledge (`it87` → `[0,1,2]`, cited from
+    `set_pwm_enable`; `nct6775` → `[0,1,2,3,4,5]`, cited from the kernel docs) and has none for
+    unrecognised chips.
+  - `rpm_min_threshold` / `rpm_max_threshold` (int, optional) — from `fanN_min` / `fanN_max`.
+    Most Super-I/O chips expose only the minimum.
+  - `tach_pulses_per_rev` (int, optional) — from `fanN_pulses`. **Absent on `it87`**, so `null`
+    is the common case on the validation hardware rather than an anomaly.
+
 - `role_source` (string, DEC-311, daemon ≥ 2.28.0) — how `role` was established:
   `"none"` | `"label"` | `"chip_mapping"` | `"user_assigned"`. Lets a client distinguish a
   confident classification from a header worth asking the user about. Note that on boards whose
@@ -897,6 +946,41 @@ and the GUI parser defaults safely:
 > stream that no client ever consumed (the GUI is poll-only; DEC-164 deferred SSE
 > past 2.0.0). It was removed entirely in daemon v2.5.0 (DEC-198). All data flows
 > through the 1 Hz `PollingService` over `GET /poll`.
+
+### GET /inventory/cooling-devices (DEC-316, daemon ≥ 2.31.0)
+
+The configured cooling-device topology — a named assembly binding a pump header, radiator fan
+headers, auxiliary members and a temperature source. Capability-gated on
+`control.cooling_devices`. Read-only; the write side is `POST /config/cooling-device`.
+
+**Topology is metadata and the daemon's profile engine never reads it.** It does not replace
+`LogicalControl` / `ControlMember`, does not participate in curve evaluation, and gates no write.
+Naming a header as a device's `pump_member` is a *description*, not a protection grant — the 30%
+floor and pump-safe identify come from `POST /config/header-role`, which is a separate call.
+
+- `api_version: int` — always `1`.
+- `cooling_devices: list` — each entry:
+  - `id`, `name` (strings)
+  - `kind` — `"unknown" | "aio_liquid" | "air_cooler" | "custom_loop"`. **Opaque token**: render
+    an unrecognised value rather than dropping the device (the 273-i rule).
+  - `pump_member` (string, optional), `radiator_members` (string[]), `auxiliary_members` (string[])
+  - `preferred_sensor` / `fallback_sensor` (string, optional) — **advisory only.** A curve keeps
+    its own `sensor_id`; nothing in the control path reads these.
+  - `coolant_sensor` (string, optional) and `coolant_telemetry` — `"available" | "unavailable"`.
+    **Unavailable is the normal case for a motherboard-connected AIO** and is not an error, not a
+    readiness item, and not a warning state.
+  - `device_policy` — the resolved policy: `id`, `display_name`, `minimum_safe_pwm_pct`,
+    `supports_stop`, and the optional `startup_override_seconds` / `expected_rpm_min` /
+    `expected_rpm_max` / `internal_control_possible`. Read-only; see the trust note below.
+- `available_policies: list` — every policy this daemon ships, same shape, so a client offers the
+  real choices rather than hardcoding a list that drifts from the binary.
+
+**Trust model.** Device-policy values are compiled into the daemon and selected **by id**. The
+Rust `DevicePolicy` type deliberately derives no `Deserialize`, so no inbound payload can
+construct one — "a normal user profile must not be able to submit `minimum_safe_pwm = 1`" is a
+compile-time property, not a review convention. 2.31.0 ships generic policies only
+(`generic_pump`, whose floor *is* the engine's hard pump floor, and `generic_fan`), so **no floor
+moves in this release**; the mechanism exists so a validated device policy can later land as data.
 
 ### GET /inventory/hwmon (DEC-200, daemon ≥ 2.6.0)
 
@@ -1694,6 +1778,8 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
   - **The GUI no longer pushes this on Settings → Save or Settings → Import (DEC-285).** It is an ordinary row on the Daemon Configuration card, written only by its own control and only when the value actually changed. The old best-effort push bypassed the no-op-write guard, so pressing Save once wrote the key into `runtime.toml`, flipped its `source` to `runtime`, and permanently shadowed the operator's `daemon.toml` with a value nobody had chosen. `AppSettings.daemon_startup_delay_secs` was deleted with it (settings schema v4), so an imported/shared config can no longer carry one machine's daemon setting onto another's.
 - `POST /config/preferred-cpu-sensor` / `POST /config/preferred-mb-sensor` — persist the user's preferred CPU / motherboard temperature sensor by stable id (body `{"sensor_id": string | null}`; `null` clears the preference). The id is validated against the live sensor set — an unknown id (or a missing key) is `400 validation_error`; a persistence failure is `503 persistence_failed`. Advisory only (thermal safety still keys off `kind`) — reflected in `/inventory/hwmon` `default_cpu` (`source: "user"`) + `preferences` and the readiness `selected_cpu_sensor_missing` item. Daemon ≥ 2.6.0 (DEC-200); older daemons answer `404` and the GUI hides the feature for the session. The GUI offers these from the Overview page's sensor-table context menu and the Settings page.
 - `POST /config/header-role` (DEC-311, daemon ≥ 2.28.0; **GUI caller since v2.51.0 — `DaemonClient.set_header_role()`, from the Configure-AIO dialog's pump step, DEC-312**) — assign or clear one PWM header's role. **The `role` key is REQUIRED**: a *missing* key is `400 validation_error`, which is distinct from `"role": null`, so a client that omits null fields cannot clear an assignment. Tokens are exact-case and must not be normalised client-side — an unrecognised token has to surface the daemon's `400` rather than be coerced into something weaker. The `200` body carries `effective_role` (the role the daemon actually resolved) alongside `role` (what was stored); they differ after a clear, and `effective_role` is the one to display. Assigning a `pump` role also releases any live identify hold on that header daemon-side, so an identify "stop" in progress ends when the call returns. Body `{"header_id": string, "role": "unknown"|"cpu_fan"|"pump"|"radiator_fan"|"chassis_fan" | null}`; `null` clears and the header falls back to its detected role. An unrecognised role token is `400 validation_error` — **never silently defaulted**, because a typo that became `"unknown"` would drop a pump's protection while the response said "updated". Assigning to a header the daemon has not discovered is also `400`; *clearing* is always permitted, even for a vanished id, so a stale assignment can never become unreachable. Persistence failure is `503 persistence_failed`. Persist-first: on a write failure nothing the daemon acts on changes.
+- `POST /config/cooling-device` (DEC-316, daemon ≥ 2.31.0; capability `control.cooling_devices`) — create or replace one cooling device, keyed by `id`. Body `{"id": string, "name"?: string, "kind"?: token, "pump_member"?: string, "radiator_members"?: string[], "auxiliary_members"?: string[], "preferred_sensor"?: string, "fallback_sensor"?: string, "coolant_sensor"?: string, "device_policy_id"?: string}`. **Safety numbers are not settable here**: a payload carrying `minimum_safe_pwm`, `minimum_safe_pwm_pct`, `supports_stop`, `startup_override_seconds`, `expected_rpm_min`, `expected_rpm_max`, `internal_control_possible`, `device_policy`, `effective_min_pwm_pct` or `stop_permitted` is **`400 validation_error`, rejected by name rather than ignored** — a caller that believed it had tightened a pump floor when it had not is the more dangerous outcome. A policy is chosen with `device_policy_id`, and an id this daemon does not ship is also `400`. An unrecognised `kind` is `400`, never silently defaulted. A member id the daemon has not discovered is `400` — **unless the daemon has discovered no headers at all** (no hwmon controller, or a driver not yet loaded), in which case member validation is skipped rather than blocking the write. That is a deliberate difference from `/config/header-role`, which rejects a set outright in that state: a role assignment is useless without its header, whereas a cooling device is metadata and a member that cannot currently be resolved is surfaced as a *missing member* by the client rather than being harmful. A header claimed twice within one device is `400`. Exceeding the 16-device cap is `409 already_exists`. Persistence failure is `503 persistence_failed`. Persist-first, then committed in memory, so a failed write changes nothing. Takes effect immediately. **Confers no pump protection** — see the note on `GET /inventory/cooling-devices`.
+- `DELETE /config/cooling-device/{id}` (DEC-316, daemon ≥ 2.31.0) — remove one cooling device. `404 not_found` when no device has that id, so a second delete is not a silent success. `503 persistence_failed` on a write failure.
 
   **Not advisory, unlike the preferred-sensor writes above.** A `"pump"` assignment is a safety input: it earns that header the 30 % hard floor and the DEC-167 stop-snap exemption, protects it from being stopped by identify, and keeps `/hwmon/{id}/verify` above the floor. It is a **union term** — it can add a floor, never remove one, so assigning `"chassis_fan"` to a header whose label already says `PUMP` does not strip that header's floor. It takes effect **immediately** rather than at next start (a safety floor that waited for a reboot would be a trap), and persists in `runtime.toml` under `[hardware.header_roles]`.
 
