@@ -476,8 +476,11 @@ class CoolingDevicePage(QWizardPage):
        ``POST /config/header-role`` (Decision 1) and the cooling-device topology
        (Decision 5).
 
-    The pump copy that used to sit on ``IntroPage`` moved here, where the pump is
-    actually the subject.
+    ``IntroPage`` keeps its one-line "a pump is never stopped" bullet, which is
+    still true and is the right thing to say in a pre-flight summary; this page
+    is where that claim is *explained and acted on*. An earlier revision of this
+    docstring said the copy had moved here — it had not, and the two are
+    deliberately both present.
     """
 
     def __init__(self, wizard: FanConfigWizard, parent=None) -> None:
