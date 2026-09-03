@@ -26,7 +26,7 @@ What it does decide is the part that is not presentation taste:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
 from ..api.models import Capabilities, CoolingDevice, FanReading, HwmonHeader
@@ -341,3 +341,203 @@ def build_cooling_device_views(
         )
         for d in devices
     ]
+
+
+# ── AIO-MB Phase 7 (DEC-319): membership index and topology merge ────────────
+#
+# Two surfaces now create cooling devices — ``AioConfigDialog`` and the fan
+# wizard — and two more need to know which fans a device already claims. Both
+# facts therefore live here rather than inside either widget: a rule that lives
+# inside one consumer is a rule the other consumers cannot follow (CLAUDE.md;
+# DEC-276's precedent, applied again).
+
+#: Default name for a cooling device this GUI creates. Moved out of
+#: ``ui/widgets/aio_config_dialog`` in Phase 7, when the wizard became a second
+#: creator.
+DEFAULT_COOLING_DEVICE_NAME = "AIO Cooling System"
+
+#: Wire token for a liquid cooler (``CoolingDeviceKind::AioLiquid``).
+COOLING_DEVICE_KIND_AIO = "aio_liquid"
+
+#: The single device id this GUI creates and upserts. Both writing surfaces use
+#: it, which is what makes Configure AIO and the wizard idempotent against each
+#: other rather than accumulating duplicate devices.
+DEFAULT_COOLING_DEVICE_ID = "aio-1"
+
+#: Header roles that imply cooling-stack membership when no device is configured.
+#: Maps the wire ``HwmonHeader.role`` token to this module's own role vocabulary.
+_ROLE_DERIVED_MEMBERSHIP = {"pump": "pump", "radiator_fan": "radiator"}
+
+
+@dataclass(frozen=True)
+class CoolingMembership:
+    """Why one fan id is claimed by the cooling stack.
+
+    ``device_id``/``device_name`` are empty when the claim came from a header
+    *role* with no configured device (AIO-MB Phase 7, Decision 4). That
+    distinction is load-bearing for the copy: there is no device to name, so
+    saying "Part of: AIO Cooling System" would assert a device that does not
+    exist.
+    """
+
+    member_id: str
+    #: "pump" | "radiator" | "auxiliary", this module's vocabulary.
+    role: str
+    role_label: str
+    device_id: str = ""
+    device_name: str = ""
+
+    @property
+    def from_device(self) -> bool:
+        """True when a configured cooling device claims this member."""
+        return bool(self.device_id)
+
+
+def cooling_member_index(
+    devices: list[CoolingDevice] | None,
+    headers: list[HwmonHeader] | None = None,
+    capabilities: Capabilities | None = None,
+) -> dict[str, CoolingMembership]:
+    """Every fan id the cooling stack claims, mapped to why.
+
+    **Built from the device inventory first, headers only as a fallback.** A
+    device's ``radiator_members`` may contain OpenFan channel ids, which have no
+    ``HwmonHeader`` at all — so an index derived from ``header.cooling_device_id``
+    would silently miss exactly the members a user with an OpenFan-driven
+    radiator cares about. The inventory is the complete source; the header pass
+    exists only to catch a role the user assigned without completing a device.
+
+    A configured device always outranks a bare role for the same id: it carries
+    a name, and the name is what the user is shown.
+
+    No capability gate is needed. ``role`` defaults to ``"unknown"`` and the
+    inventory is ``None`` against a daemon that does not serve it, so a pre-2.28
+    daemon yields an empty index by construction rather than by permission.
+    """
+    index: dict[str, CoolingMembership] = {}
+
+    for device in devices or []:
+        pairs: list[tuple[str, str]] = []
+        if device.pump_member:
+            pairs.append((device.pump_member, "pump"))
+        pairs.extend((m, "radiator") for m in device.radiator_members if m)
+        pairs.extend((m, "auxiliary") for m in device.auxiliary_members if m)
+        for member_id, role in pairs:
+            # First device wins; a member named twice keeps its stronger role,
+            # which is the order above (pump before radiator before auxiliary).
+            if member_id in index:
+                continue
+            index[member_id] = CoolingMembership(
+                member_id=member_id,
+                role=role,
+                role_label=_ROLE_LABELS.get(role, _humanise_token(role)),
+                device_id=device.id,
+                device_name=device.name or DEFAULT_COOLING_DEVICE_NAME,
+            )
+
+    for header in headers or []:
+        if header.id in index:
+            continue
+        # **The pump term is the UNION predicate, never the bare `role` token.**
+        # `role` is the DISPLAY role and a user assignment fully substitutes for
+        # inference there, downgrades included (DEC-312): assign `chassis_fan` to
+        # a header the hardware labels `PUMP` and `role` reads `chassis_fan`
+        # while the daemon still refuses to stop it. Reading `role == "pump"`
+        # here would leave that header un-excluded in the wizard and unreserved
+        # in the Controls picker while the daemon protects it — the GUI
+        # disagreeing with the daemon about the same header, which is exactly
+        # the bug DEC-312 records. There is no equivalent union for a radiator:
+        # the daemon infers `RadiatorFan` only for a known cooler chip's
+        # non-pump channels and never guesses it on a motherboard header, so the
+        # resolved token is the only evidence there is.
+        # A UNION of the two, never a swap. Gating on the predicate ALONE loses
+        # the plain `role == "pump"` claim whenever `capabilities` is absent —
+        # the predicate needs it for its reconstruction path — and that loses it
+        # in the unsafe direction: a known pump would stop being excluded from
+        # identification. Caught by this module's own existing tests during the
+        # DEC-319 review remediation, which is the whole reason they are there.
+        if (header.role or "") == "pump" or header_is_pump_protected(header, capabilities):
+            role = "pump"
+        elif _ROLE_DERIVED_MEMBERSHIP.get(header.role or "") == "radiator":
+            role = "radiator"
+        else:
+            continue
+        index[header.id] = CoolingMembership(
+            member_id=header.id,
+            role=role,
+            role_label=_ROLE_LABELS.get(role, _humanise_token(role)),
+        )
+
+    return index
+
+
+def merge_cooling_device_payload(
+    existing: CoolingDevice | None,
+    *,
+    pump_member: str | None,
+    radiator_members: Iterable[str] | None = None,
+    auxiliary_members: Iterable[str] | None = None,
+) -> dict:
+    """Overlay a new topology onto an existing device, preserving everything else.
+
+    **``POST /config/cooling-device`` is create-or-*replace* by id, not a merge**
+    — the daemon builds a fresh record from the payload
+    (``api/handlers/config.rs:1324``) and swaps it in (``:1370``). So a caller
+    that knows only the topology and posts only the topology **erases** the
+    name, the advisory sensors and the policy that an earlier
+    ``AioConfigDialog`` run stored. This function is what stops that, and it is
+    the reason the wizard reads the inventory before it writes (AIO-MB Phase 7,
+    Decision 6).
+
+    Returns keyword arguments for ``DaemonClient.set_cooling_device`` **without**
+    the id, so the caller stays in charge of which device it is writing. Keys
+    whose value is empty are omitted, matching that method's own payload
+    construction — an omitted key and an empty one mean the same thing to it.
+
+    ``existing`` of ``None`` is a create: defaults are supplied for name and
+    kind, and there is nothing else to preserve.
+
+    **``None`` and ``[]`` mean different things for the member lists, and the
+    difference is the whole safety of this function.** ``None`` is "the caller
+    has no opinion" and PRESERVES what the device already had; ``[]`` is "the
+    caller says empty" and clears it. Defaulting ``None`` to ``[]`` is what a
+    first version of this did, and it silently zeroed ``auxiliary_members`` —
+    a list no GUI surface can even display, so the caller could not have had an
+    opinion about it — on the first wizard Apply.
+    """
+
+    def _statement(given: Iterable[str] | None, current: list[str] | None) -> list[str]:
+        source = list(current or []) if given is None else list(given)
+        return [m for m in source if m]
+
+    radiators = _statement(radiator_members, existing.radiator_members if existing else None)
+    auxiliaries = _statement(auxiliary_members, existing.auxiliary_members if existing else None)
+
+    payload: dict = {
+        "name": (existing.name if existing else "") or DEFAULT_COOLING_DEVICE_NAME,
+        "kind": (existing.kind if existing else "") or COOLING_DEVICE_KIND_AIO,
+        "pump_member": pump_member or None,
+        "radiator_members": radiators,
+        "auxiliary_members": auxiliaries,
+    }
+
+    if existing is not None:
+        # The fields the wizard has no opinion about, and therefore must not
+        # destroy. `kind` is preserved above rather than forced to AIO: a user
+        # who described an air cooler or a custom loop does not get it silently
+        # relabelled because they later ran the wizard.
+        payload["preferred_sensor"] = existing.preferred_sensor or None
+        payload["fallback_sensor"] = existing.fallback_sensor or None
+        payload["coolant_sensor"] = existing.coolant_sensor or None
+        policy_id = existing.device_policy.id if existing.device_policy else ""
+        if policy_id:
+            payload["device_policy_id"] = policy_id
+
+    return payload
+
+
+def find_cooling_device(
+    devices: list[CoolingDevice] | None, device_id: str
+) -> CoolingDevice | None:
+    """The device with this id, or ``None``. The read half of read-modify-write."""
+    return next((d for d in (devices or []) if d.id == device_id), None)

@@ -18,9 +18,11 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QVBoxLayout,
 )
 
+from control_ofc.services.controls_view import ReservationNote
 from control_ofc.services.profile_service import ControlMember
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.dialog import ModalDialog
@@ -37,11 +39,16 @@ class MemberEditorDialog(ModalDialog):
         role_name: str = "",
         parent=None,
         display_name: Callable[[str, str], str] | None = None,
+        reserved: dict[str, ReservationNote] | None = None,  # fan_id -> cooling note
     ) -> None:
         super().__init__(f"Edit Role: {role_name}" if role_name else "Edit Members", parent)
         self.setMinimumSize(560, 400)
 
         self._result_members: list[ControlMember] = []
+        self._role_name = role_name
+        # DEC-319: fans a cooling device (or a bare pump/radiator role) claims.
+        # Soft — the row stays enabled and the user is asked at add time.
+        self._reserved = reserved or {}
         # DEC-228: (member_id, cached member_label) -> name to show.
         self._display_name = display_name or (lambda mid, label: label or mid)
         # Live RPM per output id (None = present-but-no-fan); absent id = unknown.
@@ -135,8 +142,14 @@ class MemberEditorDialog(ModalDialog):
                 label_text = f"[{out['source']}] {out['label'] or out['id']}"
                 label_text += self._rpm_suffix(out["id"])
                 role_name_for = assigned.get(out["id"])
+                # A hard block outranks a soft one: a fan already owned by
+                # another control cannot be taken at all, so there is nothing to
+                # ask about and the cooling note would only add noise.
+                note = None if role_name_for else self._reserved.get(out["id"])
                 if role_name_for:
                     label_text += f"  (Assigned to: {role_name_for})"
+                elif note is not None:
+                    label_text += f"  {note.text}"
                 item = QListWidgetItem(label_text)
                 item.setData(Qt.ItemDataRole.UserRole, out)
                 if role_name_for:
@@ -144,6 +157,10 @@ class MemberEditorDialog(ModalDialog):
                         item.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled
                     )
                     item.setToolTip(f"Already assigned to fan role: {role_name_for}")
+                elif note is not None:
+                    # Deliberately still enabled and selectable — the block is
+                    # soft, and `_confirm_reserved` is what enforces it.
+                    item.setToolTip(note.tooltip)
                 elif out.get("tooltip"):
                     item.setToolTip(out["tooltip"])
                 self._available_list.addItem(item)
@@ -175,8 +192,39 @@ class MemberEditorDialog(ModalDialog):
         self._available_count.setText(f"{self._available_list.count()} found")
         self._selected_count.setText(f"{self._selected_list.count()} assigned")
 
+    def _confirm_reserved(self, item: QListWidgetItem) -> bool:
+        """Ask before taking a fan out of the cooling stack (DEC-319, Decision 3).
+
+        A *soft* block, deliberately: unlike ``assigned_elsewhere`` — where
+        membership of a control is genuinely exclusive and the row is disabled —
+        a cooling device is metadata, and reassigning its fan is allowed. The
+        user is told what they are doing, not prevented.
+
+        Returns True when the fan may be moved. A fan that is not reserved is
+        never asked about, so the common path costs one dict lookup.
+        """
+        data = item.data(Qt.ItemDataRole.UserRole) or {}
+        note = self._reserved.get(data.get("id", ""))
+        if note is None:
+            return True
+        answer = QMessageBox.question(
+            self,
+            note.title,
+            f"{note.tooltip}\n\nAssign it to “{self._role_name}” anyway?"
+            if self._role_name
+            else f"{note.tooltip}\n\nAssign it to this control anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def _on_add(self) -> None:
-        for item in self._available_list.selectedItems():
+        # Resolve the rows first: `takeItem` mutates the list the selection
+        # indexes into, so taking while iterating over `selectedItems()` skips
+        # rows once more than one is selected.
+        for item in list(self._available_list.selectedItems()):
+            if not self._confirm_reserved(item):
+                continue
             row = self._available_list.row(item)
             taken = self._available_list.takeItem(row)
             self._selected_list.addItem(taken)

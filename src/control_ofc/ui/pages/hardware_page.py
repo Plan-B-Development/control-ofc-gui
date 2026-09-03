@@ -1173,7 +1173,26 @@ class HardwarePage(QWidget):
             card.setParent(None)
             card.deleteLater()
         self._show_diag_message("Cooling device topology removed. No fan settings changed.")
-        self._refresh_cooling_section()
+        # DEC-319: push the inventory back into AppState, not just this page.
+        # The Controls picker reserves a device's members, and the poller only
+        # re-reads the inventory on the ~300 s capability interval — so without
+        # this the fans of a device the user just forgot stay reserved, and
+        # nothing on screen explains why.
+        #
+        # `set_cooling_devices` emits `cooling_devices_updated`, which is already
+        # connected to `_refresh_cooling_section` (see __init__) — so it refreshes
+        # this page too, and calling it again here would tear down and rebuild
+        # every device card twice for one click. The explicit refresh is the
+        # fallback for the paths that did NOT push to state.
+        pushed = False
+        if self._state is not None:
+            try:
+                self._state.set_cooling_devices(self._client.get_cooling_devices())
+                pushed = True
+            except Exception as exc:
+                log.warning("Cooling-device re-fetch after a delete failed: %s", exc)
+        if not pushed:
+            self._refresh_cooling_section()
 
     def _show_diag_message(self, text: str) -> None:
         self._diag_result.setText(text)

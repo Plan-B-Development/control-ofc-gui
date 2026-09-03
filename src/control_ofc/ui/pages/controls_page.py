@@ -38,6 +38,7 @@ from control_ofc.services.controls_view import (
     build_pump_role_candidates,
     build_radiator_candidates,
     build_sensor_choices,
+    cooling_device_reservations,
     curve_min_output_floor,
     divergent_gpu_output,
     member_rpm_map,
@@ -53,6 +54,10 @@ from control_ofc.services.controls_view import (
     # helper (it decides the persisted member_label, hence the 30% CPU/pump
     # floor) with regression tests that import it from this module.
     role_preserving_label as _role_preserving_label,
+)
+from control_ofc.services.cooling_device_view import (
+    DEFAULT_COOLING_DEVICE_ID,
+    cooling_member_index,
 )
 from control_ofc.services.profile_service import (
     ControlMode,
@@ -205,7 +210,11 @@ class _OverrideWorker(QObject):
 #: assembly it created last time, not accumulate a new one on every pass. The
 #: daemon keys devices by id and upserts, so a fixed id makes the flow
 #: idempotent. Managing several coolers is a Phase 6 concern.
-_COOLING_DEVICE_ID = "aio-1"
+# Re-exported under its historical private name; the definition moved to the
+# service layer in DEC-319 when the fan wizard became a second writer of the
+# same device. Two literals for one device id is how two writers start
+# creating two devices.
+_COOLING_DEVICE_ID = DEFAULT_COOLING_DEVICE_ID
 
 
 class ControlsPage(QWidget):
@@ -1268,6 +1277,49 @@ class ControlsPage(QWidget):
         caps = self._state.capabilities
         return bool(caps and getattr(caps.control, "cooling_devices", False))
 
+    def _cooling_reservations(self, exempt_ids=()) -> dict:
+        """Fans the cooling stack claims → the note to warn with (DEC-319)."""
+        if not self._state:
+            return {}
+        inventory = getattr(self._state, "cooling_devices", None)
+        devices = list(getattr(inventory, "cooling_devices", []) or []) if inventory else []
+        index = cooling_member_index(devices, self._state.hwmon_headers, self._state.capabilities)
+        return cooling_device_reservations(index, exempt_ids=exempt_ids)
+
+    def _confirm_cooling_reservation(self, member_id: str, control_name: str) -> bool:
+        """Soft gate for the quick-assign path. True when the fan may be taken.
+
+        Deliberately shares its copy with the picker dialog by going through the
+        same ``ReservationNote`` — two surfaces wording the same warning
+        differently is how a rule starts drifting (CLAUDE.md; DEC-276).
+        """
+        note = self._cooling_reservations().get(member_id)
+        if note is None:
+            return True
+        answer = QMessageBox.question(
+            self,
+            note.title,
+            f"{note.tooltip}\n\nAssign it to “{control_name}” anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _refresh_cooling_devices(self) -> None:
+        """Re-read the device inventory after a write (DEC-319).
+
+        The poller refreshes it on the ~300 s capability interval, so without
+        this a reservation stays wrong for up to five minutes in BOTH
+        directions: a fan just added to a device is still assignable, and a fan
+        whose device was just forgotten is still reserved.
+        """
+        if not self._client or not self._supports_cooling_devices():
+            return
+        try:
+            self._state.set_cooling_devices(self._client.get_cooling_devices())
+        except (DaemonError, ConnectionError, OSError) as e:
+            self._log.warning("Cooling-device re-fetch after a write failed: %s", e)
+
     def _save_cooling_device(self, spec: dict | None) -> None:
         """POST the cooling-device topology, best-effort (DEC-316).
 
@@ -1297,6 +1349,10 @@ class ControlsPage(QWidget):
             logging.getLogger(__name__).warning(
                 "Could not save cooling-device topology (non-fatal): %s", e
             )
+            return
+        # DEC-319: the reservation this device implies must be visible now, not
+        # at the next capability poll.
+        self._refresh_cooling_devices()
 
     def _on_dedicate_gpu(self) -> None:
         """DEC-221: give a writable AMD GPU fan its own GPU-only control + 0-floor
@@ -1485,6 +1541,10 @@ class ControlsPage(QWidget):
             role_name=control.name,
             parent=self,
             display_name=self._state.member_display_name,
+            # DEC-319: exempt what this control ALREADY has, or removing a
+            # radiator fan and putting it back would warn about a device the fan
+            # is being restored to.
+            reserved=self._cooling_reservations(exempt_ids=[m.member_id for m in control.members]),
         )
         if dlg.exec():
             new_members = dlg.get_members()
@@ -2650,6 +2710,11 @@ class ControlsPage(QWidget):
             return
         if any(m.member_id == member.member_id for m in control.members):
             return  # already a member (raced with another assign)
+        # DEC-319: the quick-assign menu is the SECOND way to add a member, and
+        # guarding only the picker dialog would leave this as a silent bypass
+        # that defeats the reservation entirely (Decision 7).
+        if not self._confirm_cooling_reservation(member.member_id, control.name):
+            return
         control.members.append(member)
         # Membership can shift the role (chassis ↔ CPU/pump), so reapply the
         # role-aware floor before the next save (mirrors _on_edit_members).

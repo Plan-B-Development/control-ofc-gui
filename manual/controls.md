@@ -131,6 +131,12 @@ When the role contains an AMD GPU fan, a **GPU fan idle behaviour** section appe
 
 Each physical fan can belong to **only one role**: outputs already assigned elsewhere appear greyed out with "(Assigned to: …)" so you can see which role owns them. Read-only GPU fans are marked "(read-only)".
 
+Fans belonging to a configured cooler are marked "(Part of: …)" with the device's name, and a header you have assigned the pump or radiator role is marked with that role. These stay **selectable** — a cooler's layout is a description, not a lock, so you are allowed to move its fans — but you are asked to confirm first, because assigning a pump to an unrelated curve is rarely what you meant. The same confirmation appears when you use the **Unassigned Fans** quick-assign menu.
+
+To release a fan permanently rather than confirming each time, forget the device on the **Hardware** page, or re-run **Configure AIO** and leave it out.
+
+> This is advisory. It keeps the cooler's layout coherent; it is not what keeps your pump safe. Pump protection — the 30% floor, and the refusal to stop it — comes from the header's **role**, and applies no matter which curve the fan is assigned to.
+
 ### Arranging and Resizing Cards
 
 - **Drag a card** to reorder it within its section (a drop indicator shows the insertion point); the order is saved with the profile.

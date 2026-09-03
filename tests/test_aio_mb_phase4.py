@@ -573,6 +573,16 @@ class _TopologyClient:
         self.role_calls: list[tuple] = []
         self._fail = fail
         self.headers_to_return: list = []
+        # DEC-319: the page re-reads the inventory after a successful write so
+        # the Controls picker's reservation is not stale for ~300 s.
+        self.devices_to_return: list = []
+        self.get_device_calls = 0
+
+    def get_cooling_devices(self):
+        from control_ofc.api.models import CoolingDeviceInventory
+
+        self.get_device_calls += 1
+        return CoolingDeviceInventory(cooling_devices=list(self.devices_to_return))
 
     def set_cooling_device(self, device_id, **kw):
         self.device_calls.append({"id": device_id, **kw})

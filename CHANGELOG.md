@@ -1,5 +1,51 @@
 # Changelog
 
+## [2.57.0] — 2026-09-03
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). GUI-only — no daemon
+release, no contract change. Both features capability-gate on `control.header_roles` /
+`control.cooling_devices` and are simply absent against an older daemon.
+
+### Added
+- **The Fan Wizard now asks about your liquid cooler before it stops anything**
+  (AIO-MB Phase 7, DEC-319). A new **Liquid Cooling** step runs between the intro and
+  Detected Fans. It lists everything the cooling stack already claims — a configured
+  cooling device's pump, radiator and auxiliary members, plus any header carrying a
+  `pump` or `radiator_fan` role — each ticked to be left alone, and each untickable if
+  you do want to identify it.
+
+  It also lets you **name the pump**, which is the part that matters on most desktop
+  boards. Many Super-I/O chips publish no header names at all, so nothing can infer a
+  pump: every header reports `role: unknown` and the wizard would drive a real pump to
+  0 looking for it. Naming it here writes the pump role (and the cooler's topology)
+  before the first fan is stopped, so the daemon shifts the pump's speed instead of
+  stopping it. The step is shown whenever the daemon supports header roles — including,
+  deliberately, when nothing looks like an AIO yet, because that is exactly the machine
+  that cannot detect one.
+
+  Excluded fans stay **visible and greyed** on Detected Fans with the reason, rather
+  than silently disappearing, and "Select All" can no longer re-arm them.
+
+- **The Controls member picker now warns before taking a fan out of a configured
+  cooler** (DEC-319). A pump or radiator fan belonging to a cooling device is labelled
+  with the device it belongs to and asks for confirmation before it is assigned to an
+  unrelated curve. It is a *soft* block — unlike membership of another control, which is
+  genuinely exclusive and stays disabled — because a cooling device is metadata and
+  reassigning its fan is allowed; you are told what you are doing, not stopped. Both
+  ways of adding a member are covered, the picker dialog and the "Unassigned Fans"
+  quick-assign menu.
+
+### Fixed
+- **A cooling device's members no longer stay wrong for up to five minutes.** The device
+  inventory was only re-read on the ~300 s capability interval, so after Configure AIO
+  or "Forget Device" the rest of the GUI kept the previous topology — in both
+  directions. Both paths now refresh it immediately.
+- **The fan wizard's cooling-device write can no longer erase your setup.**
+  `POST /config/cooling-device` replaces a device by id rather than merging into it, so
+  writing only the topology would have destroyed the name, advisory sensors and policy
+  that Configure AIO stored. The wizard now reads the device before it writes and
+  preserves everything it has no opinion about.
+
 ## [2.56.0] — 2026-09-03
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). Every new surface is

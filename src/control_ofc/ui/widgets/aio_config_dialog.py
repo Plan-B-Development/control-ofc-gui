@@ -42,6 +42,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.services.cooling_device_view import (
+    COOLING_DEVICE_KIND_AIO,
+    DEFAULT_COOLING_DEVICE_NAME,
+)
 from control_ofc.services.profile_service import (
     AIO_PUMP_DEFAULT_PCT,
     AIO_PUMP_DEFAULT_STRATEGY,
@@ -77,12 +81,16 @@ _STRATEGY_ROWS: tuple[tuple[str, str, str], ...] = (
 
 _NO_PUMP_DATA = ""
 
-#: Default name for the cooling device this dialog creates (AIO-MB Phase 4).
-DEFAULT_COOLING_DEVICE_NAME = "AIO Cooling System"
-
-#: Wire token for the device kind this dialog always produces. Exact-case — the
-#: daemon rejects an unrecognised token rather than defaulting it.
-COOLING_DEVICE_KIND_AIO = "aio_liquid"
+# Re-exported for the callers and tests that have always imported them from
+# here. The definitions moved to `services/cooling_device_view` in AIO-MB Phase 7
+# (DEC-319), when the fan wizard became a second device-creating surface — two
+# copies of a wire token is how the two surfaces start disagreeing about what
+# they wrote. This module is now a consumer of the rule, not its owner.
+__all__ = [
+    "COOLING_DEVICE_KIND_AIO",
+    "DEFAULT_COOLING_DEVICE_NAME",
+    "AioConfigDialog",
+]
 
 
 class AioConfigDialog(QDialog):

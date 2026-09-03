@@ -12,8 +12,12 @@ truthful against an older daemon that stops everything.
 
 Note the limit, because it is the normal case on many boards: a header the daemon
 cannot classify is an ordinary fan to it, and *is* stopped. Assigning the pump
-role is what changes that, and since DEC-312 the Configure-AIO dialog can make
-that assignment (it was a daemon-side action only, register row ``AIO1-c``).
+role is what changes that. DEC-312 gave the Configure-AIO dialog that affordance;
+**DEC-319 puts it in this wizard too** (``CoolingDevicePage``), on the reasoning
+that a wizard which is about to stop fans is the last useful moment to ask, and a
+user who never opens the Controls page would otherwise never be asked at all. The
+cost — role-writing logic in two surfaces — is recorded as register row
+``AIO7-b``.
 
 Uses QWizard for standard multi-step navigation with Back/Next/Finish/Cancel.
 """
@@ -21,19 +25,26 @@ Uses QWizard for standard multi-step navigation with Back/Next/Finish/Cancel.
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
     QWizard,
     QWizardPage,
 )
@@ -41,6 +52,17 @@ from PySide6.QtWidgets import (
 from control_ofc.api.errors import DaemonError, DaemonUnavailable
 from control_ofc.api.models import ConnectionState
 from control_ofc.constants import THERMAL_ABORT_C
+from control_ofc.services.controls_view import (
+    build_pump_role_candidates,
+    build_radiator_candidates,
+)
+from control_ofc.services.cooling_device_view import (
+    DEFAULT_COOLING_DEVICE_ID,
+    CoolingMembership,
+    cooling_member_index,
+    find_cooling_device,
+    merge_cooling_device_payload,
+)
 from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.ui.components.a11y import name_value_control
 
@@ -70,11 +92,25 @@ _LABEL_PRESETS = [
     "Pump",
 ]
 
-# Page IDs
+# Page IDs. `PAGE_COOLING` is numbered 4 rather than inserted at 1 on purpose:
+# QWizard ids are arbitrary and `nextId()` is overridden, so a high id adds the
+# page without renumbering PAGE_TEST/PAGE_REVIEW — which would silently
+# invalidate every existing test and objectName that names them.
 PAGE_INTRO = 0
 PAGE_DISCOVERY = 1
 PAGE_TEST = 2
 PAGE_REVIEW = 3
+PAGE_COOLING = 4
+
+
+def _slug(fan_id: str) -> str:
+    """A fan id reduced to something safe for an objectName suffix.
+
+    Every shared/repeated widget here needs a UNIQUE objectName — a fixed one
+    collides the moment a second row exists and breaks `findChild` in tests
+    (CLAUDE.md § GUI component standard).
+    """
+    return re.sub(r"[^A-Za-z0-9]+", "_", fan_id).strip("_")
 
 
 def _hot_cpu_sensor(sensors):
@@ -133,7 +169,10 @@ class FanConfigWizard(QWizard):
         self._intro_page = IntroPage(state)
         self.setPage(PAGE_INTRO, self._intro_page)
 
-        self._discovery_page = DiscoveryPage(self._targets, state)
+        self._cooling_page = CoolingDevicePage(self)
+        self.setPage(PAGE_COOLING, self._cooling_page)
+
+        self._discovery_page = DiscoveryPage(self._targets, state, exclusions=self.excluded_reasons)
         self.setPage(PAGE_DISCOVERY, self._discovery_page)
 
         self._test_page = IdentifyFanPage(self)
@@ -178,6 +217,38 @@ class FanConfigWizard(QWizard):
             return mode == "pump_perturb"
         return self.is_pump_target(fan_id)
 
+    # ── Cooling-device awareness (AIO-MB Phase 7, DEC-319) ───────────────────
+
+    def supports_cooling_step(self) -> bool:
+        """Whether the daemon has a role model at all (``control.header_roles``).
+
+        The gate is the capability, **not** whether anything looks like an AIO.
+        Decision 10: the empty case is exactly where the step earns its keep —
+        on a board whose Super-I/O publishes no ``pwmN_label`` files every header
+        reports ``role: unknown``, so a detection-gated step would be invisible
+        on precisely the hardware that needs it. Below the capability the step is
+        skipped entirely and the wizard behaves exactly as it did before.
+        """
+        caps = getattr(self._state, "capabilities", None)
+        control = getattr(caps, "control", None) if caps else None
+        return bool(getattr(control, "header_roles", False))
+
+    def cooling_membership(self) -> dict[str, CoolingMembership]:
+        """Every fan the cooling stack claims, from the inventory then roles."""
+        inventory = getattr(self._state, "cooling_devices", None)
+        devices = list(getattr(inventory, "cooling_devices", []) or []) if inventory else []
+        return cooling_member_index(devices, self._state.hwmon_headers, self._state.capabilities)
+
+    def excluded_reasons(self) -> dict[str, str]:
+        """``fan_id`` → why it is excluded from identification, per the AIO step.
+
+        Empty when the step was skipped, which is what keeps a pre-2.28.0 daemon
+        on the original wizard behaviour.
+        """
+        if not self.supports_cooling_step():
+            return {}
+        return self._cooling_page.excluded_reasons()
+
     def _build_targets(self) -> list[dict]:
         targets = []
         for fan in self._state.fans:
@@ -205,6 +276,8 @@ class FanConfigWizard(QWizard):
     def nextId(self) -> int:
         current = self.currentId()
         if current == PAGE_INTRO:
+            return PAGE_COOLING if self.supports_cooling_step() else PAGE_DISCOVERY
+        if current == PAGE_COOLING:
             return PAGE_DISCOVERY
         if current == PAGE_DISCOVERY:
             self._selected_indices = self._discovery_page.selected_indices()
@@ -385,16 +458,405 @@ class IntroPage(QWizardPage):
         return bool(self._state.fans)
 
 
-class DiscoveryPage(QWizardPage):
-    """Page 2: Show all targets with checkboxes."""
+class CoolingDevicePage(QWizardPage):
+    """Page: identify the liquid cooler BEFORE any fan is stopped (DEC-319).
 
-    def __init__(self, targets: list[dict], state: AppState, parent=None) -> None:
+    Two jobs, and the second is why the page exists at all rather than being a
+    read-only summary:
+
+    1. **List** what the daemon already knows about the cooling stack — a
+       configured cooling device's members, plus any header carrying a ``pump``
+       or ``radiator_fan`` role — each pre-ticked to be excluded from
+       identification (Decision 2).
+    2. **Nominate.** On a board whose Super-I/O exposes no ``pwmN_label`` files
+       nothing can infer a pump: every header reports ``role: unknown`` and
+       ``stop_permitted: true``, so the wizard would drive a real pump to 0
+       looking for it. The user telling us IS the detection, so the nomination
+       lives here, before the first stop, and writes
+       ``POST /config/header-role`` (Decision 1) and the cooling-device topology
+       (Decision 5).
+
+    The pump copy that used to sit on ``IntroPage`` moved here, where the pump is
+    actually the subject.
+    """
+
+    def __init__(self, wizard: FanConfigWizard, parent=None) -> None:
+        super().__init__(parent)
+        self.setTitle("Liquid Cooling")
+        self.setSubTitle("Identify your AIO before any fan is stopped")
+        self._wizard = wizard
+        # fan_id -> (checkbox, reason shown on the Detected Fans table)
+        self._exclude_rows: dict[str, tuple[QCheckBox, str]] = {}
+
+        layout = QVBoxLayout(self)
+
+        intro = QLabel(
+            "A pump must never be stopped to identify it. If this machine has a "
+            "liquid cooler, say which header drives the pump — the daemon will "
+            "then <b>shift its speed</b> instead of stopping it, and keep it above "
+            "its safety floor.\n\n"
+            "Many motherboards report no header names at all, so this cannot be "
+            "detected. Nothing below is changed until you press <b>Apply</b>."
+        )
+        intro.setWordWrap(True)
+        intro.setObjectName("Wizard_Label_coolingIntro")
+        layout.addWidget(intro)
+
+        # ── Known members, each tickable to exclude ──────────────────────────
+        self._members_label = QLabel("")
+        self._members_label.setWordWrap(True)
+        self._members_label.setObjectName("Wizard_Label_coolingMembers")
+        layout.addWidget(self._members_label)
+
+        self._members_container = QWidget(self)
+        self._members_container.setObjectName("Wizard_Box_coolingMembers")
+        self._members_layout = QVBoxLayout(self._members_container)
+        self._members_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._members_container)
+
+        # ── Nomination ───────────────────────────────────────────────────────
+        nominate = QGroupBox("Tell the wizard about your cooler")
+        nominate.setObjectName("Wizard_Group_nominate")
+        nom_layout = QVBoxLayout(nominate)
+
+        pump_row = QHBoxLayout()
+        pump_row.addWidget(QLabel("Pump header:"))
+        self._pump_combo = QComboBox()
+        self._pump_combo.setObjectName("Wizard_Combo_pumpHeader")
+        name_value_control(self._pump_combo, "Pump header")
+        pump_row.addWidget(self._pump_combo, 1)
+        nom_layout.addLayout(pump_row)
+
+        nom_layout.addWidget(QLabel("Radiator fans (optional):"))
+        self._radiator_list = QListWidget()
+        self._radiator_list.setObjectName("Wizard_List_radiators")
+        self._radiator_list.setAccessibleName("Radiator fans")
+        self._radiator_list.setMaximumHeight(120)
+        nom_layout.addWidget(self._radiator_list)
+
+        apply_row = QHBoxLayout()
+        apply_row.addStretch()
+        self._apply_btn = QPushButton("Apply")
+        self._apply_btn.setObjectName("Wizard_Btn_applyCooling")
+        self._apply_btn.clicked.connect(self._apply_nomination)
+        apply_row.addWidget(self._apply_btn)
+        nom_layout.addLayout(apply_row)
+
+        layout.addWidget(nominate)
+
+        self._status = QLabel("")
+        self._status.setWordWrap(True)
+        self._status.setObjectName("Wizard_Label_coolingStatus")
+        layout.addWidget(self._status)
+        layout.addStretch()
+
+    # ── Population ───────────────────────────────────────────────────────────
+
+    def initializePage(self) -> None:
+        self._populate()
+
+    def _populate(self) -> None:
+        """Rebuild both halves from current state. Idempotent, and re-run after
+        every successful Apply so the page reflects what the daemon now says."""
+        membership = self._wizard.cooling_membership()
+
+        # Members, each pre-ticked to exclude (Decision 2).
+        previous = {fan_id: cb.isChecked() for fan_id, (cb, _) in self._exclude_rows.items()}
+        while self._members_layout.count():
+            item = self._members_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._exclude_rows = {}
+
+        if membership:
+            self._members_label.setText(
+                "These are part of the cooling stack. Ticked items are "
+                "<b>not</b> identified — untick one to identify it anyway."
+            )
+        else:
+            self._members_label.setText(
+                "No pump or radiator fan is known on this machine yet. "
+                "If you have a liquid cooler, name its pump below."
+            )
+
+        for fan_id, member in sorted(membership.items()):
+            name = self._wizard._state.fan_display_name(fan_id) or fan_id
+            where = f" — {member.device_name}" if member.from_device else ""
+            cb = QCheckBox(f"{name} · {member.role_label}{where}")
+            cb.setObjectName(f"Wizard_Chk_exclude_{_slug(fan_id)}")
+            # Default excluded; a choice the user already made on this page wins
+            # over the default when the page is revisited.
+            cb.setChecked(previous.get(fan_id, True))
+            self._members_layout.addWidget(cb)
+            reason = f"Part of {member.device_name}" if member.from_device else member.role_label
+            self._exclude_rows[fan_id] = (cb, f"Excluded — {reason}")
+
+        self._populate_nomination(membership)
+
+    def _populate_nomination(self, membership: dict[str, CoolingMembership]) -> None:
+        headers = self._wizard._state.hwmon_headers
+        display = self._wizard._state.fan_display_name
+
+        current_pump = self._pump_combo.currentData()
+        self._pump_combo.clear()
+        self._pump_combo.addItem("— none —", "")
+        detected_pump = next(
+            (mid for mid, m in membership.items() if m.role == "pump"),
+            "",
+        )
+        for row in build_pump_role_candidates(headers, display_name=display):
+            self._pump_combo.addItem(row["label"], row["id"])
+        wanted = current_pump or detected_pump
+        if wanted:
+            index = self._pump_combo.findData(wanted)
+            if index >= 0:
+                self._pump_combo.setCurrentIndex(index)
+
+        checked = {
+            self._radiator_list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self._radiator_list.count())
+            if self._radiator_list.item(i).checkState() == Qt.CheckState.Checked
+        }
+        preselect = {mid for mid, m in membership.items() if m.role == "radiator"} | checked
+        self._radiator_list.clear()
+        for row in build_radiator_candidates(
+            self._wizard._state.fans,
+            headers,
+            pump_id=self._pump_combo.currentData() or None,
+            preselect_ids=preselect,
+            display_name=display,
+        ):
+            item = QListWidgetItem(f"[{row['source']}] {row['label']}")
+            item.setData(Qt.ItemDataRole.UserRole, row["id"])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if row["preselect"] else Qt.CheckState.Unchecked
+            )
+            self._radiator_list.addItem(item)
+
+    # ── Exclusion, read by the wizard ────────────────────────────────────────
+
+    def excluded_reasons(self) -> dict[str, str]:
+        return {
+            fan_id: reason for fan_id, (cb, reason) in self._exclude_rows.items() if cb.isChecked()
+        }
+
+    # ── Nomination, the only thing on this page that writes ──────────────────
+
+    def _selected_radiators(self) -> list[str]:
+        return [
+            self._radiator_list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self._radiator_list.count())
+            if self._radiator_list.item(i).checkState() == Qt.CheckState.Checked
+        ]
+
+    def _offered_radiators(self) -> set[str]:
+        """Every id the radiator picker actually showed.
+
+        The complement matters: ``build_radiator_candidates`` iterates live fans
+        and writable headers, so a device member that is momentarily undetected
+        — an OpenFan channel that dropped off, a header not yet writable at boot
+        — has no row. It cannot have been *unticked*, because it was never
+        shown, and treating its absence as a deselection silently erases it from
+        the device.
+        """
+        return {
+            self._radiator_list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self._radiator_list.count())
+        }
+
+    def _stale_user_pumps(self, pump_id: str) -> list[str]:
+        """Headers the USER previously named as the pump and no longer has selected.
+
+        Restricted to ``role_source == "user_assigned"`` for the same reason
+        ``AioConfigDialog`` restricts it: a role the daemon inferred from the
+        hardware label or the chip is not ours to remove, and clearing it would
+        not remove it anyway — a clear only drops the stored assignment and falls
+        back to exactly that inference.
+        """
+        return [
+            h.id
+            for h in self._wizard._state.hwmon_headers
+            if h.role == "pump" and h.role_source == "user_assigned" and h.id != pump_id
+        ]
+
+    def _confirm_clear(self, header_ids: list[str]) -> bool:
+        """Confirm removing pump protection (Decision 11) — the ONLY operation on
+        this page that can lower a floor, so it is the only one that asks.
+
+        The copy names the protection being removed rather than implying it: a
+        user who reads "clear the pump role" does not necessarily know that this
+        is what stops the fan wizard driving it to 0.
+        """
+        names = "\n".join(f"• {self._wizard._state.fan_display_name(h) or h}" for h in header_ids)
+        answer = QMessageBox.question(
+            self,
+            "Remove pump protection from a header?",
+            "You previously named this as the pump:\n\n"
+            f"{names}\n\n"
+            "Clearing that role removes its pump protection — the daemon will no "
+            "longer hold it above the 30% pump floor, and it may be stopped "
+            "during fan identification.\n\n"
+            "Clear it?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _apply_nomination(self) -> None:
+        client = self._wizard._client
+        if client is None:
+            self._status.setText("No daemon connection — nothing was changed.")
+            return
+
+        pump_id = self._pump_combo.currentData() or ""
+        radiators = self._selected_radiators()
+        if not pump_id and not radiators:
+            self._status.setText("Nothing selected — choose a pump or a radiator fan first.")
+            return
+
+        header_ids = {h.id for h in self._wizard._state.hwmon_headers}
+        assigns: list[tuple[str, str | None]] = []
+        if pump_id:
+            assigns.append((pump_id, "pump"))
+        # OpenFan radiator members have no header and therefore no role to set;
+        # they still belong to the device topology below.
+        assigns += [(r, "radiator_fan") for r in radiators if r in header_ids and r != pump_id]
+
+        # ASSIGN BEFORE CLEAR, and the order is the safety property, not an
+        # artefact of iteration (DEC-312's review found this). No clear is ever
+        # reached unless every assign succeeded, so a failure here can only ever
+        # leave MORE protection in place than intended, never less.
+        #
+        # It does not follow that nothing changed: the assigns are separate
+        # requests, so a failure at index N means the first N already landed.
+        # Saying "nothing was changed" there would be false, and it is a role
+        # write — exactly the kind of claim that must not be approximated.
+        for done, (header_id, role) in enumerate(assigns):
+            try:
+                client.set_header_role(header_id, role)
+            except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
+                log.error("Wizard: could not set role %s on %s: %s", role, header_id, e)
+                landed = (
+                    "No roles were changed."
+                    if done == 0
+                    else f"{done} earlier role assignment(s) had already been saved "
+                    "and are still in effect."
+                )
+                self._status.setText(
+                    f"The daemon rejected the {role} assignment: {e}\n"
+                    f"{landed} The cooler's layout was not saved."
+                )
+                # Re-read so the page shows what actually landed rather than
+                # what was requested.
+                self._refresh_state()
+                self._populate()
+                return
+
+        stale = self._stale_user_pumps(pump_id) if pump_id else []
+        cleared_note = ""
+        if stale and self._confirm_clear(stale):
+            for header_id in stale:
+                try:
+                    client.set_header_role(header_id, None)
+                except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
+                    # Tolerated: a stale pump role over-protects, never under.
+                    log.warning("Wizard: could not clear role on %s: %s", header_id, e)
+        elif stale:
+            cleared_note = " The previous pump header kept its role."
+
+        self._upsert_cooling_device(pump_id, radiators)
+        self._refresh_state()
+        self._populate()
+        self._status.setText("Saved." + cleared_note)
+
+    def _upsert_cooling_device(self, pump_id: str, radiators: list[str]) -> None:
+        """Read-modify-write the cooling device (Decision 6).
+
+        ``POST /config/cooling-device`` REPLACES by id, so posting only the
+        topology would erase the name and advisory sensors a previous Configure
+        AIO run stored. Best-effort like ``controls_page._save_cooling_device``:
+        the topology is metadata the engine never reads, so failing it costs a
+        presentation nicety, not the roles that were just assigned.
+        """
+        client = self._wizard._client
+        caps = getattr(self._wizard._state, "capabilities", None)
+        control = getattr(caps, "control", None) if caps else None
+        if client is None or not getattr(control, "cooling_devices", False):
+            return
+        try:
+            inventory = client.get_cooling_devices()
+            existing = find_cooling_device(
+                getattr(inventory, "cooling_devices", []), DEFAULT_COOLING_DEVICE_ID
+            )
+            # Carry forward any existing radiator member the picker never
+            # offered — absence from an unticked list is not a deselection when
+            # the row was never there to untick. The pump is excluded because it
+            # has just been promoted out of the radiator set.
+            offered = self._offered_radiators()
+            kept = [
+                m
+                for m in (existing.radiator_members if existing else [])
+                if m and m not in offered and m not in radiators and m != pump_id
+            ]
+            payload = merge_cooling_device_payload(
+                existing,
+                pump_member=pump_id or None,
+                radiator_members=radiators + kept,
+            )
+            client.set_cooling_device(DEFAULT_COOLING_DEVICE_ID, **payload)
+        except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
+            log.warning("Wizard: could not save cooling-device topology: %s", e)
+
+    def _refresh_state(self) -> None:
+        """Re-read headers and the device inventory so this page — and the
+        Detected Fans table after it — reflect the write immediately. Both
+        otherwise refresh on the ~300 s capability interval."""
+        client = self._wizard._client
+        state = self._wizard._state
+        if client is None:
+            return
+        try:
+            state.set_hwmon_headers(client.hwmon_headers())
+        except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
+            log.warning("Wizard: header re-fetch after nomination failed: %s", e)
+        caps = getattr(state, "capabilities", None)
+        control = getattr(caps, "control", None) if caps else None
+        if not getattr(control, "cooling_devices", False):
+            return
+        try:
+            state.set_cooling_devices(client.get_cooling_devices())
+        except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
+            log.warning("Wizard: cooling-device re-fetch after nomination failed: %s", e)
+
+
+class DiscoveryPage(QWizardPage):
+    """Page 3: Show all targets with checkboxes.
+
+    Numbered from the user's view, where DEC-319's Liquid Cooling step is page 2
+    when it applies. The QWizard *id* is still ``PAGE_DISCOVERY = 1``.
+    """
+
+    def __init__(
+        self,
+        targets: list[dict],
+        state: AppState,
+        parent=None,
+        exclusions: Callable[[], dict[str, str]] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setTitle("Detected Fans")
         self.setSubTitle("Select which fans to identify")
         self._targets = targets
         self._state = state
         self._checkboxes: list[QCheckBox] = []
+        # ``fan_id -> reason``, re-read on every entry to the page (DEC-319).
+        # A callable rather than a value: the AIO step runs BEFORE this one and
+        # the user may go Back and change it, so a snapshot taken at
+        # construction would be stale exactly when it mattered.
+        self._exclusions: Callable[[], dict[str, str]] = exclusions or dict
 
         layout = QVBoxLayout(self)
 
@@ -411,9 +873,14 @@ class DiscoveryPage(QWizardPage):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        # Target table with checkboxes
-        self._table = QTableWidget(len(targets), 5)
-        self._table.setHorizontalHeaderLabels(["", "ID", "Source", "RPM", "Current Label"])
+        # Target table with checkboxes. The "Cooling" column is its own rather
+        # than a suffix on an existing one: "Current Label" carries the user's
+        # name for the fan, and overloading it with a status would make the
+        # review table's labels lie.
+        self._table = QTableWidget(len(targets), 6)
+        self._table.setHorizontalHeaderLabels(
+            ["", "ID", "Source", "RPM", "Current Label", "Cooling"]
+        )
         self._table.verticalHeader().setVisible(False)
         self._table.setObjectName("Wizard_Table_targets")
         from PySide6.QtWidgets import QHeaderView
@@ -421,9 +888,35 @@ class DiscoveryPage(QWizardPage):
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._table.horizontalHeader().setStretchLastSection(True)
 
-        for i, t in enumerate(targets):
+        layout.addWidget(self._table, 1)
+        self._populate()
+
+    def initializePage(self) -> None:
+        # Re-derive rather than trusting what `__init__` built: the AIO step
+        # precedes this page, and Back → change the exclusion → forward must
+        # produce a different table.
+        self._populate()
+
+    def _populate(self) -> None:
+        """(Re)build the table from targets + the current exclusion set.
+
+        The row order and count always mirror ``self._targets`` exactly, because
+        ``selected_indices()`` returns indices INTO that list and
+        ``FanConfigWizard.current_target()`` dereferences them. Excluded fans are
+        therefore shown and disabled (Decision 9), never filtered out — filtering
+        would silently shift every later index.
+        """
+        excluded = self._exclusions()
+        self._checkboxes = []
+        self._table.setRowCount(len(self._targets))
+
+        for i, t in enumerate(self._targets):
+            reason = excluded.get(t["id"], "")
             cb = QCheckBox()
-            cb.setChecked(True)
+            cb.setChecked(not reason)
+            cb.setEnabled(not reason)
+            if reason:
+                cb.setToolTip(reason)
             self._checkboxes.append(cb)
             self._table.setCellWidget(i, 0, cb)
             self._table.setItem(i, 1, QTableWidgetItem(t["id"]))
@@ -431,19 +924,25 @@ class DiscoveryPage(QWizardPage):
             rpm_text = str(t["rpm"]) if t["rpm"] is not None else "N/A"
             self._table.setItem(i, 3, QTableWidgetItem(rpm_text))
             self._table.setItem(i, 4, QTableWidgetItem(t["existing_label"]))
-
-        layout.addWidget(self._table, 1)
+            self._table.setItem(i, 5, QTableWidgetItem(reason))
 
     def _set_all(self, checked: bool) -> None:
+        # Skip excluded rows. `QCheckBox.setChecked` works on a DISABLED box, so
+        # without this guard "Select All" would silently re-include the pump the
+        # user just excluded — the control looks like it is doing nothing wrong.
         for cb in self._checkboxes:
-            cb.setChecked(checked)
+            if cb.isEnabled():
+                cb.setChecked(checked)
 
     def selected_indices(self) -> list[int]:
-        return [i for i, cb in enumerate(self._checkboxes) if cb.isChecked()]
+        # `isEnabled()` is the authoritative guard, not a belt-and-braces one:
+        # it is what makes an excluded fan unreachable no matter how its
+        # checkbox got into a checked state.
+        return [i for i, cb in enumerate(self._checkboxes) if cb.isChecked() and cb.isEnabled()]
 
 
 class IdentifyFanPage(QWizardPage):
-    """Page 3: Test one fan at a time with countdown and label input."""
+    """Page 4: Test one fan at a time with countdown and label input."""
 
     def __init__(self, wizard: FanConfigWizard, parent=None) -> None:
         super().__init__(parent)
@@ -695,7 +1194,7 @@ class IdentifyFanPage(QWizardPage):
 
 
 class ReviewPage(QWizardPage):
-    """Page 4: Review all labels before saving."""
+    """Page 5: Review all labels before saving."""
 
     def __init__(self, wizard: FanConfigWizard, parent=None) -> None:
         super().__init__(parent)
@@ -714,12 +1213,23 @@ class ReviewPage(QWizardPage):
         self._table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self._table, 1)
 
+    def _included_targets(self) -> list[dict]:
+        """Targets minus anything the AIO step excluded (DEC-319).
+
+        Only reached when the user selected nothing on the Detected Fans page,
+        where ``rows`` falls back to *every* target. Without this an excluded
+        pump reappears in the review — the one place the wizard summarises what
+        it did — and invites a label for a fan it deliberately never touched.
+        """
+        excluded = self._wizard.excluded_reasons()
+        return [t for t in self._wizard._targets if t["id"] not in excluded]
+
     def initializePage(self) -> None:
         targets = self._wizard._targets
         selected = self._wizard._selected_indices
         labels = self._wizard._labels
 
-        rows = [targets[i] for i in selected] if selected else targets
+        rows = [targets[i] for i in selected] if selected else self._included_targets()
         self._table.setRowCount(len(rows))
 
         for i, t in enumerate(rows):
@@ -733,7 +1243,7 @@ class ReviewPage(QWizardPage):
         # Read back any edits the user made in the review table
         targets = self._wizard._targets
         selected = self._wizard._selected_indices
-        rows = [targets[i] for i in selected] if selected else targets
+        rows = [targets[i] for i in selected] if selected else self._included_targets()
 
         for i, t in enumerate(rows):
             label_item = self._table.item(i, 2)

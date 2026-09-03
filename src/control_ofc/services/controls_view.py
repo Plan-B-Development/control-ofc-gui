@@ -11,8 +11,10 @@ No value is fabricated.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 
 from control_ofc.knowledge.sensor_knowledge import classify_sensor_with_overrides
+from control_ofc.services.cooling_device_view import CoolingMembership
 from control_ofc.services.profile_service import (
     AIO_PUMP_TAG,
     CONTROL_ROLE_GPU,
@@ -381,6 +383,75 @@ def assigned_elsewhere_map(controls, exclude_control_id: str) -> dict[str, str]:
         if ctrl.id != exclude_control_id
         for m in ctrl.members
     }
+
+
+@dataclass(frozen=True)
+class ReservationNote:
+    """Why the picker warns before taking a fan out of the cooling stack."""
+
+    #: Appended to the row label, e.g. "(Part of: AIO Cooling System)".
+    text: str
+    #: Shown on hover, and the body of the confirmation.
+    tooltip: str
+    #: The confirmation title. Kept alongside the text so the widget renders a
+    #: view-model rather than composing safety copy of its own.
+    title: str
+
+
+def cooling_device_reservations(
+    index: dict[str, CoolingMembership],
+    *,
+    exempt_ids: Iterable[str] = (),
+) -> dict[str, ReservationNote]:
+    """``member_id`` → the note to warn with, for every fan the cooling stack claims.
+
+    The soft counterpart to :func:`assigned_elsewhere_map` (AIO-MB Phase 7,
+    Decision 3): that map *disables* a row because membership of a control is
+    genuinely exclusive, whereas a cooling device is metadata and taking a fan
+    from it is allowed — the user is told what they are doing, not stopped.
+
+    **``exempt_ids`` is required for correctness, not convenience.** Pass the
+    members the control being edited *already* has. Without it, a user who
+    removes a radiator fan from the AIO control mid-dialog cannot put it back:
+    the row returns to the Available side still reserved, and warns again about
+    a device the fan is being restored to. Exempting the dialog's own starting
+    members makes removal and re-addition symmetrical, which is what a user
+    expects from a two-list picker.
+
+    Two shapes of copy, because there are two shapes of claim. A configured
+    device has a name and a documented release path. A bare header *role* has
+    neither — so it must not borrow the device wording and assert a device that
+    was never created.
+    """
+    exempt = set(exempt_ids)
+    notes: dict[str, ReservationNote] = {}
+    for member_id, membership in index.items():
+        if member_id in exempt:
+            continue
+        if membership.from_device:
+            notes[member_id] = ReservationNote(
+                text=f"(Part of: {membership.device_name})",
+                tooltip=(
+                    f"This fan is part of {membership.device_name} "
+                    f"({membership.role_label.lower()}). Assigning it here takes it "
+                    "out of that group. To release it permanently, forget the device "
+                    "on the Hardware page or re-run Configure AIO."
+                ),
+                title="Take this fan out of the cooling device?",
+            )
+        else:
+            notes[member_id] = ReservationNote(
+                text=f"({membership.role_label} role assigned)",
+                tooltip=(
+                    f"This header is assigned the {membership.role_label.lower()} "
+                    "role, so the daemon treats it as part of the cooling stack. "
+                    "Assigning it to an unrelated curve is allowed, but it is "
+                    "usually not what you want. Clear the role in Configure AIO to "
+                    "release it."
+                ),
+                title=f"Assign the {membership.role_label.lower()} to this curve?",
+            )
+    return notes
 
 
 def build_radiator_candidates(
