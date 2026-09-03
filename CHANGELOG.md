@@ -1,5 +1,72 @@
 # Changelog
 
+## [2.56.0] — 2026-09-03
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). Every new surface is
+capability-gated and simply absent, disabled or degraded against an older daemon.
+**Nothing here writes PWM** — every active test runs through a daemon diagnostic endpoint
+that already owns the hwmon lease, the pump floor clamp, the thermal refusal and
+restore-on-drop, so no action on this page can lower a floor or stop a pump.
+
+### Added
+- **The Hardware page now shows your cooling hardware, not just its readiness**
+  (AIO-MB Phase 6, DEC-318). Two new sections sit between Recommended Actions and
+  Super-I/O, and nothing existing was removed.
+
+  **Cooling Hardware.** A configured cooler appears as one assembly — pump, radiator fans,
+  control sensor, pump strategy, coolant telemetry, status — with live RPM and PWM beside
+  each member, instead of a set of unrelated hwmon channel names. Every discovered PWM
+  header also gets its own card: live values, a **Details** disclosure carrying identity,
+  the full header capability audit and the classification/safety block, and per-header
+  **Test Control** / **Characterise** actions.
+
+  **Hardware Diagnostics.** The active tests, gathered in one place: PWM control test, PWM
+  response characterisation, Startup/Lifecycle recording and AIO Validation. Each action is
+  enabled only where the capability genuinely exists, and a disabled one explains why in its
+  tooltip.
+
+- **Requested PWM and readback PWM are shown as two numbers, never one.** This is what makes
+  a failed write, a BIOS/EC reclaim and a device doing its own internal control
+  distinguishable from each other; collapsing them hides all three. Backed by the daemon's
+  new single-producer `pwm_commanded_pct` (daemon v2.33.0). Against an older daemon the
+  requested figure falls back to `last_commanded_pwm` and is flagged as approximate rather
+  than presented as a command — that field has two producers for an hwmon header
+  (register row `AIO5-a`).
+
+- **Validation and lifecycle sessions have a UI.** One dialog serves both kinds — they are
+  one daemon engine with a `kind` discriminator, so a second dialog would have been pure
+  duplication. Live status, per-member telemetry, a findings summary, Mark Event,
+  Stop/Cancel, CSV and JSON export, and a form for attaching external electrical
+  measurements (stored for your own analysis; never used for any control or safety
+  decision). Requires daemon v2.32.0.
+
+- **Characterisation now reports timing.** Response and settling time per step, plus
+  *Response latency* and *Typical settling time* summary lines. Both values have been on the
+  wire since v2.29.0 and were rendered nowhere. Measured values only: an unmeasurable step
+  shows an em dash rather than a zero, and the summary lines are omitted entirely when
+  nothing was measurable. Rounded to a tenth of a second, because the daemon samples RPM
+  every 500 ms.
+
+- **"Forget Device"** on a cooling-device card removes a topology you no longer want. It
+  removes only the grouping — the headers, their roles and the pump safety floor are
+  untouched and no fan changes speed — and it asks first.
+
+### Changed
+- **The Hardware page is now the primary entry point for PWM testing.** A *PWM control test*
+  recommended action scrolls to this page's own Diagnostics section instead of deep-linking
+  to System State. **System State keeps its controls unchanged** as an advanced shortcut,
+  reachable from an explicit button, and both pages run the identical implementation — the
+  result wording moved into a shared `services/verify_view` so the two can no longer drift.
+- The page title is now "Hardware" rather than "Hardware Readiness", which is only part of
+  what it shows.
+- Cooling-device topology is fetched on the existing 5-minute capabilities interval, not the
+  1 Hz poll. **No new per-second polling was added for any field on this page** — every live
+  value comes from data the GUI already receives.
+
+### Fixed
+- Nothing. This release adds surface; it changes no existing behaviour beyond the two
+  Changed entries above.
+
 ## [2.55.0] — 2026-09-03
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor); the new surface is gated on

@@ -36,7 +36,11 @@ from control_ofc.ui.components.tables import apply_dense_table
 
 POLL_INTERVAL_MS = 1000
 
-_COLUMNS = ("PWM", "Readback", "RPM", "Result")
+# AIO-MB Phase 6 §9 adds Response and Settling. Both values have been on the
+# wire and parsed since Phase 3 (`CharPoint.first_change_ms` / `settle_ms`) and
+# were rendered nowhere — the exact "a field that is parsed but never read
+# outside tests is decoration" trap CLAUDE.md records from DEC-301.
+_COLUMNS = ("PWM", "Readback", "RPM", "Response", "Settling", "Result")
 
 
 class PwmCharacterizationDialog(ModalDialog):
@@ -219,7 +223,16 @@ class PwmCharacterizationDialog(ModalDialog):
     def _render(self, view: CharacterizationView) -> None:
         self._table.setRowCount(len(view.rows))
         for row, item in enumerate(view.rows):
-            for col, text in enumerate((item.pwm, item.readback, item.rpm, item.result)):
+            for col, text in enumerate(
+                (
+                    item.pwm,
+                    item.readback,
+                    item.rpm,
+                    item.response,
+                    item.settling,
+                    item.result,
+                )
+            ):
                 cell = QTableWidgetItem(text)
                 cell.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 self._table.setItem(row, col, cell)
@@ -245,10 +258,19 @@ class PwmCharacterizationDialog(ModalDialog):
         self._verdict_row.addStretch(1)
         self._verdict_holder.setVisible(bool(view.verdicts))
 
-        self._range_lbl.setText(
-            f"Observed range: {view.observed_range}" if view.observed_range else ""
-        )
-        self._range_lbl.setVisible(bool(view.observed_range))
+        # The summary block: observed range, then the two timing lines §9 asks
+        # for. Each line appears only when something was actually measured —
+        # "use measured values only" — so a header with no tach shows neither
+        # rather than showing zeroes.
+        summary_lines = []
+        if view.observed_range:
+            summary_lines.append(f"Observed range: {view.observed_range}")
+        if view.response_latency:
+            summary_lines.append(f"Response latency: {view.response_latency}")
+        if view.settling_time:
+            summary_lines.append(f"Typical settling time: {view.settling_time}")
+        self._range_lbl.setText("\n".join(summary_lines))
+        self._range_lbl.setVisible(bool(summary_lines))
 
         self._notes_lbl.setText("\n\n".join(view.notes))
         self._notes_lbl.setVisible(bool(view.notes))

@@ -141,15 +141,24 @@ control_ofc/
     dashboard_view.py          # Dashboard page VM — DEC-219 (Phase 7.2)
     controls_view.py           # Controls page VM — DEC-214, grown DEC-219 (Phase 7.3)
     characterization_view.py   # PWM/RPM characterisation dialog VM — DEC-313/315
-    cooling_device_view.py     # Cooling-device topology VM — DEC-316 (AIO-MB Phase 4).
-                               #   Phase 4 builds the model; Phase 6 owns the card.
+    cooling_device_view.py     # Cooling-device topology VM — DEC-316 (AIO-MB Phase 4),
+                               #   grown live telemetry + derived pump strategy in
+                               #   DEC-318. Rendered by ui/widgets/cooling_device_card.
     validation_view.py         # Validation-session VM — DEC-317 (AIO-MB Phase 5).
                                #   Owns WORDING only: result meaning arrives
                                #   pre-decided from the daemon and is never
-                               #   recalculated here. Phase 6 owns the panel.
+                               #   recalculated here. Rendered by DEC-318's dialog.
     validation_export.py       # Validation JSON + CSV serializers — DEC-317.
-                               #   Returns text; never writes a file. Phase 6 owns
-                               #   the Export button and the save dialog.
+                               #   Returns text; never writes a file — DEC-318 owns
+                               #   the Export button and the QFileDialog.
+    header_inspector_view.py   # Per-PWM-header VM — DEC-318 (AIO-MB Phase 6). Identity,
+                               #   live rows, the four-token capability vocabulary,
+                               #   classification/safety and action enablement for one
+                               #   header. Reads pump_protection for every safety
+                               #   answer; never the wire `role` (DEC-312).
+    verify_view.py             # PWM verify result wording — DEC-318. Extracted from
+                               #   system_state_page so Hardware and System State
+                               #   render ONE object rather than two copies.
     pump_protection.py         # THE pump-protection predicate + the enforced-floor
                                #   lookup. Daemon-first since DEC-316: prefers the
                                #   header's reported stop_permitted /
@@ -240,6 +249,10 @@ control_ofc/
       theme_editor.py
       aio_config_dialog.py
       collapsible_section.py
+      cooling_device_card.py   # One cooling assembly, thin renderer — DEC-318
+      pwm_header_card.py       # One PWM header, thin renderer — DEC-318
+      validation_session_dialog.py  # Validation AND lifecycle sessions — DEC-318;
+                               #   one dialog, one engine, a `kind` discriminator
       flow_layout.py          # Qt FlowLayout — responsive card wrapping
       draggable_flow.py       # DraggableFlowContainer — drag-to-reorder
       reorderable_flow.py     # ReorderableFlow — shared drag/reorder base (DEC-187)

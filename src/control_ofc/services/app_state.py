@@ -14,6 +14,7 @@ from control_ofc.api.models import (
     BoardInfo,
     Capabilities,
     ConnectionState,
+    CoolingDeviceInventory,
     DaemonStatus,
     FanReading,
     Freshness,
@@ -53,6 +54,7 @@ class AppState(QObject):
     sensors_updated = Signal(list)  # list[SensorReading]
     fans_updated = Signal(list)  # list[FanReading]
     headers_updated = Signal(list)  # list[HwmonHeader]
+    cooling_devices_updated = Signal(object)  # CoolingDeviceInventory
     active_profile_changed = Signal(str)  # profile name
     active_profile_id_changed = Signal(str)  # active profile id
     # DEC-282 — two derived counts, each wired to the surface whose job it matches.
@@ -87,6 +89,11 @@ class AppState(QObject):
         self.sensors: list[SensorReading] = []
         self.fans: list[FanReading] = []
         self.hwmon_headers: list[HwmonHeader] = []
+        # AIO-MB Phase 6: cooling-device topology, refreshed on the
+        # capabilities interval. `None` means "not fetched yet or this
+        # daemon has no such route" — distinct from an inventory with an
+        # empty device list, which means "asked, and there are none".
+        self.cooling_devices: CoolingDeviceInventory | None = None
         self.active_profile_name: str = ""
         self.active_profile_id: str = ""
         # DEC-282: the ledger owns occurrence identity, first-seen times, recovery and
@@ -195,6 +202,10 @@ class AppState(QObject):
     def set_hwmon_headers(self, headers: list[HwmonHeader]) -> None:
         self.hwmon_headers = headers
         self.headers_updated.emit(headers)
+
+    def set_cooling_devices(self, inventory: CoolingDeviceInventory) -> None:
+        self.cooling_devices = inventory
+        self.cooling_devices_updated.emit(inventory)
 
     def set_active_profile(self, name: str) -> None:
         if name != self.active_profile_name:

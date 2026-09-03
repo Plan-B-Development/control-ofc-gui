@@ -32,6 +32,8 @@ When you fetch hardware diagnostics, the report populates with:
 
 ## Test PWM Control
 
+**Where to find it.** Since v2.56.0 the primary place is the **Hardware** page — each PWM header card has its own **Test Control** button, because the test belongs to a physical header. The **System State** page keeps the same controls as an advanced shortcut (and is still the only place with the bulk **Verify All Writable** sweep); both pages run the identical implementation and report identical wording.
+
 For motherboard hwmon headers it is often unclear whether a write actually reaches the fan. The board may accept the write at the sysfs level but the embedded controller (EC) or BIOS overrides it within milliseconds — the classic "Linux says PWM=50%, fan still runs at 100%" problem.
 
 **Test PWM Control** writes a known-distinct PWM value to a chosen header, waits ~6 seconds, then reads back what actually happened. The result is one of:
@@ -56,7 +58,9 @@ Just a connected daemon and a writable header to test. The daemon performs the w
 
 It is a *deeper* test beside the quick one, not a replacement. Use it when a fan or pump behaves oddly rather than plainly not working: it will not tell you anything new about a header that is clearly reverted.
 
-**Requires daemon 2.29.0 or newer.** On an older daemon the button is not shown.
+**Requires daemon 2.29.0 or newer.** On an older daemon the button is disabled and its tooltip says why.
+
+Since v2.56.0 the results table also reports **Response** and **Settling** for each step — how long the fan took to react at all, and how long the daemon held that duty — with a *Response latency* and *Typical settling time* summary underneath. Both are measured values: a header with no tachometer, or a fan whose speed never moved, shows an em dash rather than a fabricated zero, and the summary lines are omitted entirely when nothing was measurable. The figures are rounded to a tenth of a second because the daemon samples RPM every 500 ms — any more precision would be invented.
 
 ### The three verdicts, and why they are separate
 
@@ -148,6 +152,8 @@ The Hardware Readiness report surfaces a per-header count with a severity ramp:
 | **≥10** | Red (HIGH) | Persistent contention; expect fan speed to drift even though the daemon keeps writing |
 
 The verdict takes the highest severity across all headers, so if any single header is in HIGH state the whole report alerts you to it.
+
+Since v2.56.0 each header's own card in **Cooling Hardware** shows this count too, in its **Details ▸ Capabilities** block — a header that has never been reclaimed reads *Not observed*. A header currently under firmware control **and** with reclaims on record shows a **Control reclaimed** status; a header that was reclaimed in the past but is back under the daemon's control does not, because that is contention the daemon won rather than a live problem.
 
 The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically — control still works in the WARN/HIGH cases, but BIOS Smart Fan 6 should be set to "Manual" for the affected headers (see the vendor guidance the report auto-shows for Gigabyte + IT8696E systems).
 

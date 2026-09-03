@@ -42,8 +42,48 @@ ENGINE_PAUSE_WARNING = (
 )
 
 
+#: Shown wherever a measurement is genuinely absent. Never substitute 0.
+UNKNOWN_TEXT = "—"
+
+#: The daemon sub-samples RPM every 500 ms during a sweep
+#: (`CHARACTERIZATION_SAMPLE_INTERVAL`), so a latency is only ever accurate to
+#: about half a second. One decimal place and a "~" is the honest presentation;
+#: milliseconds would invent precision the measurement does not have (§9).
+_SECONDS_DECIMALS = 1
+
+
 def _fmt_pct(value: int | None) -> str:
-    return "—" if value is None else f"{value}%"
+    return UNKNOWN_TEXT if value is None else f"{value}%"
+
+
+def _fmt_seconds(ms: int | None) -> str:
+    """A duration in seconds, or an em dash when it was never measured.
+
+    ``None`` is the common and legitimate case: a header with no tach, or a fan
+    whose RPM never moved past the noise floor, yields no first-change time at
+    all. Rendering that as "0.0 s" would report an instant response where in
+    fact there was no response to time.
+    """
+    if ms is None:
+        return UNKNOWN_TEXT
+    return f"{ms / 1000:.{_SECONDS_DECIMALS}f} s"
+
+
+def _typical_seconds(values: object) -> str:
+    """The median of the measured durations, as "~N.N s", or "" if none were.
+
+    Median rather than mean: a single startup outlier — exactly what a pump does
+    on its first point — would drag a mean far from what every other point
+    showed. Empty string, not an em dash, because the caller shows a whole
+    summary LINE only when there is something to say (§9: "use measured values
+    only").
+    """
+    measured = sorted(v for v in values if v is not None)
+    if not measured:
+        return ""
+    mid = len(measured) // 2
+    median = measured[mid] if len(measured) % 2 else (measured[mid - 1] + measured[mid]) / 2
+    return f"~{median / 1000:.{_SECONDS_DECIMALS}f} s"
 
 
 def _fmt_rpm(value: int | None) -> str:
@@ -125,6 +165,14 @@ class CharRow:
     rpm: str
     result: str
     state: str
+    # ── Timing analysis (AIO-MB Phase 6 §9) ──────────────────────────────────
+    # Both figures have been on the wire and parsed since Phase 3 and were
+    # rendered nowhere. `first_change_ms` is how long the fan took to react at
+    # all; `settle_ms` is how long the daemon held the point. Absent means the
+    # daemon could not measure it — commonly no tach, or an RPM that never moved
+    # — and renders as an em dash, never as 0.
+    response: str = UNKNOWN_TEXT
+    settling: str = UNKNOWN_TEXT
 
 
 @dataclass(frozen=True)
@@ -145,6 +193,13 @@ class CharacterizationView:
     verdicts: list[VerdictChip] = field(default_factory=list)
     observed_range: str = ""
     notes: list[str] = field(default_factory=list)
+    # ── Timing summary (AIO-MB Phase 6 §9) ───────────────────────────────────
+    # "~0.4 s" / "~1.9 s", or "" when nothing was measurable. Deliberately
+    # one-decimal and prefixed "~": the daemon sub-samples RPM at 500 ms, so
+    # any further precision would be invented. §9: "avoid over-precision if
+    # sampling resolution does not justify it".
+    response_latency: str = ""
+    settling_time: str = ""
 
 
 # Per-point result wording. A row's verdict combines the two axes, but never
@@ -201,6 +256,8 @@ def _row_for(point) -> CharRow:
         rpm=_fmt_rpm(point.rpm_after),
         result=result,
         state=state,
+        response=_fmt_seconds(point.first_change_ms),
+        settling=_fmt_seconds(point.settle_ms),
     )
 
 
@@ -289,6 +346,8 @@ def build_characterization_view(
         verdicts=verdicts,
         observed_range=observed_range,
         notes=notes,
+        response_latency=_typical_seconds(p.first_change_ms for p in run.points),
+        settling_time=_typical_seconds(p.settle_ms for p in run.points),
     )
 
 

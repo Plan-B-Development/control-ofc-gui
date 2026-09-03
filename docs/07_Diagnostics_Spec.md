@@ -770,12 +770,20 @@ the section shows a concise result rather than a card per device.
 
 ## Implementation: Validation sessions (DEC-317, AIO-MB Phase 5 — backend only)
 
-**There is no UI for this yet, deliberately.** Phase 5 ships the data model, the API client
-and the serializers; **Phase 6 owns the panel, the live status, the charts, the export
-button and the external-measurement form.** Nothing on any page changes in GUI v2.55.0, and
-there is no debug hook to remove.
+**Phase 6 (DEC-318, GUI v2.56.0) shipped that UI.** The validation and lifecycle panel is
+`ui/widgets/validation_session_dialog.py`, launched from the Hardware page's *Hardware
+Diagnostics* section. One dialog serves both session kinds, because Phase 5 made them one
+engine with a `kind` discriminator — a second dialog would be the duplication the brief
+forbids. It shows the live status, the per-member telemetry table and the findings summary,
+offers Mark Event / Stop / Cancel, records external measurements, and exports CSV and JSON
+through the Qt-free serializers below.
 
-What exists GUI-side, for Phase 6 to build on:
+**Charts remain deliberately absent.** The brief's own guidance is "do not make graphing
+mandatory" and "a stable tabular implementation is preferable"; `TimelineChart` is coupled
+to live `AppState` history and cannot render a session's `samples[]` array without a new
+plot. Recorded as deferred work (`AIO6-b`) rather than half-built.
+
+What Phase 5 built and Phase 6 consumes:
 
 - `api/models.py` — `ValidationSession` and its parts, `parse_validation_session`,
   `parse_validation_session_summary` (the miniature on `/status` + `/poll`), and

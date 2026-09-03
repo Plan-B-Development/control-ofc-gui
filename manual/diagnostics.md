@@ -113,7 +113,9 @@ This page is covered in depth on the [Hardware Troubleshooting](hardware-trouble
 
 ![Hardware page](../screenshots/auto/05_hardware.png)
 
-The **Hardware** page shows two daemon-sourced, read-only views of your cooling hardware: the **System Readiness Checklist** (the daemon's go/no-go assessment) and the **Super-I/O Architecture** report (motherboard sensor/fan-chip detection). Both come from a *single* request to the daemon's combined `GET /inventory/hardware-readiness`, which serves one shared, coalesced hardware scan — so the two sections can never disagree with each other. Neither view ever changes your system.
+The **Hardware** page is where you see, understand and test your cooling hardware. It has four sections: the **System Readiness Checklist** (the daemon's go/no-go assessment), **Recommended Actions**, **Cooling Hardware** (your coolers and every PWM header), **Hardware Diagnostics** (the active tests), and the **Super-I/O Architecture** report (motherboard sensor/fan-chip detection). The readiness and Super-I/O halves come from a *single* request to the daemon's combined `GET /inventory/hardware-readiness`, which serves one shared, coalesced hardware scan — so those two sections can never disagree with each other.
+
+Everything the page *displays* is read-only. The tests in **Hardware Diagnostics** do exercise your hardware, and each is described below; all of them run inside the daemon, which keeps its hwmon lease, the pump safety floor and thermal protection in force throughout. **The GUI never writes a PWM value itself, and no action on this page can stop a pump or drive a fan below its floor.**
 
 ### System Readiness Checklist
 
@@ -129,7 +131,30 @@ Requires `control-ofc-daemon` ≥ v2.6.0. On a daemon that predates the feature 
 
 ### Recommended Actions
 
-Each checklist item carries a recommended next step; the page gathers these into a **Recommended Actions** summary so you can work down the list from most to least urgent. Actions that need the hardware to be *exercised* — a **PWM control test** or a **GPU fan verification** — link *over* to the **System State** page, because that is where the Test PWM Control, Verify All Writable, and GPU-fan verify/restore actions live. The Hardware page itself only reports; it never writes to your fans.
+Each checklist item carries a recommended next step; the page gathers these into a **Recommended Actions** summary so you can work down the list from most to least urgent. A **PWM control test** action now scrolls you to this page's own **Hardware Diagnostics** section — the tests live here. GPU-fan verification, and the bulk **Verify All Writable** sweep, still live on the **System State** page, reachable from the **Advanced (System State)** button in that section.
+
+### Cooling Hardware
+
+This section answers *"what cooling hardware do I have, and what is it doing right now?"*.
+
+**Cooling devices.** If you have grouped a pump and its radiator fans into a cooling device (via **Configure AIO…** on the Controls page), it appears here as one assembly rather than a set of unrelated hwmon channels: pump, radiator fans, control sensor, pump strategy, coolant telemetry and an overall status, with live RPM and PWM beside each member. Buttons let you jump to the headers, characterise the pump, start a validation session, edit the configuration, or **Forget Device** — which removes only the *grouping*. Your headers, their assigned roles and the pump safety floor are unaffected, and no fan changes speed.
+
+**PWM headers.** Every discovered header gets a card showing its name, role, live RPM, and — kept deliberately apart — the PWM the daemon **requested** and the PWM the hardware **reports back**. Those two numbers are what let you tell a failed write from a BIOS/EC reclaim from a device doing its own control; a single merged number would hide all three. A **Details** disclosure adds the engineering view: which chip and channel, the kernel label, the capability audit (PWM write, readback, `pwm_enable`, supported control modes, PWM/DC mode, base frequency, tach pulses, alarm state, BIOS/EC reclaim count), and the classification and safety block — role, role source, the device safety floor, and whether stopping the fan is prohibited.
+
+A few things read as **Unknown** on most boards, and that is normal rather than a problem: the supported control modes are known only for `it87` and `nct6775` chips, and many boards expose no PWM frequency or tach-pulse count at all. The page says *Unknown* rather than *Unsupported* precisely because a driver that stays silent is not a driver saying no.
+
+Requested PWM shows as approximate on a daemon older than v2.33.0, which did not report the commanded duty separately from the readback.
+
+### Hardware Diagnostics
+
+The active tests, gathered in one place instead of scattered across the page. Each is disabled with a reason in its tooltip when your hardware or daemon cannot support it — a read-only header cannot be driven, and validation sessions need daemon v2.32.0 or newer plus a configured cooling device.
+
+- **Test Control** (on each header card) — the quick write-and-read-back test. See [Hardware Troubleshooting § Test PWM Control](hardware-troubleshooting.md#test-pwm-control).
+- **Characterise** (on each header card, and **Characterise Pump** on a device card) — the full sweep, now also reporting response latency and settling time per step. See [§ Characterise PWM Response](hardware-troubleshooting.md#characterise-pwm-response).
+- **Startup / Lifecycle Recording** — records how your cooler behaves across startup, resume and profile changes.
+- **AIO Validation** — records what your cooler actually does and finalises into an evidence summary you can export as CSV or JSON.
+
+Both recorders open the same dialog. It shows elapsed time, per-member telemetry and, when the session finishes, a findings table using explicit result words — **PASS**, **FAIL**, **OBSERVED**, **NOT OBSERVED**, **NOT TESTED**, **UNKNOWN**, **UNAVAILABLE**. Nothing that was not actually tested is ever reported as PASS, and a capability your hardware simply does not expose is reported as *unavailable*, never as a failure. You can mark an event while recording, and attach external electrical measurements (a meter or logic-analyser reading) to the session — those are stored for your own analysis and are never used for any control or safety decision.
 
 ### Super-I/O Architecture
 

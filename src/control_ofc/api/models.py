@@ -578,6 +578,21 @@ class FanReading:
     # hwmon only. ``None`` means "the daemon did not say" — never 0% — and is
     # what a pre-2.32 daemon, an OpenFan channel and a GPU fan all report.
     pwm_readback_pct: int | None = None
+    # AIO-MB Phase 6 (DEC-318, daemon >= 2.33.0): the duty the daemon last
+    # COMMANDED for an hwmon header, as a percent.
+    #
+    # The command half of the pair whose readback half is ``pwm_readback_pct``,
+    # and the field to read when the value the daemon actually chose matters.
+    # Single-producer daemon-side (only the hwmon write path sets it), unlike
+    # ``last_commanded_pwm`` — which for an hwmon header reports whichever of the
+    # poll's readback and the engine's command wrote last (AIO5-a), so for an
+    # *uncontrolled* header it is a readback despite its name.
+    #
+    # hwmon only. ``None`` means "the daemon has never commanded this header" —
+    # never 0% — and is also what a pre-2.33 daemon reports for every fan. An
+    # OpenFan channel and a GPU fan keep their own unambiguous command in
+    # ``last_commanded_pwm`` and report ``None`` here rather than duplicating it.
+    pwm_commanded_pct: int | None = None
     # AIO-MB Phase 4: the driver's own `fanN_alarm` bit, sampled at 1 Hz.
     # `None` means "not known" — either the driver exposes no alarm attribute,
     # or the entry was refreshed by a PWM write without re-reading it. Never
@@ -2341,8 +2356,9 @@ def parse_gpu_verify_result(data: dict) -> GpuVerifyResult:
 #
 # A validation session records what an already-configured cooler actually did,
 # and may orchestrate the existing PWM verify and characterisation to produce
-# evidence about it. Phase 5 ships the model and the serializers; **Phase 6 owns
-# every pixel** — there is deliberately no page, dialog or button here.
+# evidence about it. Phase 5 shipped the model and the serializers; **Phase 6
+# (DEC-318) added every pixel**, in `ui/widgets/validation_session_dialog.py`.
+# There is still deliberately no page, dialog or button in THIS module.
 #
 # Two rules run through all of it, and both are the daemon's semantics rather
 # than the GUI's to reinterpret:

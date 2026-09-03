@@ -38,6 +38,11 @@ class _PollWorker(QObject):
     sensors_ready = Signal(list)
     fans_ready = Signal(list)
     headers_ready = Signal(list)
+    #: AIO-MB Phase 6: the cooling-device topology (DEC-316 surface).
+    #: Emitted on the CAPABILITIES interval, not the 1 Hz poll — topology
+    #: is static configuration, and §19 forbids increasing poll load
+    #: simply because more fields became visible.
+    cooling_devices_ready = Signal(object)  # CoolingDeviceInventory
     active_profile_ready = Signal(object)  # ActiveProfileInfo | None
     hw_diagnostics_ready = Signal(object)  # HardwareDiagnosticsResult
 
@@ -128,8 +133,20 @@ class _PollWorker(QObject):
             # re-fetch keeps capabilities, headers, and the active profile
             # from going stale between reconnects).
             if self._poll_count % self._caps_interval == 0:
-                self.capabilities_ready.emit(client.capabilities())
+                caps = client.capabilities()
+                self.capabilities_ready.emit(caps)
                 self.headers_ready.emit(client.hwmon_headers())
+                # Cooling-device topology (AIO-MB Phase 6). Capability-gated:
+                # a pre-2.31 daemon 404s the route, and an unguarded call would
+                # log a spurious error every five minutes on every older setup.
+                if getattr(caps.control, "cooling_devices", False):
+                    try:
+                        self.cooling_devices_ready.emit(client.get_cooling_devices())
+                    except (DaemonError, ConnectionError, OSError):
+                        # Best-effort and display-only: the Hardware page falls
+                        # back to per-header cards, which never depended on
+                        # topology (§1). Never fail a poll over it.
+                        log.warning("Failed to query cooling devices — topology view may be stale")
                 try:
                     self.active_profile_ready.emit(client.active_profile())
                 except (DaemonError, ConnectionError, OSError):
@@ -309,6 +326,7 @@ class PollingService(QObject):
         self._worker.sensors_ready.connect(state.set_sensors)
         self._worker.fans_ready.connect(state.set_fans)
         self._worker.headers_ready.connect(state.set_hwmon_headers)
+        self._worker.cooling_devices_ready.connect(state.set_cooling_devices)
         self._worker.active_profile_ready.connect(self._on_active_profile)
         self._worker.hw_diagnostics_ready.connect(self._on_hw_diagnostics)
         self._worker.connected.connect(self._on_connected)

@@ -502,3 +502,117 @@ class _CharacterizationWorker(_SocketWorker):
     @Slot()
     def do_cancel(self) -> None:
         self._guard(lambda: self._ensure_client().cancel_characterization(), "cancellation")
+
+
+class _ValidationWorker(_SocketWorker):
+    """Runs a validation session's daemon calls off the UI thread.
+
+    A session is long-running (minutes to hours) and its start call can
+    orchestrate a PWM verify and a full characterisation sweep — a blocking
+    call measured in minutes. Every method here is therefore a slot on a
+    QThread, exactly like the verify and characterisation workers, and for the
+    same reason: a blocked hardware probe must not freeze the poll loop, the
+    menus or the window.
+
+    One worker serves every session verb rather than one worker per verb,
+    because they are strictly sequential on a single daemon-side session slot —
+    a second thread would buy nothing and could interleave a stop with a poll.
+    """
+
+    session_updated = Signal(object)  # ValidationSession | None
+    session_error = Signal(str, str)  # category, message
+    #: A one-shot acknowledgement for marker/measurement, so the dialog can
+    #: confirm without waiting for the next poll to show the new event.
+    action_ok = Signal(str)  # human-readable confirmation
+
+    def _run(self, category_fn, label: str) -> None:
+        """Shared error translation. Kept in one place so a safety refusal is
+        never reported as a failure on one verb and a refusal on another."""
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            category_fn()
+        except DaemonTimeout:
+            self.session_error.emit("unavailable", f"{label} timed out.")
+        except DaemonUnavailable:
+            self.session_error.emit("unavailable", f"Daemon unavailable during {label.lower()}.")
+        except DaemonError as e:
+            if _is_soft_safety_refusal(e):
+                self.session_error.emit("unavailable", e.message)
+            else:
+                self.session_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Validation worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.session_error.emit("unavailable", f"Connection lost during {label.lower()}.")
+
+    @Slot(str, str, list, list, dict)
+    def do_start(
+        self,
+        device_id: str,
+        kind: str,
+        diagnostics: list,
+        sweep_members: list,
+        metadata: dict,
+    ) -> None:
+        def call() -> None:
+            self.session_updated.emit(
+                self._ensure_client().start_validation_session(
+                    device_id,
+                    kind=kind or None,
+                    diagnostics=list(diagnostics) or None,
+                    sweep_members=list(sweep_members) or None,
+                    metadata=dict(metadata) or None,
+                )
+            )
+
+        self._run(call, "Starting the session")
+
+    @Slot()
+    def do_poll(self) -> None:
+        def call() -> None:
+            # A 404 is `None` from the client, not an error: it simply means no
+            # session is active. Emitting it lets the dialog show the finished
+            # state rather than an error the user cannot act on.
+            self.session_updated.emit(self._ensure_client().validation_session())
+
+        self._run(call, "Reading the session")
+
+    @Slot()
+    def do_stop(self) -> None:
+        def call() -> None:
+            self.session_updated.emit(self._ensure_client().stop_validation_session())
+
+        self._run(call, "Stopping the session")
+
+    @Slot()
+    def do_cancel(self) -> None:
+        def call() -> None:
+            self.session_updated.emit(self._ensure_client().cancel_validation_session())
+
+        self._run(call, "Cancelling the session")
+
+    @Slot(str, str)
+    def do_marker(self, detail: str, member_id: str) -> None:
+        def call() -> None:
+            self._ensure_client().add_validation_marker(detail or None, member_id=member_id or None)
+            self.action_ok.emit("Event marked.")
+
+        self._run(call, "Marking an event")
+
+    @Slot(str, float, str, str, str)
+    def do_measurement(self, kind: str, value: float, unit: str, member_id: str, note: str) -> None:
+        def call() -> None:
+            self._ensure_client().add_validation_measurement(
+                kind,
+                value,
+                unit=unit,
+                member_id=member_id or None,
+                note=note or None,
+            )
+            self.action_ok.emit("External measurement recorded.")
+
+        self._run(call, "Recording a measurement")

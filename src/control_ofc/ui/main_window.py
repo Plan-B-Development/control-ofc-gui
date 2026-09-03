@@ -241,7 +241,12 @@ class MainWindow(QWidget):
         # Owns its own hardware-readiness worker; deep-links re-point to the
         # migrated System State / Overview / Settings pages.
         self.hardware_page = HardwarePage(
-            state=self._state, diagnostics_service=self._diag, client=self._client
+            state=self._state,
+            diagnostics_service=self._diag,
+            client=self._client,
+            # The Cooling Hardware card derives the pump strategy from the active
+            # profile's curve shape, and only ProfileService holds a Profile.
+            profile_service=self._profile_service,
         )
         # DEC-215: Theme is now its own page (split from the Settings tabs). Owns
         # the theme_changed signal + the theme editor; Settings keeps the rest.
@@ -397,6 +402,9 @@ class MainWindow(QWidget):
         self.hardware_page.open_preferred_sensors.connect(self._open_preferred_sensors)
         self.hardware_page.open_system_state.connect(self._open_system_state)
         self.hardware_page.open_overview.connect(self._open_overview)
+        # A cooling-device card's "Edit Configuration" — the AIO configuration
+        # workflow lives on Controls and is reused, never duplicated (§21).
+        self.hardware_page.open_controls.connect(self._open_controls_page)
 
         # Populate dashboard profile selector
         self.dashboard_page.populate_profiles()
@@ -785,6 +793,15 @@ class MainWindow(QWidget):
         self.page_stack.setCurrentIndex(PAGE_CONTROLS)
         self.sidebar.select_page(PAGE_CONTROLS)
         self.controls_page.focus_control(control_id)
+
+    def _open_controls_page(self) -> None:
+        """Navigate to Controls without focusing a particular control.
+
+        Used by the Hardware page's "Edit Configuration", which wants the
+        Configure-AIO workflow that already lives there.
+        """
+        self.page_stack.setCurrentIndex(PAGE_CONTROLS)
+        self.sidebar.select_page(PAGE_CONTROLS)
 
     def _open_logs(self) -> None:
         """The status-ribbon Alerts indicator was clicked — open the Logs entry

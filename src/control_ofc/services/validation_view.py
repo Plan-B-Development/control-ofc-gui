@@ -2,9 +2,11 @@
 
 Qt-free by design — the widget that renders this is a thin renderer over
 ``ValidationSessionView``, in the ``services/*_view.py`` pattern this project
-uses for every page derivation. Phase 5 builds the model; **Phase 6 owns the
-panel, the chart and the export button** that draw it, so nothing here decides
-spacing, colour or layout.
+uses for every page derivation. Phase 5 built the model; **Phase 6 (DEC-318) added
+the panel and the export button** that draw it — `ui/widgets/validation_session_dialog.py`
+— so nothing here decides spacing, colour or layout. Phase 6 deliberately shipped
+**no chart**: the brief prefers a stable table, and `TimelineChart` cannot render a
+session's sample array without a new plot (register row `AIO6-b`).
 
 What it does decide is the part that is not presentation taste:
 

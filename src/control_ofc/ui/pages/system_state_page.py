@@ -38,9 +38,9 @@ from control_ofc.services.system_state_view import (
     build_verify_headers,
     daemon_version_at_least,
 )
+from control_ofc.services.verify_view import build_verify_result_view
 from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.buttons import make_button
-from control_ofc.ui.hwmon_guidance import dual_chip_verify_hint, verification_guidance
 from control_ofc.ui.pages.diagnostics_workers import (
     _CharacterizationWorker,
     _GpuVerifyWorker,
@@ -769,49 +769,17 @@ class SystemStatePage(QWidget):
             self._step_pwm_verify_all()
 
     def _show_verify_result(self, result: HwmonVerifyResult) -> None:
-        status_map = {
-            "effective": ("PWM control is working correctly", "SuccessChip"),
-            "pwm_enable_reverted": (
-                "BIOS/EC reverted pwm_enable — fan control is being overridden",
-                "CriticalChip",
-            ),
-            "pwm_value_clamped": ("PWM value was clamped or ignored by hardware", "WarningChip"),
-            "no_rpm_effect": (
-                "PWM accepted but RPM did not change (fan may be disconnected or stalled)",
-                "WarningChip",
-            ),
-            "rpm_unavailable": ("PWM write accepted but RPM readback unavailable", "CardMeta"),
-        }
-        summary, css_class = status_map.get(result.result, (f"Result: {result.result}", "CardMeta"))
-        lines = [f"Result: {summary}"]
-        if result.details:
-            lines.append(result.details)
-        init, final = result.initial_state, result.final_state
-        if init.rpm is not None and final.rpm is not None:
-            lines.append(f"RPM: {init.rpm} → {final.rpm}")
-
-        board_vendor = chip_name = ""
-        expected_chips: list[str] = []
-        detected: list[str] = []
-        hw = self._diag.last_hw_diagnostics
+        # Wording and assembly live in `services/verify_view` since AIO-MB
+        # Phase 6, so this page and the Hardware page render one object rather
+        # than two copies that drift (DEC-318).
+        header = None
         if self._state:
             header = next((h for h in self._state.hwmon_headers if h.id == result.header_id), None)
-            if header:
-                chip_name = header.chip_name
-        if hw is not None:
-            board_vendor = hw.board.vendor
-            expected_chips = list(hw.expected_chips)
-            detected = [c.chip_name for c in hw.hwmon.chips_detected]
-        guidance = verification_guidance(result.result, board_vendor, chip_name)
-        if guidance:
-            lines.append("")
-            lines.append(f"Next step: {guidance}")
-        dual_hint = dual_chip_verify_hint(result.result, expected_chips, detected)
-        if dual_hint:
-            lines.append("")
-            lines.append(dual_hint)
-        self._verify_result_label.setText("\n".join(lines))
-        set_chip_class(self._verify_result_label, css_class)
+        view = build_verify_result_view(
+            result, header=header, diagnostics=self._diag.last_hw_diagnostics
+        )
+        self._verify_result_label.setText(view.text)
+        set_chip_class(self._verify_result_label, view.chip_class)
         self._verify_result_label.setVisible(True)
 
     def _run_pwm_verify_all(self) -> None:
