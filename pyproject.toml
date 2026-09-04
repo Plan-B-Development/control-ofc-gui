@@ -1,6 +1,6 @@
 [project]
 name = "control-ofc-gui"
-version = "2.57.5"
+version = "2.57.6"
 description = "Desktop fan control GUI for the Control-OFC daemon"
 requires-python = ">=3.12"
 license = "MIT"

@@ -1,8 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [2.57.6] — 2026-09-04
 
-Batches G and H of the `/ofc:audit` register triage (DEC-326). The GUI's share is
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). Batches G and H of
+the `/ofc:audit` register triage (DEC-326). The GUI's share is
 **one corrected in-app chip-guidance entry** and the user-facing documentation
 that described the same hardware wrongly. No floor, threshold, route, capability
 flag or control behaviour changes.
