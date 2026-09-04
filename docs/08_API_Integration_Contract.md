@@ -1314,8 +1314,14 @@ was true before the merge.
   - `code: str` — a **stable machine key** the GUI keys knowledge-base entries and
     acknowledgement state off (e.g. `cpu_sensor_missing`, `cpu_sensor_present`,
     `no_pwm_controls`, `pwm_read_only`, `monitor_only_fans_present`, and — when a
-    Super-I/O chip is detected without its driver — `superio_driver_unloaded` /
-    `superio_acpi_conflict`, DEC-202).
+    Super-I/O chip is detected but its driver is not bound — `superio_driver_unloaded` /
+    `superio_acpi_conflict`, DEC-202). **`superio_driver_unloaded` covers two
+    distinct states despite its name** (DEC-327): the driver is not loaded at all,
+    **or** it is loaded and failed to bind. The `code` is deliberately stable
+    across both — the GUI keys knowledge-base entries and acknowledgement state
+    off it, so renaming it would be a breaking change — and the two states are
+    distinguished in the human-readable `summary`/`detail` instead. A client must
+    not infer "the module is not loaded" from this code.
   - `severity: str` — `ok | info | warning | critical`.
   - `component: str` — `cpu | pwm | hwmon | sensor`.
   - `summary`, `detail`, `recommended_action: str`.

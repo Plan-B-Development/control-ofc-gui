@@ -294,8 +294,13 @@ IT87952E — so the chip is **unreachable, not unsupported**.
   earlier revisions of this page cited it as a fix, which was wrong.
 
 Your remaining headers work normally. The unreachable ones need driver work
-upstream; [issue #64](https://github.com/frankcrawford/it87/issues/64) is the
-thread to watch.
+upstream. There is **no open upstream issue tracking this specific case** as at
+2026-09-04 — [#64](https://github.com/frankcrawford/it87/issues/64) is where the
+eSPI-to-LPC bridge reading comes from but was **closed in 2025-12**, and
+[#81](https://github.com/frankcrawford/it87/issues/81) is open for the sibling
+STEALTH ICE board without a resolution. Watch the
+[driver repository](https://github.com/frankcrawford/it87) rather than a single
+issue.
 
 **This is per-board, not per-family.** Other boards in the same generation with
 the same IT8696E + IT87952E pairing do work — the X870E AORUS ELITE is

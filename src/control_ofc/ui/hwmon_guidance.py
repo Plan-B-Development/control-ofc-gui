@@ -539,12 +539,17 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_name="it87",
         in_mainline=False,
         driver_package="it87-dkms-git (AUR) — installed, but see below",
-        driver_url="https://github.com/frankcrawford/it87/issues/64",
+        # NOT issue #64: it is where the bridge reading comes from but was
+        # closed in 2025-12, and pointing a user at a closed issue as their
+        # entry point is the `HOST-c` defect (citing an upstream issue as
+        # something it is not). The repository is the honest destination.
+        driver_url="https://github.com/frankcrawford/it87",
         known_issues=[
             "There is no 'IT8883' sensor chip. Device-ID 0x8883 at the "
             "secondary Super-I/O address is most likely an ITE eSPI-to-LPC "
-            "bridge answering in place of the chip behind it "
-            "(frankcrawford/it87 issue #64).",
+            "bridge answering in place of the chip behind it — inferred from "
+            "frankcrawford/it87 issue #64 (closed 2025-12), not confirmed by "
+            "the maintainer.",
             "Measured on Gigabyte X870E AORUS MASTER (2026-09-04): the it87 "
             "driver finds the primary IT8696E over MMIO and then reports "
             "'Unsupported chip (DEVID=0x8883)' for the secondary. One hwmon "
