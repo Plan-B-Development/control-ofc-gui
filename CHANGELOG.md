@@ -1,5 +1,49 @@
 # Changelog
 
+## [Unreleased]
+
+**Tests only — no shipped GUI code changed.** Batch D of the `/ofc:audit` register triage
+closes six P2 rows (`AUD2-f`, `AUD2-i`, `AUD3-a`, `AUD3-o`, `AUD3-p`, `TT-a`; DEC-324), all
+one story: a rule extracted, unit-tested exhaustively, and its only production caller never
+executed. Nothing here changes a floor, a threshold, the thermal ladder, the single-writer
+loop, a route or a capability flag.
+
+### Added
+- **The Hardware page's interaction layer is now executed by tests** (`AUD3-a`). Both
+  `_open_characterization` call sites — Hardware page and System State page — construct the
+  characterisation dialog from `header_is_pump_protected(...)`, the DEC-312 **union**, so a
+  header the hardware labels `AIO_PUMP` that the user downgraded to `chassis_fan` still gets
+  the "a pump is never stopped" warning. Neither call site had a test; replacing either with
+  `header.role == "pump"` left the whole suite green while every user with a pump silently
+  lost that warning. Both are now asserted as a *relationship* against the predicate rather
+  than against a literal `True`, which is what makes the assertion mean anything.
+- **The ten dialog signal connections behind Characterise and Start Validation** are pinned,
+  along with the export, forget-device and result-routing paths. Dropping `stop_requested`
+  previously meant a recording session could not be stopped, with nothing noticing.
+- **`ValidationSessionDialog`'s buttons and rendering** (`AUD3-o`) — every button driven with
+  `.click()` rather than by calling its handler, the full start/marker/measurement payloads
+  asserted, both tables rendered from a populated session, and both close paths shown to stop
+  the 1 Hz poll timer.
+- **The fan wizard's Apply button** (`AUD3-p`) — the only UI path that writes a pump-role
+  nomination, and every test drove the handler directly instead. Assign, topology upsert and
+  the confirmed clear are now driven through the real button.
+- **The Controls-page curve-editor floor** (`TT-a`) — a mutation-confirmed survivor:
+  `set_min_output(min_floor)` → `set_min_output(0.0)` used to leave the suite green. Both
+  branches of `_on_edit_curve` are covered, the inline editor and the modal one a Flat curve
+  opens, which is how the Fixed pump strategy is stored.
+- **`_CharacterizationWorker` and `_ValidationWorker` refusal mapping** — a `thermal_abort`,
+  or a retryable `validation_error` while the thermal ladder is forcing, is protection and is
+  shown verbatim; anything else is an error. Asserted at the worker rather than only at the
+  dialog, which is where it can actually be wrong.
+
+- **The page↔worker signal wiring**, on live QThreads with an injected fake client and no
+  socket — the hop the dialog tests deliberately stub out. Deleting either
+  `self._char_start_request.connect(w.do_start, …)` or the `session_updated` → page
+  connection previously left all 4134 tests green.
+
+Coverage, measured full-suite before and after: `hardware_page.py` 72% → 84%,
+`validation_session_dialog.py` 69% → 98%, `diagnostics_workers.py` 56% → 75%.
+
 ## [2.57.4] — 2026-09-04
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). **No shipped GUI code

@@ -19,6 +19,8 @@ from PySide6.QtWidgets import QLabel, QPushButton
 
 from control_ofc.api.models import (
     VALIDATION_KIND_LIFECYCLE,
+    VALIDATION_KIND_VALIDATION,
+    VALIDATION_STATE_RECORDING,
     Capabilities,
     CharacterizationRun,
     CharPoint,
@@ -31,6 +33,10 @@ from control_ofc.api.models import (
     HwmonHeader,
     SensorReading,
     ValidationFinding,
+    ValidationMemberRole,
+    ValidationMemberSample,
+    ValidationMetadata,
+    ValidationSample,
     ValidationSession,
     parse_fans,
 )
@@ -106,6 +112,56 @@ def _fan_header(**kw) -> HwmonHeader:
     }
     base.update(kw)
     return HwmonHeader(**base)
+
+
+def _session(**kw) -> ValidationSession:
+    """A populated session, so `_render` has members and findings to draw."""
+    base = {
+        "session_id": "vs-1",
+        "state": VALIDATION_STATE_RECORDING,
+        # `build_member_rows` reads the metadata roster, not the sample ids: a
+        # member that reported nothing must still render a row saying so.
+        "metadata": ValidationMetadata(
+            cooling_device_id="aio0",
+            device_name="AIO Cooling System",
+            pump_member=_pump_header().id,
+            members=[
+                ValidationMemberRole(
+                    member_id=_pump_header().id,
+                    label="AIO_PUMP",
+                    role="pump",
+                    member_kind="pump",
+                    pump_protected=True,
+                )
+            ],
+        ),
+        "started_unix_ms": 1_700_000_000_000,
+        "requested_diagnostics": ["pwm_verify"],
+        "sweep_members": [_pump_header().id],
+        "samples": [
+            ValidationSample(
+                elapsed_ms=1000,
+                unix_ms=1_700_000_001_000,
+                temperature_c=54.0,
+                temperature_sensor="cpu:pkg",
+                thermal_state="normal",
+                members=[
+                    ValidationMemberSample(
+                        member_id=_pump_header().id,
+                        role="pump",
+                        requested_pct=45,
+                        readback_pct=44,
+                        rpm=2100,
+                    )
+                ],
+            )
+        ],
+        "findings": [
+            ValidationFinding(id="pump_never_stopped", state="pass", detail="held above 30%")
+        ],
+    }
+    base.update(kw)
+    return ValidationSession(**base)
 
 
 def _reading(header_id: str, **kw) -> FanReading:
@@ -971,3 +1027,967 @@ def test_no_hardcoded_font_size_in_new_widgets():
     ):
         text = (root / name).read_text()
         assert "font-size" not in text, f"{name} hardcodes a font size"
+
+
+# ── Call sites: the page's interaction layer (register row `AUD3-a`) ─────────
+#
+# `test_characterise_button_invokes_the_existing_dialog_path` above stops at the
+# page boundary: it replaces `_open_characterization` with a recorder, so the
+# method's own body — the union predicate, the three signal connections, the
+# dialog lifecycle — never ran. Measured, `hardware_page.py` sat at 71% with
+# `_open_characterization` and `_open_validation` wholly missing, which made
+#
+#     is_pump=header_is_pump_protected(header, self._capabilities())
+#
+# replaceable by `is_pump=False` with the entire suite green — and every user
+# with a pump would silently lose the warning that their pump is about to be
+# swept. The tests below execute those bodies for real.
+
+
+def _stub_workers(page):
+    """Neutralise the QThread workers; the call sites under test sit above them.
+
+    Each `_ensure_*_worker` builds a real `DaemonClient` against a socket path
+    and starts a thread. What these tests are about is the code *after* that
+    check — the dialog construction and its connections — so the gate is
+    satisfied without any I/O. The hop this skips is covered on its own by
+    `TestWorkerRequestSignalsReachTheirWorker` below, which starts the real
+    thread and injects a fake client into it.
+    """
+    page._ensure_char_worker = lambda: True  # type: ignore[method-assign]
+    page._ensure_validation_worker = lambda: True  # type: ignore[method-assign]
+
+
+def _no_exec(monkeypatch, cls):
+    """Patch a dialog's blocking `exec()` and hand back what the page built."""
+    built = []
+
+    def fake_exec(dialog):
+        built.append(dialog)
+        return 0
+
+    monkeypatch.setattr(cls, "exec", fake_exec, raising=True)
+    return built
+
+
+class TestCharacterizationCallSite:
+    """[SAFETY] DEC-312: the dialog's pump copy is decided by the UNION."""
+
+    def test_the_card_button_opens_the_dialog_with_the_union_predicate(self, qtbot, monkeypatch):
+        """A header the user downgraded to `chassis_fan` that the hardware
+        labels PUMP is still pump-protected daemon-side.
+
+        The assertion is a RELATIONSHIP against the predicate rather than the
+        literal `True`, so it cannot be satisfied by a call site that reads the
+        wire `role` — which for this fixture says `chassis_fan`.
+        """
+        from control_ofc.services.pump_protection import header_is_pump_protected
+        from control_ofc.ui.widgets.pwm_characterization_dialog import (
+            PwmCharacterizationDialog,
+        )
+
+        downgraded = _pump_header(role="chassis_fan", role_source="user_assigned")
+        page, state = _page(qtbot)
+        state.set_hwmon_headers([downgraded, _fan_header()])
+        page._header_cards.clear()
+        page._refresh_cooling_section()
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, PwmCharacterizationDialog)
+
+        card = next(c for c in page.findChildren(PwmHeaderCard) if c.header_id() == downgraded.id)
+        button = card.findChild(QPushButton, f"HeaderCard_Btn_characterize_{_slug(downgraded.id)}")
+        button.click()
+
+        assert len(built) == 1, "the real button must reach the real dialog"
+        expected = header_is_pump_protected(downgraded, state.capabilities)
+        assert expected is True, "the fixture must exercise the union, not agree with `role`"
+        assert built[0]._is_pump == expected
+        assert "never stopped" in built[0]._warnings.text()
+
+    def test_a_chassis_header_opens_without_the_pump_copy(self, qtbot, monkeypatch):
+        """The opposite branch, so the assertion above is not vacuously true."""
+        from control_ofc.services.pump_protection import header_is_pump_protected
+        from control_ofc.ui.widgets.pwm_characterization_dialog import (
+            PwmCharacterizationDialog,
+        )
+
+        page, state = _page(qtbot)
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, PwmCharacterizationDialog)
+        page._open_characterization(_fan_header().id)
+
+        assert built[0]._is_pump is False
+        assert header_is_pump_protected(_fan_header(), state.capabilities) is False
+        assert "never stopped" not in built[0]._warnings.text()
+
+    def test_the_dialogs_three_signals_reach_the_pages_worker_requests(self, qtbot, monkeypatch):
+        from control_ofc.ui.widgets.pwm_characterization_dialog import (
+            PwmCharacterizationDialog,
+        )
+
+        page, _ = _page(qtbot)
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, PwmCharacterizationDialog)
+        page._open_characterization(_pump_header().id)
+        dialog = built[0]
+
+        seen: list[str] = []
+        page._char_start_request.connect(lambda *_a: seen.append("start"))
+        page._char_poll_request.connect(lambda: seen.append("poll"))
+        page._char_cancel_request.connect(lambda: seen.append("cancel"))
+
+        dialog.start_requested.emit(_pump_header().id, None, None)
+        dialog.poll_requested.emit()
+        dialog.cancel_requested.emit()
+        assert seen == ["start", "poll", "cancel"]
+
+    def test_an_unknown_header_opens_nothing(self, qtbot, monkeypatch):
+        from control_ofc.ui.widgets.pwm_characterization_dialog import (
+            PwmCharacterizationDialog,
+        )
+
+        page, _ = _page(qtbot)
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, PwmCharacterizationDialog)
+        page._open_characterization("hwmon:nope:dev:pwm9:GONE")
+        page._open_characterization("")
+        assert built == []
+
+
+class TestValidationCallSite:
+    """The seven `.connect()` calls in `_open_validation`, driven for real.
+
+    Dropping `stop_requested` means a recording session cannot be stopped; with
+    the body unexecuted, nothing noticed.
+    """
+
+    def _open(self, qtbot, monkeypatch, *, lifecycle=False, device_id=""):
+        page, state = _page(qtbot, devices=[_device()])
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        page._open_validation(lifecycle=lifecycle, device_id=device_id)
+        return page, state, built
+
+    def test_every_dialog_signal_reaches_its_worker_request(self, qtbot, monkeypatch):
+        page, _, built = self._open(qtbot, monkeypatch)
+        assert len(built) == 1
+        dialog = built[0]
+
+        seen: list[tuple] = []
+        page._validation_start_request.connect(lambda *a: seen.append(("start", a)))
+        page._validation_poll_request.connect(lambda: seen.append(("poll", ())))
+        page._validation_stop_request.connect(lambda: seen.append(("stop", ())))
+        page._validation_cancel_request.connect(lambda: seen.append(("cancel", ())))
+        page._validation_marker_request.connect(lambda *a: seen.append(("marker", a)))
+        page._validation_measurement_request.connect(lambda *a: seen.append(("measure", a)))
+
+        dialog.start_requested.emit("aio0", "validation", ["pwm_verify"], ["m1"], {"note": "n"})
+        dialog.poll_requested.emit()
+        dialog.stop_requested.emit()
+        dialog.cancel_requested.emit()
+        dialog.marker_requested.emit("resumed", "m1")
+        dialog.measurement_requested.emit("supply_voltage", 12.1, "V", "m1", "note")
+
+        assert [name for name, _ in seen] == [
+            "start",
+            "poll",
+            "stop",
+            "cancel",
+            "marker",
+            "measure",
+        ]
+        assert dict(seen)["start"] == ("aio0", "validation", ["pwm_verify"], ["m1"], {"note": "n"})
+        assert dict(seen)["measure"] == ("supply_voltage", 12.1, "V", "m1", "note")
+
+    def test_opening_polls_immediately_so_an_existing_session_is_shown(self, qtbot, monkeypatch):
+        """A session may still be recording from an earlier visit; opening the
+        dialog must not look like a fresh start."""
+        page, _ = _page(qtbot, devices=[_device()])
+        _stub_workers(page)
+        polls: list[int] = []
+        page._validation_poll_request.connect(lambda: polls.append(1))
+        _no_exec(monkeypatch, ValidationSessionDialog)
+        page._open_validation(lifecycle=False)
+        assert polls == [1]
+
+    def test_the_export_signal_is_wired_to_the_pages_serializer(self, qtbot, monkeypatch):
+        page, _, built = self._open(qtbot, monkeypatch)
+        formats: list[str] = []
+        page._export_session = lambda fmt: formats.append(fmt)  # type: ignore[method-assign]
+        # Re-open so the fresh dialog connects to the patched method.
+        built.clear()
+        page._open_validation(lifecycle=False)
+        built[0].export_requested.emit("csv")
+        assert formats == ["csv"]
+
+    def test_the_lifecycle_button_opens_the_lifecycle_kind(self, qtbot, monkeypatch):
+        page, _ = _page(qtbot, devices=[_device()])
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        page._lifecycle_btn.click()
+        assert built[0]._kind == VALIDATION_KIND_LIFECYCLE
+        assert "Lifecycle" in built[0].windowTitle()
+
+    def test_the_validation_button_opens_the_validation_kind(self, qtbot, monkeypatch):
+        page, _ = _page(qtbot, devices=[_device()])
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        page._validation_btn.click()
+        assert built[0]._kind != VALIDATION_KIND_LIFECYCLE
+
+    def test_no_configured_device_explains_itself_instead_of_opening(self, qtbot, monkeypatch):
+        page, _ = _page(qtbot)  # no cooling devices
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        page._open_validation(lifecycle=False)
+        assert built == []
+        assert "Configure a cooling device first" in page._diag_result.text()
+
+    def test_a_card_targets_its_own_device_not_the_first_one(self, qtbot, monkeypatch):
+        """`_resolve_device` honours the id the card emitted. The GUI writes one
+        device today, so `devices[0]` would coincide — and be wrong by
+        construction the moment a second exists."""
+        second = _device(id="aio1", name="Second Loop")
+        page, _ = _page(qtbot, devices=[_device(), second])
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        page._open_validation(lifecycle=False, device_id="aio1")
+        assert built[0]._device_id == "aio1"
+        assert "Second Loop" in built[0]._device_lbl.text()
+
+    def test_the_member_pickers_are_populated_from_the_device(self, qtbot, monkeypatch):
+        _page, _state, built = self._open(qtbot, monkeypatch)
+        member_ids = {mid for mid, _label in built[0]._members}
+        assert member_ids == {_pump_header().id, _fan_header().id}
+
+    def test_worker_results_are_routed_to_the_open_dialog(self, qtbot, monkeypatch):
+        """`_on_validation_update`/`_error`/`_action_ok` are the worker's only
+        route onto the screen and were all uncovered."""
+        page, _, built = self._open(qtbot, monkeypatch)
+        dialog = built[0]
+        page._validation_dialog = dialog  # `exec()` returned, so re-attach it
+
+        page._on_validation_update(_session(state="recording"))
+        assert dialog.session() is not None
+        assert dialog._stop_btn.isEnabled(), "a recording session must be stoppable"
+
+        page._on_validation_error("unavailable", "Cannot start while hot")
+        assert dialog._status_lbl.text() == "Cannot start while hot"
+        page._on_validation_error("error", "boom")
+        assert "Session error" in dialog._status_lbl.text()
+
+        page._on_validation_action_ok("Event marked.")
+        assert dialog._status_lbl.text() == "Event marked."
+
+    def test_start_begins_polling_as_well_as_requesting(self, qtbot, monkeypatch):
+        page, _, built = self._open(qtbot, monkeypatch)
+        page._validation_dialog = built[0]
+        built[0].stop_polling()
+        requested: list[tuple] = []
+        page._validation_start_request.connect(lambda *a: requested.append(a))
+        page._on_validation_start("aio0", "validation", [], [], {})
+        assert requested == [("aio0", "validation", [], [], {})]
+        assert built[0]._timer.isActive(), "a started session must be polled for"
+
+
+class TestExportCallSite:
+    def test_export_writes_the_chosen_format_through_the_phase5_serializers(
+        self, qtbot, monkeypatch, tmp_path
+    ):
+        import PySide6.QtWidgets as QtW
+
+        page, _ = _page(qtbot, devices=[_device()])
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        page._open_validation(lifecycle=False)
+        page._validation_dialog = built[0]
+        built[0].apply_session(_session(state="completed"))
+
+        for fmt, suffix, probe in (
+            ("csv", ".csv", "elapsed_ms"),
+            ("json", ".json", '"session_id"'),
+        ):
+            target = tmp_path / f"out{suffix}"
+            # Bound as a default argument: a bare closure over `target` would be
+            # a late-binding read, which is only accidentally correct here.
+            monkeypatch.setattr(
+                QtW.QFileDialog,
+                "getSaveFileName",
+                lambda *a, _t=str(target), **k: (_t, ""),
+            )
+            page._export_session(fmt)
+            assert target.exists(), f"{fmt} export must write the file"
+            assert probe in target.read_text()
+            assert "Exported to" in built[0]._status_lbl.text()
+
+    def test_a_cancelled_file_dialog_writes_nothing(self, qtbot, monkeypatch, tmp_path):
+        import PySide6.QtWidgets as QtW
+
+        page, _ = _page(qtbot, devices=[_device()])
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        page._open_validation(lifecycle=False)
+        page._validation_dialog = built[0]
+        built[0].apply_session(_session(state="completed"))
+        monkeypatch.setattr(QtW.QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""))
+        page._export_session("json")
+        assert list(tmp_path.iterdir()) == []
+
+    def test_an_unwritable_path_is_reported_rather_than_swallowed(
+        self, qtbot, monkeypatch, tmp_path
+    ):
+        import PySide6.QtWidgets as QtW
+
+        page, _ = _page(qtbot, devices=[_device()])
+        _stub_workers(page)
+        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        page._open_validation(lifecycle=False)
+        page._validation_dialog = built[0]
+        built[0].apply_session(_session(state="completed"))
+        # A path that is itself a directory: `atomic_write` creates missing
+        # parents, so a non-existent directory is NOT an error here.
+        bad = tmp_path / "a-directory.json"
+        bad.mkdir()
+        monkeypatch.setattr(QtW.QFileDialog, "getSaveFileName", lambda *a, **k: (str(bad), ""))
+        page._export_session("json")
+        assert "Could not write" in built[0]._status_lbl.text()
+
+
+class TestForgetDeviceCallSite:
+    """Metadata only: no role, floor or fan speed changes (DEC-316)."""
+
+    class _Client:
+        socket_path = "/nonexistent/control-ofc.sock"
+
+        def __init__(self, *, after=None, raises=None):
+            self.deleted: list[str] = []
+            self._after = after if after is not None else CoolingDeviceInventory(cooling_devices=[])
+            self._raises = raises
+
+        def delete_cooling_device(self, device_id):
+            if self._raises:
+                raise self._raises
+            self.deleted.append(device_id)
+
+        def get_cooling_devices(self):
+            return self._after
+
+    def test_the_card_button_deletes_and_pushes_the_inventory_back_to_state(
+        self, qtbot, monkeypatch
+    ):
+        from PySide6.QtWidgets import QMessageBox
+
+        client = self._Client()
+        page, state = _page(qtbot, client=client, devices=[_device()])
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+        card = next(iter(page._device_cards.values()))
+        card._btn_forget.click()
+
+        assert client.deleted == ["aio0"], "the real button must reach the real delete"
+        assert state.cooling_devices is not None
+        assert list(state.cooling_devices.cooling_devices) == [], (
+            "DEC-319: the inventory must reach AppState, or the Controls picker "
+            "keeps reserving the forgotten device's fans"
+        )
+        assert "No fan settings changed" in page._diag_result.text()
+        assert page._device_cards == {}
+
+    def test_a_declined_confirmation_deletes_nothing(self, qtbot, monkeypatch):
+        from PySide6.QtWidgets import QMessageBox
+
+        client = self._Client()
+        page, _ = _page(qtbot, client=client, devices=[_device()])
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+        next(iter(page._device_cards.values()))._btn_forget.click()
+        assert client.deleted == []
+
+    def test_a_rejected_delete_keeps_the_card_and_says_so(self, qtbot):
+        from control_ofc.api.errors import DaemonError
+
+        client = self._Client(raises=DaemonError(code="internal_error", message="nope"))
+        page, _ = _page(qtbot, client=client, devices=[_device()])
+        page._forget_device("aio0")
+        assert "Could not forget the device" in page._diag_result.text()
+        assert "aio0" in page._device_cards, "a failed delete must not remove the card"
+
+    def test_no_client_is_reported_not_silently_ignored(self, qtbot):
+        page, _ = _page(qtbot, devices=[_device()])
+        page._forget_device("aio0")
+        assert "no daemon connection" in page._diag_result.text()
+
+
+# ── The dialog's own interactive + rendering layer (row `AUD3-o`) ────────────
+#
+# Only two tests above touch `ValidationSessionDialog`, and both assert on a
+# freshly-constructed widget: a title check and an enablement check. Nothing
+# clicked a button, nothing called `apply_session()` with a populated session,
+# and nothing asserted that closing stops the poll timer — so deleting
+# `self._start_btn.clicked.connect(self._emit_start)` left the whole Phase 6
+# suite green. `test_cancel_emits_and_start_emits_no_client_side_point_list` in
+# `test_aio_mb_phase3.py` is the sibling doing this correctly, one file away.
+
+
+class TestValidationDialogButtons:
+    """`.click()`, not `_emit_*()` — the connection is the fragile part."""
+
+    def _dialog(self, qtbot, **kw):
+        kw.setdefault("members", [(_pump_header().id, "AIO_PUMP"), (_fan_header().id, "CPU_FAN")])
+        dialog = ValidationSessionDialog("aio0", "AIO Cooling System", **kw)
+        qtbot.addWidget(dialog)
+        return dialog
+
+    def test_start_assembles_the_whole_payload_from_the_form(self, qtbot):
+        dialog = self._dialog(qtbot)
+        seen: list[tuple] = []
+        dialog.start_requested.connect(lambda *a: seen.append(a))
+
+        dict(dialog._diag_boxes)["pwm_characterization"].setChecked(True)
+        dialog._sweep_combo.setCurrentIndex(dialog._sweep_combo.findData(_fan_header().id))
+        dialog._note_edit.setText("  bench run 3  ")
+        dialog._start_btn.click()
+
+        assert seen == [
+            (
+                "aio0",
+                VALIDATION_KIND_VALIDATION,
+                ["pwm_characterization"],
+                [_fan_header().id],
+                {"note": "bench run 3"},
+            )
+        ]
+
+    def test_an_empty_note_sends_no_metadata_key(self, qtbot):
+        dialog = self._dialog(qtbot)
+        seen: list[tuple] = []
+        dialog.start_requested.connect(lambda *a: seen.append(a))
+        dialog._start_btn.click()
+        assert seen[0][2] == [], "no diagnostic ticked means none requested"
+        assert seen[0][3] == [], "the default sweep member is the daemon's choice, not ours"
+        assert seen[0][4] == {}, "a blank note must not become an empty metadata value"
+
+    def test_stop_cancel_and_export_buttons_emit(self, qtbot):
+        dialog = self._dialog(qtbot)
+        seen: list[str] = []
+        dialog.stop_requested.connect(lambda: seen.append("stop"))
+        dialog.cancel_requested.connect(lambda: seen.append("cancel"))
+        dialog.export_requested.connect(lambda fmt: seen.append(f"export:{fmt}"))
+        # Enable them the way a recording session does, rather than by hand.
+        dialog.apply_session(_session(state=VALIDATION_STATE_RECORDING))
+        dialog._stop_btn.click()
+        dialog._cancel_btn.click()
+        dialog._csv_btn.click()
+        dialog._json_btn.click()
+        assert seen == ["stop", "cancel", "export:csv", "export:json"]
+
+    def test_mark_event_carries_the_note_field(self, qtbot):
+        dialog = self._dialog(qtbot)
+        seen: list[tuple] = []
+        dialog.marker_requested.connect(lambda *a: seen.append(a))
+        dialog.apply_session(_session(state=VALIDATION_STATE_RECORDING))
+        dialog._note_edit.setText("resumed from suspend")
+        dialog._mark_btn.click()
+        assert seen == [("resumed from suspend", "")]
+
+    def test_a_measurement_carries_kind_value_unit_member_and_folded_note(self, qtbot):
+        """§17: the wire has no `instrument` field, so it is folded into the
+        note. Untrusted free text either way — never read for control."""
+        dialog = self._dialog(qtbot)
+        seen: list[tuple] = []
+        dialog.measurement_requested.connect(lambda *a: seen.append(a))
+        dialog.apply_session(_session(state=VALIDATION_STATE_RECORDING))
+
+        dialog._m_kind.setCurrentIndex(dialog._m_kind.findText("12 V supply voltage"))
+        dialog._m_member.setCurrentIndex(dialog._m_member.findData(_pump_header().id))
+        dialog._m_value.setValue(12.14)
+        dialog._m_instrument.setText("Fluke 87V")
+        dialog._m_note.setText("at the pump header")
+        dialog._m_add.click()
+
+        assert seen == [
+            (
+                "supply_voltage",
+                12.14,
+                "V",
+                _pump_header().id,
+                "Instrument: Fluke 87V — at the pump header",
+            )
+        ]
+
+    def test_the_unit_follows_the_measurement_kind(self, qtbot):
+        dialog = self._dialog(qtbot)
+        dialog._m_kind.setCurrentIndex(dialog._m_kind.findText("PWM frequency"))
+        assert dialog._m_unit.text() == "Hz"
+        dialog._m_kind.setCurrentIndex(dialog._m_kind.findText("Device current"))
+        assert dialog._m_unit.text() == "A"
+
+
+class TestValidationDialogRendering:
+    def _dialog(self, qtbot):
+        dialog = ValidationSessionDialog("aio0", "AIO", members=[(_pump_header().id, "AIO_PUMP")])
+        qtbot.addWidget(dialog)
+        return dialog
+
+    def test_a_populated_session_fills_both_tables(self, qtbot):
+        dialog = self._dialog(qtbot)
+        dialog.apply_session(_session())
+        assert dialog._member_table.rowCount() == 1
+        assert dialog._member_table.item(0, 0).text()
+        assert dialog._findings_table.rowCount() == 1
+        # The finding's WORDING is the client's (273-i); only its presence is
+        # asserted here, so the view-model stays the single source of it.
+        assert dialog._findings_table.item(0, 1).text()
+        # `isVisibleTo`, not `isVisible`: the dialog is never shown in a headless
+        # test, so `isVisible()` is False for every widget and asserting it would
+        # pass with `setVisible(bool(view.members))` deleted — measured.
+        assert dialog._member_table.isVisibleTo(dialog) is True
+        assert dialog._findings_table.isVisibleTo(dialog) is True
+
+    def test_tables_with_nothing_in_them_stay_hidden(self, qtbot):
+        """The other half of `setVisible(bool(...))`, so the assertion above
+        cannot be satisfied by a table that is simply always visible."""
+        dialog = self._dialog(qtbot)
+        dialog.apply_session(_session(metadata=ValidationMetadata(), findings=[]))
+        assert dialog._member_table.isVisibleTo(dialog) is False
+        assert dialog._findings_table.isVisibleTo(dialog) is False
+
+    def test_requested_and_readback_stay_two_columns_in_the_rendered_table(self, qtbot):
+        """§6, asserted where the two disagree — equal values would pass with
+        both columns wired to the same field."""
+        dialog = self._dialog(qtbot)
+        dialog.apply_session(_session())
+        headers = [
+            dialog._member_table.horizontalHeaderItem(c).text()
+            for c in range(dialog._member_table.columnCount())
+        ]
+        requested = dialog._member_table.item(0, headers.index("Requested")).text()
+        readback = dialog._member_table.item(0, headers.index("Readback")).text()
+        assert "45" in requested
+        assert "44" in readback
+        assert requested != readback
+
+    def test_no_session_resets_to_the_ready_state(self, qtbot):
+        dialog = self._dialog(qtbot)
+        dialog.apply_session(_session())
+        dialog.apply_session(None)
+        assert dialog._status_lbl.text() == "Ready to start."
+        assert dialog._member_table.isVisibleTo(dialog) is False
+        assert dialog._findings_table.isVisibleTo(dialog) is False
+        assert dialog._start_btn.isEnabled() is True
+
+    def test_a_finished_session_stops_polling_and_still_allows_export(self, qtbot):
+        dialog = self._dialog(qtbot)
+        dialog.start_polling()
+        dialog.apply_session(_session(state="completed"))
+        assert dialog._timer.isActive() is False, "a finished session must stop the poll timer"
+        assert dialog._stop_btn.isEnabled() is False
+        assert dialog._mark_btn.isEnabled() is False
+        assert dialog._csv_btn.isEnabled() is True, "finished evidence is still exportable"
+
+    def test_a_recording_session_enables_the_live_actions_and_locks_the_options(self, qtbot):
+        dialog = self._dialog(qtbot)
+        dialog.apply_session(_session(state=VALIDATION_STATE_RECORDING))
+        assert dialog._start_btn.isEnabled() is False
+        assert dialog._stop_btn.isEnabled() is True
+        assert dialog._mark_btn.isEnabled() is True
+        assert dialog._m_add.isEnabled() is True
+        assert dialog._options_section.isEnabled() is False, (
+            "the session's own options must not change under a running session"
+        )
+
+    def test_a_soft_refusal_is_shown_verbatim_and_an_error_is_prefixed(self, qtbot):
+        """The daemon declining to move a pump during a thermal event is
+        protection working, not a failure."""
+        dialog = self._dialog(qtbot)
+        dialog.apply_error("unavailable", "Cannot start while hot: Tctl at 91.0°C")
+        assert dialog._status_lbl.text() == "Cannot start while hot: Tctl at 91.0°C"
+        dialog.apply_error("error", "boom")
+        assert dialog._status_lbl.text() == "Session error: boom"
+
+    def test_an_unrecognised_state_renders_rather_than_vanishing(self, qtbot):
+        """273-i: a newer daemon must not make a session disappear."""
+        dialog = self._dialog(qtbot)
+        dialog.apply_session(_session(state="some_future_state"))
+        assert dialog._state_pill.text()
+        assert dialog._state_pill.accessibleName()
+
+    def test_closing_stops_the_poll_timer_on_both_exit_paths(self, qtbot):
+        for close in ("reject", "accept"):
+            dialog = self._dialog(qtbot)
+            dialog.start_polling()
+            assert dialog._timer.isActive()
+            getattr(dialog, close)()
+            assert dialog._timer.isActive() is False, (
+                f"{close}() must stop the 1 Hz poll, or it outlives the dialog"
+            )
+
+    def test_the_close_button_stops_polling_too(self, qtbot):
+        dialog = self._dialog(qtbot)
+        dialog.start_polling()
+        dialog._close_btn.click()
+        assert dialog._timer.isActive() is False
+
+    def test_the_timer_emits_the_poll_signal(self, qtbot):
+        dialog = self._dialog(qtbot)
+        polls: list[int] = []
+        dialog.poll_requested.connect(lambda: polls.append(1))
+        dialog._timer.timeout.emit()
+        assert polls == [1]
+
+
+class TestValidationWorkerRefusalMapping:
+    """`_ValidationWorker`'s six verbs and their shared error translation.
+
+    Named in `AUD3-a`'s scope alongside the page: `diagnostics_workers.py` fell
+    62% → 56% precisely because Phase 5/6 added this class and nothing drove it.
+    The branch that matters is the same one the characterisation worker has — a
+    soft safety refusal must reach the dialog as "unavailable" and be shown
+    verbatim, because the daemon declining to disturb a pump during a thermal
+    event is protection working, not a failure. `_run` is shared by all six
+    verbs exactly so the two cannot drift on what counts as a refusal.
+    """
+
+    def _worker(self, *, raises=None, returns=None):
+        from control_ofc.ui.pages.diagnostics_workers import _ValidationWorker
+
+        worker = _ValidationWorker("/nonexistent/control-ofc.sock")
+        calls: list[tuple] = []
+
+        class _Client:
+            def __getattr__(self, name):
+                def call(*args, **kwargs):
+                    calls.append((name, args, kwargs))
+                    if raises is not None:
+                        raise raises
+                    return returns
+
+                return call
+
+        worker._client = _Client()  # `_ensure_client` returns this — no socket
+        errors: list[tuple[str, str]] = []
+        sessions: list[object] = []
+        oks: list[str] = []
+        worker.session_error.connect(lambda c, m: errors.append((c, m)))
+        worker.session_updated.connect(sessions.append)
+        worker.action_ok.connect(oks.append)
+        return worker, calls, errors, sessions, oks
+
+    def test_start_forwards_the_whole_payload_and_emits_the_session(self):
+        session = _session()
+        worker, calls, errors, sessions, _ = self._worker(returns=session)
+        worker.do_start("aio0", "validation", ["pwm_verify"], ["m1"], {"note": "n"})
+        assert calls[0][0] == "start_validation_session"
+        assert calls[0][1] == ("aio0",)
+        assert calls[0][2] == {
+            "kind": "validation",
+            "diagnostics": ["pwm_verify"],
+            "sweep_members": ["m1"],
+            "metadata": {"note": "n"},
+        }
+        assert sessions == [session]
+        assert errors == []
+
+    def test_empty_optionals_become_none_rather_than_empty_containers(self):
+        """The daemon's defaults must be reachable: an explicit `[]` asks for
+        *no* diagnostics, which is not the same request as "you choose"."""
+        worker, calls, _e, _s, _o = self._worker(returns=None)
+        worker.do_start("aio0", "", [], [], {})
+        assert calls[0][2] == {
+            "kind": None,
+            "diagnostics": None,
+            "sweep_members": None,
+            "metadata": None,
+        }
+
+    def test_poll_stop_and_cancel_each_emit_their_session_snapshot(self):
+        for verb, method in (
+            ("do_poll", "validation_session"),
+            ("do_stop", "stop_validation_session"),
+            ("do_cancel", "cancel_validation_session"),
+        ):
+            session = _session()
+            worker, calls, errors, sessions, _ = self._worker(returns=session)
+            getattr(worker, verb)()
+            assert calls[0][0] == method, f"{verb} must call {method}"
+            assert sessions == [session]
+            assert errors == []
+
+    def test_a_poll_with_no_active_session_emits_none_not_an_error(self):
+        """A 404 is `None` from the client: it means no session is recording,
+        which the dialog renders as the finished state rather than an error the
+        user cannot act on."""
+        worker, _c, errors, sessions, _o = self._worker(returns=None)
+        worker.do_poll()
+        assert sessions == [None]
+        assert errors == []
+
+    def test_marker_and_measurement_acknowledge_without_waiting_for_a_poll(self):
+        worker, calls, _e, _s, oks = self._worker()
+        worker.do_marker("resumed", "m1")
+        assert calls[0][0] == "add_validation_marker"
+        assert calls[0][2] == {"member_id": "m1"}
+        assert oks == ["Event marked."]
+
+        worker, calls, _e, _s, oks = self._worker()
+        worker.do_measurement("supply_voltage", 12.1, "V", "m1", "note")
+        assert calls[0][0] == "add_validation_measurement"
+        assert calls[0][1] == ("supply_voltage", 12.1)
+        assert calls[0][2] == {"unit": "V", "member_id": "m1", "note": "note"}
+        assert oks == ["External measurement recorded."]
+
+    def test_a_thermal_abort_is_protection_and_is_shown_verbatim(self):
+        from control_ofc.api.errors import DaemonError
+
+        worker, _c, errors, _s, _o = self._worker(
+            raises=DaemonError(
+                code="thermal_abort", message="Cannot start while hot: Tctl at 91.0°C", status=409
+            )
+        )
+        worker.do_start("aio0", "validation", [], [], {})
+        assert errors == [("unavailable", "Cannot start while hot: Tctl at 91.0°C")]
+
+    def test_a_retryable_validation_error_is_also_protection(self):
+        """DEC-297: the ladder actively forcing is a refusal, not a fault."""
+        from control_ofc.api.errors import DaemonError
+
+        worker, _c, errors, _s, _o = self._worker(
+            raises=DaemonError(
+                code="validation_error",
+                message="thermal safety is forcing fan output",
+                retryable=True,
+                status=400,
+            )
+        )
+        worker.do_stop()
+        assert errors == [("unavailable", "thermal safety is forcing fan output")]
+
+    def test_a_genuine_failure_is_still_an_error(self):
+        from control_ofc.api.errors import DaemonError
+
+        worker, _c, errors, _s, _o = self._worker(
+            raises=DaemonError(code="not_found", message="unknown device", status=404)
+        )
+        worker.do_cancel()
+        assert errors == [("error", "unknown device")]
+
+    def test_a_timeout_and_an_unavailable_daemon_name_the_verb(self):
+        from control_ofc.api.errors import DaemonTimeout, DaemonUnavailable
+
+        worker, _c, errors, _s, _o = self._worker(raises=DaemonTimeout())
+        worker.do_marker("x", "")
+        assert errors == [("unavailable", "Marking an event timed out.")]
+
+        worker, _c, errors, _s, _o = self._worker(raises=DaemonUnavailable())
+        worker.do_poll()
+        assert errors == [("unavailable", "Daemon unavailable during reading the session.")]
+
+    def test_a_dropped_connection_closes_the_client_so_the_next_call_reconnects(self):
+        worker, _c, errors, _s, _o = self._worker(raises=ConnectionError("broken pipe"))
+        worker.do_measurement("pwm_duty", 40.0, "%", "", "")
+        assert errors == [("unavailable", "Connection lost during recording a measurement.")]
+        assert worker._client is None, "a stale client must be dropped, not reused"
+
+
+class TestWorkerRequestSignalsReachTheirWorker:
+    """The hop `_stub_workers` deliberately skips, tested for real.
+
+    The dialog tests above stub `_ensure_char_worker`/`_ensure_validation_worker`
+    out, which is right for what they assert — but it leaves the *next* hop
+    unproven: the `QueuedConnection`s inside those two `connect` closures, from
+    the page's request signals into the worker's slots and back from the worker's
+    result signals into the page. Measured: deleting
+    `self._char_start_request.connect(w.do_start, …)` **and** the
+    `w.session_updated` → `_on_validation_update` connection left the entire
+    4134-test suite green.
+
+    No socket is opened: the worker's lazily-built client is replaced with a fake
+    after the thread starts, exactly as `test_v1_2_diagnostics.py` does for the
+    verify worker. Every test tears the thread down in a `finally`.
+    """
+
+    class _Client:
+        socket_path = "/nonexistent/control-ofc-worker.sock"
+
+    def _page_with_client(self, qtbot):
+        return _page(qtbot, client=self._Client(), devices=[_device()])
+
+    def test_char_requests_reach_the_worker_and_results_reach_the_page(self, qtbot):
+        from control_ofc.ui.widgets.pwm_characterization_dialog import (
+            PwmCharacterizationDialog,
+        )
+
+        page, _ = self._page_with_client(qtbot)
+        assert page._ensure_char_worker() is True
+        worker = page._char_worker
+        assert worker is not None and page._char_thread.isRunning()
+        try:
+            run = CharacterizationRun(
+                run_id="char-1",
+                header_id=_pump_header().id,
+                state="running",
+                requested_points_pct=[40],
+                points=[CharPoint(requested_pct=40, command_accepted=True, rpm_after=900)],
+            )
+            calls: list[tuple] = []
+
+            class _Fake:
+                def start_characterization(self, header_id, **kw):
+                    calls.append(("start", header_id, kw))
+                    return run
+
+                def characterization_status(self):
+                    calls.append(("poll",))
+                    return run
+
+                def cancel_characterization(self):
+                    calls.append(("cancel",))
+                    return run
+
+            worker._client = _Fake()
+
+            dialog = PwmCharacterizationDialog(_pump_header().id, "AIO_PUMP", is_pump=True)
+            qtbot.addWidget(dialog)
+            dialog._started = True
+            page._char_dialog = dialog
+
+            page._char_start_request.emit(_pump_header().id, None, None)
+            qtbot.waitUntil(lambda: any(c[0] == "start" for c in calls), timeout=3000)
+            assert calls[0][1] == _pump_header().id
+
+            page._char_poll_request.emit()
+            qtbot.waitUntil(lambda: any(c[0] == "poll" for c in calls), timeout=3000)
+
+            page._char_cancel_request.emit()
+            qtbot.waitUntil(lambda: any(c[0] == "cancel" for c in calls), timeout=3000)
+
+            # …and back: the worker's result must reach the open dialog through
+            # the page's slot, which is the other half of the same closure.
+            qtbot.waitUntil(lambda: dialog._table.rowCount() == 1, timeout=3000)
+        finally:
+            page._char_dialog = None
+            page.cleanup()
+        assert page._char_worker is None and page._char_thread is None
+
+    def test_a_char_worker_error_reaches_the_page(self, qtbot):
+        from control_ofc.api.errors import DaemonError
+        from control_ofc.ui.widgets.pwm_characterization_dialog import (
+            PwmCharacterizationDialog,
+        )
+
+        page, _ = self._page_with_client(qtbot)
+        assert page._ensure_char_worker() is True
+        try:
+
+            class _Hot:
+                def characterization_status(self):
+                    raise DaemonError(
+                        code="thermal_abort",
+                        message="Cannot run while hot: Tctl at 91.0°C",
+                        status=409,
+                    )
+
+            page._char_worker._client = _Hot()
+            dialog = PwmCharacterizationDialog(_pump_header().id, "AIO_PUMP", is_pump=True)
+            qtbot.addWidget(dialog)
+            page._char_dialog = dialog
+
+            page._char_poll_request.emit()
+            qtbot.waitUntil(
+                lambda: dialog._status_lbl.text() == "Cannot run while hot: Tctl at 91.0°C",
+                timeout=3000,
+            )
+        finally:
+            page._char_dialog = None
+            page.cleanup()
+
+    def test_validation_requests_reach_the_worker_and_results_reach_the_page(self, qtbot):
+        page, _ = self._page_with_client(qtbot)
+        assert page._ensure_validation_worker() is True
+        assert page._validation_worker is not None and page._validation_thread.isRunning()
+        try:
+            session = _session()
+            calls: list[str] = []
+
+            class _Fake:
+                def start_validation_session(self, device_id, **kw):
+                    calls.append("start")
+                    return session
+
+                def validation_session(self):
+                    calls.append("poll")
+                    return session
+
+                def stop_validation_session(self):
+                    calls.append("stop")
+                    return session
+
+                def cancel_validation_session(self):
+                    calls.append("cancel")
+                    return session
+
+                def add_validation_marker(self, detail, **kw):
+                    calls.append("marker")
+
+                def add_validation_measurement(self, kind, value, **kw):
+                    calls.append("measurement")
+
+            page._validation_worker._client = _Fake()
+
+            dialog = ValidationSessionDialog("aio0", "AIO", members=[])
+            qtbot.addWidget(dialog)
+            page._validation_dialog = dialog
+
+            page._validation_start_request.emit("aio0", "validation", [], [], {})
+            page._validation_poll_request.emit()
+            page._validation_stop_request.emit()
+            page._validation_cancel_request.emit()
+            page._validation_marker_request.emit("resumed", "")
+            page._validation_measurement_request.emit("pwm_duty", 40.0, "%", "", "")
+            qtbot.waitUntil(lambda: len(calls) == 6, timeout=3000)
+            assert set(calls) == {"start", "poll", "stop", "cancel", "marker", "measurement"}
+
+            # `session_updated` → `_on_validation_update` → the dialog…
+            qtbot.waitUntil(lambda: dialog.session() is not None, timeout=3000)
+            # …and `action_ok` → `_on_validation_action_ok`, a separate connection.
+            qtbot.waitUntil(
+                lambda: (
+                    dialog._status_lbl.text() in ("Event marked.", "External measurement recorded.")
+                ),
+                timeout=3000,
+            )
+        finally:
+            page._validation_dialog = None
+            page.cleanup()
+        assert page._validation_worker is None and page._validation_thread is None
+
+    def test_a_validation_worker_error_reaches_the_page(self, qtbot):
+        from control_ofc.api.errors import DaemonError
+
+        page, _ = self._page_with_client(qtbot)
+        assert page._ensure_validation_worker() is True
+        try:
+
+            class _Hot:
+                def validation_session(self):
+                    raise DaemonError(
+                        code="thermal_abort", message="Cannot start while hot", status=409
+                    )
+
+            page._validation_worker._client = _Hot()
+            dialog = ValidationSessionDialog("aio0", "AIO", members=[])
+            qtbot.addWidget(dialog)
+            page._validation_dialog = dialog
+
+            page._validation_poll_request.emit()
+            qtbot.waitUntil(
+                lambda: dialog._status_lbl.text() == "Cannot start while hot", timeout=3000
+            )
+        finally:
+            page._validation_dialog = None
+            page.cleanup()
+
+    def test_no_worker_without_a_socket_path(self, qtbot):
+        """The gate the entry points rely on: no client means no thread."""
+        page, _ = _page(qtbot, devices=[_device()])
+        assert page._ensure_char_worker() is False
+        assert page._ensure_validation_worker() is False
+        assert page._char_thread is None and page._validation_thread is None

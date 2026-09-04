@@ -606,3 +606,220 @@ class TestRestoreNoteDoesNotTrustOneField:
             assert (
                 "restor" not in self._notes(restore_failed=False, restore_outcome=outcome).lower()
             ), f"{outcome!r} must not produce a note"
+
+
+# ── Call sites (register row `AUD2-f`) ───────────────────────────────
+#
+# Everything above this line tests the pieces. `AUD2-f` is about the wiring:
+# `grep -rn _open_characterization tests/` used to return zero hits, so the
+# whole click → page → dialog path was unexecuted, and every `TestDialog` case
+# above passes `is_pump=True` as a LITERAL. That means `system_state_page.py`'s
+#
+#     is_pump=header_is_pump_protected(header, …)
+#
+# could have been written `header.role == "pump"` — the exact DEC-312 defect the
+# line exists to prevent — with the entire file still green. This is CLAUDE.md's
+# most-repeated lesson: *extracting a rule into a testable function does not
+# test the call site.*
+
+
+class TestSystemStatePageCharacterizationCallSite:
+    """Drive the real button and assert the UNION predicate reached the dialog."""
+
+    def _page(self, qtbot, header, *, characterization=True, roles=True):
+        from control_ofc.api.models import ConnectionState
+        from control_ofc.services.app_state import AppState
+        from control_ofc.services.diagnostics_service import DiagnosticsService
+        from control_ofc.ui.pages.system_state_page import SystemStatePage
+
+        state = AppState()
+        state.set_connection(ConnectionState.CONNECTED)
+        state.set_capabilities(_caps(characterization=characterization, roles=roles))
+        state.set_hwmon_headers([header])
+        page = SystemStatePage(state=state, diagnostics_service=DiagnosticsService(state))
+        qtbot.addWidget(page)
+        page._populate_verify_combo()
+        # The worker owns a QThread and a real socket client; the call site under
+        # test is the dialog construction below it, so the thread is stubbed out
+        # rather than started. That stub skips a real hop — the `QueuedConnection`s
+        # inside `_ensure_char_worker`'s closure — which is covered separately, on
+        # a live thread with an injected fake client, by
+        # `test_aio_mb_phase6.py::TestWorkerRequestSignalsReachTheirWorker`. An
+        # earlier version of this comment claimed the shared `_ensure_worker`
+        # helper covered it; that was wrong, and deleting either connection left
+        # the whole suite green.
+        page._ensure_char_worker = lambda: True  # type: ignore[method-assign]
+        return page, state
+
+    def _capture_dialog(self, monkeypatch):
+        """Stop `exec()` blocking, and keep the dialog the page built."""
+        built: list[PwmCharacterizationDialog] = []
+
+        def fake_exec(dialog):
+            built.append(dialog)
+            return 0
+
+        monkeypatch.setattr(PwmCharacterizationDialog, "exec", fake_exec, raising=True)
+        return built
+
+    def test_the_button_opens_the_dialog_with_the_union_predicate(self, qtbot, monkeypatch):
+        """[SAFETY] A header the user downgraded to `chassis_fan` that the
+        hardware labels PUMP is still pump-protected daemon-side (DEC-312).
+
+        Asserted as a RELATIONSHIP against the predicate, not as the literal
+        `True`: a literal would still pass if the call site read the wire `role`,
+        because this fixture would then be the only thing making it true.
+        """
+        header = _header(label="AIO_PUMP", role="chassis_fan", role_source="user_assigned")
+        page, state = self._page(qtbot, header)
+        built = self._capture_dialog(monkeypatch)
+
+        assert page._characterize_btn.isEnabled(), "the action must be reachable to be tested"
+        page._characterize_btn.click()
+
+        assert len(built) == 1, "the real button must open the real dialog"
+        expected = header_is_pump_protected(header, state.capabilities)
+        assert expected is True, "the fixture must exercise the union, not agree with `role`"
+        assert built[0]._is_pump == expected
+        assert "never stopped" in built[0]._warnings.text(), (
+            "the user must be told the pump is perturbed rather than stopped"
+        )
+
+    def test_a_plain_chassis_header_gets_no_pump_copy(self, qtbot, monkeypatch):
+        """The other branch, so the test above cannot pass by always being true."""
+        header = _header(id="hwmon:nct6798:dev:pwm2:CHA_FAN1", label="CHA_FAN1", role="chassis_fan")
+        page, state = self._page(qtbot, header)
+        built = self._capture_dialog(monkeypatch)
+
+        page._characterize_btn.click()
+
+        assert built[0]._is_pump is header_is_pump_protected(header, state.capabilities) is False
+        assert "never stopped" not in built[0]._warnings.text()
+
+    def test_the_dialogs_signals_reach_the_pages_worker_requests(self, qtbot, monkeypatch):
+        """Three `.connect()` calls nothing pinned. Dropping any one silently
+        breaks start, poll or cancel in the running app."""
+        page, _ = self._page(qtbot, _header())
+        built = self._capture_dialog(monkeypatch)
+        page._characterize_btn.click()
+        dialog = built[0]
+
+        started: list[tuple] = []
+        polled: list[int] = []
+        cancelled: list[int] = []
+        page._char_start_request.connect(lambda h, p, s: started.append((h, p, s)))
+        page._char_poll_request.connect(lambda: polled.append(1))
+        page._char_cancel_request.connect(lambda: cancelled.append(1))
+
+        dialog.start_requested.emit(_header().id, None, None)
+        dialog.poll_requested.emit()
+        dialog.cancel_requested.emit()
+
+        assert started == [(_header().id, None, None)]
+        assert polled == [1]
+        assert cancelled == [1]
+
+    def test_worker_results_are_routed_to_the_open_dialog(self, qtbot, monkeypatch):
+        """`_on_char_update`/`_on_char_error` are the worker's only way onto the
+        screen, and both were uncovered."""
+        page, _ = self._page(qtbot, _header())
+        built = self._capture_dialog(monkeypatch)
+        page._characterize_btn.click()
+        # `exec()` returned, so the page cleared its handle; re-attach the dialog
+        # the page itself built to exercise the routing slots against it.
+        page._char_dialog = built[0]
+        built[0]._started = True
+
+        page._on_char_update(
+            _run(header_id=_header().id, state="running", points=[_point(30, rpm=900)])
+        )
+        assert built[0]._table.rowCount() == 1
+
+        page._on_char_error("unavailable", "Cannot run while hot: Tctl at 91.0°C")
+        assert built[0]._status_lbl.text() == "Cannot run while hot: Tctl at 91.0°C"
+
+    def test_no_dialog_opens_without_the_capability(self, qtbot, monkeypatch):
+        page, _ = self._page(qtbot, _header(), characterization=False)
+        built = self._capture_dialog(monkeypatch)
+        assert page._characterize_btn.isVisible() is False
+        page._characterize_btn.click()
+        assert built == [], "an unadvertised capability must not open the sweep dialog"
+
+
+class TestCharacterizationWorkerRefusalMapping:
+    """`_CharacterizationWorker._guard`'s five exception branches were 0%.
+
+    The one that matters is the soft-refusal split: it is what distinguishes
+    "the daemon refused because thermal safety is active" (protection, shown
+    verbatim) from "the sweep failed" (an error). It was asserted only from the
+    dialog end, against categories the test supplied itself.
+    """
+
+    def _worker(self, exc):
+        from control_ofc.ui.pages.diagnostics_workers import _CharacterizationWorker
+
+        worker = _CharacterizationWorker("/nonexistent/control-ofc.sock")
+
+        class _Client:
+            def start_characterization(self, *a, **kw):
+                raise exc
+
+            def characterization_status(self):
+                raise exc
+
+            def cancel_characterization(self):
+                raise exc
+
+        worker._client = _Client()  # `_ensure_client` returns this, so no socket is opened
+        seen: list[tuple[str, str]] = []
+        worker.run_error.connect(lambda c, m: seen.append((c, m)))
+        return worker, seen
+
+    def test_a_thermal_abort_is_reported_as_protection_not_failure(self):
+        from control_ofc.api.errors import DaemonError
+
+        worker, seen = self._worker(
+            DaemonError(
+                code="thermal_abort", message="Too hot to sweep: Tctl at 91.0°C", status=409
+            )
+        )
+        worker.do_start("h1", None, None)
+        assert seen == [("unavailable", "Too hot to sweep: Tctl at 91.0°C")]
+
+    def test_a_retryable_validation_error_is_also_protection(self):
+        """DEC-297: the ladder actively forcing is a refusal, not a fault."""
+        from control_ofc.api.errors import DaemonError
+
+        worker, seen = self._worker(
+            DaemonError(
+                code="validation_error",
+                message="thermal safety is forcing fan output",
+                retryable=True,
+                status=400,
+            )
+        )
+        worker.do_poll()
+        assert seen == [("unavailable", "thermal safety is forcing fan output")]
+
+    def test_a_genuine_failure_is_still_an_error(self):
+        from control_ofc.api.errors import DaemonError
+
+        worker, seen = self._worker(
+            DaemonError(code="not_found", message="unknown header", status=404)
+        )
+        worker.do_cancel()
+        assert seen == [("error", "unknown header")]
+
+    def test_a_timeout_says_the_daemon_still_owns_the_restore(self):
+        from control_ofc.api.errors import DaemonTimeout
+
+        worker, seen = self._worker(DaemonTimeout())
+        worker.do_start("h1", None, None)
+        assert seen[0][0] == "unavailable"
+        assert "restores the header itself" in seen[0][1]
+
+    def test_a_dropped_connection_closes_the_client_so_the_next_call_reconnects(self):
+        worker, seen = self._worker(ConnectionError("broken pipe"))
+        worker.do_poll()
+        assert seen[0][0] == "unavailable"
+        assert worker._client is None, "a stale client must be dropped, not reused"

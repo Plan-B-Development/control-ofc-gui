@@ -853,3 +853,95 @@ class TestPartialAssignIsReportedHonestly:
         page._pump_combo.setCurrentIndex(page._pump_combo.findData(PUMP_ID))
         page._apply_nomination()
         assert "No roles were changed" in page._status.text()
+
+
+# ---------------------------------------------------------------------------
+# The Apply button itself (register row `AUD3-p`)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyButtonIsWired:
+    """[SAFETY] The only UI path that writes a pump-role nomination.
+
+    Every test in `TestNominationWrites` above calls `page._apply_nomination()`
+    directly, and `grep -n "_apply_btn" tests/test_aio_mb_phase7.py` returned
+    nothing — so a broken, dropped or stale `clicked.connect` on `_apply_btn`
+    left all of them green while the Apply button in the running app silently
+    did nothing, i.e. pump nominations stopped being saved with no test failing.
+
+    `TestSelectAllRespectsExclusion` in this same file already knows better and
+    says why: "invoking the handler skips the `clicked.connect` wiring, which is
+    the thing most likely to be broken". The class guarding the ROLE WRITES did
+    not apply it.
+    """
+
+    def _page(self, qtbot, wizard_state, client):
+        client.headers_to_return = list(wizard_state.hwmon_headers)
+        wiz = FanConfigWizard(wizard_state, client=client)
+        qtbot.addWidget(wiz)
+        wiz.setStartId(PAGE_COOLING)
+        wiz.restart()
+        return wiz, wiz._cooling_page
+
+    def test_clicking_apply_writes_the_pump_role(self, qtbot, wizard_state):
+        client = _WizardClient()
+        _wiz, page = self._page(qtbot, wizard_state, client)
+        page._pump_combo.setCurrentIndex(page._pump_combo.findData(PUMP_ID))
+
+        assert page._apply_btn.isEnabled()
+        page._apply_btn.click()
+
+        assert (PUMP_ID, "pump") in client.role_calls, (
+            "the real button must reach the real role write"
+        )
+        assert page._status.text() == "Saved."
+
+    def test_clicking_apply_writes_the_topology(self, qtbot, wizard_state):
+        client = _WizardClient(devices=[_device(name="Mitch's Loop", radiators=[])])
+        _wiz, page = self._page(qtbot, wizard_state, client)
+        page._pump_combo.setCurrentIndex(page._pump_combo.findData(PUMP_ID))
+        page._apply_btn.click()
+        assert len(client.device_calls) == 1
+        assert client.device_calls[0]["pump_member"] == PUMP_ID
+
+    def test_clicking_apply_performs_the_confirmed_clear_after_the_assign(
+        self, qtbot, wizard_state, monkeypatch
+    ):
+        """The clear path is the one that can REMOVE pump protection (`AIO7-c`),
+        so it is the one that most needs driving through its real control."""
+        # A stale user-assigned pump role on another header is what makes a
+        # clear reachable at all.
+        wizard_state.hwmon_headers = [
+            _header(PUMP_ID),
+            _header(RAD_HWMON_ID, role="pump", role_source="user_assigned"),
+        ]
+        client = _WizardClient()
+        _wiz, page = self._page(qtbot, wizard_state, client)
+        page._pump_combo.setCurrentIndex(page._pump_combo.findData(PUMP_ID))
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+        page._apply_btn.click()
+        assert (PUMP_ID, "pump") in client.role_calls
+        assert (RAD_HWMON_ID, None) in client.role_calls
+        assert client.role_calls.index((PUMP_ID, "pump")) < client.role_calls.index(
+            (RAD_HWMON_ID, None)
+        ), "assign-before-clear is the safety property, and it must hold via the button too"
+
+    def test_clicking_apply_with_nothing_selected_writes_nothing(self, qtbot, wizard_state):
+        client = _WizardClient()
+        _wiz, page = self._page(qtbot, wizard_state, client)
+        page._pump_combo.setCurrentIndex(0)  # "— none —"
+        for i in range(page._radiator_list.count()):
+            page._radiator_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+        page._apply_btn.click()
+        assert client.role_calls == []
+        assert client.device_calls == []
+        assert "Nothing selected" in page._status.text()
+
+    def test_clicking_apply_without_a_daemon_changes_nothing_and_says_so(self, qtbot, wizard_state):
+        wiz = FanConfigWizard(wizard_state)  # no client
+        qtbot.addWidget(wiz)
+        wiz.setStartId(PAGE_COOLING)
+        wiz.restart()
+        page = wiz._cooling_page
+        page._apply_btn.click()
+        assert "nothing was changed" in page._status.text()
