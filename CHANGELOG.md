@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.57.4] — 2026-09-04
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). **No shipped GUI code
+changed.** This release is the contract document and a changelog entry, published as the GUI
+half of `control-ofc-daemon` v2.35.1 (DEC-323). The daemon change it records is one this GUI
+was already correct about — `characterization_view.py` already words a `cancelled` run as a
+cancellation rather than a hardware failure, which stays true now that the daemon is the one
+doing the cancelling.
+
+### Changed
+- **`docs/08_API_Integration_Contract.md`** records two client-visible consequences of daemon
+  v2.35.1, flagged here per the cross-repo contract rule:
+  - **Ending a validation session now ends the characterisation that session started.**
+    Previously the sweep ran on after stop/cancel — still driving the header and still holding
+    the profile engine's write-pause, for up to 20 × 15 s. The daemon now cancels it, **fenced
+    on the run the session itself started**, so a characterisation begun outside the session is
+    never touched. For a client this means `GET /diagnostics/characterization` reports such a
+    run as **`cancelled`** rather than `complete` — *not* a hardware failure, and it must not be
+    worded as one — and, because the cancel is cooperative, the run stays `running` for up to
+    one settle (≤ 15 s) after the session has already returned its summary. A progress view
+    should expect that gap. **There is no capability flag separating this from the older
+    behaviour**; a client that must distinguish them has to branch on the daemon version.
+  - **`POST /validation/session/stop` and `DELETE /validation/session` can now answer
+    `500 internal_error`**, meaning the finaliser broke and **the session is still installed and
+    still recording**. `404 not_found` on those two routes keeps its narrower meaning: no
+    session has ever been started. The distinction is load-bearing — a client that reads the 500
+    as "the session is gone" will stop offering to stop it, and will then be refused on its next
+    `POST /validation/session`, because the recorder never stopped sampling. Retry the stop.
+
+**No GUI code change was needed and none was made.** The `cancelled` wording was already
+correct, and the GUI does not yet drive the two finalise routes' 500 path. The daemon floor is
+unchanged at v2.11.0 — this release adds no new daemon requirement, and upgrading the GUI alone
+changes nothing you can observe. **Take daemon v2.35.1 for the fixes themselves.**
+
 ## [2.57.3] — 2026-09-04
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). **No shipped GUI code
