@@ -1210,6 +1210,20 @@ Over-long is `400 validation_error`, never silently truncated. A user-metadata *
 These arrays are capped by *count*, so unbounded text made the session document unbounded —
 and since a session too large to read back is now pruned (see the byte-cap note above),
 that would have been a way to destroy an operator's evidence rather than merely waste disk.
+
+**Ending a session ends the diagnostic it started (daemon ≥ 2.35.1).** A session that
+orchestrated a characterisation used to leave that sweep running after stop/cancel — still
+driving the header and still holding the engine's write-pause, for up to five minutes. The
+daemon now cancels it, fenced on the run the session itself started, so a run begun from
+`POST /hwmon/{id}/characterize` outside the session is never touched. Two consequences for a
+client: `GET /diagnostics/characterization` reports that run as **`cancelled`** rather than
+`complete`, which is not a hardware failure and must not be worded as one; and the cancel is
+cooperative, so the sweep's current point finishes its settle (≤ 15 s) before the header is
+restored — a progress view should expect the run to remain `running` briefly after the
+session has already returned its summary. There is no capability flag separating this from
+the older behaviour; branch on the daemon version if a client must distinguish them.
+
+**`POST /validation/session/stop` and `DELETE /validation/session` can also answer `500 internal_error` (daemon ≥ 2.35.1).** It means the finaliser itself broke and **the session is still installed and still recording** — not that it does not exist. `404 not_found` on these two routes keeps its original, narrower meaning: no session has ever been started. A client must not treat the 500 as "the session is gone": the recorder is still sampling, `GET /validation/session` still returns it, and a fresh `POST /validation/session` will be refused. Retry the stop.
 - `GET /validation/sessions` — the retained index, newest first: `session_id`, `kind`,
   `state`, timestamps, `cooling_device_id`, `device_name`, `sample_count`, `event_count`,
   `sample_limit_reached`, `interrupted_reason`.
