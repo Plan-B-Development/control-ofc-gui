@@ -492,3 +492,94 @@ def test_a_sparse_strip_is_meaningfully_filled(qtbot, default_theme):
         f"{painted}px painted for a {column_px:.0f}px column — one event is claiming more "
         "of the strip than its own slice"
     )
+
+
+# ── AUD2-d: the focus ring must survive the empty-feed path ──────────────────
+
+
+def _focused_histogram(qtbot, events=None, *, width=200):
+    widget = ActivityHistogram(object_name="Test_HistogramFocus")
+    qtbot.addWidget(widget)
+    widget.resize(width, 60)
+    if events:
+        rows = build_log_rows(events)
+        widget.set_buckets(make_buckets(rows, span=time_span(rows), bucket_count=4))
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget.activateWindow()
+    widget.setFocus()
+    # `hasFocus()` needs the window activated and the event queue drained; a bare
+    # `setFocus()` on a freshly shown widget is not enough under offscreen.
+    qtbot.waitUntil(widget.hasFocus, timeout=2000)
+    return widget
+
+
+def _ring_pixels(widget, default_theme, *, width=200):
+    """`text_primary` pixels along the top border — the ring's own row.
+
+    Sampled on the border rather than over the whole image so the count cannot
+    be confused with the centre text, which is painted in `text_muted`. The
+    stroke is not antialiased (this painter sets no render hint), so an exact
+    token match is safe here in a way it is not for glyphs.
+    """
+    image = QImage(width, 60, QImage.Format.Format_ARGB32)
+    image.fill(QColor(default_theme.app_bg))
+    widget.render(image)
+    token = QColor(default_theme.text_primary).name()
+    return [QColor(image.pixel(x, 0)).name() for x in range(width)].count(token)
+
+
+def test_an_empty_histogram_still_paints_its_focus_ring(qtbot, default_theme):
+    """DEC-251 / WCAG 2.4.7 (`AUD2-d`).
+
+    `paintEvent` returned on the empty-buckets path *before* reaching the focus
+    ring, so a keyboard user had a fully operable control — Left/Right/Space/Esc
+    are all live — with no visible focus. It fired on every fresh launch, because
+    the feed is empty until something is logged, and whenever a filter matched
+    nothing. Measured before the fix: **0** ring pixels; after: the full border.
+    """
+    widget = _focused_histogram(qtbot)
+    assert widget.buckets() == [], "precondition: this is the empty-feed path"
+    assert _ring_pixels(widget, default_theme) == 200, "the whole top border must be the focus ring"
+
+
+def test_an_unfocused_empty_histogram_paints_no_ring(qtbot, default_theme):
+    """The other branch, so the assertion above cannot pass by always being true."""
+    widget = ActivityHistogram(object_name="Test_HistogramNoFocus")
+    qtbot.addWidget(widget)
+    widget.resize(200, 60)
+    assert widget.hasFocus() is False
+    assert _ring_pixels(widget, default_theme) == 0
+
+
+def test_a_populated_histogram_still_paints_its_focus_ring(qtbot, default_theme):
+    """The rule now lives in one helper with two call sites, and this is the
+    second one — extracting it does not test the site that already worked."""
+    widget = _focused_histogram(qtbot, [_ev(i * 10) for i in range(4)])
+    assert widget.buckets(), "precondition: this is the populated path"
+    assert _ring_pixels(widget, default_theme) == 200
+
+
+def test_the_focus_ring_reports_whether_it_painted(qtbot, default_theme):
+    """`_paint_focus_ring` returns the predicate the caller used to re-test.
+
+    The cursor column is gated on that return value, so a helper that painted
+    but reported `False` would silently drop it.
+    """
+    focused = _focused_histogram(qtbot, [_ev(i * 10) for i in range(4)])
+    image = QImage(200, 60, QImage.Format.Format_ARGB32)
+    painter = QPainter(image)
+    try:
+        assert focused._paint_focus_ring(painter, default_theme) is True
+    finally:
+        painter.end()
+
+    unfocused = ActivityHistogram()
+    qtbot.addWidget(unfocused)
+    unfocused.resize(200, 60)
+    image2 = QImage(200, 60, QImage.Format.Format_ARGB32)
+    painter2 = QPainter(image2)
+    try:
+        assert unfocused._paint_focus_ring(painter2, default_theme) is False
+    finally:
+        painter2.end()

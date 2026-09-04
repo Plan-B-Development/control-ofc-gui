@@ -1011,3 +1011,152 @@ def test_user_assigned_pump_outranks_an_inferred_one_for_selection():
     assigned = _mb_header(5, role="pump", role_source="user_assigned")
     det = detect_aio_setup([inferred, assigned], [], {})
     assert det.pump_member.member_id.endswith(":pwm5:pwm5")
+
+
+# ---------------------------------------------------------------------------
+# AUD2-g: the seeded calibration must describe the sensor the USER chose
+# ---------------------------------------------------------------------------
+
+
+class TestSeedCalibrationFollowsTheChosenSensor:
+    """[SAFETY-adjacent] The call site `TestSeedCurveCalibration` never had.
+
+    That class proves `build_aio_controls` honours `sensor_is_coolant`, passing
+    it as a literal. It cannot see the one thing that decides it in production:
+    `_configure_aio` chose the calibration from hardware **detection**
+    (`det.has_coolant`) while the sensor it is applied to comes from the
+    **user** (`res["radiator_sensor_id"]`). The two disagree the moment a
+    machine has a coolant sensor and the user picks CPU package — which the
+    dialog actively invites, since `build_sensor_choices` offers every sensor
+    and the note reads "CPU temperature also works but is spikier".
+
+    The result was the coolant seed on a CPU-bound curve: **100% at 55 C**, an
+    ordinary package temperature under load, on a control whose members include
+    the pump. That is precisely the failure `TestSeedCurveCalibration` exists to
+    prevent, arriving through the one input it never checked.
+
+    The register recorded this as read-but-not-executed. These tests execute it.
+    """
+
+    COOLANT_ID = "z53:coolant"
+    CPU_ID = "cpu:pkg"
+
+    def _page(self, qtbot, app_state, profile_service, *, chosen_sensor, with_coolant=True):
+        from control_ofc.ui.pages.controls_page import ControlsPage
+        from control_ofc.ui.widgets import aio_config_dialog as dlg_mod
+
+        sensors = [_sensor(self.CPU_ID, "cpu_temp", "Package id 0")]
+        if with_coolant:
+            sensors.append(_sensor(self.COOLANT_ID, "coolant_temp", "Coolant", chip="z53"))
+        app_state.set_sensors(sensors)
+        app_state.set_hwmon_headers(
+            [
+                _mb_header(5, role="pump", role_source="user_assigned"),
+                _mb_header(1, role="radiator_fan"),
+            ]
+        )
+
+        page = ControlsPage(state=app_state, profile_service=profile_service)
+        qtbot.addWidget(page)
+
+        result = {
+            "pump_strategy": AIO_PUMP_STRATEGY_AUTOMATIC,
+            "pump_member_id": _mb_header(5, role="pump").id,
+            "pump_pct": 0,
+            "radiator_members": [
+                {
+                    "source": "hwmon",
+                    "id": _mb_header(1, role="radiator_fan").id,
+                    "label": "Radiator",
+                }
+            ],
+            "radiator_sensor_id": chosen_sensor,
+            "role_assignments": [],
+            "cooling_device": None,
+        }
+        # Stop `exec()` blocking and hand back the user's choices. The dialog's
+        # own behaviour is covered elsewhere; what is under test is what the page
+        # does with the answer.
+        dlg_mod.AioConfigDialog.exec = lambda self: 1
+        dlg_mod.AioConfigDialog.get_result = lambda self: result
+        return page
+
+    @pytest.fixture(autouse=True)
+    def _restore_dialog(self):
+        from control_ofc.ui.widgets import aio_config_dialog as dlg_mod
+
+        exec_, get = dlg_mod.AioConfigDialog.exec, dlg_mod.AioConfigDialog.get_result
+        yield
+        dlg_mod.AioConfigDialog.exec = exec_
+        dlg_mod.AioConfigDialog.get_result = get
+
+    def _radiator_curve(self, page):
+        profile = page._get_current_profile()
+        return next(c for c in profile.curves if c.name == "AIO Radiator")
+
+    def _output_at(self, curve, temp):
+        return curve.interpolate(temp)
+
+    def test_a_cpu_sensor_chosen_on_a_coolant_machine_gets_the_cpu_calibration(
+        self, qtbot, app_state, profile_service
+    ):
+        """The defect, executed. `det.has_coolant` is True here and the chosen
+        sensor is CPU package, so the two inputs genuinely disagree."""
+        page = self._page(qtbot, app_state, profile_service, chosen_sensor=self.CPU_ID)
+        det = detect_aio_setup(app_state.hwmon_headers, app_state.sensors, {})
+        assert det.has_coolant is True, "precondition: detection must see a coolant sensor"
+
+        page._on_configure_aio()
+
+        curve = self._radiator_curve(page)
+        assert curve.sensor_id == self.CPU_ID, "precondition: the curve is CPU-bound"
+        assert self._output_at(curve, 55.0) < 100.0, (
+            "55 C is an ordinary CPU package temperature — the coolant seed pins "
+            "the fans at 100% there, which is the exact failure the CPU "
+            "calibration exists to prevent"
+        )
+        assert self._output_at(curve, 55.0) == 35.0
+
+    def test_the_coolant_sensor_chosen_still_gets_the_coolant_calibration(
+        self, qtbot, app_state, profile_service
+    ):
+        """The other branch — the fix must not simply disable the coolant seed."""
+        page = self._page(qtbot, app_state, profile_service, chosen_sensor=self.COOLANT_ID)
+
+        page._on_configure_aio()
+
+        curve = self._radiator_curve(page)
+        assert curve.sensor_id == self.COOLANT_ID
+        assert self._output_at(curve, 55.0) == 100.0, (
+            "a genuine coolant binding must keep the coolant calibration"
+        )
+
+    def test_a_machine_with_no_coolant_sensor_is_unaffected(
+        self, qtbot, app_state, profile_service
+    ):
+        """The common motherboard-AIO case, which was already correct."""
+        page = self._page(
+            qtbot, app_state, profile_service, chosen_sensor=self.CPU_ID, with_coolant=False
+        )
+
+        page._on_configure_aio()
+
+        curve = self._radiator_curve(page)
+        assert self._output_at(curve, 55.0) == 35.0
+
+    def test_the_pump_curve_follows_the_same_choice(self, qtbot, app_state, profile_service):
+        """`sensor_is_coolant` seeds BOTH curves, so the pump is affected too —
+        and it is the member carrying the 30% floor."""
+        page = self._page(qtbot, app_state, profile_service, chosen_sensor=self.CPU_ID)
+
+        page._on_configure_aio()
+
+        profile = page._get_current_profile()
+        pump = next(c for c in profile.curves if c.name == "AIO Pump")
+        assert pump.sensor_id == self.CPU_ID
+        # The coolant pump seed is already at 55% by 45 C; the CPU seed is not,
+        # because 45 C is unremarkable for a package temperature.
+        assert self._output_at(pump, 45.0) < 50.0
+        assert min(p.output_pct for p in pump.points) >= 30.0, (
+            "every seeded pump point stays at or above the DEC-095 floor"
+        )

@@ -743,8 +743,25 @@ class LogsPage(QWidget):
         self._copy_event_btn.clicked.connect(self._copy_event_with_context)
         self._copy_raw_btn.clicked.connect(self._copy_raw)
         self._filter_related_btn.clicked.connect(self._filter_to_related)
+        # `itemActivated` ONLY (`AUD2-e`). Both used to be connected, and the
+        # slot navigates the table, whose selection handler rebuilds this very
+        # list from `_render_related` — destroying the `QListWidgetItem` the
+        # first delivery was handed. On any style setting
+        # `SH_ItemView_ActivateItemOnSingleClick` (KDE Breeze's default)
+        # `QAbstractItemView::mouseReleaseEvent` emits `clicked` and then
+        # `activated` for a single click, so the second landed on a list the
+        # first had already cleared: at best it navigated to an unrelated event,
+        # because Qt re-resolves the same row index against the rebuilt list, and
+        # at worst `item` arrived as `None` and the slot raised inside a Qt
+        # callback.
+        #
+        # `itemActivated` is the one kept because it is the signal that means
+        # "the user chose this item", and it is the only one of the two that
+        # fires for Return/Enter — dropping it would make the related list
+        # mouse-only (DEC-251, WCAG 2.1.1). The cost is that styles which do not
+        # activate on single click need a double-click, which is their own normal
+        # list behaviour.
         self._related_list.itemActivated.connect(self._on_related_activated)
-        self._related_list.itemClicked.connect(self._on_related_activated)
         self._action_btn.clicked.connect(self._run_context_action)
         self._tabs.currentChanged.connect(self._on_tab_changed)
         self._journal_btn.clicked.connect(self._fetch_journal)
@@ -1145,8 +1162,14 @@ class LogsPage(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, r.event_id)
             self._related_list.addItem(item)
 
-    def _on_related_activated(self, item: QListWidgetItem) -> None:
+    def _on_related_activated(self, item: QListWidgetItem | None) -> None:
         """Jump the list to a related event, if it is currently visible."""
+        # Kept even though only one signal is connected now: Qt hands `None`
+        # whenever the emitting row no longer resolves to an item, and this slot
+        # rebuilds the list it was called from. An unguarded `None` here is an
+        # unhandled exception inside a Qt callback, not a caught error.
+        if item is None:
+            return
         event_id = item.data(Qt.ItemDataRole.UserRole)
         pos = self._model.index_of_event(event_id)
         if pos >= 0:

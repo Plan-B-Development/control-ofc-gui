@@ -203,6 +203,14 @@ class ActivityHistogram(QWidget):
             painter.drawText(
                 self.rect(), Qt.AlignmentFlag.AlignCenter, "No activity in the retained feed"
             )
+            # The ring belongs on BOTH paths. It used to be painted only after
+            # the bars, so a keyboard user with an empty feed had a fully
+            # operable control (Left/Right/Space/Esc are all live) and no visible
+            # focus at all — on every fresh launch, and whenever a filter matches
+            # nothing. No stylesheet covers it either: `theme.py` declares no
+            # generic `QWidget:focus`, and this widget fills its whole rect with
+            # `chart_bg` regardless, which would overpaint one.
+            self._paint_focus_ring(painter, theme)
             painter.end()
             return
 
@@ -236,14 +244,27 @@ class ActivityHistogram(QWidget):
                 )
                 y -= h
 
-        if self.hasFocus():
-            # DEC-251: the strip is keyboard-operable, so it needs a visible focus
-            # indicator, and the cursor column needs to be distinguishable from the
-            # selected one.
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QColor(theme.text_primary))
-            painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+        if self._paint_focus_ring(painter, theme):
+            # The cursor column is drawn only here: it needs a bucket pitch, and
+            # the empty path has no buckets to derive one from. It must stay
+            # distinguishable from the *selected* column.
             cur_left = int(self._cursor * pitch)
             cur_w = max(1, int((self._cursor + 1) * pitch) - cur_left - _BUCKET_GAP)
             painter.drawRect(QRect(cur_left, 0, cur_w, self.height() - 1))
         painter.end()
+
+    def _paint_focus_ring(self, painter: QPainter, theme) -> bool:
+        """Paint the DEC-251 keyboard-focus ring; return whether it was painted.
+
+        One definition, called from both branches of :meth:`paintEvent`. It lived
+        inside the populated branch only, which is exactly the shape `AUD2-d`
+        recorded: the rule was written once and one of its two call sites never
+        reached it. Returning the predicate rather than re-testing `hasFocus()`
+        at the caller keeps that from happening again.
+        """
+        if not self.hasFocus():
+            return False
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QColor(theme.text_primary))
+        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+        return True

@@ -514,14 +514,81 @@ def test_filter_to_these_narrows_the_list(qtbot):
 
 
 def test_activating_a_related_event_selects_it(qtbot):
+    # `itemActivated`, not `itemClicked` (`AUD2-e`): both were connected to this
+    # slot, and only `itemActivated` is now. Emitted through the signal rather
+    # than by calling the slot, so the `connect` itself is what is under test.
     page, diag = _page(qtbot)
     diag.log_event("info", "polling", "connected")
     diag.log_event("info", "polling", "disconnected")
     page._table.selectRow(0)
 
-    page._related_list.itemClicked.emit(page._related_list.item(0))
+    page._related_list.itemActivated.emit(page._related_list.item(0))
 
     assert page._selected_row.message == "connected"
+
+
+# ── AUD2-e: one connection, and a guarded slot ──────────────────────────────
+
+
+def _page_with_related(qtbot):
+    """A page whose related list holds exactly one correlated event."""
+    page, diag = _page(qtbot)
+    diag.log_event("info", "polling", "connected")
+    diag.log_event("info", "polling", "disconnected")
+    page._table.selectRow(0)
+    assert page._related_list.count() == 1, "precondition: something to activate"
+    assert page._selected_row.message == "disconnected"
+    return page
+
+
+def test_item_clicked_is_no_longer_wired_to_the_related_slot(qtbot):
+    """The defect was the *second* connection, so its absence is the fix.
+
+    `_on_related_activated` navigates the table, whose selection handler rebuilds
+    this very list — destroying the item the first delivery was handed. On any
+    style with `SH_ItemView_ActivateItemOnSingleClick` (KDE Breeze's default) one
+    click emits `clicked` and then `activated`, so the second landed on a list
+    the first had already cleared.
+    """
+    page = _page_with_related(qtbot)
+
+    page._related_list.itemClicked.emit(page._related_list.item(0))
+
+    assert page._selected_row.message == "disconnected", (
+        "itemClicked must no longer reach the slot, or the double-delivery returns"
+    )
+
+
+def test_a_none_delivery_is_survived_rather_than_raised(qtbot):
+    """Qt hands `None` when the emitting row no longer resolves to an item.
+
+    Unguarded this was an unhandled exception inside a Qt callback, which is not
+    a caught error — it prints a traceback and leaves the click half-applied.
+    """
+    page = _page_with_related(qtbot)
+
+    page._related_list.itemActivated.emit(None)  # must not raise
+
+    assert page._selected_row.message == "disconnected", "a None delivery must do nothing"
+
+
+def test_activating_twice_is_stable_now_the_list_rebuilds_underneath(qtbot):
+    """The realistic sequence, driven end to end.
+
+    The first activation navigates and rebuilds the related list; the second is
+    delivered against that rebuilt list. It must resolve against what is actually
+    there now rather than raising or jumping somewhere unrelated.
+    """
+    page = _page_with_related(qtbot)
+
+    page._related_list.itemActivated.emit(page._related_list.item(0))
+    assert page._selected_row.message == "connected"
+
+    assert page._related_list.count() == 1, "the list was rebuilt for the new selection"
+    page._related_list.itemActivated.emit(page._related_list.item(0))
+    assert page._selected_row.message == "disconnected", (
+        "the second activation must follow the rebuilt list, not a stale row"
+    )
 
 
 def test_the_contextual_action_appears_only_for_known_sources(qtbot):

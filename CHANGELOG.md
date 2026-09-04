@@ -2,11 +2,47 @@
 
 ## [Unreleased]
 
-**Tests only — no shipped GUI code changed.** Batch D of the `/ofc:audit` register triage
-closes six P2 rows (`AUD2-f`, `AUD2-i`, `AUD3-a`, `AUD3-o`, `AUD3-p`, `TT-a`; DEC-324), all
+Two batches of the `/ofc:audit` register triage. **Batch E** (DEC-325) fixes three GUI
+correctness defects and is the only part with a user-visible behaviour change; **Batch D**
+(DEC-324) below it is tests only. Neither changes a floor, a threshold, the thermal ladder,
+the single-writer loop, a route or a capability flag.
+
+### Fixed
+- **The AIO setup seeded the wrong curve calibration whenever you picked a sensor the
+  detector did not expect** (`AUD2-g`, DEC-325). Configure AIO chose between its two
+  calibrations from *hardware detection* — does this machine have a coolant sensor — while
+  the sensor those curves are bound to comes from *you*. On a machine with a coolant sensor,
+  picking CPU package instead (which the dialog explicitly invites: "CPU temperature also
+  works but is spikier") applied the coolant calibration to a CPU-bound curve. Measured
+  through the real dialog path: the radiator curve reached **100% at 55 °C** and the pump
+  curve **55% at 45 °C** — both ordinary package temperatures under load, so the fans sat
+  at or near maximum during normal desktop use. Both seeded curves now follow the sensor
+  actually chosen. Machines with no coolant sensor, and users who keep the coolant default,
+  are unaffected.
+- **The activity strip showed no keyboard focus while the feed was empty** (`AUD2-d`,
+  DEC-325). `paintEvent` returned on the empty-buckets path before it reached the focus
+  ring, so the strip was fully operable from the keyboard — Left/Right/Space/Esc all live —
+  with nothing on screen to say it had focus. It happened on **every fresh launch**, since
+  the feed is empty until something is logged, and whenever a filter matched nothing.
+  Measured: 0 ring pixels before, the full border after. (DEC-251, WCAG 2.4.7.)
+- **Activating a related event could jump somewhere unrelated, or raise** (`AUD2-e`,
+  DEC-325). The related-events list had both `itemActivated` and `itemClicked` wired to a
+  slot that navigates the table — which rebuilds that very list, destroying the item the
+  first delivery was handed. On desktops that activate on a single click (KDE Plasma's
+  default) one click emitted both, so the second landed on a list the first had already
+  cleared: at best it jumped to an unrelated event, at worst it raised inside a Qt callback.
+
+### Changed
+- **Related events are activated with Enter or a double-click** (single click still works on
+  KDE Plasma and any desktop that opens items that way). Previously a single click worked
+  everywhere — that was the second connection above, and it is what caused the defect. Enter
+  was kept over single-click so the panel stays keyboard-operable (DEC-251, WCAG 2.1.1).
+
+#### Batch D — test coverage only, no shipped GUI code changed
+
+Closes six P2 rows (`AUD2-f`, `AUD2-i`, `AUD3-a`, `AUD3-o`, `AUD3-p`, `TT-a`; DEC-324), all
 one story: a rule extracted, unit-tested exhaustively, and its only production caller never
-executed. Nothing here changes a floor, a threshold, the thermal ladder, the single-writer
-loop, a route or a capability flag.
+executed.
 
 ### Added
 - **The Hardware page's interaction layer is now executed by tests** (`AUD3-a`). Both

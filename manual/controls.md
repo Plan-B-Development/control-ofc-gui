@@ -71,6 +71,8 @@ Each fan role appears as a card:
   Which is right depends on your cooler, and there is no universal answer — check its documentation. Many pumps are happiest at a steady speed; some vendors recommend the opposite for their own hardware, and at least one ignores PWM below 20% and boosts itself when the coolant gets hot regardless of what you ask for.
 - A **radiator-fan** control bound to a temperature sensor — the **coolant** sensor by default (recommended, since the radiator's job is to cool the loop), though any sensor is selectable and coolant/CPU are highlighted as preferred. If your machine has no coolant sensor, CPU package temperature is used instead; that is normal, not a problem to fix.
 
+  The seeded curve is calibrated for **the sensor you actually pick**, not for what your machine happens to have. That matters because the two scales are not interchangeable: CPU package runs 20-30 °C hotter than coolant for the same thermal state, so a coolant curve applied to a CPU sensor would sit the fans at full speed during ordinary use. Pick CPU temperature on a machine that also has a coolant sensor and you get the CPU calibration, as you should.
+
 ### If your AIO is plugged into the motherboard
 
 A USB cooler (NZXT Kraken, Aquacomputer) identifies itself, so its pump is found automatically. A pump plugged into an **AIO_PUMP** or **CPU_OPT** header on the motherboard cannot be: it looks exactly like any other fan to the system, and on many boards the chip publishes no channel names at all, so every header reads as "unknown".

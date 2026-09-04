@@ -1310,11 +1310,17 @@ def build_aio_controls(
     fact about pumps — see ``AIO_PUMP_STRATEGY_*``. This function asserts nothing
     either way; it builds what it is asked for.
 
-    The radiator fans get a graph curve bound to ``radiator_sensor_id``, which is
-    the coolant sensor where the loop has one and CPU package temperature where it
-    does not (a motherboard-connected AIO). ``sensor_is_coolant`` selects which
-    calibration the seeded curves use — the two ranges are not interchangeable,
-    since CPU package sits 20-30 C above coolant for the same thermal state.
+    The radiator fans get a graph curve bound to ``radiator_sensor_id``, which
+    *defaults* to the coolant sensor where the loop has one and CPU package
+    temperature where it does not (a motherboard-connected AIO) — but the user
+    may pick any sensor, so it is the caller's choice and not a property of the
+    hardware. ``sensor_is_coolant`` selects which calibration the seeded curves
+    use, and **must describe the sensor actually passed in
+    ``radiator_sensor_id``, not whether the machine has a coolant sensor at
+    all** (`AUD2-g`: the caller derived it from detection and the two could
+    disagree). The two ranges are not interchangeable: CPU package sits 20-30 C
+    above coolant for the same thermal state, so the coolant curve reaches 100%
+    at 55 C — a normal CPU package temperature under load.
     """
     created: list[LogicalControl] = []
     pump_points = _AIO_PUMP_CURVE_POINTS if sensor_is_coolant else _AIO_PUMP_CURVE_POINTS_CPU

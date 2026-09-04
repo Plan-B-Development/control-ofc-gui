@@ -261,6 +261,11 @@ same source, and the panel says so — because "same source tag" is a weaker cla
 "related", and it should not pretend otherwise. **Filter to these** narrows the list to
 that group.
 
+To jump to one, **activate** it: press **Enter** on the highlighted entry, or double-click
+it. On desktops that open items with a single click — KDE Plasma's default — a single
+click does it too. (One gesture, not two: the panel rebuilds itself the moment you jump,
+so a second activation of the same click would land on a list that no longer exists.)
+
 #### Actions
 
 | Button | Action |

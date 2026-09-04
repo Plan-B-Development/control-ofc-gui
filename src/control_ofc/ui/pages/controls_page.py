@@ -1237,7 +1237,20 @@ class ControlsPage(QWidget):
             radiator_members=radiator_members,
             radiator_sensor_id=res["radiator_sensor_id"],
             pump_strategy=strategy or AIO_PUMP_STRATEGY_FIXED,
-            sensor_is_coolant=det.has_coolant,
+            # `AUD2-g`: derived from the sensor the user actually CHOSE, not from
+            # whether the machine merely HAS a coolant sensor. The dialog offers
+            # every sensor — `build_sensor_choices` only *flags* coolant and CPU
+            # as preferred — and its own note invites the swap ("CPU temperature
+            # also works but is spikier"). So `det.has_coolant` said True while
+            # `radiator_sensor_id` pointed at CPU package, and both seeded curves
+            # got the coolant calibration: 100% at 55 C on the radiator, which is
+            # an ordinary CPU package temperature under load. That is exactly the
+            # failure `TestSeedCurveCalibration` exists to prevent, arriving
+            # through the one input it never checked.
+            sensor_is_coolant=(
+                det.coolant_sensor_id is not None
+                and res["radiator_sensor_id"] == det.coolant_sensor_id
+            ),
         )
         if not created:
             return
