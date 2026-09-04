@@ -2,7 +2,10 @@
 
 ## [Unreleased]
 
-Two batches of the `/ofc:audit` register triage. **Batch E** (DEC-325) fixes three GUI
+## [2.57.5] — 2026-09-04
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). Two batches of the
+`/ofc:audit` register triage. **Batch E** (DEC-325) fixes three GUI
 correctness defects and is the only part with a user-visible behaviour change; **Batch D**
 (DEC-324) below it is tests only. Neither changes a floor, a threshold, the thermal ladder,
 the single-writer loop, a route or a capability flag.
