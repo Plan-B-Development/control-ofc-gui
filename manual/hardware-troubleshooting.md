@@ -242,20 +242,66 @@ Open the **System State** page, look at the **Hardware Readiness** report:
 
 Open the **System State** page. If the **dual-chip warning banner** at the top of the Hardware Readiness report is visible, your motherboard is one of the dual-IO Gigabyte boards (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) where the secondary ITE chip silently failed to enumerate.
 
-This usually means one of:
+There are **three** causes, and they are not interchangeable — the first two are
+fixable and the third is not. Find out which one you have **before** trying
+anything, because the remedy for the fixable cases does nothing for the third.
 
-- The installed `it87` driver build is too old. Current (2026-03+) `it87-dkms-git` builds reach the secondary chip through an MMIO path that is on by default, and both enumerate **and** control it; older builds need the `mmio=on` module parameter set manually.
-- The SuperIO bridge was left in configuration mode by an earlier process (most commonly a previous run of `sensors-detect`), so the secondary chip's DEVID read returned `0xFFFF`.
+**Find out which:** run `sudo dmesg | grep it87` (or `journalctl -k -b | grep it87`).
 
-The fix, in order:
+| What the kernel says | Which case | Fixable? |
+| --- | --- | --- |
+| Nothing, or "module not found" | Driver not installed | Yes — case A |
+| `Unsupported chip (DEVID=0xFFFF)` | Super-I/O stuck in config mode | Yes — case B |
+| `Unsupported chip (DEVID=0x8883)` | Secondary behind a bridge | **No — case C** |
 
-1. Update the driver: reinstall `it87-dkms-git` (a `-git` package reinstall builds the current upstream snapshot — see [Driver Setup](driver-setup.md)).
-2. Only on older (pre-2026-03) builds: create `/etc/modprobe.d/it87.conf` containing `options it87 mmio=on`.
-3. Avoid running `sensors-detect` after boot.
-4. Reboot.
-5. Click **Rescan Hardware** — the chips table should now list both ITE chips and `total_headers` should match what the board physically exposes.
+**Case A — the driver build is too old or missing.** Current (2026-03+)
+`it87-dkms-git` builds reach the secondary chip through an MMIO path that is on
+by default; older builds needed `mmio=on` set manually.
 
-If the warning persists after these steps, see the upstream tracker thread at [frankcrawford/it87 issue #70](https://github.com/frankcrawford/it87/issues/70) for board-specific notes.
+1. Reinstall `it87-dkms-git` (a `-git` package reinstall builds the current
+   upstream snapshot — see [Driver Setup](driver-setup.md)).
+2. Only on older (pre-2026-03) builds: create `/etc/modprobe.d/it87.conf`
+   containing `options it87 mmio=on`.
+3. Reboot, then click **Rescan Hardware**.
+
+**Case B — the bridge was left in configuration mode**, most commonly by a
+previous run of `sensors-detect`. The secondary chip's DEVID then reads
+`0xFFFF`.
+
+1. Avoid running `sensors-detect` after boot.
+2. Reboot — this clears it.
+3. Click **Rescan Hardware**.
+
+**Case C — the secondary answers `0x8883`. There is no local fix.**
+Measured on an **X870E AORUS MASTER** on 2026-09-04, against `it87` at upstream
+HEAD: the driver finds the primary IT8696E over MMIO and then reports
+`Unsupported chip (DEVID=0x8883)` for the secondary. One `it87` hwmon device
+appears instead of two, and roughly three headers stay unreachable.
+
+`0x8883` is almost certainly an ITE eSPI-to-LPC **bridge** answering in place of
+the IT87952E behind it ([issue #64](https://github.com/frankcrawford/it87/issues/64)).
+The driver has no entry for `0x8883` at all, while it *does* support the
+IT87952E — so the chip is **unreachable, not unsupported**.
+
+**Do not spend time on the following — all three are already known not to work:**
+
+- **`mmio=on`** — the MMIO path is already the driver default, so setting it
+  changes nothing.
+- **Reinstalling `it87-dkms-git`** — the failure reproduces at upstream HEAD.
+- **`force_id`** — the reporter on
+  [issue #81](https://github.com/frankcrawford/it87/issues/81) forced the ID and
+  still lost three fans and a water pump. That issue is **open, not resolved**;
+  earlier revisions of this page cited it as a fix, which was wrong.
+
+Your remaining headers work normally. The unreachable ones need driver work
+upstream; [issue #64](https://github.com/frankcrawford/it87/issues/64) is the
+thread to watch.
+
+**This is per-board, not per-family.** Other boards in the same generation with
+the same IT8696E + IT87952E pairing do work — the X870E AORUS ELITE is
+owner-confirmed with both chips controllable
+([issue #89](https://github.com/frankcrawford/it87/issues/89)). Do not read case
+C as "X870E boards are unsupported".
 
 > One exception to "MMIO is good": on **IT8665E** boards (X399 era, e.g. ASUS ROG Zenith Extreme) the new MMIO default *breaks* PWM writes — set `options it87 mmio=off` there instead ([issue #106](https://github.com/frankcrawford/it87/issues/106)).
 

@@ -515,34 +515,57 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_url="https://www.kernel.org/doc/html/latest/hwmon/it87.html",
         notes="ITE IT8622E — supported in the mainline kernel it87 driver.",
     ),
-    # DEC-106 (D4.A), corrected 2026-07 (verified against frankcrawford/it87
-    # issues #81 + #70): there is NO "IT8883" chip. Device-ID 0x8883 is what a
-    # secondary Super-I/O reports when it is left stuck in configuration mode
-    # (commonly by sensors-detect); a clean read is 0x8695 (IT87952E early ID).
-    # On the X870 AORUS STEALTH ICE the real pair is IT8696E + IT87952E, both
-    # controllable once the driver is loaded with mmio=on. This entry survives
-    # so a lookup on a bogus "it8883" chip name explains the situation.
+    # DEC-106 (D4.A) → corrected 2026-07 → **corrected again 2026-09-04 by
+    # DEC-326**, this time from a measurement rather than from a reading of
+    # upstream issues. The 2026-07 text said 0x8883 was merely a secondary
+    # Super-I/O stuck in config mode, "recovered with mmio=on". Both halves are
+    # false, measured on an X870E AORUS MASTER at it87 upstream HEAD:
+    #
+    #   * `mmio` already defaults to true (it87.c:314), and this host passes the
+    #     module no parameters at all — so "load with mmio=on" named a state
+    #     that was already in effect and could never have been a remedy.
+    #   * frankcrawford/it87 #81 is NOT resolved. Its owner applied exactly this
+    #     advice (force_id + ignore_resource_conflict + mmio=on) and still has
+    #     three fans and a water pump non-functional.
+    #   * `0x8883` appears NOWHERE in the driver (0 hits over the whole file),
+    #     while IT87952E_DEVID 0x8695 IS defined and IS handled — so the
+    #     secondary is UNREACHABLE, not unsupported. The old text inverted that.
+    #
+    # Best current reading, labelled as inference: 0x8883 is an IT8883 eSPI→LPC
+    # bridge answering in the chip's place (#64). There is no local fix today.
+    # This entry survives so a lookup on the bogus "it8883" chip name says so.
     ChipGuidance(
         chip_prefix="it8883",
         driver_name="it87",
         in_mainline=False,
-        driver_package="it87-dkms-git (AUR) — load with mmio=on",
-        driver_url="https://github.com/frankcrawford/it87/issues/81",
+        driver_package="it87-dkms-git (AUR) — installed, but see below",
+        driver_url="https://github.com/frankcrawford/it87/issues/64",
         known_issues=[
-            "There is no 'IT8883' chip: device-ID 0x8883 is what a secondary "
-            "Super-I/O reports when left in configuration mode (commonly after "
-            "running sensors-detect). A clean read is 0x8695 (IT87952E).",
-            "Seen on Gigabyte X870 AORUS STEALTH ICE, whose real chips are "
-            "IT8696E + IT87952E — both controllable once the driver is loaded "
-            "with mmio=on (the merged H2RAM/MMIO path).",
-            "Fix: install a current it87-dkms-git build, load it with mmio=on, "
-            "and avoid running sensors-detect mid-session (frankcrawford/it87 "
-            "issue #81).",
+            "There is no 'IT8883' sensor chip. Device-ID 0x8883 at the "
+            "secondary Super-I/O address is most likely an ITE eSPI-to-LPC "
+            "bridge answering in place of the chip behind it "
+            "(frankcrawford/it87 issue #64).",
+            "Measured on Gigabyte X870E AORUS MASTER (2026-09-04): the it87 "
+            "driver finds the primary IT8696E over MMIO and then reports "
+            "'Unsupported chip (DEVID=0x8883)' for the secondary. One hwmon "
+            "device appears instead of two, so roughly three fan headers are "
+            "unreachable.",
+            "There is NO local fix as at 2026-09-04. The MMIO path is already "
+            "the driver default, so enabling it changes nothing; forcing the "
+            "device ID does not help either (issue #81's reporter tried that "
+            "and still lost three fans and a water pump). This needs driver "
+            "work upstream — it is not a misconfiguration you can correct.",
+            "Distinct from the separate 0xFFFF failure: a secondary genuinely "
+            "left in config mode (commonly by sensors-detect) reads 0xFFFF, "
+            "not 0x8883, and that one IS recovered by rebooting without "
+            "running sensors-detect.",
         ],
         notes=(
-            "ITE 0x8883 — not a real chip; the stuck-in-config-mode symptom of "
-            "a secondary Super-I/O (DEC-106, corrected 2026-07 per issues "
-            "#81/#70). Recover with mmio=on."
+            "ITE 0x8883 — not a real sensor chip; most likely an eSPI→LPC "
+            "bridge masking the secondary Super-I/O. The chip is unreachable "
+            "rather than unsupported, and there is no local fix "
+            "(DEC-326, measured 2026-09-04; supersedes this entry's earlier "
+            "2026-07 reading, which was wrong)."
         ),
     ),
     # ── Out-of-tree-only ITE parts (verified 2026-08-26) ────────────────
@@ -1277,21 +1300,34 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "docs.kernel.org/hwmon/asus_ec_sensors.html.",
         ],
     ),
+    # DEC-326 (2026-09-04): this quirk fires for ANY Gigabyte + IT8696E board,
+    # and those boards do not all behave the same way — so it must not promise
+    # one outcome. #89's X870E AORUS ELITE genuinely works; the X870E AORUS
+    # MASTER measured here does not, and no local setting changes that. The
+    # previous text promised the working outcome to everyone and named
+    # `mmio=on` as the remedy, which is already the driver default.
     VendorQuirk(
         vendor_pattern="gigabyte",
         chip_prefix="it8696",
         severity="low",
-        summary="Gigabyte X870 AORUS STEALTH ICE — secondary Super-I/O, load with mmio=on",
+        summary="Gigabyte dual Super-I/O (IT8696E + IT87952E) — outcome varies by board",
         details=[
-            "X870 AORUS STEALTH ICE pairs the primary IT8696E with a secondary "
-            "IT87952E — both controllable via it87-dkms-git. There is no "
-            "'IT8883' chip.",
-            "If a utility (commonly sensors-detect) leaves the secondary "
-            "Super-I/O in config mode, its DEVID misreads as 0x8883; a clean "
-            "read is 0x8695 (IT87952E early ID).",
-            "Fix (frankcrawford/it87 issue #81): load a current build with "
-            "mmio=on (the merged H2RAM/MMIO path) and avoid running "
-            "sensors-detect mid-session — both chips are then fully controllable.",
+            "These boards pair a primary IT8696E with a secondary IT87952E. "
+            "Only the primary is needed for basic fan control; the secondary "
+            "carries the remaining headers.",
+            "Confirmed working: X870E AORUS ELITE (incl. X3D) reports both "
+            "chips with control working on it87-dkms-git "
+            "(frankcrawford/it87 issue #89).",
+            "Confirmed NOT working: X870E AORUS MASTER, measured 2026-09-04. "
+            "The secondary answers device-ID 0x8883 — a bridge, not the chip — "
+            "and the driver reports 'Unsupported chip'. One hwmon device "
+            "appears instead of two and roughly three headers are unreachable.",
+            "If you see only some of your headers: there is no local fix for "
+            "the 0x8883 case. mmio is already the driver default, so setting "
+            "it changes nothing, and forcing the device ID does not help "
+            "either. A secondary genuinely stuck in config mode is a different "
+            "fault — it reads 0xFFFF, and rebooting without running "
+            "sensors-detect clears that one.",
         ],
     ),
     # ── DEC-144: B650 GAMING X AX V2 ACPI bind failure ──────────────

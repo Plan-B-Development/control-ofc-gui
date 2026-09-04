@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+Batches G and H of the `/ofc:audit` register triage (DEC-326). The GUI's share is
+**one corrected in-app chip-guidance entry** and the user-facing documentation
+that described the same hardware wrongly. No floor, threshold, route, capability
+flag or control behaviour changes.
+
+### Fixed
+- **The Hardware page no longer tells X870E owners their missing fan headers are
+  a fixable misconfiguration** (`HOST-b`/`HOST-c`). The in-app guidance for
+  device-ID `0x8883` said the secondary Super-I/O was "stuck in config mode",
+  recoverable by loading the driver with `mmio=on`. Measured on the affected
+  hardware, both halves are false: `mmio` is already the driver default, and the
+  upstream issue cited as the resolution is still open — its reporter applied
+  exactly that advice and still has three fans and a water pump non-functional.
+  The entry now says there is **no local fix**, which is the honest answer, and
+  keeps the genuinely recoverable `0xFFFF` case as the separate fault it is.
+- **The dual-Super-I/O quirk reports both outcomes instead of promising the good
+  one.** It fires for every Gigabyte board with an IT8696E, and those boards do
+  not behave alike: X870E AORUS ELITE works with both chips controllable, while
+  X870E AORUS MASTER cannot reach its secondary at all. It now names both.
+- **`manual/hardware-troubleshooting.md`'s "only 5 of 8 headers show up" section
+  gave a five-step remedy that could not work** on the board it named. It now
+  splits three distinct causes, gives a one-line `dmesg` check to tell them
+  apart, and states plainly which one has no fix — instead of looping the reader
+  through a driver reinstall and a module parameter that were already in effect.
+
+### Changed
+- **`docs/19`, `docs/21` and `docs/22` no longer cite upstream it87 issue #81 as
+  a resolution.** It records the failure. Corrections are bounded **by board
+  pairing, not by family** — the "2026-03+ builds work by default" claim is
+  evidenced for several pairings and was deliberately left standing for those.
+
+
 ## [2.57.5] — 2026-09-04
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). Two batches of the

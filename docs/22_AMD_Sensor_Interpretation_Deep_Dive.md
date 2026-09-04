@@ -303,9 +303,13 @@ Some recent boards pair two ITE Super-I/O chips (e.g. IT8689E + IT87952E on
 Gigabyte AORUS boards). Mainline `it87` gained IT8689E fan *control* in kernel
 7.1 (commit `66b8eaf`; six PWM channels, `FEAT_FANCTL_ONOFF`), and the
 out-of-tree `frankcrawford/it87` DKMS driver has driven the secondary chip on
-dual-IO Gigabyte boards since its 2026-03 MMIO merge (PR #95 / #102). lm-sensors
-issue #454 tracked the earlier, incomplete state; docs 19 and 23 carry the
-current per-chip support matrix.
+**many** dual-IO Gigabyte boards since its 2026-03 MMIO merge (PR #95 / #102) —
+but not all of them, and the difference is per board rather than per family. On
+the X870E AORUS MASTER the secondary answers device-ID `0x8883` and stays
+unreachable at upstream HEAD, with no local fix (measured 2026-09-04, DEC-326);
+on the X870E AORUS ELITE the same IT8696E + IT87952E pairing is owner-confirmed
+working (it87 #89). lm-sensors issue #454 tracked the earlier, incomplete state;
+docs 19 and 23 carry the current per-chip support matrix.
 
 Reference: https://github.com/lm-sensors/lm-sensors/issues/454
 

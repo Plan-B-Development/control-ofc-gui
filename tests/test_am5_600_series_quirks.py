@@ -79,17 +79,42 @@ class TestNarrowerChipGuidance:
         # to the generic `nct679` entry.
         assert g.chip_prefix == "nct679"
 
-    def test_it8883_entry_explains_config_mode_symptom(self):
-        # Corrected 2026-07 (frankcrawford/it87 issues #81/#70): there is no
-        # "IT8883" chip — 0x8883 is a secondary Super-I/O stuck in config
-        # mode. The entry must explain that and point to the mmio=on recovery.
+    def test_it8883_entry_states_there_is_no_local_fix(self):
+        # DEC-326 (2026-09-04) replaced the 2026-07 reading. 0x8883 is not a
+        # config-mode symptom recovered with mmio=on: mmio is already the
+        # driver default, #81's reporter applied that advice and still lost
+        # three fans and a pump, and 0x8883 appears nowhere in the driver.
+        #
+        # This test deliberately does NOT assert on the substring "mmio=on".
+        # The corrected text still contains it — inside a sentence saying it
+        # does not work — so a substring check passes identically against the
+        # advice and against its negation, which is how the previous version
+        # of this test stayed green through the correction.
         g = lookup_chip_guidance("it8883")
         assert g is not None
         assert g.chip_prefix == "it8883"
         flat = " ".join([g.notes or "", *g.known_issues]).lower()
-        assert "config" in flat and "mmio=on" in flat, (
-            "IT8883 entry must explain 0x8883 is a config-mode symptom "
-            "recovered with mmio=on, not a driverless chip"
+
+        # The honest branch must be present.
+        assert "no local fix" in flat, (
+            f"the IT8883 entry must tell the user there is no local fix, got: {flat!r}"
+        )
+        # ...and the withdrawn promise must NOT be made. Match the promise,
+        # not the token: the token survives in the sentence that retracts it.
+        for promise in (
+            "recovered with mmio=on",
+            "recover with mmio=on",
+            "load with mmio=on",
+            "both controllable",
+            "fully controllable",
+        ):
+            assert promise not in flat, (
+                f"the withdrawn 2026-07 promise {promise!r} is still being made"
+            )
+        # The separate 0xFFFF fault must stay documented as a distinct mode.
+        assert "0xffff" in flat, (
+            "config-mode/0xFFFF is a real SEPARATE failure and must not be "
+            "deleted along with the wrong 0x8883 account"
         )
         assert "frankcrawford/it87" in g.driver_url or "issue" in g.driver_url
 
@@ -155,14 +180,26 @@ class TestX500X600X800VendorQuirks:
             f"specifically; got: {[q.summary for q in critical]}"
         )
 
-    def test_gigabyte_stealth_ice_quirk_documents_mmio_on(self):
-        # X870 AORUS STEALTH ICE secondary is an it8696 + it87952 pair (not
-        # "IT8883"); 0x8883 is a config-mode symptom recovered with mmio=on
-        # (frankcrawford/it87 #81/#70). The quirk fires on the primary chip.
+    def test_gigabyte_dual_superio_quirk_reports_both_outcomes(self):
+        # DEC-326: this quirk fires for ANY Gigabyte + IT8696E board, and they
+        # do not all behave the same way — so it must not promise one outcome.
+        # It previously promised the working one to everybody.
         quirks = lookup_vendor_quirks("Gigabyte Technology Co., Ltd.", "it8696")
         flat = " ".join(q.summary + " ".join(q.details) for q in quirks).lower()
-        assert "stealth ice" in flat
-        assert "mmio=on" in flat, "STEALTH ICE quirk must document the mmio=on recovery"
+
+        # BOTH branches, or the entry is lying to one set of owners. The
+        # working pairing is owner-confirmed upstream and must not be deleted
+        # along with the wrong claim.
+        assert "aorus elite" in flat and "89" in flat, (
+            "the confirmed-working pairing (#89) must survive the correction"
+        )
+        assert "aorus master" in flat, "the measured non-working pairing must be named"
+        assert "no local fix" in flat, (
+            "the 0x8883 case has no local remedy and the quirk must say so"
+        )
+        # The withdrawn promise must not be restated.
+        assert "recovered with mmio=on" not in flat
+        assert "fully controllable" not in flat
 
     def test_asrock_nct6798_supported_info(self):
         # AM4 500-series ASRock NCT6798D boards: mainline coverage is

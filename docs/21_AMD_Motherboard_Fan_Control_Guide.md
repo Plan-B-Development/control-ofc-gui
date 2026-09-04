@@ -511,20 +511,46 @@ The ASRock X870 Nova ships **NCT6796D-S** as its primary chip
 cleanly; do not load `nct6687d` here. The DEC-105 collision logic
 applies.
 
-### Gigabyte X870 AORUS STEALTH ICE — secondary Super-I/O, use `mmio=on`
+### A secondary Super-I/O reading `0x8883` — no local fix
 
-X870 AORUS STEALTH ICE pairs the primary **IT8696E** with a secondary
-**IT87952E** — both controllable via `it87-dkms-git`. There is no
-"IT8883" chip: when a utility (commonly `sensors-detect`) leaves the
-secondary Super-I/O in configuration mode, its DEVID misreads as
-`0x8883`; a clean read is `0x8695` (the IT87952E early ID). Per
-frankcrawford/it87 issue #81, load a current build with `mmio=on` (the
-merged H2RAM/MMIO path) and avoid running `sensors-detect` mid-session —
-both chips are then fully controllable.
+**This section was rewritten on 2026-09-04 (DEC-326). The previous version
+was headed "use `mmio=on`" and said `0x8883` was a secondary stuck in config
+mode that a current build recovers. That was wrong, and it is withdrawn.**
 
-The GUI's chip-guidance database explains what a `0x8883` reading means
-(a secondary stuck in config mode, recovered with `mmio=on`), so users
-who searched for "IT8883" find the resolution rather than a dead end.
+`0x8883` and `0xFFFF` are **different faults** and only one of them is
+recoverable:
+
+* **`0xFFFF`** — the secondary really is stuck in configuration mode, usually
+  after a `sensors-detect` run. Reboot without running it and the chip comes
+  back. This case is real and unchanged.
+* **`0x8883`** — measured on an **X870E AORUS MASTER**, 2026-09-04, on `it87`
+  at upstream HEAD. The driver finds the primary IT8696E over MMIO, then
+  reports `Unsupported chip (DEVID=0x8883)`. One hwmon device enumerates
+  instead of two; about three headers are unreachable. **There is no local
+  fix.**
+
+Why the old advice cannot work, measured rather than argued:
+
+| Old advice | Why it fails |
+| --- | --- |
+| "load with `mmio=on`" | `mmio` already defaults to `true` (`it87.c:314`). The test host passes the module no parameters at all, so this named a state already in effect. |
+| "update to a current build" | The failure reproduces at upstream HEAD. |
+| "per issue #81" | #81 is **open**. Its reporter forced the ID *and* set `mmio=on`, and still has three fans and a water pump non-functional. It records the failure, not a resolution. |
+
+The driver contains **no** case, constant or comment for `0x8883` anywhere,
+while `IT87952E_DEVID 0x8695` **is** defined and handled — so the secondary is
+**unreachable, not unsupported**. The likely mechanism, stated as inference:
+`0x8883` is an ITE eSPI-to-LPC **bridge** answering in place of the chip behind
+it ([issue #64](https://github.com/frankcrawford/it87/issues/64)).
+
+**Bounded by pairing, not by family.** Other boards with the same IT8696E +
+IT87952E pairing genuinely work — the X870E AORUS ELITE is owner-confirmed with
+both chips controllable ([#89](https://github.com/frankcrawford/it87/issues/89)).
+Do not generalise this to "X870E" or to "dual-ITE".
+
+The GUI's chip-guidance database now reports this honestly, so a user who
+searches for "IT8883" is told there is nothing to configure rather than being
+sent round a loop.
 
 ---
 
@@ -871,11 +897,30 @@ Reference: https://github.com/frankcrawford/it87
   https://github.com/frankcrawford/it87/pull/128
 
 - **Gigabyte X870E AORUS MASTER (IT8696E rev 0 + IT87952E):** PWM fan
-  control **works** on `it87-dkms-git` 332.20f2f2f+ and BIOS F13a
-  (2026-03 onwards). Distinct from the X670E AORUS MASTER case above
-  — that one is IT8689E rev 1 with a manual-control limitation; this
-  is IT8696E rev 0 (primary) plus IT87952E (secondary), both
-  controllable. The board exposes **8 writable PWM headers total**:
+  control on the **primary** works. Distinct from the X670E AORUS MASTER
+  case above — that one is IT8689E rev 1 with a manual-control
+  limitation; this is IT8696E rev 0 (primary) plus a secondary.
+
+  **⚠ The secondary is NOT reachable on current firmware/driver, measured
+  2026-09-04 (DEC-326).** On BIOS **F14c** with `it87-dkms-git`
+  **349.c567739** (upstream HEAD), the kernel finds
+  `IT8696E chip at 0xa40 [MMIO at 0xfe100000]` and then answers device-ID
+  `0x8883` at the secondary address, which the driver does not recognise.
+  One `it87` hwmon device enumerates and exactly **five** `pwm` files exist
+  — the primary's. There is **no local fix**: `mmio` is already the driver
+  default and `force_id` does not help (it87
+  [#81](https://github.com/frankcrawford/it87/issues/81) is open, its
+  reporter tried both). `0x8883` is most likely an eSPI→LPC bridge
+  ([#64](https://github.com/frankcrawford/it87/issues/64)).
+
+  This **does not retract** the earlier report below, which was made on
+  `it87-dkms-git` 332.20f2f2f+ and BIOS **F13a** (2026-03). Both
+  observations are recorded because they differ in board firmware *and*
+  driver revision and only one of them has been reproduced here; nobody has
+  bisected which change matters. Treat the 8-header figure as the board's
+  **physical** layout, not as what Linux currently reaches.
+
+  Physically the board exposes **8 PWM headers**:
   5 on IT8696E (CPU_FAN, SYS_FAN1, SYS_FAN2, SYS_FAN3, CPU_OPT) and
   3 on IT87952E (community-reported as SYS_FAN5_PUMP, SYS_FAN6_PUMP,
   SYS_FAN4 in that pwm order — frankcrawford/it87

@@ -79,7 +79,7 @@ writes until resolved.
 | IT8689E | `it87` | **Yes (control) since 7.1** — six PWM + `FEAT_FANCTL_ONOFF` (commit `66b8eaf`, merged 2026-03-31; 7.1 released 2026-06-14) | `it87-dkms-git` (AUR) still recommended pre-7.1 (6.12 / 6.18 LTS) and for board Rev 1 quirks; the GUI still labels it out-of-tree for this reason (DEC-144) |
 | IT8696E | `it87` | **No** | `it87-dkms-git` (AUR) — primary on AM5 800-series Gigabyte boards |
 | IT87952E | `it87` | **Yes since 6.4 for enumeration** (commit `d44cb4c`) — secondary-chip *control* on dual-IO Gigabyte boards needs the DKMS MMIO path | `it87-dkms-git` (AUR) for control — secondary chip on dual-IO Gigabyte boards (e.g. X870E AORUS MASTER) |
-| "IT8883" | *(not a distinct desktop chip)* | — | On Gigabyte desktop dual-chip boards, device-ID `0x8883` is the stuck-in-config-mode *symptom* of a secondary Super-I/O, not a chip ([#70](https://github.com/frankcrawford/it87/issues/70)); a clean read is `0x8695` (IT87952E). See the STEALTH ICE row below. *(Scope caveat: on the AAEON **Elkhart Lake embedded** board of [issue #117](https://github.com/frankcrawford/it87/issues/117), a contributor identifies `0x8883`/IT8883 as an ITE **LPC↔eSPI bridge chip** — not a Super-I/O sensor chip, so still nothing to fan-control, and in config mode it blocks bus access (same class as the desktop symptom). The maintainer is investigating the real sensor chip behind it. Confidence C — contributor comment, not maintainer-confirmed; does not change the desktop behaviour above.)* |
+| "IT8883" | *(not a distinct sensor chip)* | — | Device-ID `0x8883` at a secondary Super-I/O address is **not a sensor chip and not a config-mode symptom** — most likely an ITE eSPI→LPC **bridge** answering in place of the chip behind it ([#64](https://github.com/frankcrawford/it87/issues/64)). `it87` has no entry for `0x8883` at all, while it *does* support the IT87952E — so the secondary is **unreachable, not unsupported**, and there is no local fix. Measured on an X870E AORUS MASTER 2026-09-04 (DEC-326); this row previously described it as a stuck-in-config-mode symptom recovered by `mmio=on`, which was wrong. The genuine config-mode fault reads `0xFFFF`, not `0x8883`, and *is* cleared by rebooting without `sensors-detect` ([#70](https://github.com/frankcrawford/it87/issues/70)). See the STEALTH ICE row below. *(Corroborating, and no longer filed as a counter-case: on the AAEON **Elkhart Lake embedded** board of [issue #117](https://github.com/frankcrawford/it87/issues/117), a contributor identifies `0x8883`/IT8883 as an ITE **LPC↔eSPI bridge chip** — not a Super-I/O sensor chip — with the maintainer investigating the real sensor chip behind it. As at 2026-09-04 that reading **agrees with** the desktop measurement above rather than qualifying it, and it is the basis for the bridge inference. Confidence C — contributor comment, not maintainer-confirmed — which is why the bridge mechanism is stated as inference and the enumeration failure as measurement.)* |
 
 The out-of-tree `it87` driver is maintained by Frank Crawford:
 https://github.com/frankcrawford/it87
@@ -109,8 +109,13 @@ and master carries a built-in DMI ACPI-exemption table
 
 **Known issue — secondary chip not enumerated.** On some systems only
 the primary chip appears in `sensors` output (5 of 8 fan headers
-visible on X870E AORUS MASTER, etc.). The secondary chip's DEVID
-read can fail when the SuperIO bridge has been left in configuration
+visible on X870E AORUS MASTER, etc.). **There are two causes and only
+one is recoverable — check the DEVID in `dmesg` before acting.** If it
+reads `0x8883` the secondary is behind a bridge the driver cannot
+reach and there is no local fix (measured on an X870E AORUS MASTER,
+BIOS F14c, it87 349.c567739, 2026-09-04 — DEC-326); see the "IT8883"
+row above. The recoverable cause, which reads `0xFFFF`, is a DEVID
+read failing because the SuperIO bridge was left in configuration
 mode by an earlier process — most commonly a previous run of
 `sensors-detect`, but also some early-boot kernel modules or BIOS
 quirks. The frankcrawford/it87 issue
@@ -130,10 +135,10 @@ the second chip, pointing at a stuck SuperIO bridge rather than
    SuperIO state mid-session.
 4. Reboot.
 
-(On the X870 AORUS STEALTH ICE, a secondary that reads as `0x8883` is just
-stuck in config mode — `mmio=on` on a current build recovers it (the chips
-are an it8696 + it87952 pair); see
-[#81](https://github.com/frankcrawford/it87/issues/81) and the STEALTH ICE
+(A secondary that reads `0x8883` is a **different and unrecoverable** fault —
+not config mode, and `mmio=on` does not help because it is already the driver
+default. Measured on an X870E AORUS MASTER 2026-09-04; see
+[#64](https://github.com/frankcrawford/it87/issues/64) and the STEALTH ICE
 row below.)
 
 **IT8665E MMIO — update the driver.** The 2026-03+ MMIO default *broke* PWM writes
@@ -204,8 +209,9 @@ directory, or kernel `asus_*` driver allowlists.
 | **AM5 800-series** (B850 / X870 / B840) | ASUS (X870E variants, X870 series) | NCT6798D + expanded `asus_ec_sensors` allowlist (ROG STRIX X870E-E/-H, X870-F/-I and B850-I entries landed in kernel **6.18**, alongside the older ProArt X870E-CREATOR WIFI) | mainline `nct6775` + sensor enrichment |
 | | MSI **auto-allowlist** (B840/B850/X870/Z890 boards; the upstream list keeps growing — `nct6687.c::nct6687_msi_alt_boards[]` is the source of truth) | NCT6687-R variants with msi_alt1 auto-enabled | out-of-tree `nct6687d-dkms-git` |
 | | MSI boards NOT on the allowlist | NCT6687-R variants | `nct6687d` + `fan_config=msi_alt1` or `msi_fan_brute_force=1` |
-| | Gigabyte X870E AORUS MASTER / PRO / **ELITE (incl. X3D, issue #89)** / B850-AI-TOP | IT8696E + IT87952E (dual-chip) | out-of-tree `it87-dkms-git`; 2026-03+ builds work out of the box (older builds need `mmio=on`) |
-| | **Gigabyte X870 AORUS STEALTH ICE** | IT8696E + IT87952E (a secondary Super-I/O left in config mode can misreport as device-ID `0x8883`) | out-of-tree `it87-dkms-git` with `mmio=on` — both chips are fully supported; `0x8883` just means the secondary was stuck in config mode ([#81](https://github.com/frankcrawford/it87/issues/81) resolution; [#70](https://github.com/frankcrawford/it87/issues/70)) |
+| | Gigabyte X870E AORUS **PRO** / **ELITE (incl. X3D, issue #89)** / B850-AI-TOP | IT8696E + IT87952E (dual-chip) | out-of-tree `it87-dkms-git`; 2026-03+ builds work out of the box (older builds need `mmio=on`). ELITE is owner-confirmed with both chips controllable ([#89](https://github.com/frankcrawford/it87/issues/89)) |
+| | **Gigabyte X870E AORUS MASTER** — split out of the row above 2026-09-04 (DEC-326) | IT8696E + secondary answering device-ID `0x8883` | out-of-tree `it87-dkms-git` drives the **primary only** (5 of 8 headers). **Measured 2026-09-04 at it87 upstream HEAD: the secondary does not enumerate and there is no local fix** — `mmio` is already the driver default and `force_id` does not help. Same nominal pairing as the ELITE above, different outcome, which is why this table is per board and not per family. See the "IT8883" row and [#64](https://github.com/frankcrawford/it87/issues/64) |
+| | **Gigabyte X870 AORUS STEALTH ICE** | IT8696E + secondary reads device-ID `0x8883` (likely an eSPI→LPC bridge masking an IT87952E) | out-of-tree `it87-dkms-git` drives the **primary only**. The secondary is **unreachable and there is no local fix** — `mmio=on` is already the driver default and `force_id` does not help ([#81](https://github.com/frankcrawford/it87/issues/81) is **open**: its reporter tried both and still lost three fans and a pump; [#64](https://github.com/frankcrawford/it87/issues/64) is the bridge thread). Corrected 2026-09-04 (DEC-326) — this row previously cited #81 as a *resolution*, which misread it |
 | | ASRock X870 Nova | **NCT6796D-S** | mainline `nct6775` |
 | | **ASRock X870E Taichi Lite — dual-Nuvoton** | NCT6686 + NCT6799 (separate chips) | `nct6687d` + mainline `nct6775` (DEC-106 collision-detector exemption) |
 
