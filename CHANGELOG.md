@@ -1,5 +1,40 @@
 # Changelog
 
+## [2.57.3] — 2026-09-04
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). **No shipped GUI code
+changed.** This release adds the GUI half of a new cross-repo parity oracle and records two
+daemon fixes in the contract document. It is the GUI counterpart of
+`control-ofc-daemon` v2.35.0 (DEC-322).
+
+### Added
+- **`tests/test_header_role_parity.py` and `tests/fixtures/header_role_classification.json`**
+  (`AUD3-c`) — a third cross-stack golden oracle, byte-identical with the daemon's copy and
+  gated by `parity.yml`. `services/pump_protection.py` hand-mirrors the daemon's
+  `classify_header_role` label branches, because a daemon older than 2.31.0 publishes no
+  `stop_permitted` and the reconstruction is then the only answer available. The two copies
+  **agreed** — what was missing was a gate, and the direction of harm is the unsafe one: if
+  the daemon learns a new pump-classifying label (`/ofc:superio-curator` exists to add
+  exactly that) and this copy does not, the reconstruction returns "not protected" and the
+  wizard offers to stop a real pump. 29 cases; the test docstring records honestly that only
+  the cases where the daemon's `role` is *not* `pump` discriminate, because the GUI
+  short-circuits on that field by design.
+
+### Changed
+- **`docs/08_API_Integration_Contract.md`** records two daemon fixes shipped in v2.35.0,
+  flagged here per the cross-repo contract rule:
+  - **`stop_permitted` now means what this document already said it meant** (`AIO7-d`).
+    Daemons 2.31.0 – 2.34.0 published it as `!pump_protected && policy.supports_stop`, and
+    one policy is resolved for *every member* of a cooling device — so a radiator fan in an
+    AIO was advertised unstoppable while `identify` stopped it, and a `pump_member` without
+    a pump role was promised protection it did not have. **No GUI change was needed:**
+    `pump_protection.py` already reads the field as `not stop_permitted` meaning "pump
+    protected", which is the semantics 2.35.0 restores. The doc now records what the older
+    daemons actually did, and that `stop_permitted` and `effective_min_pwm_pct` must not be
+    derived from one another — the floor still over-claims for the same members
+    (`AIO4-a`/`AUD3-r`).
+  - A diagnostic can no longer restore a pump-protected header to 0 (`AUD3-l`).
+
 ## [2.57.2] — 2026-09-04
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). **No shipped GUI code

@@ -1,0 +1,277 @@
+{
+  "schema": 1,
+  "description": "Cross-stack HWMON HEADER role-classification agreement vectors (AUD3-c, DEC-322). The daemon's hwmon::roles::classify_header_role + is_pump_protected and the GUI's services.pump_protection.header_is_pump_protected MUST agree on every case. This pins the classifier that decides whether the fan wizard offers to STOP a header, which is why it is a safety oracle and not a tidiness one: if the daemon learns a new pump-classifying label (/ofc:superio-curator exists to add exactly that) and the GUI's hand-mirrored copy does not, the GUI concludes 'not protected' and offers to stop a real pump. Inference only: every case has assigned = None, because a user assignment is runtime.toml state neither side infers. The GUI reconstruction is the FALLBACK path (a daemon >= 2.31.0 publishes stop_permitted and the GUI prefers it), so these cases are driven with stop_permitted = null. is_aio is an INPUT for the GUI, which cannot see chip_name; the daemon derives it from chip_name via aio::is_liquid_cooler_chip and the daemon test asserts that derivation too, so the field cannot drift from the chip list. This file must be byte-identical in both repos (daemon/tests/fixtures and the GUI tests/fixtures) and is gated by parity.yml.",
+  "cases": [
+    {
+      "name": "synthesised_placeholder_channel_1",
+      "why": "DEC-229: a synthesised pwmN restates the channel index and is not evidence. This is the it8696 AIO-MB validation target, which publishes no label files at all.",
+      "chip_name": "it8696",
+      "pwm_index": 1,
+      "label": "pwm1",
+      "is_aio": false,
+      "role": "unknown",
+      "pump_protected": false
+    },
+    {
+      "name": "synthesised_placeholder_channel_5",
+      "why": "Same rule at the other end of the it8696's five channels.",
+      "chip_name": "it8696",
+      "pwm_index": 5,
+      "label": "pwm5",
+      "is_aio": false,
+      "role": "unknown",
+      "pump_protected": false
+    },
+    {
+      "name": "placeholder_rule_is_index_specific",
+      "why": "'pwm2' on channel 1 is NOT the placeholder for that channel, so it counts as a real (unrecognised) label. Both sides must key the placeholder test on the channel index, not on the pwm-prefix alone.",
+      "chip_name": "it8696",
+      "pwm_index": 1,
+      "label": "pwm2",
+      "is_aio": false,
+      "role": "unknown",
+      "pump_protected": false
+    },
+    {
+      "name": "empty_label_is_not_evidence",
+      "chip_name": "nct6799",
+      "pwm_index": 1,
+      "label": "",
+      "is_aio": false,
+      "role": "unknown",
+      "pump_protected": false
+    },
+    {
+      "name": "bare_pump_label",
+      "chip_name": "nct6799",
+      "pwm_index": 2,
+      "label": "PUMP",
+      "is_aio": false,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "aio_pump_label",
+      "chip_name": "nct6799",
+      "pwm_index": 3,
+      "label": "AIO_PUMP",
+      "is_aio": false,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "w_pump_label",
+      "chip_name": "nct6799",
+      "pwm_index": 4,
+      "label": "W_PUMP",
+      "is_aio": false,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "pump_fan_label",
+      "chip_name": "nct6799",
+      "pwm_index": 5,
+      "label": "PUMP_FAN",
+      "is_aio": false,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "pump_hint_outranks_a_chassis_hint",
+      "why": "SYS_FAN5_PUMP carries both a chassis hint and a pump hint. The pump reading must win on both sides — a false positive floors a fan, a false negative stops a pump.",
+      "chip_name": "nct6799",
+      "pwm_index": 6,
+      "label": "SYS_FAN5_PUMP",
+      "is_aio": false,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "pump_label_is_case_insensitive",
+      "chip_name": "nct6799",
+      "pwm_index": 1,
+      "label": "Pump",
+      "is_aio": false,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "cpu_fan_label",
+      "chip_name": "nct6799",
+      "pwm_index": 1,
+      "label": "CPU_FAN",
+      "is_aio": false,
+      "role": "cpu_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "cpu_fan_numbered",
+      "chip_name": "nct6799",
+      "pwm_index": 1,
+      "label": "CPU_FAN1",
+      "is_aio": false,
+      "role": "cpu_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "cpu_fan_unseparated",
+      "chip_name": "nct6799",
+      "pwm_index": 1,
+      "label": "CPUFAN",
+      "is_aio": false,
+      "role": "cpu_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "cpu_fan_hyphen_normalises",
+      "why": "Both sides normalise '-', ' ' and '.' to '_' before matching.",
+      "chip_name": "nct6799",
+      "pwm_index": 1,
+      "label": "CPU-FAN",
+      "is_aio": false,
+      "role": "cpu_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "cpu_fan_space_normalises",
+      "chip_name": "nct6799",
+      "pwm_index": 1,
+      "label": "CPU FAN",
+      "is_aio": false,
+      "role": "cpu_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "cpu_fan_dot_normalises",
+      "chip_name": "nct6799",
+      "pwm_index": 1,
+      "label": "CPU.FAN",
+      "is_aio": false,
+      "role": "cpu_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "cpu_opt_is_deliberately_ambiguous",
+      "why": "CPU_OPT is the header the AIO brief forbids guessing: it is as often a pump as a second CPU fan. It must classify as unknown, NOT cpu_fan, on both sides.",
+      "chip_name": "nct6799",
+      "pwm_index": 2,
+      "label": "CPU_OPT",
+      "is_aio": false,
+      "role": "unknown",
+      "pump_protected": false
+    },
+    {
+      "name": "chassis_cha_fan",
+      "chip_name": "nct6799",
+      "pwm_index": 2,
+      "label": "CHA_FAN1",
+      "is_aio": false,
+      "role": "chassis_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "chassis_sys_fan",
+      "chip_name": "nct6799",
+      "pwm_index": 3,
+      "label": "SYS_FAN2",
+      "is_aio": false,
+      "role": "chassis_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "chassis_bare",
+      "chip_name": "nct6799",
+      "pwm_index": 4,
+      "label": "CHASSIS",
+      "is_aio": false,
+      "role": "chassis_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "chassis_chafan_unseparated",
+      "chip_name": "nct6799",
+      "pwm_index": 5,
+      "label": "CHAFAN",
+      "is_aio": false,
+      "role": "chassis_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "chassis_sysfan_unseparated",
+      "chip_name": "nct6799",
+      "pwm_index": 6,
+      "label": "SYSFAN",
+      "is_aio": false,
+      "role": "chassis_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "cooler_channel_1_is_the_pump",
+      "why": "Chip mapping: on a known liquid cooler, channel 1 is the pump. Verified against nzxt-kraken3 (pwm1=pump, pwm2=fan).",
+      "chip_name": "x53",
+      "pwm_index": 1,
+      "label": "",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "cooler_channel_2_is_a_radiator_fan",
+      "chip_name": "x53",
+      "pwm_index": 2,
+      "label": "",
+      "is_aio": true,
+      "role": "radiator_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "cooler_placeholder_still_reaches_chip_mapping",
+      "why": "Skipping the synthesised label is what LETS the chip mapping run on a cooler that publishes no label files.",
+      "chip_name": "kraken2023",
+      "pwm_index": 1,
+      "label": "pwm1",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "cooler_chip_name_is_case_insensitive",
+      "chip_name": "X53",
+      "pwm_index": 1,
+      "label": "",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "aquacomputer_d5next_channel_1",
+      "chip_name": "d5next",
+      "pwm_index": 1,
+      "label": "",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "a_label_outranks_the_chip_mapping",
+      "why": "THE load-bearing precedence case. A cooler's channel 1 labelled CPU_FAN1 is a CPU fan, not a pump: a label is direct per-channel evidence while chip mapping is a positional assumption. Getting this backwards on one side only is how the two classifiers would diverge in the unsafe direction.",
+      "chip_name": "x53",
+      "pwm_index": 1,
+      "label": "CPU_FAN1",
+      "is_aio": true,
+      "role": "cpu_fan",
+      "pump_protected": false
+    },
+    {
+      "name": "a_pump_label_on_a_cooler_channel_2_still_wins",
+      "why": "A dual-pump loop: pwm2 labelled PUMP classifies Pump under label-first and RadiatorFan under mapping-first, and only one of those refuses to stop it.",
+      "chip_name": "x53",
+      "pwm_index": 2,
+      "label": "PUMP",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
+    }
+  ]
+}

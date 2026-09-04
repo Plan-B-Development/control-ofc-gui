@@ -836,6 +836,41 @@ Use to discover:
     wherever the daemon's pump-protection union holds, whatever a policy claims. **`null`/absent
     is not `false`** — read it as unknown and fall back, or an older daemon's pump becomes
     "stoppable".
+
+    **Daemons 2.31.0 – 2.34.0 did not honour that sentence, and this paragraph is what they
+    diverged from (`AIO7-d`, fixed in 2.35.0 / DEC-322).** The published value was
+    `!pump_protected && policy.supports_stop`, and `PwmHeaderEntry::from_descriptor` resolves
+    **one** policy for *every member* of a cooling device — so a radiator fan in an AIO
+    inherited the pump policy's `supports_stop: false` and was published as unstoppable, while
+    `POST /fans/{id}/identify` branches on the pump-protection union alone (membership is not a
+    term in it) and stopped it. Measured on an X870E AORUS MASTER: `pwm1`, a `radiator_members`
+    entry with `role: unknown`, no pump label and not a liquid-cooler channel 1, reported
+    `stop_permitted: false` while its identify predicate was `false`. Both directions were
+    wrong, and the second is the one that mattered: a header named as a `pump_member`
+    **without** a pump role — reachable by `curl`, and something this document already notes
+    confers no floor — was promised `stop_permitted: false` while identify drove it to 0.
+    From 2.35.0 the published value is exactly `!header_is_pump_protected`, pinned by
+    `stop_permitted_matches_identify_for_every_shipped_policy`.
+
+    **Related, and it changes what one diagnostic field means (daemon ≥ 2.35.0, `AUD3-l`).**
+    A diagnostic captures the pre-test duty and restores it on the way out. For a
+    **pump-protected** header that restore is now clamped to the 30% floor, because
+    `set_pwm` always asserts `pwm_enable=1` and restoring a captured 0 would convert *0 under
+    firmware control* into *0 under manual control with no writer* — a stopped pump. So
+    `restore_failed: false` and `restore_outcome: "restored"` mean **"restored, floor-clamped"**
+    for such a header: the duty now on the hardware may be higher than the `initial`/original
+    duty reported alongside it. Do not compute the live duty by reading the reported original
+    on a pump — read it back from `/poll`. A non-pump header is still restored exactly as
+    captured, 0 included, so the two agree there.
+
+    **Two consequences for a client.** Against 2.31.0 – 2.34.0, a `false` on a *radiator or
+    auxiliary member of a cooling device* is not evidence of pump protection and must not be
+    used to suppress a stop warning; there is no capability flag distinguishing the two
+    behaviours, so branch on the daemon version if that matters to you. And do **not** expect
+    `stop_permitted` and `effective_min_pwm_pct` to be derivable from one another: the floor is
+    still resolved through the device policy and over-claims for the same members, which is
+    tracked separately as `AIO4-a`/`AUD3-r` and deliberately not changed here — moving it is a
+    real cooling change rather than a reporting correction.
   - `cooling_device_id` (string, optional) — the cooling device claiming this header, if any.
   - `pwm_freq_hz` (int, optional) — PWM base frequency from `pwmN_freq`.
   - **There is deliberately no `pwm_enable_mode` here.** The header's *current* `pwmN_enable`
