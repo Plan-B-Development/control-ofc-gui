@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 
 from ..api.models import Capabilities, FanReading, HwmonHeader
 from ..knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
+from .daemon_features import unsupported_feature_message
 from .pump_protection import header_effective_floor_pct, header_is_pump_protected
 
 # ── The capability vocabulary the brief mandates (§4) ────────────────────────
@@ -402,7 +403,7 @@ def build_header_inspector_view(
     if not header.is_writable:
         char_reason = "This header is read-only, so there is nothing to sweep."
     elif not _supports_characterization(capabilities):
-        char_reason = "This daemon does not support PWM characterisation."
+        char_reason = unsupported_feature_message("pwm_characterization")
     elif not header.rpm_available:
         # Degraded, not blocked: the sweep still proves command acceptance and
         # readback, which is two of its three verdicts (§11, §20).

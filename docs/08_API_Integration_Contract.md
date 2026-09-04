@@ -1733,7 +1733,8 @@ Old daemons predating the route answer `404`, which the GUI treats as
 - `POST /hwmon/rescan` — re-enumerate hwmon devices
   - Response: `{"api_version": N, "headers": [...], "count": N}` — same
     header entry shape as `GET /hwmon/headers`.
-  - Called by the System State page's *Rescan Hardware* (DEC-147).
+  - Called by the global footer's *Rescan Hardware* action (DEC-147/DEC-208); the
+    System State page owns only the outcome line.
     On success the GUI pushes the fresh list through
     `AppState.set_hwmon_headers` and chains a `/diagnostics/hardware`
     refetch.
@@ -1786,7 +1787,7 @@ Old daemons predating the route answer `404`, which the GUI treats as
     logs a warning, so `Restart=on-failure` never fired and nothing recovered
     it. Adoption uses the same identity-verified path as boot, so a port that
     opens but is not an OpenFanController is still refused.
-  - Called by the GUI as part of the System State page's *Rescan Hardware*
+  - Called by the GUI as part of the global footer's *Rescan Hardware*
     action, not as a separate button: that action is what a user reaches for
     when hardware is missing, and requiring them to know *which kind* of
     hardware went missing is the worse UX. The leg is best-effort — a `503`

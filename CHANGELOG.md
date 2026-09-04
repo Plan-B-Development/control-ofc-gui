@@ -1,5 +1,100 @@
 # Changelog
 
+## [2.57.7] — 2026-09-04
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). The `/ofc:docs-correctness`
+pass over everything a user reads — `README.md`, `manual/`, `man/`, the published `docs/`,
+and the in-application advice strings — judged on both axes: **is it true**, and where it
+reports a problem does it give a **clear route out**. Seventeen findings (`UDOC-a`…`UDOC-q`),
+all fixed here. No floor, threshold, route, capability flag or control behaviour changes;
+the daemon is untouched apart from its own documentation.
+
+### Fixed
+- **The Hardware and System State pages no longer prescribe a fix that cannot work, or
+  contradict themselves while doing it** (`UDOC-h`). On a Gigabyte dual-Super-I/O board
+  with a missing secondary chip, the dual-chip alert asserted that current `it87-dkms-git`
+  builds "both enumerate *and* control" the secondary and gave five numbered steps —
+  update the driver, set `options it87 mmio=on`, reboot, rescan. On the X870E AORUS MASTER
+  measured for the previous release none of that can work: `mmio` is already the driver
+  default and the secondary sits behind a bridge the driver cannot reach. The corrected
+  vendor-quirk card saying exactly that rendered **on the same report**, so the app
+  contradicted itself on one screen. The alert now hands over the one-line `dmesg`
+  discriminator and branches the advice: `DEVID=0xFFFF` is a bridge stuck in config mode
+  and is recoverable by rebooting without `sensors-detect`; `DEVID=0x8883` has **no local
+  fix**, and the alert says so and names the things not to waste time on. The GUI cannot
+  resolve the branch itself — the DEVID never reaches it, because the daemon's kmsg parser
+  extracts only `IT8xxx` name tokens — so the copy asks the user, which is the shape the
+  daemon already settled on in `ite_unbound_tail`. **Four existing tests were pinning
+  the retracted wording** — asserting that `mmio=on` was present, scoped to older
+  builds, and ordered after the driver update — which is a large part of why the
+  previous release's correction did not reach this string. All four are rewritten to
+  assert the advice is sound rather than that a particular remedy appears.
+- **The Fan Wizard no longer promises pump protection that the connected daemon may not
+  have** (`UDOC-i`). Its opening screen stated "a **pump is never stopped** — its speed is
+  shifted instead" unconditionally, in a label built once and never re-read. Against a
+  daemon older than 2.28.0 that is false: it drives every identified fan to 0, pumps
+  included. Every *per-fan* string already went through the capability gate; only the
+  promise made before any of them did not. The bullet is now derived from
+  `control.header_roles` each time the page is shown, and the honest branch names the
+  daemon version that would fix it. (The bullets also now separate correctly — the label
+  is rich text, so the newlines that used to divide them collapsed into one paragraph.)
+- **Six "this daemon does not support X" messages were true and unactionable** (`UDOC-l`).
+  GPU fan verification, the combined hardware-readiness report, the active port probe,
+  preferred sensors, validation sessions and PWM characterisation each reported the
+  feature as unavailable and stopped — no required version, no way to check the running
+  one. Every required version was known at the call site, and `settings_page.py` already
+  phrased it correctly three times. All nine now come from one registry
+  (`services/daemon_features.py`) that names the version and where to read the running
+  one; the three pre-existing correct messages render byte-identically.
+- **The thermal trip point was described 5 °C low in six places** (`UDOC-j`). `docs/05`,
+  `docs/06`, `manual/hardware-troubleshooting.md`, the daemon's `README.md`, its
+  `docs/USER_GUIDE.md` and its man page all said the per-machine limit is "raised to
+  **match** the CPU's own design ceiling". The daemon computes `min(ceiling + 5 °C,
+  115 °C)`. The margin is the point: a limit set *at* the ceiling fires on a healthy part
+  and then latches, because release needs a reading at or below 80 °C that a part holding
+  its ceiling never produces — i.e. the docs described the failure the design exists to
+  prevent. No code was wrong; the daemon has always computed the capped `+5`.
+- **The manual still prescribed `options it87 mmio=off` for IT8665E boards** (`UDOC-k`),
+  a workaround upstream removed the need for in merged PR #120 (2026-07-22), which
+  `docs/19`'s own bibliography already recorded as closed.
+- **Nine documentation sites placed *Rescan Hardware* on the System State page**
+  (`UDOC-c`); it is in the global footer. Two were flat navigation instructions on the
+  most common remediation path in the manual — install a driver, then rescan.
+- **The manual sent readers round the loop the previous release was written to stop**
+  (`UDOC-b`). `manual/driver-setup.md` asserted secondary-chip fan control was "already
+  fixed upstream" and that reinstalling is the first remediation. It is now bounded by
+  board pairing, and cross-links the three-case walk-through.
+- **Four README links dangled on every installed system** (`UDOC-d`) — they pointed
+  relatively at documents the package does not install. They are now absolute.
+- **`docs/24` was unreachable from the manual** (`UDOC-f`) despite being the designated
+  reference for the Hardware page's readiness checks, and `docs/23` was missing from the
+  reference list. Both are now linked, and `docs/24` now ships in the package, so the
+  new relative links resolve on an installed system.
+- **The v2.57.6 notes omitted a commit the tag contains** (`UDOC-e`): `a6cc4d0`'s entry was
+  deferred to an `[Unreleased]` section that did not exist. Its two corrections are now
+  recorded there.
+- **`docs/01` still described a page retired at DEC-216** (`UDOC-o`), and the daemon's
+  operator guide listed two superseded `/inventory/*` routes while omitting the one the
+  GUI actually calls (`UDOC-n`).
+- Smaller factual drift (`UDOC-p`, `UDOC-q`): `docs/06`'s excluded-settings list was four
+  keys behind the code, `docs/19` dated upstream PR #119 two days late, and `docs/19`'s
+  thermal section described the emergency duties without saying they are floors over the
+  profile's output rather than replacements for it.
+
+### Changed
+- **The README "Latest release" line is one sentence again** (`UDOC-a`). It had grown to
+  **16,839 characters** in the GUI and 19,566 in the daemon — the release notes of every
+  version since v2.42.0, pasted into a single paragraph at the top of the GitHub landing
+  page and installed to `/usr/share/doc/`. Per-version detail lives in this file. A length
+  assertion now sits beside the existing daemon-floor guard so it cannot regrow.
+- **User-facing documents no longer cite ADR ids** (`UDOC-g`). `DECISIONS.md` is not
+  published, so every `DEC-NNN` in `manual/` and `README.md` was a reference a reader
+  could not follow. The claims themselves were verified accurate and are unchanged.
+- **Upstream ROCm issues #6101 and #6155 are now cited with their closure status**
+  (`UDOC-m`) across eight prose sites and the in-app AMD GPU guidance. Both are closed;
+  neither closure shipped a fix, and #6101 collected further reports through 2026-08-28,
+  including a third independent unit. The advice was right — the citation read as resolved.
+
 ## [2.57.6] — 2026-09-04
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). Batches G and H of
@@ -28,11 +123,21 @@ flag or control behaviour changes.
   apart, and states plainly which one has no fix — instead of looping the reader
   through a driver reinstall and a module parameter that were already in effect.
 
+- **The in-app `0x8883` guidance and `manual/hardware-troubleshooting.md` no
+  longer point at upstream it87 issue #64 as the live thread.** It was closed in
+  2025-12; the `driver_url` now points at the repository, and the manual says so.
+  *(Recorded 2026-09-04 by `UDOC-e`. Commit `a6cc4d0` is in this tag but its
+  entry was deferred to an `[Unreleased]` section that did not exist, so it was
+  missing from these notes.)*
+
 ### Changed
 - **`docs/19`, `docs/21` and `docs/22` no longer cite upstream it87 issue #81 as
   a resolution.** It records the failure. Corrections are bounded **by board
   pairing, not by family** — the "2026-03+ builds work by default" claim is
   evidenced for several pairings and was deliberately left standing for those.
+- **`docs/08_API_Integration_Contract.md`'s `superio_driver_unloaded` description
+  now covers both of its states** rather than only one. *(Also `a6cc4d0`; see
+  above.)*
 
 
 ## [2.57.5] — 2026-09-04
@@ -735,8 +840,12 @@ in this release** — it is documentation, comments and developer tooling only.
     a fan no control commands still receives the forced duty. Text saying the
     emergency "bypasses every control" was wrong and is corrected.
   - The emergency trip point is **per-machine**, not a fixed 105 °C (DEC-308). It
-    is at least 105 °C, raised to match the CPU's own kernel-reported design
-    ceiling where one is published. `emergency_threshold_c` on
+    is at least 105 °C, raised to `min(ceiling + 5 °C, 115 °C)` where the CPU's
+    own kernel-reported design ceiling is published. (Corrected 2026-09-04,
+    `UDOC-j`: this entry originally said "raised to match the ceiling", which
+    understates the trip point by 5 °C and describes the latch-forever
+    behaviour the margin exists to prevent. The shipped daemon has always
+    computed the capped `+5`; only the description was wrong.) `emergency_threshold_c` on
     `/diagnostics/hardware` reports the value in use — **render it; never assume
     105**. `docs/08` and `docs/09` now say so explicitly.
 

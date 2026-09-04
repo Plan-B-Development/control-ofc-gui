@@ -126,12 +126,19 @@ def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
             {
                 "key": "dual_chip",
                 "label": "Super-I/O chip not enumerated",
+                # DEC-326 / `UDOC-h`: this line used to prescribe the
+                # update/mmio=on/reboot loop unconditionally. On a board whose
+                # secondary answers DEVID=0x8883 none of that can work, and the
+                # vendor-quirk card rendered directly below says so — so the
+                # report contradicted itself. Both halves now point at the same
+                # discriminator; the detail lives in the alert above.
                 "fix": (
-                    "Update it87-dkms-git first (2026-03+ builds enumerate and "
-                    "control the secondary chip by default); on older builds "
-                    "create /etc/modprobe.d/it87.conf with "
-                    "'options it87 mmio=on'. Avoid running sensors-detect "
-                    "after boot, then reboot (full steps in the alert above)."
+                    "Two different faults look identical here and only one is "
+                    "fixable locally. Run 'dmesg | grep -i it87': DEVID=0xFFFF "
+                    "is a bridge stuck in config mode, recovered by rebooting "
+                    "without running sensors-detect; DEVID=0x8883 is a bridge "
+                    "the driver cannot reach and has no local fix. Full steps "
+                    "in the alert above."
                 ),
                 "doc_url": "https://github.com/frankcrawford/it87/issues/70",
                 "doc_title": "frankcrawford/it87 issue #70",

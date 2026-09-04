@@ -87,7 +87,9 @@ A temporary operator-driven mode that overrides automatic curve application. It 
 - Dashboard
 - Controls
 - Settings
-- Diagnostics
+- System health — **Overview, System State, Hardware and Logs**. The single tabbed
+  "Diagnostics" page this line used to name was retired and split at DEC-216; see
+  `docs/07_Diagnostics_Spec.md` ("System-Health Pages Spec") for the current shape.
 - Demo mode
 - Theme import/export
 - GUI settings import/export
@@ -137,8 +139,9 @@ Immediately visible on launch:
 - current profile
 - graph of current fan speeds
 
-## Diagnostics decisions
-Diagnostics must expose:
+## System-health decisions
+Between them, the Overview, System State, Hardware and Logs pages must expose
+(one tabbed "Diagnostics" page no longer exists — DEC-216):
 - logs
 - daemon/API status
 - controller status

@@ -40,24 +40,47 @@ VENDOR_GB = "Gigabyte Technology Co., Ltd."
 
 
 class TestRemediationOrdering:
-    def test_dual_chip_warning_recommends_driver_update_before_mmio(self):
+    def test_dual_chip_warning_names_the_driver_package_where_it_helps(self):
+        """Rewritten by `UDOC-h` — the ordering it asserted is no longer meaningful.
+
+        This was the THIRD test pinning the retracted remedy: it required that
+        an `mmio=on` step "remain for old builds" and merely be ordered after
+        the driver update. Ordering advice that cannot work does not make it
+        work. Together with the two below, these guards are why the DEC-326
+        correction landed in `docs/` and in `lookup_vendor_quirks` but not in
+        this string — the wrong behaviour had test cover.
+
+        What survives is the part that is still true: installing
+        `it87-dkms-git` is a real remedy for the two cases where the driver is
+        absent or the bridge is merely stuck, so the package must still be
+        named.
+        """
         html = dual_chip_warning_html("X870E AORUS MASTER", ["it8696", "it87952"], ["it8696"])
         assert html is not None
-        update_pos = html.find("it87-dkms-git")
-        mmio_pos = html.find("mmio=on")
-        assert update_pos != -1, "warning must name the driver package to update"
-        assert mmio_pos != -1, "legacy mmio=on step must remain for old builds"
-        assert update_pos < mmio_pos, (
-            "DEC-144: the driver update must be step 1; mmio=on is the "
-            "legacy-build fallback, not the headline remediation"
-        )
+        assert "it87-dkms-git" in html, "the package must still be named where it genuinely helps"
+        # ...but never as the answer to the unreachable-bridge case.
+        assert "no local fix" in html.lower()
 
-    def test_dual_chip_warning_scopes_mmio_to_older_builds(self):
+    def test_dual_chip_warning_does_not_offer_mmio_as_a_remedy(self):
+        """Rewritten by `UDOC-h` — it used to pin the claim that was wrong.
+
+        The original asserted `mmio=on` was "presented as an older-build-only
+        step", which is a scoping requirement on advice that should never have
+        been given: `mmio` has been the driver default since it87's PR #95, so
+        on the X870E AORUS MASTER measured for DEC-326 the step names a state
+        already in effect and cannot help. This test was a live guard holding
+        the retracted wording in place — worth recording, because it is why the
+        DEC-326 correction reached the docs and the vendor-quirk table but not
+        this string.
+        """
         html = dual_chip_warning_html("X870E AORUS MASTER", ["it8696", "it87952"], ["it8696"])
         assert html is not None
-        assert "older" in html.lower(), "mmio=on must be presented as an older-build-only step"
+        lowered = html.lower()
+        assert "no local fix" in lowered
+        if "mmio" in lowered:
+            assert "already the driver default" in lowered
 
-    def test_readiness_dual_chip_fix_orders_update_first(self):
+    def test_readiness_dual_chip_fix_gives_the_discriminator(self):
         diag = HardwareDiagnosticsResult(
             hwmon=HwmonDiagnostics(
                 chips_detected=[HwmonChipInfo(chip_name="it8696", header_count=5)],
@@ -71,9 +94,15 @@ class TestRemediationOrdering:
         )
         problems = {p["key"]: p for p in detect_readiness_problems(diag)}
         assert "dual_chip" in problems
-        fix = problems["dual_chip"]["fix"]
-        assert fix.find("it87-dkms-git") != -1
-        assert fix.find("it87-dkms-git") < fix.find("mmio=on")
+        fix = problems["dual_chip"]["fix"].lower()
+        # `UDOC-h`: this used to assert the ORDER of two remedies ("update
+        # before mmio=on"). Ordering futile advice does not make it useful —
+        # on a 0x8883 board neither step can work. The line now hands over the
+        # discriminator instead, so the user finds out which fault they have
+        # before changing anything.
+        assert "dmesg" in fix
+        assert "no local fix" in fix
+        assert "mmio=on" not in fix
 
     def test_readiness_acpi_fix_orders_update_first_for_it87(self):
         from control_ofc.api.models import AcpiConflictInfo

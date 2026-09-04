@@ -47,6 +47,10 @@ from control_ofc.paths import (
 )
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
+from control_ofc.services.daemon_features import (
+    requires_daemon,
+    unsupported_feature_message,
+)
 from control_ofc.services.orphan_prune import OrphanReport, find_orphans, live_series_keys
 from control_ofc.services.profile_import_service import import_profiles
 from control_ofc.services.profile_service import ImportCollection, collect_local_profiles_for_import
@@ -1108,7 +1112,7 @@ class SettingsPage(QWidget):
                 self._daemon_config_unsupported = True
                 self._daemon_cfg_note.setText(
                     "This daemon is too old to report its configuration "
-                    "(requires control-ofc-daemon 2.16.0 or newer)."
+                    f"{requires_daemon('daemon_config_report')}."
                 )
             else:
                 self._set_daemon_cfg_result(
@@ -1363,7 +1367,7 @@ class SettingsPage(QWidget):
         if connected and not supported:
             self._remove_search_dir_btn.setToolTip(
                 "This daemon is too old to remove a profile search directory "
-                "(requires control-ofc-daemon 2.23.0 or newer)."
+                f"{requires_daemon('profile_search_dir_removal')}."
             )
         elif block:
             self._remove_search_dir_btn.setToolTip(f"Cannot remove: {block}.")
@@ -1408,7 +1412,7 @@ class SettingsPage(QWidget):
         if remove and not self._daemon_supports_dir_removal():
             self._set_daemon_cfg_result(
                 "This daemon is too old to remove a profile search directory "
-                "(requires control-ofc-daemon 2.23.0 or newer).",
+                f"{requires_daemon('profile_search_dir_removal')}.",
                 "CautionChip",
             )
             return
@@ -2075,7 +2079,7 @@ class SettingsPage(QWidget):
         except DaemonError as e:
             if getattr(e, "status", None) == 404:
                 self._set_pref_result(
-                    "This daemon version does not support preferred sensors.", "CautionChip"
+                    unsupported_feature_message("preferred_sensors"), "CautionChip"
                 )
             else:
                 self._set_pref_result(f"Could not load sensors: {e.message}", "CriticalChip")

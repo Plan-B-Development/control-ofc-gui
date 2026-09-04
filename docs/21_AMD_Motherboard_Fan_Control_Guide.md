@@ -1102,8 +1102,8 @@ If you have an AMD discrete GPU paired with one of the boards in this
 guide, also check the daemon's kernel-warning catalogue. Two regressions
 are currently flagged:
 
-- **`rdna_hang_kernel_6_18_6_19` (Critical):** Linux **6.18.x and 6.19.x** hard-hang RDNA3/RDNA4 GPUs (RX 7000 / 9000 series) under load. Pin to a **6.15–6.17** longterm kernel — **do not roll back to 6.18, which is also affected** ([Phoronix EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025); [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101) reports panics on 6.18.20 and 6.19.10).
-- **`smu_mismatch_navi48_r9700` (Critical):** the AMD R9700 (PCI `0x7551`) has no working `fan_curve` path on current kernels — an SMU interface-version mismatch ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)) leaves `pwm1` read-only and commanded fan changes ineffective. Device-scoped, not 7.0-specific; the RX 9070 XT (`0x7550`) is **not** affected.
+- **`rdna_hang_kernel_6_18_6_19` (Critical):** Linux **6.18.x and 6.19.x** hard-hang RDNA3/RDNA4 GPUs (RX 7000 / 9000 series) under load. Pin to a **6.15–6.17** longterm kernel — **do not roll back to 6.18, which is also affected** ([Phoronix EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025); [ROCm #6101 — closed 2026-07, fault still reported](https://github.com/ROCm/ROCm/issues/6101) reports panics on 6.18.20 and 6.19.10).
+- **`smu_mismatch_navi48_r9700` (Critical):** the AMD R9700 (PCI `0x7551`) has no working `fan_curve` path on current kernels — an SMU interface-version mismatch ([ROCm #6101 — closed 2026-07, fault still reported](https://github.com/ROCm/ROCm/issues/6101)) leaves `pwm1` read-only and commanded fan changes ineffective. Device-scoped, not 7.0-specific; the RX 9070 XT (`0x7550`) is **not** affected.
 
 The GUI raises a one-time popup when these match your hardware; the
 catalogue is curated in `hwmon/kernel_warnings.rs` (daemon, DEC-098) and

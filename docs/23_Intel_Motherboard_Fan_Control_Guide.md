@@ -226,7 +226,7 @@ yay -S it87-dkms-git
 echo 'options it87 mmio=on' | sudo tee /etc/modprobe.d/it87.conf
 
 sudo systemctl reboot
-# Then in the GUI: System State → Rescan Hardware
+# Then in the GUI: click Rescan Hardware in the global footer
 ```
 
 **BIOS tips:**

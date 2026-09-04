@@ -543,21 +543,32 @@ class TestVerifyTimingConstantsDec101:
 
 
 class TestDualChipRemediationOrderingDec144:
-    def test_missing_secondary_chip_remediation_order(self):
+    def test_missing_secondary_chip_names_the_board_and_the_discriminator(self):
+        """Rewritten by `UDOC-h` — the FOURTH test found pinning the retracted advice.
+
+        It required `mmio=on` to be present and merely ordered after the driver
+        update. On a board whose secondary answers `0x8883` neither step can
+        work, so the ordering was of two futile actions. Four tests asserting
+        that wording is a large part of why DEC-326's correction reached the
+        docs and the vendor-quirk table but not this string.
+
+        What still matters is kept: the alert must identify the missing chip and
+        the board, so a user can correlate it with their hardware.
+        """
         from control_ofc.ui.hwmon_guidance import dual_chip_warning_html
 
         out = dual_chip_warning_html("X870E AORUS MASTER", ["it8696", "it87952"], ["it8696"])
         assert out is not None
-        # Must name the missing chip, the board, and the remediation — driver
-        # update first (DEC-144), with mmio=on retained as the legacy fallback.
         assert "IT87952E" in out or "it87952" in out.lower()
         assert "X870E AORUS MASTER" in out
+        # The driver package is still named — it is a real remedy for the two
+        # cases that have one — but never as the answer to the unreachable case.
         assert "it87-dkms-git" in out
-        assert "mmio=on" in out
-        assert out.find("it87-dkms-git") < out.find("mmio=on"), (
-            "DEC-144: the driver update must precede the legacy mmio=on step"
-        )
-        assert "modprobe" in out.lower()
+        lowered = out.lower()
+        assert "dmesg" in lowered, "the alert must hand over the discriminator"
+        assert "no local fix" in lowered
+        if "mmio" in lowered:
+            assert "already the driver default" in lowered
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # Maintainer: Plan-B-Development <https://github.com/Plan-B-Development>
 pkgname=control-ofc-gui
-pkgver=2.57.6
+pkgver=2.57.7
 pkgrel=1
 pkgdesc="PySide6 desktop GUI for the Control-OFC fan control daemon"
 arch=('any')
@@ -84,10 +84,13 @@ package() {
             "$pkgdir/usr/share/doc/$pkgname/manual/$(basename "$guide")"
     done
 
-    # Hardware/sensor reference docs (docs/19–23) — the manual pages link to
+    # Hardware/sensor reference docs (docs/19–24) — the manual pages link to
     # them via ../docs/… relative paths, so ship them alongside the manual to
     # keep the installed copy's links resolving (DEC-145).
-    for refdoc in docs/19_*.md docs/20_*.md docs/21_*.md docs/22_*.md docs/23_*.md; do
+    # docs/24 joined the set with `UDOC-f`, which added the manual's first links
+    # to it: a relative link the package does not ship is `UDOC-d` all over again.
+    for refdoc in docs/19_*.md docs/20_*.md docs/21_*.md docs/22_*.md docs/23_*.md \
+        docs/24_*.md; do
         install -Dm644 "$refdoc" \
             "$pkgdir/usr/share/doc/$pkgname/docs/$(basename "$refdoc")"
     done

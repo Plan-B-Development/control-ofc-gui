@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from ..api.models import Capabilities, HwmonHeader
 from ..knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
+from .daemon_features import requires_daemon
 
 # Mirrors the daemon's `classify_header_role` label branches (`hwmon/roles.rs`).
 # A label matching any of these classifies the header BEFORE chip mapping is
@@ -30,6 +31,44 @@ def label_outranks_chip_mapping(lowered_label: str) -> bool:
     if normalised.startswith(CPU_FAN_LABEL_PREFIXES):
         return True
     return any(hint in normalised for hint in CHASSIS_LABEL_HINTS)
+
+
+def daemon_protects_pumps(capabilities: Capabilities | None) -> bool:
+    """Whether this daemon has a pump-protection model at all (DEC-311).
+
+    The wizard-level question, as distinct from `header_is_pump_protected`'s
+    per-header one: *can* this daemon decline to stop a pump? A pre-2.28.0
+    daemon has no role model, so it drives every identified fan to 0 — pumps
+    included — and any copy promising otherwise is a lie.
+    """
+    return bool(capabilities is not None and getattr(capabilities.control, "header_roles", False))
+
+
+def pump_identify_warning(capabilities: Capabilities | None) -> str:
+    """The Fan Wizard's up-front line about what happens to a pump (`UDOC-i`).
+
+    Rich-text, one bullet, gated on the capability — because the guarantee it
+    describes is the daemon's, not the GUI's.
+
+    This lives here rather than in the wizard because it is the same rule as
+    `daemon_protects_pumps`, one sentence further on, and the wizard is not its
+    only possible consumer. It exists at all because the intro page stated the
+    protected outcome **unconditionally**, in a static label built once in
+    `__init__`, while every per-fan string a few hundred lines below correctly
+    went through the gate. A user on an older daemon was reassured on page one
+    that their pump would keep running, and then it was stopped.
+    """
+    if daemon_protects_pumps(capabilities):
+        return (
+            "• A <b>pump is never stopped</b> — its speed is shifted instead, so "
+            "coolant keeps flowing. Watch the RPM reading or listen for the change."
+        )
+    return (
+        "• <b>This daemon cannot protect a pump</b> "
+        f"{requires_daemon('pump_protection')}: every fan it identifies is "
+        "stopped briefly, <b>including a pump</b>. If you run a liquid cooler, "
+        "update the daemon before using this wizard."
+    )
 
 
 def header_is_pump_protected(
@@ -92,7 +131,7 @@ def header_is_pump_protected(
         return not header.stop_permitted
     # The reconstruction DOES need the gate: a pre-2.28.0 daemon has no role
     # model at all, so there is nothing to reconstruct from.
-    if capabilities is None or not getattr(capabilities.control, "header_roles", False):
+    if not daemon_protects_pumps(capabilities):
         return False
     if header.role == "pump":
         return True

@@ -115,6 +115,8 @@ This page is covered in depth on the [Hardware Troubleshooting](hardware-trouble
 
 The **Hardware** page is where you see, understand and test your cooling hardware. It has four sections: the **System Readiness Checklist** (the daemon's go/no-go assessment), **Recommended Actions**, **Cooling Hardware** (your coolers and every PWM header), **Hardware Diagnostics** (the active tests), and the **Super-I/O Architecture** report (motherboard sensor/fan-chip detection). The readiness and Super-I/O halves come from a *single* request to the daemon's combined `GET /inventory/hardware-readiness`, which serves one shared, coalesced hardware scan — so those two sections can never disagree with each other.
 
+Every readiness check on this page is explained in full — what it means, why it fails, and how to clear it — in the [Cooling Hardware Readiness Guide](../docs/24_Cooling_Hardware_Readiness_Guide.md); the page's own *Learn how* links point there.
+
 Everything the page *displays* is read-only. The tests in **Hardware Diagnostics** do exercise your hardware, and each is described below; all of them run inside the daemon, which keeps its hwmon lease, the pump safety floor and thermal protection in force throughout. **The GUI never writes a PWM value itself, and no action on this page can stop a pump or drive a fan below its floor.**
 
 ### System Readiness Checklist

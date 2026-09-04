@@ -296,8 +296,8 @@ The daemon owns one absolute backstop independent of the GUI: at or above
 the trip point on the hottest CpuTemp sensor, all OpenFan channels and writable
 hwmon headers are driven to 100% (see `daemon/src/safety.rs`, DEC-022).
 This is non-editable and fires regardless of profile content. **The trip point
-is per-machine (DEC-308)** — at least 105°C, raised to match the CPU's own
-reported design ceiling where the kernel publishes one — and `/diagnostics/hardware`
+is per-machine (DEC-308)** — at least 105°C, raised to `min(ceiling + 5 °C, 115 °C)` where the kernel publishes the
+CPU's own design ceiling — and `/diagnostics/hardware`
 reports the value in use, so a client renders it rather than assuming 105. The 60%
 recovery floor and 40% no-sensor fallback are likewise non-editable. **All three
 are floors over the active profile's output, not replacements for it (DEC-307)**:

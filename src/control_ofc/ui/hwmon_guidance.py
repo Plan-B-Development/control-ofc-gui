@@ -1692,7 +1692,9 @@ AMD_GPU_GUIDANCE_DB: list[AmdGpuGuidance] = [
             "both kernel 6.18.x and 6.19.x — not 6.19 alone.",
             "Roll back to a 6.15-6.17 longterm kernel. 6.18 is NOT a safe "
             "target: ROCm #6101 reports kernel panics on both 6.18.20 and "
-            "6.19.10, and no upstream fix or revert is confirmed.",
+            "6.19.10. That tracker was closed in July 2026, but the fault "
+            "was still being reported on it a month later, so treat the "
+            "closure as bookkeeping rather than a fix.",
             "Recovery from a hang typically requires a hard reboot — running "
             "fan control on a kernel that can hang is not safe.",
         ],
@@ -1718,6 +1720,11 @@ AMD_GPU_GUIDANCE_DB: list[AmdGpuGuidance] = [
             "— it is reported across every tested kernel (6.14, 6.17, 7.0). Use "
             "automatic mode (POST /gpu/{bdf}/fan/reset) until the amdgpu driver "
             "ships SMU iface 0x32.",
+            "Both ROCm trackers cited below are CLOSED (#6101 in July 2026, "
+            "#6155 in May 2026) and neither closure shipped a fix — #6101 "
+            "collected further reports afterwards, including a third "
+            "independent unit, through August 2026. They are cited as "
+            "evidence the fault is real, not as threads to watch for a fix.",
             "The RX 9070 XT (PCI 0x7550, revision 0xC0) and RX 9070 (0x7550, "
             "revision 0xC3) are not affected — they are device 0x7550, distinct "
             "from the R9700's 0x7551.",
@@ -1864,12 +1871,30 @@ def dual_chip_warning_html(
         - every expected chip is in ``detected_chip_names`` (the kernel
           enumerated the full set — nothing to warn about)
 
-    When some expected chips are missing, returns an HTML string with the
-    remediation steps (driver update first; `mmio=on` modparam on
-    pre-2026-03 builds; post-boot warnings — DEC-144) suitable
-    for display in a `Qt.RichText` label. The wording is deliberately
-    explicit about *which* chip is missing so users can correlate with
-    their hardware docs.
+    When some expected chips are missing, returns an HTML string suitable for
+    display in a `Qt.RichText` label, naming *which* chip is missing so users
+    can correlate with their hardware docs.
+
+    **The text states a discriminator, not a remedy (DEC-326 / `UDOC-h`).** Two
+    unrelated faults produce a missing secondary chip and they need opposite
+    responses: a bridge left in config mode (`DEVID=0xFFFF`) is recovered by
+    rebooting without `sensors-detect`, while an eSPI-to-LPC bridge
+    (`DEVID=0x8883`) has **no local fix at all**. This function previously
+    asserted the first case for everyone and prescribed a numbered
+    update/`mmio=on`/reboot loop, which on a 0x8883 board is the futile loop
+    `HOST-c` was raised against — and it rendered on the same report as
+    `lookup_vendor_quirks`' correctly-worded card, so the app contradicted
+    itself on one screen.
+
+    The GUI cannot resolve the branch itself: the DEVID never reaches it. The
+    daemon's kmsg parser (`chip_db.rs::parse_kmsg_for_it87_chips`) extracts only
+    `IT8xxx` *name* tokens, and `Unsupported chip (DEVID=0x8883)` contains no
+    such token, so `kernel_detected_chips` is empty for exactly this case; the
+    active port probe that could read it is opt-in and off by default. So the
+    copy hands the user the one-line `dmesg` check and branches the advice,
+    which is the same shape the daemon settled on in
+    `hwmon/superio.rs::ite_unbound_tail`. Per-board specifics are added on top
+    by `lookup_vendor_quirks`, which is where measured per-board outcomes live.
 
     *board_name* is the DMI ``board_name`` (used only for the heading);
     callers should pass the empty string when DMI is unavailable and the
@@ -1907,33 +1932,39 @@ def dual_chip_warning_html(
     missing_pretty = ", ".join(f"<b>{escape(_pretty_chip(c))}</b>" for c in missing)
     chip_summary = (
         f"expected {expected_pretty}; missing {missing_pretty}.<br><br>"
-        f"<b>Most likely cause:</b> an outdated it87 driver build, or the "
-        f"SuperIO bridge left in configuration mode by an earlier process "
-        f"(typically a previous run of <code>sensors-detect</code>). Current "
-        f"<code>it87-dkms-git</code> builds (2026-03 onwards) reach the "
-        f"secondary chip through the ISA-bridge MMIO path by default and "
-        f"both enumerate <i>and</i> control it; older builds need the "
-        f"<code>mmio=on</code> module parameter.<br><br>"
-        f"<b>To fix:</b><br>"
-        f"&nbsp;&nbsp;1. Update the driver (<code>yay -S it87-dkms-git</code> "
-        f"rebuilds the current upstream snapshot against your kernel).<br>"
-        f"&nbsp;&nbsp;2. Only on older (pre-2026-03) builds: create "
-        f"<code>/etc/modprobe.d/it87.conf</code> with: "
-        f"<code>options it87 mmio=on</code><br>"
-        f"&nbsp;&nbsp;3. Avoid running <code>sensors-detect</code> after boot "
-        f"(it can leave the SuperIO bridge in a bad state).<br>"
-        f"&nbsp;&nbsp;4. Reboot the machine.<br>"
-        f"&nbsp;&nbsp;5. Click <i>Rescan Hardware</i> (in the footer) to re-check.<br>"
+        f"<b>Two different faults produce this, and only one of them has a "
+        f"local fix.</b> Find out which you have before changing anything — "
+        f"run <code>dmesg | grep -i it87</code> and read the secondary chip's "
+        f"device ID:<br><br>"
+        f"&nbsp;&nbsp;<b>DEVID=0xFFFF</b> — the Super-I/O bridge was left in "
+        f"configuration mode, typically by a run of <code>sensors-detect</code> "
+        f"after boot. <b>This one is recoverable:</b> reboot <i>without</i> "
+        f"running <code>sensors-detect</code>, then click <i>Rescan Hardware</i> "
+        f"(in the footer). If you are still on the in-tree driver, install "
+        f"<code>it87-dkms-git</code> as well.<br><br>"
+        f"&nbsp;&nbsp;<b>DEVID=0x8883</b> — the secondary sits behind an "
+        f"eSPI-to-LPC bridge the driver cannot reach. It is <b>unreachable "
+        f"rather than unsupported, and there is no local fix.</b> Do not spend "
+        f"time on these: <code>mmio</code> is already the driver default so "
+        f"setting it changes nothing, <code>force_id</code> does not help, and "
+        f"reinstalling the driver rebuilds the same code. The affected headers "
+        f"stay unavailable until the driver gains support upstream — the rest "
+        f"of your fan control is unaffected.<br><br>"
+        f"&nbsp;&nbsp;<b>No <code>it87</code> lines at all</b> — the driver is "
+        f"not loaded. Install <code>it87-dkms-git</code>, reboot, then rescan."
+        f"<br><br>"
         f"<i>⚠ {REMEDIATION_DISCLAIMER}</i><br><br>"
-        f"<b>Still missing after reboot?</b> The frankcrawford/it87 "
+        f"<b>Which case applies is per board, not per board family</b> — two "
+        f"boards with the same pair of chips can differ. The frankcrawford/it87 "
         f'<a href="https://github.com/frankcrawford/it87/issues/70">issue #70</a> '
-        f"thread documents the same failure mode on similar boards. See also "
-        f"the project's "
+        f"thread tracks the recoverable case on similar boards. See the "
+        f"project's "
         f'<a href="https://github.com/Plan-B-Development/control-ofc-gui/blob/main/'
         f'docs/19_Hardware_Compatibility.md">Hardware Compatibility Guide</a> '
-        f"and the manual's "
+        f"for the per-board table, and the manual's "
         f'<a href="https://github.com/Plan-B-Development/control-ofc-gui/blob/main/'
-        f'manual/driver-setup.md">Driver Setup guide</a>.'
+        f'manual/hardware-troubleshooting.md">Hardware Troubleshooting</a> guide '
+        f"for the full walk-through."
     )
     return heading + chip_summary
 

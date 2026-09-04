@@ -31,6 +31,8 @@ For deeper hardware and sensor topics, see:
 - [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) — vendor-by-vendor BIOS notes (Gigabyte, ASUS, MSI, ASRock)
 - [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) — what each sensor name means and which to trust
 - [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md) — Tctl vs Tdie, edge vs junction, and common AMD-specific traps
+- [Intel Motherboard Fan Control Guide](../docs/23_Intel_Motherboard_Fan_Control_Guide.md) — Intel-platform BIOS notes and Super-I/O specifics
+- [Cooling Hardware Readiness Guide](../docs/24_Cooling_Hardware_Readiness_Guide.md) — what the Hardware page's readiness checks mean and how to clear them
 
 ## Screenshots
 

@@ -130,7 +130,7 @@ not match any installed theme the GUI falls back to Default Dark and
 logs the miss.
 
 ### C. Safety display
-Safety is daemon-owned and **not editable by the GUI**. The daemon reports `min_pwm_percent: 0` for all hwmon headers (no per-header floors). Thermal safety is temperature-triggered: at the trip point → drive all OpenFan and writable hwmon fans to 100% PWM, hold until temperature falls below 80°C, then apply a 60% PWM recovery floor for two cycles (the release cycle and one more) before resuming active control; 40% floor if no CPU sensor for 5 cycles. **The trip point is per-machine (DEC-308)** — at least 105°C, raised to match the CPU's own reported design ceiling where the kernel publishes one — and `emergency_threshold_c` on `GET /diagnostics/hardware` reports the value in use. **All three duties are floors over the active profile's output, never replacements (DEC-307).** GPU fans are excluded — PMFW firmware owns GPU thermal protection (DEC-130). The GUI reads safety metadata from `GET /capabilities` under `limits` and uses it for:
+Safety is daemon-owned and **not editable by the GUI**. The daemon reports `min_pwm_percent: 0` for all hwmon headers (no per-header floors). Thermal safety is temperature-triggered: at the trip point → drive all OpenFan and writable hwmon fans to 100% PWM, hold until temperature falls below 80°C, then apply a 60% PWM recovery floor for two cycles (the release cycle and one more) before resuming active control; 40% floor if no CPU sensor for 5 cycles. **The trip point is per-machine (DEC-308)** — at least 105°C, raised to `min(ceiling + 5 °C, 115 °C)` where the kernel publishes the CPU's own design ceiling — and `emergency_threshold_c` on `GET /diagnostics/hardware` reports the value in use. **All three duties are floors over the active profile's output, never replacements (DEC-307).** GPU fans are excluded — PMFW firmware owns GPU thermal protection (DEC-130). The GUI reads safety metadata from `GET /capabilities` under `limits` and uses it for:
 - curve validation (reject curves that violate floors)
 - display in Controls and on the System State page
 - stale-data timeout thresholds for warning presentation
@@ -261,8 +261,11 @@ These belong to the daemon runtime/config:
   hardware-id-keyed maps (`window_geometry`, `last_page_index`, data-dir
   overrides, `series_colors`, `controls_card_sizes`,
   `diagnostics_hidden_sensor_ids`, `sensor_class_overrides`,
-  `acknowledged_kernel_warnings`, `fan_aliases_seeded`, `daemon_import_prompted`) are excluded — the
-  authoritative set is `MACHINE_SPECIFIC_KEYS` in `app_settings_service.py`;
+  `acknowledged_kernel_warnings`, `fan_aliases_seeded`, `daemon_import_prompted`, and the
+  DEC-245 view-state keys `splitter_sizes`, `logs_level_filters`, `logs_search_text`
+  and `logs_source_filter`) are excluded — the
+  authoritative set is `MACHINE_SPECIFIC_KEYS` in `app_settings_service.py`, which is
+  what to read: this prose list has drifted from it once already (`UDOC-p`);
   `fan_aliases`, `fan_zones`, and `hidden_chart_series` are kept portable. The
   full snapshot still lives in the diagnostics support bundle.
   Because `fan_aliases` is portable it can travel to another machine, which is

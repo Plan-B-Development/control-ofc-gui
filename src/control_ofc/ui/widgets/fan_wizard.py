@@ -63,7 +63,10 @@ from control_ofc.services.cooling_device_view import (
     find_cooling_device,
     merge_cooling_device_payload,
 )
-from control_ofc.services.pump_protection import header_is_pump_protected
+from control_ofc.services.pump_protection import (
+    header_is_pump_protected,
+    pump_identify_warning,
+)
 from control_ofc.ui.components.a11y import name_value_control
 
 if TYPE_CHECKING:
@@ -411,22 +414,26 @@ class IntroPage(QWizardPage):
 
         layout = QVBoxLayout(self)
 
-        # DEC-311: a pump is never stopped — the daemon perturbs its speed
-        # instead. Say so here rather than only at the moment it happens, so a
-        # user with a liquid cooler is not told their pump is about to stop.
-        warning = QLabel(
-            "This wizard will <b>change one fan at a time</b> for several "
-            "seconds so you can observe which physical fan responded.\n\n"
-            "• Ordinary fans are <b>stopped</b> briefly.\n"
-            "• A <b>pump is never stopped</b> — its speed is shifted instead, so "
-            "coolant keeps flowing. Watch the RPM reading or listen for the change.\n"
-            "• Your system should be <b>idle and cool</b> before starting.\n"
-            "• You can <b>abort at any time</b> — fans will be restored to their prior speed.\n"
-            "• Only one fan is tested at a time.\n"
-            "• Temperature is monitored during each test for safety."
-        )
-        warning.setWordWrap(True)
-        layout.addWidget(warning)
+        # DEC-311 / `UDOC-i`: what happens to a PUMP is the daemon's guarantee,
+        # not ours, so that one bullet is built from the capability at
+        # `initializePage` time rather than frozen here. The label used to state
+        # the protected outcome unconditionally, which lied to anyone on a
+        # pre-2.28.0 daemon — the exact case `is_pump_target`'s docstring warns
+        # about, a few hundred lines below.
+        #
+        # The separators are `<br>`, not `\n`: the text contains `<b>` tags, so
+        # `Qt.AutoText` resolves it as rich text and newlines collapse to
+        # spaces. With `\n` every bullet below ran together into one paragraph
+        # — which would have hidden the warning this change adds.
+        self._warning_label = QLabel("")
+        self._warning_label.setWordWrap(True)
+        self._warning_label.setObjectName("FanWizard_Lbl_introWarning")
+        layout.addWidget(self._warning_label)
+        # Seed it here as well as in `initializePage`, so the label is never
+        # blank for a caller that has not shown the page yet. `initializePage`
+        # is what keeps it CORRECT across a reconnect; this only keeps it
+        # non-empty.
+        self._warning_label.setText(self._intro_warning_text())
 
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
@@ -434,7 +441,26 @@ class IntroPage(QWizardPage):
         layout.addWidget(self._status_label)
         layout.addStretch()
 
+    def _intro_warning_text(self) -> str:
+        """Assemble the pre-flight warning, pump bullet included.
+
+        Re-derived per page show so a reconnect to a different daemon cannot
+        leave a stale promise on screen.
+        """
+        return (
+            "This wizard will <b>change one fan at a time</b> for several "
+            "seconds so you can observe which physical fan responded.<br><br>"
+            "• Ordinary fans are <b>stopped</b> briefly.<br>"
+            f"{pump_identify_warning(self._state.capabilities)}<br>"
+            "• Your system should be <b>idle and cool</b> before starting.<br>"
+            "• You can <b>abort at any time</b> — fans will be restored to their "
+            "prior speed.<br>"
+            "• Only one fan is tested at a time.<br>"
+            "• Temperature is monitored during each test for safety."
+        )
+
     def initializePage(self) -> None:
+        self._warning_label.setText(self._intro_warning_text())
         errors = []
         if self._state.connection != ConnectionState.CONNECTED:
             errors.append("Daemon is not connected.")

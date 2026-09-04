@@ -623,3 +623,33 @@ def test_notify_repo_names_an_auth_failure_instead_of_reporting_a_mystery():
         "the dispatch step must not run under `set -e` — belt-and-braces for any "
         "future command added here that is NOT wrapped in an `if` condition"
     )
+
+
+def test_readme_release_line_stays_one_sentence():
+    """`UDOC-a`: the "Latest release:" line must not regrow into release notes.
+
+    `/ofc:release § SKILL.md` specifies this line as a single sentence naming the
+    version, the date and the daemon floor. It had instead accumulated the notes
+    for every version since v2.42.0 — **16,839 characters, 2,741 words, one
+    unbroken paragraph** — and it is the first thing rendered on the GitHub
+    landing page and installed to `/usr/share/doc/control-ofc-gui/README.md`.
+
+    Nothing bounded it, which is why it grew unnoticed: the existing guard beside
+    this one checks only that the daemon *floor* matches `PKGBUILD`, and its own
+    comment ("the line names several capability-gated versions in parentheses")
+    shows the growth had been accommodated rather than caught.
+
+    The bound is deliberately generous — this asserts the line is a sentence, not
+    that it is any particular sentence. Per-version detail belongs in
+    `CHANGELOG.md`, which already carries it in full.
+    """
+    line = next(
+        ln
+        for ln in README.read_text(encoding="utf-8").splitlines()
+        if ln.startswith("**Latest release:**")
+    )
+    assert len(line) <= 400, (
+        f"the release line is {len(line)} characters. It is a one-sentence pointer, "
+        f"not a changelog — move per-version narrative to CHANGELOG.md. "
+        f"Starts: {line[:120]!r}"
+    )

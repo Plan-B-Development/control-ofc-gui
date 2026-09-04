@@ -25,7 +25,7 @@ column therefore reads N/A throughout. Live manual override and fan identify are
 | Serial startup retry | IMPLEMENTED | 5x exponential backoff (1-16s) |
 | **Serial runtime reconnect** | **IMPLEMENTED (R43)** | After 5 consecutive errors, enters reconnect mode with backoff |
 | hwmon manual rescan | IMPLEMENTED | `POST /hwmon/rescan` endpoint |
-| GUI rescan button | **IMPLEMENTED (DEC-147)** | The System State page's "Rescan Hardware" — restores the `DaemonClient.hwmon_rescan` wrapper, pushes fresh headers through `AppState`, chains a diagnostics refetch. New *motherboard* fan-control hardware still requires a daemon restart (daemon-side limit); an OpenFan controller does not, since DEC-265 gave the same button a `POST /fans/openfan/rescan` leg. |
+| GUI rescan button | **IMPLEMENTED (DEC-147)** | The global footer's "Rescan Hardware" action (moved there by DEC-208; DEC-147 introduced it on the System State page) — restores the `DaemonClient.hwmon_rescan` wrapper, pushes fresh headers through `AppState`, chains a diagnostics refetch. New *motherboard* fan-control hardware still requires a daemon restart (daemon-side limit); an OpenFan controller does not, since DEC-265 gave the same button a `POST /fans/openfan/rescan` leg. |
 | udev stable symlink | TEMPLATE ONLY | `packaging/99-control-ofc.rules` — requires user VID/PID |
 | udev hotplug trigger | ABSENT | No automatic device-event service start |
 | Runtime hwmon hotplug | ABSENT | Devices added after startup are invisible |

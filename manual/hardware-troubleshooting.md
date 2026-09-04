@@ -134,7 +134,7 @@ If you have an NVIDIA discrete GPU, Control-OFC **monitors** it but does not dri
 
 This is by design. NVIDIA presents two mutually-exclusive driver worlds, and Control-OFC treats both as read-only:
 
-- **`nouveau`** (the open driver) publishes an hwmon node whose `pwm1` *is* writable, but Control-OFC deliberately **excludes** it from control — GPU fans are owned by the GPU subsystem, the same safety rule applied to AMD (DEC-102).
+- **`nouveau`** (the open driver) publishes an hwmon node whose `pwm1` *is* writable, but Control-OFC deliberately **excludes** it from control — GPU fans are owned by the GPU subsystem, the same safety rule applied to AMD.
 - **Proprietary NVIDIA** exposes no hwmon fan node; where enabled, Control-OFC reads temperature and fan telemetry through the **NVML** userspace library. This path is **opt-in and off by default** (`[detection] enable_nvidia_telemetry` in the daemon config, plus a `/dev/nvidia*` systemd drop-in) and is **experimental** — built and tested, but not yet verified against NVIDIA hardware. It never writes to the GPU.
 
 Fan *write* control for NVIDIA is a possible future addition, deliberately deferred until it can be validated on real hardware.
@@ -308,13 +308,13 @@ owner-confirmed with both chips controllable
 ([issue #89](https://github.com/frankcrawford/it87/issues/89)). Do not read case
 C as "X870E boards are unsupported".
 
-> One exception to "MMIO is good": on **IT8665E** boards (X399 era, e.g. ASUS ROG Zenith Extreme) the new MMIO default *breaks* PWM writes — set `options it87 mmio=off` there instead ([issue #106](https://github.com/frankcrawford/it87/issues/106)).
+> One historical exception to "MMIO is good": on **IT8665E** boards (X399 era, e.g. ASUS ROG Zenith Extreme) the MMIO default *broke* PWM writes. This was fixed upstream by [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged 2026-07-22), which removed MMIO support for that chip in the driver, closing [issue #106](https://github.com/frankcrawford/it87/issues/106). On a current build you need no parameter — update the driver. `options it87 mmio=off` is only needed on a build predating that merge.
 
 ### "Fans run at full speed regardless of profile"
 
 The daemon's thermal failsafe has two distinct triggers, with different fan speeds:
 
-- **Emergency (100%):** any CPU sensor reports at or above the emergency limit. That limit is at least 105°C, and on CPUs whose own design ceiling is higher the daemon raises it to match — a modern Intel part is *meant* to run at its ceiling under load, so a fixed limit would trip on a perfectly healthy machine. The Hardware page shows the limit in use. All OpenFan and writable hwmon fans are forced to 100% and held there until the hottest CPU sensor falls to 80°C or below, then run at a 60% recovery floor for two cycles (the release cycle and one more) before the active profile resumes. GPU fans are deliberately excluded — the GPU's own firmware handles GPU thermal protection.
+- **Emergency (100%):** any CPU sensor reports at or above the emergency limit. That limit is at least 105°C, and where the kernel publishes the CPU's own design ceiling the daemon raises it to that ceiling **plus 5°C**, capped at 115°C. The margin matters: a modern Intel part is *meant* to run at its ceiling under load, so a limit set *at* the ceiling would trip on a perfectly healthy machine and then stay tripped, because release needs a reading at or below 80°C that a part holding its ceiling never produces. The Hardware page shows the limit in use. All OpenFan and writable hwmon fans are forced to 100% and held there until the hottest CPU sensor falls to 80°C or below, then run at a 60% recovery floor for two cycles (the release cycle and one more) before the active profile resumes. GPU fans are deliberately excluded — the GPU's own firmware handles GPU thermal protection.
 - **No-sensor fallback (40%):** no CPU sensor has been seen for 5 consecutive poll cycles. OpenFan and writable hwmon fans are set to a 40% safe floor — so fans sitting at a uniform ~40% (rather than 100%) usually mean a missing CPU sensor, not an overheat.
 
 Both overrides are owned and driven entirely by the daemon — it forces the fan speeds and holds them itself. The GUI simply reflects what the daemon reports: while an override is active it shows a "Daemon thermal override active" warning (in the Dashboard warning count and the event log on the **Logs** page), driven by the `thermal_state` field in the daemon's 1 Hz poll. Normal profile control resumes automatically once the daemon reports a normal thermal state again — fans pinned during an override are the daemon protecting the system, not a stuck profile.
@@ -327,12 +327,12 @@ Open the **System State** page, look at the **GPU diagnostics** row. If `amdgpu.
 
 ### "A popup said my kernel has a known regression — should I worry?"
 
-The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel_warnings.rs`, DEC-098). When the running kernel matches a known issue affecting your hardware, the GUI raises a one-time popup, and the warning stays listed on the **Logs** page until you acknowledge it. The popup includes a Phoronix or upstream-issue reference link.
+The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel_warnings.rs`). When the running kernel matches a known issue affecting your hardware, the GUI raises a one-time popup, and the warning stays listed on the **Logs** page until you acknowledge it. The popup includes a Phoronix or upstream-issue reference link.
 
 Currently catalogued:
 
-- **`rdna_hang_kernel_6_18_6_19` (Critical):** Linux **6.18.x and 6.19.x** on RDNA3/RDNA4 GPUs (RX 7000/9000 series) hard-hang under load ([Phoronix EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025); [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101) reports panics on 6.18.20 and 6.19.10). Pin to a **6.15–6.17** longterm kernel — **do not roll back to 6.18, which is also affected.**
-- **`smu_mismatch_navi48_r9700` (Critical):** the AMD R9700 (PCI `0x7551`) has no working `fan_curve` path on current kernels — an SMU interface-version mismatch (firmware v50 vs driver v46, [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)) leaves `pwm1` read-only and commanded fan changes ineffective. Device-scoped, not 7.0-specific; the RX 9070 XT (`0x7550`) is **not** affected.
+- **`rdna_hang_kernel_6_18_6_19` (Critical):** Linux **6.18.x and 6.19.x** on RDNA3/RDNA4 GPUs (RX 7000/9000 series) hard-hang under load ([Phoronix EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025); [ROCm #6101 — closed 2026-07, fault still reported](https://github.com/ROCm/ROCm/issues/6101) reports panics on 6.18.20 and 6.19.10). Pin to a **6.15–6.17** longterm kernel — **do not roll back to 6.18, which is also affected.**
+- **`smu_mismatch_navi48_r9700` (Critical):** the AMD R9700 (PCI `0x7551`) has no working `fan_curve` path on current kernels — an SMU interface-version mismatch (firmware v50 vs driver v46, [ROCm #6101 — closed 2026-07, fault still reported](https://github.com/ROCm/ROCm/issues/6101)) leaves `pwm1` read-only and commanded fan changes ineffective. Device-scoped, not 7.0-specific; the RX 9070 XT (`0x7550`) is **not** affected.
 
 If you acknowledge a popup it is remembered in the `acknowledged_kernel_warnings` field of your `app_settings.json` and won't re-fire on reconnect or restart. To force the popup to re-appear (e.g. after a kernel update), edit `app_settings.json` and remove the relevant entry, then restart the GUI.
 

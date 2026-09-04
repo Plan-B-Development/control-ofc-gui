@@ -85,7 +85,9 @@ yay -S it87-dkms-git
 yay -S nct6687d-dkms-git
 ```
 
-Both are `-git` packages: every install/reinstall builds the **current upstream snapshot**. That matters — many historical workarounds are already fixed upstream (for the it87 driver: secondary-chip fan control, MMIO on by default since the 2026-03 builds, ACPI-conflict sidestepping). The version number shown on the AUR page is stale `-git` metadata; what installs is upstream HEAD at build time. If you installed the driver months ago and something misbehaves, **reinstalling the package is the first remediation, not the last**.
+Both are `-git` packages: every install/reinstall builds the **current upstream snapshot**. That matters — many historical workarounds are already fixed upstream (for the it87 driver: MMIO on by default since the 2026-03 builds, ACPI-conflict sidestepping). The version number shown on the AUR page is stale `-git` metadata; what installs is upstream HEAD at build time. If you installed the driver months ago and something misbehaves, **reinstalling the package is the first remediation, not the last**.
+
+> **Secondary-chip fan control on dual-Super-I/O Gigabyte boards is bound by board pairing, not fixed for the family.** Some boards work — the X870E AORUS ELITE reports both chips and controls both. Others have a secondary the driver cannot reach at all, measured 2026-09-04 on an X870E AORUS MASTER, and for those **there is no local fix**: reinstalling, `mmio=on` and `force_id` all change nothing. Find out which case you are in before spending time on it — see [Hardware Troubleshooting → *Some of my fan headers are missing*](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up).
 
 ## Step 4 — Load and verify
 
@@ -110,8 +112,8 @@ Boot-time loading is already handled for you: the `control-ofc-daemon` package s
 
 Then verify end-to-end in the GUI:
 
-1. **Restart the daemon** so it adopts the new chip's PWM headers: `sudo systemctl restart control-ofc-daemon`. (A **Rescan Hardware** click on the **System State** page is enough when you only need the chip's *sensors* — fan-control headers are discovered at daemon startup only.)
-2. **System State → Rescan Hardware** — the chips table should show your chip as *loaded* and the header count should match what the board physically has.
+1. **Restart the daemon** so it adopts the new chip's PWM headers: `sudo systemctl restart control-ofc-daemon`. (A **Rescan Hardware** click in the global footer page is enough when you only need the chip's *sensors* — fan-control headers are discovered at daemon startup only.)
+2. Click **Rescan Hardware** in the global footer, then open **System State** — the chips table should show your chip as *loaded* and the header count should match what the board physically has.
 3. Run **Test PWM Control** on a *non-critical chassis fan* header (not CPU/pump). A **"PWM control is working correctly"** result is the finish line.
 4. If the test reports the BIOS reverting control, go to Step 5.
 
@@ -160,8 +162,8 @@ Most users on current driver builds need **none** of these. The exceptions, all 
 
 | Situation | Parameter | Source |
 |---|---|---|
-| Dual-chip Gigabyte board, **old (pre-2026-03)** it87 build, secondary chip missing | `options it87 mmio=on` | [DEC-101 / issue #70](https://github.com/frankcrawford/it87/issues/70) — current builds default this on; update the driver instead |
-| **IT8665E** board (X399 era, e.g. ROG Zenith Extreme) — PWM writes garbled on current builds | `options it87 mmio=off` | [issue #106](https://github.com/frankcrawford/it87/issues/106) |
+| Dual-chip Gigabyte board, **old (pre-2026-03)** it87 build, secondary chip missing | `options it87 mmio=on` | [issue #70](https://github.com/frankcrawford/it87/issues/70) — current builds default this on; update the driver instead. **If the secondary's DEVID reads `0x8883` rather than `0xFFFF`, updating will not help and nothing local will** — see [Hardware Troubleshooting](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) |
+| **IT8665E** board (X399 era, e.g. ROG Zenith Extreme) — PWM writes garbled on **builds predating 2026-07-22 only** | `options it87 mmio=off` | [issue #106](https://github.com/frankcrawford/it87/issues/106) — **closed, fixed upstream by [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged 2026-07-22), which removed MMIO for this chip in the driver.** On a current build no parameter is needed; update the driver instead |
 | `modprobe it87` fails with *Device or resource busy* (ACPI conflict, e.g. B650 GAMING X AX V2) | `options it87 ignore_resource_conflict=1` | [issue #92](https://github.com/frankcrawford/it87/issues/92) — prefer this driver-local option over the system-wide `acpi_enforce_resources=lax` |
 | MSI **NCT6687DR** board (B840/B850/B860/X870/X870E/Z890 only) whose system fans ignore writes and which is **not** on the driver's auto-allowlist | `options nct6687 fan_config=msi_alt1` | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) — see the warning below |
 | `modprobe nct6687` fails with *Device or resource busy* (ACPI conflict) | `acpi_enforce_resources=lax` **as a kernel parameter** | `nct6687` and `nct6775` expose **no** driver-local `ignore_resource_conflict` equivalent, so unlike it87 the system-wide parameter is the only kernel-side remedy — use it deliberately |

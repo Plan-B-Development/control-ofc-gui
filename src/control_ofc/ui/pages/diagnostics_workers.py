@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from control_ofc.services.daemon_features import unsupported_feature_message
+
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
 
@@ -153,7 +155,7 @@ class _GpuVerifyWorker(_SocketWorker):
             if getattr(e, "status", None) == 404 or getattr(e, "code", "") == "not_found":
                 self.verify_error.emit(
                     "unsupported",
-                    "This daemon version does not support GPU fan verification.",
+                    unsupported_feature_message("gpu_fan_verify"),
                 )
             elif _is_soft_safety_refusal(e):
                 # Safety refusal — show the daemon's message verbatim, not as an
@@ -382,7 +384,7 @@ class _HardwareReadinessWorker(_SocketWorker):
             if getattr(e, "status", None) == 404 or getattr(e, "code", "") == "not_found":
                 self.fetch_error.emit(
                     "unsupported",
-                    "This daemon version does not provide the combined hardware-readiness report.",
+                    unsupported_feature_message("hardware_readiness"),
                 )
             elif (
                 getattr(e, "status", None) == 503
@@ -427,9 +429,7 @@ class _HardwareReadinessWorker(_SocketWorker):
             # (that hides the whole page even though the passive GET works). Report
             # it as a transient error so the page survives (CON review, DEC-203).
             if getattr(e, "status", None) == 404 or getattr(e, "code", "") == "not_found":
-                self.probe_error.emit(
-                    "error", "This daemon version does not support the active port probe."
-                )
+                self.probe_error.emit("error", unsupported_feature_message("superio_port_probe"))
             else:
                 self.probe_error.emit("error", e.message)
         except (ConnectionError, OSError) as e:

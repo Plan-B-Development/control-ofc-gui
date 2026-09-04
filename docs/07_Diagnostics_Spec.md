@@ -20,8 +20,9 @@ still exist — only their page homes changed:
   fan-status table.
 - **System State** (`pages/system_state_page.py`) — the `/diagnostics/hardware`
   report: verdict + issue checklist, BIOS-interference monitor, dual-chip
-  warnings, thermal safety & GPU, and the PWM/GPU verify + Rescan Hardware +
-  Open Full Report actions.
+  warnings, thermal safety & GPU, and the PWM/GPU verify + Open Full Report
+  actions. *Rescan Hardware* is a **global-footer** action (DEC-208); this page
+  renders its outcome line, not the button.
 - **Hardware** (`pages/hardware_page.py`) — the daemon's go/no-go readiness
   checklist and Super-I/O chip detection (both from the combined
   `GET /inventory/hardware-readiness`), plus the opt-in Probe ports action.
@@ -279,7 +280,7 @@ If the daemon does not expose a runtime reload endpoint, do not fake a daemon co
 - explain what was and was not reloaded
 
 ### Reconnect controller
-The daemon exposes `POST /hwmon/rescan` (surfaced as *Rescan Hardware* on the
+The daemon exposes `POST /hwmon/rescan` (surfaced as *Rescan Hardware* in the
 System State page since DEC-147) for hwmon re-enumeration; serial-controller
 reconnection remains daemon-automatic (5× backoff + runtime reconnect mode),
 so no GUI reconnect button exists:

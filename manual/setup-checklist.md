@@ -60,7 +60,7 @@ Launch the GUI and check:
 
 ## Step 3 — Run the Hardware Readiness check
 
-Open the **System State** page (the report fetches automatically the first time; **Rescan Hardware** re-runs it) and read the **summary line** — chip count, writable header count, and any issues. [What each section of the report means](hardware-troubleshooting.md#what-the-hardware-readiness-report-shows).
+Open the **System State** page (the report fetches automatically the first time; **Rescan Hardware**, in the global footer, re-runs it) and read the **summary line** — chip count, writable header count, and any issues. [What each section of the report means](hardware-troubleshooting.md#what-the-hardware-readiness-report-shows).
 
 ## Step 4 — Branch: what your hardware needs
 

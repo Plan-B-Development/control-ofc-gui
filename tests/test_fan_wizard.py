@@ -571,17 +571,34 @@ class TestPumpSafeIdentifyCopy:
         qtbot.addWidget(wiz)
         assert wiz.is_pump_target("hwmon:it8696:isa:pwm5:pwm5") is False
 
-    def test_intro_page_warns_that_a_pump_is_never_stopped(self, qtbot):
-        # The intro is shown before any per-fan role is known, so it describes
-        # both behaviours rather than promising a stop.
-        state = self._state_with_pump(header_roles=True)
-        page = IntroPage(state)
-        qtbot.addWidget(page)
+    def test_intro_page_pump_warning_tracks_the_capability(self, qtbot):
+        """`UDOC-i`: assert the RELATIONSHIP, not the literal.
+
+        This test previously passed `header_roles=True` and asserted the string
+        "never stopped" appeared — which is satisfied by a call site that never
+        reads the capability at all, i.e. by the exact defect it now guards
+        against. The intro label WAS unconditional, and this test was green
+        throughout. Both branches, per DEC-324 rule (1).
+        """
         from PySide6.QtWidgets import QLabel
 
-        text = " ".join(w.text() for w in page.findChildren(QLabel))
-        assert "never stopped" in text.lower(), text
-        assert "coolant keeps flowing" in text.lower(), text
+        from control_ofc.services.pump_protection import daemon_protects_pumps
+
+        for header_roles in (True, False):
+            state = self._state_with_pump(header_roles=header_roles)
+            page = IntroPage(state)
+            qtbot.addWidget(page)
+            page.initializePage()
+            text = " ".join(w.text() for w in page.findChildren(QLabel)).lower()
+            assert ("never stopped" in text) == daemon_protects_pumps(state.capabilities), text
+            if header_roles:
+                # The protected branch must still explain WHY it is safe.
+                assert "coolant keeps flowing" in text, text
+            else:
+                # The honest branch must name the version that would fix it,
+                # rather than dead-ending (the `UDOC-l` rule, same change).
+                assert "including a pump" in text, text
+                assert "2.28.0" in text, text
 
     def test_test_page_prompt_names_the_pump_behaviour(self, qtbot):
         state = self._state_with_pump(header_roles=True)

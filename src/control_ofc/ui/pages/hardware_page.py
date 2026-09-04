@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.cooling_device_view import build_cooling_device_views
+from control_ofc.services.daemon_features import unsupported_feature_message
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.hardware_view import (
     build_checklist,
@@ -590,7 +591,7 @@ class HardwarePage(QWidget):
         for button in (self._validation_btn, self._lifecycle_btn):
             button.setEnabled(enabled)
             if not supported:
-                button.setToolTip("This daemon does not support validation sessions.")
+                button.setToolTip(unsupported_feature_message("validation_sessions"))
             elif not has_device:
                 button.setToolTip(
                     "Configure a cooling device first — a session records one named assembly."

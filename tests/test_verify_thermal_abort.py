@@ -7,6 +7,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from control_ofc.api.errors import DaemonError
+from control_ofc.services.daemon_features import unsupported_feature_message
 from control_ofc.ui.pages.diagnostics_workers import _GpuVerifyWorker, _VerifyWorker
 
 
@@ -80,7 +81,13 @@ def test_gpu_verify_404_is_unsupported(qapp):
     worker._ensure_client = MagicMock(return_value=client)
     seen = _capture(worker)
     worker.do_verify("0000:03:00.0")
-    assert seen == [("unsupported", "This daemon version does not support GPU fan verification.")]
+    # `UDOC-l`: the message now comes from the shared registry so it names the
+    # daemon version that provides the route. Asserted as a relationship against
+    # the registry rather than as a literal — a literal here would have to be
+    # re-edited every time the wording moves, and would not check the thing that
+    # matters, which is that the worker emits the registry's message at all.
+    assert seen == [("unsupported", unsupported_feature_message("gpu_fan_verify"))]
+    assert "1.11.0" in seen[0][1], "the message must name the version that provides the route"
 
 
 def test_hwmon_verify_thermal_forcing_refusal_is_soft(qapp):
