@@ -1,5 +1,45 @@
 # Changelog
 
+## [2.57.2] — 2026-09-04
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). **No shipped GUI code
+changed — this release is the contract document and this changelog entry.** It is the GUI
+half of `control-ofc-daemon` v2.34.0 (DEC-321), which closed three P2 register rows
+(`AUD3-b`, `AIO1-d`, `AUD3-m`) that were one failure story: a user-assigned pump role could
+vanish from the daemon's `runtime.toml`, and nothing reported it. All three fixes are
+daemon-side. Nothing on any page behaves differently, and no new daemon version is required
+to run this release.
+
+### Changed
+- **No shipped-code change — the contract doc, plus this entry.**
+  `docs/08_API_Integration_Contract.md` records two daemon changes shipped in
+  `control-ofc-daemon` v2.34.0 (DEC-321), flagged here per the cross-repo contract rule:
+  - **New `/status` + `/poll` field `runtime_config_degraded`** (daemon ≥ 2.34.0, additive,
+    `api_version` unchanged, omitted when the config loaded cleanly). Shape
+    `{reason, path, detail, phase}`. It reports that the daemon's own `runtime.toml` could
+    not be read or parsed and it fell back to defaults — which matters because those
+    defaults carry **no `header_roles`**, so on a board whose Super-I/O publishes no
+    `pwmN_label` files (the case the whole AIO-MB programme exists for) every user-assigned
+    `pump` role loses its 30% floor, its stop exemption and its pump-safe identify. Before
+    this field the entire notification was one line in the daemon's journal. **The GUI does
+    not render it yet** — this release is contract-only on that field; the banner that
+    should consume it is registered as `AUD3-z`. Two properties a future consumer must get
+    right and that the doc spells out: a *missing* `runtime.toml` is deliberately **not**
+    reported (that is first boot), and the field is **sticky until a daemon restart**, so a
+    successful `POST /config/*` does not clear it.
+  - **`POST`/`DELETE /config/*` are now serialised daemon-side** (`AIO1-d`). Until v2.34.0
+    two concurrent config writes each overwrote the other's key — the later write won the
+    file and **both requests answered `200 {"updated": true}`**. That is directly this
+    GUI's Configure-AIO flow, which posts `/config/header-role` then
+    `/config/cooling-device` in one user action, and the loss was asymmetric: the
+    cooling-device write is metadata the engine never reads, but landing it from a stale
+    base dropped the header-role edit before it, i.e. a pump's 30% floor at the next daemon
+    restart. **No GUI change was needed and none was made:** `fan_wizard.py` already blocks
+    on each call and issues them strictly sequentially, which is why the shipped GUI never
+    raced itself. `docs/08` now states that this sequencing is **load-bearing against a
+    daemon < 2.34.0** rather than incidental style, so it is not "tidied" into concurrent
+    calls by a future change.
+
 ## [2.57.1] — 2026-09-04
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). **No shipped GUI code

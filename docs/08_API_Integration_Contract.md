@@ -476,6 +476,46 @@ consumes this **display-only**: the Overview page shows a low-key panel + an "N 
 summary count, and these sensors do **not** raise a staleness warning (they are absent from the live
 sensor list). Older daemons omit the array — the GUI defaults it to empty.
 
+`runtime_config_degraded` (daemon ≥ 2.34.0, additive — `api_version` unchanged, **omitted when the
+config loaded cleanly**) is set when the daemon's own `runtime.toml` could not be read or parsed and
+it fell back to defaults (`AUD3-m`, DEC-321). Shape:
+`{reason, path, detail, phase}`.
+
+| Field | Meaning |
+| --- | --- |
+| `reason` | `unreadable` (I/O error, or larger than the daemon's 4 MiB config read cap) or `malformed` (the bytes were read but are not valid TOML for that daemon version — canonically a **downgrade**, since each section is `deny_unknown_fields`) |
+| `path` | The file that failed to load |
+| `detail` | The underlying I/O or TOML error, verbatim — daemon prose, not a stable token |
+| `phase` | `startup` or `reload`. **These cost different things** — see below |
+
+**[SAFETY] Why this is on the wire at all.** The daemon's `RuntimeConfig::load_from` degrades
+*silently* to defaults so that a corrupt file can never stop it booting — deliberate, and unchanged.
+But those defaults carry **no `header_roles`**, and on a board whose Super-I/O publishes no
+`pwmN_label` files (the case the whole AIO-MB programme exists for) a user's `pump` assignment via
+`POST /config/header-role` is the *only* evidence a header drives a pump. A failed load therefore
+removes that header's 30% floor, its stop exemption and its pump-safe identify — and before this
+field the entire notification was one `warn!` in the daemon's journal. **No client could tell.**
+
+A `phase: "startup"` degradation is the one that drops header roles, because the boot load seeds
+every runtime-mutable key. A `phase: "reload"` degradation (a SIGHUP that could not parse the file)
+is narrower: it re-applies defaults to the running config but commits only `profile_search_dirs`, so
+header roles keep whatever startup established.
+
+Two properties a client must not get wrong:
+
+- **A missing `runtime.toml` is NOT a degradation** and is never reported. That is first boot, and
+  defaults are the correct answer — treating it as damage would put a permanent warning on every
+  fresh install, and a warning that is always on is one nobody reads when it matters.
+- **The field is sticky for the daemon's lifetime.** A later successful `POST /config/*` repairs the
+  *file*, and `header_roles` / `cooling_devices` are re-committed live by their setters — but nearly
+  every other runtime-mutable key is consumed once at startup, so the daemon genuinely is still
+  running on defaults for those. Do not treat a successful write as clearing the condition; only a
+  daemon restart does that. Latest-wins if both phases occur.
+
+Older daemons omit the key entirely, which reads the same as "fine" — the safe direction here, since
+it is exactly the (absent) warning such a daemon shows today. The GUI does **not** yet render this;
+it is contract-only in this release, recorded as `AUD3-z` for the banner that should consume it.
+
 `skipped_controls` (daemon ≥ 2.21.0, additive — `api_version` unchanged, omitted when empty) lists
 logical controls the daemon's profile engine **cannot resolve**, and is therefore not commanding at
 all (273-i). Each entry is `{control_id, control_name, reason, skipped_for_ms}`.
@@ -978,6 +1018,19 @@ headers, auxiliary members and a temperature source. Capability-gated on
 `LogicalControl` / `ControlMember`, does not participate in curve evaluation, and gates no write.
 Naming a header as a device's `pump_member` is a *description*, not a protection grant — the 30%
 floor and pump-safe identify come from `POST /config/header-role`, which is a separate call.
+
+**Concurrent `/config/*` writes are serialised from daemon 2.34.0 (`AIO1-d`, DEC-321) — and were
+not before.** Every setter is load the whole `runtime.toml` → change one key → write it back →
+commit in memory. Until 2.34.0 nothing ordered two of them, so two setters loading the same base
+each overwrote the other's key: the later write won the file, the later commit won the cache, and
+**both requests answered `200 {"updated": true}`**. The Configure-AIO flow is exactly this pattern —
+it posts `POST /config/header-role` and then `POST /config/cooling-device` in one user action — and
+the loss was asymmetric: the cooling-device write is metadata the engine never reads, but landing it
+from a stale base **dropped the header-role edit before it**, i.e. a pump's 30% floor at the next
+daemon restart. Against a daemon **< 2.34.0 the GUI must keep issuing these calls strictly
+sequentially, waiting for each response**, which is what `fan_wizard.py` already does — that is why
+the shipped GUI never raced *itself*. Against ≥ 2.34.0 the ordering is enforced daemon-side. Neither
+version is safe to fire concurrently from two clients on an older daemon.
 
 - `api_version: int` — always `1`.
 - `cooling_devices: list` — each entry:
