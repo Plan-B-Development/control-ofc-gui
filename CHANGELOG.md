@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased]
+
+Wave 2 of the 2026-09-05 wire-surface sweep (`DEC-329`) — the GUI now consumes what the
+daemon already publishes, instead of hardcoding, re-deriving or discarding it. Pairs with
+a daemon-side test-only change; no daemon version floor moves.
+
+### Added
+- **The GUI ↔ daemon wire-field surface is now pinned on both sides** (`WIRE-aj`). A new
+  declared surface (`tests/fixtures/wire_fields.json`) lists, per daemon response struct,
+  every key it puts on the wire and the model that must carry it; the daemon asserts its
+  own serialised shape against the same lists. Nothing previously compared the two, which
+  is the systemic reason the v2.58.0 fix went a whole release unnoticed. For fields marked
+  load-bearing the test also asserts a real *read site* in production code — a parsed field
+  nobody reads is decoration, and having it in the model is what hides that.
+
+### Fixed
+- **The hardware inventory dropped 14 fields the daemon sends** (`WIRE-h`, `WIRE-i`).
+  `GET /inventory/hwmon` returns the same PWM-header objects as `GET /hwmon/headers`, but
+  the GUI modelled them with a second, older class that had missed every field added in the
+  cooling-device work — including the header's **enforced duty floor** and whether it may be
+  stopped at all. Its docstring claimed a field-for-field mirror, dated to a 2026-07-21
+  audit, which is what stopped anyone noticing. The inventory's temperature sensors likewise
+  lost their thresholds, sensor type, age and session min/max, so the same sensor showed
+  thresholds on one screen and none on another. Both now reuse the models that were already
+  correct, so they cannot drift apart again.
+- **A read-only fan header can no longer look controllable through a malformed response**
+  (`WIRE-t`). Two models of the same wire field defaulted opposite ways; the unsafe default
+  is now gone from both. Demo mode declares its headers writable explicitly.
+- **A malformed `GET /capabilities` response no longer aborts startup discovery**
+  (`WIRE-aa`). An explicit JSON `null` for the `devices`, `features` or `control` block
+  raised inside the parser instead of falling back to defaults. Not something the shipping
+  daemon can send — but capabilities is the gate for every control feature, so it degrades
+  rather than throws.
+
 ## [2.58.0] — 2026-09-05
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (**unchanged floor**). The new banner reads a

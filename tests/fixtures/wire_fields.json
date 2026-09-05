@@ -1,0 +1,279 @@
+{
+  "description": "The declared GUI <-> daemon wire-field surface (WIRE-aj). For each daemon Serialize struct the GUI consumes, the exact set of keys it puts on the wire and the dataclass that must model them. Pinned on the daemon side by daemon/src/api/responses.rs::tests::wire_field_surface_is_pinned, which fails if a struct's serialised key set and this list disagree; pinned on this side by tests/test_wire_field_coverage.py, which fails if a declared field has no model slot. Adding a wire field means updating the Rust test, this fixture, and docs/08.",
+  "min_daemon_version": "2.35.4",
+  "structs": [
+    {
+      "daemon": "SensorEntry",
+      "gui": "SensorReading",
+      "endpoints": [
+        "GET /sensors",
+        "GET /poll"
+      ],
+      "fields": [
+        "id",
+        "kind",
+        "label",
+        "value_c",
+        "source",
+        "age_ms",
+        "rate_c_per_s",
+        "session_min_c",
+        "session_max_c",
+        "chip_name",
+        "temp_type",
+        "thresholds",
+        "control_eligible"
+      ],
+      "must_be_read": [
+        "control_eligible",
+        "thresholds",
+        "value_c",
+        "rate_c_per_s"
+      ]
+    },
+    {
+      "daemon": "FanEntry",
+      "gui": "FanReading",
+      "endpoints": [
+        "GET /fans",
+        "GET /poll"
+      ],
+      "fields": [
+        "id",
+        "source",
+        "rpm",
+        "last_commanded_pwm",
+        "duty_pct",
+        "age_ms",
+        "stall_detected",
+        "pwm_enable_mode",
+        "fan_alarm",
+        "pwm_readback_pct",
+        "pwm_commanded_pct"
+      ],
+      "must_be_read": [
+        "stall_detected",
+        "pwm_readback_pct",
+        "pwm_commanded_pct",
+        "duty_pct"
+      ]
+    },
+    {
+      "daemon": "PwmHeaderEntry",
+      "gui": "HwmonHeader",
+      "endpoints": [
+        "GET /hwmon/headers"
+      ],
+      "fields": [
+        "id",
+        "label",
+        "chip_name",
+        "device_id",
+        "pwm_index",
+        "supports_enable",
+        "rpm_available",
+        "min_pwm_percent",
+        "max_pwm_percent",
+        "is_writable",
+        "pwm_mode",
+        "is_aio",
+        "role",
+        "role_source",
+        "effective_min_pwm_pct",
+        "stop_permitted",
+        "cooling_device_id",
+        "pwm_freq_hz",
+        "supported_pwm_enable_modes",
+        "rpm_min_threshold",
+        "rpm_max_threshold",
+        "tach_pulses_per_rev"
+      ],
+      "must_be_read": [
+        "is_writable",
+        "role",
+        "role_source",
+        "effective_min_pwm_pct",
+        "stop_permitted",
+        "supported_pwm_enable_modes",
+        "pwm_freq_hz"
+      ]
+    },
+    {
+      "daemon": "PwmHeaderEntry",
+      "gui": "InventoryPwmControl",
+      "endpoints": [
+        "GET /inventory/hwmon .pwm_controls"
+      ],
+      "note": "The SAME daemon struct as GET /hwmon/headers. Two GUI names for one wire shape is how WIRE-h stayed invisible: HwmonHeader was kept current and InventoryPwmControl was not, while its docstring claimed a field-for-field mirror.",
+      "fields": [
+        "id",
+        "label",
+        "chip_name",
+        "device_id",
+        "pwm_index",
+        "supports_enable",
+        "rpm_available",
+        "min_pwm_percent",
+        "max_pwm_percent",
+        "is_writable",
+        "pwm_mode",
+        "is_aio",
+        "role",
+        "role_source",
+        "effective_min_pwm_pct",
+        "stop_permitted",
+        "cooling_device_id",
+        "pwm_freq_hz",
+        "supported_pwm_enable_modes",
+        "rpm_min_threshold",
+        "rpm_max_threshold",
+        "tach_pulses_per_rev"
+      ],
+      "must_be_read": []
+    },
+    {
+      "daemon": "InventoryTempSensor",
+      "gui": "InventoryTempSensor",
+      "endpoints": [
+        "GET /inventory/hwmon .temp_sensors"
+      ],
+      "note": "serde(flatten) over SensorEntry, so every SensorEntry key rides here too",
+      "fields": [
+        "id",
+        "kind",
+        "label",
+        "value_c",
+        "source",
+        "age_ms",
+        "rate_c_per_s",
+        "session_min_c",
+        "session_max_c",
+        "chip_name",
+        "temp_type",
+        "thresholds",
+        "control_eligible",
+        "classification",
+        "confidence",
+        "rationale"
+      ],
+      "must_be_read": [
+        "classification",
+        "rationale"
+      ]
+    },
+    {
+      "daemon": "FanInputEntry",
+      "gui": "InventoryFanInput",
+      "endpoints": [
+        "GET /inventory/hwmon .monitor_only_fans"
+      ],
+      "fields": [
+        "id",
+        "source",
+        "chip_name",
+        "label",
+        "fan_index"
+      ],
+      "must_be_read": []
+    },
+    {
+      "daemon": "DefaultCpuEntry",
+      "gui": "DefaultCpuSensor",
+      "endpoints": [
+        "GET /inventory/hwmon .default_cpu"
+      ],
+      "fields": [
+        "sensor_id",
+        "confidence",
+        "rationale",
+        "source"
+      ],
+      "must_be_read": [
+        "sensor_id"
+      ]
+    },
+    {
+      "daemon": "HwmonInventoryResponse",
+      "gui": "HwmonInventory",
+      "endpoints": [
+        "GET /inventory/hwmon"
+      ],
+      "fields": [
+        "api_version",
+        "temp_sensors",
+        "pwm_controls",
+        "monitor_only_fans",
+        "default_cpu",
+        "preferences"
+      ],
+      "must_be_read": [
+        "temp_sensors",
+        "default_cpu",
+        "preferences"
+      ]
+    },
+    {
+      "daemon": "DevicePolicySummary",
+      "gui": "DevicePolicySummary",
+      "endpoints": [
+        "GET /inventory/cooling-devices"
+      ],
+      "fields": [
+        "id",
+        "display_name",
+        "minimum_safe_pwm_pct",
+        "supports_stop",
+        "startup_override_seconds",
+        "expected_rpm_min",
+        "expected_rpm_max",
+        "internal_control_possible"
+      ],
+      "must_be_read": [
+        "display_name"
+      ]
+    },
+    {
+      "daemon": "CoolingDeviceEntry",
+      "gui": "CoolingDevice",
+      "endpoints": [
+        "GET /inventory/cooling-devices .cooling_devices"
+      ],
+      "fields": [
+        "id",
+        "name",
+        "kind",
+        "pump_member",
+        "radiator_members",
+        "auxiliary_members",
+        "preferred_sensor",
+        "fallback_sensor",
+        "coolant_sensor",
+        "coolant_telemetry",
+        "device_policy"
+      ],
+      "must_be_read": [
+        "pump_member",
+        "radiator_members",
+        "coolant_telemetry"
+      ]
+    },
+    {
+      "daemon": "CoolingDevicesResponse",
+      "gui": "CoolingDeviceInventory",
+      "endpoints": [
+        "GET /inventory/cooling-devices"
+      ],
+      "fields": [
+        "api_version",
+        "cooling_devices",
+        "available_policies"
+      ],
+      "unmodelled": {
+        "api_version": "Sub-envelope api_version, recorded inert in register row WIRE-ak: the GUI gates on GET /capabilities, never on a per-response version."
+      },
+      "must_be_read": [
+        "cooling_devices"
+      ]
+    }
+  ]
+}

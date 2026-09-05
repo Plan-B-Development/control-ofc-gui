@@ -1951,6 +1951,33 @@ Define internal view-model friendly data classes for:
 - HwmonHeader
 - ApiFault
 
+**One wire struct gets one model class (DEC-329).** Where the daemon reuses a struct across
+endpoints, the GUI aliases rather than mirrors: `pwm_controls[]` on `GET /inventory/hwmon`
+is `Vec<PwmHeaderEntry>` — literally the `GET /hwmon/headers` element — so
+`InventoryPwmControl` *is* `HwmonHeader`, not a copy of it. Where the daemon flattens one
+struct into another (`#[serde(flatten)]`), the GUI subclasses: `InventoryTempSensor`
+extends `SensorReading`. A second class claiming to mirror the first is how eight
+cooling-device fields, including an enforced duty floor, went missing while a docstring
+asserted a field-for-field match.
+
+**The surface is pinned on both sides.** `tests/fixtures/wire_fields.json` declares, per
+daemon `Serialize` struct, the keys it emits and the model that must carry them;
+`daemon/src/api/responses.rs::tests::wire_field_surface_is_pinned` asserts the daemon's
+serialised key set against the same lists, and `tests/test_wire_field_coverage.py` asserts
+each key has a model slot plus — for fields marked load-bearing — a real read site outside
+`api/models.py`. **Adding a field to a pinned struct means updating the Rust arm, the
+fixture, and this document.** Coverage is partial by design: the ten structs behind
+`/sensors`, `/fans`, `/poll`, `/hwmon/headers`, `/inventory/hwmon` and
+`/inventory/cooling-devices`.
+
+**A default that the GUI would act on points the safe way (DEC-329).** `is_writable`
+defaults `false`, not `true`: the daemon always sends it, so the default is only ever
+reached through a malformed response, and there "assume controllable" would offer a
+read-only header in the member-picker that DEC-102 exists to keep out. Likewise the
+`devices` / `features` / `control` blocks of `GET /capabilities` fall back to empty on an
+explicit JSON `null` rather than raising — capabilities is the startup gate for every
+control feature.
+
 ## Missing or partial data
 The GUI must expect:
 - missing devices

@@ -590,17 +590,23 @@ class TestParserFailureModes:
         )
 
     def test_parse_capabilities_with_null_devices_field_falls_back(self):
-        """If a future daemon were to send `devices: null` (unlikely but
-        possible), the parser .get() chain treats it as 'missing'."""
-        # We can't pass None as `.get("devices", {})` returns {} only when
-        # the key is absent, not when its value is None. So this asserts
-        # the current contract: null causes the standard fall-through path
-        # via AttributeError on .get(). Lock the failure mode so a future
-        # contributor cannot quietly "fix" it without an audit.
-        import pytest
+        """A JSON `null` for `devices` degrades to defaults instead of raising.
 
-        with pytest.raises(AttributeError):
-            parse_capabilities({"devices": None})
+        This test used to assert the opposite, deliberately: it locked the
+        AttributeError in place "so a future contributor cannot quietly fix it
+        without an audit". Register row `WIRE-aa` is that audit, and it went the
+        other way — `parse_capabilities` is the startup gate for every control
+        feature, so a malformed response should cost the GUI its capabilities,
+        not its startup. Still unreachable against the shipping daemon (both
+        keys are non-Option Rust structs); the sibling row `WIRE-t` is the same
+        judgement about defaults, one field over.
+        """
+        caps = parse_capabilities({"devices": None})
+        assert caps.amd_gpu.present is False
+        # The guard must not flatten the healthy path.
+        assert (
+            parse_capabilities({"devices": {"amd_gpu": {"present": True}}}).amd_gpu.present is True
+        )
 
     def test_parse_sensors_with_nonlist_sensors_field_raises(self):
         """If `sensors` is a dict instead of a list (bad daemon shape),

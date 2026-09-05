@@ -743,7 +743,13 @@ class HwmonHeader:
     rpm_available: bool = False
     min_pwm_percent: int = 0
     max_pwm_percent: int = 100
-    is_writable: bool = True
+    # Defaults False — the SAFE direction, and register row `WIRE-t`. The daemon
+    # always serialises this key (it is a plain `bool`, not an `Option`), so the
+    # default is only reachable through a malformed or truncated response; there,
+    # `True` would make a read-only header look controllable and offer it in the
+    # member-picker, which DEC-102 exists to prevent. Any construction that means
+    # "writable" must say so explicitly — including the demo seeds, which do.
+    is_writable: bool = False
     pwm_mode: int | None = None  # 0=DC, 1=PWM, None=not exposed
     is_aio: bool = False  # liquid-cooler header (daemon >= 1.18.0, DEC-156)
     # DEC-311 (AIO-MB Phase 1, daemon >= 2.28.0): what this channel DRIVES.
@@ -1254,22 +1260,26 @@ class HardwareDiagnosticsResult:
 
 
 @dataclass
-class InventoryTempSensor:
-    """A temperature sensor from GET /inventory/hwmon, carrying the daemon's
-    fine-grained classification refinement (advisory; the daemon's ``kind`` and
-    thermal safety are unchanged)."""
+class InventoryTempSensor(SensorReading):
+    """A temperature sensor from ``GET /inventory/hwmon`` ``temp_sensors``.
 
-    id: str = ""
-    kind: str = ""
-    label: str = ""
-    value_c: float = 0.0
-    source: str = ""
-    chip_name: str = ""
+    The daemon's ``InventoryTempSensor`` is a ``#[serde(flatten)]`` over
+    ``SensorEntry`` plus three classification keys, so on the wire each object
+    carries the *whole* sensor — thresholds, ``temp_type``, ``age_ms`` and the
+    session min/max included — alongside the refinement. Subclassing
+    ``SensorReading`` mirrors that flatten exactly, which is the point: this
+    class previously redeclared a hand-picked ten of the sixteen keys and
+    quietly lost six of them, so the same sensor carried thresholds on
+    ``/sensors`` and none here (register row ``WIRE-h``). Inheriting means a
+    field added to ``SensorReading`` cannot go missing here again.
+
+    The classification is **advisory** — it refines the coarse ``kind`` and
+    never contradicts it, and the daemon's thermal safety is unaffected.
+    """
+
     classification: str = ""  # cpu_tctl / cpu_package / vrm_temp / motherboard_temp / ...
     confidence: str = ""  # high | medium | low | unknown
     rationale: str = ""
-    # DEC-193: default True so a pre-field daemon leaves sensors selectable.
-    control_eligible: bool = True
 
 
 @dataclass
@@ -1297,35 +1307,21 @@ class InventoryPreferences:
     mb_sensor_id: str | None = None
 
 
-@dataclass
-class InventoryPwmControl:
-    """One controllable PWM header from GET /inventory/hwmon ``pwm_controls``
-    (mirrors the daemon's ``responses.rs::PwmHeaderEntry`` field-for-field;
-    CONTR-1, 2026-07-21 audit)."""
-
-    id: str = ""
-    label: str = ""
-    chip_name: str = ""
-    device_id: str = ""
-    pwm_index: int = 0
-    supports_enable: bool = False
-    rpm_available: bool = False
-    min_pwm_percent: int = 0
-    max_pwm_percent: int = 100
-    is_writable: bool = False
-    # 0 = DC, 1 = PWM; None when the pwmN_mode file is not exposed (the daemon
-    # omits the key).
-    pwm_mode: int | None = None
-    # Daemon-authoritative AIO hint (Kraken/Aquacomputer). Always present from
-    # any daemon that serves this endpoint (≥ 2.6.0, DEC-200 — later than the
-    # field's 1.18.0 introduction); the False default is a forward-compat
-    # safety net only.
-    is_aio: bool = False
-    # DEC-311: per-channel role, with the user's assignment applied. Same
-    # opaque-token rule as `HwmonHeader.role` — render what you do not
-    # recognise, never drop the row.
-    role: str = "unknown"
-    role_source: str = "none"
+# ``GET /inventory/hwmon`` ``pwm_controls`` is ``Vec<PwmHeaderEntry>`` — the
+# *same* daemon struct ``GET /hwmon/headers`` returns, which ``docs/08`` states
+# plainly ("same shape as /hwmon/headers"). It is therefore an alias, not a
+# mirror.
+#
+# It used to be a second dataclass whose docstring claimed to mirror
+# ``responses.rs::PwmHeaderEntry`` "field-for-field; CONTR-1, 2026-07-21 audit".
+# DEC-316 then added eight fields to that struct and updated ``HwmonHeader``
+# only, so the claim went stale and the copy silently dropped
+# ``effective_min_pwm_pct`` and ``stop_permitted`` among others — a safety floor
+# and a stop permission — while reading as authoritative (register rows
+# ``WIRE-h`` / ``WIRE-i``). The two also defaulted ``is_writable`` opposite ways
+# in the same module (``WIRE-t``). One name for one wire struct removes all
+# three failure modes by construction rather than by vigilance.
+InventoryPwmControl = HwmonHeader
 
 
 @dataclass
@@ -1666,8 +1662,15 @@ def _coalesce_pci_bdf(raw: dict) -> dict:
 
 
 def parse_capabilities(data: dict) -> Capabilities:
-    devices = data.get("devices", {})
-    features = data.get("features", {})
+    # `or {}`, not just a `{}` default: `data.get(k, {})` returns None for an
+    # explicit JSON `null`, and every `_filter_fields` call below would then
+    # raise AttributeError on `.items()` and take the whole capabilities parse
+    # with it (register row `WIRE-aa`). Not reachable against the shipping
+    # daemon — both are non-Option Rust structs — but `diagnostics_workers.py`
+    # documents having been bitten by exactly this class of null before, and a
+    # capabilities parse is the startup gate for every control feature.
+    devices = data.get("devices") or {}
+    features = data.get("features") or {}
 
     # DEC-098: kernel_warnings is a list of dicts on the wire; the
     # `_filter_fields` helper would drop it if it landed here as a list of
@@ -1712,7 +1715,7 @@ def parse_capabilities(data: dict) -> Capabilities:
         features=FeatureFlags(**_filter_fields(FeatureFlags, features)),
         # DEC-160: top-level ``control`` block; absent on pre-1.19 daemons →
         # all-default (profile_storage=False), which disables the import offer.
-        control=ControlCapability(**_filter_fields(ControlCapability, data.get("control", {}))),
+        control=ControlCapability(**_filter_fields(ControlCapability, data.get("control") or {})),
     )
 
 
@@ -1826,23 +1829,30 @@ def parse_sensors(data: dict) -> list[SensorReading]:
     return [_parse_sensor_reading(s) for s in sensors]
 
 
-def _parse_sensor_reading(raw: dict) -> SensorReading:
-    """Parse a single ``SensorEntry`` JSON payload into a ``SensorReading``.
+def _parse_sensor_reading[T: SensorReading](raw: dict, cls: type[T] = SensorReading) -> T:
+    """Parse a single ``SensorEntry`` JSON payload into ``cls``.
 
     Handles the DEC-117 nested ``thresholds`` object: the dict-comprehension
     ``_filter_fields`` pattern can't construct a nested dataclass on its own,
     so we hand-parse the threshold sub-payload and inject the result.
+
+    ``cls`` exists for ``GET /inventory/hwmon``'s ``temp_sensors``, which the
+    daemon builds by flattening this very struct into ``InventoryTempSensor``.
+    Routing that list through the same parser is what stops the two drifting —
+    the previous hand-rolled parse there dropped ``thresholds`` outright, and a
+    plain ``_filter_fields`` would leave it as a raw dict in a slot typed
+    ``SensorThresholds | None`` (register row ``WIRE-h``).
     """
     if not isinstance(raw, dict):
-        return SensorReading()
-    fields_only = _filter_fields(SensorReading, raw)
+        return cls()
+    fields_only = _filter_fields(cls, raw)
     thresholds_raw = fields_only.pop("thresholds", None)
     thresholds: SensorThresholds | None = None
     if isinstance(thresholds_raw, dict):
         thresholds = SensorThresholds(**_filter_fields(SensorThresholds, thresholds_raw))
         if thresholds.is_empty():
             thresholds = None
-    return SensorReading(thresholds=thresholds, **fields_only)
+    return cls(thresholds=thresholds, **fields_only)
 
 
 def parse_fans(data: dict) -> list[FanReading]:
@@ -2099,7 +2109,7 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
 
 def parse_hwmon_inventory(data: dict) -> HwmonInventory:
     temp_sensors = [
-        InventoryTempSensor(**_filter_fields(InventoryTempSensor, s))
+        _parse_sensor_reading(s, InventoryTempSensor)
         for s in data.get("temp_sensors", [])
         if isinstance(s, dict)
     ]

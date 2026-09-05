@@ -140,6 +140,10 @@ _DEMO_SENSORS: list[dict] = [
     },
 ]
 
+# Every seed declares `is_writable` explicitly. `HwmonHeader.is_writable`
+# defaults to False (the fail-safe direction, register row `WIRE-t`), so a seed
+# that stays silent would be dropped by the member-picker and demo mode would
+# offer no hwmon headers at all. `tests/test_demo_hwmon_headers.py` pins this.
 _DEMO_HWMON_HEADERS: list[dict] = [
     {
         "id": "hwmon:it8696:pci0:pwm1:CHA_FAN1",
@@ -148,6 +152,7 @@ _DEMO_HWMON_HEADERS: list[dict] = [
         "pwm_index": 1,
         "supports_enable": True,
         "rpm_available": True,
+        "is_writable": True,
         "min_pwm_percent": 0,
         "max_pwm_percent": 100,
     },
@@ -158,6 +163,7 @@ _DEMO_HWMON_HEADERS: list[dict] = [
         "pwm_index": 3,
         "supports_enable": True,
         "rpm_available": True,
+        "is_writable": True,
         "min_pwm_percent": 0,
         "max_pwm_percent": 100,
     },
@@ -169,6 +175,7 @@ _DEMO_HWMON_HEADERS: list[dict] = [
         "pwm_index": 1,
         "supports_enable": True,
         "rpm_available": True,
+        "is_writable": True,
         "min_pwm_percent": 0,
         "max_pwm_percent": 100,
         "is_aio": True,
