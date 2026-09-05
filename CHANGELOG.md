@@ -28,6 +28,12 @@ a daemon-side test-only change; no daemon version floor moves.
   offered a maximum of 12 that the daemon would never have honoured. The ceiling now comes
   from the daemon. Machines with no OpenFan controller, and older daemons, keep the previous
   range.
+- **The Hardware page states its own cooling-device precondition** (`WIRE-z`). Forgetting a
+  cooling device, and the inventory re-fetch that follows it, were the only cooling-device
+  calls in the GUI that did not first check the daemon supports them. Nothing could reach
+  them on a daemon that does not — the cards are built from an inventory the poller declines
+  to fetch — but the guarantee lived in another module, and against an unsupporting daemon
+  the failure would have read as "Could not forget the device: 404".
 - **Daemon configuration rows follow the daemon's own view of what is editable** (`WIRE-g`).
   `GET /config` says per key whether a write route exists for it; the GUI decided that for
   itself, so a key the daemon had made read-only would still offer an editor whose only

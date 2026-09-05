@@ -434,6 +434,22 @@ class HardwarePage(QWidget):
     def _capabilities(self):
         return self._state.capabilities if self._state else None
 
+    def _supports_cooling_devices(self) -> bool:
+        """Whether this daemon serves the DEC-316 cooling-device routes.
+
+        Every other cooling-device call site in the GUI states this precondition
+        (`polling.py:142`, `controls_page.py::_supports_cooling_devices`); the
+        two on this page did not (`WIRE-z`). They were *transitively* safe — the
+        cards can only be populated from an inventory the poller refuses to
+        fetch without the capability — but a precondition held by someone else's
+        code is one an edit can remove without touching this file, and a
+        404 from `DELETE /config/cooling-device/{id}` would surface here as
+        "Could not forget the device: 404" rather than as "this daemon is too
+        old".
+        """
+        caps = self._capabilities()
+        return bool(caps and getattr(caps.control, "cooling_devices", False))
+
     def _sensor_labels(self) -> dict[str, str]:
         return {s.id: (s.label or s.id) for s in (self._state.sensors if self._state else [])}
 
@@ -1163,6 +1179,12 @@ class HardwarePage(QWidget):
         if not self._client:
             self._show_diag_message("Cannot forget device: no daemon connection.")
             return
+        if not self._supports_cooling_devices():
+            self._show_diag_message(
+                "This daemon does not support cooling-device topology, so there is "
+                "nothing to forget."
+            )
+            return
         try:
             self._client.delete_cooling_device(device_id)
         except Exception as exc:
@@ -1186,7 +1208,7 @@ class HardwarePage(QWidget):
         # every device card twice for one click. The explicit refresh is the
         # fallback for the paths that did NOT push to state.
         pushed = False
-        if self._state is not None:
+        if self._state is not None and self._supports_cooling_devices():
             try:
                 self._state.set_cooling_devices(self._client.get_cooling_devices())
                 pushed = True
