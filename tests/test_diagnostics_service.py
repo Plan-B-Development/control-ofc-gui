@@ -129,7 +129,7 @@ class TestFormatDaemonStatus:
         )
         state.sensors = [
             SensorReading(
-                id="s1", kind="CpuTemp", label="Tctl", value_c=45.0, source="hwmon", age_ms=100
+                id="s1", kind="cpu_temp", label="Tctl", value_c=45.0, source="hwmon", age_ms=100
             )
         ]
 
@@ -357,7 +357,7 @@ class TestExportSupportBundle:
         state.set_status(DaemonStatus(overall_status="healthy", daemon_version="1.4.0"))
         state.sensors = [
             SensorReading(
-                id="s1", kind="CpuTemp", label="Tctl", value_c=45.0, source="hwmon", age_ms=100
+                id="s1", kind="cpu_temp", label="Tctl", value_c=45.0, source="hwmon", age_ms=100
             )
         ]
         state.fans = [

@@ -119,7 +119,7 @@ class TestSensorUpdatesDriveNoControl:
         # the input the deleted control loop would have evaluated into a write.
         for temp in (30.0, 55.0, 70.0, 95.0):
             app_state.set_sensors(
-                [SensorReading(id="cpu", kind="CpuTemp", label="Tctl", value_c=temp)]
+                [SensorReading(id="cpu", kind="cpu_temp", label="Tctl", value_c=temp)]
             )
 
         # The GUI is a viewer: telemetry must never drive a write/override/eval.

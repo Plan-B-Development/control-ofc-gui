@@ -858,13 +858,13 @@ class TestCurveEditorSensorLabel:
         page = ControlsPage(state=app_state, profile_service=profile_service)
         qtbot.addWidget(page)
         zero = SensorReading(
-            id="cpu", kind="CpuTemp", label="Tctl", value_c=0.0, chip_name="k10temp"
+            id="cpu", kind="cpu_temp", label="Tctl", value_c=0.0, chip_name="k10temp"
         )
         warm = SensorReading(
-            id="cpu", kind="CpuTemp", label="Tctl", value_c=42.5, chip_name="k10temp"
+            id="cpu", kind="cpu_temp", label="Tctl", value_c=42.5, chip_name="k10temp"
         )
         missing = SensorReading(
-            id="cpu", kind="CpuTemp", label="Tctl", value_c=None, chip_name="k10temp"
+            id="cpu", kind="cpu_temp", label="Tctl", value_c=None, chip_name="k10temp"
         )  # type: ignore[arg-type]
         assert "0.0" in page._sensor_combo_label(zero)  # was absent before the fix
         assert "42.5" in page._sensor_combo_label(warm)  # format unchanged

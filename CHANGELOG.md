@@ -71,7 +71,19 @@ a daemon-side test-only change; no daemon version floor moves.
   itself, so a key the daemon had made read-only would still offer an editor whose only
   possible outcome was an error.
 
+- **Liquid temperature is charted by default on a liquid-cooled machine** (`WIRE-ai`).
+  The default chart seeded CPU, GPU and motherboard only, so on an AIO the coolant
+  temperature — arguably the headline number — was absent unless you went looking for it.
+  Air-cooled machines are unchanged.
+
 ### Fixed
+- **Demo mode's sensor summary was blank, and the coolant count was missing everywhere**
+  (`WIRE-c`). The Overview line read `Sensors: 10 total` with no breakdown at all in demo
+  mode. Two causes: there was never a `coolant_temp` branch (the kind has existed since
+  liquid-cooler support shipped), and demo mode emitted sensor kinds in a spelling the
+  daemon never uses — which six other modules had quietly grown code to tolerate. Fixed at
+  the source: demo mode now emits exactly what the daemon does, and that compensation is
+  gone from all six.
 - **The liquid-cooling line trusts the daemon's own verdict** (`WIRE-s`). It re-derived
   supported / monitor-only / unsupported from two other fields instead of reading the token
   the daemon publishes. Equivalent today; a rule the daemon owns and either side could have

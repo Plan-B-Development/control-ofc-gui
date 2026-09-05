@@ -48,7 +48,7 @@ class TestDashboardStates:
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_sensors(
             [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=42.0, age_ms=100),
+                SensorReading(id="s1", label="CPU", kind="cpu_temp", value_c=42.0, age_ms=100),
             ]
         )
         assert window.dashboard_page._stack.currentIndex() == 2
@@ -68,7 +68,7 @@ class TestDashboardStates:
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_sensors(
             [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=42.0, age_ms=100),
+                SensorReading(id="s1", label="CPU", kind="cpu_temp", value_c=42.0, age_ms=100),
             ]
         )
         assert window.dashboard_page._stack.currentIndex() == 2
@@ -321,8 +321,8 @@ class TestDashboardContent:
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_sensors(
             [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=72.5, age_ms=100),
-                SensorReading(id="s2", label="GPU", kind="GpuTemp", value_c=65.0, age_ms=100),
+                SensorReading(id="s1", label="CPU", kind="cpu_temp", value_c=72.5, age_ms=100),
+                SensorReading(id="s2", label="GPU", kind="gpu_temp", value_c=65.0, age_ms=100),
             ]
         )
         shown = window.dashboard_page._sensor_panel.displayed_sensor_ids()
@@ -350,7 +350,7 @@ class TestDashboardContent:
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_sensors(
             [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=42.0, age_ms=5000),
+                SensorReading(id="s1", label="CPU", kind="cpu_temp", value_c=42.0, age_ms=5000),
             ]
         )
         assert app_state.warning_count >= 1
@@ -410,8 +410,8 @@ class TestSensorSeriesPanel:
         qtbot.addWidget(panel)
 
         sensors = [
-            SensorReading(id="s1", label="Tctl", kind="CpuTemp", value_c=55.0, age_ms=50),
-            SensorReading(id="s2", label="edge", kind="GpuTemp", value_c=42.0, age_ms=50),
+            SensorReading(id="s1", label="Tctl", kind="cpu_temp", value_c=55.0, age_ms=50),
+            SensorReading(id="s2", label="edge", kind="gpu_temp", value_c=42.0, age_ms=50),
         ]
         panel.update_sensors(sensors)
 
@@ -429,12 +429,12 @@ class TestSensorSeriesPanel:
         panel = SensorSeriesPanel(sel)
         qtbot.addWidget(panel)
 
-        sensors = [SensorReading(id="s1", label="Tctl", kind="CpuTemp", value_c=55.0, age_ms=50)]
+        sensors = [SensorReading(id="s1", label="Tctl", kind="cpu_temp", value_c=55.0, age_ms=50)]
         panel.update_sensors(sensors)
         assert "55.0" in panel._sensor_items["s1"].text(1)
 
         # Update value
-        sensors2 = [SensorReading(id="s1", label="Tctl", kind="CpuTemp", value_c=62.3, age_ms=50)]
+        sensors2 = [SensorReading(id="s1", label="Tctl", kind="cpu_temp", value_c=62.3, age_ms=50)]
         panel.update_sensors(sensors2)
         assert "62.3" in panel._sensor_items["s1"].text(1)
 
@@ -461,12 +461,12 @@ class TestSensorSeriesPanel:
         panel = SensorSeriesPanel(sel)
         qtbot.addWidget(panel)
 
-        sensors = [SensorReading(id="s1", label="Tctl", kind="CpuTemp", value_c=55.0, age_ms=50)]
+        sensors = [SensorReading(id="s1", label="Tctl", kind="cpu_temp", value_c=55.0, age_ms=50)]
         panel.update_sensors(sensors)
         first_item = panel._sensor_items["s1"]
 
         # Second call with same sensor IDs should reuse items
-        sensors2 = [SensorReading(id="s1", label="Tctl", kind="CpuTemp", value_c=60.0, age_ms=50)]
+        sensors2 = [SensorReading(id="s1", label="Tctl", kind="cpu_temp", value_c=60.0, age_ms=50)]
         panel.update_sensors(sensors2)
         assert panel._sensor_items["s1"] is first_item  # Same object
         assert "60.0" in first_item.text(1)
@@ -484,7 +484,7 @@ class TestR12SensorPanelNoRebuild:
         panel = SensorSeriesPanel(sel)
         qtbot.addWidget(panel)
 
-        sensors = [SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=45.0, age_ms=50)]
+        sensors = [SensorReading(id="s1", label="CPU", kind="cpu_temp", value_c=45.0, age_ms=50)]
         panel.update_sensors(sensors)
         first_item = panel._sensor_items["s1"]
 
@@ -535,7 +535,7 @@ class TestR12ProfileSelector:
         selected = page._profile_combo.currentText()
         # Simulate sensor update
         app_state.set_sensors(
-            [SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=50.0, age_ms=50)]
+            [SensorReading(id="s1", label="CPU", kind="cpu_temp", value_c=50.0, age_ms=50)]
         )
         assert page._profile_combo.currentText() == selected
 
@@ -547,8 +547,8 @@ class TestR14SensorPanelGrouping:
         """Sensor update through dashboard creates groups in the sensor panel."""
         app_state.set_sensors(
             [
-                SensorReading(id="s1", label="Tctl", kind="CpuTemp", value_c=55.0, age_ms=50),
-                SensorReading(id="s2", label="edge", kind="GpuTemp", value_c=42.0, age_ms=50),
+                SensorReading(id="s1", label="Tctl", kind="cpu_temp", value_c=55.0, age_ms=50),
+                SensorReading(id="s2", label="edge", kind="gpu_temp", value_c=42.0, age_ms=50),
             ]
         )
         panel = window.dashboard_page._sensor_panel
@@ -558,13 +558,13 @@ class TestR14SensorPanelGrouping:
     def test_sensor_values_update_via_dashboard(self, qtbot, window, app_state):
         """Values update through the dashboard signal chain."""
         app_state.set_sensors(
-            [SensorReading(id="s1", label="Tctl", kind="CpuTemp", value_c=55.0, age_ms=50)]
+            [SensorReading(id="s1", label="Tctl", kind="cpu_temp", value_c=55.0, age_ms=50)]
         )
         panel = window.dashboard_page._sensor_panel
         assert "55.0" in panel._sensor_items["s1"].text(1)
 
         app_state.set_sensors(
-            [SensorReading(id="s1", label="Tctl", kind="CpuTemp", value_c=62.3, age_ms=50)]
+            [SensorReading(id="s1", label="Tctl", kind="cpu_temp", value_c=62.3, age_ms=50)]
         )
         assert "62.3" in panel._sensor_items["s1"].text(1)
 

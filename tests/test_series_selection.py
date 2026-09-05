@@ -196,14 +196,43 @@ def test_default_series_picks_one_per_category():
     assert default_series_keys(sensors) == {"sensor:c0", "sensor:g0", "sensor:m0"}
 
 
-def test_default_series_accepts_both_kind_casings():
-    """The daemon sends snake_case kinds; demo mode sends PascalCase. Both must
-    resolve, or the demo chart would silently come up empty."""
+def test_default_series_uses_the_wire_kind_tokens_only():
+    """One spelling, and it is the daemon's (`WIRE-c`).
+
+    This test used to assert that BOTH casings resolved, because `DemoService`
+    emitted PascalCase kinds the daemon never sends. That was fixed at the
+    source, so a PascalCase kind now resolves to nothing — which is correct: it
+    is not a value any producer emits, and accepting it would keep the
+    compensation alive in the one place still testing it.
+    """
+    wire = [_sensor("c0", "cpu_temp"), _sensor("g0", "gpu_temp"), _sensor("m0", "mb_temp")]
+    assert default_series_keys(wire) == {"sensor:c0", "sensor:g0", "sensor:m0"}
+    # Deliberately PascalCase: this asserts the compensation is GONE, so it
+    # must survive any future normalisation sweep over this file.
+    assert default_series_keys([_sensor("c0", "Cpu" + "Temp")]) == set()
+
+
+def test_default_series_seeds_coolant_on_a_liquid_cooled_machine():
+    """`WIRE-ai`: on an AIO machine the coolant temperature is arguably the
+    headline number, and it was absent from the default chart."""
     sensors = [
-        _sensor("c0", "CpuTemp"),
-        _sensor("g0", "GpuTemp"),
-        _sensor("m0", "MbTemp"),
+        _sensor("c0", "cpu_temp"),
+        _sensor("g0", "gpu_temp"),
+        _sensor("m0", "mb_temp"),
+        _sensor("l0", "coolant_temp"),
     ]
+    assert default_series_keys(sensors) == {
+        "sensor:c0",
+        "sensor:g0",
+        "sensor:m0",
+        "sensor:l0",
+    }
+
+
+def test_an_air_cooled_machine_gets_exactly_what_it_got_before():
+    """The opposite branch: the coolant slot must not add an empty series, or a
+    machine with no liquid cooler pays for a feature it cannot use."""
+    sensors = [_sensor("c0", "cpu_temp"), _sensor("g0", "gpu_temp"), _sensor("m0", "mb_temp")]
     assert default_series_keys(sensors) == {"sensor:c0", "sensor:g0", "sensor:m0"}
 
 

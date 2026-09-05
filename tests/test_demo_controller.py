@@ -21,7 +21,7 @@ from control_ofc.services.profile_service import (
 def _setup(curve, ctrl, sensor_temp=60.0):
     state = AppState()
     state.set_sensors(
-        [SensorReading(id="cpu", kind="CpuTemp", label="t", value_c=sensor_temp, age_ms=10)]
+        [SensorReading(id="cpu", kind="cpu_temp", label="t", value_c=sensor_temp, age_ms=10)]
     )
     demo = DemoService()
     ps = ProfileService()
@@ -150,7 +150,9 @@ def test_no_deadband_output_tracks_sub_2c_fall_immediately(qtbot):
         members=[ControlMember(source="openfan", member_id="openfan:ch00")],
     )
     state = AppState()
-    state.set_sensors([SensorReading(id="cpu", kind="CpuTemp", label="t", value_c=60.0, age_ms=10)])
+    state.set_sensors(
+        [SensorReading(id="cpu", kind="cpu_temp", label="t", value_c=60.0, age_ms=10)]
+    )
     demo = DemoService()
     ps = ProfileService()
     ps._profiles["p"] = Profile(id="p", name="P", controls=[ctrl], curves=[curve])
@@ -161,6 +163,8 @@ def test_no_deadband_output_tracks_sub_2c_fall_immediately(qtbot):
     assert demo._fan_pwm["openfan:ch00"] == 60
 
     # 1 °C fall — inside the daemon's deadband — must still update at once.
-    state.set_sensors([SensorReading(id="cpu", kind="CpuTemp", label="t", value_c=59.0, age_ms=10)])
+    state.set_sensors(
+        [SensorReading(id="cpu", kind="cpu_temp", label="t", value_c=59.0, age_ms=10)]
+    )
     dc.tick()
     assert demo._fan_pwm["openfan:ch00"] == 58

@@ -37,16 +37,11 @@ if TYPE_CHECKING:
 # Sensor kind → group key + display label
 _SENSOR_KIND_GROUPS: dict[str, tuple[str, str]] = {
     "cpu_temp": ("cpu", "CPU"),
-    "CpuTemp": ("cpu", "CPU"),
     "gpu_temp": ("gpu", "GPU"),
-    "GpuTemp": ("gpu", "GPU"),
     # DEC-157: liquid-cooler coolant temperatures cluster under "AIO / Liquid".
     "coolant_temp": ("aio", "AIO / Liquid"),
-    "CoolantTemp": ("aio", "AIO / Liquid"),
     "mb_temp": ("mb", "Motherboard"),
-    "MbTemp": ("mb", "Motherboard"),
     "disk_temp": ("disk", "Disk"),
-    "DiskTemp": ("disk", "Disk"),
 }
 
 # Order for display

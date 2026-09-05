@@ -307,7 +307,7 @@ def test_parse_sensors():
         "sensors": [
             {
                 "id": "hwmon:k10temp:Tctl",
-                "kind": "CpuTemp",
+                "kind": "cpu_temp",
                 "label": "CPU Tctl",
                 "value_c": 45.5,
                 "source": "hwmon",
@@ -442,7 +442,7 @@ class TestParserResilience:
             "sensors": [
                 {
                     "id": "cpu_temp",
-                    "kind": "CpuTemp",
+                    "kind": "cpu_temp",
                     "label": "CPU",
                     "value_c": 55.0,
                     "age_ms": 200,
@@ -474,7 +474,7 @@ class TestParserResilience:
 
     def test_sensors_missing_optional_fields_use_defaults(self):
         """Missing optional fields fall back to dataclass defaults."""
-        data = {"sensors": [{"id": "s1", "kind": "CpuTemp", "label": "CPU"}]}
+        data = {"sensors": [{"id": "s1", "kind": "cpu_temp", "label": "CPU"}]}
         result = parse_sensors(data)
         assert result[0].value_c == 0.0
         assert result[0].age_ms == 0

@@ -64,31 +64,40 @@ _DEMO_FANS: list[dict] = [
     {"id": "nvidia_gpu:0000:01:00.0", "source": "nvidia_gpu", "label": "RTX 4080 Fan"},
 ]
 
+# `kind` is the WIRE contract: snake_case, exactly as `GET /sensors` sends it
+# (`docs/08` § GET /sensors). This file emitted PascalCase for most of the
+# project's life, and six consumers grew a dual-casing tax to compensate — each
+# testing the kind against a tuple of both spellings. The seventh consumer, the
+# Overview sensor summary, was written against the wire contract alone and
+# therefore reported `Sensors: 10 total` with no breakdown at all in demo mode
+# (register row `WIRE-c`). Do not reintroduce the other spelling: a demo payload
+# that does not match the wire is a fixture that tests the compensation instead
+# of the code, and `test_wire_g9_coolant_and_casing.py` scans this tree for it.
 _DEMO_SENSORS: list[dict] = [
     {
         "id": "hwmon:k10temp:0000:00:18.3:Tctl",
-        "kind": "CpuTemp",
+        "kind": "cpu_temp",
         "label": "Tctl",
         "source": "hwmon",
         "chip_name": "k10temp",
     },
     {
         "id": "hwmon:k10temp:0000:00:18.3:Tccd1",
-        "kind": "CpuTemp",
+        "kind": "cpu_temp",
         "label": "Tccd1",
         "source": "hwmon",
         "chip_name": "k10temp",
     },
     {
         "id": "hwmon:amdgpu:0000:2d:00.0:edge",
-        "kind": "GpuTemp",
+        "kind": "gpu_temp",
         "label": "edge",
         "source": "amd_gpu",
         "chip_name": "amdgpu",
     },
     {
         "id": "hwmon:amdgpu:0000:2d:00.0:junction",
-        "kind": "GpuTemp",
+        "kind": "gpu_temp",
         "label": "junction",
         "source": "amd_gpu",
         "chip_name": "amdgpu",
@@ -96,14 +105,14 @@ _DEMO_SENSORS: list[dict] = [
     # Intel Arc (Battlemage) via the xe driver — temps start at temp2 (DEC-121).
     {
         "id": "hwmon:xe:0000:03:00.0:temp2",
-        "kind": "GpuTemp",
+        "kind": "gpu_temp",
         "label": "temp2",
         "source": "intel_gpu",
         "chip_name": "xe",
     },
     {
         "id": "hwmon:xe:0000:03:00.0:temp3",
-        "kind": "GpuTemp",
+        "kind": "gpu_temp",
         "label": "temp3",
         "source": "intel_gpu",
         "chip_name": "xe",
@@ -111,21 +120,21 @@ _DEMO_SENSORS: list[dict] = [
     # NVIDIA discrete GPU (DEC-204) — via the open nouveau driver hwmon node.
     {
         "id": "hwmon:nouveau:0000:01:00.0:temp1",
-        "kind": "GpuTemp",
+        "kind": "gpu_temp",
         "label": "temp1",
         "source": "nvidia_gpu",
         "chip_name": "nouveau",
     },
     {
         "id": "hwmon:it8696:it87.2624:temp1",
-        "kind": "MbTemp",
+        "kind": "mb_temp",
         "label": "temp1",
         "source": "hwmon",
         "chip_name": "it8696",
     },
     {
         "id": "hwmon:nvme:0000:01:00.0:Composite",
-        "kind": "DiskTemp",
+        "kind": "disk_temp",
         "label": "Composite",
         "source": "hwmon",
         "chip_name": "nvme",
@@ -133,7 +142,7 @@ _DEMO_SENSORS: list[dict] = [
     # NZXT Kraken AIO coolant temperature (DEC-156) — classifies as Liquid.
     {
         "id": "hwmon:z53:usb-3-2:Coolant",
-        "kind": "CoolantTemp",
+        "kind": "coolant_temp",
         "label": "Coolant",
         "source": "hwmon",
         "chip_name": "z53",
@@ -321,13 +330,13 @@ class DemoService:
     def sensors(self) -> list[SensorReading]:
         readings = []
         for s in _DEMO_SENSORS:
-            if s["kind"] == "CpuTemp":
+            if s["kind"] == "cpu_temp":
                 val = self._drift(self._base_cpu_temp, 8.0, 90.0)
-            elif s["kind"] == "GpuTemp":
+            elif s["kind"] == "gpu_temp":
                 val = self._drift(self._base_gpu_temp, 12.0, 150.0)
-            elif s["kind"] == "MbTemp":
+            elif s["kind"] == "mb_temp":
                 val = self._drift(self._base_mb_temp, 3.0, 200.0)
-            elif s["kind"] == "CoolantTemp":
+            elif s["kind"] == "coolant_temp":
                 val = self._drift(self._base_coolant_temp, 5.0, 60.0)
             else:
                 val = self._drift(self._base_disk_temp, 2.0, 300.0)

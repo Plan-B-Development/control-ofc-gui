@@ -10,7 +10,7 @@ from control_ofc.services.history_store import HistoryStore, TimestampedReading
 
 def test_record_sensors():
     store = HistoryStore()
-    sensors = [SensorReading(id="cpu", kind="CpuTemp", value_c=45.0)]
+    sensors = [SensorReading(id="cpu", kind="cpu_temp", value_c=45.0)]
     store.record_sensors(sensors)
     series = store.get_series("sensor:cpu")
     assert len(series) == 1
@@ -322,14 +322,14 @@ def test_generation_stable_across_plain_appends():
     store = HistoryStore()
     key = "sensor:cpu"
     assert store.generation(key) == 0
-    store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=50.0, age_ms=10)])
-    store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=51.0, age_ms=10)])
+    store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=50.0, age_ms=10)])
+    store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=51.0, age_ms=10)])
     assert store.generation("sensor:cpu") == 0  # append-only → cache stays valid
 
 
 def test_generation_bumps_on_prefill_merge():
     store = HistoryStore()
-    store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=50.0, age_ms=10)])
+    store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=50.0, age_ms=10)])
     key = "sensor:cpu"
     before = store.generation(key)
     now_ms = int(time.time() * 1000)
@@ -339,7 +339,7 @@ def test_generation_bumps_on_prefill_merge():
 
 def test_generation_bumps_on_clear():
     store = HistoryStore()
-    store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=50.0, age_ms=10)])
+    store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=50.0, age_ms=10)])
     before = store.generation("sensor:cpu")
     store.clear()
     assert store.generation("sensor:cpu") == before + 1

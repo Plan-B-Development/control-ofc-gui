@@ -142,7 +142,7 @@ class TestWindowedSeriesParity:
         bump must force a rebuild so the merged points appear (a pure
         incremental append would silently miss them)."""
         store = HistoryStore()
-        store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=55.0, age_ms=10)])
+        store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=55.0, age_ms=10)])
         chart = self._chart(qtbot, store)
         now = time.monotonic()
         assert chart._windowed_series("sensor:cpu", now)[0] is not None  # cache built
@@ -158,7 +158,7 @@ class TestWindowedSeriesParity:
 
     def test_clear_invalidates_cache(self, qtbot):
         store = HistoryStore()
-        store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=55.0, age_ms=10)])
+        store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=55.0, age_ms=10)])
         chart = self._chart(qtbot, store)
         assert chart._windowed_series("sensor:cpu", time.monotonic())[0] is not None
         store.clear()
@@ -171,7 +171,7 @@ class TestWindowedSeriesParity:
 class TestChartIntegration:
     def test_update_chart_plots_windowed_data_incrementally(self, qtbot):
         store = HistoryStore()
-        store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=50.0, age_ms=10)])
+        store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=50.0, age_ms=10)])
         chart = TimelineChart(store)
         qtbot.addWidget(chart)
         chart.update_chart()
@@ -179,7 +179,7 @@ class TestChartIntegration:
         _, y = chart._temp_items["sensor:cpu"].getOriginalDataset()
         assert list(y) == [50.0]
 
-        store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=51.0, age_ms=10)])
+        store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=51.0, age_ms=10)])
         chart.update_chart()  # steady-state incremental tick
         _, y = chart._temp_items["sensor:cpu"].getOriginalDataset()
         assert list(y) == [50.0, 51.0]
@@ -187,7 +187,7 @@ class TestChartIntegration:
 
     def test_stale_key_removal_drops_cache(self, qtbot):
         store = HistoryStore()
-        store.record_sensors([SensorReading(id="cpu", kind="CpuTemp", value_c=50.0, age_ms=10)])
+        store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=50.0, age_ms=10)])
         chart = TimelineChart(store)
         qtbot.addWidget(chart)
         chart.update_chart()

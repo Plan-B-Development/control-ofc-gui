@@ -1151,7 +1151,10 @@ def _real_header_label(header: HwmonHeader) -> str:
 
 
 _CPU_PACKAGE_LABEL_HINTS = ("package", "tctl", "tdie")
-_CPU_SENSOR_KINDS = ("cpu_temp", "CpuTemp")
+# Wire tokens (`docs/08` § GET /sensors). The PascalCase alternate was here
+# only because `DemoService` emitted a shape the daemon never sends; that was
+# fixed at the source in `WIRE-c`.
+_CPU_SENSOR_KINDS = ("cpu_temp",)
 
 
 def _pick_cpu_sensor_id(sensors: list) -> str | None:

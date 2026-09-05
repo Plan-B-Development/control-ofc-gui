@@ -28,7 +28,7 @@ def _make_wizard_state():
     )
     state.set_sensors(
         [
-            SensorReading(id="cpu", label="Tctl", kind="CpuTemp", value_c=45.0, age_ms=50),
+            SensorReading(id="cpu", label="Tctl", kind="cpu_temp", value_c=45.0, age_ms=50),
         ]
     )
     return state
@@ -48,7 +48,7 @@ def wizard_state():
     )
     state.set_sensors(
         [
-            SensorReading(id="cpu", label="Tctl", kind="CpuTemp", value_c=45.0, age_ms=50),
+            SensorReading(id="cpu", label="Tctl", kind="cpu_temp", value_c=45.0, age_ms=50),
         ]
     )
     return state
@@ -100,7 +100,7 @@ class TestIntroPage:
         state.set_fans([FanReading(id="f1", source="openfan", rpm=1000, age_ms=50)])
         state.set_sensors(
             [
-                SensorReading(id="cpu", label="Tctl", kind="CpuTemp", value_c=90.0, age_ms=50),
+                SensorReading(id="cpu", label="Tctl", kind="cpu_temp", value_c=90.0, age_ms=50),
             ]
         )
         page = IntroPage(state)
@@ -165,7 +165,7 @@ class TestThermalGuard:
         state.set_connection(ConnectionState.CONNECTED)
         state.set_sensors(
             [
-                SensorReading(id="cpu", label="Tctl", kind="CpuTemp", value_c=90.0, age_ms=50),
+                SensorReading(id="cpu", label="Tctl", kind="cpu_temp", value_c=90.0, age_ms=50),
             ]
         )
         state.set_fans([FanReading(id="f1", source="openfan", rpm=1000, age_ms=50)])
@@ -375,7 +375,7 @@ class TestIdentifyFanPageLifecycle:
 
     @staticmethod
     def _hot_cpu():
-        return [SensorReading(id="cpu", label="Tctl", kind="CpuTemp", value_c=120.0, age_ms=50)]
+        return [SensorReading(id="cpu", label="Tctl", kind="cpu_temp", value_c=120.0, age_ms=50)]
 
     def test_start_test_stops_fan_and_runs_timer(self, qtbot, wizard_state):
         from unittest.mock import MagicMock
@@ -496,7 +496,7 @@ class TestPumpSafeIdentifyCopy:
             ]
         )
         state.set_sensors(
-            [SensorReading(id="cpu", label="Tctl", kind="CpuTemp", value_c=45.0, age_ms=50)]
+            [SensorReading(id="cpu", label="Tctl", kind="cpu_temp", value_c=45.0, age_ms=50)]
         )
         state.set_hwmon_headers(
             [

@@ -105,7 +105,7 @@ class TestSecurityEscape:
     def test_build_sensor_rows_escapes_source(self):
         """Finding 1.2: the appended `Source:` line carries the daemon source."""
         rows = build_sensor_rows(
-            [SensorReading(id="s1", kind="CpuTemp", label="Tctl", value_c=40.0, source="<b>src")],
+            [SensorReading(id="s1", kind="cpu_temp", label="Tctl", value_c=40.0, source="<b>src")],
             overrides={},
             board_vendor="ASUS",
         )
@@ -149,7 +149,7 @@ class TestHistoryStoreLock:
 
         def worker():
             store.record_sensors(
-                [SensorReading(id="s1", kind="CpuTemp", label="x", value_c=1.0, source="hwmon")]
+                [SensorReading(id="s1", kind="cpu_temp", label="x", value_c=1.0, source="hwmon")]
             )
             done.set()
 
@@ -176,7 +176,7 @@ class TestHistoryStoreLock:
                     store.record_sensors(
                         [
                             SensorReading(
-                                id="s1", kind="CpuTemp", label="x", value_c=1.0, source="hwmon"
+                                id="s1", kind="cpu_temp", label="x", value_c=1.0, source="hwmon"
                             )
                         ]
                     )

@@ -118,7 +118,7 @@ class FakeDaemonClient:
         return [
             SensorReading(
                 id="hwmon:k10temp:0:Tctl",
-                kind="CpuTemp",
+                kind="cpu_temp",
                 label="Tctl",
                 value_c=45.0,
                 source="hwmon",
@@ -126,7 +126,7 @@ class FakeDaemonClient:
             ),
             SensorReading(
                 id="hwmon:amdgpu:0:edge",
-                kind="GpuTemp",
+                kind="gpu_temp",
                 label="edge",
                 value_c=38.0,
                 source="hwmon",

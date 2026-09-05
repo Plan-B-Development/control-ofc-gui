@@ -29,7 +29,7 @@ from control_ofc.ui.widgets.timeline_chart import _MAX_ANNOTATIONS, TimelineChar
 
 
 def _sensor(
-    sid: str, kind: str = "CpuTemp", value: float = 45.0, age_ms: int = 100
+    sid: str, kind: str = "cpu_temp", value: float = 45.0, age_ms: int = 100
 ) -> SensorReading:
     return SensorReading(id=sid, kind=kind, label=sid, value_c=value, source="hwmon", age_ms=age_ms)
 
@@ -244,7 +244,7 @@ class TestFirstRunSeeding:
         assert settings_service.settings.chart_series_seeded is False
         _, sel = _page(qtbot, app_state, settings_service, profile_service)
         app_state.set_sensors(
-            [_sensor("cpu"), _sensor("gpu", "GpuTemp"), _sensor("disk", "DiskTemp")]
+            [_sensor("cpu"), _sensor("gpu", "gpu_temp"), _sensor("disk", "disk_temp")]
         )
         app_state.set_fans([_fan("f1"), _fan("f2")])
 
@@ -261,7 +261,7 @@ class TestFirstRunSeeding:
         self, qtbot, app_state, settings_service, profile_service
     ):
         _, sel = _page(qtbot, app_state, settings_service, profile_service)
-        app_state.set_sensors([_sensor("cpu"), _sensor("disk", "DiskTemp")])
+        app_state.set_sensors([_sensor("cpu"), _sensor("disk", "disk_temp")])
         # Only sensors so far — must NOT seed (disk still visible, flag unset).
         assert settings_service.settings.chart_series_seeded is False
         assert sel.is_visible("sensor:disk")
@@ -274,7 +274,7 @@ class TestFirstRunSeeding:
         # not be re-decluttered.
         settings_service.settings.chart_series_seeded = True
         _, sel = _page(qtbot, app_state, settings_service, profile_service)
-        app_state.set_sensors([_sensor("cpu"), _sensor("disk", "DiskTemp")])
+        app_state.set_sensors([_sensor("cpu"), _sensor("disk", "disk_temp")])
         app_state.set_fans([_fan("f1")])
         assert sel.is_visible("sensor:disk")
         assert sel.is_visible("fan:f1:rpm")
@@ -288,7 +288,7 @@ class TestModeWiring:
         self, qtbot, app_state, settings_service, profile_service
     ):
         page, sel = _page(qtbot, app_state, settings_service, profile_service)
-        app_state.set_sensors([_sensor("cpu"), _sensor("gpu", "GpuTemp")])
+        app_state.set_sensors([_sensor("cpu"), _sensor("gpu", "gpu_temp")])
         app_state.set_fans([_fan("f1")])
         page._chart.mode_selected.emit(ChartMode.THERMALS)
         assert sel.is_visible("sensor:cpu")
@@ -296,7 +296,7 @@ class TestModeWiring:
 
     def test_reset_restores_combined(self, qtbot, app_state, settings_service, profile_service):
         page, sel = _page(qtbot, app_state, settings_service, profile_service)
-        app_state.set_sensors([_sensor("cpu"), _sensor("disk", "DiskTemp")])
+        app_state.set_sensors([_sensor("cpu"), _sensor("disk", "disk_temp")])
         app_state.set_fans([_fan("f1")])
         sel.apply_mode(ChartMode.DIAGNOSTICS)  # show everything
         assert sel.is_visible("sensor:disk")

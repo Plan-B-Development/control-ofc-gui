@@ -212,9 +212,8 @@ def sensor_combo_label(s, overrides: dict) -> str:
     cls = classify_sensor_with_overrides(
         s.id, chip_name=s.chip_name, label=s.label, overrides=overrides
     )
-    preferred = cls.source_class in ("coolant", "coolant_in", "coolant_out") or s.kind in (
-        "cpu_temp",
-        "CpuTemp",
+    preferred = cls.source_class in ("coolant", "coolant_in", "coolant_out") or (
+        s.kind == "cpu_temp"
     )
     star = "★ " if preferred else ""
     return f"{star}{s.label} ({s.kind}){val_text}"
@@ -584,11 +583,15 @@ def build_sensor_choices(sensors, overrides: dict) -> list[dict]:
         cls = classify_sensor_with_overrides(
             s.id, chip_name=s.chip_name, label=s.label, overrides=overrides
         )
-        preferred = cls.source_class in (
-            "coolant",
-            "coolant_in",
-            "coolant_out",
-        ) or s.kind in ("cpu_temp", "CpuTemp")
+        preferred = (
+            cls.source_class
+            in (
+                "coolant",
+                "coolant_in",
+                "coolant_out",
+            )
+            or s.kind == "cpu_temp"
+        )
         choices.append({"id": s.id, "label": s.label, "preferred": preferred})
     return choices
 

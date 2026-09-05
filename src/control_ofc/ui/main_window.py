@@ -529,7 +529,7 @@ class MainWindow(QWidget):
         ds = self._state.daemon_status
         thermal = (ds.thermal_state if ds else "normal") or "normal"
         label, _css = THERMAL_STATES.get(thermal, (f"Thermal: {thermal}", ""))
-        cpu_sensors = [s for s in self._state.sensors if s.kind in ("CpuTemp", "cpu_temp")]
+        cpu_sensors = [s for s in self._state.sensors if s.kind == "cpu_temp"]
         # DEC-269: the daemon stops trusting a CPU reading once it ages out, and
         # so should the label beside it. DEC-270: on its OWN threshold, not
         # `Freshness.FRESH` — that 2 s line is about display currency at the

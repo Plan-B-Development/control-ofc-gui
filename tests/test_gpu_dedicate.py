@@ -276,7 +276,7 @@ def test_dedicate_gpu_handler_creates_control_and_marks_unsaved(
 
     app_state.fans = [FanReading(id=GPU_ID, source="amd_gpu")]
     app_state.sensors = [
-        SensorReading(id="gpu_edge", kind="GpuTemp", label="edge", source="amd_gpu"),
+        SensorReading(id="gpu_edge", kind="gpu_temp", label="edge", source="amd_gpu"),
     ]
     _install_fake_dialog(monkeypatch, result={"sensor_id": "gpu_edge", "zero_rpm": True})
 
@@ -302,7 +302,7 @@ def test_dedicate_gpu_handler_cancel_is_noop(qtbot, app_state, profile_service, 
 
     app_state.fans = [FanReading(id=GPU_ID, source="amd_gpu")]
     app_state.sensors = [
-        SensorReading(id="gpu_edge", kind="GpuTemp", label="edge", source="amd_gpu")
+        SensorReading(id="gpu_edge", kind="gpu_temp", label="edge", source="amd_gpu")
     ]
     _install_fake_dialog(monkeypatch, result={}, accept=False)
 
@@ -343,8 +343,8 @@ def test_dedicate_gpu_handler_defaults_to_junction_when_no_edge(
     qtbot.addWidget(page)
     app_state.fans = [FanReading(id=GPU_ID, source="amd_gpu")]
     app_state.sensors = [
-        SensorReading(id="cpu", kind="CpuTemp", label="CPU", source="hwmon"),
-        SensorReading(id="gpu_junction", kind="GpuTemp", label="junction", source="amd_gpu"),
+        SensorReading(id="cpu", kind="cpu_temp", label="CPU", source="hwmon"),
+        SensorReading(id="gpu_junction", kind="gpu_temp", label="junction", source="amd_gpu"),
     ]
     captured: dict = {}
     _install_fake_dialog(monkeypatch, result={}, accept=False, captured=captured)
@@ -386,7 +386,7 @@ def test_dedicate_gpu_twice_leaves_single_gpu_control(
     qtbot.addWidget(page)
     app_state.fans = [FanReading(id=GPU_ID, source="amd_gpu")]
     app_state.sensors = [
-        SensorReading(id="gpu_edge", kind="GpuTemp", label="edge", source="amd_gpu")
+        SensorReading(id="gpu_edge", kind="gpu_temp", label="edge", source="amd_gpu")
     ]
     _install_fake_dialog(monkeypatch, result={"sensor_id": "gpu_edge", "zero_rpm": True})
 
@@ -420,7 +420,7 @@ def test_dedicate_gpu_handler_pulls_gpu_from_existing_shared_control(
 
     app_state.fans = [FanReading(id=GPU_ID, source="amd_gpu")]
     app_state.sensors = [
-        SensorReading(id="gpu_edge", kind="GpuTemp", label="edge", source="amd_gpu")
+        SensorReading(id="gpu_edge", kind="gpu_temp", label="edge", source="amd_gpu")
     ]
     _install_fake_dialog(monkeypatch, result={"sensor_id": "gpu_edge", "zero_rpm": True})
 
@@ -444,12 +444,12 @@ def test_dedicate_gpu_handler_filters_ineligible_and_prefers_gpu_edge(
 
     app_state.fans = [FanReading(id=GPU_ID, source="amd_gpu")]
     app_state.sensors = [
-        SensorReading(id="cpu", kind="CpuTemp", label="CPU", source="hwmon"),
-        SensorReading(id="gpu_junction", kind="GpuTemp", label="junction", source="amd_gpu"),
-        SensorReading(id="gpu_edge", kind="GpuTemp", label="edge", source="amd_gpu"),
+        SensorReading(id="cpu", kind="cpu_temp", label="CPU", source="hwmon"),
+        SensorReading(id="gpu_junction", kind="gpu_temp", label="junction", source="amd_gpu"),
+        SensorReading(id="gpu_edge", kind="gpu_temp", label="edge", source="amd_gpu"),
         # DEC-193: a WiFi-PHY temp must not be offered as a curve source.
         SensorReading(
-            id="wifi", kind="CpuTemp", label="ath12k", source="hwmon", control_eligible=False
+            id="wifi", kind="cpu_temp", label="ath12k", source="hwmon", control_eligible=False
         ),
     ]
     captured: dict = {}

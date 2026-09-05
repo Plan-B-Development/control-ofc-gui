@@ -22,7 +22,7 @@ from control_ofc.ui.widgets.sensor_series_panel import SensorSeriesPanel
 from control_ofc.ui.widgets.timeline_chart import TIME_RANGES, TimelineChart
 
 
-def _sensor(sid: str, kind: str = "CpuTemp") -> SensorReading:
+def _sensor(sid: str, kind: str = "cpu_temp") -> SensorReading:
     return SensorReading(id=sid, kind=kind, label=sid, value_c=45.0, source="hwmon", age_ms=100)
 
 
@@ -37,7 +37,7 @@ class TestFirstDiscoveryVisibility:
         panel = SensorSeriesPanel(model)
         qtbot.addWidget(panel)
 
-        panel.update_sensors([_sensor("cpu:tctl"), _sensor("gpu:edge", "GpuTemp")])
+        panel.update_sensors([_sensor("cpu:tctl"), _sensor("gpu:edge", "gpu_temp")])
         # The dashboard registers displayable keys *after* the panel rebuild —
         # replicating that order is what regresses the bug.
         model.update_known_keys([f"sensor:{sid}" for sid in panel.displayed_sensor_ids()])
@@ -52,7 +52,7 @@ class TestFirstDiscoveryVisibility:
         panel = SensorSeriesPanel(model)
         qtbot.addWidget(panel)
 
-        readings = [_sensor("cpu:tctl"), _sensor("gpu:edge", "GpuTemp")]
+        readings = [_sensor("cpu:tctl"), _sensor("gpu:edge", "gpu_temp")]
         panel.update_sensors(readings)
         model.update_known_keys([f"sensor:{sid}" for sid in panel.displayed_sensor_ids()])
         panel.update_sensors(readings)  # in-place value update path
@@ -79,7 +79,7 @@ class TestFirstDiscoveryVisibility:
         panel = SensorSeriesPanel(model)
         qtbot.addWidget(panel)
 
-        panel.update_sensors([_sensor("cpu:tctl"), _sensor("gpu:edge", "GpuTemp")])
+        panel.update_sensors([_sensor("cpu:tctl"), _sensor("gpu:edge", "gpu_temp")])
         model.update_known_keys([f"sensor:{sid}" for sid in panel.displayed_sensor_ids()])
 
         assert not model.is_visible("sensor:cpu:tctl")

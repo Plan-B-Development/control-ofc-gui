@@ -78,7 +78,7 @@ class TestSettingsPruneButton:
             [
                 SensorReading(
                     id="hwmon:k10temp:0000:00:18.3:Tccd1",
-                    kind="CpuTemp",
+                    kind="cpu_temp",
                     label="Tccd1",
                     value_c=45.0,
                     source="hwmon",

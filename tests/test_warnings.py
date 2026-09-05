@@ -20,7 +20,7 @@ class TestWarningCount:
     def test_stale_sensor_creates_warning(self, warn_state):
         warn_state.set_sensors(
             [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=50.0, age_ms=5000),
+                SensorReading(id="s1", label="CPU", kind="cpu_temp", value_c=50.0, age_ms=5000),
             ]
         )
         assert warn_state.warning_count == 1
@@ -42,7 +42,7 @@ class TestWarningCount:
     def test_fresh_data_no_warnings(self, warn_state):
         warn_state.set_sensors(
             [
-                SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=50.0, age_ms=100),
+                SensorReading(id="s1", label="CPU", kind="cpu_temp", value_c=50.0, age_ms=100),
             ]
         )
         warn_state.set_fans(
@@ -54,8 +54,8 @@ class TestWarningCount:
         assert len(warn_state.unacknowledged_warnings) == 0
 
 
-STALE_S1 = SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=50.0, age_ms=5000)
-FRESH_S1 = SensorReading(id="s1", label="CPU", kind="CpuTemp", value_c=50.0, age_ms=100)
+STALE_S1 = SensorReading(id="s1", label="CPU", kind="cpu_temp", value_c=50.0, age_ms=5000)
+FRESH_S1 = SensorReading(id="s1", label="CPU", kind="cpu_temp", value_c=50.0, age_ms=100)
 
 
 class TestAcknowledgement:
@@ -147,7 +147,7 @@ class TestAcknowledgement:
         warn_state.acknowledge_all()
         warn_state.set_sensors(
             [
-                SensorReading(id="s2", label="GPU", kind="GpuTemp", value_c=60.0, age_ms=5000),
+                SensorReading(id="s2", label="GPU", kind="gpu_temp", value_c=60.0, age_ms=5000),
             ]
         )
         assert warn_state.unacknowledged_count == 1  # new warning from s2

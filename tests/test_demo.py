@@ -30,8 +30,14 @@ def test_demo_sensors_returns_readings():
     sensors = demo.sensors()
     assert len(sensors) >= 4
     kinds = {s.kind for s in sensors}
-    assert "CpuTemp" in kinds
-    assert "GpuTemp" in kinds
+    # WIRE-c: snake_case, because that is what `GET /sensors` sends. Demo mode
+    # emitted PascalCase, six consumers grew a dual-casing tax to compensate,
+    # and the one written against the wire contract alone lost its whole
+    # breakdown in demo mode. A demo payload that does not match the wire is a
+    # fixture that tests the compensation instead of the code.
+    assert "cpu_temp" in kinds
+    assert "gpu_temp" in kinds
+    assert not any(k[:1].isupper() for k in kinds), f"PascalCase kinds are back: {kinds}"
     assert all(hasattr(s, "value_c") for s in sensors)
     assert all(s.id for s in sensors)
 

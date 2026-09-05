@@ -648,6 +648,10 @@ def build_sensor_summary(
     board = sum(1 for s in all_sensors if s.kind == "mb_temp")
     gpu = sum(1 for s in all_sensors if s.kind == "gpu_temp")
     disk = sum(1 for s in all_sensors if s.kind == "disk_temp")
+    # DEC-156's fifth kind, missing since it shipped (`WIRE-c`). On an AIO
+    # machine the coolant temperature is arguably the headline number, and it
+    # was the one kind with no line in the breakdown.
+    coolant = sum(1 for s in all_sensors if s.kind == "coolant_temp")
     stale = sum(1 for s in all_sensors if s.freshness != Freshness.FRESH)
     low_conf = 0
     for s in all_sensors:
@@ -663,6 +667,8 @@ def build_sensor_summary(
         parts.append(f"{board} board")
     if gpu:
         parts.append(f"{gpu} GPU")
+    if coolant:
+        parts.append(f"{coolant} liquid")
     if disk:
         parts.append(f"{disk} disk")
     if stale:

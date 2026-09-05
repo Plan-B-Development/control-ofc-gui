@@ -175,12 +175,12 @@ class TestSensorComboLabel:
 
     def test_generic_sensor_not_starred(self):
         s = SensorReading(
-            id="mb0", kind="MbTemp", label="SYSTIN", value_c=30.0, chip_name="nct6799"
+            id="mb0", kind="mb_temp", label="SYSTIN", value_c=30.0, chip_name="nct6799"
         )
         assert not sensor_combo_label(s, {}).startswith("★")
 
     def test_missing_value_hides_temperature(self):
-        s = SensorReading(id="x", kind="MbTemp", label="x", value_c=None, chip_name="nct6799")
+        s = SensorReading(id="x", kind="mb_temp", label="x", value_c=None, chip_name="nct6799")
         assert "°C" not in sensor_combo_label(s, {})
 
 

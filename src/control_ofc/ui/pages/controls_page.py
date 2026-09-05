@@ -1400,7 +1400,7 @@ class ControlsPage(QWidget):
         for s in self._state.sensors:
             if not s.control_eligible:
                 continue
-            is_gpu_temp = s.kind in ("GpuTemp", "gpu_temp") or s.source == "amd_gpu"
+            is_gpu_temp = s.kind == "gpu_temp" or s.source == "amd_gpu"
             sensor_choices.append({"id": s.id, "label": s.label, "preferred": is_gpu_temp})
             if is_gpu_temp and default_sensor_id is None:
                 default_sensor_id = s.id

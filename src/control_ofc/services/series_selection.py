@@ -14,18 +14,28 @@ from PySide6.QtCore import QObject, Signal
 from control_ofc.api.models import SensorReading
 
 # The curated default chart series (refinement §7.3 / B-fork DEC-181): one CPU
-# temp, one GPU temp, one mobo/case temp. Kind-aware, so it cannot be derived
-# from the series keys alone — the model can't tell a CPU temp from a GPU temp
-# by key. Daemon sends snake_case kinds; demo sends PascalCase.
-_DEFAULT_SERIES_KINDS: tuple[tuple[str, ...], ...] = (
-    ("CpuTemp", "cpu_temp"),
-    ("GpuTemp", "gpu_temp"),
-    ("MbTemp", "mb_temp"),
+# temp, one GPU temp, one mobo/case temp — and, since `WIRE-ai`, one coolant
+# temp where the machine has a liquid cooler, which on such a machine is
+# arguably the headline number and was absent by default.
+#
+# Kind-aware, so it cannot be derived from the series keys alone: the model
+# cannot tell a CPU temp from a GPU temp by key.
+#
+# Single-spelling since `WIRE-c`. These are wire tokens (`docs/08` § GET
+# /sensors) and the PascalCase alternates were here only because `DemoService`
+# emitted a shape the daemon never sends. Six modules carried that tax; the
+# seventh, written against the contract, silently lost its whole breakdown in
+# demo mode. Fixed at the source, not compensated for again.
+_DEFAULT_SERIES_KINDS: tuple[str, ...] = (
+    "cpu_temp",
+    "gpu_temp",
+    "mb_temp",
+    "coolant_temp",
 )
 
 
 def default_series_keys(sensors: list[SensorReading]) -> set[str]:
-    """The curated default series: one CPU temp, one GPU temp, one mobo/case temp.
+    """The curated default series: one each of CPU, GPU, mobo/case and coolant.
 
     This is what ``ChartMode.COMBINED`` resolves to. It lives here rather than in
     a page view-model because it is chart logic, not page logic — it was
@@ -34,10 +44,12 @@ def default_series_keys(sensors: list[SensorReading]) -> set[str]:
 
     Slots with no matching sensor are simply dropped: ``set_only_visible`` later
     intersects with the known keys, so an absent or filtered sensor is harmless.
+    That is also what scopes the coolant slot to machines that have one — an
+    air-cooled machine gets exactly the three series it got before (`WIRE-ai`).
     """
     keys: set[str] = set()
-    for kinds in _DEFAULT_SERIES_KINDS:
-        sensor = next((s for s in sensors if s.kind in kinds), None)
+    for kind in _DEFAULT_SERIES_KINDS:
+        sensor = next((s for s in sensors if s.kind == kind), None)
         if sensor is not None:
             keys.add(f"sensor:{sensor.id}")
     return keys

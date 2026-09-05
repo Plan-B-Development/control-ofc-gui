@@ -33,7 +33,7 @@ def window(qtbot, app_state, profile_service, settings_service):
     return win
 
 
-def _cpu(value_c: float, age_ms: int, id: str = "cpu", kind: str = "CpuTemp") -> SensorReading:
+def _cpu(value_c: float, age_ms: int, id: str = "cpu", kind: str = "cpu_temp") -> SensorReading:
     # The hedge fires at CPU_HEDGE_STALE_AFTER_MS, not at Freshness.FRESH's 2 s.
     return SensorReading(id=id, kind=kind, value_c=value_c, age_ms=age_ms)
 
@@ -86,11 +86,13 @@ class TestHedgeThreshold:
         )
 
 
-# The window matches both spellings the daemon has used for this kind. Pinning
-# only one leaves the other arm free to be dropped with the suite still green,
-# and the label would then vanish on whichever daemon emits it.
-@pytest.mark.parametrize("kind", ["CpuTemp", "cpu_temp"])
-def test_a_stale_cpu_reading_is_hedged_through_the_real_window(window, kind):
+# WIRE-c retired the dual spelling. `cpu_temp` is the wire token (`docs/08`
+# § GET /sensors) and the only one anything emits: the PascalCase alternate came
+# from `DemoService`, which the daemon never sent and which is now fixed at the
+# source. The parametrisation that used to pin both arms went with it — a second
+# arm over a spelling nothing produces asserts nothing.
+def test_a_stale_cpu_reading_is_hedged_through_the_real_window(window):
+    kind = "cpu_temp"
     """The headline behaviour of the release, asserted on the production path."""
     window._state.sensors = [_cpu(94.0, age_ms=20000, kind=kind)]
     window._state.daemon_status = DaemonStatus(thermal_state="emergency")

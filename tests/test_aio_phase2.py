@@ -249,7 +249,7 @@ def test_coolant_kind_groups_as_aio_liquid():
     from control_ofc.ui.widgets.sensor_series_panel import _GROUP_ORDER, _SENSOR_KIND_GROUPS
 
     assert _SENSOR_KIND_GROUPS["coolant_temp"] == ("aio", "AIO / Liquid")
-    assert _SENSOR_KIND_GROUPS["CoolantTemp"][0] == "aio"
+    assert _SENSOR_KIND_GROUPS["coolant_temp"][0] == "aio"
     assert "aio" in _GROUP_ORDER
 
 
