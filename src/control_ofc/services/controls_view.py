@@ -144,7 +144,29 @@ _SKIP_REASONS: dict[str, str] = {
 }
 
 
-def skipped_control_feedback(reason: str) -> tuple[str, str]:
+def _format_skip_duration(ms: int) -> str:
+    """A coarse "how long" for the skipped chip (`WIRE-q`).
+
+    Deliberately coarse — minutes above a minute, seconds below — so the chip
+    text changes at most once a minute and the 1 Hz poll does not repaint it
+    every tick. `0` renders empty: the daemon lists a control only after three
+    consecutive skipped ticks, so a zero here means "not reported", and "for 0s"
+    would read as though it had just started.
+    """
+    if ms <= 0:
+        return ""
+    seconds = ms // 1000
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    return f"{minutes // 60}h{minutes % 60:02d}m"
+
+
+def skipped_control_feedback(
+    reason: str, skipped_for_ms: int = 0, control_name: str = ""
+) -> tuple[str, str]:
     """``(chip_text, tooltip)`` for a control the daemon is not commanding.
 
     The chip is deliberately terse and the same for every cause — what matters
@@ -162,15 +184,23 @@ def skipped_control_feedback(reason: str) -> tuple[str, str]:
     # crash, not a degraded render. `unavailable_sensors` never keys a dict on a
     # wire value, which is why this asymmetry is ours to handle.
     detail = _SKIP_REASONS.get(reason) if isinstance(reason, str) else None
+    # `skipped_for_ms` and `control_name` were parsed and never read (`WIRE-q`):
+    # "not controlled" and "not controlled for four minutes" call for different
+    # responses from the user, and the name is the DAEMON's — the GUI otherwise
+    # resolves it from its own profile, which can be the stale one.
+    duration = _format_skip_duration(skipped_for_ms)
+    chip = f"Not controlled · {duration}" if duration else "Not controlled"
+    subject = f'"{control_name}"' if control_name else "these fans"
+    since = f" It has been skipped for {duration}." if duration else ""
     if detail is None:
         return (
-            "Not controlled",
-            "The daemon is not commanding these fans. They hold their last speed.",
+            chip,
+            f"The daemon is not commanding {subject}. They hold their last speed.{since}",
         )
     return (
-        "Not controlled",
-        f"The daemon is not commanding these fans — {detail}. "
-        "They hold their last speed until it resolves.",
+        chip,
+        f"The daemon is not commanding {subject} — {detail}. "
+        f"They hold their last speed until it resolves.{since}",
     )
 
 

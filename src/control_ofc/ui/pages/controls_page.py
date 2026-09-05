@@ -47,6 +47,7 @@ from control_ofc.services.controls_view import (
     prune_card_sizes,
     renew_interval_ms,
     sensor_combo_label,
+    skipped_control_feedback,
     unassigned_fan_ids,
 )
 from control_ofc.services.controls_view import (
@@ -309,6 +310,12 @@ class ControlsPage(QWidget):
         # cannot resolve. Tracked so the reconcile below acts only on the
         # per-poll delta, exactly like `_external_overrides`.
         self._skipped_controls: dict[str, str] = {}
+        # Repaint suppression only, kept separate from `_skipped_controls` above
+        # (which answers "is this control skipped, and why"). Holds the RENDERED
+        # (chip, tooltip) pair, so a repaint happens exactly when the
+        # user-visible text moves — the skip duration is on the 1 Hz poll and
+        # keying on it directly would repaint every second (`WIRE-q`).
+        self._skipped_rendered: dict[str, tuple[str, str]] = {}
         self._override_renew_timer = QTimer(self)
         self._override_renew_timer.setObjectName("Controls_Timer_overrideRenew")
         self._override_renew_timer.timeout.connect(self._renew_overrides)
@@ -1027,6 +1034,7 @@ class ControlsPage(QWidget):
         self._external_overrides.clear()
         # 273-i: likewise — the next poll re-adopts any still-skipped control.
         self._skipped_controls.clear()
+        self._skipped_rendered.clear()
         # Clear existing
         self._controls_flow.clear_cards()
         self._control_cards.clear()
@@ -2418,14 +2426,24 @@ class ControlsPage(QWidget):
         # instead: `_filter_fields` coerces every identity field to `str`, so a
         # malformed wire id arrives here as an unmatchable string rather than an
         # unhashable list.
-        skipped = {entry.control_id: entry.reason for entry in status.skipped_controls}
-        for control_id, reason in skipped.items():
+        # WIRE-q: `skipped_for_ms` and `control_name` were parsed and never read.
+        # The change key is the RENDERED chip text, not the reason alone: the
+        # duration is coarse (minutes above a minute), so keying on the rendering
+        # repaints when the user-visible string actually moves and never once a
+        # second — which keying on `skipped_for_ms` itself would have done.
+        skipped = {
+            entry.control_id: (entry.reason, entry.skipped_for_ms, entry.control_name)
+            for entry in status.skipped_controls
+        }
+        for control_id, (reason, for_ms, name) in skipped.items():
             card = self._control_cards.get(control_id)
             if card is None:
                 continue
-            if self._skipped_controls.get(control_id) != reason:
-                card.set_skipped(reason)
-                self._skipped_controls[control_id] = reason
+            rendered = skipped_control_feedback(reason, for_ms, name)
+            if self._skipped_rendered.get(control_id) != rendered:
+                card.set_skipped(reason, for_ms, name)
+                self._skipped_rendered[control_id] = rendered
+            self._skipped_controls[control_id] = reason
         for control_id in list(self._skipped_controls):
             if control_id not in skipped:
                 self._clear_skipped(control_id)
@@ -2535,6 +2553,7 @@ class ControlsPage(QWidget):
     def _clear_skipped(self, control_id: str) -> None:
         """Stop tracking a skipped control and clear its chip (273-i)."""
         self._skipped_controls.pop(control_id, None)
+        self._skipped_rendered.pop(control_id, None)
         card = self._control_cards.get(control_id)
         if card is not None:
             card.clear_skipped()

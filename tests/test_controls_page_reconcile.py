@@ -54,7 +54,14 @@ def _status(*overrides: tuple[str, int]) -> DaemonStatus:
 
 
 def _skipped(*entries: tuple[str, str]) -> DaemonStatus:
-    """Build a DaemonStatus carrying the given (control_id, reason) skips."""
+    """Build a DaemonStatus carrying the given (control_id, reason) skips.
+
+    `skipped_for_ms` is non-zero, so the chip these tests read renders as
+    "Not controlled · 9s" (`WIRE-q`). They assert the prefix rather than the
+    whole string: the duration is a separate concern with its own tests in
+    `test_wire_g8_poll_field_renders.py`, and pinning it here would make every
+    one of them fail on a wording change to a thing they are not about.
+    """
     return DaemonStatus(
         skipped_controls=[
             SkippedControl(
@@ -191,7 +198,7 @@ class TestForeignOverrideReconcile:
         page = _page(qtbot, app_state, profile_service, client)
         page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
         assert page._skipped_controls == {"lc1": "mix_unresolvable"}
-        assert page._control_cards["lc1"]._status_chip.text() == "Not controlled"
+        assert page._control_cards["lc1"]._status_chip.text().startswith("Not controlled")
 
         curve = CurveConfig(id="c1", name="C", type=CurveType.FLAT, flat_output_pct=40.0)
         control = LogicalControl(
@@ -211,7 +218,7 @@ class TestForeignOverrideReconcile:
         # The same reason again: only a cleared cache makes this a fresh delta.
         page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
 
-        assert page._control_cards["lc1"]._status_chip.text() == "Not controlled", (
+        assert page._control_cards["lc1"]._status_chip.text().startswith("Not controlled"), (
             "the rebuilt card must get its chip back on the next poll — otherwise "
             "the page goes quiet about a fan nothing is driving"
         )
@@ -278,7 +285,7 @@ class TestSkippedControlReconcile:
 
         assert page._skipped_controls == {"lc1": "mix_unresolvable"}
         card = page._control_cards["lc1"]
-        assert card._status_chip.text() == "Not controlled"
+        assert card._status_chip.text().startswith("Not controlled")
         # The reason reaches the user somewhere — terse chip, detail on hover.
         assert "combined inputs" in card._status_chip.toolTip()
 
@@ -314,7 +321,7 @@ class TestSkippedControlReconcile:
 
         card.set_output(42.0, "CPU", 55.0)
 
-        assert card._status_chip.text() == "Not controlled"
+        assert card._status_chip.text().startswith("Not controlled")
         # The output label still tracks the last commanded value — that IS what
         # the fans are holding, so hiding it would be the opposite error.
         assert "42" in card._output_label.text()
@@ -338,7 +345,7 @@ class TestSkippedControlReconcile:
         page._on_status_reconcile(_skipped(("lc1", "some_future_reason")))
 
         card = page._control_cards["lc1"]
-        assert card._status_chip.text() == "Not controlled"
+        assert card._status_chip.text().startswith("Not controlled")
         assert card._status_chip.toolTip() != ""
 
     def test_a_malformed_control_id_does_not_crash_the_poll_path(
@@ -397,7 +404,7 @@ class TestSkippedControlReconcile:
 
         page._on_status_reconcile(status)
 
-        assert page._control_cards["lc1"]._status_chip.text() == "Not controlled", (
+        assert page._control_cards["lc1"]._status_chip.text().startswith("Not controlled"), (
             "a malformed sibling entry must not cost the well-formed one its chip"
         )
 
@@ -432,19 +439,19 @@ class TestSkipAndManualInteraction:
         page = _page(qtbot, app_state, profile_service, client)
         page._on_status_reconcile(_skipped(("lc1", "mix_unresolvable")))
         card = page._control_cards["lc1"]
-        assert card._status_chip.text() == "Not controlled"
+        assert card._status_chip.text().startswith("Not controlled")
 
         card._manual_btn.setChecked(True)  # user takes over
         assert card._status_chip.text() == "Manual", "Manual wins while it is held"
         card._manual_btn.setChecked(False)  # ...and changes their mind
 
-        assert card._status_chip.text() == "Not controlled", (
+        assert card._status_chip.text().startswith("Not controlled"), (
             "leaving Manual must restore what the daemon still reports — the "
             "reconcile acts only on a delta, so nothing else will"
         )
         # And the 1 Hz poll must not undo it.
         card.set_output(42.0, "CPU", 55.0)
-        assert card._status_chip.text() == "Not controlled"
+        assert card._status_chip.text().startswith("Not controlled")
 
     def test_leaving_manual_restores_an_external_chip(self, qtbot, app_state, profile_service):
         """The card's own state machine, exercised directly — NOT via the page.
@@ -605,7 +612,7 @@ class TestSkipAndManualInteraction:
 
         card.clear_external_override()
 
-        assert card._status_chip.text() == "Not controlled", (
+        assert card._status_chip.text().startswith("Not controlled"), (
             "the suppressed skip must be repainted when the override lapses, not "
             "blanked — nothing else will ever repaint it"
         )
@@ -614,7 +621,7 @@ class TestSkipAndManualInteraction:
         # And it must survive the next poll's output update, which is what made the
         # old bug permanent rather than a single-frame flicker.
         card.set_output(42.0, "CPU", 55.0)
-        assert card._status_chip.text() == "Not controlled"
+        assert card._status_chip.text().startswith("Not controlled")
 
     def test_the_no_members_chip_does_not_inherit_a_stale_tooltip(
         self, qtbot, app_state, profile_service

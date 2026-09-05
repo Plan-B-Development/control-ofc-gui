@@ -28,6 +28,22 @@ a daemon-side test-only change; no daemon version floor moves.
   offered a maximum of 12 that the daemon would never have honoured. The ceiling now comes
   from the daemon. Machines with no OpenFan controller, and older daemons, keep the previous
   range.
+- **An identify started elsewhere is described correctly** (`WIRE-p`). When the daemon
+  identifies a *pump* it perturbs its speed rather than stopping it, and says so on the
+  poll — but the Overview panel and the exported support bundle called every identify a
+  stop. Both now report what the daemon actually did and at what duty. The Fan Wizard's own
+  path was already correct.
+- **The "Not controlled" chip says how long, and names the control the daemon means**
+  (`WIRE-q`). "Not controlled" and "not controlled for four minutes" call for different
+  responses; the duration was on the poll and unread. The tooltip now uses the *daemon's*
+  name for the control rather than the GUI's, which can come from a stale profile.
+- **The footer's cooling-readiness chip takes you to the item it names** (`WIRE-r`). The
+  daemon publishes a stable code for the most important problem precisely so a client can
+  deep-link to it; the chip could name the problem and not navigate to it.
+- **Refreshing the hardware assessment says whether anything was actually re-scanned**
+  (`WIRE-af`). The daemon stamps each scan with an id, and the GUI judged freshness from
+  age alone — which cannot tell a cached answer from a genuine re-scan of unchanged
+  hardware.
 - **The Hardware page's Super-I/O table shows how each chip was found** (`WIRE-w`). The
   daemon says whether a chip came from the board table, the kernel log, a bound driver, or
   the opt-in `/dev/port` probe — and the GUI parsed that and showed none of it, so after
@@ -56,6 +72,10 @@ a daemon-side test-only change; no daemon version floor moves.
   possible outcome was an error.
 
 ### Fixed
+- **The liquid-cooling line trusts the daemon's own verdict** (`WIRE-s`). It re-derived
+  supported / monitor-only / unsupported from two other fields instead of reading the token
+  the daemon publishes. Equivalent today; a rule the daemon owns and either side could have
+  moved.
 - **The Dashboard's stall alert no longer claims a command that may not exist** (`WIRE-j`).
   For a motherboard fan header the daemon has never driven, the field the alert was built
   from reports the *hardware readback*, not a command — so an `error`-level alert said

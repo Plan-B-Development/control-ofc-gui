@@ -70,7 +70,10 @@ class StatusFooter(QWidget):
     rescan_clicked = Signal()
     export_bundle_clicked = Signal()
     thermal_clicked = Signal()
-    readiness_clicked = Signal()
+    #: Carries `ReadinessRollup.top_code` — the daemon's stable id for the
+    #: most-severe readiness item, published so a client can deep-link to it
+    #: (`WIRE-r`). Empty when the daemon sent none, or when everything passes.
+    readiness_clicked = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -110,8 +113,13 @@ class StatusFooter(QWidget):
         self._thermal_btn.clicked.connect(self.thermal_clicked)
         layout.addWidget(self._thermal_btn)
 
+        self._readiness_top_code = ""
         self._readiness_btn = _chip_button("StatusFooter_Chip_readiness", "")
-        self._readiness_btn.clicked.connect(self.readiness_clicked)
+        # Not a direct connect: `clicked` carries a bool, and this signal carries
+        # the deep-link code captured from the last rollup.
+        self._readiness_btn.clicked.connect(
+            lambda _=False: self.readiness_clicked.emit(self._readiness_top_code)
+        )
         self._readiness_btn.hide()
         layout.addWidget(self._readiness_btn)
 
@@ -206,8 +214,14 @@ class StatusFooter(QWidget):
         never as markup (defence-in-depth, mirroring the item views' PlainText rule).
         """
         if rollup is None:
+            self._readiness_top_code = ""
             self._readiness_btn.hide()
             return
+        # `top_code` is published as the stable code for a deep link to the
+        # offending item; only `overall`, `to_fix_count` and `top_summary` were
+        # read, so the chip could NAME the problem and not take you to it
+        # (`WIRE-r`).
+        self._readiness_top_code = rollup.top_code or ""
         overall = (rollup.overall or "ok").lower()
         n = rollup.to_fix_count
         if overall == "ok":

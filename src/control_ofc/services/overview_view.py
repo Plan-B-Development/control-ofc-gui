@@ -391,7 +391,9 @@ def build_daemon_health_vm(
         "Subsystems:\n" + "\n".join(subsystem_lines) if subsystem_lines else "Subsystems: —"
     )
     ov_lines = [f"{o.control_id} {o.pwm_percent}% ({o.expires_in_secs}s)" for o in status.overrides]
-    id_lines = [f"{i.fan_id} ({i.expires_in_secs}s)" for i in status.fan_identify]
+    id_lines = [
+        f"{i.fan_id} {i.describe_hold()} ({i.expires_in_secs}s)" for i in status.fan_identify
+    ]
     active = []
     if ov_lines:
         active.append("Overrides: " + ", ".join(ov_lines))
@@ -469,12 +471,21 @@ def build_device_discovery_vm(
     else:
         nvidia_gpu = "NVIDIA GPU: Not detected"
 
+    # `status` is the daemon's own three-way verdict and was parsed and never
+    # read; this re-derived the identical answer from `present` + `pump_writable`
+    # (`WIRE-s`). Equivalent today, but it is a rule the daemon owns and either
+    # side could move. An unrecognised token is described rather than dropped
+    # (273-i) — a newer daemon may add one, and "Not detected" would be a lie.
     aio_cap = caps.aio_hwmon
-    if aio_cap.present:
-        if aio_cap.pump_writable:
-            detail = "pump/fan writable"
-        else:
-            detail = "monitor-only (read-only driver — use vendor tooling)"
+    if aio_cap.status == "supported":
+        detail = "pump/fan writable"
+    elif aio_cap.status == "monitor_only":
+        detail = "monitor-only (read-only driver — use vendor tooling)"
+    elif aio_cap.present:
+        detail = aio_cap.status.replace("_", " ") or "status not reported"
+    else:
+        detail = ""
+    if detail:
         if aio_cap.coolant_available:
             detail += ", coolant sensed"
         aio = f"Liquid cooling: Detected (hwmon) — {detail}"

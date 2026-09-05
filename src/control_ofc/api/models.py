@@ -323,6 +323,29 @@ class IdentifyStatusEntry:
     mode: str = "stop"
     identify_pwm_percent: int = 0
 
+    def describe_hold(self) -> str:
+        """What the daemon is actually doing to this fan, in its own words.
+
+        These two fields ride the 1 Hz poll precisely so a GUI polling into an
+        identify **someone else started** describes it truthfully (DEC-311), and
+        both were read nowhere outside the wizard — so the Overview panel and the
+        support bundle called a pump perturbation a stop (`WIRE-p`).
+
+        A pre-2.28.0 daemon omits ``mode`` and always stops, so the ``"stop"``
+        default is correct rather than merely safe. An unrecognised token is
+        rendered verbatim, never coerced into "stopped" (the 273-i rule): a
+        future mode described as a stop would be the same lie in a new coat.
+
+        On the model rather than in a view module because both consumers need it
+        and they already import each other — the DEC-276 lesson, and the same
+        placement as ``FanReading.requested_duty``.
+        """
+        if self.mode == "pump_perturb":
+            return f"held at {self.identify_pwm_percent}%"
+        if self.mode in ("stop", ""):
+            return "stopped"
+        return f"{self.mode} at {self.identify_pwm_percent}%"
+
 
 @dataclass
 class UnavailableSensor:

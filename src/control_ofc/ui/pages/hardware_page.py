@@ -167,6 +167,10 @@ class HardwarePage(QWidget):
         self._readiness_auto_fetched = False
         self._readiness_unsupported = False
         self._last_report: HardwareReadiness | None = None
+        # True only between a user-pressed Refresh and its answer, so the
+        # generation comparison reports on a rescan the user actually asked for
+        # (`WIRE-af`).
+        self._awaiting_rescan = False
 
         # AIO-MB Phase 6 workers. Each is created lazily by `_ensure_worker`
         # and torn down in `cleanup`, exactly like the readiness worker.
@@ -607,6 +611,25 @@ class HardwarePage(QWidget):
                 card.setParent(None)
                 card.deleteLater()
 
+    def focus_readiness_item(self, code: str) -> bool:
+        """Scroll the readiness item with this stable `code` into view (`WIRE-r`).
+
+        Returns whether it was found. The daemon publishes `rollup.top_code` as
+        the deep-link target for the most-severe item, and the footer chip could
+        previously name the problem without being able to take the user to it.
+
+        A miss is normal, not an error: the rollup is **cached** daemon-side and
+        refreshed only on discovery-changing events, so it can name an item the
+        current report no longer contains. Landing on the Hardware page with
+        nothing scrolled is the right outcome there — better than scrolling to
+        something else and implying it is the one that was named.
+        """
+        card = self.findChild(QWidget, f"Hardware_Action_{code}")
+        if card is None:
+            return False
+        self._scroll.ensureWidgetVisible(card)
+        return True
+
     def _scroll_to_headers(self, *_args) -> None:
         self._scroll.ensureWidgetVisible(self._header_container)
 
@@ -655,16 +678,38 @@ class HardwarePage(QWidget):
         (self._readiness_refresh_request if force else self._readiness_request).emit()
 
     def _refresh_readiness(self) -> None:
+        self._awaiting_rescan = True
         self._fetch_readiness(force=True)
 
     @Slot(object)
     def _on_readiness_ok(self, result: HardwareReadiness) -> None:
+        # WIRE-af: `generation` is the daemon's monotonic scan id — the "a fresh
+        # assessment landed" signal — and only `scanned_age_ms` was read, so a
+        # forced refresh the daemon answered from cache was indistinguishable
+        # from one that re-scanned. Age cannot decide it: a cached report's age
+        # keeps climbing, and a genuine re-scan of unchanged hardware produces a
+        # report identical by every other field.
+        previous = self._last_report
+        rescanned = previous is not None and result.generation > previous.generation
         self._last_report = result
         self._status_label.setVisible(False)
         self._render(result)
+        if self._awaiting_rescan:
+            self._awaiting_rescan = False
+            # Only after a refresh the USER asked for. Saying "unchanged" after a
+            # background fetch nobody requested would be noise.
+            self._set_status(
+                "Hardware re-scanned."
+                if rescanned
+                else "No change — the daemon served its existing assessment."
+            )
 
     @Slot(str, str)
     def _on_readiness_error(self, category: str, message: str) -> None:
+        # A failed refresh ends the wait. Without this the flag survives and the
+        # NEXT background fetch — which the user did not ask for — reports on a
+        # rescan, which is the wrong event and possibly the wrong verdict.
+        self._awaiting_rescan = False
         if category == "unsupported":
             self._readiness_unsupported = True
             self._set_status(

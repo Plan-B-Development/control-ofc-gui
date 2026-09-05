@@ -163,7 +163,35 @@ class TestFormatDaemonStatus:
         )
         text = DiagnosticsService(state=state).format_daemon_status()
         assert "Override: pump 40% (expires 12s)" in text
-        assert "Identify: openfan:ch00 (expires 8s)" in text
+        # WIRE-p: the line now names what the daemon actually did. The default
+        # mode is "stop", which a pre-2.28.0 daemon is also the only thing that
+        # can do — so this fixture reads "stopped".
+        assert "Identify: openfan:ch00 stopped (expires 8s)" in text
+
+    def test_identify_records_a_pump_perturbation_as_such(self):
+        """WIRE-p: DEC-311 put `mode` on the poll so a client that did not start
+        the identify still describes it truthfully. A support bundle recording a
+        pump perturbation as a stop misdescribes the one case the field exists
+        for — and a pump is exactly the header an engineer reading the bundle
+        would be alarmed to see stopped."""
+        state = AppState()
+        state.set_connection(ConnectionState.CONNECTED)
+        state.set_status(
+            DaemonStatus(
+                overall_status="healthy",
+                fan_identify=[
+                    IdentifyStatusEntry(
+                        fan_id="hwmon:it8696:pci0:pwm3:AIO_PUMP",
+                        expires_in_secs=8,
+                        mode="pump_perturb",
+                        identify_pwm_percent=85,
+                    )
+                ],
+            )
+        )
+        text = DiagnosticsService(state=state).format_daemon_status()
+        assert "held at 85%" in text
+        assert "stopped" not in text
 
 
 # ---------------------------------------------------------------------------

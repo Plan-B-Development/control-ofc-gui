@@ -77,6 +77,12 @@ class ControlCard(ResizableGridCard):
         # the control is being commanded normally. Set by the Controls page's
         # /status reconcile, exactly like `_external_pct` above.
         self._skipped_reason: str | None = None
+        # Kept alongside the reason so `_restore_daemon_chip` repaints the SAME
+        # chip it suppressed — without these it would silently drop the duration
+        # and the daemon's own control name every time a manual hold ended
+        # (`WIRE-q`).
+        self._skipped_for_ms: int = 0
+        self._skipped_control_name: str = ""
         # Sizing (DEC-128 floor) + the DEC-129 resize grip live in the base.
         self._init_grid_card(control.id, f"ControlCard_Grip_{control.id}")
 
@@ -511,7 +517,9 @@ class ControlCard(ResizableGridCard):
         if self._external_pct is not None:
             self._apply_chip(f"External {self._external_pct}%", "InfoChip")
         elif self._skipped_reason is not None:
-            text, tooltip = skipped_control_feedback(self._skipped_reason)
+            text, tooltip = skipped_control_feedback(
+                self._skipped_reason, self._skipped_for_ms, self._skipped_control_name
+            )
             self._apply_chip(text, "WarningChip", tooltip)
         elif not self._control.members:
             # "No members" is a TERMINAL state of the card, not a transient chip.
@@ -648,7 +656,7 @@ class ControlCard(ResizableGridCard):
         # last COMPLETED tick, so the two genuinely co-occur for up to a tick.
         self._restore_daemon_chip()
 
-    def set_skipped(self, reason: str) -> None:
+    def set_skipped(self, reason: str, skipped_for_ms: int = 0, control_name: str = "") -> None:
         """Show a "Not controlled" chip for a control the daemon cannot resolve
         (273-i).
 
@@ -663,6 +671,8 @@ class ControlCard(ResizableGridCard):
         delaying this.
         """
         self._skipped_reason = reason
+        self._skipped_for_ms = skipped_for_ms
+        self._skipped_control_name = control_name
         if self._manual_btn.isChecked() or self._external_pct is not None:
             # Suppressed, not discarded — `_restore_daemon_chip` repaints it when
             # whichever state is suppressing it ends. The `_external_pct` arm is
@@ -672,7 +682,7 @@ class ControlCard(ResizableGridCard):
             # one would be a lie in the unsafe direction. Two tests pin both
             # directions of this; do not simplify the arm away.
             return
-        text, tooltip = skipped_control_feedback(reason)
+        text, tooltip = skipped_control_feedback(reason, skipped_for_ms, control_name)
         self._apply_chip(text, "WarningChip", tooltip)
 
     def clear_skipped(self) -> None:

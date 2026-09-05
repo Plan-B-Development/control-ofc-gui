@@ -744,12 +744,21 @@ class MainWindow(QWidget):
 
         self.sidebar.activate_nav(NAV_OVERVIEW)
 
-    def _open_readiness(self) -> None:
-        """DEC-206: the Dashboard cooling-readiness chip was clicked — activate the
-        Hardware entry, which opens the Hardware page (DEC-212)."""
+    def _open_readiness(self, top_code: str = "") -> None:
+        """DEC-206: a cooling-readiness chip was clicked — activate the Hardware
+        entry, which opens the Hardware page (DEC-212).
+
+        `top_code` is the daemon's stable id for the most-severe readiness item,
+        published on the rollup precisely so a client can deep-link to it
+        (`WIRE-r`). The footer chip sends it; the Dashboard's chip has no rollup
+        of its own and sends nothing, which is why it defaults to empty rather
+        than being required.
+        """
         from control_ofc.constants import NAV_HARDWARE
 
         self.sidebar.activate_nav(NAV_HARDWARE)
+        if top_code:
+            self.hardware_page.focus_readiness_item(top_code)
 
     def _open_system_state(self) -> None:
         """DEC-212: a Hardware-page readiness action deep-links to the System State

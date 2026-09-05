@@ -281,7 +281,13 @@ class DiagnosticsService(QObject):
                     f"Override: {o.control_id} {o.pwm_percent}% (expires {o.expires_in_secs}s)"
                 )
             for i in status.fan_identify:
-                lines.append(f"Identify: {i.fan_id} (expires {i.expires_in_secs}s)")
+                # WIRE-p: the daemon reports whether it stopped the fan or
+                # perturbed a pump, and at what duty. A support bundle that
+                # records every identify as a stop misdescribes exactly the case
+                # DEC-311 exists for.
+                lines.append(
+                    f"Identify: {i.fan_id} {i.describe_hold()} (expires {i.expires_in_secs}s)"
+                )
         else:
             lines.append("Daemon status: not available (no response received)")
 
