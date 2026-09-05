@@ -23,7 +23,7 @@ The title row carries a **profile selector + Apply** (see
 [Profile Selector](#profile-selector)) so you can switch profiles without leaving the
 page. The sidebar has one too — either works.
 
-Below it, four banners appear only when they apply:
+Below it, five banners appear only when they apply:
 
 - **Motherboard fan headers** are missing or all read-only
 - **API version mismatch** — the connected daemon's API version differs from the one
@@ -39,6 +39,18 @@ Below it, four banners appear only when they apply:
   slows a tick down, because the daemon writes to every fan in turn. *Stopped* means
   nothing is controlling your fans and the emergency protection is not running:
   restart `control-ofc-daemon`. Daemons older than v2.17.0 do not report this, and
+  show no banner
+- **Daemon running on fallback settings** — the daemon could not read or parse its own
+  `runtime.toml` and fell back to built-in defaults, so that a corrupt file can never
+  stop it booting. Those defaults carry **no header roles**. If the failure happened at
+  *startup*, any `pump` role you assigned by hand is gone, and with it that header's 30%
+  floor, its stop exemption and its pump-safe identify — which matters most on a board
+  whose chip publishes no header labels, because there your assignment was the only
+  evidence a header drives a pump. A failure during a *reload* leaves header roles
+  untouched. Fixing the file is not enough on its own: saving settings repairs the file
+  but not the running daemon, so restart `control-ofc-daemon` afterwards. The daemon's
+  verbatim error goes to the GUI log rather than into the banner, since a TOML parse
+  error can run to several lines. Daemons older than v2.34.0 do not report this, and
   show no banner
 
 ## Fan Cards
