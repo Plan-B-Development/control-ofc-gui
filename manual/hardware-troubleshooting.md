@@ -228,6 +228,43 @@ Fan control depends on sensors: curves need temperatures, and the daemon's therm
 
 Prefer the readiness report first — it identifies your board's chips **without probing the hardware**. Treat `sudo sensors-detect` as a **last resort**, run at your own risk: its probing "can access chips in a way these chips do not like, causing problems ranging from SMBus lockup to permanent hardware damage (a rare case, thankfully)" — [sensors-detect(8)](https://man.archlinux.org/man/extra/lm_sensors/sensors-detect.8.en). If you do run it, accept its conservative defaults rather than answering yes to every probe, and **never run it after boot on a dual-chip Gigabyte board** — it can wedge the Super-I/O bridge so the secondary chip vanishes until reboot (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below).
 
+## Voltages, and why most of them have no name
+
+The **Hardware** page has a read-only **Voltages** table (v2.61.0, with
+`control-ofc-daemon` ≥ v2.37.0). It lists the analogue-to-digital channels your
+Super-I/O chip exposes — typically ten of them.
+
+Most will say **Unnamed channel**, and that is normal rather than a fault. Only
+some channels carry a name from the driver; on a Gigabyte X870E AORUS MASTER, for
+example, three of ten do (`3VSB`, `Vbat`, `+3.3V`).
+
+**Do not read an unnamed channel as a rail voltage.** Motherboards feed a rail
+through a resistor divider before it reaches the chip, and the driver has no way
+to know the ratio your board used. So the number shown is a real measurement of
+the voltage *at the chip's pin*, and it is not the voltage of whatever rail that
+pin is wired to — a +12V rail commonly reads around 2 V there. Rows the table
+marks **Identified rail** are the ones you can read at face value.
+
+Naming the rest is a per-board job that `lm_sensors` handles, not Control-OFC:
+if a configuration exists for your board under `/etc/sensors.d/`, it supplies
+both the labels and the divider maths, and the driver then publishes the names
+the Voltages table shows. A board with an empty `/etc/sensors.d/` gets unnamed
+channels.
+
+Two things the table deliberately does not show, because on real hardware they
+mislead:
+
+- **Voltage alarm bits.** On the reference board two channels assert their alarm
+  bit while reading *inside* their own configured limits, so the bit would put a
+  fault on screen that the reading beside it disproves.
+- **Per-channel min/max.** These are usually driver defaults rather than limits
+  anyone configured for your board.
+
+Voltages are informational only. They are never offered as a fan-curve source,
+and nothing in fan control reads them. The readings are taken when the GUI
+connects to the daemon — the table says so, because rails move by millivolts and
+they are not on the live poll.
+
 ## Common situations
 
 ### "All my hwmon headers show as read-only"
