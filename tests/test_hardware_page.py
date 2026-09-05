@@ -201,7 +201,12 @@ def test_superio_table_real_columns(qtbot):
     table = page.findChild(QWidget, "Hardware_Table_superio")
     assert table is not None
     assert table.rowCount() == 1  # one chip, no fabricated per-channel rows
-    holder = table.cellWidget(0, 5)  # Health column
+    # Index from the module's own constant, not a literal: WIRE-w inserted an
+    # Evidence column before Health and this line silently addressed the wrong
+    # cell, which is the whole argument against hardcoding a column number.
+    from control_ofc.ui.pages.hardware_page import _SIO_HEALTH
+
+    holder = table.cellWidget(0, _SIO_HEALTH)
     assert holder.findChild(StatusPill) is not None
     assert page.findChild(QWidget, "Hardware_ChipHow_it8696") is not None
 

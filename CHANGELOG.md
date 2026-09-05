@@ -28,6 +28,22 @@ a daemon-side test-only change; no daemon version floor moves.
   offered a maximum of 12 that the daemon would never have honoured. The ceiling now comes
   from the daemon. Machines with no OpenFan controller, and older daemons, keep the previous
   range.
+- **The Hardware page's Super-I/O table shows how each chip was found** (`WIRE-w`). The
+  daemon says whether a chip came from the board table, the kernel log, a bound driver, or
+  the opt-in `/dev/port` probe — and the GUI parsed that and showed none of it, so after
+  running the probe nothing on screen said which chip it had actually found. New "Evidence"
+  column.
+- **An unbound AMD GPU now says whether the module is missing or the bind failed**
+  (`WIRE-v`). The daemon publishes three fields as a deliberate trio so a client can tell a
+  blacklisted or absent `amdgpu` module from one that loaded but failed to bind — different
+  problems with different fixes. The GUI read one of the three and could report only the
+  symptom. It also now says when `amdgpu` is not bound to a GPU it can otherwise see.
+- **PWM characterisation shows the evidence behind its own verdicts** (`WIRE-u`). Each
+  measured point now reports the header's control mode, which is what the sweep-level
+  "another controller took the header back" verdict is derived from — previously a
+  conclusion with nothing on screen to check it against. And when the sweep cannot put the
+  fan back where it found it, the note now says what duty that was, which is the one fact
+  needed to restore it by hand.
 - **The Hardware page states its own cooling-device precondition** (`WIRE-z`). Forgetting a
   cooling device, and the inventory re-fetch that follows it, were the only cooling-device
   calls in the GUI that did not first check the daemon supports them. Nothing could reach

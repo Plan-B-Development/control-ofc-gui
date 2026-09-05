@@ -90,6 +90,27 @@ def _fmt_rpm(value: int | None) -> str:
     return "—" if value is None else f"{value}"
 
 
+#: `pwmN_enable` values every hwmon driver agrees on. Anything above 1 is
+#: driver-specific automatic control, which is what makes it evidence of
+#: interference — the daemon writes 1 when it takes a header over, so a point
+#: reporting 2 during a sweep means something else wrote it back.
+_PWM_ENABLE_LABELS = {0: "no control", 1: "manual", 2: "automatic"}
+
+
+def _fmt_pwm_enable(mode: int | None) -> str:
+    """Render a point's `pwmN_enable` (`WIRE-u`).
+
+    ``None`` means the daemon did not report it — never "no control", which is
+    the *value 0* and a materially different statement. An unrecognised value is
+    rendered as itself rather than dropped: modes above 2 are driver-specific
+    and a newer driver may use one (the 273-i rule).
+    """
+    if mode is None:
+        return UNKNOWN_TEXT
+    known = _PWM_ENABLE_LABELS.get(mode)
+    return known if known is not None else f"mode {mode}"
+
+
 def _humanise_token(token: str) -> str:
     """Render a token this build does not recognise, rather than dropping it."""
     return token.replace("_", " ").strip().capitalize() or "Unknown"
@@ -148,12 +169,34 @@ def restore_note(run: CharacterizationRun) -> str:
         return ""
     known = _RESTORE_NOTE.get(run.restore_outcome)
     if known:
-        return known
+        return _with_original_duty(known, run.original_pct)
     if not run.restore_outcome:
         # Pre-2.30.0: `restore_failed: true` meant the restore write failed, and
         # nothing else could set it.
-        return _RESTORE_NOTE["write_failed"]
-    return _RESTORE_NOTE_FALLBACK.format(reason=_humanise_token(run.restore_outcome))
+        return _with_original_duty(_RESTORE_NOTE["write_failed"], run.original_pct)
+    return _with_original_duty(
+        _RESTORE_NOTE_FALLBACK.format(reason=_humanise_token(run.restore_outcome)),
+        run.original_pct,
+    )
+
+
+def _with_original_duty(note: str, original_pct: int | None) -> str:
+    """Name the duty the header should be back at (`WIRE-u`).
+
+    `CharacterizationRun.original_pct` was parsed and never read, so every
+    restore-failure note told the user their fan had been left somewhere without
+    being able to say where it *should* be — which is the one fact needed to put
+    it back by hand. Appended rather than woven into each note so the per-reason
+    advice, including the thermal-force case where "re-activate your profile" is
+    the wrong instruction (`AUD2-c`), is unchanged.
+
+    Omitted when the daemon did not report one — which is exactly the
+    `no_original_duty` case, where claiming a figure would contradict the note
+    it is appended to.
+    """
+    if original_pct is None:
+        return note
+    return f"{note} It was at {original_pct}% before the sweep."
 
 
 @dataclass(frozen=True)
@@ -171,6 +214,11 @@ class CharRow:
     # all; `settle_ms` is how long the daemon held the point. Absent means the
     # daemon could not measure it — commonly no tach, or an RPM that never moved
     # — and renders as an em dash, never as 0.
+    # WIRE-u: the per-point `pwmN_enable` mode — the direct evidence behind the
+    # sweep-level `interference_detected` verdict the dialog already shows. A
+    # verdict without the observation that produced it is something the user has
+    # to take on trust, and this is the row where it becomes checkable.
+    control_mode: str = UNKNOWN_TEXT
     response: str = UNKNOWN_TEXT
     settling: str = UNKNOWN_TEXT
 
@@ -256,6 +304,7 @@ def _row_for(point) -> CharRow:
         rpm=_fmt_rpm(point.rpm_after),
         result=result,
         state=state,
+        control_mode=_fmt_pwm_enable(point.pwm_enable),
         response=_fmt_seconds(point.first_change_ms),
         settling=_fmt_seconds(point.settle_ms),
     )

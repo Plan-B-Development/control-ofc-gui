@@ -140,6 +140,11 @@ class SuperIoRowVM:
     mainline_state: str
     risk_notes: tuple[str, ...]
     caveats: tuple[str, ...]
+    #: How the daemon knows this chip is here, in its own words (`WIRE-w`).
+    #: Empty when the daemon sent none.
+    evidence_text: str = ""
+    #: The raw tokens, for callers that want to branch rather than render.
+    evidence: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -290,6 +295,8 @@ def _superio_row(c) -> SuperIoRowVM:
         mainline_state = "ok" if rec.in_mainline else "warn"
         risk = tuple(rec.risk_notes)
     return SuperIoRowVM(
+        evidence_text=_evidence_text(c.evidence),
+        evidence=tuple(c.evidence),
         chip=c.chip_name or "(unknown chip)",
         vendor=vendor_text,
         driver_text=c.bound_driver or c.expected_module or "—",
@@ -306,6 +313,30 @@ def _superio_row(c) -> SuperIoRowVM:
         risk_notes=risk,
         caveats=tuple(c.caveats),
     )
+
+
+#: `SuperIoChip.evidence` tokens in the daemon's discovery order, mapped to
+#: words a user can act on. Deliberately a *display* map and not a filter: an
+#: unrecognised token is rendered verbatim rather than dropped (the 273-i rule),
+#: because the daemon may add an evidence source before the GUI knows about it
+#: and "we found this chip somehow" is still worth more than silence.
+_EVIDENCE_LABELS = {
+    "dmi_board_table": "board table",
+    "kernel_log": "kernel log",
+    "bound_hwmon": "bound driver",
+    "port_probe": "port probe",
+}
+
+
+def _evidence_text(tokens: list[str]) -> str:
+    """Render `SuperIoChip.evidence` for display (`WIRE-w`).
+
+    The field was parsed and never shown, so after a user ran the opt-in
+    `/dev/port` probe nothing on screen said the newly-found chip came *from*
+    the probe — which is the whole reason the probe is worth running, and the
+    one evidence source the user themselves caused.
+    """
+    return ", ".join(_EVIDENCE_LABELS.get(tok, tok) for tok in tokens if tok)
 
 
 def build_superio_panel(report: SuperIoReport) -> SuperIoPanelVM:

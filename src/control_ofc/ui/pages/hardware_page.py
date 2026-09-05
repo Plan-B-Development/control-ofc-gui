@@ -97,8 +97,22 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_SUPERIO_COLS = ["Chip", "Vendor", "Driver", "Module loaded", "Confidence", "Health", "Notes"]
-_SIO_HEALTH = 5
+_SUPERIO_COLS = [
+    "Chip",
+    "Vendor",
+    "Driver",
+    "Module loaded",
+    "Confidence",
+    # WIRE-w: how the daemon knows the chip is there. Sits beside Confidence
+    # because it is what justifies it — and it is the only place the opt-in
+    # /dev/port probe's result is visible as such.
+    "Evidence",
+    "Health",
+    "Notes",
+]
+_SIO_EVIDENCE = 5
+_SIO_HEALTH = 6
+_SIO_NOTES = 7
 
 
 class HardwarePage(QWidget):
@@ -862,7 +876,8 @@ class HardwarePage(QWidget):
             table.item(i, 2).setText(row.driver_text)
             table.item(i, 3).setText(row.module_text)
             table.item(i, 4).setText(row.confidence)
-            table.item(i, 6).setText(row.notes)
+            table.item(i, _SIO_EVIDENCE).setText(row.evidence_text or "—")
+            table.item(i, _SIO_NOTES).setText(row.notes)
             _set_pill(table, i, _SIO_HEALTH, row.health_word, row.health_state)
         self._superio_layout.addWidget(table)
 

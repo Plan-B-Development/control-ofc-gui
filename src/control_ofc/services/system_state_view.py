@@ -434,6 +434,18 @@ def build_safety_gpu_vm(diag: HardwareDiagnosticsResult) -> SafetyGpuVM:
                 "Zero-RPM", "available" if gpu.zero_rpm_available else "not available", "neutral"
             )
         )
+        # The third of the WIRE-v trio, and the only one scoped to *this* GPU.
+        # Defaults True (an hwmon node implies a bound driver), so it is worth a
+        # row only when the daemon actually says otherwise — an hwmon node
+        # without a bound driver is a contradiction the user needs to see.
+        if not gpu.amdgpu_driver_bound:
+            rows.append(
+                GpuConstraintRowVM(
+                    "amdgpu binding",
+                    "not bound to this GPU's PCI device — fan control will not work",
+                    "warn",
+                )
+            )
         if gpu.fan_speed_min_pct is not None and gpu.fan_speed_max_pct is not None:
             speed_min = gpu.fan_speed_min_pct
             speed_max = gpu.fan_speed_max_pct
@@ -448,14 +460,25 @@ def build_safety_gpu_vm(diag: HardwareDiagnosticsResult) -> SafetyGpuVM:
                 )
             )
 
+    # WIRE-v: the daemon documents these as a deliberate diagnostic TRIO —
+    # `amd_pci_devices[].amdgpu_bound`, `amdgpu_module_loaded` and the per-GPU
+    # `amdgpu_driver_bound`. Only the first was read, and one third of the trio
+    # cannot distinguish "module blacklisted or missing" from "module loaded but
+    # the bind failed" — which are different problems with different fixes.
     for dev in diag.amd_pci_devices:
         if dev.amdgpu_bound:
             continue
-        rows.append(
-            GpuConstraintRowVM(
-                f"AMD {dev.pci_bdf}", f"amdgpu NOT bound (driver: {dev.driver or 'none'})", "warn"
+        driver = dev.driver or "none"
+        if diag.amdgpu_module_loaded:
+            detail = (
+                f"amdgpu is loaded but NOT bound to this device (driver: {driver}) — bind failure"
             )
-        )
+        else:
+            detail = (
+                f"the amdgpu module is not loaded (driver: {driver}) "
+                "— blacklisted, missing, or passed through"
+            )
+        rows.append(GpuConstraintRowVM(f"AMD {dev.pci_bdf}", detail, "warn"))
 
     if diag.intel_gpu:
         ig = diag.intel_gpu

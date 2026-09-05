@@ -40,7 +40,9 @@ POLL_INTERVAL_MS = 1000
 # wire and parsed since Phase 3 (`CharPoint.first_change_ms` / `settle_ms`) and
 # were rendered nowhere — the exact "a field that is parsed but never read
 # outside tests is decoration" trap CLAUDE.md records from DEC-301.
-_COLUMNS = ("PWM", "Readback", "RPM", "Response", "Settling", "Result")
+# "Mode" is the point's own `pwmN_enable` (WIRE-u) — the observation the
+# sweep-level "interference detected" verdict is derived from.
+_COLUMNS = ("PWM", "Readback", "RPM", "Mode", "Response", "Settling", "Result")
 
 
 class PwmCharacterizationDialog(ModalDialog):
@@ -228,6 +230,7 @@ class PwmCharacterizationDialog(ModalDialog):
                     item.pwm,
                     item.readback,
                     item.rpm,
+                    item.control_mode,
                     item.response,
                     item.settling,
                     item.result,

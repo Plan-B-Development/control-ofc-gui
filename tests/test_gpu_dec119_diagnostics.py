@@ -181,14 +181,20 @@ class TestRenderNewGpuFields:
             _result(amd_pci_devices=[dev], amdgpu_module_loaded=False)
         ).gpu_rows
         unbound = next(r for r in rows if "0000:03:00.0" in r.label)
-        assert "NOT bound" in unbound.value
+        # WIRE-v restored the module-loaded distinction this file's next test
+        # recorded as dropped: with the module absent, "not bound" is a symptom
+        # and "the module is not loaded" is the cause the user can act on.
+        assert "not loaded" in unbound.value
+        assert "blacklisted" in unbound.value
         assert "driver: none" in unbound.value
         assert unbound.state == "warn"
 
     def test_unbound_gpu_with_module_loaded_names_the_holding_driver(self):
-        # The page's "did not bind this device" prose (module loaded vs not) is
-        # dropped; the actionable datum — which driver holds the device — is
-        # still carried on the row.
+        # The module-loaded-vs-not prose is BACK (WIRE-v): the daemon documents
+        # the three fields as a deliberate trio precisely so a client can tell a
+        # blacklist from a bind failure, and dropping one third meant the GUI
+        # could not. The actionable datum — which driver holds the device — was
+        # always carried and still is.
         dev = AmdPciDeviceInfo(
             pci_bdf="0000:03:00.0", pci_device_id=0x7550, driver="vfio-pci", amdgpu_bound=False
         )
@@ -197,6 +203,7 @@ class TestRenderNewGpuFields:
         ).gpu_rows
         unbound = next(r for r in rows if "0000:03:00.0" in r.label)
         assert "NOT bound" in unbound.value
+        assert "bind failure" in unbound.value
         assert "vfio-pci" in unbound.value
 
     def test_bound_gpu_does_not_render_unbound_warning(self):
