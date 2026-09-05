@@ -1360,6 +1360,38 @@ class BoardFirmwareCounts:
 
 
 @dataclass
+class VoltageRail:
+    """One board voltage rail — an hwmon ``inN_input`` channel (``WIRE-ag``,
+    daemon >= 2.37.0).
+
+    **Display-only, and never a curve source.** Voltages are deliberately not
+    ``SensorReading`` objects: that type is temperature-shaped (``value_c``,
+    ``temp_type``, ``thresholds``) and feeds curve binding and the thermal
+    path, so a volt in it would be a lie in a field those consumers trust.
+
+    Read :attr:`identified` before presenting :attr:`value_v` as a named rail.
+    Boards feed rails through resistor dividers the driver knows nothing about,
+    so on an unidentified channel ``value_v`` is a genuine measurement of the
+    chip's input pin and is *not* evidence of what any named rail is doing.
+    """
+
+    id: str = ""
+    chip_name: str = ""
+    channel: int = 0
+    #: ``inN_label`` where the driver published one, else ``in{N}``.
+    label: str = ""
+    #: Volts at the chip's input pin. See :attr:`identified`.
+    value_v: float = 0.0
+    #: True when the driver published a label for this channel.
+    #:
+    #: Defaults ``False`` — the safe direction. An older daemon sends no rails
+    #: at all, but a malformed entry that omitted the flag would otherwise be
+    #: rendered as an identified rail, which is the one claim this field exists
+    #: to withhold.
+    identified: bool = False
+
+
+@dataclass
 class HardwareDiagnosticsResult:
     api_version: int = 1
     hwmon: HwmonDiagnostics = field(default_factory=HwmonDiagnostics)
@@ -1418,6 +1450,10 @@ class HardwareDiagnosticsResult:
     # DEC-119: whether the amdgpu kernel module is loaded. Paired with
     # amd_pci_devices to distinguish a blacklisted module from a bind failure.
     amdgpu_module_loaded: bool = False
+    # `WIRE-ag` (daemon >= 2.37.0): board voltage rails from hwmon `inN_input`.
+    # Empty on older daemons and on boards whose chips expose no ADC channel —
+    # the daemon omits the key entirely rather than sending `[]`.
+    voltages: list[VoltageRail] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -2259,6 +2295,27 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         if isinstance(d, dict)
     ]
 
+    # `WIRE-ag`: board voltage rails. Coerced field-by-field rather than
+    # `**`-unpacked so a malformed numeric never reaches the renderer as a
+    # string; a rail that will not coerce is dropped rather than shown wrong.
+    voltages: list[VoltageRail] = []
+    for v in data.get("voltages") or []:
+        if not isinstance(v, dict):
+            continue
+        try:
+            voltages.append(
+                VoltageRail(
+                    id=str(v.get("id") or ""),
+                    chip_name=str(v.get("chip_name") or ""),
+                    channel=int(v.get("channel") or 0),
+                    label=str(v.get("label") or ""),
+                    value_v=float(v.get("value_v")),
+                    identified=bool(v.get("identified", False)),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+
     return HardwareDiagnosticsResult(
         api_version=data.get("api_version", 1),
         hwmon=hwmon,
@@ -2282,6 +2339,7 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         cpu_vendor=str(data.get("cpu_vendor") or ""),
         amd_pci_devices=amd_pci_devices,
         amdgpu_module_loaded=bool(data.get("amdgpu_module_loaded", False)),
+        voltages=voltages,
     )
 
 

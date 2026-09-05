@@ -1,5 +1,32 @@
 # Changelog
 
+## [2.61.0] — 2026-09-05
+
+Pairs with **`control-ofc-daemon` >= v2.37.0** for the new field; on an older
+daemon the panel says so and nothing else changes.
+
+### Added
+- **A Voltages table on the Hardware page** (`WIRE-ag`). The daemon now discovers
+  the board's voltage rails from its Super-I/O ADC channels, and the Hardware
+  page renders them read-only, below Super-I/O.
+
+  **Only some channels are named rails, and the table says which.** The chip
+  exposes ten channels on the reference board and the driver labels three of them
+  (`3VSB`, `Vbat`, `+3.3V`); the rest are raw ADC pins. Motherboards feed rails
+  through resistor dividers the driver knows nothing about, so an unnamed
+  channel's reading is a genuine voltage measured at the chip's pin and is *not*
+  the voltage of whatever rail it is wired to. Each row therefore carries
+  "Identified rail" or "Unnamed channel", unnamed rows explain themselves on
+  hover, and a footnote names installing an `/etc/sensors.d` file for the board
+  as what turns the second kind into the first.
+
+  Voltages are display-only and can never be chosen as a fan-curve source — they
+  are not sensors, and are deliberately kept off the type that feeds curve
+  binding and thermal safety. The readings are a snapshot taken when the GUI
+  connects — the panel says so, because the page re-renders when opened but does
+  not re-fetch. Rails move by millivolts, so a connect-time snapshot is
+  representative. See DEC-331.
+
 ## [2.60.0] — 2026-09-05
 
 Wave 3 of the 2026-09-05 wire-surface sweep — the GUI-side half. Pairs with

@@ -293,6 +293,27 @@
       "must_be_read": [
         "openfan_stop_timeout_s"
       ]
+    },
+    {
+      "daemon": "VoltageEntry",
+      "gui": "VoltageRail",
+      "endpoints": [
+        "GET /diagnostics/hardware .voltages"
+      ],
+      "note": "WIRE-ag / DEC-331. Pinned from the first release that publishes it rather than after a divergence: WIRE-h is what an unpinned new struct costs. `label` is genuinely read (it is the Rail column) but is excluded from must_be_read by test_must_be_read_names_are_distinctive — the name is too common to prove a read site; tests/test_wire_ag_voltages.py asserts it at the call site instead. `id` has no GUI consumer yet, and the wire identity is modelled anyway because the model mirrors the wire; `channel` is read only as a display sort key.",
+      "fields": [
+        "id",
+        "chip_name",
+        "channel",
+        "label",
+        "value_v",
+        "identified"
+      ],
+      "must_be_read": [
+        "value_v",
+        "identified",
+        "chip_name"
+      ]
     }
   ]
 }

@@ -28,10 +28,12 @@ wire_field_surface_is_pinned``. Neither copy can drift alone: a new daemon field
 reds that Rust test, and updating the fixture to match then reds this one until
 the GUI models it.
 
-Scope is honest and partial by design: ten structs covering ``/sensors``,
-``/fans``, ``/poll``, ``/hwmon/headers``, ``/inventory/hwmon`` and
-``/inventory/cooling-devices`` — the surfaces where drift has actually happened.
-Adding a struct is a fixture edit plus a Rust arm; it is not automatic.
+Scope is honest and partial by design: the structs covering ``/sensors``,
+``/fans``, ``/poll``, ``/hwmon/headers``, ``/inventory/hwmon``,
+``/inventory/cooling-devices``, ``/capabilities`` (``Limits``) and
+``/diagnostics/hardware`` (``VoltageEntry``) — the surfaces where drift has
+actually happened, plus ones new enough not to have had the chance. Adding a
+struct is a fixture edit plus a Rust arm; it is not automatic.
 """
 
 from __future__ import annotations

@@ -401,3 +401,108 @@ def build_superio_panel(report: SuperIoReport) -> SuperIoPanelVM:
         probe_available=report.port_probe_available,
         probe_reason=report.port_probe_reason,
     )
+
+
+# ─── Voltage rails (`WIRE-ag`) ─────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class VoltageRowVM:
+    """One rendered rail. ``identified`` decides how it must be presented.
+
+    Deliberately carries no ``id``: nothing renders it, and a VM field no
+    renderer reads is the ``WIRE-ak`` "parsed but never read" category — having
+    it in the type is what makes the gap invisible. The wire id stays on
+    :class:`~control_ofc.api.models.VoltageRail`, which is the wire mirror.
+    """
+
+    #: The rail's name where the driver identified it, else its channel (``in0``).
+    name: str
+    chip: str
+    #: Formatted to millivolt resolution — the precision the ADC actually has.
+    value_text: str
+    #: True when the driver labelled this channel.
+    identified: bool
+    #: One-line explanation shown for an unidentified channel, empty otherwise.
+    caveat: str
+
+
+@dataclass(frozen=True)
+class VoltagePanelVM:
+    has_rails: bool
+    #: Shown instead of the table when the daemon reported no rails.
+    empty_note: str
+    rows: tuple[VoltageRowVM, ...]
+    #: Count line, e.g. "10 channels · 3 identified".
+    summary_text: str
+    #: Says where the readings came from. The GUI fetches
+    #: ``/diagnostics/hardware`` once per connection, so these are a snapshot
+    #: rather than a live reading, and a panel that did not say so would let a
+    #: user read hours-old millivolts as current ones.
+    provenance_text: str
+    #: Shown under the table when any row is unidentified; empty otherwise.
+    footnote: str
+
+
+_UNIDENTIFIED_CAVEAT = (
+    "Raw ADC channel — the driver did not name it, so this is the voltage at the "
+    "chip's pin, not a known rail."
+)
+
+_VOLTAGE_FOOTNOTE = (
+    "Channels the driver did not name are shown as measured at the chip's input "
+    "pin. Boards feed rails through resistor dividers the driver knows nothing "
+    "about, so those readings are real voltages but not the rail voltage. "
+    "Installing an /etc/sensors.d file for this board is what names them."
+)
+
+_VOLTAGE_PROVENANCE = (
+    "Measured when the GUI connected to the daemon — voltages are not on the live "
+    "poll, because a rail moves by millivolts."
+)
+
+_VOLTAGE_EMPTY_NOTE = (
+    "No voltage rails reported. The daemon publishes them from the hwmon chip's "
+    "ADC channels; a board whose Super-I/O driver exposes none, or a daemon older "
+    "than 2.37.0, reports nothing here."
+)
+
+
+def build_voltage_panel(rails) -> VoltagePanelVM:
+    """Build the Hardware page's Voltages panel from ``HardwareDiagnosticsResult.voltages``.
+
+    Display-only by construction: nothing here is offered as a control input,
+    and the ``identified`` distinction is carried into the row rather than
+    flattened, because presenting a divided reading with the same authority as a
+    direct one is the specific failure the daemon's flag exists to prevent.
+    """
+    ordered = sorted(rails, key=lambda r: (r.chip_name, r.channel))
+    rows = tuple(
+        VoltageRowVM(
+            name=r.label,
+            chip=r.chip_name,
+            value_text=f"{r.value_v:.3f} V",
+            identified=r.identified,
+            caveat="" if r.identified else _UNIDENTIFIED_CAVEAT,
+        )
+        for r in ordered
+    )
+    if not rows:
+        return VoltagePanelVM(
+            has_rails=False,
+            empty_note=_VOLTAGE_EMPTY_NOTE,
+            rows=(),
+            summary_text="",
+            provenance_text="",
+            footnote="",
+        )
+    identified = sum(1 for r in rows if r.identified)
+    channel_word = "channel" if len(rows) == 1 else "channels"
+    return VoltagePanelVM(
+        has_rails=True,
+        empty_note="",
+        rows=rows,
+        summary_text=f"{len(rows)} {channel_word} · {identified} identified",
+        provenance_text=_VOLTAGE_PROVENANCE,
+        footnote=_VOLTAGE_FOOTNOTE if identified < len(rows) else "",
+    )

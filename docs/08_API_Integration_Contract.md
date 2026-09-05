@@ -1064,6 +1064,46 @@ the descriptor does not decode, and on older daemons — never a zeroed object. 
 defaulted `fan_count: 0` would claim the board has no fan headers, a far stronger
 and wrong claim; a client must parse absence as "did not say".
 
+`voltages` (daemon ≥ 2.37.0, additive — `api_version` unchanged, omitted when
+empty) is the board's voltage rails, discovered from hwmon `inN_input`
+(`WIRE-ag`). Each entry:
+`{id, chip_name, channel, label, value_v, identified}`.
+
+- `id` — `hwmon:<chip>:<device_id>:in<N>`. The label is deliberately **not**
+  embedded: a rail's label appears or changes when the user installs an
+  `/etc/sensors.d` file, and an id that moved with it would break any client
+  that had stored one.
+- `label` — `inN_label` where the driver publishes one, else `in{N}`.
+- `value_v` — volts **at the chip's input pin**, after whatever scaling the
+  *driver* applies.
+- `identified` — true when the driver published a label for the channel.
+
+**A client MUST render the two `identified` cases differently.** Boards routinely
+feed a rail through an external resistor divider the driver knows nothing about,
+so on an unidentified channel `value_v` is a genuine measurement of the pin and
+is **not** evidence of what any named rail is doing. Measured on the reference
+board (`it8696`): 10 channels, 3 labelled. Presenting a divided 1.2 V reading with
+the same authority as a direct 3.3 V one is the specific failure this flag exists
+to prevent; the reference GUI renders an "Identification" column reading
+"Identified rail" or "Unnamed channel", plus a footnote.
+
+**Voltages are NOT sensors and are NOT on `sensors[]`, `/status` or `/poll`.**
+That array is temperature-shaped to the field name (`value_c`, `temp_type`,
+`thresholds.*_c`) and feeds curve binding and the thermal-safety path, so a volt
+in it would be a lie in a field those consumers trust. A rail can never be offered
+as a fan-curve source. They are deliberately absent from the 1 Hz poll: a rail
+moves by millivolts, so a live copy would buy nothing for the payload it costs —
+a client wanting them fetches this endpoint.
+
+Deliberately **not** published: `inN_alarm` (measured untrustworthy — two channels
+on the reference board assert the bit while reading *inside* their own min/max
+window), `inN_min`/`inN_max` (driver defaults, not board limits), and GPU rails
+(`amdgpu` `vddgfx`/`vddnb` and Intel `i915`/`xe` `in0_input` are GPU **core**
+voltages, not board rails, and are excluded).
+
+Entries are ordered by `(chip_name, device_id, channel)` — numerically by channel,
+so a chip with more than ten channels does not emit `in10` before `in2`.
+
 Additional optional field added in DEC-105 (same wire convention —
 `skip_serializing_if = "Vec::is_empty"`, so older daemons emit nothing
 and the GUI parser defaults to `[]`):

@@ -59,6 +59,7 @@ from control_ofc.services.hardware_view import (
     build_readiness_summary,
     build_recommended_actions,
     build_superio_panel,
+    build_voltage_panel,
 )
 from control_ofc.services.header_inspector_view import build_header_inspector_views
 from control_ofc.services.profile_service import ProfileService
@@ -113,6 +114,14 @@ _SUPERIO_COLS = [
 _SIO_EVIDENCE = 5
 _SIO_HEALTH = 6
 _SIO_NOTES = 7
+
+# `WIRE-ag` Voltages table. Named constants, not literals: WIRE-w recorded that
+# inserting a column silently repointed a test that hardcoded an index.
+_VOLTAGE_COLS = ["Rail", "Chip", "Reading", "Identification"]
+_VOLT_NAME = 0
+_VOLT_CHIP = 1
+_VOLT_VALUE = 2
+_VOLT_IDENT = 3
 
 
 class HardwarePage(QWidget):
@@ -270,6 +279,10 @@ class HardwarePage(QWidget):
 
         # Super-I/O.
         layout.addWidget(self._build_superio_card())
+
+        # Voltages (`WIRE-ag`) — display-only, below Super-I/O because it is
+        # reference information rather than something to act on.
+        layout.addWidget(self._build_voltages_card())
         layout.addStretch(1)
 
     def _build_checklist_card(self) -> QWidget:
@@ -344,6 +357,18 @@ class HardwarePage(QWidget):
         self._superio_layout.setContentsMargins(0, 0, 0, 0)
         self._superio_layout.setSpacing(8)
         v.addWidget(self._superio_container)
+        return card
+
+    def _build_voltages_card(self) -> QWidget:
+        card = Card()
+        card.setObjectName("Hardware_Card_voltages")
+        v = QVBoxLayout(card)
+        v.addWidget(SectionHeader("Voltages", object_name="Hardware_SectionHeader_voltages"))
+        self._voltages_container = QWidget()
+        self._voltages_layout = QVBoxLayout(self._voltages_container)
+        self._voltages_layout.setContentsMargins(0, 0, 0, 0)
+        self._voltages_layout.setSpacing(8)
+        v.addWidget(self._voltages_container)
         return card
 
     # ── Cooling Hardware + Diagnostics (AIO-MB Phase 6) ──────────────
@@ -665,6 +690,11 @@ class HardwarePage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        # `WIRE-ag`: the diagnostics snapshot may land after this page was
+        # first built, so re-read it on every show rather than only at
+        # construction — otherwise the panel is stuck on its empty note for the
+        # whole session for anyone who opened Hardware before the first poll.
+        self._render_voltages()
         if not self._readiness_unsupported and not self._readiness_auto_fetched:
             self._readiness_auto_fetched = True  # latch BEFORE emit → no double-fetch
             self._fetch_readiness()
@@ -776,6 +806,7 @@ class HardwarePage(QWidget):
         self._render_checklist(build_checklist(items))
         self._render_actions(build_recommended_actions(items), summary)
         self._render_superio(build_superio_panel(hw.superio))
+        self._render_voltages()
 
     def _render_checklist(self, groups) -> None:
         _clear_layout(self._checklist_layout)
@@ -1015,6 +1046,64 @@ class HardwarePage(QWidget):
             cv.setTextFormat(Qt.TextFormat.PlainText)
             section.add_widget(cv)
         return section
+
+    def _render_voltages(self) -> None:
+        """Render the Voltages panel from the cached hardware diagnostics.
+
+        `WIRE-ag`. The source is `DiagnosticsService.last_hw_diagnostics`, which
+        the poll worker fetches **once per connection** behind a latch — the same
+        object this page already reads for the PWM test. Rails move by
+        millivolts, so a connect-time snapshot is representative, but it is a
+        snapshot: this re-renders on every page show, it does not re-fetch.
+        `VoltagePanelVM.provenance_text` is what says so on screen, and the panel
+        must keep rendering it — without it a user reads hours-old millivolts as
+        current ones. A refresh control is register row `VOLT-a`.
+        """
+        _clear_layout(self._voltages_layout)
+        diag = getattr(self._diag, "last_hw_diagnostics", None)
+        panel = build_voltage_panel(getattr(diag, "voltages", []) or [])
+
+        if not panel.has_rails:
+            self._voltages_layout.addWidget(
+                _note_label(panel.empty_note, "Hardware_Label_voltagesEmpty")
+            )
+            return
+
+        self._voltages_layout.addWidget(
+            _note_label(panel.summary_text, "Hardware_Label_voltagesSummary")
+        )
+        self._voltages_layout.addWidget(
+            _note_label(panel.provenance_text, "Hardware_Label_voltagesProvenance")
+        )
+
+        table = QTableWidget(len(panel.rows), len(_VOLTAGE_COLS))
+        table.setObjectName("Hardware_Table_voltages")
+        table.setHorizontalHeaderLabels(_VOLTAGE_COLS)
+        apply_dense_table(table)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(True)
+        for i, row in enumerate(panel.rows):
+            _ensure_items(table, i, len(_VOLTAGE_COLS))
+            table.item(i, _VOLT_NAME).setText(row.name)
+            table.item(i, _VOLT_CHIP).setText(row.chip)
+            table.item(i, _VOLT_VALUE).setText(row.value_text)
+            # The one cell that carries the honesty distinction: a named rail
+            # says so, an unnamed channel says what it actually is, and the
+            # caveat rides as the row tooltip rather than being dropped.
+            table.item(i, _VOLT_IDENT).setText(
+                "Identified rail" if row.identified else "Unnamed channel"
+            )
+            if row.caveat:
+                for col in range(len(_VOLTAGE_COLS)):
+                    table.item(i, col).setToolTip(row.caveat)
+        self._voltages_layout.addWidget(table)
+
+        if panel.footnote:
+            self._voltages_layout.addWidget(
+                _note_label(panel.footnote, "Hardware_Label_voltagesFootnote")
+            )
 
     def _build_advanced(self, panel) -> QWidget:
         section = CollapsibleSection(
