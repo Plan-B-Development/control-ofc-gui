@@ -2467,11 +2467,18 @@ class ControlsPage(QWidget):
         `ControlCard.set_output`'s `_skipped_reason` guard live rather than dead
         in live mode, which is what that guard was kept for.
 
-        **An absent control is not a zero.** The daemon omits any control it did
-        not evaluate — no profile, a listed skip, or the whole of a thermal event,
-        where the daemon publishes no per-control output at all. A
-        card with no entry is left alone rather than being told `0`, so it keeps
-        showing whatever it last had rather than claiming the fans stopped.
+        **An absent control is not a zero, and it is not "keep the last value"
+        either.** The daemon omits any control it did not evaluate — no profile, a
+        listed skip, or the whole of a thermal event, where it publishes no
+        per-control output at all. Every such card is RESET to "—"; see the
+        comment on the reset loop below, which states the `docs/08` clause.
+
+        (This paragraph used to end "so it keeps showing whatever it last had",
+        contradicting that loop twenty lines later. `docs/08` records the older
+        wording as retracted and the code was always correct — the docstring was
+        the surviving copy of a claim retracted everywhere else, which is the
+        failure `CLAUDE.md § Workflow documentation protocol` rule 2 exists to
+        stop. Register row `WIRE-ae`.)
         """
         outputs = {entry.control_id: entry.output_pct for entry in status.control_outputs}
 

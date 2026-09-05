@@ -413,16 +413,19 @@ class DaemonClient:
         """
         return parse_hwmon_inventory(self._get("/inventory/hwmon"))
 
-    def hardware_readiness(self, force: bool = False) -> HardwareReadiness:
+    def hardware_readiness(self, refresh: bool = False) -> HardwareReadiness:
         """GET /inventory/hardware-readiness — the combined readiness + Super-I/O
         snapshot for the merged "Cooling Hardware Readiness" page (DEC-207), all
-        from ONE shared daemon scan. ``force`` (the page's "Refresh hardware
+        from ONE shared daemon scan. ``refresh`` — named for the query key it
+        becomes, register row ``WIRE-ab``; it was ``force``, which was correct
+        today and invited a future edit that renamed one and not the other —
+        (the page's "Refresh hardware
         assessment" action) requests a fresh scan via ``?refresh=true``; otherwise
         the daemon serves its cached assessment. Read-only. Raises ``DaemonError``
         with ``.status == 404`` on a daemon that predates the endpoint — the page
         shows an "unavailable" state in that case.
         """
-        params = {"refresh": "true"} if force else None
+        params = {"refresh": "true"} if refresh else None
         return parse_hardware_readiness(self._get("/inventory/hardware-readiness", params=params))
 
     def superio_probe(self) -> SuperIoReport:

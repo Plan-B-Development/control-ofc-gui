@@ -370,7 +370,7 @@ class _HardwareReadinessWorker(_SocketWorker):
         from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 
         try:
-            result = self._ensure_client().hardware_readiness(force=force)
+            result = self._ensure_client().hardware_readiness(refresh=force)
             self.fetch_ok.emit(result)
         except DaemonTimeout:
             self.fetch_error.emit("unavailable", "Hardware readiness fetch timed out")

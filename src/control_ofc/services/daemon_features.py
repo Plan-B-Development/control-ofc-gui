@@ -45,7 +45,10 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         "pwm_characterization": "2.29.0",  # DEC-313, control.pwm_characterization
         "pump_protection": "2.28.0",  # DEC-311, control.header_roles
         "daemon_config_report": "2.16.0",  # GET /config
-        "profile_search_dir_removal": "2.23.0",  # DELETE on /config/profile-dirs
+        # `remove` array on POST /config/profile-search-dirs. This comment used
+        # to cite `DELETE /config/profile-dirs`, a route that has never existed
+        # (`WIRE-ad`); the version floor was right, the surface named was not.
+        "profile_search_dir_removal": "2.23.0",
     }
 )
 

@@ -196,8 +196,33 @@ def test_client_hardware_readiness_get_and_force():
     client.hardware_readiness()
     client._get.assert_called_once_with("/inventory/hardware-readiness", params=None)
     client._get.reset_mock()
-    client.hardware_readiness(force=True)
+    client.hardware_readiness(refresh=True)
     client._get.assert_called_once_with("/inventory/hardware-readiness", params={"refresh": "true"})
+
+
+def test_the_readiness_parameter_is_named_for_the_wire_key():
+    """`WIRE-ab`: the parameter was `force` while the query key is `refresh`.
+
+    Verified correct at the time — the request really did send `?refresh=true` —
+    but a mismatched pair invites an edit that renames one and not the other.
+    Asserted as a relationship between the signature and the emitted key, so it
+    cannot drift apart again without failing here.
+    """
+    import inspect
+
+    from control_ofc.api.client import DaemonClient
+
+    (param,) = [
+        n for n in inspect.signature(DaemonClient.hardware_readiness).parameters if n != "self"
+    ]
+    client = DaemonClient.__new__(DaemonClient)
+    client._get = MagicMock(return_value={"overall": "ok", "items": []})
+    client.hardware_readiness(**{param: True})
+    (_route, kwargs) = client._get.call_args[0][0], client._get.call_args[1]
+    assert param in kwargs["params"], (
+        f"the parameter is named {param!r} but the wire key is "
+        f"{sorted(kwargs['params'])} — rename one and you must rename both"
+    )
 
 
 # ── Worker (off-thread call, run synchronously here) ─────────────────
@@ -212,8 +237,11 @@ class _WorkerClient:
         self.force_calls: list[bool] = []
         self.socket_path = "/tmp/control-ofc-cr-test.sock"
 
-    def hardware_readiness(self, force: bool = False) -> HardwareReadiness:
-        self.force_calls.append(force)
+    def hardware_readiness(self, refresh: bool = False) -> HardwareReadiness:
+        # Named for the wire key, like the real client (`WIRE-ab`). A stub whose
+        # keyword differs from the thing it stands in for is a stub that passes
+        # while the production call site would raise TypeError.
+        self.force_calls.append(refresh)
         if self._error is not None:
             raise self._error
         return self._hw
