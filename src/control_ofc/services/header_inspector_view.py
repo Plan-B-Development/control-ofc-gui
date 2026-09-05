@@ -194,11 +194,9 @@ def requested_pct(reading: FanReading | None) -> tuple[int | None, bool]:
     """
     if reading is None:
         return None, False
-    if reading.pwm_commanded_pct is not None:
-        return reading.pwm_commanded_pct, False
-    if reading.last_commanded_pwm is not None:
-        return reading.last_commanded_pwm, True
-    return None, False
+    # Delegates to `FanReading.requested_duty`, which is where this rule now
+    # lives so the Dashboard's derivations can follow it too (`WIRE-j`, DEC-276).
+    return reading.requested_duty()
 
 
 def _tach_capability(header: HwmonHeader) -> str:

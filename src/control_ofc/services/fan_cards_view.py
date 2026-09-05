@@ -96,7 +96,11 @@ class FanState(Enum):
     OVERRIDE = "Override"  # manually pinned via a daemon override on its control
     LOW_RPM = "Low RPM"  # rpm==0 while commanded above the floor (non-GPU only)
     STALE = "Stale"  # reading older than the FRESH window
-    STALL = "Stall"  # daemon-confirmed stall (rpm==0 while PWM commanded)
+    # Daemon-confirmed stall: rpm==0 while the header reported a duty above the
+    # daemon's stall threshold. Deliberately not worded "while PWM commanded" —
+    # the daemon derives it from `last_commanded_pwm`, which for an uncontrolled
+    # hwmon header is the readback (`AIO5-a` / `WIRE-j`).
+    STALL = "Stall"
     OFFLINE = "Offline"  # expected fan with no live reading
 
 
@@ -167,11 +171,19 @@ def _derive_state(fan: FanReading, *, overridden: bool, floor: float) -> FanStat
         return FanState.STALE
     # LOW_RPM is a soft heuristic and is suppressed for GPU fans: a zero-RPM idle
     # is normal for them (DEC-047), and intel GPU fans report no commanded PWM.
+    #
+    # `requested_duty`, not `last_commanded_pwm` (`WIRE-j`): for an hwmon header
+    # the latter carries the poll's *readback* whenever nothing has been
+    # commanded (`AIO5-a`), so an uncontrolled header sitting at a BIOS-set duty
+    # with a dead tach would be flagged "low RPM against a command" that never
+    # happened. DEC-318 shipped the unambiguous field; this derivation and the
+    # Dashboard's stall alert were the two that never moved to it.
+    commanded, _approximate = fan.requested_duty()
     if (
         fan.source not in _GPU_SOURCES
         and fan.rpm == 0
-        and fan.last_commanded_pwm is not None
-        and fan.last_commanded_pwm > floor
+        and commanded is not None
+        and commanded > floor
     ):
         return FanState.LOW_RPM
     if overridden:

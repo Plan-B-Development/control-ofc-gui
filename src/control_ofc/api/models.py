@@ -687,6 +687,28 @@ class FanReading:
             return Freshness.STALE
         return Freshness.INVALID
 
+    def requested_duty(self) -> tuple[int | None, bool]:
+        """The duty the daemon asked for, and whether it is an approximation.
+
+        Returns ``(value, approximate)``. ``approximate`` is True only where the
+        sole candidate is ``last_commanded_pwm`` — which for an *hwmon* header
+        carries whichever of the poll's readback and the engine's command wrote
+        last (register row ``AIO5-a``), so on an *uncontrolled* header nothing
+        was commanded at all and any wording saying "commanded" is false.
+
+        Lives here rather than in one view module on purpose. It began as a
+        helper inside the Hardware page's header inspector, which is why the
+        Dashboard's two derivations were still reading the ambiguous field a
+        release after DEC-318 shipped the unambiguous one (register row
+        ``WIRE-j``) — the DEC-276 lesson that a rule inside one consumer is a
+        rule the other consumers cannot follow.
+        """
+        if self.pwm_commanded_pct is not None:
+            return self.pwm_commanded_pct, False
+        if self.last_commanded_pwm is not None:
+            return self.last_commanded_pwm, True
+        return None, False
+
 
 # ---------------------------------------------------------------------------
 # Cooling-device topology (AIO-MB Phase 4, DEC-316, daemon >= 2.31.0)

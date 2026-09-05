@@ -43,6 +43,32 @@ MAX_FAN_ALIAS_LEN = 64
 _OPENFAN_CH_PREFIX = "openfan:ch"
 
 
+def _stall_detail(fan: FanReading) -> str:
+    """Say what was actually observed, not what we wish had been (`WIRE-j`).
+
+    The daemon asserts `stall_detected` from `rpm == 0 && pwm > STALL_PWM_THRESHOLD`
+    where `pwm` is `last_commanded_pwm` — and for an hwmon header that field
+    carries the poll's *readback* whenever nothing has been commanded
+    (`AIO5-a`). So on an uncontrolled header the old wording, "RPM=0 while PWM
+    commanded", named a command that never happened, on an `error`-level alert.
+
+    Where DEC-318's unambiguous `pwm_commanded_pct` is present the claim is
+    exact. Where it is not, the sentence describes the *reading* and says the
+    daemon cannot separate the two — an alert that overstates its evidence is
+    worse than one that qualifies it, because the user acts on it.
+    """
+    duty, approximate = fan.requested_duty()
+    if duty is None:
+        return f"Fan '{fan.id}' stall detected: RPM is 0 and the daemon reports it stalled"
+    if approximate:
+        return (
+            f"Fan '{fan.id}' stall detected: RPM is 0 while the header reports {duty}%. "
+            "This daemon does not separate the commanded duty from the hardware "
+            "readback, so the fan may not be under control at all."
+        )
+    return f"Fan '{fan.id}' stall detected: RPM is 0 while the daemon commands {duty}%"
+
+
 class AppState(QObject):
     """Observable application state. Emits signals when data changes."""
 
@@ -482,7 +508,7 @@ class AppState(QObject):
                         source="fan",
                         component=f.id,
                         title=f"{f.id} stall",
-                        detail=f"Fan '{f.id}' stall detected (RPM=0 while PWM commanded)",
+                        detail=_stall_detail(f),
                     )
                 )
 

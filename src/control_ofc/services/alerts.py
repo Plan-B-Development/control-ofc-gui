@@ -261,7 +261,7 @@ def transition_to_log(tr: AlertTransition) -> tuple[str, str, str]:
     Onset carries the condition's own sentence; recovery reads back the short title
     with how long it lasted, so the pair reads as a story in the log table:
 
-        09:18:35 WARN  fan  Fan 'cpu_fan' stall detected (RPM=0 while PWM commanded)
+        09:18:35 WARN  fan  Fan 'cpu_fan' stall detected: RPM is 0 while the daemon commands 45%
         09:18:36 INFO  fan  CPU_FAN stall recovered after 1.2s
     """
     occ = tr.occurrence

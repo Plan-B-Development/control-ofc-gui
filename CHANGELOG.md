@@ -56,6 +56,13 @@ a daemon-side test-only change; no daemon version floor moves.
   possible outcome was an error.
 
 ### Fixed
+- **The Dashboard's stall alert no longer claims a command that may not exist** (`WIRE-j`).
+  For a motherboard fan header the daemon has never driven, the field the alert was built
+  from reports the *hardware readback*, not a command — so an `error`-level alert said
+  "RPM=0 while PWM commanded" about a header nothing was commanding. It now says what was
+  actually observed, and says plainly when the daemon cannot tell the two apart. The
+  fan-card "low RPM" state was reading the same ambiguous number and now prefers the
+  unambiguous one.
 - **The hardware inventory dropped 14 fields the daemon sends** (`WIRE-h`, `WIRE-i`).
   `GET /inventory/hwmon` returns the same PWM-header objects as `GET /hwmon/headers`, but
   the GUI modelled them with a second, older class that had missed every field added in the
