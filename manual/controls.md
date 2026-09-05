@@ -56,7 +56,7 @@ Each fan role appears as a card:
 
 | Card element | Meaning |
 |--------------|---------|
-| **Title row** | Role name plus a status chip: **Applied** (curve output being written), **Manual** (your own inline override active), **External** (an override held by something else — another client, or this app before it restarted), **Not controlled** (the daemon cannot work out a speed for this role, so nothing is driving these fans and they hold their last speed — hover for the reason), or **No members** |
+| **Title row** | Role name plus a status chip: **Applied** (curve output being written), **Manual** (your own inline override active), **External** (an override held by something else — another client, or this app before it restarted), **Not controlled** (the daemon cannot work out a speed for this role, so nothing is driving these fans and they hold their last speed — the chip carries how long it has been that way, and the tooltip the reason), or **No members** |
 | **Members** | The physical outputs in the role — "Members: Front Intake 1, Front Intake 2, +1 more" |
 | **Curve** | The assigned curve and its type, or "Curve: Manual" for fixed-speed roles. A **Min: N%** badge appears when a stall-protection floor applies (see [role-aware minimums](profiles-and-curves.md#role-aware-minimum-stall-protection)) |
 | **Now** | Live output and the driving sensor: "Now: 65% • Tctl 45.0°C". Mixed roles with a GPU member also show the GPU's own value ("(GPU 0%)") when it idles below the rest |

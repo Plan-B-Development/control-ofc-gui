@@ -723,8 +723,14 @@ def test_parse_hwmon_inventory_full():
     assert inv.preferences.cpu_sensor_id == "hwmon:k10temp:x:Tctl"
     assert inv.preferences.mb_sensor_id is None
     # CONTR-1 (2026-07-21 audit): the previously-dropped lists are modelled.
-    # Every field is asserted so a dataclass field-name typo (which
-    # _filter_fields would silently drop, substituting the default) trips here.
+    # Every field IN THIS PAYLOAD is asserted, so a dataclass field-name typo —
+    # which `_filter_fields` silently drops, substituting the default — trips
+    # here. The qualifier is not pedantry: this comment used to claim "every
+    # field" outright and was falsified the moment DEC-316 added eight more to
+    # the wire struct without touching this fixture, which is precisely the
+    # `WIRE-i` failure one file over. The DEC-316 fields have their own parse
+    # test in `test_wire_g3_inventory_models.py`; their absence from THIS
+    # payload is asserted below, because absent must mean None and never 0.
     pwm = inv.pwm_controls[0]
     assert pwm.id == "hwmon:nct6799:isa:pwm2"
     assert pwm.label == "pwm2"
@@ -738,6 +744,12 @@ def test_parse_hwmon_inventory_full():
     assert pwm.is_writable is True
     assert pwm.pwm_mode == 1
     assert pwm.is_aio is False
+    # DEC-316 fields absent from the payload → None, never 0. `WIRE-h`/`WIRE-t`:
+    # a 0 here would advertise a 0% floor on a pump, and a True `is_writable`
+    # would make a read-only header look controllable.
+    assert pwm.effective_min_pwm_pct is None
+    assert pwm.stop_permitted is None
+    assert pwm.cooling_device_id is None
     fan = inv.monitor_only_fans[0]
     assert fan.id == "hwmon:nct6799:isa:fan5"
     assert fan.source == "hwmon"

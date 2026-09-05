@@ -143,6 +143,21 @@ def test_a_mutable_key_keeps_its_editor(page) -> None:
     assert widget.isEnabled() is True
 
 
+def test_a_key_that_becomes_mutable_again_stops_claiming_to_be_read_only(page) -> None:
+    """`_set_daemon_config_available(True)` re-enables the widget but never
+    touches tooltips, so without an explicit restore the control would be
+    editable while still saying it is read-only — a claim that outlives its
+    reason, which is the failure class this whole wave is about.
+    """
+    widget = page._daemon_key_widgets["serial.port"]
+    original = page._daemon_key_tooltips["serial.port"]
+    page._apply_daemon_key_mutability(_cfg(serial__port=False))
+    assert "read-only" in widget.toolTip()
+    page._apply_daemon_key_mutability(_cfg(serial__port=True))
+    assert widget.toolTip() == original
+    assert "read-only" not in widget.toolTip()
+
+
 def test_a_key_the_daemon_never_mentions_is_left_alone(page) -> None:
     """Absence means "older daemon", not "locked".
 
@@ -174,6 +189,63 @@ def test_immutable_search_dirs_disables_the_add_and_remove_buttons(page) -> None
     page._apply_daemon_key_mutability(_cfg(profiles__search_dirs=False))
     assert page._add_search_dir_btn.isEnabled() is False
     assert page._remove_search_dir_btn.isEnabled() is False
+
+
+def test_only_one_readiness_request_is_ever_outstanding(qtbot, qapp) -> None:
+    """The invariant that makes `_awaiting_rescan` attributable.
+
+    Two independent triggers — the first-show auto-fetch and the Re-scan button —
+    land on the same `_on_readiness_ok`, and the replies carry nothing that says
+    which request they answer. With both in flight the auto-fetch's answer is
+    read as the rescan's: the wrong verdict shown, and the user's real re-scan
+    then reporting nothing. Serialising is what fixes it, so this asserts the
+    serialisation rather than the symptom.
+    """
+    from control_ofc.api.models import HardwareReadiness
+    from control_ofc.ui.pages.hardware_page import HardwarePage
+
+    page = HardwarePage(state=None, client=object())
+    qtbot.addWidget(page)
+    page._ensure_readiness_worker = lambda: True
+
+    page._fetch_readiness()  # the first-show auto-fetch: not a rescan
+    assert page._readiness_in_flight is True
+    assert page._refresh_btn.isEnabled() is False
+    assert page._awaiting_rescan is False
+
+    page._refresh_readiness()  # the user presses Re-scan mid-flight
+    assert page._awaiting_rescan is False, "the pending auto-fetch must not be armed as a rescan"
+
+    page._on_readiness_ok(HardwareReadiness(generation=1, overall="ok"))
+    # Assert on the CLAIM, not on emptiness: `_on_readiness_ok` hides the status
+    # label without clearing it, so the in-flight text is still there.
+    text = page._status_label.text()
+    assert "re-scanned" not in text and "No change" not in text, (
+        f"an auto-fetch reply must not report on a re-scan: {text!r}"
+    )
+    assert page._readiness_in_flight is False
+    assert page._refresh_btn.isEnabled() is True
+
+    # And a refresh started when nothing is outstanding still works.
+    page._refresh_readiness()
+    assert page._awaiting_rescan is True
+    page._on_readiness_ok(HardwareReadiness(generation=2, overall="ok"))
+    assert "re-scanned" in page._status_label.text()
+
+
+def test_a_failed_fetch_re_enables_the_button(qtbot, qapp) -> None:
+    """Otherwise one transient error disables Re-scan for the whole session,
+    with no way back — the same trap `_refresh_daemon_config` documents."""
+    from control_ofc.ui.pages.hardware_page import HardwarePage
+
+    page = HardwarePage(state=None, client=object())
+    qtbot.addWidget(page)
+    page._ensure_readiness_worker = lambda: True
+    page._fetch_readiness(force=True)
+    assert page._refresh_btn.isEnabled() is False
+    page._on_readiness_error("transient", "socket closed")
+    assert page._refresh_btn.isEnabled() is True
+    assert page._readiness_in_flight is False
 
 
 # ── WIRE-x ───────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.59.0] — 2026-09-05
 
 Wave 2 of the 2026-09-05 wire-surface sweep (`DEC-329`) — the GUI now consumes what the
 daemon already publishes, instead of hardcoding, re-deriving or discarding it. Pairs with

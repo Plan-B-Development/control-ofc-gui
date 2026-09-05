@@ -36,7 +36,9 @@ from the retired Dashboard status strip, so every page now has them).
 ### Telemetry graph (DEC-181, top)
 A wide temperature / fan-speed-over-time chart with:
 - selectable time range
-- a curated default series subset on first run (CPU · GPU · one motherboard temp)
+- a curated default series subset on first run (CPU · GPU · one motherboard temp · and,
+  on a liquid-cooled machine, one coolant temp — DEC-329/`WIRE-ai`; a slot with no matching
+  sensor is simply dropped, so an air-cooled machine gets the same three as before)
   instead of every series at once, resolved by
   `series_selection.default_series_keys`
 - **chart modes** (Combined [default] / Thermals / Fans / Diagnostics) + Reset — the

@@ -169,8 +169,17 @@ class HardwarePage(QWidget):
         self._last_report: HardwareReadiness | None = None
         # True only between a user-pressed Refresh and its answer, so the
         # generation comparison reports on a rescan the user actually asked for
-        # (`WIRE-af`).
+        # (`WIRE-af`). It is only *attributable* because at most one readiness
+        # request is ever outstanding — see `_readiness_in_flight`.
         self._awaiting_rescan = False
+        # There are two independent triggers for a readiness fetch — the
+        # first-show auto-fetch and the Re-scan button — and both land on the
+        # same `_on_readiness_ok`. With both in flight the replies arrive in
+        # request order and nothing distinguishes them, so the auto-fetch's
+        # answer would be read as the rescan's: the wrong verdict shown, and the
+        # user's actual re-scan then reporting nothing at all. Serialising the
+        # requests is what makes the flag mean what it says.
+        self._readiness_in_flight = False
 
         # AIO-MB Phase 6 workers. Each is created lazily by `_ensure_worker`
         # and torn down in `cleanup`, exactly like the readiness worker.
@@ -672,13 +681,26 @@ class HardwarePage(QWidget):
         if not self._ensure_readiness_worker():
             self._set_status("Cannot fetch readiness: no daemon socket path")
             return
+        if self._readiness_in_flight:
+            # Defence in depth: the button is disabled below for the duration,
+            # so a user cannot reach this — but a programmatic second call would
+            # otherwise put two replies on one slot.
+            return
+        self._readiness_in_flight = True
+        self._refresh_btn.setEnabled(False)
+        # Armed HERE, not in `_refresh_readiness`, so it is set only once the
+        # request is genuinely going out and only while it is the sole one.
+        self._awaiting_rescan = force
         self._set_status(
             "Refreshing hardware assessment…" if force else "Fetching hardware readiness…"
         )
         (self._readiness_refresh_request if force else self._readiness_request).emit()
 
+    def _end_readiness_request(self) -> None:
+        self._readiness_in_flight = False
+        self._refresh_btn.setEnabled(True)
+
     def _refresh_readiness(self) -> None:
-        self._awaiting_rescan = True
         self._fetch_readiness(force=True)
 
     @Slot(object)
@@ -689,6 +711,7 @@ class HardwarePage(QWidget):
         # from one that re-scanned. Age cannot decide it: a cached report's age
         # keeps climbing, and a genuine re-scan of unchanged hardware produces a
         # report identical by every other field.
+        self._end_readiness_request()
         previous = self._last_report
         rescanned = previous is not None and result.generation > previous.generation
         self._last_report = result
@@ -710,6 +733,7 @@ class HardwarePage(QWidget):
         # NEXT background fetch — which the user did not ask for — reports on a
         # rescan, which is the wrong event and possibly the wrong verdict.
         self._awaiting_rescan = False
+        self._end_readiness_request()
         if category == "unsupported":
             self._readiness_unsupported = True
             self._set_status(

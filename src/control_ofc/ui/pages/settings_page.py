@@ -996,6 +996,9 @@ class SettingsPage(QWidget):
             "detection.enable_nvidia_telemetry": self._nvidia_toggle,
         }
         self._daemon_key_widgets: dict[str, QWidget] = dict(controls)
+        #: Each editor's tooltip as authored, so `_apply_daemon_key_mutability`
+        #: can put it back when a key stops being read-only.
+        self._daemon_key_tooltips: dict[str, str] = {k: w.toolTip() for k, w in controls.items()}
         # Per-row source/restart annotation, keyed by config key.
         self._daemon_row_notes: dict[str, QLabel] = {}
         for key, title, subtitle in self._DAEMON_ROWS:
@@ -1121,6 +1124,14 @@ class SettingsPage(QWidget):
                     f"{key} is read-only on this daemon — it reports no write route "
                     "for it. Edit the daemon's config file and restart."
                 )
+            elif entry is not None:
+                # Restore, don't just leave: `_set_daemon_config_available(True)`
+                # re-enables the widget but never touches tooltips, so a key that
+                # goes immutable and then mutable again across two polls would be
+                # editable while still saying it is read-only. The original text
+                # is captured once at construction rather than reconstructed, so
+                # it cannot drift from the widget's real tooltip.
+                widget.setToolTip(self._daemon_key_tooltips.get(key, ""))
         dirs = cfg.get("profiles.search_dirs")
         if dirs is not None and not dirs.mutable:
             for widget in (self._add_search_dir_btn, self._remove_search_dir_btn):

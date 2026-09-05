@@ -82,7 +82,7 @@ A summary table (ID, Source, New Label) where every label is still editable — 
 
 | Setting | Location | Effect |
 |---------|----------|--------|
-| **Fan Wizard spin-down timer** | Settings → Operational Behavior | How long each fan stays stopped (5–12 seconds, default 8) |
+| **Fan Wizard spin-down timer** | Settings → Operational Behavior | How long each fan stays stopped (5–12 seconds, default 8). On a machine with an OpenFan controller the maximum is lowered to whatever the daemon says it will honour — it restarts a stopped OpenFan fan after a fixed timeout, so a longer setting would promise a stop that ends early |
 
 ## Where Labels Appear
 

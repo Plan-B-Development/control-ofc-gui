@@ -25,7 +25,7 @@ Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-pag
 
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
-| **Fan Wizard spin-down timer** | 8 seconds | 5-12s | How long each fan is stopped during the Fan Wizard identification test. Longer gives more time to observe which fan changed |
+| **Fan Wizard spin-down timer** | 8 seconds | 5-12s, or lower where the daemon says so | How long each fan is stopped during the Fan Wizard identification test. Longer gives more time to observe which fan changed. With an OpenFan controller present the daemon advertises the point at which it restarts a stopped fan, and the spinner will not go above it — a longer value could not have been honoured |
 | **Auto-hide integrated GPU sensors** | On | — | When both an integrated GPU (iGPU) and a discrete GPU (dGPU) are present, hide the less-useful iGPU temperature sensors from the Dashboard and the Overview page's sensor lists |
 | **Auto-hide unused fan headers** | On | — | Hide motherboard fan headers that report 0 RPM, indicating no fan is plugged into that header |
 

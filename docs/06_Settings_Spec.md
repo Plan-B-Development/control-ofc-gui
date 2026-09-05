@@ -242,7 +242,8 @@ These belong to the daemon runtime/config:
 - **`AppSettings.from_dict` is the trust boundary (DEC-137):** it never raises.
   Every field is type-checked and coerced — wrong types fall back to the field
   default, numeric fields are clamped to their widget ranges (e.g. wizard
-  spin-down 5–12 s), `card_size` is an enum, `window_geometry`
+  spin-down 5–12 s, upper bound lowered to `capabilities.limits.openfan_stop_timeout_s`
+  where an OpenFan controller is present — DEC-329), `card_size` is an enum, `window_geometry`
   must be four sane ints, and `series_colors` keeps only valid hex entries. A
   non-dict payload yields all-defaults rather than a crash on the next launch.
 - **Theme tokens are hex-only (DEC-142):** colour tokens (and every
