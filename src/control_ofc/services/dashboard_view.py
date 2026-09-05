@@ -19,8 +19,79 @@ from dataclasses import dataclass
 
 from control_ofc.api.models import (
     Capabilities,
+    RuntimeConfigDegraded,
 )
 from control_ofc.constants import EXPECTED_API_VERSION
+
+# Plain-language rendering of the DEC-321 `runtime_config_degraded.reason`
+# token. An unrecognised token renders as itself rather than being dropped —
+# the daemon owns the vocabulary and may extend it, and "the config failed to
+# load for a reason this GUI has not heard of" is still worth saying.
+_RUNTIME_CONFIG_REASONS: dict[str, str] = {
+    "unreadable": "the file could not be read",
+    "malformed": "the file is not valid for this daemon version",
+}
+
+
+def runtime_config_degraded_message(degraded: RuntimeConfigDegraded | None) -> str | None:
+    """The Dashboard banner text for a daemon running on fallback settings, or
+    ``None`` when the config loaded cleanly (`WIRE-a`, DEC-321).
+
+    **[SAFETY].** ``phase`` decides what the user has actually lost, and the two
+    cases must not share one message. Only the boot load seeds every
+    runtime-mutable key, so a ``startup`` failure drops ``header_roles`` — a pump
+    role the user assigned by hand is gone, and with it that header's 30% floor,
+    its stop exemption and its pump-safe identify. A ``reload`` failure commits
+    only ``profile_search_dirs``, so roles survive as startup established them;
+    saying otherwise would be a false alarm about pump protection.
+
+    An **unknown** phase gets the cautious wording: it names the possibility
+    without asserting the loss, because over-warning erodes the banner and
+    under-warning hides a real one.
+
+    ``detail`` is deliberately absent from the message. It is verbatim daemon
+    prose and can be a multi-line TOML parse error; the page logs it instead, the
+    same split the API-skew guard uses.
+    """
+    if degraded is None:
+        return None
+
+    reason = _RUNTIME_CONFIG_REASONS.get(degraded.reason, degraded.reason.strip())
+    cause = f" ({reason})" if reason else ""
+    where = f" — {degraded.path}" if degraded.path.strip() else ""
+    remedy = "Repair the file and restart control-ofc-daemon."
+
+    if degraded.phase == "reload":
+        # **Deliberately does NOT say "header roles are unaffected".** `phase` is
+        # latest-wins in the daemon (`main.rs:600-601` overwrites unconditionally),
+        # so a FAILED reload replaces an earlier startup record — the roles may
+        # already be gone while the record reads `reload`, and this is reachable
+        # by editing a broken file wrongly and reloading. The GUI cannot tell the
+        # two apart, so it must not reassure. It still says something narrower
+        # than the startup case: a reload never *restores* roles.
+        return (
+            f"Daemon settings failed to reload{cause}{where}. Reloading does not restore "
+            f"fan header roles, so if the file was already bad at startup, roles you "
+            f"assigned by hand are still not in effect and those headers have no 30% "
+            f"pump floor. {remedy}"
+        )
+    if degraded.phase == "startup":
+        return (
+            f"Daemon settings failed to load{cause}{where}. control-ofc-daemon is "
+            f"running on built-in defaults, so any fan header roles you assigned by "
+            f"hand are NOT in effect — those headers lose their 30% pump floor and "
+            f"can be stopped by fan identify. Saving settings will not clear this. "
+            f"{remedy}"
+        )
+    # Unknown or absent phase: state the degradation and flag the risk without
+    # claiming a loss that may not have happened.
+    return (
+        f"Daemon settings failed to load{cause}{where}. control-ofc-daemon is running "
+        f"on built-in defaults, so settings you changed — possibly including fan "
+        f"header roles you assigned by hand, and their 30% pump floor — may not be in "
+        f"effect. Saving settings will not clear this. {remedy}"
+    )
+
 
 # Plain-language reason per daemon thermal_state, for the Safety detail. Kept
 # qualitative (no hardcoded thresholds) so it can't drift from the daemon.

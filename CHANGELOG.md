@@ -1,5 +1,43 @@
 # Changelog
 
+## [2.58.0] — 2026-09-05
+
+Pairs with `control-ofc-daemon` >= v2.11.0 (**unchanged floor**). The new banner reads a
+field only daemons >= 2.34.0 send; its absence is indistinguishable from "the config loaded
+cleanly" and renders as nothing, which is exactly what an older daemon reports today.
+From the `/ofc:investigate-mismatch` wire-surface sweep (`WIRE-a`, `WIRE-b`).
+
+### Added
+- **The Dashboard now tells you when the daemon is running on fallback settings**
+  (`WIRE-a`). If `control-ofc-daemon` cannot read or parse its own `runtime.toml` it
+  silently falls back to built-in defaults so that a corrupt file can never stop it
+  booting — deliberate, and unchanged. But those defaults carry **no header roles**, so on
+  a board whose Super-I/O publishes no `pwmN_label` files a `pump` role you assigned by
+  hand is the only evidence a header drives a pump, and a failed *startup* load removes
+  that header's 30% floor, its stop exemption and its pump-safe identify. The daemon has
+  published `runtime_config_degraded` on `/status` and `/poll` since 2.34.0 for exactly
+  this reason; until now the GUI did not read it, so the entire notification was one
+  `warn!` line in the daemon's journal and **no client could tell**.
+
+  The banner distinguishes the two phases, because they cost different things: a
+  `startup` failure names the lost pump protection outright, a `reload` failure says
+  header roles are unaffected, and an unrecognised phase warns without asserting a loss
+  it cannot confirm. It also says what does *not* clear the condition — saving settings
+  repairs the file but not the running daemon, which needs a restart. The verbatim
+  daemon error goes to the log rather than into the banner, since a TOML parse error can
+  run to several lines.
+
+### Fixed
+- **A radiator fan in an AIO no longer shows a 30% "device safety floor" that nothing
+  enforces** (`WIRE-b`, requires daemon >= 2.35.4). The Hardware page rendered
+  "Device safety floor: 30%" directly above "Fan stop: Permitted" for the same header —
+  a contradiction, and the floor was the false half. See the daemon changelog for the
+  cause; this side is display only, and no cooling behaviour changed. Against daemons
+  2.31.0 – 2.35.3 the old value is still received and still displayed: `pump_protection`
+  deliberately does not second-guess a self-describing safety field client-side, because
+  suppressing a floor the GUI merely *believes* to be decorative is how a real one would
+  get hidden.
+
 ## [2.57.7] — 2026-09-04
 
 Pairs with `control-ofc-daemon` >= v2.11.0 (unchanged floor). The `/ofc:docs-correctness`

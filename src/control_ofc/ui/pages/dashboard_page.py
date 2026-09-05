@@ -40,7 +40,10 @@ from control_ofc.services.daemon_service_check import (
     ENABLE_COMMAND,
     check_daemon_service_state,
 )
-from control_ofc.services.dashboard_view import build_capabilities_vm
+from control_ofc.services.dashboard_view import (
+    build_capabilities_vm,
+    runtime_config_degraded_message,
+)
 from control_ofc.services.fan_cards_view import build_fan_card_vms
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import (
@@ -471,6 +474,16 @@ class DashboardPage(QWidget):
         content_layout.addWidget(self._engine_banner)
         self._last_engine_status = "ok"
 
+        # Daemon running on fallback settings (DEC-321 / `WIRE-a`), surfaced the
+        # same way and for the same reason as the two banners above: /poll is the
+        # authoritative source and the GUI has no loop of its own to notice.
+        self._runtime_config_banner = ErrorBanner()
+        self._runtime_config_banner.setObjectName("Dashboard_Banner_runtime_config")
+        content_layout.addWidget(self._runtime_config_banner)
+        # Poll-diff key, not a bool: a repaired daemon reconnecting must clear the
+        # banner, and a *different* degradation must re-raise it.
+        self._last_runtime_config_key: tuple[str, str, str] | None = None
+
         self._v_splitter = QSplitter(Qt.Orientation.Vertical)
         self._v_splitter.setObjectName("Dashboard_Splitter_vertical")
         self._h_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -801,6 +814,54 @@ class DashboardPage(QWidget):
                     f"Fan control engine has stopped{reason} \u2014 the daemon is not "
                     "driving your fans, and its thermal emergency protection is not "
                     "running. Restart control-ofc-daemon."
+                )
+
+        # Daemon runtime-config degradation (DEC-321 / `WIRE-a`). **[SAFETY]:**
+        # the daemon fell back to built-in defaults, which carry no
+        # `header_roles` — so a pump role the user assigned by hand is gone,
+        # taking its 30% floor, its stop exemption and its pump-safe identify
+        # with it. Before this field the daemon's entire notification was one
+        # `warn!` in its journal and no client could tell.
+        #
+        # Poll-diff rather than set-every-tick, and that is not a micro-
+        # optimisation: `ErrorBanner.show_warning` calls `set_chip_class`, which
+        # repolishes the widget, and this slot runs at 1 Hz. The field is sticky
+        # for the daemon's lifetime so there is normally exactly one transition —
+        # but keying on the whole identity also clears the banner when a repaired
+        # daemon reconnects, and re-raises it if the degradation changes.
+        degraded = status.runtime_config_degraded
+        rc_key = (degraded.reason, degraded.path, degraded.phase) if degraded is not None else None
+        if rc_key != self._last_runtime_config_key:
+            self._last_runtime_config_key = rc_key
+            rc_message = runtime_config_degraded_message(degraded)
+            # Guarded on `degraded` as well as on the message. The `else` branch
+            # dereferences `degraded`, and "a message implies a degradation" is a
+            # cross-file invariant of the view model — if that ever stopped
+            # holding (an unrecognised shape returning None, say) this slot would
+            # raise `AttributeError` at 1 Hz. Degrade to "hide" instead.
+            if degraded is None or rc_message is None:
+                self._runtime_config_banner.hide_banner()
+                self._state.remove_warning("runtime_config_degraded")
+            else:
+                import logging
+
+                self._runtime_config_banner.show_warning(rc_message, auto_dismiss_ms=0)
+                self._state.add_warning(
+                    level="warning",
+                    source="daemon",
+                    message=rc_message,
+                    key="runtime_config_degraded",
+                )
+                self._annotate("Daemon config: degraded")
+                # `detail` is verbatim daemon prose and can be a multi-line TOML
+                # parse error, so it is logged rather than pushed into a banner —
+                # the same split the API-skew guard above uses.
+                logging.getLogger(__name__).warning(
+                    "Daemon runtime config degraded: reason=%s phase=%s path=%s detail=%s",
+                    degraded.reason,
+                    degraded.phase,
+                    degraded.path,
+                    degraded.detail,
                 )
 
         # Override start/end (poll-diff, DEC-181) — net-new diff state; overrides

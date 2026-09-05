@@ -513,8 +513,16 @@ Two properties a client must not get wrong:
   daemon restart does that. Latest-wins if both phases occur.
 
 Older daemons omit the key entirely, which reads the same as "fine" — the safe direction here, since
-it is exactly the (absent) warning such a daemon shows today. The GUI does **not** yet render this;
-it is contract-only in this release, recorded as `AUD3-z` for the banner that should consume it.
+it is exactly the (absent) warning such a daemon shows today.
+
+**The GUI renders this from v2.58.0** (`WIRE-a`, formerly `AUD3-z`): a persistent Dashboard
+banner plus a keyed `AppState` warning, raised on a poll-diff of `{reason, path, phase}` and
+cleared when a repaired daemon reconnects. The wording is phase-differentiated, and note the
+one thing a client must NOT do — **`phase: "reload"` is not evidence that header roles
+survived.** The record is latest-wins, so a *failed* reload overwrites an earlier startup
+degradation whose roles are already gone; a client that reads `reload` as "roles are fine"
+reassures the user at exactly the wrong moment. `detail` is logged rather than shown, being
+verbatim daemon prose that can run to several lines.
 
 `skipped_controls` (daemon ≥ 2.21.0, additive — `api_version` unchanged, omitted when empty) lists
 logical controls the daemon's profile engine **cannot resolve**, and is therefore not commanding at
@@ -830,8 +838,16 @@ Use to discover:
   - `effective_min_pwm_pct` (int, optional) — the duty floor the daemon **will actually
     enforce** for this header: its resolved device policy, clamped by the absolute pump
     backstop (20%). Prefer this over re-deriving a floor from labels and chip names. With the
-    generic-only policy table shipped in 2.31.0 this is `30` for every pump-protected header
-    and `0` otherwise — identical to what the engine already enforced.
+    generic-only policy table shipped in 2.31.0 it is `30` for every pump-protected header and
+    `0` for every other header — identical to what the engine already enforces.
+
+    **Daemons 2.31.0 – 2.35.3 over-claimed for one case (`WIRE-b`, fixed in 2.35.4).** A
+    *radiator or auxiliary member of a cooling device* resolved that device's policy —
+    `generic_pump` by default — and so published `30`, while every enforcement site keys on the
+    pump-protection union, in which membership is not a term. Nothing held that floor. The tell
+    is a header reporting a non-zero floor **and** `stop_permitted: true` together: from 2.35.4
+    that pairing cannot occur, and against an older daemon it means the floor is decorative.
+    Note this was a *reporting* defect only — no cooling behaviour changed in the fix.
   - `stop_permitted` (bool, optional) — whether the header may be driven to 0 at all. `false`
     wherever the daemon's pump-protection union holds, whatever a policy claims. **`null`/absent
     is not `false`** — read it as unknown and fall back, or an older daemon's pump becomes
@@ -866,11 +882,13 @@ Use to discover:
     **Two consequences for a client.** Against 2.31.0 – 2.34.0, a `false` on a *radiator or
     auxiliary member of a cooling device* is not evidence of pump protection and must not be
     used to suppress a stop warning; there is no capability flag distinguishing the two
-    behaviours, so branch on the daemon version if that matters to you. And do **not** expect
-    `stop_permitted` and `effective_min_pwm_pct` to be derivable from one another: the floor is
-    still resolved through the device policy and over-claims for the same members, which is
-    tracked separately as `AIO4-a`/`AUD3-r` and deliberately not changed here — moving it is a
-    real cooling change rather than a reporting correction.
+    behaviours, so branch on the daemon version if that matters to you. And do **not** derive
+    `stop_permitted` and `effective_min_pwm_pct` from one another. From 2.35.4 both are
+    functions of the pump-protection union alone and therefore perfectly correlated
+    (`WIRE-b`, formerly `AIO4-a`/`AUD3-r`) — but **that correlation is a property of the
+    generic-only policy table, not a contract.** A future validated policy lowers the floor
+    toward the 20% backstop without changing `stop_permitted` at all, at which point a client
+    that inferred one from the other is wrong about a pump.
   - `cooling_device_id` (string, optional) — the cooling device claiming this header, if any.
   - `pwm_freq_hz` (int, optional) — PWM base frequency from `pwmN_freq`.
   - **There is deliberately no `pwm_enable_mode` here.** The header's *current* `pwmN_enable`
@@ -2039,9 +2057,10 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
     opens this path as root and the endpoint is unprivileged-reachable. A second,
     looser copy of this check previously accepted `/dev/shm/...`. `null` clears
     the override and returns to auto-detection. Note the daemon **falls back to
-    auto-detection when a configured port cannot be opened**, so a bad value
-    cannot durably remove OpenFan control (and with it the thermal emergency's
-    only path to those fans).
+    auto-detection when a configured port cannot be opened, or opens but fails
+    the `ReadAllRpm` identity handshake** (DEC-250) — so neither a bad path nor a
+    modem, printer or Arduino sitting on that tty can durably remove OpenFan
+    control (and with it the thermal emergency's only path to those fans).
   - `POST /config/serial-timeout` — `{"timeout_ms": 50..1000}`. **The ceiling is
     [SAFETY]**: an emergency `force_all_with_floor` awaits the OpenFan backend before the
     hwmon one, costing up to `channels × timeout` on a wedged link.

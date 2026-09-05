@@ -163,6 +163,16 @@ def header_effective_floor_pct(
     ``None`` means "not known" and callers must render it as such rather than
     substituting 0 — that is the whole reason the wire field is optional.
 
+    **Daemons 2.31.0 to 2.35.3 over-claim for one case (`WIRE-b`, fixed in
+    2.35.4).** A radiator or auxiliary member of a cooling device resolved that
+    *device's* policy — ``generic_pump`` by default — and so reported 30, while
+    no enforcement site applies a floor to it. Such a header reports a non-zero
+    floor **and** ``stop_permitted: true`` together, a pairing a 2.35.4+ daemon
+    cannot produce. This function deliberately does **not** compensate for it:
+    second-guessing a self-describing safety field client-side is the failure
+    direction this whole module exists to avoid, and suppressing a floor the GUI
+    merely believes to be decorative is exactly how a real one would get hidden.
+
     The fallback keeps older daemons honest: with no reported value, a
     pump-protected header still shows the hard 30% floor those daemons enforce.
     An ordinary header gets ``None`` rather than 0, because the daemon applies

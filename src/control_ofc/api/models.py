@@ -395,6 +395,42 @@ class ReadinessRollup:
         return self.critical + self.warning
 
 
+@dataclass
+class RuntimeConfigDegraded:
+    """The daemon's own ``runtime.toml`` failed to load, so it is running on
+    built-in defaults (daemon >= 2.34.0, DEC-321).
+
+    **[SAFETY], and this is why the field is on the wire at all.** The defaults
+    carry no ``header_roles``. On a board whose Super-I/O publishes no
+    ``pwmN_label`` files — the case the whole AIO-MB programme exists for — a
+    user's ``pump`` assignment is the *only* evidence a header drives a pump, so
+    a failed **startup** load removes that header's 30% floor, its stop exemption
+    and its pump-safe identify. The daemon's only other notification is one
+    ``warn!`` in its journal, which no client can see.
+
+    ``None`` when the config loaded cleanly *and* when the daemon predates
+    2.34.0. The two are deliberately indistinguishable and both read as "fine" —
+    the safe direction, because that is exactly what such a daemon reports today.
+
+    A **missing** ``runtime.toml`` is not a degradation and is never reported:
+    that is first boot, and defaults are the correct answer there.
+    """
+
+    #: ``unreadable`` (I/O error, or larger than the daemon's 4 MiB read cap) or
+    #: ``malformed`` (read, but not valid TOML for this daemon version —
+    #: canonically a downgrade, since each section is ``deny_unknown_fields``).
+    reason: str = ""
+    #: The file that failed to load.
+    path: str = ""
+    #: The underlying I/O or TOML error, verbatim. Daemon prose, **not** a stable
+    #: token — render it, never branch on it.
+    detail: str = ""
+    #: ``startup`` or ``reload``. These cost different things: only the boot load
+    #: seeds every runtime-mutable key, so a ``reload`` failure leaves header
+    #: roles as startup established them and is materially narrower.
+    phase: str = ""
+
+
 # Every value the daemon's `thermal_state` field can take (DEC-132/165), in
 # severity order. This is the WIRE vocabulary, so it belongs with the model
 # rather than with any one surface that renders it.
@@ -464,6 +500,13 @@ class DaemonStatus:
     # mirrored onto every /poll status. `None` when the key is ABSENT (older
     # daemon, or before the daemon's startup seed runs) → the chip is hidden.
     readiness: ReadinessRollup | None = None
+    # DEC-321 / `WIRE-a`: set when the daemon's own runtime.toml failed to load
+    # and it fell back to built-in defaults. `None` when it loaded cleanly OR the
+    # daemon predates 2.34.0 — both read as "fine", which is the safe direction.
+    # STICKY for the daemon's lifetime: a later successful `POST /config/*`
+    # repairs the file but does not clear this, because nearly every
+    # runtime-mutable key is consumed once at startup. Only a restart clears it.
+    runtime_config_degraded: RuntimeConfigDegraded | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1740,6 +1783,9 @@ def parse_status(data: dict) -> DaemonStatus:
         # DEC-206: the compact readiness rollup for the Dashboard chip. Absent
         # key (old daemon / pre-seed) or a malformed object → None ⇒ chip hidden.
         readiness=_parse_readiness_rollup(data.get("readiness")),
+        # DEC-321 / `WIRE-a`: absent when the config loaded cleanly and on every
+        # daemon before 2.34.0 → None, which the Dashboard reads as "fine".
+        runtime_config_degraded=_parse_runtime_config_degraded(data.get("runtime_config_degraded")),
     )
 
 
@@ -1754,6 +1800,19 @@ def _parse_readiness_rollup(raw: object) -> ReadinessRollup | None:
     if not isinstance(raw, dict):
         return None
     return ReadinessRollup(**_filter_fields(ReadinessRollup, raw))
+
+
+def _parse_runtime_config_degraded(raw: object) -> RuntimeConfigDegraded | None:
+    """Parse the DEC-321 ``runtime_config_degraded`` object, or ``None`` when it
+    is absent or malformed.
+
+    Defensive like the sibling status parsers: a non-dict (including the common
+    absent-key ``None``) yields ``None``; unknown fields are dropped so a newer
+    daemon that extends the object cannot break an older GUI.
+    """
+    if not isinstance(raw, dict):
+        return None
+    return RuntimeConfigDegraded(**_filter_fields(RuntimeConfigDegraded, raw))
 
 
 def parse_sensors(data: dict) -> list[SensorReading]:
