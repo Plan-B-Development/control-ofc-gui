@@ -83,6 +83,14 @@ class ControlCard(ResizableGridCard):
         # (`WIRE-q`).
         self._skipped_for_ms: int = 0
         self._skipped_control_name: str = ""
+        # `WIRE-n`: the daemon is EVALUATING but not WRITING — a hardware verify,
+        # PWM characterisation, OpenFan calibration or validation sweep owns its
+        # engine write pause. Distinct from `_skipped_reason`, which means the
+        # daemon did not evaluate this control at all: here the figure below is
+        # real and current, it is simply not being applied. False in demo mode
+        # and against any daemon before 2.36.0, which is what this card rendered
+        # before the field existed.
+        self._write_paused: bool = False
         # Sizing (DEC-128 floor) + the DEC-129 resize grip live in the base.
         self._init_grid_card(control.id, f"ControlCard_Grip_{control.id}")
 
@@ -335,6 +343,20 @@ class ControlCard(ResizableGridCard):
             # DEC-169: a foreign daemon override owns the chip — keep the
             # read-only "External" badge instead of repainting "Applied" each
             # tick. The output label above still tracks the live value.
+            return
+        if self._write_paused:
+            # `WIRE-n`: "Applied" is the false half of this card during a
+            # diagnostic session. The daemon really did evaluate the figure in
+            # the label — that is why the label is kept — but its write phase is
+            # paused, so the fans are holding their last duty and nothing has
+            # applied it. Replacing exactly the claim that is wrong is the
+            # minimum correction; blanking the figure would discard a true one.
+            self._apply_chip(
+                "Not writing",
+                "CautionChip",
+                "A hardware diagnostic is running, so the daemon is evaluating this "
+                "control but not applying it. The fans hold their last duty.",
+            )
             return
         self._apply_chip("Applied", "SuccessChip")
 
@@ -655,6 +677,23 @@ class ControlCard(ResizableGridCard):
         # `/status` reads `overrides[]` live but `skipped_controls[]` from the
         # last COMPLETED tick, so the two genuinely co-occur for up to a tick.
         self._restore_daemon_chip()
+
+    def set_write_paused(self, paused: bool) -> None:
+        """Record whether the daemon's engine write phase is paused (`WIRE-n`).
+
+        State only — the chip is repainted by the next :meth:`set_output`, which
+        the Controls page drives from the same 1 Hz poll this flag arrives on, so
+        the two can never disagree by more than one tick. Setting it here rather
+        than passing it through `set_output` keeps it out of the demo path, whose
+        evaluator has no daemon and no write pause.
+
+        It deliberately does **not** repaint on its own. A card the daemon did
+        not report is reset to "—" by the page and has no output claim to
+        qualify; repainting here would put a "Not writing" chip on a control
+        that is not being evaluated either, which `set_skipped` already describes
+        more precisely.
+        """
+        self._write_paused = paused
 
     def set_skipped(self, reason: str, skipped_for_ms: int = 0, control_name: str = "") -> None:
         """Show a "Not controlled" chip for a control the daemon cannot resolve

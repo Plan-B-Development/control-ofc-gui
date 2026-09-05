@@ -177,7 +177,15 @@ GUI treats every flag as false / old behaviour (AIP-180):
   capability gate rather than leaving fans uncontrolled). Drives the startup
   control gate. `true` since **2.0.0**.
 - `min_supported_gui` (string) — the minimum **GUI** version this daemon supports.
-  Empty until the 2.0.0 cutover sets it.
+  Empty until the 2.0.0 cutover sets it. **`2.23.0` since daemon 2.36.0**; `2.0.0`
+  before that.
+
+  **This field is the single source of the pairing floor (`WIRE-ac`).** Until
+  2.36.0 three numbers claimed to be it: the handler said `2.0.0`, every release
+  note from 2.23.0 onward said "Pairs with `control-ofc-gui` >= v2.23.0", and the
+  2.16.0 entry said `>= v2.38.0` (a forward reference to the GUI that consumes
+  `GET /config`, not a floor). The daemon now publishes the number and the prose
+  quotes it; do not restate it anywhere else.
 
   Note the direction: this is a floor the *daemon* places on the *GUI*, the
   opposite of the `autonomous_control` gate, which is about the daemon being too
@@ -208,6 +216,35 @@ GUI treats every flag as false / old behaviour (AIP-180):
   checking would read that partial success as a whole one and tell the user a
   directory had been pruned when it had not. This is the case where "try it and
   see" is wrong.
+
+- **Five flags for features that shipped before they had one** (`WIRE-k`, all
+  `true` since daemon **2.36.0**; omitted and therefore `false` before that):
+
+  | Flag | Route it advertises | Feature since |
+  | --- | --- | --- |
+  | `gpu_fan_verify` | `POST /gpu/{id}/fan/verify` | 1.11.0 (DEC-120) |
+  | `hardware_readiness` | `GET /inventory/hardware-readiness` | 2.11.0 (DEC-207) |
+  | `superio_port_probe` | `POST /inventory/superio/probe` | 2.7.0 (DEC-203) |
+  | `preferred_sensors` | `GET /inventory/hwmon` | 2.6.0 (DEC-200) |
+  | `daemon_config_report` | `GET /config` | 2.16.0 (DEC-243) |
+
+  Each existed for between one and five minor versions with no key, so a client
+  detected it by comparing the daemon's **version string** or by calling the route
+  and reading a `404` as "unsupported". Neither is a contract, for the reason
+  already stated under `pwm_characterization`: the route fallback's `404` is
+  indistinguishable from a handler's own `404` for an unknown id.
+
+  **An absent flag is NOT a denial, and a client must not treat it as one.** These
+  keys exist only from 2.36.0 while the features behind them shipped from 1.11.0
+  onward and the pairing floor is 2.23.0 — so collapsing "absent" into `false`
+  would stand five working features down on every daemon in that range. The
+  reference GUI models them as tri-state (`bool | None`) and keeps its existing
+  fallback for `None`.
+
+  `superio_port_probe` advertises the **route**, not that a probe will act: the
+  active probe is separately gated by daemon configuration and by `CAP_SYS_RAWIO`,
+  and a disabled probe returns a normal report rather than an error. Gate the
+  affordance on the flag; read the report to learn whether the probe ran.
 
 ### Per-call timeouts (DEC-098 / DEC-099)
 
@@ -513,7 +550,17 @@ Two properties a client must not get wrong:
   *file*, and `header_roles` / `cooling_devices` are re-committed live by their setters — but nearly
   every other runtime-mutable key is consumed once at startup, so the daemon genuinely is still
   running on defaults for those. Do not treat a successful write as clearing the condition; only a
-  daemon restart does that. Latest-wins if both phases occur.
+  daemon restart does that.
+- **When both phases fail, the more severe record is kept — not the latest (`WIRE-ao`, daemon ≥
+  2.36.0).** A `startup` record therefore survives any number of later failed reloads. The two are
+  not equally costly: a startup failure drops every `header_roles` assignment, and on a board with
+  no `pwmN_label` files that assignment is the only evidence a header drives a pump, so its 30%
+  floor, its stop exemption and its pump-safe identify all go with it; a reload failure drops
+  nothing, because startup's roles are still in force. Latest-wins is kept *within* the reload
+  phase, so a second failed reload still refreshes `detail`.
+
+  **Daemons 2.34.0–2.35.x are latest-wins and can therefore under-report**, which is why the
+  client-side rule below is stated as unconditional rather than as a workaround.
 
 Older daemons omit the key entirely, which reads the same as "fine" — the safe direction here, since
 it is exactly the (absent) warning such a daemon shows today.
@@ -522,9 +569,11 @@ it is exactly the (absent) warning such a daemon shows today.
 banner plus a keyed `AppState` warning, raised on a poll-diff of `{reason, path, phase}` and
 cleared when a repaired daemon reconnects. The wording is phase-differentiated, and note the
 one thing a client must NOT do — **`phase: "reload"` is not evidence that header roles
-survived.** The record is latest-wins, so a *failed* reload overwrites an earlier startup
-degradation whose roles are already gone; a client that reads `reload` as "roles are fine"
-reassures the user at exactly the wrong moment. `detail` is logged rather than shown, being
+survived.** On daemons before 2.36.0 the record was latest-wins, so a *failed* reload overwrote an
+earlier startup degradation whose roles were already gone; a client that reads `reload` as "roles
+are fine" reassures the user at exactly the wrong moment. `WIRE-ao` fixed that at source in 2.36.0,
+but the rule stands unchanged: a client cannot tell which daemon it is talking to from this field,
+and the safe reading costs nothing. `detail` is logged rather than shown, being
 verbatim daemon prose that can run to several lines.
 
 `skipped_controls` (daemon ≥ 2.21.0, additive — `api_version` unchanged, omitted when empty) lists
@@ -622,6 +671,28 @@ all. Render absence as "unknown" (the reference GUI's
 
 Older daemons omit the array entirely — a client defaults it to `[]` and simply shows no figure,
 which is what it already did before the field existed.
+
+`verify_active` (daemon ≥ 2.36.0, additive — `api_version` unchanged, **always serialised**, `false`
+by default) says whether the daemon's engine is **evaluating but not applying** (`WIRE-n`). A
+hardware verify, PWM characterisation, OpenFan calibration or validation sweep takes the engine's
+write pause for its duration; the engine keeps evaluating every control and keeps publishing the
+result in `control_outputs[]`, and simply does not write it.
+
+Without this field a client cannot tell that state from a normal tick, so it renders a duty nothing
+is applying — the same class of error the absence rule above exists to prevent, arriving through a
+*populated* entry instead of an absent one. The reach is narrow but real: the dialogs driving these
+sessions are modal, yet a validation session keeps recording after its dialog closes.
+
+**It is not a safety signal and must never gate one.** The thermal emergency's `force_all_with_floor`
+runs well before the engine's `verify_active()` gate (DEC-297), so a paused write phase does not
+pause the ladder — a client that suppressed a thermal banner on this field would hide a live
+emergency. It qualifies the **commanded duty** and nothing else. The reference GUI keeps the figure
+(it is genuinely what the daemon evaluated) and replaces the card's "Applied" badge with "Not
+writing".
+
+Unlike the arrays above it is serialised even when `false`, because its safe default is also its
+common value; an older daemon omits it and a client reads `false`, which is what it rendered before
+the field existed.
 
 `active_profile_id` and `active_profile_name` (daemon ≥ 2.4.0, additive — `api_version` unchanged,
 **both omitted when no profile is active**) mirror the daemon's currently-active profile onto the
@@ -963,6 +1034,35 @@ and the GUI parser defaults to `[]`:
   "kernel saw the chip but driver did not bind" from "kernel never saw
   the chip"; not authoritative — the source of truth for "what works"
   is `hwmon.chips_detected`.
+
+`board_firmware_counts` (daemon ≥ 2.36.0, additive — `api_version` unchanged,
+**omitted when the firmware did not say**) is what the board itself declares it
+has (`X87-d`), decoded from the Gigabyte SIV descriptor the `it87` driver exports
+at `/sys/class/gigabyte/id/gigabyte_siv`:
+`{platform, special, fan_count, temp_count, volt_count}`, each a small integer.
+
+The distinction from `expected_chips` is the point. That list is a curated DMI
+lookup, so it is an *inference* and only ever as good as the table; this is a
+**measurement** from the board, which lets a client state "5 of 8 headers
+reachable" as a fact. It counts headers — it does not name chips, and the DMI
+table stays authoritative for *which* chip should be carrying them.
+
+Compare `fan_count` against total discovered headers, **not** against writable
+headers: a BIOS-owned read-only header is discovered, and counting it as missing
+reports a phantom deficit on a working board.
+
+**Say what you counted.** `hwmon.total_headers` on this response is `pwmN`-capable
+headers only; monitor-only tachometers (a `fanN_input` with no matching `pwmN`)
+are a **disjoint** set and live on `GET /inventory/hwmon`. A client that has not
+fetched both must not describe the difference as "unreachable headers" — on a
+board with tach-only headers on a *detected* chip that overstates the deficit by
+exactly those headers. The reference GUI phrases it as "N expose a controllable
+fan header", which is true from this response alone.
+
+The key is **absent** on every non-Gigabyte board, when `it87` is not loaded, when
+the descriptor does not decode, and on older daemons — never a zeroed object. A
+defaulted `fan_count: 0` would claim the board has no fan headers, a far stronger
+and wrong claim; a client must parse absence as "did not say".
 
 Additional optional field added in DEC-105 (same wire convention —
 `skip_serializing_if = "Vec::is_empty"`, so older daemons emit nothing

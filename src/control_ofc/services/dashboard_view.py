@@ -62,13 +62,17 @@ def runtime_config_degraded_message(degraded: RuntimeConfigDegraded | None) -> s
     remedy = "Repair the file and restart control-ofc-daemon."
 
     if degraded.phase == "reload":
-        # **Deliberately does NOT say "header roles are unaffected".** `phase` is
-        # latest-wins in the daemon (`main.rs:600-601` overwrites unconditionally),
-        # so a FAILED reload replaces an earlier startup record — the roles may
-        # already be gone while the record reads `reload`, and this is reachable
-        # by editing a broken file wrongly and reloading. The GUI cannot tell the
-        # two apart, so it must not reassure. It still says something narrower
-        # than the startup case: a reload never *restores* roles.
+        # **Deliberately does NOT say "header roles are unaffected".** On daemons
+        # 2.34.0-2.35.x `phase` is latest-wins — `apply_config_reload` overwrites
+        # the slot unconditionally — so a FAILED reload replaces an earlier
+        # startup record and the roles may already be gone while the record reads
+        # `reload`, reachable by editing a broken file wrongly and reloading.
+        #
+        # Daemon 2.36.0 fixed that at source (`WIRE-ao`, DEC-330): a `startup`
+        # record now survives a failed reload. **This message does not change**,
+        # because nothing in this payload says which daemon sent it, and the safe
+        # reading costs nothing. It still says something narrower than the startup
+        # case: a reload never *restores* roles.
         return (
             f"Daemon settings failed to reload{cause}{where}. Reloading does not restore "
             f"fan header roles, so if the file was already bad at startup, roles you "

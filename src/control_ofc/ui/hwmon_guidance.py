@@ -1863,6 +1863,9 @@ def dual_chip_warning_html(
     board_name: str,
     expected_chips: list[str],
     detected_chip_names: list[str],
+    *,
+    firmware_fan_count: int | None = None,
+    reachable_fan_count: int | None = None,
 ) -> str | None:
     """Return rich-text HTML for the dual-chip board warning, or None.
 
@@ -1899,6 +1902,24 @@ def dual_chip_warning_html(
     *board_name* is the DMI ``board_name`` (used only for the heading);
     callers should pass the empty string when DMI is unavailable and the
     function will use a generic heading instead.
+
+    ``firmware_fan_count`` / ``reachable_fan_count`` add a **measurement** to an
+    otherwise inferred warning (``X87-d``). Everything above is derived from a
+    curated DMI table, so it is only ever as good as that table; where the board's
+    own firmware declares a header count (``board_firmware_counts`` on
+    ``GET /diagnostics/hardware``) the deficit can be stated as a fact instead.
+    Both are optional and both must be present for the sentence to render — a
+    half-known deficit is not a measurement.
+
+    **The rendered sentence says "expose a controllable fan header", not
+    "reachable", and the distinction is load-bearing.** The only count available on
+    this endpoint is `hwmon.total_headers`, which is `pwmN`-capable headers;
+    monitor-only tachometers (a `fanN_input` with no matching `pwmN`) live on
+    `GET /inventory/hwmon` and are a **disjoint** set. On a board with tach-only
+    headers on a *detected* chip — AIO pump tachs routinely land there — calling
+    the difference "unreachable" would overstate the deficit by exactly those
+    headers. Saying what was actually counted is true on every board and needs no
+    second request.
     """
     if not expected_chips:
         return None
@@ -1926,12 +1947,32 @@ def dual_chip_warning_html(
             f"but the kernel only enumerated {detected_count}: "
         )
 
+    # `X87-d`: state the deficit as a measurement where the board's firmware
+    # supplied one. Rendered only when the firmware count genuinely EXCEEDS what
+    # is reachable — equal counts mean the missing chip carries no fan headers on
+    # this board, and a firmware count BELOW the reachable one means something is
+    # wrong with our own arithmetic, not with the user's board, so neither is
+    # worth telling them about here.
+    measured = ""
+    if (
+        firmware_fan_count is not None
+        and reachable_fan_count is not None
+        and firmware_fan_count > reachable_fan_count
+    ):
+        measured = (
+            f"Your board's firmware declares <b>{firmware_fan_count}</b> fan headers "
+            f"and <b>{reachable_fan_count}</b> expose a controllable fan header. The "
+            f"first count comes from the board itself, not from a lookup table."
+            f"<br><br>"
+        )
+
     # _pretty_chip echoes the raw (daemon-supplied) chip name for anything not in
     # the pretty-name table, so escape its output before it lands in rich text.
     expected_pretty = ", ".join(f"<b>{escape(_pretty_chip(c))}</b>" for c in expected_chips)
     missing_pretty = ", ".join(f"<b>{escape(_pretty_chip(c))}</b>" for c in missing)
     chip_summary = (
         f"expected {expected_pretty}; missing {missing_pretty}.<br><br>"
+        f"{measured}"
         f"<b>Two different faults produce this, and only one of them has a "
         f"local fix.</b> Find out which you have before changing anything — "
         f"run <code>dmesg | grep -i it87</code> and read the secondary chip's "

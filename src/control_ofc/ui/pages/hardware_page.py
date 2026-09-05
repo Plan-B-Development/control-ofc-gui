@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.services.cooling_device_view import build_cooling_device_views
-from control_ofc.services.daemon_features import unsupported_feature_message
+from control_ofc.services.daemon_features import daemon_supports, unsupported_feature_message
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.hardware_view import (
     build_checklist,
@@ -670,10 +670,17 @@ class HardwarePage(QWidget):
             self._fetch_readiness()
 
     def _fetch_readiness(self, *, force: bool = False) -> None:
+        # `WIRE-k`: stand down on the daemon's own answer, BEFORE the request.
+        # This latch used to be set only by a 404 coming back — probe-then-
+        # recover — which meant the first attempt always went out and the
+        # feature's absence was inferred from a status code the route fallback
+        # and a handler's unknown-id branch both return. `daemon_supports` is
+        # `None` on any daemon predating the flag, and that case deliberately
+        # falls through to the probe path below, unchanged.
+        if daemon_supports("hardware_readiness", self._capabilities()) is False:
+            self._readiness_unsupported = True
         if self._readiness_unsupported:
-            self._set_status(
-                "Hardware readiness is unavailable — the daemon predates this feature."
-            )
+            self._set_status(unsupported_feature_message("hardware_readiness"))
             return
         if not self._client:
             self._set_status("Cannot fetch readiness: no daemon connection")
@@ -1023,9 +1030,21 @@ class HardwarePage(QWidget):
         self._probe_btn = make_button(
             "Probe ports (advanced)", "secondary", object_name="Hardware_Btn_probe"
         )
-        self._probe_btn.setEnabled(panel.probe_available)
+        # `WIRE-k`: two independent reasons the button stays down, and they say
+        # different things. `panel.probe_available` is the DAEMON's own answer
+        # about whether probing is enabled and privileged on this machine; the
+        # capability flag is about whether the ROUTE exists at all. Checked in
+        # that order because the daemon's reason is the more specific and more
+        # actionable of the two — "probing is disabled in daemon config" beats
+        # "upgrade the daemon" on a daemon that has the route and has turned it
+        # off. `None` (any daemon before 2.36.0) leaves the existing behaviour
+        # untouched.
+        route_absent = daemon_supports("superio_port_probe", self._capabilities()) is False
+        self._probe_btn.setEnabled(panel.probe_available and not route_absent)
         if not panel.probe_available and panel.probe_reason:
             self._probe_btn.setToolTip(panel.probe_reason)
+        elif route_absent:
+            self._probe_btn.setToolTip(unsupported_feature_message("superio_port_probe"))
         self._probe_btn.clicked.connect(self._confirm_probe)
         section.add_widget(self._probe_btn)
         return section

@@ -99,12 +99,17 @@ def test_startup_and_reload_do_not_share_a_message():
 
 
 def test_no_message_ever_claims_pump_protection_is_intact():
-    """**The regression for the review P1.** `phase` is latest-wins in the daemon
-    (`main.rs:600-601` overwrites unconditionally), so a *failed* reload replaces
-    an earlier startup record: the roles can already be gone while the record
-    reads `reload`. An earlier draft of the reload message said "Fan header roles
-    you assigned are unaffected", which is then a false safety reassurance inside
-    the one feature that exists to prevent exactly that.
+    """**The regression for the review P1.** On daemons 2.34.0-2.35.x `phase` is
+    latest-wins — `apply_config_reload` overwrites the slot unconditionally — so a
+    *failed* reload replaces an earlier startup record and the roles can already
+    be gone while the record reads `reload`. An earlier draft of the reload
+    message said "Fan header roles you assigned are unaffected", which is then a
+    false safety reassurance inside the one feature that exists to prevent
+    exactly that.
+
+    Daemon 2.36.0 keeps the more severe record instead (`WIRE-ao`, DEC-330), and
+    this test is unchanged by that on purpose: nothing in the payload says which
+    daemon sent it, so the client rule stays unconditional.
 
     Asserted over every phase, including the unknown one, because the GUI cannot
     distinguish the histories and so may never reassure in any of them."""

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
+from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.system_state_view import (
@@ -864,9 +865,18 @@ class SystemStatePage(QWidget):
         gpu = diag.gpu
         writable = bool(gpu and gpu.fan_control_method not in ("read_only", "none", ""))
         caps = getattr(self._state, "capabilities", None) if self._state else None
-        version_ok = daemon_version_at_least(caps.daemon_version if caps else "", (1, 11, 0))
+        # `WIRE-k`: capability first, version only as the fallback. The flag says
+        # whether THIS build serves `POST /gpu/{id}/fan/verify`; the version
+        # string only says when the route first appeared, which is why this was a
+        # gate on a number for so long. `daemon_supports` returns None on any
+        # daemon before 2.36.0 — every one of which may still serve the route —
+        # so the comparison stays for exactly that window rather than being
+        # deleted and hiding a working button on a supported daemon.
+        supported = daemon_supports("gpu_fan_verify", caps)
+        if supported is None:
+            supported = daemon_version_at_least(caps.daemon_version if caps else "", (1, 11, 0))
         self._gpu_verify_bdf = gpu.pci_bdf if (gpu and writable) else None
-        show = bool(self._gpu_verify_bdf) and version_ok and not self._gpu_verify_unsupported
+        show = bool(self._gpu_verify_bdf) and supported and not self._gpu_verify_unsupported
         self._gpu_verify_btn.setVisible(show)
         if not show:
             self._gpu_verify_result_label.setVisible(False)

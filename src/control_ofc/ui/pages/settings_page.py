@@ -48,6 +48,7 @@ from control_ofc.paths import (
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
 from control_ofc.services.daemon_features import (
+    daemon_supports,
     requires_daemon,
     unsupported_feature_message,
 )
@@ -1152,6 +1153,16 @@ class SettingsPage(QWidget):
 
     def _refresh_daemon_config(self) -> None:
         """Fetch GET /config and render it. 404-tolerant (pre-2.16.0 daemon)."""
+        # `WIRE-k`: latch on the daemon's own answer BEFORE the request, instead
+        # of only on a 404 coming back. `daemon_supports` is `None` on any daemon
+        # predating the flag, which falls through to the unchanged 404 arm below.
+        caps = self._state.capabilities if self._state else None
+        if daemon_supports("daemon_config_report", caps) is False:
+            self._daemon_config_unsupported = True
+            self._daemon_cfg_note.setText(
+                "This daemon is too old to report its configuration "
+                f"{requires_daemon('daemon_config_report')}."
+            )
         if self._client is None or self._daemon_config_unsupported:
             self._set_daemon_config_available(False)
             return
@@ -2179,6 +2190,14 @@ class SettingsPage(QWidget):
 
     def _refresh_preferred_sensors(self) -> None:
         """Fetch the classified sensor inventory and (re)populate the combos."""
+        # `WIRE-k`: the daemon's own answer, before the request. Unlike the two
+        # latched features above this one is re-checked on every refresh and
+        # nothing is cached — the combos are rebuilt each time, so there is no
+        # state to stand down.
+        caps = self._state.capabilities if self._state else None
+        if daemon_supports("preferred_sensors", caps) is False:
+            self._set_pref_result(unsupported_feature_message("preferred_sensors"), "CautionChip")
+            return
         if self._client is None:
             self._set_pref_result(
                 "Daemon not connected — preferred sensors unavailable.", "CautionChip"

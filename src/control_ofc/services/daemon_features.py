@@ -52,6 +52,40 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
     }
 )
 
+#: The ``GET /capabilities`` ``control.*`` flag that advertises each feature,
+#: where one exists (`WIRE-k`).
+#:
+#: **The flag outranks the version, and this mapping is why.** A version string
+#: says when a feature first *appeared*; a flag says whether the connected build
+#: *serves* it. Five of these — `gpu_fan_verify`, `hardware_readiness`,
+#: `superio_port_probe`, `preferred_sensors`, `daemon_config_report` — shipped
+#: before the daemon had keys for them, so the GUI detected them by comparing the
+#: version or by reading a `404` off the route. Neither is a contract: the route
+#: fallback's 404 is indistinguishable from a handler's own 404 for an unknown
+#: id, which is exactly why `pwm_characterization` and `validation_sessions` were
+#: given flags. Daemon 2.36.0 added the missing five.
+#:
+#: Ids absent from this map have no flag and never will — they are gated by
+#: version or by probe alone. That is a deliberate hole, not an oversight: see
+#: `daemon_supports`, which reports "did not say" for both cases so a caller
+#: cannot tell them apart and cannot accidentally treat one as a denial.
+DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
+    {
+        "gpu_fan_verify": "gpu_fan_verify",
+        "hardware_readiness": "hardware_readiness",
+        "superio_port_probe": "superio_port_probe",
+        "preferred_sensors": "preferred_sensors",
+        "daemon_config_report": "daemon_config_report",
+        "validation_sessions": "validation_sessions",
+        "pwm_characterization": "pwm_characterization",
+        # The flag's name is not the feature id: DEC-311 named the capability
+        # after what the daemon *classifies* (header roles), while the GUI names
+        # the id after what the user *gets* (pump protection).
+        "pump_protection": "header_roles",
+        "profile_search_dir_removal": "profile_search_dir_remove",
+    }
+)
+
 #: Human-readable feature names, in the grammar of "does not support {name}".
 #: Lower-case and un-punctuated so they compose into a sentence.
 DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
@@ -102,3 +136,52 @@ def unsupported_feature_message(feature_id: str) -> str:
         f"{requires_daemon(feature_id)}. The connected daemon's version is "
         f"shown on the Overview page."
     )
+
+
+def daemon_supports(feature_id: str, capabilities: object | None) -> bool | None:
+    """Whether the connected daemon serves *feature_id*, per its own capabilities.
+
+    Tri-state, and the third state is the point (`WIRE-k`):
+
+    ``True``
+        The daemon advertises the flag. Call the route.
+    ``False``
+        The daemon advertises the flag as false. **Do not call the route** —
+        stand the feature down without a request.
+    ``None``
+        The daemon did not say: it predates the flag, sent no ``control`` block,
+        or is not connected. The caller keeps whatever fallback it already had —
+        a version comparison, or probe-then-recover.
+
+    **``None`` is only reachable for the five `WIRE-k` ids.** The four older
+    entries in ``DAEMON_FEATURE_CAPABILITY_FLAGS`` (``validation_sessions``,
+    ``pwm_characterization``, ``pump_protection``, ``profile_search_dir_removal``)
+    are modelled as plain ``bool`` and default ``False``, so an older daemon reads
+    as a denial here. That is correct for those four — absence and false mean the
+    same thing to the GUI, which is why they were modelled that way — but it means
+    a caller must not read a ``False`` from one of them as "the daemon explicitly
+    said no". Do not "fix" this by making them tri-state without a consumer that
+    needs the distinction; each of their call sites was written for two states.
+
+    Collapsing ``None`` into ``False`` would be a regression, not a
+    simplification. The five flags added for this row exist only from daemon
+    2.36.0, while each feature behind them shipped between 1.11.0 and 2.16.0 and
+    the published pairing floor is lower still — so a two-state answer would hide
+    five working features on every daemon in that range.
+
+    ``capabilities`` is duck-typed rather than annotated as ``Capabilities``
+    because this module is Qt-free *and* import-free by design: every page,
+    dialog and service reaches it, and a concrete import here would make the API
+    model a dependency of the wording layer.
+    """
+    flag = DAEMON_FEATURE_CAPABILITY_FLAGS.get(feature_id)
+    if flag is None:
+        return None
+    control = getattr(capabilities, "control", None)
+    if control is None:
+        return None
+    # `getattr(..., None)` and not `False`: a client dataclass that has not been
+    # extended with a newer daemon's flag must read as "did not say", exactly
+    # like an older daemon, rather than as a denial.
+    value = getattr(control, flag, None)
+    return value if isinstance(value, bool) else None

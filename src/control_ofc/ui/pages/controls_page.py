@@ -2482,6 +2482,20 @@ class ControlsPage(QWidget):
         """
         outputs = {entry.control_id: entry.output_pct for entry in status.control_outputs}
 
+        # `WIRE-n`: tell every card whether the daemon is actually WRITING what
+        # it publishes. A verify / characterisation / calibration / validation
+        # sweep pauses the engine's write phase while it keeps evaluating, so
+        # `control_outputs[]` stays populated with curve figures nothing is
+        # applying — the same class of lie the reset loop below exists to stop,
+        # arriving through a populated entry instead of an absent one.
+        #
+        # Pushed to EVERY card, not only the ones in `outputs`: the flag is a
+        # property of the engine, not of a control, and a card that stops being
+        # reported must not keep a stale pause. The card itself decides what to
+        # do with it (see `ControlCard.set_write_paused`).
+        for card in self._control_cards.values():
+            card.set_write_paused(status.verify_active)
+
         # Cards whose curve is on the editor workbench are showing a live
         # "Preview: N%" from `_update_card_previews`, recomputed on every drag.
         # The poll must not stamp over it — with a 1 Hz feed the preview would

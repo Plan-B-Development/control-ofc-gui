@@ -1,5 +1,53 @@
 # Changelog
 
+## [2.60.0] — 2026-09-05
+
+Wave 3 of the 2026-09-05 wire-surface sweep — the GUI-side half. Pairs with
+**`control-ofc-daemon` >= v2.36.0** for the new fields; every change degrades to the
+previous behaviour on an older daemon, and none of it is gated on a version comparison.
+
+### Added
+- **A Controls card no longer claims a duty is "Applied" while the daemon is not writing
+  it** (`WIRE-n`). A hardware verify, PWM characterisation, OpenFan calibration or
+  validation sweep takes the daemon's engine write pause: the engine keeps evaluating every
+  control and keeps publishing the result, and simply does not apply it. Nothing on the wire
+  said so, so the cards painted a green "Applied" badge over a figure nothing was writing.
+  The daemon now reports it and the badge reads **"Not writing"** for the duration, with the
+  evaluated figure kept — it is genuinely what the daemon computed, so blanking it would
+  discard a true value to fix a false claim.
+
+  A control the daemon is not evaluating at all still shows its own "Not controlled" chip:
+  that is the more specific fact and it keeps precedence.
+
+- **The dual-chip warning states a measurement where the board's firmware supplied one**
+  (`X87-d`). "This board is expected to expose 2 ITE chips, the kernel enumerated 1" is
+  derived from a curated table and is only ever as good as that table. On boards whose
+  firmware publishes a header count the warning now adds the count itself — "your board's
+  firmware declares 8 fan headers and 5 are reachable" — sourced from the board rather than
+  from a lookup. Boards that publish no descriptor, and older daemons, render exactly as
+  before.
+
+### Changed
+- **Five daemon features are detected from the daemon's capabilities instead of its version
+  string or a 404** (`WIRE-k`). GPU fan verification, the hardware-readiness report, the
+  active Super-I/O port probe, preferred sensors and the daemon's configuration report all
+  shipped before `GET /capabilities` had keys for them, so the GUI compared version numbers
+  or called the route and read a `404` as "unsupported" — a status the daemon's route
+  fallback and its own unknown-id branch both return. Daemon 2.36.0 adds the five flags and
+  the GUI now asks first, so a feature the daemon does not serve costs no request at all.
+
+  **An absent flag is not read as a denial.** The flags exist only from daemon 2.36.0 while
+  the features behind them shipped from 1.11.0 onward, so "the daemon did not say" keeps the
+  existing fallback in charge and nothing disappears on an older daemon. The user-facing
+  wording still names the version required — that is guidance, not gating.
+
+### Documentation
+- `docs/08_API_Integration_Contract.md` documents the five capability flags (including the
+  tri-state rule), `verify_active`, `board_firmware_counts`, and the corrected
+  `min_supported_gui` contract. It also records the daemon's `WIRE-ao` fix — a failed config
+  reload no longer overwrites a startup degradation — while **keeping the client-side rule
+  unchanged**, because a client cannot tell from that field which daemon it is talking to.
+
 ## [2.59.0] — 2026-09-05
 
 Wave 2 of the 2026-09-05 wire-surface sweep (`DEC-329`) — the GUI now consumes what the

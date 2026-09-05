@@ -235,6 +235,38 @@ class ControlCapability:
     # the route fallback, which is indistinguishable from a genuine "no such
     # session" without inspecting `error.code`.
     validation_sessions: bool = False
+    # `WIRE-k` (daemon >= 2.36.0): five features that shipped BEFORE this block
+    # had keys for them. Until the daemon grew these flags the GUI detected them
+    # by comparing the daemon's version string — which says when a feature first
+    # appeared, not whether this build serves it — or by calling the route and
+    # reading a 404 as "unsupported". Neither is a contract: the route
+    # fallback's 404 is indistinguishable from a handler's own 404 for an
+    # unknown id, which is exactly why `pwm_characterization` and
+    # `validation_sessions` above were given flags in the first place.
+    #
+    # Each defaults False, so against an older daemon the GUI falls back to the
+    # probe-then-recover it already does. That fallback is deliberately KEPT
+    # rather than deleted: these flags only exist from 2.36.0, and the daemon
+    # floor is lower than that.
+    # `None`, NOT `False`, and the distinction is the whole point. The wire
+    # separates "absent" from "false"; a `False` default collapses them, and a
+    # collapsed answer would hide five WORKING features on every daemon between
+    # each feature's own floor (1.11.0 to 2.16.0) and 2.36.0, which is where the
+    # flags start. `daemon_supports` reads `None` as "did not say" and leaves the
+    # caller's existing fallback in charge.
+    #
+    # The sibling flags above stay `bool` on purpose: for those, absence and
+    # false mean the same thing to the GUI (hide the button, keep the old
+    # wording), so there is nothing to distinguish.
+    gpu_fan_verify: bool | None = None
+    hardware_readiness: bool | None = None
+    # Advertises the ROUTE, not that a probe will act. The active port probe is
+    # separately gated by daemon config and by CAP_SYS_RAWIO, and a disabled
+    # probe returns a normal report rather than an error — so the button gates
+    # on this flag and the report still says whether the probe ran.
+    superio_port_probe: bool | None = None
+    preferred_sensors: bool | None = None
+    daemon_config_report: bool | None = None
 
 
 @dataclass
@@ -561,6 +593,20 @@ class DaemonStatus:
     # repairs the file but does not clear this, because nearly every
     # runtime-mutable key is consumed once at startup. Only a restart clears it.
     runtime_config_degraded: RuntimeConfigDegraded | None = None
+    # `WIRE-n` (daemon >= 2.36.0): True while a hardware verify, PWM
+    # characterisation, OpenFan calibration or validation sweep owns the
+    # daemon's engine WRITE PAUSE. The engine keeps evaluating and keeps
+    # publishing every control's duty in `control_outputs` — it simply does not
+    # write it — so without this field a Controls card shows a duty nothing is
+    # applying. Defaults False on older daemons, which is what those cards render
+    # today.
+    #
+    # NOT a safety signal, and it must never gate one. The thermal emergency's
+    # force-all runs well before the daemon's `verify_active()` gate (DEC-297),
+    # so a paused write phase does not pause the ladder — suppressing a thermal
+    # banner on this field would hide a live emergency. It qualifies the
+    # COMMANDED DUTY and nothing else.
+    verify_active: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1275,6 +1321,45 @@ class GpuVerifyResult:
 
 
 @dataclass
+class BoardFirmwareCounts:
+    """What the board's **firmware** declares it has (``X87-d``, daemon >= 2.36.0).
+
+    Decoded by the daemon from the Gigabyte SIV descriptor the ``it87`` driver
+    exports. Distinct in kind from :attr:`HardwareDiagnosticsResult.expected_chips`,
+    which is a curated DMI lookup and therefore an *inference*: this is a
+    measurement from the board, so the deficit is a statement of fact rather than
+    something derived from a hard-coded table.
+
+    It counts headers; it does not name chips. The DMI table stays authoritative
+    for *which* chip should be carrying them.
+
+    Compare :attr:`fan_count` against ``hwmon.total_headers`` — total *discovered*
+    headers, not writable ones: a BIOS-owned read-only header is discovered, and
+    counting it as missing reports a phantom deficit on a working board.
+
+    **Then say what you counted.** ``total_headers`` is ``pwmN``-capable headers
+    only; monitor-only tachometers (a ``fanN_input`` with no matching ``pwmN``)
+    are a **disjoint** set that lives on ``GET /inventory/hwmon``, which the
+    diagnostics path does not fetch. So the difference is "headers with no
+    controllable PWM", never "unreachable headers" — on a board with tach-only
+    headers on a *detected* chip the latter overstates the deficit by exactly
+    those headers. ``ui/hwmon_guidance.dual_chip_warning_html`` phrases it as
+    "N expose a controllable fan header" for that reason.
+    """
+
+    #: Platform id, bits 31:28. Non-zero for a valid descriptor.
+    platform: int = 0
+    #: Vendor "special" nibble, bits 27:24. No public decode; carried verbatim.
+    special: int = 0
+    #: Fan/pump headers the board declares.
+    fan_count: int = 0
+    #: Temperature channels the board declares.
+    temp_count: int = 0
+    #: Voltage rails the board declares.
+    volt_count: int = 0
+
+
+@dataclass
 class HardwareDiagnosticsResult:
     api_version: int = 1
     hwmon: HwmonDiagnostics = field(default_factory=HwmonDiagnostics)
@@ -1298,6 +1383,15 @@ class HardwareDiagnosticsResult:
     # dual-chip remediation steps (driver update first; `mmio=on`
     # modprobe.d line on pre-2026-03 builds — DEC-144).
     expected_chips: list[str] = field(default_factory=list)
+    # `X87-d` (daemon >= 2.36.0): the board's own firmware-declared counts, where
+    # the driver publishes them. `None` on every non-Gigabyte board, when `it87`
+    # is not loaded, when the descriptor does not decode, and on older daemons.
+    #
+    # `None` rather than a zeroed instance, deliberately: a `fan_count` of 0
+    # would read as "this board has no fan headers", a far stronger claim than
+    # "the firmware did not say", and the whole value of this field is that it is
+    # a measurement rather than an inference.
+    board_firmware_counts: BoardFirmwareCounts | None = None
     # DEC-101: best-effort kernel-level chip detection (parsed from
     # /dev/kmsg by the daemon). Populated when the kernel ring buffer
     # is readable; empty otherwise. Useful for surfacing the
@@ -1866,6 +1960,12 @@ def parse_status(data: dict) -> DaemonStatus:
         # DEC-321 / `WIRE-a`: absent when the config loaded cleanly and on every
         # daemon before 2.34.0 → None, which the Dashboard reads as "fine".
         runtime_config_degraded=_parse_runtime_config_degraded(data.get("runtime_config_degraded")),
+        # `WIRE-n`: absent on every daemon before 2.36.0 → False, which is what
+        # the cards render today. Coerced through `is True` rather than `bool()`
+        # deliberately: a malformed non-boolean must read as "the engine is
+        # writing", the state that shows the daemon's figures rather than
+        # suppressing them, so a bad payload cannot blank a live Controls page.
+        verify_active=data.get("verify_active") is True,
     )
 
 
@@ -2176,12 +2276,30 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         ],
         board=board,
         expected_chips=expected_chips,
+        board_firmware_counts=_parse_board_firmware_counts(data.get("board_firmware_counts")),
         kernel_detected_chips=kernel_detected_chips,
         module_collisions=module_collisions,
         cpu_vendor=str(data.get("cpu_vendor") or ""),
         amd_pci_devices=amd_pci_devices,
         amdgpu_module_loaded=bool(data.get("amdgpu_module_loaded", False)),
     )
+
+
+def _parse_board_firmware_counts(raw: object) -> BoardFirmwareCounts | None:
+    """Parse the ``X87-d`` ``board_firmware_counts`` object, or ``None``.
+
+    ``None`` for the absent key — the common case on every non-Gigabyte board —
+    and for a malformed one. Never a zeroed instance: a defaulted ``fan_count``
+    of 0 claims the board has no fan headers, which is the opposite of "the
+    firmware did not say" and would show a phantom deficit on every machine that
+    does not publish the descriptor.
+
+    Unknown fields are dropped so a newer daemon extending the object cannot
+    break an older GUI, matching the sibling status parsers.
+    """
+    if not isinstance(raw, dict):
+        return None
+    return BoardFirmwareCounts(**_filter_fields(BoardFirmwareCounts, raw))
 
 
 def parse_hwmon_inventory(data: dict) -> HwmonInventory:

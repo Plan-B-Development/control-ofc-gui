@@ -301,7 +301,30 @@ def _issue_card_from_problem(diag: HardwareDiagnosticsResult, problem: dict) -> 
         detail = build_acpi_detail(diag)
     elif key == "dual_chip":
         detected = [c.chip_name for c in diag.hwmon.chips_detected]
-        detail = dual_chip_warning_html(diag.board.name, list(diag.expected_chips), detected)
+        # `X87-d`: hand the warning the board's own firmware-declared header
+        # count where the daemon read one, so the deficit reads as a measurement
+        # rather than an inference from a curated DMI table. `None` on every
+        # board that publishes no descriptor, and on daemons before 2.36.0 — the
+        # warning then renders exactly as it did.
+        #
+        # `total_headers`, not `writable_headers`: a BIOS-owned read-only header
+        # is discovered and counting it as missing would report a phantom
+        # deficit on a working board.
+        #
+        # It is also the ONLY count this endpoint carries. Monitor-only
+        # tachometers (`fanN_input` with no `pwmN`) are a disjoint set living on
+        # `GET /inventory/hwmon`, which this path does not fetch — which is why
+        # the rendered sentence says "expose a controllable fan header" rather
+        # than "are reachable". Claiming reachability would overstate the deficit
+        # on a board with tach-only headers on a detected chip.
+        firmware = diag.board_firmware_counts
+        detail = dual_chip_warning_html(
+            diag.board.name,
+            list(diag.expected_chips),
+            detected,
+            firmware_fan_count=firmware.fan_count if firmware else None,
+            reachable_fan_count=diag.hwmon.total_headers if firmware else None,
+        )
     else:
         detail = None
     sd = severity_display(problem["severity"])
