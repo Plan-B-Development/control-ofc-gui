@@ -83,7 +83,14 @@ class TestDualChipAlertTruthfulness:
         assert "0xffff" in lowered
 
         # And the unfixable case must be named as unfixable.
-        assert "no local fix" in lowered
+        assert "power" in lowered and ("wall" in lowered or "power cut" in lowered), (
+            "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
+            "the remedy rather than tell the user to give up. It must also say "
+            "the machine has to be powered down at the wall — a reboot does "
+            "not clear the latch, and a user who reboots, sees no change and "
+            "concludes the chip is dead is exactly the failure this asserts "
+            "against. Got: " + repr(lowered)
+        )
 
         # The retracted claim must be gone. This is the specific false sentence:
         # it promised control of the secondary chip as a property of current
@@ -133,7 +140,14 @@ class TestDualChipAlertTruthfulness:
 
         surface = " ".join(text_of(c) for c in cards)
         # The honest verdict reaches the screen at all.
-        assert "no local fix" in surface
+        assert "power" in surface and ("wall" in surface or "power cut" in surface), (
+            "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
+            "the remedy rather than tell the user to give up. It must also say "
+            "the machine has to be powered down at the wall — a reboot does "
+            "not clear the latch, and a user who reboots, sees no change and "
+            "concludes the chip is dead is exactly the failure this asserts "
+            "against. Got: " + repr(surface)
+        )
 
         # ...and NO SINGLE CARD prescribes a remedy DEC-326 measured as futile.
         #
@@ -159,7 +173,14 @@ class TestDualChipAlertTruthfulness:
         assert "dual_chip" in problems
         fix = problems["dual_chip"]["fix"].lower()
         assert "dmesg" in fix, "the one-line fix must tell the user how to tell the cases apart"
-        assert "no local fix" in fix
+        assert "power" in fix and ("wall" in fix or "power cut" in fix), (
+            "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
+            "the remedy rather than tell the user to give up. It must also say "
+            "the machine has to be powered down at the wall — a reboot does "
+            "not clear the latch, and a user who reboots, sees no change and "
+            "concludes the chip is dead is exactly the failure this asserts "
+            "against. Got: " + repr(fix)
+        )
         assert "mmio=on" not in fix
 
 

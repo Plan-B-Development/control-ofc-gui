@@ -279,17 +279,24 @@ Open the **System State** page, look at the **Hardware Readiness** report:
 
 Open the **System State** page. If the **dual-chip warning banner** at the top of the Hardware Readiness report is visible, your motherboard is one of the dual-IO Gigabyte boards (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) where the secondary ITE chip silently failed to enumerate.
 
-There are **three** causes, and they are not interchangeable — the first two are
-fixable and the third is not. Find out which one you have **before** trying
-anything, because the remedy for the fixable cases does nothing for the third.
+There are **three** causes, and they are not interchangeable. All three are
+fixable, but they need *different* remedies, and the remedy for one does nothing
+for the others. Find out which one you have **before** trying anything.
 
 **Find out which:** run `sudo dmesg | grep it87` (or `journalctl -k -b | grep it87`).
 
-| What the kernel says | Which case | Fixable? |
+| What the kernel says | Which case | Remedy |
 | --- | --- | --- |
-| Nothing, or "module not found" | Driver not installed | Yes — case A |
-| `Unsupported chip (DEVID=0xFFFF)` | Super-I/O stuck in config mode | Yes — case B |
-| `Unsupported chip (DEVID=0x8883)` | Secondary behind a bridge | **No — case C** |
+| Nothing, or "module not found" | Driver not installed | Case A — install the driver |
+| `Unsupported chip (DEVID=0xFFFF)` | Super-I/O stuck in config mode | Case B — reboot |
+| `Unsupported chip (DEVID=0x8883)` | An ITE bridge is latched in config mode | Case C — **full power cut** |
+| No `Unsupported chip` line at all, and only one chip found | Not one of these three | See the note under case C |
+
+> **Read the DEVID, not just the chip count.** `0xFFFF` and `0x8883` look
+> identical from the outside — one hwmon device where there should be two — and
+> they need different fixes. Note also that a `0xFFFF` secondary prints **no**
+> `Unsupported chip` line in some driver builds, so an absent line is not the
+> same as a clean result.
 
 **Case A — the driver build is too old or missing.** Current (2026-03+)
 `it87-dkms-git` builds reach the secondary chip through an MMIO path that is on
@@ -309,41 +316,115 @@ previous run of `sensors-detect`. The secondary chip's DEVID then reads
 2. Reboot — this clears it.
 3. Click **Rescan Hardware**.
 
-**Case C — the secondary answers `0x8883`. There is no local fix.**
-Measured on an **X870E AORUS MASTER** on 2026-09-04, against `it87` at upstream
-HEAD: the driver finds the primary IT8696E over MMIO and then reports
-`Unsupported chip (DEVID=0x8883)` for the secondary. One `it87` hwmon device
-appears instead of two, and roughly three headers stay unreachable.
+**Case C — the secondary answers `0x8883`: an ITE bridge is latched in
+configuration mode.** This *is* fixable, but it needs a full power cut rather
+than a reboot, which is why it is worth identifying properly.
 
-`0x8883` is almost certainly an ITE eSPI-to-LPC **bridge** answering in place of
-the IT87952E behind it ([issue #64](https://github.com/frankcrawford/it87/issues/64)).
-The driver has no entry for `0x8883` at all, while it *does* support the
-IT87952E — so the chip is **unreachable, not unsupported**.
+**What is happening.** Your board's secondary Super-I/O sits behind an ITE
+eSPI-to-LPC bridge. Something wrote a Super-I/O *config-mode unlock* to port
+0x2E/0x4E, which put the **bridge** into configuration mode — and while it is
+there, the bridge answers device-ID `0x8883` in place of the IT87952E behind it.
+`it87` looks for a chip, gets the bridge, and gives up. You lose every header on
+the secondary chip: on an X870E AORUS MASTER that is 3 of 8 fan headers and 3 of
+9 temperatures.
 
-**Do not spend time on the following — all three are already known not to work:**
+**What writes that unlock.** Almost always the `nct6775` or `w83627ehf` kernel
+modules. Both write the unlock *before* reading the device ID, so they do the
+damage even though they then fail to load with "No such device" — they are
+Nuvoton/Winbond drivers and your board is ITE, so they were never going to bind.
+Running `sensors-detect` does the same thing.
 
-- **`mmio=on`** — the MMIO path is already the driver default, so setting it
-  changes nothing.
-- **Reinstalling `it87-dkms-git`** — the failure reproduces at upstream HEAD.
+> **Measured, not theorised.** On 2026-09-05, on an X870E AORUS MASTER: loading
+> `nct6775` turned a working `it87952-isa-0a60` into `Unsupported chip
+> (DEVID=0x8883)` within a single boot, while reloading `it87` by itself changed
+> nothing. Suppressing both modules and cutting power restored 3 fans, 3 PWMs
+> and 3 thermistor temperatures.
+
+**The latch survives a reboot.** It also survives a normal shut-down, because
+the board keeps the Super-I/O powered on +5V standby. Only removing mains power
+clears it. This is the single most important thing on this page: *if you reboot,
+test, and see no change, that does not mean the fix failed.*
+
+#### Recovery, step by step
+
+1. **Check whether the guard is already in place.** Recent
+   `control-ofc-daemon` packages ship one:
+
+   ```
+   ls /usr/lib/modprobe.d/control-ofc-superio.conf
+   ```
+
+   If that file exists, skip to step 3 — the modules are already suppressed on
+   your board.
+
+2. **Otherwise, suppress the two modules yourself.** Create
+   `/etc/modprobe.d/control-ofc-superio-local.conf`:
+
+   ```
+   install nct6775 /bin/true
+   install w83627ehf /bin/true
+   ```
+
+   Use `install`, **not** `blacklist`: `blacklist` is ignored by the explicit
+   `modprobe` that systemd issues at boot, so it would silently do nothing here.
+
+3. **Confirm nothing else loads them.** Check
+   `/etc/modules-load.d/` for other files naming `nct6775` or `w83627ehf`, and
+   make sure `lm_sensors.service` is not running `sensors-detect` at boot:
+
+   ```
+   grep -rn 'nct6775\|w83627ehf' /etc/modules-load.d/
+   systemctl is-enabled lm_sensors.service
+   ```
+
+4. **Power down fully — this is the step that actually clears the latch.**
+   Shut the machine down, then **either** switch the PSU off at the back (the
+   `0`/`O` side of the rocker) **or** unplug it at the wall. Wait about 10
+   seconds. A reboot will *not* work, and neither will a normal shut-down that
+   leaves the PSU switched on.
+
+5. **Power back on and verify:**
+
+   ```
+   sudo dmesg | grep it87
+   sensors | grep -c '^it8'
+   ```
+
+   You want a second `Found IT...E chip` line, and two `it8*` chips rather than
+   one. The `Unsupported chip (DEVID=0x8883)` line should be gone.
+
+6. **Click Rescan Hardware** in the app. The dual-chip warning on the **System
+   State** page disappears once every expected chip is present, and the new
+   headers appear on the **Controls** page.
+
+#### If it still fails after a genuine power cut
+
+Then something else is still writing the unlock before `it87` reads. Check, in
+this order:
+
+- another `modules-load.d` file, or a distro default, loading `nct6775`;
+- `sensors-detect` running at boot via `lm_sensors.service`;
+- a Super-I/O module baked into your initramfs (`lsinitcpio /boot/initramfs-linux.img | grep -E 'nct6775|w83627|it87'`);
+- any other tool that probes Super-I/O ports.
+
+**Do not** reach for these — they are known not to help, and one of them makes
+things worse:
+
+- **`mmio=on`** — already the driver default; setting it changes nothing.
+- **Reinstalling `it87-dkms-git`** — the latch is not a driver bug, and the
+  failure reproduces at upstream HEAD.
 - **`force_id`** — the reporter on
   [issue #81](https://github.com/frankcrawford/it87/issues/81) forced the ID and
-  still lost three fans and a water pump. That issue is **open, not resolved**;
-  earlier revisions of this page cited it as a fix, which was wrong.
-
-Your remaining headers work normally. The unreachable ones need driver work
-upstream. There is **no open upstream issue tracking this specific case** as at
-2026-09-04 — [#64](https://github.com/frankcrawford/it87/issues/64) is where the
-eSPI-to-LPC bridge reading comes from but was **closed in 2025-12**, and
-[#81](https://github.com/frankcrawford/it87/issues/81) is open for the sibling
-STEALTH ICE board without a resolution. Watch the
-[driver repository](https://github.com/frankcrawford/it87) rather than a single
-issue.
+  still lost three fans and a water pump. Upstream tells people explicitly not
+  to use it.
+- **`sensors-detect`** — this is one of the things that *causes* case C.
 
 **This is per-board, not per-family.** Other boards in the same generation with
-the same IT8696E + IT87952E pairing do work — the X870E AORUS ELITE is
-owner-confirmed with both chips controllable
-([issue #89](https://github.com/frankcrawford/it87/issues/89)). Do not read case
-C as "X870E boards are unsupported".
+the same IT8696E + IT87952E pairing work out of the box — the X870E AORUS ELITE
+is owner-confirmed with both chips controllable
+([issue #89](https://github.com/frankcrawford/it87/issues/89)). Background on
+the bridge itself is in
+[issue #64](https://github.com/frankcrawford/it87/issues/64).
 
 > One historical exception to "MMIO is good": on **IT8665E** boards (X399 era, e.g. ASUS ROG Zenith Extreme) the MMIO default *broke* PWM writes. This was fixed upstream by [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged 2026-07-22), which removed MMIO support for that chip in the driver, closing [issue #106](https://github.com/frankcrawford/it87/issues/106). On a current build you need no parameter — update the driver. `options it87 mmio=off` is only needed on a build predating that merge.
 

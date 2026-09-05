@@ -305,10 +305,11 @@ Gigabyte AORUS boards). Mainline `it87` gained IT8689E fan *control* in kernel
 out-of-tree `frankcrawford/it87` DKMS driver has driven the secondary chip on
 **many** dual-IO Gigabyte boards since its 2026-03 MMIO merge (PR #95 / #102) —
 but not all of them, and the difference is per board rather than per family. On
-the X870E AORUS MASTER the secondary answers device-ID `0x8883` and stays
-unreachable at upstream HEAD, with no local fix (measured 2026-09-04, DEC-326);
-on the X870E AORUS ELITE the same IT8696E + IT87952E pairing is owner-confirmed
-working (it87 #89). lm-sensors issue #454 tracked the earlier, incomplete state;
+the X870E AORUS MASTER the secondary can answer device-ID `0x8883` — an ITE
+eSPI→LPC bridge latched in configuration mode by `nct6775`/`w83627ehf`, which
+clears once those are suppressed and mains power is removed (measured
+2026-09-05, DEC-332, superseding DEC-326's "no local fix"); on the X870E AORUS
+ELITE the same IT8696E + IT87952E pairing is owner-confirmed working (it87 #89). lm-sensors issue #454 tracked the earlier, incomplete state;
 docs 19 and 23 carry the current per-chip support matrix.
 
 Reference: https://github.com/lm-sensors/lm-sensors/issues/454

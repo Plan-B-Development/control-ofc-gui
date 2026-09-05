@@ -511,46 +511,89 @@ The ASRock X870 Nova ships **NCT6796D-S** as its primary chip
 cleanly; do not load `nct6687d` here. The DEC-105 collision logic
 applies.
 
-### A secondary Super-I/O reading `0x8883` — no local fix
+### A secondary Super-I/O reading `0x8883` — a latched bridge, and how to clear it
 
-**This section was rewritten on 2026-09-04 (DEC-326). The previous version
-was headed "use `mmio=on`" and said `0x8883` was a secondary stuck in config
-mode that a current build recovers. That was wrong, and it is withdrawn.**
+**Rewritten twice. 2026-09-04 (DEC-326) withdrew a "use `mmio=on`" account that
+was wrong. 2026-09-05 (DEC-332) withdrew that rewrite's own conclusion — "there
+is no local fix" — after a controlled experiment produced both the cause and the
+cure. The measurements below are unchanged; only the conclusion moved.**
 
-`0x8883` and `0xFFFF` are **different faults** and only one of them is
-recoverable:
+`0x8883` and `0xFFFF` are **different faults** with **different remedies**:
 
 * **`0xFFFF`** — the secondary really is stuck in configuration mode, usually
   after a `sensors-detect` run. Reboot without running it and the chip comes
   back. This case is real and unchanged.
-* **`0x8883`** — measured on an **X870E AORUS MASTER**, 2026-09-04, on `it87`
-  at upstream HEAD. The driver finds the primary IT8696E over MMIO, then
-  reports `Unsupported chip (DEVID=0x8883)`. One hwmon device enumerates
-  instead of two; about three headers are unreachable. **There is no local
-  fix.**
+* **`0x8883`** — an ITE eSPI-to-LPC **bridge** is latched in configuration mode
+  and answers in place of the chip behind it. The driver finds the primary
+  IT8696E over MMIO, then reports `Unsupported chip (DEVID=0x8883)`; one hwmon
+  device enumerates instead of two, costing 3 of 8 fan headers and 3 of 9
+  temperatures on an X870E AORUS MASTER. **Recoverable — see below.**
 
-Why the old advice cannot work, measured rather than argued:
+#### What latches it, measured
+
+`nct6775` and `w83627ehf` share one `superio_enter()`:
+
+```c
+static inline int superio_enter(int ioreg) {
+        if (!request_muxed_region(ioreg, 2, DRVNAME)) return -EBUSY;
+        outb(0x87, ioreg);      /* unconditional */
+        outb(0x87, ioreg);
+        return 0;
+}
+```
+
+Both call it and *then* read `SIO_REG_DEVID`, on both 0x2E and 0x4E. That
+unconditional write is what puts the bridge into config mode. `it87` does the
+opposite — `superio_enter(sioaddr, /*noentry=*/true)` reads the DEVID with no
+unlock and unlocks only if that returns `0xffff` — which is why `it87` is safe
+and the other two are not.
+
+Measured on an X870E AORUS MASTER, 2026-09-05, within a single boot:
+
+| Step | Result |
+| --- | --- |
+| Control: reload `it87` alone | `it87952` stays bound — a reload writes nothing |
+| Load `nct6775`, reload `it87` | `Unsupported chip (DEVID=0x8883)`, `it87952` gone |
+
+`nct6775` **fails to load** on this board (`could not insert 'nct6775': No such
+device`) and does the damage anyway, because the port write happens before the
+`-ENODEV`. `w83627ehf` was not tested individually; it is implicated by having
+byte-identical unlock behaviour in the same function, not by measurement.
+
+#### Clearing it
+
+1. Stop `nct6775` and `w83627ehf` loading. The `control-ofc-daemon` package
+   ships `/usr/lib/modprobe.d/control-ofc-superio.conf`, which does this
+   automatically on boards known to carry an ITE Super-I/O. To do it by hand,
+   use `install <mod> /bin/true` — **not** `blacklist`, which the explicit
+   `modprobe` issued by systemd ignores.
+2. **Power the machine down at the wall.** The latch survives a warm reboot
+   *and* a soft power-off, because the Super-I/O stays powered on +5V standby.
+   This is the step people skip, and skipping it produces a false negative.
+3. Verify: `dmesg | grep it87` should show a second `Found IT...E chip` line,
+   and `sensors` two `it8*` chips.
+
+Why the *old* advice still cannot work, measured rather than argued:
 
 | Old advice | Why it fails |
 | --- | --- |
 | "load with `mmio=on`" | `mmio` already defaults to `true` (`it87.c:314`). The test host passes the module no parameters at all, so this named a state already in effect. |
-| "update to a current build" | The failure reproduces at upstream HEAD. |
-| "per issue #81" | #81 is **open**. Its reporter forced the ID *and* set `mmio=on`, and still has three fans and a water pump non-functional. It records the failure, not a resolution. |
+| "update to a current build" | The failure reproduces at upstream HEAD. It is not a driver bug. |
+| "per issue #81" | #81's *opening post* forced the ID and set `mmio=on` and still lost three fans and a pump. Its later comments record the reporter getting the second chip working — the opposite of what the opening post shows. |
 
 The driver contains **no** case, constant or comment for `0x8883` anywhere,
-while `IT87952E_DEVID 0x8695` **is** defined and handled — so the secondary is
-**unreachable, not unsupported**. The likely mechanism, stated as inference:
-`0x8883` is an ITE eSPI-to-LPC **bridge** answering in place of the chip behind
-it ([issue #64](https://github.com/frankcrawford/it87/issues/64)).
+while `IT87952E_DEVID 0x8695` **is** defined and handled — so while the bridge
+is latched the secondary is **unreachable, not unsupported**.
 
 **Bounded by pairing, not by family.** Other boards with the same IT8696E +
-IT87952E pairing genuinely work — the X870E AORUS ELITE is owner-confirmed with
-both chips controllable ([#89](https://github.com/frankcrawford/it87/issues/89)).
-Do not generalise this to "X870E" or to "dual-ITE".
+IT87952E pairing work out of the box — the X870E AORUS ELITE is owner-confirmed
+with both chips controllable
+([#89](https://github.com/frankcrawford/it87/issues/89)). Do not generalise this
+to "X870E" or to "dual-ITE".
 
-The GUI's chip-guidance database now reports this honestly, so a user who
-searches for "IT8883" is told there is nothing to configure rather than being
-sent round a loop.
+The GUI's chip-guidance database reports this honestly, so a user who searches
+for "IT8883" is told what they are looking at and how to clear it, rather than
+being sent round a loop or told to give up.
 
 ---
 
@@ -901,17 +944,20 @@ Reference: https://github.com/frankcrawford/it87
   case above — that one is IT8689E rev 1 with a manual-control
   limitation; this is IT8696E rev 0 (primary) plus a secondary.
 
-  **⚠ The secondary is NOT reachable on current firmware/driver, measured
-  2026-09-04 (DEC-326).** On BIOS **F14c** with `it87-dkms-git`
+  **⚠ The secondary can be masked by a latched bridge — measured, and
+  recoverable (DEC-332, 2026-09-05).** On BIOS **F14c** with `it87-dkms-git`
   **349.c567739** (upstream HEAD), the kernel finds
   `IT8696E chip at 0xa40 [MMIO at 0xfe100000]` and then answers device-ID
   `0x8883` at the secondary address, which the driver does not recognise.
   One `it87` hwmon device enumerates and exactly **five** `pwm` files exist
-  — the primary's. There is **no local fix**: `mmio` is already the driver
-  default and `force_id` does not help (it87
-  [#81](https://github.com/frankcrawford/it87/issues/81) is open, its
-  reporter tried both). `0x8883` is most likely an eSPI→LPC bridge
-  ([#64](https://github.com/frankcrawford/it87/issues/64)).
+  — the primary's. `0x8883` is an ITE eSPI→LPC bridge in configuration mode
+  ([#64](https://github.com/frankcrawford/it87/issues/64)), put there by
+  `nct6775`/`w83627ehf` unlocking Super-I/O config space before reading the
+  DEVID. Suppressing those two and then cutting mains power restored the
+  secondary as `it87952-isa-0a60` — 3 fans, 3 PWMs, 3 thermistor temps, 8 of
+  8 headers. Neither `mmio` (already the driver default) nor `force_id` is
+  the remedy; DEC-326 recorded this state as having "no local fix" on
+  2026-09-04, which the experiment disproved the next day.
 
   This **does not retract** the earlier report below, which was made on
   `it87-dkms-git` 332.20f2f2f+ and BIOS **F13a** (2026-03). Both

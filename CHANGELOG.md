@@ -1,5 +1,44 @@
 # Changelog
 
+## [2.61.1] — 2026-09-05
+
+**Guidance correctness only — no behaviour change.** Pairs with
+`control-ofc-daemon` >= v2.38.0, which ships the guard this text refers to; on an
+older daemon the recovery steps still work by hand.
+
+### Fixed
+- **The app told users a recoverable fault was permanent** (`X87-b`, DEC-332).
+  When a dual-Super-I/O board's secondary chip answers device-ID `0x8883`, the
+  Hardware/System State cards, the chip-guidance database, the vendor quirk and
+  the manual all said the chip was unreachable with "no local fix" and needed
+  upstream driver work. That was measured false on 2026-09-05: `0x8883` is an
+  ITE eSPI→LPC bridge latched into configuration mode by the `nct6775` /
+  `w83627ehf` modules, which write a config-mode unlock before reading the
+  device ID. Suppressing them and then cutting mains power brings the chip back
+  — on the reference board, 3 fan headers and 3 temperatures.
+
+  Every one of those surfaces now states the remedy instead, and names the two
+  things a user would otherwise get wrong: **which modules to suppress**, and
+  that a **reboot does not clear the latch** (the Super-I/O stays powered on +5V
+  standby, so it needs the PSU switched off or unplugged).
+
+### Changed
+- **`manual/hardware-troubleshooting.md` carries a numbered recovery
+  procedure** — diagnose by DEVID, suppress, full power cut, verify, rescan —
+  plus what to check if it still fails, and the four things not to waste time on
+  (`mmio=on`, driver reinstall, `force_id`, `sensors-detect` — the last of which
+  *causes* the fault). The "Some of my fan headers are missing" decision table
+  now lists a remedy for all three cases rather than marking one unfixable.
+- **In-app copy links our own documentation, not an upstream issue thread.** The
+  readiness report's dual-chip card pointed at frankcrawford/it87 #70 as its
+  entry point; it now points at the manual's recovery section. The card states
+  the discriminator in two sentences, and the procedure lives in the manual —
+  an issue thread is context, not instructions.
+- **Reference docs corrected** (`docs/19`, `docs/21`, `docs/22`,
+  `manual/driver-setup.md`). `docs/21` gains the measured mechanism, including
+  the upstream `superio_enter()` source and the two-stage experiment that
+  separated cause from correlation.
+
 ## [2.61.0] — 2026-09-05
 
 Pairs with **`control-ofc-daemon` >= v2.37.0** for the new field; on an older

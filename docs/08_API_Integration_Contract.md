@@ -1599,8 +1599,17 @@ scan via the page's Refresh action.
 The **opt-in ACTIVE** Super-I/O probe — a *deliberate, one-shot* action (never
 polled) that reads the Super-I/O config ports (0x2E/0x4E) to identify an
 **unbound** chip the passive `GET` cannot see. It is a `POST` because it is a
-deliberate side-effecting action (it writes the chip's enter/exit protocol
+deliberate side-effecting action (it *may* write the chip's enter/exit protocol
 bytes), not a passive read.
+
+**It reads before it writes (daemon ≥ 2.38.0, DEC-332).** The DEVID read happens
+with **no unlock at all**, and an unlock is written only when that read returns
+`0xffff`. A chip already in configuration mode at power-on (`FEAT_NOCONF`:
+it8790/it8792/it87952) is therefore identified without a single unlock byte
+reaching its port. This is not a micro-optimisation: an unconditional unlock was
+measured to latch an ITE eSPI→LPC bridge into configuration mode, hiding the
+Super-I/O behind it — and every fan header on it — until the machine is
+disconnected from mains power. Older daemons unlock first and read second.
 
 **Off by default.** It runs only when the operator has BOTH set
 `[detection] allow_port_probe = true` and installed the `CAP_SYS_RAWIO` systemd
@@ -1614,6 +1623,14 @@ probe-identified chips appended to `chips[]` (each carries `evidence: ["port_pro
 and, for an unbound chip, a load `recommendation`). ITE chips are identified
 precisely (DEVID → chip name → driver + DKMS status); the Nuvoton/Winbond family
 is identified at vendor level with the raw DEVID and an `nct6775` recommendation.
+
+**`chip_name` is `null` for DEVID `0x8883` (daemon ≥ 2.38.0, DEC-332).** That
+value is an ITE eSPI→LPC *bridge* answering in place of the chip behind it, not a
+chip. Earlier daemons named it `it8883`, a device that has never existed. The
+entry is still returned — with `vendor: "ite"` and the raw `devid` — because the
+signature is exactly what tells an operator the bridge is latched; only the
+invented name is gone. **A client must not synthesise a chip name from `devid`
+for this value.**
 
 **GUI usage:** gate an advanced "Probe ports" button on `port_probe_available`;
 disable it with `port_probe_reason` as the tooltip when false. Because the probe

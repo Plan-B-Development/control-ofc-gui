@@ -58,8 +58,17 @@ class TestRemediationOrdering:
         html = dual_chip_warning_html("X870E AORUS MASTER", ["it8696", "it87952"], ["it8696"])
         assert html is not None
         assert "it87-dkms-git" in html, "the package must still be named where it genuinely helps"
-        # ...but never as the answer to the unreachable-bridge case.
-        assert "no local fix" in html.lower()
+        # ...but never as the answer to the latched-bridge case, which needs a
+        # power cut instead.
+        lowered = html.lower()
+        assert "power" in lowered and ("wall" in lowered or "power cut" in lowered), (
+            "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
+            "the remedy rather than tell the user to give up. It must also say "
+            "the machine has to be powered down at the wall — a reboot does "
+            "not clear the latch, and a user who reboots, sees no change and "
+            "concludes the chip is dead is exactly the failure this asserts "
+            "against. Got: " + repr(lowered)
+        )
 
     def test_dual_chip_warning_does_not_offer_mmio_as_a_remedy(self):
         """Rewritten by `UDOC-h` — it used to pin the claim that was wrong.
@@ -76,7 +85,14 @@ class TestRemediationOrdering:
         html = dual_chip_warning_html("X870E AORUS MASTER", ["it8696", "it87952"], ["it8696"])
         assert html is not None
         lowered = html.lower()
-        assert "no local fix" in lowered
+        assert "power" in lowered and ("wall" in lowered or "power cut" in lowered), (
+            "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
+            "the remedy rather than tell the user to give up. It must also say "
+            "the machine has to be powered down at the wall — a reboot does "
+            "not clear the latch, and a user who reboots, sees no change and "
+            "concludes the chip is dead is exactly the failure this asserts "
+            "against. Got: " + repr(lowered)
+        )
         if "mmio" in lowered:
             assert "already the driver default" in lowered
 
@@ -101,7 +117,14 @@ class TestRemediationOrdering:
         # discriminator instead, so the user finds out which fault they have
         # before changing anything.
         assert "dmesg" in fix
-        assert "no local fix" in fix
+        assert "power" in fix and ("wall" in fix or "power cut" in fix), (
+            "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
+            "the remedy rather than tell the user to give up. It must also say "
+            "the machine has to be powered down at the wall — a reboot does "
+            "not clear the latch, and a user who reboots, sees no change and "
+            "concludes the chip is dead is exactly the failure this asserts "
+            "against. Got: " + repr(fix)
+        )
         assert "mmio=on" not in fix
 
     def test_readiness_acpi_fix_orders_update_first_for_it87(self):

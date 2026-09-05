@@ -96,8 +96,13 @@ class TestNarrowerChipGuidance:
         flat = " ".join([g.notes or "", *g.known_issues]).lower()
 
         # The honest branch must be present.
-        assert "no local fix" in flat, (
-            f"the IT8883 entry must tell the user there is no local fix, got: {flat!r}"
+        assert "power" in flat and ("wall" in flat or "power cut" in flat), (
+            "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
+            "the remedy rather than tell the user to give up. It must also say "
+            "the machine has to be powered down at the wall — a reboot does "
+            "not clear the latch, and a user who reboots, sees no change and "
+            "concludes the chip is dead is exactly the failure this asserts "
+            "against. Got: " + repr(flat)
         )
         # ...and the withdrawn promise must NOT be made. Match the promise,
         # not the token: the token survives in the sentence that retracts it.
@@ -194,8 +199,18 @@ class TestX500X600X800VendorQuirks:
             "the confirmed-working pairing (#89) must survive the correction"
         )
         assert "aorus master" in flat, "the measured non-working pairing must be named"
-        assert "no local fix" in flat, (
-            "the 0x8883 case has no local remedy and the quirk must say so"
+        assert "power" in flat and ("wall" in flat or "power cut" in flat), (
+            "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
+            "the remedy rather than tell the user to give up. It must also say "
+            "the machine has to be powered down at the wall — a reboot does "
+            "not clear the latch, and a user who reboots, sees no change and "
+            "concludes the chip is dead is exactly the failure this asserts "
+            "against. Got: " + repr(flat)
+        )
+        # ...and it must name WHAT to suppress, or "power down" is unactionable.
+        assert "nct6775" in flat, (
+            "the remedy is only usable if the copy names the module that "
+            f"causes the latch. Got: {flat!r}"
         )
         # The withdrawn promise must not be restated.
         assert "recovered with mmio=on" not in flat

@@ -55,6 +55,14 @@ _HW_COMPAT_URL = (
     "https://github.com/Plan-B-Development/control-ofc-gui/blob/main/"
     "docs/19_Hardware_Compatibility.md"
 )
+# The step-by-step recovery for a missing secondary Super-I/O. In-app copy stays
+# short and sends the reader here rather than trying to fit a six-step procedure
+# (including "cut mains power, a reboot will not do") into a card.
+_MISSING_HEADERS_URL = (
+    "https://github.com/Plan-B-Development/control-ofc-gui/blob/main/"
+    "manual/hardware-troubleshooting.md"
+    "#some-of-my-fan-headers-are-missing--only-5-of-8-show-up"
+)
 # Reclaim count at/above which BIOS interference is treated as critical
 # (mirrors classify_reclaim_severity's HIGH bucket in diagnostics_page).
 _RECLAIM_HIGH = 10
@@ -127,21 +135,29 @@ def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
                 "key": "dual_chip",
                 "label": "Super-I/O chip not enumerated",
                 # DEC-326 / `UDOC-h`: this line used to prescribe the
-                # update/mmio=on/reboot loop unconditionally. On a board whose
-                # secondary answers DEVID=0x8883 none of that can work, and the
-                # vendor-quirk card rendered directly below says so — so the
-                # report contradicted itself. Both halves now point at the same
-                # discriminator; the detail lives in the alert above.
+                # update/mmio=on/reboot loop unconditionally, which is futile on
+                # a board answering DEVID=0x8883.
+                #
+                # DEC-332 then retracted the replacement's own conclusion. It
+                # said 0x8883 "has no local fix", which was measured false: the
+                # bridge is latched by a config-mode unlock from
+                # nct6775/w83627ehf and clears on a full power cut. Telling a
+                # user to give up costs them 3 of 8 headers permanently, so the
+                # discriminator now names the remedy for BOTH readings, and the
+                # link points at our own step-by-step rather than at an upstream
+                # issue thread the reader has to interpret.
                 "fix": (
-                    "Two different faults look identical here and only one is "
-                    "fixable locally. Run 'dmesg | grep -i it87': DEVID=0xFFFF "
-                    "is a bridge stuck in config mode, recovered by rebooting "
-                    "without running sensors-detect; DEVID=0x8883 is a bridge "
-                    "the driver cannot reach and has no local fix. Full steps "
-                    "in the alert above."
+                    "Two different faults look identical here and they need "
+                    "different remedies. Run 'dmesg | grep -i it87': "
+                    "DEVID=0xFFFF is a Super-I/O stuck in config mode, cleared "
+                    "by rebooting without running sensors-detect. DEVID=0x8883 "
+                    "is an ITE bridge latched in config mode — suppress the "
+                    "nct6775/w83627ehf modules, then power down fully at the "
+                    "wall, because a reboot does not clear it. Full steps in "
+                    "the guide below."
                 ),
-                "doc_url": "https://github.com/frankcrawford/it87/issues/70",
-                "doc_title": "frankcrawford/it87 issue #70",
+                "doc_url": _MISSING_HEADERS_URL,
+                "doc_title": "Manual: recovering missing fan headers",
                 "severity": "warn",
             }
         )

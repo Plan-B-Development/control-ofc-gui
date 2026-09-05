@@ -566,7 +566,14 @@ class TestDualChipRemediationOrderingDec144:
         assert "it87-dkms-git" in out
         lowered = out.lower()
         assert "dmesg" in lowered, "the alert must hand over the discriminator"
-        assert "no local fix" in lowered
+        assert "power" in lowered and ("wall" in lowered or "power cut" in lowered), (
+            "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
+            "the remedy rather than tell the user to give up. It must also say "
+            "the machine has to be powered down at the wall — a reboot does "
+            "not clear the latch, and a user who reboots, sees no change and "
+            "concludes the chip is dead is exactly the failure this asserts "
+            "against. Got: " + repr(lowered)
+        )
         if "mmio" in lowered:
             assert "already the driver default" in lowered
 

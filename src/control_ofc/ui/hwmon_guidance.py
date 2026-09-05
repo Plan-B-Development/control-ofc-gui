@@ -515,25 +515,27 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_url="https://www.kernel.org/doc/html/latest/hwmon/it87.html",
         notes="ITE IT8622E — supported in the mainline kernel it87 driver.",
     ),
-    # DEC-106 (D4.A) → corrected 2026-07 → **corrected again 2026-09-04 by
-    # DEC-326**, this time from a measurement rather than from a reading of
-    # upstream issues. The 2026-07 text said 0x8883 was merely a secondary
-    # Super-I/O stuck in config mode, "recovered with mmio=on". Both halves are
-    # false, measured on an X870E AORUS MASTER at it87 upstream HEAD:
+    # DEC-106 (D4.A) → corrected 2026-07 → corrected again by DEC-326 → and
+    # corrected a THIRD time by DEC-332, which is the one that finally has a
+    # controlled experiment behind it rather than a reading of upstream issues.
     #
-    #   * `mmio` already defaults to true (it87.c:314), and this host passes the
-    #     module no parameters at all — so "load with mmio=on" named a state
-    #     that was already in effect and could never have been a remedy.
-    #   * frankcrawford/it87 #81 is NOT resolved. Its owner applied exactly this
-    #     advice (force_id + ignore_resource_conflict + mmio=on) and still has
-    #     three fans and a water pump non-functional.
-    #   * `0x8883` appears NOWHERE in the driver (0 hits over the whole file),
-    #     while IT87952E_DEVID 0x8695 IS defined and IS handled — so the
-    #     secondary is UNREACHABLE, not unsupported. The old text inverted that.
+    # DEC-326's measurements all stand: `mmio` already defaults to true
+    # (it87.c:314); #81's owner applied force_id + mmio=on and still lost three
+    # fans and a pump; `0x8883` appears nowhere in the driver while
+    # IT87952E_DEVID 0x8695 IS defined and handled, so the secondary is
+    # unreachable rather than unsupported.
     #
-    # Best current reading, labelled as inference: 0x8883 is an IT8883 eSPI→LPC
-    # bridge answering in the chip's place (#64). There is no local fix today.
-    # This entry survives so a lookup on the bogus "it8883" chip name says so.
+    # What DEC-326 got wrong was the CONCLUSION it drew from them — "there is no
+    # local fix". The bridge answering is a STATE, not a property of the board,
+    # and 2026-09-05 measured both the cause and the cure on an X870E AORUS
+    # MASTER: loading `nct6775` (which writes a config-mode unlock to 0x4E
+    # before reading the DEVID) turned a working it87952 into
+    # `Unsupported chip (DEVID=0x8883)` inside one boot, against an it87-reload
+    # control that changed nothing; suppressing nct6775/w83627ehf and cutting
+    # mains power brought back 3 fans, 3 PWMs and 3 thermistor temps.
+    #
+    # This entry survives so a lookup on the bogus "it8883" chip name explains
+    # what the reader is actually looking at — and now tells them how to fix it.
     ChipGuidance(
         chip_prefix="it8883",
         driver_name="it87",
@@ -547,30 +549,37 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         known_issues=[
             "There is no 'IT8883' sensor chip. Device-ID 0x8883 at the "
             "secondary Super-I/O address is most likely an ITE eSPI-to-LPC "
-            "bridge answering in place of the chip behind it — inferred from "
-            "frankcrawford/it87 issue #64 (closed 2025-12), not confirmed by "
-            "the maintainer.",
-            "Measured on Gigabyte X870E AORUS MASTER (2026-09-04): the it87 "
-            "driver finds the primary IT8696E over MMIO and then reports "
-            "'Unsupported chip (DEVID=0x8883)' for the secondary. One hwmon "
-            "device appears instead of two, so roughly three fan headers are "
-            "unreachable.",
-            "There is NO local fix as at 2026-09-04. The MMIO path is already "
-            "the driver default, so enabling it changes nothing; forcing the "
-            "device ID does not help either (issue #81's reporter tried that "
-            "and still lost three fans and a water pump). This needs driver "
-            "work upstream — it is not a misconfiguration you can correct.",
+            "bridge answering in place of the chip behind it. The bridge "
+            "reading came from frankcrawford/it87 issue #64; the mechanism was "
+            "confirmed locally on 2026-09-05 by reproducing the latch on "
+            "demand and then clearing it.",
+            "Measured on Gigabyte X870E AORUS MASTER: the it87 driver finds "
+            "the primary IT8696E over MMIO and then reports 'Unsupported chip "
+            "(DEVID=0x8883)' for the secondary. One hwmon device appears "
+            "instead of two — 3 of 8 fan headers and 3 of 9 temperatures are "
+            "missing while the bridge is latched.",
+            "This IS fixable, but not by any driver setting. The bridge is "
+            "latched into config mode by a Super-I/O unlock written by the "
+            "nct6775 or w83627ehf modules (both write it before reading the "
+            "device ID, so they do the damage even though they then fail to "
+            "load on an ITE board). Keep those modules off the board, then "
+            "power down FULLY at the wall — the latch survives a reboot and a "
+            "normal shut-down, because the chip stays powered on +5V standby.",
+            "Do NOT use mmio=on (already the driver default) or force_id "
+            "(issue #81's reporter tried it and still lost three fans and a "
+            "water pump), and do not run sensors-detect — it writes the same "
+            "unlock and is one of the things that causes this.",
             "Distinct from the separate 0xFFFF failure: a secondary genuinely "
             "left in config mode (commonly by sensors-detect) reads 0xFFFF, "
             "not 0x8883, and that one IS recovered by rebooting without "
             "running sensors-detect.",
         ],
         notes=(
-            "ITE 0x8883 — not a real sensor chip; most likely an eSPI→LPC "
-            "bridge masking the secondary Super-I/O. The chip is unreachable "
-            "rather than unsupported, and there is no local fix "
-            "(DEC-326, measured 2026-09-04; supersedes this entry's earlier "
-            "2026-07 reading, which was wrong)."
+            "ITE 0x8883 — not a real sensor chip; an eSPI→LPC bridge latched "
+            "in config mode and masking the secondary Super-I/O. Recoverable: "
+            "suppress nct6775/w83627ehf, then cut mains power (a reboot does "
+            "not clear it). DEC-332, measured 2026-09-05 — supersedes the "
+            "'no local fix' reading this entry carried from 2026-09-04."
         ),
     ),
     # ── Out-of-tree-only ITE parts (verified 2026-08-26) ────────────────
@@ -1323,16 +1332,20 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "Confirmed working: X870E AORUS ELITE (incl. X3D) reports both "
             "chips with control working on it87-dkms-git "
             "(frankcrawford/it87 issue #89).",
-            "Confirmed NOT working: X870E AORUS MASTER, measured 2026-09-04. "
-            "The secondary answers device-ID 0x8883 — a bridge, not the chip — "
-            "and the driver reports 'Unsupported chip'. One hwmon device "
-            "appears instead of two and roughly three headers are unreachable.",
-            "If you see only some of your headers: there is no local fix for "
-            "the 0x8883 case. mmio is already the driver default, so setting "
-            "it changes nothing, and forcing the device ID does not help "
-            "either. A secondary genuinely stuck in config mode is a different "
-            "fault — it reads 0xFFFF, and rebooting without running "
-            "sensors-detect clears that one.",
+            "Seen failing on X870E AORUS MASTER: the secondary answers "
+            "device-ID 0x8883 — an ITE bridge latched in config mode, not the "
+            "chip — and the driver reports 'Unsupported chip'. One hwmon "
+            "device appears instead of two, costing 3 of 8 fan headers and 3 "
+            "of 9 temperatures while it lasts.",
+            "The 0x8883 case is recoverable (measured 2026-09-05). The latch "
+            "is written by the nct6775/w83627ehf modules, which unlock "
+            "Super-I/O config mode before reading the device ID and so do the "
+            "damage even though they cannot bind to an ITE board. Suppress "
+            "them, then power down fully at the wall — a reboot does not clear "
+            "it. Do not use mmio=on (already the driver default, so it changes "
+            "nothing) or force_id; neither touches this. A secondary "
+            "genuinely stuck in config mode is a different fault — it reads "
+            "0xFFFF, and a reboot without sensors-detect clears that one.",
         ],
     ),
     # ── DEC-144: B650 GAMING X AX V2 ACPI bind failure ──────────────
@@ -1879,15 +1892,21 @@ def dual_chip_warning_html(
     can correlate with their hardware docs.
 
     **The text states a discriminator, not a remedy (DEC-326 / `UDOC-h`).** Two
-    unrelated faults produce a missing secondary chip and they need opposite
-    responses: a bridge left in config mode (`DEVID=0xFFFF`) is recovered by
-    rebooting without `sensors-detect`, while an eSPI-to-LPC bridge
-    (`DEVID=0x8883`) has **no local fix at all**. This function previously
-    asserted the first case for everyone and prescribed a numbered
-    update/`mmio=on`/reboot loop, which on a 0x8883 board is the futile loop
-    `HOST-c` was raised against — and it rendered on the same report as
-    `lookup_vendor_quirks`' correctly-worded card, so the app contradicted
-    itself on one screen.
+    unrelated faults produce a missing secondary chip and they need *different*
+    responses: a Super-I/O left in config mode (`DEVID=0xFFFF`) is recovered by
+    rebooting without `sensors-detect`, while a latched eSPI-to-LPC bridge
+    (`DEVID=0x8883`) needs the offending modules suppressed and then a full
+    power cut. This function previously asserted the first case for everyone and
+    prescribed a numbered update/`mmio=on`/reboot loop, which on a 0x8883 board
+    is the futile loop `HOST-c` was raised against — and it rendered on the same
+    report as `lookup_vendor_quirks`' correctly-worded card, so the app
+    contradicted itself on one screen.
+
+    **DEC-332 retracted the "no local fix" half of that correction.** Both cases
+    are recoverable; they simply need different actions, and the 0x8883 one
+    needs an action people do not guess (mains power removed, not a reboot).
+    The copy here stays a short discriminator and links the manual for the
+    procedure — a six-step recovery does not belong in a diagnostic card.
 
     The GUI cannot resolve the branch itself: the DEVID never reaches it. The
     daemon's kmsg parser (`chip_db.rs::parse_kmsg_for_it87_chips`) extracts only
@@ -1973,8 +1992,8 @@ def dual_chip_warning_html(
     chip_summary = (
         f"expected {expected_pretty}; missing {missing_pretty}.<br><br>"
         f"{measured}"
-        f"<b>Two different faults produce this, and only one of them has a "
-        f"local fix.</b> Find out which you have before changing anything — "
+        f"<b>Two different faults produce this, and they need different "
+        f"remedies.</b> Find out which you have before changing anything — "
         f"run <code>dmesg | grep -i it87</code> and read the secondary chip's "
         f"device ID:<br><br>"
         f"&nbsp;&nbsp;<b>DEVID=0xFFFF</b> — the Super-I/O bridge was left in "
@@ -1983,14 +2002,16 @@ def dual_chip_warning_html(
         f"running <code>sensors-detect</code>, then click <i>Rescan Hardware</i> "
         f"(in the footer). If you are still on the in-tree driver, install "
         f"<code>it87-dkms-git</code> as well.<br><br>"
-        f"&nbsp;&nbsp;<b>DEVID=0x8883</b> — the secondary sits behind an "
-        f"eSPI-to-LPC bridge the driver cannot reach. It is <b>unreachable "
-        f"rather than unsupported, and there is no local fix.</b> Do not spend "
-        f"time on these: <code>mmio</code> is already the driver default so "
-        f"setting it changes nothing, <code>force_id</code> does not help, and "
-        f"reinstalling the driver rebuilds the same code. The affected headers "
-        f"stay unavailable until the driver gains support upstream — the rest "
-        f"of your fan control is unaffected.<br><br>"
+        f"&nbsp;&nbsp;<b>DEVID=0x8883</b> — an ITE eSPI-to-LPC bridge has been "
+        f"latched into configuration mode and is answering in place of the "
+        f"secondary chip. <b>This is recoverable, but not by a reboot:</b> the "
+        f"latch is written by the <code>nct6775</code> / <code>w83627ehf</code> "
+        f"modules, and it survives both a reboot and a normal shut-down. "
+        f"Suppress those modules, then power the machine down <i>fully at the "
+        f"wall</i>. Do not spend time on <code>mmio</code> (already the driver "
+        f"default), <code>force_id</code>, or reinstalling the driver — none of "
+        f"them touch this. The full step-by-step is in the manual, linked "
+        f"below.<br><br>"
         f"&nbsp;&nbsp;<b>No <code>it87</code> lines at all</b> — the driver is "
         f"not loaded. Install <code>it87-dkms-git</code>, reboot, then rescan."
         f"<br><br>"
