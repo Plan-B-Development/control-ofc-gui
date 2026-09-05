@@ -58,7 +58,10 @@ Use this at startup and on explicit refresh to determine:
 - IPC transport
 - device presence
 - feature support
-- min/max limits
+- min/max limits — `limits.openfan_stop_timeout_s` is the one a client must act on; see
+  § Safety behaviours to respect → OpenFan. The `pwm_percent_min`/`max` pair is
+  deliberately unmodelled GUI-side (the daemon clamps authoritatively, DEC-163) and is
+  recorded as such in `tests/fixtures/wire_fields.json`.
 
 This endpoint should drive:
 - feature enablement
@@ -1306,6 +1309,10 @@ as unavailable. The daemon never writes hardware to build this report.
 - `default_cpu: {sensor_id, confidence, rationale, source}?` — the daemon's
   default-CPU recommendation; `source` is `"user"` when it echoes the persisted
   preferred CPU sensor, else `"auto"`. Omitted when no CPU sensor is present.
+  **All four fields are rendered** under the Settings preferred-sensor picker
+  (DEC-329): the star alone asked the user to take the preselection on trust,
+  and `source: "user"` must not be worded as a recommendation — it is the
+  user's own pinned choice echoed back.
 - `preferences: {cpu_sensor_id, mb_sensor_id}?` — the user's persisted preferred
   CPU/motherboard sensors (pinned via the `POST /config/preferred-{cpu,mb}-sensor`
   writes). Either id may be stale — cross-check against the live sensor list.
@@ -1873,7 +1880,12 @@ The API client must normalize this into an internal error object that includes:
 According to the provided daemon notes:
 
 ### OpenFan
-- 0% allowed for max 8s (stop timeout queryable via `GET /capabilities` → `limits.openfan_stop_timeout_s`)
+- 0% allowed for max `limits.openfan_stop_timeout_s` seconds (8 on every build to date),
+  after which the daemon rejects the held 0% command. **Read the advertised value, never
+  the literal** — the GUI's Fan Wizard sizes its spin-down ceiling from it (DEC-329), and
+  before that shipped a hardcoded 8 that matched the daemon constant by coincidence, plus a
+  spinner maximum of 12 that already exceeded it. `0` means "this daemon did not say":
+  fall back to the client's own band rather than treating it as "stop immediately".
 - PWM 0–100 passed through — no clamping in the daemon. Role-aware floors are
   baked into the profile by the GUI and enforced by the daemon engine
   (DEC-162; see `docs/09_State_Model_and_Control_Behaviour.md`).
@@ -2043,7 +2055,12 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
   - `source` — `runtime` | `admin` | `default`. `runtime` means a `POST /config/*`
     write is shadowing the admin file — the one case where an operator's
     `daemon.toml` edit appears to do nothing.
-  - `mutable` — a `POST /config/*` route exists for it
+  - `mutable` — a `POST /config/*` route exists for it. **Drive editor availability from
+    this, not from a hardcoded key list** (DEC-329): the GUI disables the row's control
+    when the daemon reports `mutable: false`, so a key that becomes immutable stops
+    offering a write that can only return 400. Only ever *disables* — a key the daemon does
+    not report at all means "this daemon predates it", not "locked", and greying a control
+    on the strength of a truncated response is the same drift pointed the other way.
   - `requires_restart`, `restart_pending` — `restart_pending` is **the daemon's
     verdict** (`value != running_value`). Clients must not re-derive it from what
     they posted.

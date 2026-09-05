@@ -126,6 +126,14 @@ SETTINGS_FIELD_WIDGETS: dict[str, str] = {
 # surface, pinned on the daemon side by
 # ``get_config_key_set_and_mutability_are_pinned`` — and resolves every
 # objectName on a constructed page.
+#: Sanity band for the Fan Wizard spin-down timer. The *upper* bound is a
+#: fallback: where the daemon advertises `limits.openfan_stop_timeout_s` and an
+#: OpenFan controller is present, that value replaces it, because the daemon
+#: rejects a 0% OpenFan command held longer than its own `STOP_TIMEOUT` — so a
+#: longer timer here would promise a stop that does not happen (`WIRE-d`).
+WIZARD_SPINDOWN_MIN_S = 5
+WIZARD_SPINDOWN_MAX_S = 12
+
 DAEMON_CONFIG_WIDGETS: dict[str, str] = {
     "profiles.search_dirs": "Settings_List_profileSearchDirs",
     "startup.delay_secs": "Settings_Spin_startupDelay",
@@ -459,7 +467,7 @@ class SettingsPage(QWidget):
 
         self._wizard_spindown_spin = QSpinBox()
         self._wizard_spindown_spin.setObjectName("Settings_Spin_wizardSpindown")
-        self._wizard_spindown_spin.setRange(5, 12)
+        self._wizard_spindown_spin.setRange(WIZARD_SPINDOWN_MIN_S, WIZARD_SPINDOWN_MAX_S)
         self._wizard_spindown_spin.setSuffix(" seconds")
         self._wizard_spindown_spin.setToolTip(
             "How long each fan is stopped during the wizard identification test"
@@ -976,6 +984,9 @@ class SettingsPage(QWidget):
             )
         )
 
+        # Keyed by config key, and kept: `_apply_daemon_key_mutability` drives
+        # each editor's enabled state off the daemon's own `keys[].mutable`
+        # rather than off this hardcoded membership (`WIRE-g`).
         controls = {
             "startup.delay_secs": self._startup_delay_spin,
             "polling.poll_interval_ms": self._poll_interval_spin,
@@ -984,6 +995,7 @@ class SettingsPage(QWidget):
             "detection.allow_port_probe": self._port_probe_toggle,
             "detection.enable_nvidia_telemetry": self._nvidia_toggle,
         }
+        self._daemon_key_widgets: dict[str, QWidget] = dict(controls)
         # Per-row source/restart annotation, keyed by config key.
         self._daemon_row_notes: dict[str, QLabel] = {}
         for key, title, subtitle in self._DAEMON_ROWS:
@@ -1085,6 +1097,35 @@ class SettingsPage(QWidget):
         self._refresh_search_dir_buttons()
         return card
 
+    def _apply_daemon_key_mutability(self, cfg) -> None:
+        """Let the daemon decide which config keys are editable (`WIRE-g`).
+
+        `GET /config` reports `mutable` per key — whether a `POST /config/*`
+        route exists for it — and the GUI hardcoded that judgement instead, in
+        the membership of `DAEMON_CONFIG_WIDGETS`. A daemon that makes a key
+        newly immutable would therefore keep an editor that can only come back
+        as a 400, and one that makes a key newly mutable would keep it greyed
+        out. Same drift class as DEC-257.
+
+        Only ever *disables*: a key the daemon does not report at all leaves its
+        widget as `_set_daemon_config_available` left it, because absence means
+        "this daemon predates the key", not "this key is locked" — and greying
+        a control the user could previously edit on the strength of a truncated
+        response would be the same over-reach in the other direction.
+        """
+        for key, widget in self._daemon_key_widgets.items():
+            entry = cfg.get(key)
+            if entry is not None and not entry.mutable:
+                widget.setEnabled(False)
+                widget.setToolTip(
+                    f"{key} is read-only on this daemon — it reports no write route "
+                    "for it. Edit the daemon's config file and restart."
+                )
+        dirs = cfg.get("profiles.search_dirs")
+        if dirs is not None and not dirs.mutable:
+            for widget in (self._add_search_dir_btn, self._remove_search_dir_btn):
+                widget.setEnabled(False)
+
     def _daemon_config_controls(self) -> list[QWidget]:
         return [
             self._startup_delay_spin,
@@ -1173,6 +1214,8 @@ class SettingsPage(QWidget):
             }
         finally:
             self._populating_daemon_cfg = False
+
+        self._apply_daemon_key_mutability(cfg)
 
         for key, label in self._daemon_row_notes.items():
             self._render_daemon_row_note(
@@ -1878,6 +1921,42 @@ class SettingsPage(QWidget):
 
     # ─── Logic ───────────────────────────────────────────────────────
 
+    def _apply_wizard_spindown_limit(self) -> None:
+        """Bound the wizard spin-down timer by what the daemon will actually honour.
+
+        `GET /capabilities` publishes `limits.openfan_stop_timeout_s` so that
+        "clients size their identify/stop UI timeouts from this advertised
+        value" — the daemon rejects a 0% OpenFan command held longer than its own
+        `STOP_TIMEOUT`, so a longer timer here offers a spin-down that silently
+        ends early. The GUI previously hardcoded 8 s, which matched the daemon
+        constant **by coincidence** and would have desynced the moment it moved
+        (register row `WIRE-d`); the spinner's maximum of 12 already exceeded it.
+
+        Scoped to daemons that report an OpenFan controller: the limit is an
+        OpenFan serial-protocol bound, and an hwmon-only machine is governed by
+        the identify deadman instead. With no capability, no OpenFan, or a `0`
+        (older daemon / malformed response) the static band stands — the
+        pre-existing behaviour, and the safe direction, since narrowing on an
+        unknown limit would silently shorten every user's timer.
+        """
+        caps = getattr(self._state, "capabilities", None) if self._state else None
+        if caps is None or not getattr(getattr(caps, "openfan", None), "present", False):
+            ceiling = WIZARD_SPINDOWN_MAX_S
+        else:
+            advertised = getattr(getattr(caps, "limits", None), "openfan_stop_timeout_s", 0) or 0
+            ceiling = advertised if advertised > 0 else WIZARD_SPINDOWN_MAX_S
+        # Never below the floor, and never above the static band: an implausible
+        # advertised value must not widen the control past what the wizard's own
+        # copy and layout assume.
+        ceiling = max(WIZARD_SPINDOWN_MIN_S, min(ceiling, WIZARD_SPINDOWN_MAX_S))
+        self._wizard_spindown_spin.setMaximum(ceiling)
+        if ceiling < WIZARD_SPINDOWN_MAX_S:
+            self._wizard_spindown_spin.setToolTip(
+                "How long each fan is stopped during the wizard identification test. "
+                f"Capped at {ceiling} s because this daemon restarts an OpenFan fan "
+                "after that, whatever the timer says."
+            )
+
     def _load_current_settings(self) -> None:
         s = self._settings_svc.settings
         idx = self._startup_page_combo.findData(s.default_startup_page)
@@ -1890,6 +1969,9 @@ class SettingsPage(QWidget):
         )
         self._gpu_zero_rpm_warn_cb.setChecked(s.show_gpu_zero_rpm_warning)
         self._aio_pump_info_cb.setChecked(s.show_aio_pump_info)
+        # Apply the daemon's advertised ceiling BEFORE seeding, so a stored
+        # value the daemon will not honour is clamped rather than displayed.
+        self._apply_wizard_spindown_limit()
         self._wizard_spindown_spin.setValue(s.wizard_spindown_seconds)
         # No startup-delay seed here: the daemon owns that key and
         # `_refresh_daemon_config` is the only thing allowed to fill the spinner
@@ -2012,6 +2094,20 @@ class SettingsPage(QWidget):
         self._pref_mb_combo.currentIndexChanged.connect(self._on_preferred_mb_changed)
         v.addWidget(self._pref_mb_combo)
 
+        # WIRE-x: the daemon sends a plain-English reason for its recommendation
+        # plus a confidence and a `user`/`auto` provenance. Only `sensor_id` was
+        # read, so the starred preselection arrived with nothing to justify it
+        # and the user had to take it on trust.
+        self._pref_cpu_rationale = QLabel("")
+        self._pref_cpu_rationale.setObjectName("Settings_Label_preferredCpuRationale")
+        # The rationale is a daemon-supplied string; PlainText for the same
+        # reason as the daemon-config row notes (DEC-231).
+        self._pref_cpu_rationale.setTextFormat(Qt.TextFormat.PlainText)
+        self._pref_cpu_rationale.setWordWrap(True)
+        self._pref_cpu_rationale.setProperty("class", "CardMeta")
+        self._pref_cpu_rationale.setVisible(False)
+        v.addWidget(self._pref_cpu_rationale)
+
         self._pref_result_label = QLabel("")
         self._pref_result_label.setObjectName("Settings_Label_preferredResult")
         self._pref_result_label.setWordWrap(True)
@@ -2035,6 +2131,11 @@ class SettingsPage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        # Capabilities arrive after construction, so the wizard spin-down
+        # ceiling has to be re-derived on arrival — `_load_current_settings`
+        # runs before the handshake and would leave the static fallback in
+        # place forever (`WIRE-d`).
+        self._apply_wizard_spindown_limit()
         # Load preferred-sensor options from the daemon the first time Settings
         # is shown — a light, cache-backed GET kept off the startup path.
         if not self._prefs_loaded and self._client is not None:
@@ -2100,7 +2201,32 @@ class SettingsPage(QWidget):
             self._fill_pref_combo(self._pref_mb_combo, sensors, None, mb_pref)
         finally:
             self._populating_prefs = False
+        self._render_default_cpu_rationale(inv.default_cpu)
         self._set_pref_result("", "")
+
+    def _render_default_cpu_rationale(self, default_cpu) -> None:
+        """Explain the starred CPU-sensor recommendation in the daemon's words.
+
+        `default_cpu` carries `rationale`, `confidence` and `source` alongside
+        the id (`WIRE-x`). `source` is the load-bearing one: `"user"` means the
+        star is merely echoing a choice already persisted, and calling that a
+        recommendation would be circular.
+        """
+        text = ""
+        if default_cpu is not None and default_cpu.sensor_id:
+            reason = (default_cpu.rationale or "").strip()
+            if default_cpu.source == "user":
+                lead = "★ Your pinned CPU sensor"
+            else:
+                lead = "★ Recommended by the daemon"
+            confidence = (default_cpu.confidence or "").strip()
+            # "unknown" is a real token and says nothing; suppress it rather
+            # than printing "confidence: unknown" beside a recommendation.
+            if confidence and confidence != "unknown":
+                lead = f"{lead} ({confidence} confidence)"
+            text = f"{lead}: {reason}" if reason else lead
+        self._pref_cpu_rationale.setText(text)
+        self._pref_cpu_rationale.setVisible(bool(text))
 
     def _fill_pref_combo(self, combo, sensors, recommended, current) -> None:
         combo.clear()

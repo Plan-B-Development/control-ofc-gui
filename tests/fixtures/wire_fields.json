@@ -274,6 +274,25 @@
       "must_be_read": [
         "cooling_devices"
       ]
+    },
+    {
+      "daemon": "Limits",
+      "gui": "Limits",
+      "endpoints": [
+        "GET /capabilities"
+      ],
+      "fields": [
+        "pwm_percent_min",
+        "pwm_percent_max",
+        "openfan_stop_timeout_s"
+      ],
+      "unmodelled": {
+        "pwm_percent_min": "Inert: the daemon clamps authoritatively (DEC-163) and ships 0 on every build. The P3 capability cleanup deleted the GUI mirror for exactly this reason and set the bar for re-adding at 'find a consumer first'; this field still has none.",
+        "pwm_percent_max": "Inert: as pwm_percent_min. Ships 100 on every build."
+      },
+      "must_be_read": [
+        "openfan_stop_timeout_s"
+      ]
     }
   ]
 }

@@ -15,6 +15,24 @@ a daemon-side test-only change; no daemon version floor moves.
   load-bearing the test also asserts a real *read site* in production code — a parsed field
   nobody reads is decoration, and having it in the model is what hides that.
 
+- **The Settings page now explains the daemon's CPU-sensor recommendation** (`WIRE-x`).
+  The starred preselection under "Preferred CPU sensor" arrived with nothing to justify it,
+  because the GUI read only the sensor id and discarded the daemon's plain-English reason,
+  its confidence, and whether the star was a recommendation at all or simply your own
+  pinned choice echoed back. All four are now shown.
+
+### Changed
+- **The Fan Wizard spin-down timer is capped by what the daemon will actually honour**
+  (`WIRE-d`). The daemon restarts an OpenFan fan a fixed number of seconds after a stop and
+  advertises that number; the GUI hardcoded 8 seconds, which matched **by coincidence**, and
+  offered a maximum of 12 that the daemon would never have honoured. The ceiling now comes
+  from the daemon. Machines with no OpenFan controller, and older daemons, keep the previous
+  range.
+- **Daemon configuration rows follow the daemon's own view of what is editable** (`WIRE-g`).
+  `GET /config` says per key whether a write route exists for it; the GUI decided that for
+  itself, so a key the daemon had made read-only would still offer an editor whose only
+  possible outcome was an error.
+
 ### Fixed
 - **The hardware inventory dropped 14 fields the daemon sends** (`WIRE-h`, `WIRE-i`).
   `GET /inventory/hwmon` returns the same PWM-header objects as `GET /hwmon/headers`, but
