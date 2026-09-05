@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.61.1] — 2026-09-05
+## [2.61.1] — 2026-09-06
 
 **Guidance correctness only — no behaviour change.** Pairs with
 `control-ofc-daemon` >= v2.38.0, which ships the guard this text refers to; on an
