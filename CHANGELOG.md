@@ -1,5 +1,40 @@
 # Changelog
 
+## [2.64.0] — 2026-09-06
+
+**AIO Phase 8 Batch 3a (DEC-335): thermal observation, steady state and startup
+behaviour.** Pairs with `control-ofc-daemon` >= v2.41.0. Everything here is
+capability-gated — against an older daemon the new button is disabled with the
+version it needs, and the new result blocks simply do not appear.
+
+### Added
+- **A Thermal Observation action on the Hardware page.** Records how the cooler
+  responds to a workload you choose, with a live readout of elapsed time, control
+  temperature, CPU package power, pump and radiator state, temperature trend and
+  whether a steady state has been reached. **Control-OFC does not start, stop or
+  control your workload** — the dialog says so, and nothing in the observation
+  drives a fan or a pump.
+- **A steady-state panel.** Mean and peak temperature, trend, variation, warm-up
+  duration and confidence, with the exact criterion the daemon applied shown
+  beneath it. "Not established" is reported as a fact about the observation, not
+  as a fault in the cooler.
+- **A startup-behaviour panel.** Peak and settled RPM, override duration, and the
+  duty that was commanded and read back while it happened — shown together,
+  because the two agreeing is what shows a high startup RPM was the device
+  ramping rather than a control failure.
+- **A session timeline chart.** Temperature and RPM over the recording with event
+  markers and the steady-state period shaded, and CPU/GPU power on a linked strip
+  beneath. Drawn only when the session has something to plot.
+- **Guided isolation templates** (pump influence, radiator influence). Each stage
+  tells you which duty to set and marks the timeline when you confirm it;
+  Control-OFC changes nothing itself. Stepping is refused while thermal
+  protection is active or while no temperature can be read.
+
+### Fixed
+- A power reading the machine cannot provide now shows as unknown rather than as
+  `0 W`. Several systems expose no CPU package power at all, and a zero there
+  would have read as an idle processor.
+
 ## [2.63.1] — 2026-09-06
 
 **Fixes a defect shipped in 2.63.0.** The previous release's note claimed

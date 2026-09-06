@@ -1287,8 +1287,17 @@ a second definition of a safety rule, and the two would drift.
 
 Body:
 - `cooling_device_id` (string, **required**) — must name a configured device.
-- `kind` (string, optional) — `"validation"` (default) or `"lifecycle"`. One engine and one
-  wire type; the discriminator selects which findings matter and what a client presets.
+- `kind` (string, optional) — `"validation"` (default), `"lifecycle"`, or, from daemon
+  2.41.0, `"thermal_observation"` (DEC-335). One engine and one wire type; the discriminator
+  selects which findings matter and what a client presets.
+  **Gate `"thermal_observation"` on `control.thermal_observation`, and note that this gate is
+  unlike the `diagnostics[]` one.** An unrecognised `diagnostics[]` token makes the daemon
+  reject the whole session — a loud failure a client cannot miss. An unrecognised `kind` does
+  **not**: it falls back to `"validation"` and returns **200**. So against a pre-2.41.0 daemon
+  an ungated client starts what it believes is a thermal observation, receives a perfectly
+  valid ordinary validation session, and mislabels it for the rest of its life. The capability
+  flag is the only thing that distinguishes the two before the request is made. (The fallback
+  itself is pre-existing and unchanged — register row `P8-k`.)
 - `diagnostics` (string[], optional) — what the session should **run**: `"pwm_verify"`
   and/or `"pwm_characterization"`; from daemon 2.39.0 `"control_path_discovery"`
   (DEC-333) when `control.control_path_discovery` is advertised; and from daemon 2.40.0
@@ -1662,6 +1671,64 @@ for this value.**
 disable it with `port_probe_reason` as the tooltip when false. Because the probe
 touches raw I/O ports, present a confirmation before POSTing. **Detection is
 still not control.**
+
+
+### Session response — AIO Phase 8 Batch 3a additions (daemon >= 2.41.0, DEC-335)
+
+**Present on ANY session from daemon >= 2.41.0, whatever its `kind`** — not only on a
+`thermal_observation`. The daemon samples power on every tick of every session and derives the
+fingerprint and the steady-state result for every kind at finalisation, so a client reading an
+ordinary `validation` or `lifecycle` session against a 2.41.0+ daemon will find all of these
+populated. `control.thermal_observation` gates whether you may **request** the thermal kind
+(see the `kind` field above); it does **not** gate these fields, and treating it as though it
+did would drop real data on every non-thermal session.
+
+Every field below is optional and absent from an older daemon; **absent means "this daemon does
+not derive it", never a negative result.**
+
+On each entry of `samples[]`:
+
+- `package_power_w` (float, optional) — CPU package power in watts.
+- `gpu_power_w` (float, optional) — GPU power in watts, where the GPU exposes it. A separate
+  heat source; **never sum it with `package_power_w`**.
+
+**`null` on either means NOT KNOWN, and a client must not render it as `0 W`.** Three unrelated
+causes produce it: the machine exposes no readable source (measured — `k10temp` publishes no
+power attribute at all, so this is the common case, not the exotic one), this is the first tick
+of a session whose source is a cumulative powercap RAPL counter (one reading of a cumulative
+counter is not a power), or the derived value failed the daemon's plausibility guard. A `0 W`
+would be a claim about an idle processor.
+
+On the session document:
+
+- `auto_started` (bool) — the daemon opened this recording at startup rather than an operator
+  (`[startup] record_startup`). Display-only for a client: the daemon owns both behaviours that
+  hang off it (operator pre-emption, and a separate retention slot), and a client must not
+  re-derive either.
+- `startup_fingerprints[]` — per member: `member_id`, `role`, `override_observed`,
+  `override_duration_ms`, `peak_rpm`, `requested_pct_during`, `readback_pct_during`,
+  `post_override_rpm`, `transition_ms`, `interpretation`.
+  `interpretation` is a stable token — `device_startup_override` · `override_did_not_resolve` ·
+  `no_override_observed` · `command_readback_mismatch` — and **the client owns the wording** and
+  must render an unrecognised one rather than dropping it (273-i).
+  **None of these tokens is a fault.** §1 forbids diagnosing a high startup RPM as failed PWM
+  control while command and readback remain valid, so a client must show the duty pair beside
+  the RPM: the two agreeing is what rules the control fault out.
+- `steady_state` (object, optional) — `verdict` (`detected` · `not_established` ·
+  `insufficient_data`), `start_ms`, `warmup_ms`, `slope_c_per_min`, `stddev_c`, `mean_c`,
+  `peak_c`, `confidence`, `criterion`.
+  `insufficient_data` and `not_established` are **different answers** — "we could not tell"
+  versus "it never settled" — and collapsing them would report a short recording as a cooler
+  that cannot stabilise. Neither is a failure: a run stopped early and a loop that genuinely
+  cannot stabilise are indistinguishable from the data.
+  **`criterion` is rendered verbatim and never restated by the client.** It is built from the
+  daemon's own constants, so a client-side copy of the thresholds is falsified the moment either
+  moves — the failure this project already recorded for the emergency threshold.
+  `peak_c` spans the **whole** observation including warm-up, not just the steady region.
+
+New finding id: `thermal_steady_state`. Observational, like every other finding here — it can
+report `observed`, `not_observed` or `not_tested`, and never `fail`.
+
 
 ## Write endpoints
 

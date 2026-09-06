@@ -262,6 +262,16 @@ class ControlCapability:
     # the GUI can offer the safety summary on the Test/Characterise dialogs
     # without offering discovery.
     diagnostic_preflight: bool = False
+    # AIO Phase 8 Batch 3a (daemon >= 2.41.0, DEC-335): the
+    # `thermal_observation` session kind and the power fields on a sample.
+    #
+    # **This flag is load-bearing in a way the diagnostics tokens are not.** An
+    # unknown `diagnostics[]` token makes the daemon reject the whole session,
+    # so a mistake there is loud. An unknown `kind` does not: it falls back to
+    # `"validation"` and returns 200, so an ungated client would start what it
+    # believes is a thermal observation, receive a perfectly valid ordinary
+    # session, and label it wrongly for the rest of its life.
+    thermal_observation: bool = False
     # `WIRE-k` (daemon >= 2.36.0): five features that shipped BEFORE this block
     # had keys for them. Until the daemon grew these flags the GUI detected them
     # by comparing the daemon's version string — which says when a feature first
@@ -3247,6 +3257,35 @@ VALIDATION_DIAG_VERIFY = "pwm_verify"
 # Session kinds.
 VALIDATION_KIND_VALIDATION = "validation"
 VALIDATION_KIND_LIFECYCLE = "lifecycle"
+#: A thermal observation (DEC-335, daemon >= 2.41.0).
+#:
+#: **Gate on ``control.thermal_observation`` before sending it.** Unlike an
+#: unknown ``diagnostics[]`` token — which the daemon rejects along with the
+#: whole session — an unknown ``kind`` falls back to ``"validation"`` and
+#: returns 200. So an older daemon accepts this request, records an ordinary
+#: validation session, and the client has no way to tell from the response that
+#: it did. The capability flag is the only thing that distinguishes them.
+VALIDATION_KIND_THERMAL = "thermal_observation"
+
+# Steady-state verdicts (DEC-335 §3). Stable tokens; the client owns the
+# wording and must render an unrecognised one rather than dropping it.
+STEADY_STATE_DETECTED = "detected"
+STEADY_STATE_NOT_ESTABLISHED = "not_established"
+#: Distinct from ``not_established``: too little data to judge, rather than a
+#: run that genuinely never settled. §3 asks for both, and collapsing them would
+#: report a short recording as a cooler that cannot stabilise.
+STEADY_STATE_INSUFFICIENT = "insufficient_data"
+
+# Startup-fingerprint interpretations (DEC-335 §1).
+#: The override ended and the commanded duty was honoured throughout — a device
+#: behaviour, explicitly **not** a control fault.
+STARTUP_DEVICE_OVERRIDE = "device_startup_override"
+STARTUP_UNRESOLVED = "override_did_not_resolve"
+STARTUP_NONE_OBSERVED = "no_override_observed"
+#: Command and readback disagreed during the elevated period. Still not a
+#: failure verdict — it says the benign reading is unsupported, which is a
+#: different claim from asserting a fault.
+STARTUP_COMMAND_MISMATCH = "command_readback_mismatch"
 
 
 @dataclass
@@ -3336,6 +3375,17 @@ class ValidationSample:
     temperature_c: float | None = None
     temperature_sensor: str | None = None
     coolant_c: float | None = None
+    #: CPU package power in watts (DEC-335 §2), or ``None`` for **not known**.
+    #:
+    #: Never render ``None`` as 0 W or as an idle machine. Three unrelated
+    #: causes produce it and none is zero watts: the host exposes no readable
+    #: source (measured — ``k10temp`` publishes no power attribute at all), this
+    #: is the first tick of a session whose source is a cumulative RAPL counter,
+    #: or the derived value failed the daemon's plausibility guard.
+    package_power_w: float | None = None
+    #: GPU power in watts where the GPU exposes it. A separate heat source in
+    #: the same case; never summed with ``package_power_w``.
+    gpu_power_w: float | None = None
     thermal_state: str = "normal"
     members: list[ValidationMemberSample] = field(default_factory=list)
 
@@ -3416,6 +3466,55 @@ class ValidationExternalMeasurement:
 
 
 @dataclass
+class ValidationStartupFingerprint:
+    """What one member's fans did just after control was established (§1).
+
+    **Observational, always.** §1 is explicit that a temporary high-RPM period
+    must be representable without being treated as a control failure, so
+    ``interpretation`` carries the daemon's reading and the GUI renders it —
+    it never re-derives a verdict from ``peak_rpm`` alone. A large number beside
+    a duty that was honoured is a device ramping, not a fault.
+    """
+
+    member_id: str = ""
+    role: str = ""
+    override_observed: bool = False
+    override_duration_ms: int | None = None
+    peak_rpm: int | None = None
+    #: The commanded duty during the override, paired with its readback because
+    #: the two agreeing is precisely what rules a control fault out.
+    requested_pct_during: int | None = None
+    readback_pct_during: int | None = None
+    post_override_rpm: int | None = None
+    transition_ms: int | None = None
+    #: A stable token. Render an unrecognised one rather than dropping it.
+    interpretation: str = STARTUP_NONE_OBSERVED
+
+
+@dataclass
+class ValidationSteadyState:
+    """§3's outcome. Every magnitude is optional: unknown is not zero."""
+
+    verdict: str = STEADY_STATE_INSUFFICIENT
+    start_ms: int | None = None
+    warmup_ms: int | None = None
+    slope_c_per_min: float | None = None
+    stddev_c: float | None = None
+    mean_c: float | None = None
+    #: Peak across the WHOLE observation, including warm-up — a spike during
+    #: the ramp is still the hottest moment the run saw.
+    peak_c: float | None = None
+    confidence: str = "low"
+    #: The exact rule the daemon applied, which §3 requires be reported.
+    #:
+    #: **Render this string; never restate the thresholds in GUI copy.** The
+    #: daemon builds it from its own constants, so a hardcoded copy here would
+    #: be falsified the moment either constant moved — the failure `CLAUDE.md`
+    #: records for the emergency threshold, one domain over.
+    criterion: str = ""
+
+
+@dataclass
 class ValidationSession:
     session_id: str = ""
     kind: str = VALIDATION_KIND_VALIDATION
@@ -3433,6 +3532,20 @@ class ValidationSession:
     sample_limit_reached: bool = False
     interrupted_reason: str | None = None
     truncated_at_unix_ms: int | None = None
+    #: Opened by the daemon at startup rather than by an operator (DEC-335 §1,
+    #: ``[startup] record_startup``). Display-only here — the daemon owns both
+    #: behaviours that hang off it (operator pre-emption and its own retention
+    #: slot), and the GUI must not re-derive either.
+    auto_started: bool = False
+    #: Per-member startup behaviour (DEC-335 §1). Empty when nothing was
+    #: derivable; never a row of zeroes.
+    startup_fingerprints: list[ValidationStartupFingerprint] = field(default_factory=list)
+    #: Steady-state analysis of the control temperature (DEC-335 §3).
+    #:
+    #: ``None`` means the session recorded no temperature at all. A session that
+    #: recorded temperature and did not settle carries a result whose verdict is
+    #: ``not_established`` — a finding, not an absence.
+    steady_state: ValidationSteadyState | None = None
 
     @property
     def is_recording(self) -> bool:
@@ -3518,6 +3631,20 @@ def parse_validation_session(data: dict) -> ValidationSession:
         for m in data.get("external_measurements", [])
         if isinstance(m, dict)
     ]
+    # DEC-335. Both are absent from a pre-2.41.0 daemon and default empty/None,
+    # which every consumer must treat as "this daemon does not derive it" rather
+    # than as a negative result.
+    session.startup_fingerprints = [
+        ValidationStartupFingerprint(**_filter_fields(ValidationStartupFingerprint, f))
+        for f in data.get("startup_fingerprints", [])
+        if isinstance(f, dict)
+    ]
+    steady = data.get("steady_state")
+    session.steady_state = (
+        ValidationSteadyState(**_filter_fields(ValidationSteadyState, steady))
+        if isinstance(steady, dict)
+        else None
+    )
     session.findings = [
         ValidationFinding(**_filter_fields(ValidationFinding, f))
         for f in data.get("findings", [])

@@ -1165,7 +1165,12 @@ class TestValidationCallSite:
         page, state = _page(qtbot, devices=[_device()])
         _stub_workers(page)
         built = _no_exec(monkeypatch, ValidationSessionDialog)
-        page._open_validation(lifecycle=lifecycle, device_id=device_id)
+        # DEC-335 turned the boolean discriminator into the wire token; a third
+        # kind made `lifecycle: bool` unable to express the argument.
+        page._open_validation(
+            kind=VALIDATION_KIND_LIFECYCLE if lifecycle else VALIDATION_KIND_VALIDATION,
+            device_id=device_id,
+        )
         return page, state, built
 
     def test_every_dialog_signal_reaches_its_worker_request(self, qtbot, monkeypatch):
@@ -1207,7 +1212,7 @@ class TestValidationCallSite:
         polls: list[int] = []
         page._validation_poll_request.connect(lambda: polls.append(1))
         _no_exec(monkeypatch, ValidationSessionDialog)
-        page._open_validation(lifecycle=False)
+        page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         assert polls == [1]
 
     def test_the_export_signal_is_wired_to_the_pages_serializer(self, qtbot, monkeypatch):
@@ -1216,7 +1221,7 @@ class TestValidationCallSite:
         page._export_session = lambda fmt: formats.append(fmt)  # type: ignore[method-assign]
         # Re-open so the fresh dialog connects to the patched method.
         built.clear()
-        page._open_validation(lifecycle=False)
+        page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         built[0].export_requested.emit("csv")
         assert formats == ["csv"]
 
@@ -1239,7 +1244,7 @@ class TestValidationCallSite:
         page, _ = _page(qtbot)  # no cooling devices
         _stub_workers(page)
         built = _no_exec(monkeypatch, ValidationSessionDialog)
-        page._open_validation(lifecycle=False)
+        page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         assert built == []
         assert "Configure a cooling device first" in page._diag_result.text()
 
@@ -1251,7 +1256,7 @@ class TestValidationCallSite:
         page, _ = _page(qtbot, devices=[_device(), second])
         _stub_workers(page)
         built = _no_exec(monkeypatch, ValidationSessionDialog)
-        page._open_validation(lifecycle=False, device_id="aio1")
+        page._open_validation(kind=VALIDATION_KIND_VALIDATION, device_id="aio1")
         assert built[0]._device_id == "aio1"
         assert "Second Loop" in built[0]._device_lbl.text()
 
@@ -1299,7 +1304,7 @@ class TestExportCallSite:
         page, _ = _page(qtbot, devices=[_device()])
         _stub_workers(page)
         built = _no_exec(monkeypatch, ValidationSessionDialog)
-        page._open_validation(lifecycle=False)
+        page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         page._validation_dialog = built[0]
         built[0].apply_session(_session(state="completed"))
 
@@ -1326,7 +1331,7 @@ class TestExportCallSite:
         page, _ = _page(qtbot, devices=[_device()])
         _stub_workers(page)
         built = _no_exec(monkeypatch, ValidationSessionDialog)
-        page._open_validation(lifecycle=False)
+        page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         page._validation_dialog = built[0]
         built[0].apply_session(_session(state="completed"))
         monkeypatch.setattr(QtW.QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""))
@@ -1341,7 +1346,7 @@ class TestExportCallSite:
         page, _ = _page(qtbot, devices=[_device()])
         _stub_workers(page)
         built = _no_exec(monkeypatch, ValidationSessionDialog)
-        page._open_validation(lifecycle=False)
+        page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         page._validation_dialog = built[0]
         built[0].apply_session(_session(state="completed"))
         # A path that is itself a directory: `atomic_write` creates missing

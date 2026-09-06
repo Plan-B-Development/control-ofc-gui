@@ -51,7 +51,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.api.models import ControlPathRecord
+from control_ofc.api.models import (
+    VALIDATION_KIND_LIFECYCLE,
+    VALIDATION_KIND_THERMAL,
+    VALIDATION_KIND_VALIDATION,
+    ControlPathRecord,
+)
 from control_ofc.services.cooling_device_view import build_cooling_device_views
 from control_ofc.services.daemon_features import daemon_supports, unsupported_feature_message
 from control_ofc.services.diagnostics_service import DiagnosticsService
@@ -477,8 +482,25 @@ class HardwarePage(QWidget):
             object_name="Hardware_Btn_lifecycle",
             accessible_name="Record startup and lifecycle behaviour",
         )
-        self._lifecycle_btn.clicked.connect(lambda: self._open_validation(lifecycle=True))
+        self._lifecycle_btn.clicked.connect(
+            lambda: self._open_validation(kind=VALIDATION_KIND_LIFECYCLE)
+        )
         actions.addWidget(self._lifecycle_btn)
+
+        # DEC-335 §9.2. Capability-gated in `_sync_diagnostic_enablement`: an
+        # older daemon silently records an ORDINARY session for an unknown kind
+        # and returns 200, so an ungated button would mislabel the result rather
+        # than fail loudly.
+        self._thermal_btn = make_button(
+            "Thermal Observation",
+            "secondary",
+            object_name="Hardware_Btn_thermal",
+            accessible_name="Start a thermal observation session",
+        )
+        self._thermal_btn.clicked.connect(
+            lambda: self._open_validation(kind=VALIDATION_KIND_THERMAL)
+        )
+        actions.addWidget(self._thermal_btn)
 
         self._validation_btn = make_button(
             "AIO Validation",
@@ -486,7 +508,9 @@ class HardwarePage(QWidget):
             object_name="Hardware_Btn_validation",
             accessible_name="Start an AIO validation session",
         )
-        self._validation_btn.clicked.connect(lambda: self._open_validation(lifecycle=False))
+        self._validation_btn.clicked.connect(
+            lambda: self._open_validation(kind=VALIDATION_KIND_VALIDATION)
+        )
         actions.addWidget(self._validation_btn)
 
         self._advanced_btn = make_button(
@@ -637,7 +661,9 @@ class HardwarePage(QWidget):
                 card.view_headers_requested.connect(self._scroll_to_headers)
                 card.characterize_pump_requested.connect(self._open_characterization)
                 card.start_validation_requested.connect(
-                    lambda device_id: self._open_validation(lifecycle=False, device_id=device_id)
+                    lambda device_id: self._open_validation(
+                        kind=VALIDATION_KIND_VALIDATION, device_id=device_id
+                    )
                 )
                 card.edit_requested.connect(lambda _id: self.open_controls.emit())
                 card.forget_requested.connect(self._forget_device)
@@ -712,6 +738,20 @@ class HardwarePage(QWidget):
                 )
             else:
                 button.setToolTip("")
+
+        # DEC-335: the thermal button carries a SECOND gate on top of the
+        # session capability, because the failure mode without it is silent.
+        # An unknown `diagnostics[]` token makes the daemon reject the session;
+        # an unknown `kind` does not — it records an ordinary validation session
+        # and returns 200, so the button would appear to work and mislabel every
+        # result. `daemon_supports` is tri-state and `None` ("did not say") must
+        # read as unsupported here, hence the explicit `is True`.
+        thermal_ok = daemon_supports("thermal_observation", caps) is True
+        self._thermal_btn.setEnabled(enabled and thermal_ok)
+        if not thermal_ok:
+            self._thermal_btn.setToolTip(unsupported_feature_message("thermal_observation"))
+        else:
+            self._thermal_btn.setToolTip(self._validation_btn.toolTip())
 
     # ── Fetch + render ───────────────────────────────────────────────
 
@@ -1407,12 +1447,13 @@ class HardwarePage(QWidget):
 
     # ── Validation / lifecycle sessions ──────────────────────────────
 
-    def _open_validation(self, *, lifecycle: bool, device_id: str = "") -> None:
-        from control_ofc.api.models import (
-            VALIDATION_KIND_LIFECYCLE,
-            VALIDATION_KIND_VALIDATION,
-        )
+    def _open_validation(self, *, kind: str, device_id: str = "") -> None:
+        """Open a session dialog of one kind.
 
+        REWRITE (DEC-335): this took `lifecycle: bool`. A third kind turns a
+        boolean discriminator into a lie by construction, so it takes the wire
+        token now and the callers name what they want.
+        """
         if not self._ensure_validation_worker():
             self._show_diag_message("Cannot start a session: no daemon connection.")
             return
@@ -1425,7 +1466,7 @@ class HardwarePage(QWidget):
         dialog = ValidationSessionDialog(
             device_id,
             device_name,
-            kind=VALIDATION_KIND_LIFECYCLE if lifecycle else VALIDATION_KIND_VALIDATION,
+            kind=kind,
             members=members,
             supported_diagnostics=self._supported_session_diagnostics(),
             parent=self,

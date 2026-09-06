@@ -365,3 +365,16 @@ Synthetic data; fully explorable without hardware.
 - still trust daemon as final safety authority
 - log all failed intent attempts with context
 - never hide a control-capability gate (new-GUI / old-daemon) or an override rejection
+
+
+### AIO Phase 8 Batch 3a additions (DEC-335)
+
+- `services/thermal_view.py` — Qt-free rendering for thermal observations: the §9.2 live block,
+  the steady-state and startup-fingerprint views, the plottable `SessionTrace`, and the guided
+  isolation templates with their stage gate. Every "unknown is not zero" and "this is not a
+  fault" decision lives here and is tested headlessly.
+- `ui/widgets/session_timeline_chart.py` — a session's timeline over a Qt-free trace, on the
+  `PwmResponseChart` pattern. Two X-linked plots (temperature + RPM above, power beneath),
+  because °C, RPM and watts are three units and two axes cannot hold them honestly.
+- `ui/widgets/validation_session_dialog.py` — gained a third `kind` rather than a sibling
+  dialog, per the Overview's instruction not to duplicate Phase 3/5/6 implementations.

@@ -157,6 +157,20 @@ The active tests, gathered in one place instead of scattered across the page. Ea
 - **Startup / Lifecycle Recording** — records how your cooler behaves across startup, resume and profile changes.
 - **AIO Validation** — records what your cooler actually does and finalises into an evidence summary you can export as CSV or JSON.
 
+- **Thermal Observation** (daemon 2.41.0+, hidden with the required version shown otherwise) — records how your cooler responds to a workload **you** run. While it records you get a live readout of elapsed time, control temperature, CPU package power, pump and radiator duty and RPM, the temperature trend, and whether the temperature has reached a steady state.
+
+  **Control-OFC does not start, stop or control your workload.** Start your game, render or stress test yourself, then come back and record. Nothing in this observation drives a fan or a pump — it only watches.
+
+  When you stop it you also get:
+
+  - **Steady state** — whether the temperature settled, with the mean, peak, trend, variation, warm-up time and the exact rule that produced the verdict. "Not established" means *this recording* did not settle — it is not a verdict on your cooler, and a run you stopped early looks the same as one that genuinely never stabilises.
+  - **Startup behaviour** — if the fans or pump spun up hard at the start and then came down, you get the peak and settled RPM, how long it lasted, and the duty that was commanded and read back while it happened. **A high startup RPM is not a fault** when the duty was being obeyed; many coolers ramp at power-on by design, and the two figures being shown together is what tells you which it was.
+  - **Timeline** — temperature and RPM plotted over the recording with the steady period shaded, and CPU/GPU power beneath.
+
+  **Isolation templates** step you through the two comparisons cooler reviews use — *pump influence* (hold the fans, vary the pump) and *radiator influence* (hold the pump, vary the fans). Each stage tells you which duty to set; you set it on the Controls page as usual, and Control-OFC marks the timeline. It will refuse to advance while thermal protection is active or while it cannot read a temperature.
+
+  **If CPU package power shows a dash**, your machine does not expose it — AMD systems using `k10temp` commonly do not. That is a gap in what Linux publishes, not a fault, and everything else in the observation still works.
+
 Both recorders open the same dialog. It shows elapsed time, per-member telemetry and, when the session finishes, a findings table using explicit result words — **PASS**, **FAIL**, **OBSERVED**, **NOT OBSERVED**, **NOT TESTED**, **UNKNOWN**, **UNAVAILABLE**. Nothing that was not actually tested is ever reported as PASS, and a capability your hardware simply does not expose is reported as *unavailable*, never as a failure. You can mark an event while recording, and attach external electrical measurements (a meter or logic-analyser reading) to the session — those are stored for your own analysis and are never used for any control or safety decision.
 
 ### Super-I/O Architecture

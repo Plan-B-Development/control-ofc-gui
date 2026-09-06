@@ -825,7 +825,11 @@ through the Qt-free serializers below.
 **Charts remain deliberately absent.** The brief's own guidance is "do not make graphing
 mandatory" and "a stable tabular implementation is preferable"; `TimelineChart` is coupled
 to live `AppState` history and cannot render a session's `samples[]` array without a new
-plot. Recorded as deferred work (`AIO6-b`) rather than half-built.
+plot. That was recorded as deferred work and is **discharged by DEC-335**: Batch 3a adds
+`SessionTimelineChart`, which takes a Qt-free trace built from the session's own samples
+instead of reaching for `HistoryStore`. `TimelineChart` is still not reusable for this and
+was not reused. The tables remain primary — §14's "graphing is not mandatory" is honoured
+by the chart living in a disclosure and drawing nothing when there is no series.
 
 What Phase 5 built and Phase 6 consumes:
 
@@ -861,3 +865,43 @@ Three presentation rules the VM already encodes, which a Phase 6 renderer must n
 - daemon restart integration if safe and supported
 - real-time journal tailing (follow mode) via background thread
 - python-systemd native journal access (eliminates subprocess overhead)
+
+
+## Thermal observation, steady state and startup behaviour (DEC-335, Batch 3a)
+
+Since **DEC-335** (daemon >= 2.41.0, gated on `control.thermal_observation`) the Hardware page
+offers a third session action, **Thermal Observation**, beside Startup / Lifecycle Recording and
+AIO Validation. It is the same engine and the same dialog — a third `kind`, not a third
+implementation.
+
+**Control-OFC never starts, stops or controls the workload.** §2 and §11 forbid launching a
+stress or benchmark tool, and the dialog says so where the user starts the run rather than
+burying it in help. Nothing in the observation drives a fan or a pump; it only watches.
+
+What it records, beyond an ordinary session: CPU package power (from a CPU chip's hwmon power
+attribute, else the powercap RAPL counter), GPU power where exposed, and — at finalisation —
+a steady-state verdict over the control temperature and a per-member startup fingerprint.
+
+Three honesty rules the UI enforces, each of which the spec states as a prohibition:
+
+- **An unknown power is a dash, never `0 W`.** Several machines expose no CPU package power at
+  all (measured: `k10temp` publishes none), so "not known" is the common case and a zero would
+  claim an idle processor.
+- **"Not established" is a statement about the observation, not about the cooler.** A run
+  stopped early and a loop that genuinely cannot stabilise produce the same verdict, and nothing
+  renders either as a fault.
+- **A high startup RPM with a honoured duty is a device behaviour.** The commanded duty and its
+  readback are shown together beside the peak RPM, because the two agreeing is exactly what
+  rules out a control fault.
+
+**Component-isolation templates are guided.** A stage names the duty to set — through the
+Controls page's existing floor-clamped manual override — and marks the timeline when the user
+confirms it. There is no daemon-driven stepping and no new PWM write path. Stepping is refused
+while thermal protection is active or while no temperature can be read; that client-side gate is
+the only place a guided workflow can refuse, and it does.
+
+**An opt-in startup recording** (`[startup] record_startup`, off by default) lets the daemon
+capture the startup window without an operator present, because a hand-started session cannot
+reach it. It never blocks anyone: starting a session takes over immediately, the partial
+recording is still saved, and auto-records are retained separately so they cannot displace
+sessions made by hand.

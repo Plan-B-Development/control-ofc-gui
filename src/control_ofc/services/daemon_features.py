@@ -49,6 +49,10 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # rejecting them, so a client gating on it would render empty hysteresis
         # and stability panels as though the hardware had produced them.
         "pwm_behaviour_characterization": "2.40.0",
+        # DEC-335, control.thermal_observation. Gates the thermal-observation
+        # session kind; see the flag's own note in `models.py` for why an
+        # ungated client mislabels an ordinary session rather than failing.
+        "thermal_observation": "2.41.0",
         # DEC-333, control.control_path_discovery / control.diagnostic_preflight
         "control_path_discovery": "2.39.0",
         "diagnostic_preflight": "2.39.0",
@@ -88,6 +92,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "validation_sessions": "validation_sessions",
         "pwm_characterization": "pwm_characterization",
         "pwm_behaviour_characterization": "pwm_behaviour_characterization",
+        "thermal_observation": "thermal_observation",
         "control_path_discovery": "control_path_discovery",
         "diagnostic_preflight": "diagnostic_preflight",
         # The flag's name is not the feature id: DEC-311 named the capability
@@ -109,6 +114,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "validation_sessions": "validation sessions",
         "pwm_characterization": "PWM characterisation",
         "pwm_behaviour_characterization": "PWM behaviour characterisation",
+        "thermal_observation": "thermal observation sessions",
         "control_path_discovery": "control-path discovery",
         "diagnostic_preflight": "the diagnostic safety preflight",
         "pump_protection": "pump protection",

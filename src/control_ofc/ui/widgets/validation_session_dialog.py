@@ -2,9 +2,11 @@
 
 Phase 5 built the whole engine, the typed models, the view-model and the
 serializers, and deliberately shipped no UI. This is that UI, and it is the only
-consumer: one dialog serves BOTH a validation session and a lifecycle recording,
-because Phase 5 Decision 8 made them one engine with a ``kind`` discriminator.
-Building two dialogs would recreate the duplication §21 forbids.
+consumer: one dialog serves a validation session, a lifecycle recording and a
+thermal observation (DEC-335), because Phase 5 Decision 8 made them one engine
+with a ``kind`` discriminator. Building a dialog per kind would recreate the
+duplication §21 forbids, and Phase 8's Overview repeats the instruction: do not
+duplicate Phase 3/5/6 implementations under new names.
 
 Three rules the renderer must not undo, all decided in
 ``services/validation_view`` and merely displayed here:
@@ -15,10 +17,15 @@ Three rules the renderer must not undo, all decided in
 * An unrecognised finding id, state or event kind renders **humanised**, never
   dropped, so a newer daemon cannot make a result vanish (the 273-i rule).
 
-Charts are deliberately absent. §14 says "do not make graphing mandatory" and "a
-stable tabular implementation is preferable"; ``TimelineChart`` is coupled to
-live ``AppState`` history and cannot render a session's sample array without a
-new plot, which is recorded as deferred work rather than half-built here.
+**The "charts are deliberately absent" note here is RETRACTED (DEC-335).** It was
+correct for Phase 6: §14 says "do not make graphing mandatory" and prefers a
+stable tabular implementation, and ``TimelineChart`` is coupled to live
+``AppState`` history and cannot render a session's sample array. That is still
+true of ``TimelineChart`` — so Batch 3a did not reuse it. It adds
+``SessionTimelineChart``, which takes a Qt-free trace built from the session's
+own samples, on the ``PwmResponseChart`` pattern. The tables remain; the chart is
+additive, and §14's "not mandatory" is honoured by it drawing nothing when the
+session carries no series.
 """
 
 from __future__ import annotations
@@ -41,8 +48,17 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.models import (
     VALIDATION_KIND_LIFECYCLE,
+    VALIDATION_KIND_THERMAL,
     VALIDATION_KIND_VALIDATION,
     ValidationSession,
+)
+from control_ofc.services.thermal_view import (
+    ISOLATION_TEMPLATES,
+    build_live_summary,
+    build_session_trace,
+    build_startup_views,
+    build_steady_state_view,
+    isolation_stage_gate,
 )
 from control_ofc.services.validation_view import (
     ValidationSessionView,
@@ -51,9 +67,11 @@ from control_ofc.services.validation_view import (
 )
 from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.badges import StatusPill
+from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.dialog import ModalDialog
 from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
+from control_ofc.ui.widgets.session_timeline_chart import SessionTimelineChart
 
 #: The dialog's own refresh while it is open. One request per second against a
 #: session the daemon is already sampling at 1 Hz — matching its cadence rather
@@ -96,6 +114,48 @@ _MEASUREMENT_KINDS = (
     ("device_power", "Device power", "W"),
 )
 
+#: Title and lead-in per session kind (DEC-335). One table rather than nested
+#: ternaries — see the REWRITE note in `__init__`.
+_KIND_TITLES = {
+    VALIDATION_KIND_VALIDATION: "AIO Validation",
+    VALIDATION_KIND_LIFECYCLE: "Startup / Lifecycle Recording",
+    VALIDATION_KIND_THERMAL: "Thermal Observation",
+}
+
+_KIND_INTROS = {
+    VALIDATION_KIND_VALIDATION: (
+        "Records what this cooler actually does — PWM command, hardware "
+        "readback, RPM, temperature, control ownership and thermal state — "
+        "and finalises into evidence you can export.\n\n"
+        "Nothing here lowers a safety floor or stops a pump: any diagnostic "
+        "you enable runs through the daemon's existing, floor-clamped "
+        "implementation."
+    ),
+    VALIDATION_KIND_LIFECYCLE: (
+        "Records how this cooler behaves across startup, resume and "
+        "profile changes. Passive by default — enable a diagnostic below "
+        "only if you want one run at the start."
+    ),
+    # §2's workload boundary, stated where the user starts the run rather than
+    # buried in help: Control-OFC records, the user drives the load. The spec is
+    # explicit that no stress tool is launched, and this is the sentence that
+    # makes that a promise rather than an omission.
+    VALIDATION_KIND_THERMAL: (
+        "Records how this cooler responds to a workload you choose — "
+        "temperature, CPU package power, pump and radiator duty and RPM — and "
+        "reports whether the temperature reached a steady state.\n\n"
+        "Control-OFC does NOT start, stop or control your workload. Start it "
+        "yourself, then come back here and record. Nothing in this observation "
+        "drives a fan or a pump; it only watches."
+    ),
+}
+
+_START_LABELS = {
+    VALIDATION_KIND_VALIDATION: "Start Validation",
+    VALIDATION_KIND_LIFECYCLE: "Start Recording",
+    VALIDATION_KIND_THERMAL: "Start Observation",
+}
+
 _FINDING_COLUMNS = ("Check", "Result", "Detail")
 _MEMBER_COLUMNS = ("Member", "Role", "Samples", "Requested", "Readback", "RPM")
 
@@ -121,8 +181,14 @@ class ValidationSessionDialog(ModalDialog):
         supported_diagnostics: set[str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        lifecycle = kind == VALIDATION_KIND_LIFECYCLE
-        title = "Startup / Lifecycle Recording" if lifecycle else "AIO Validation"
+        # REWRITE (DEC-335): this was `lifecycle = kind == KIND_LIFECYCLE` plus a
+        # ternary on the title and another on the intro. A third kind would have
+        # made that a second special case layered on a first, which is the shape
+        # the rewrite rule exists to stop. One table, three entries, and adding a
+        # fourth kind is a row rather than another branch.
+        thermal = kind == VALIDATION_KIND_THERMAL
+        self._thermal = thermal
+        title = _KIND_TITLES.get(kind, _KIND_TITLES[VALIDATION_KIND_VALIDATION])
         super().__init__(title, parent)
         self.setObjectName("ValidationSessionDialog")
         # `ModalDialog` renders the title into its own header label but does NOT
@@ -154,16 +220,7 @@ class ValidationSessionDialog(ModalDialog):
         body.addWidget(self._device_lbl)
 
         self._intro = QLabel(
-            "Records what this cooler actually does — PWM command, hardware "
-            "readback, RPM, temperature, control ownership and thermal state — "
-            "and finalises into evidence you can export.\n\n"
-            "Nothing here lowers a safety floor or stops a pump: any diagnostic "
-            "you enable runs through the daemon's existing, floor-clamped "
-            "implementation."
-            if not lifecycle
-            else "Records how this cooler behaves across startup, resume and "
-            "profile changes. Passive by default — enable a diagnostic below "
-            "only if you want one run at the start.",
+            _KIND_INTROS.get(kind, _KIND_INTROS[VALIDATION_KIND_VALIDATION]),
             self,
         )
         self._intro.setObjectName("Validation_Label_intro")
@@ -203,12 +260,17 @@ class ValidationSessionDialog(ModalDialog):
         self._findings_table.setVisible(False)
         body.addWidget(self._findings_table)
 
+        # DEC-335 §9.1/§9.2. Built for every kind and shown only when the
+        # session actually carries the material: a daemon predating Batch 3a
+        # sends neither, and an empty 'Steady state' panel would read as a
+        # measurement that came back blank rather than one never taken.
+        body.addWidget(self._build_thermal_sections())
         body.addWidget(self._build_evidence_section())
         body.addWidget(self._build_measurement_form())
 
         # ── Footer ───────────────────────────────────────────────────────────
         self._start_btn = self.add_footer_button(
-            "Start Recording" if lifecycle else "Start Validation",
+            _START_LABELS.get(kind, _START_LABELS[VALIDATION_KIND_VALIDATION]),
             "primary",
             object_name="Validation_Btn_start",
         )
@@ -283,6 +345,229 @@ class ValidationSessionDialog(ModalDialog):
         section.add_widget(host)
         self._options_section = section
         return section
+
+    def _build_thermal_sections(self) -> QWidget:
+        """The §9.1/§9.2 blocks: live readout, steady state, startup, chart."""
+        host = QWidget(self)
+        col = QVBoxLayout(host)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(8)
+
+        # Live readout (§9.2). Thermal only — it is the block a user watches
+        # while their workload runs, and it would be noise on a PWM validation.
+        self._live_box = QWidget(host)
+        live_grid = QFormLayout(self._live_box)
+        live_grid.setContentsMargins(0, 0, 0, 0)
+        self._live_rows: dict[str, QLabel] = {}
+        for key, label in (
+            ("elapsed", "Elapsed"),
+            ("temperature", "Control temperature"),
+            ("package_power", "CPU package power"),
+            ("gpu_power", "GPU power"),
+            ("pump", "Pump"),
+            ("radiator", "Radiator"),
+            ("slope", "Temperature trend"),
+            ("steady", "Steady state"),
+        ):
+            value = QLabel("—", self._live_box)
+            value.setObjectName(f"Validation_Live_{key}")
+            value.setTextFormat(Qt.TextFormat.PlainText)
+            self._live_rows[key] = value
+            live_grid.addRow(f"{label}:", value)
+        self._live_box.setVisible(False)
+        col.addWidget(self._live_box)
+
+        self._workload_lbl = QLabel("", host)
+        self._workload_lbl.setObjectName("Validation_Label_workload")
+        self._workload_lbl.setWordWrap(True)
+        self._workload_lbl.setVisible(False)
+        col.addWidget(self._workload_lbl)
+
+        # Component-isolation templates (§4 / §9.3), GUIDED ONLY.
+        #
+        # These instruct; they never drive. Q3-A: this batch adds no PWM write
+        # path, so a stage tells the user which duty to set through the Controls
+        # page's existing floor-clamped override, and the session records what
+        # happens. `Next stage` drops a `user_marker` so the timeline shows where
+        # each step began.
+        self._template_section = CollapsibleSection("Isolation template", parent=host)
+        self._template_section.setObjectName("Validation_Section_template")
+        picker = QWidget(host)
+        prow = QHBoxLayout(picker)
+        prow.setContentsMargins(0, 0, 0, 0)
+        self._template_combo = QComboBox(picker)
+        self._template_combo.setObjectName("Validation_Combo_template")
+        self._template_combo.addItem("None", "")
+        for key, (label, _stages) in ISOLATION_TEMPLATES.items():
+            self._template_combo.addItem(label, key)
+        name_value_control(self._template_combo, "Isolation template")
+        prow.addWidget(self._template_combo, 1)
+        self._stage_btn = make_button(
+            "Next stage",
+            "secondary",
+            object_name="Validation_Btn_nextStage",
+            accessible_name="Record the next isolation-template stage",
+        )
+        prow.addWidget(self._stage_btn)
+        self._template_section.add_widget(picker)
+
+        self._stage_lbl = QLabel("", host)
+        self._stage_lbl.setObjectName("Validation_Label_stage")
+        self._stage_lbl.setWordWrap(True)
+        self._stage_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        self._template_section.add_widget(self._stage_lbl)
+        self._template_index = 0
+        # Connected LAST, deliberately. Both handlers read `_stage_lbl` and
+        # `_template_index`, and connecting beside the widgets that emit —
+        # which is where these lines started — leaves a window in which a
+        # signal would reach a handler whose state does not exist yet. No
+        # current code path fires one there; this removes the trap rather
+        # than relying on that staying true.
+        self._template_combo.currentIndexChanged.connect(self._on_template_changed)
+        self._stage_btn.clicked.connect(self._on_next_stage)
+        self._template_section.setVisible(False)
+        col.addWidget(self._template_section)
+
+        # Steady state (§3). A CollapsibleSection like every other detail block.
+        self._steady_section = CollapsibleSection("Steady state", parent=host)
+        self._steady_section.setObjectName("Validation_Section_steady")
+        self._steady_pill = StatusPill("—", "neutral", object_name="Validation_Pill_steady")
+        self._steady_section.add_widget(self._steady_pill)
+        self._steady_body = QLabel("", host)
+        self._steady_body.setObjectName("Validation_Label_steady")
+        self._steady_body.setWordWrap(True)
+        self._steady_body.setTextFormat(Qt.TextFormat.PlainText)
+        self._steady_section.add_widget(self._steady_body)
+        self._steady_section.setVisible(False)
+        col.addWidget(self._steady_section)
+
+        # Startup fingerprint (§9.1).
+        self._startup_section = CollapsibleSection("Startup behaviour", parent=host)
+        self._startup_section.setObjectName("Validation_Section_startup")
+        self._startup_body = QLabel("", host)
+        self._startup_body.setObjectName("Validation_Label_startup")
+        self._startup_body.setWordWrap(True)
+        self._startup_body.setTextFormat(Qt.TextFormat.PlainText)
+        self._startup_section.add_widget(self._startup_body)
+        self._startup_section.setVisible(False)
+        col.addWidget(self._startup_section)
+
+        # The timeline (Q9). Inside a disclosure so §14's "graphing is not
+        # mandatory" still holds: the tables above are the primary surface and
+        # the chart is opened by someone who wants it.
+        self._chart_section = CollapsibleSection("Timeline", parent=host)
+        self._chart_section.setObjectName("Validation_Section_chart")
+        self._chart = SessionTimelineChart(object_name="Validation_Chart_timeline")
+        self._chart.setMinimumHeight(220)
+        self._chart_section.add_widget(self._chart)
+        self._chart_section.setVisible(False)
+        col.addWidget(self._chart_section)
+
+        return host
+
+    def _render_thermal(self, session: ValidationSession) -> None:
+        """Render the Batch 3a blocks from the session the daemon sent.
+
+        Every block hides itself when its material is absent. That is the same
+        rule the chart follows and it matters most here: an older daemon sends
+        no `steady_state` and no `startup_fingerprints`, and a visible-but-empty
+        panel would report a measurement that came back blank rather than one
+        this daemon never takes.
+        """
+        steady = getattr(session, "steady_state", None)
+        fingerprints = getattr(session, "startup_fingerprints", None) or []
+
+        if self._thermal:
+            self._template_section.setVisible(True)
+            self._render_template()
+            live = build_live_summary(session, steady)
+            self._live_rows["elapsed"].setText(live.elapsed_text)
+            self._live_rows["temperature"].setText(live.temperature_text)
+            self._live_rows["package_power"].setText(live.package_power_text)
+            self._live_rows["gpu_power"].setText(live.gpu_power_text)
+            self._live_rows["pump"].setText(live.pump_text)
+            self._live_rows["radiator"].setText(live.radiator_text)
+            self._live_rows["slope"].setText(live.slope_text)
+            self._live_rows["steady"].setText(live.steady_text)
+            self._live_box.setVisible(True)
+            self._workload_lbl.setText(live.workload_note)
+            self._workload_lbl.setVisible(True)
+
+        steady_view = build_steady_state_view(steady)
+        if steady_view is not None:
+            self._steady_pill.set_text(steady_view.verdict_label)
+            self._steady_pill.set_state(_pill_state(steady_view.tone))
+            lines = [f"{r.label}: {r.value}" for r in steady_view.rows]
+            if steady_view.criterion:
+                # Rendered verbatim from the daemon, never restated here — §3
+                # requires the criterion be reported, and a GUI-side copy of the
+                # thresholds would be falsified the moment either constant moved.
+                lines.append(f"Criterion: {steady_view.criterion}")
+            self._steady_body.setText("\n".join(lines))
+        self._steady_section.setVisible(steady_view is not None)
+
+        startup_views = build_startup_views(fingerprints)
+        if startup_views:
+            blocks = []
+            for v in startup_views:
+                rows = "\n".join(f"  {r.label}: {r.value}" for r in v.rows)
+                blocks.append(f"{v.interpretation_label}\n{rows}")
+            self._startup_body.setText("\n\n".join(blocks))
+        self._startup_section.setVisible(bool(startup_views))
+
+        trace = build_session_trace(session, steady, event_label=event_label)
+        self._chart.set_trace(trace)
+        self._chart_section.setVisible(trace.has_data)
+
+    def _on_template_changed(self) -> None:
+        self._template_index = 0
+        self._render_template()
+
+    def _on_next_stage(self) -> None:
+        """Advance one stage, but only when the machine is in a safe state.
+
+        The gate lives in the view model so the rule is testable without Qt; this
+        only refuses and reports. §12 asks that an unsafe rising temperature
+        block progression, and under Q3-A this is the only place a guided
+        workflow can refuse anything.
+        """
+        gate = isolation_stage_gate(self._session)
+        if not gate.can_advance:
+            self._status_lbl.setText(gate.reason)
+            return
+        key = self._template_combo.currentData()
+        if not key:
+            return
+        label, stages = ISOLATION_TEMPLATES[key]
+        if self._template_index >= len(stages):
+            return
+        stage = stages[self._template_index]
+        self.marker_requested.emit(f"{label} — stage {self._template_index + 1}: {stage}", "")
+        self._template_index += 1
+        self._render_template()
+
+    def _render_template(self) -> None:
+        key = self._template_combo.currentData() if hasattr(self, "_template_combo") else ""
+        if not key:
+            self._stage_lbl.setText(
+                "Pick a template to step through a guided observation. "
+                "Control-OFC will not change any duty for you — it records and "
+                "marks the timeline while you do."
+            )
+            self._stage_btn.setEnabled(False)
+            return
+        label, stages = ISOLATION_TEMPLATES[key]
+        if self._template_index >= len(stages):
+            self._stage_lbl.setText(f"{label}: all {len(stages)} stages recorded.")
+            self._stage_btn.setEnabled(False)
+            return
+        gate = isolation_stage_gate(self._session)
+        nxt = stages[self._template_index]
+        suffix = "" if gate.can_advance else f"\n\nCannot advance: {gate.reason}"
+        self._stage_lbl.setText(
+            f"Stage {self._template_index + 1} of {len(stages)} — {label}\n\n{nxt}{suffix}"
+        )
+        self._stage_btn.setEnabled(gate.can_advance)
 
     def _build_evidence_section(self) -> QWidget:
         """The §6.4 "Evidence & confidence" disclosure.
@@ -510,6 +795,7 @@ class ValidationSessionDialog(ModalDialog):
             return
         view = build_validation_session_view(session)
         self._render(view)
+        self._render_thermal(session)
         if not view.recording:
             self._timer.stop()
         self._apply_enablement()

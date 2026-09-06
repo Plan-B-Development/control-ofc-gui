@@ -70,6 +70,7 @@ FINDING_LABELS = {
     "coolant_telemetry": "Coolant telemetry",
     "daemon_restart_recovery": "Daemon restart recovery",
     "control_path_mapping": "Control-path mapping",
+    "thermal_steady_state": "Thermal steady state",
 }
 
 #: Wording for each result token (§7).
