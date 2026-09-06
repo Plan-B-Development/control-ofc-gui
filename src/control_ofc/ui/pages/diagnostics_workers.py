@@ -504,6 +504,129 @@ class _CharacterizationWorker(_SocketWorker):
         self._guard(lambda: self._ensure_client().cancel_characterization(), "cancellation")
 
 
+class _ControlPathWorker(_SocketWorker):
+    """Runs the control-path discovery calls off the UI thread (AIO Phase 8 §2).
+
+    Same shape as :class:`_CharacterizationWorker`, and for the same reasons:
+    all four calls are short because the daemon returns ``202`` and runs the
+    sweep itself, the polling cadence is the dialog's QTimer, and a GUI that
+    dies mid-run does not strand the header because the restore is the daemon's
+    job on every exit path.
+
+    The preflight is served by this worker too rather than by one of its own: it
+    is a read-only GET against the same socket, issued immediately before a
+    start, so a second thread would buy nothing but another teardown to get
+    wrong.
+    """
+
+    run_updated = Signal(object)  # ControlPathStatus | None
+    run_error = Signal(str, str)  # category ('unavailable'|'error'), message
+    preflight_ready = Signal(object)  # PreflightReport
+    preflight_error = Signal(str, str)
+
+    def _guard(self, call, what: str) -> None:
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            self.run_updated.emit(call())
+        except DaemonTimeout:
+            self.run_error.emit(
+                "unavailable",
+                f"The daemon did not answer the {what} in time. The run may still "
+                "be going — the daemon restores the header itself when it ends.",
+            )
+        except DaemonUnavailable:
+            self.run_error.emit("unavailable", f"Daemon unavailable during {what}")
+        except DaemonError as e:
+            # The shared refusal taxonomy: `thermal_abort` and a retryable
+            # `validation_error` are protection, not failure. This endpoint
+            # returns exactly those two, for the same reasons a verify does.
+            if _is_soft_safety_refusal(e):
+                self.run_error.emit("unavailable", e.message)
+            else:
+                self.run_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Control-path worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.run_error.emit("unavailable", f"Connection lost during {what}")
+
+    @Slot(str, str)
+    def do_preflight(self, header_id: str, diagnostic: str) -> None:
+        """Fetch the safety preflight.
+
+        Failure is reported on its OWN signal, never on ``run_error``: the
+        preflight is advisory, and a dialog that treated a missing advisory as a
+        run failure would refuse to offer a diagnostic the daemon would happily
+        have performed.
+        """
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            self.preflight_ready.emit(
+                self._ensure_client().diagnostic_preflight(header_id, diagnostic)
+            )
+        except DaemonTimeout:
+            self.preflight_error.emit(
+                "unavailable", "The daemon did not answer the safety preflight in time."
+            )
+        except DaemonUnavailable:
+            self.preflight_error.emit("unavailable", "Daemon unavailable — safety checks unknown.")
+        except DaemonError as e:
+            # 404 is an older daemon that has no preflight route. Not an error to
+            # the user: the diagnostic itself still runs its own guards.
+            if e.status == 404:
+                self.preflight_error.emit(
+                    "unavailable",
+                    unsupported_feature_message("diagnostic_preflight"),
+                )
+            else:
+                self.preflight_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("Control-path preflight connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.preflight_error.emit("unavailable", "Connection lost fetching safety checks.")
+
+    @Slot(str)
+    def do_start(self, header_id: str) -> None:
+        # No tuning arguments: the daemon owns the perturbation size, direction,
+        # cycle count and floor. A client-side duty here would be a second copy
+        # of a safety rule.
+        self._guard(
+            lambda: _as_status(self._ensure_client().start_control_path_discovery(header_id)),
+            "discovery start",
+        )
+
+    @Slot()
+    def do_poll(self) -> None:
+        self._guard(lambda: self._ensure_client().control_path_status(), "status poll")
+
+    @Slot()
+    def do_cancel(self) -> None:
+        self._guard(
+            lambda: _as_status(self._ensure_client().cancel_control_path_discovery()),
+            "cancellation",
+        )
+
+
+def _as_status(run):
+    """Wrap a bare run in a status envelope.
+
+    ``POST``/``DELETE`` return a run; ``GET`` returns ``{run, records}``. The
+    dialog renders one shape, so the two POST-shaped replies are wrapped here
+    rather than teaching the dialog to accept both — a renderer that accepts two
+    shapes eventually mis-reads one of them.
+    """
+    from control_ofc.api.models import ControlPathStatus
+
+    return ControlPathStatus(run=run, records=[])
+
+
 class _ValidationWorker(_SocketWorker):
     """Runs a validation session's daemon calls off the UI thread.
 

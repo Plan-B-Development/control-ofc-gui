@@ -191,6 +191,43 @@ def _session_dict(session: ValidationSession) -> dict[str, Any]:
         "events": [_asdict(e) for e in session.events],
         "external_measurements": [_asdict(m) for m in session.external_measurements],
         "samples": [_sample_dict(s) for s in session.samples],
+        # AIO Phase 8 Batch 1 §3: the provenance model travels WITH the export.
+        #
+        # A legend rather than a per-value tag, deliberately. Tagging every value
+        # inline would double the document to restate a constant for the fields
+        # whose provenance is fixed by definition, and it would put the GUI's
+        # classification on top of values the daemon may later classify itself.
+        # A legend says what each field name means, once, and a daemon-supplied
+        # `{value, provenance}` envelope still wins wherever one appears —
+        # §6.5's "add the new schema fields to the existing export" rather than a
+        # new export.
+        "provenance": _provenance_dict(),
+    }
+
+
+def _provenance_dict() -> dict[str, Any]:
+    """The provenance legend for this document.
+
+    ``fields`` classifies every field name this repository can classify from
+    definition alone. ``unverified`` lists the physical properties software
+    cannot establish from motherboard hwmon at all — present explicitly because
+    §5 forbids letting an untested item read as a pass, and an omitted row reads
+    as a pass to most people.
+    """
+    from control_ofc.services.provenance import (
+        PROVENANCE_LABELS,
+        PROVENANCE_TOOLTIPS,
+        UNVERIFIABLE,
+        fixed_classifications,
+    )
+
+    return {
+        "classifications": {
+            token: {"label": label, "meaning": PROVENANCE_TOOLTIPS.get(token, "")}
+            for token, label in PROVENANCE_LABELS.items()
+        },
+        "fields": dict(sorted(fixed_classifications().items())),
+        "unverified": [{"property": key, "description": text} for key, text in UNVERIFIABLE],
     }
 
 
@@ -211,4 +248,28 @@ def _sample_dict(sample: ValidationSample) -> dict[str, Any]:
 
 
 def _evidence_dict(ev: Any) -> dict[str, Any]:
-    return _asdict(ev)
+    """One evidence entry, plus per-value provenance for what it actually holds.
+
+    §3 asks for every validation result to be "explicit about where its data came
+    from", and its worked example is a table of field / value / provenance. The
+    legend at the document root explains the vocabulary; this attaches it to the
+    values this entry really carries, so a reader does not have to cross-reference
+    by hand.
+
+    Only fields `services.provenance` can classify appear — an unclassifiable one
+    is omitted rather than tagged UNKNOWN, because a row claiming unknown
+    provenance for a value whose provenance was never in question reads as a
+    deficiency rather than a non-question.
+    """
+    from control_ofc.services.provenance import classified_rows
+
+    out = _asdict(ev)
+    summary = (out.get("control_path") or {}).get("summary") or {}
+    if summary:
+        rows = classified_rows(summary)
+        if rows:
+            out["provenance_rows"] = [
+                {"field": field, "value": value, "provenance": token}
+                for field, value, token in rows
+            ]
+    return out

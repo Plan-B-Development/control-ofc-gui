@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..api.models import Capabilities, FanReading, HwmonHeader
+from ..api.models import Capabilities, ControlPathRecord, FanReading, HwmonHeader
 from ..knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from .daemon_features import unsupported_feature_message
 from .pump_protection import header_effective_floor_pct, header_is_pump_protected
@@ -162,6 +162,17 @@ class HeaderInspectorView:
     test_disabled_reason: str = ""
     can_characterize: bool = False
     characterize_disabled_reason: str = ""
+    #: AIO Phase 8 Batch 1 (§6.2): may this header be offered "Discover Control
+    #: Path"?
+    can_discover: bool = False
+    discover_disabled_reason: str = ""
+    #: §6.3: "Control relationship — PWM5 → fan5_input · Confidence: HIGH".
+    #: Empty when nothing has been discovered, in which case the card omits the
+    #: row entirely rather than showing an empty one — a row reading "—" implies
+    #: a test that ran and found nothing.
+    control_relationship: str = ""
+    control_relationship_confidence: str = ""
+    control_relationship_validated_unix_ms: int = 0
     #: True when the requested-PWM figure is `last_commanded_pwm` rather than
     #: the single-producer command — i.e. the daemon predates DEC-318.
     requested_is_approximate: bool = False
@@ -241,6 +252,7 @@ def build_header_inspector_view(
     capabilities: Capabilities | None = None,
     display_name: str = "",
     enable_revert_count: int = 0,
+    control_path: ControlPathRecord | None = None,
 ) -> HeaderInspectorView:
     """Build the render-ready inspection of one PWM header.
 
@@ -410,6 +422,32 @@ def build_header_inspector_view(
     else:
         char_reason = ""
 
+    # AIO Phase 8 Batch 1 §6.2. Same shape as the characterisation gate above:
+    # read-only is a hard no, a daemon without the capability is a hard no, and a
+    # header with no tach of its own is DEGRADED rather than blocked — discovery
+    # watches every OTHER tach too, and "this header drives fan3" is exactly the
+    # answer a header with no tach of its own most needs.
+    can_discover = bool(header.is_writable and _supports_discovery(capabilities))
+    if not header.is_writable:
+        discover_reason = "This header is read-only, so it cannot be perturbed."
+    elif not _supports_discovery(capabilities):
+        discover_reason = unsupported_feature_message("control_path_discovery")
+    else:
+        discover_reason = ""
+
+    relationship = ""
+    confidence = ""
+    validated = 0
+    if control_path is not None:
+        # Imported here rather than at module scope: `control_path_view`
+        # imports nothing from this module, but keeping the dependency local
+        # makes the direction obvious and avoids a cycle if that ever changes.
+        from .control_path_view import relationship_summary_line
+
+        relationship = relationship_summary_line(control_path)
+        confidence = control_path.confidence
+        validated = control_path.validated_unix_ms
+
     return HeaderInspectorView(
         header_id=header.id,
         title=title,
@@ -429,6 +467,11 @@ def build_header_inspector_view(
         test_disabled_reason=test_reason,
         can_characterize=can_char,
         characterize_disabled_reason=char_reason,
+        can_discover=can_discover,
+        discover_disabled_reason=discover_reason,
+        control_relationship=relationship,
+        control_relationship_confidence=confidence,
+        control_relationship_validated_unix_ms=validated,
         requested_is_approximate=approximate,
         cooling_device_id=header.cooling_device_id,
     )
@@ -440,6 +483,12 @@ def _supports_characterization(capabilities: Capabilities | None) -> bool:
     return bool(getattr(capabilities.control, "pwm_characterization", False))
 
 
+def _supports_discovery(capabilities: Capabilities | None) -> bool:
+    if capabilities is None:
+        return False
+    return bool(getattr(capabilities.control, "control_path_discovery", False))
+
+
 def build_header_inspector_views(
     headers: list[HwmonHeader],
     *,
@@ -447,6 +496,7 @@ def build_header_inspector_views(
     capabilities: Capabilities | None = None,
     display_names: dict[str, str] | None = None,
     enable_revert_counts: dict[str, int] | None = None,
+    control_paths: dict[str, ControlPathRecord] | None = None,
 ) -> list[HeaderInspectorView]:
     """Build views for every header, pumps first then daemon order.
 
@@ -456,6 +506,7 @@ def build_header_inspector_views(
     by_id = {r.id: r for r in (readings or [])}
     names = display_names or {}
     reverts = enable_revert_counts or {}
+    paths = control_paths or {}
     views = [
         build_header_inspector_view(
             h,
@@ -463,6 +514,7 @@ def build_header_inspector_views(
             capabilities=capabilities,
             display_name=names.get(h.id, ""),
             enable_revert_count=reverts.get(h.id, 0),
+            control_path=paths.get(h.id),
         )
         for h in headers
     ]

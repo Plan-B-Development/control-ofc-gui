@@ -7,6 +7,7 @@ This page covers the **Hardware Readiness** report on the **System State** page 
 > - Click **Rescan Hardware** in the global footer to fetch current state from the daemon.
 > - Click **Test PWM Control** to run a ~6-second write test against a selected motherboard header.
 > - Click **Characterise PWM Response** for the deeper sweep — how a header responds across 30-100%, reported as three separate verdicts (daemon 2.29.0+).
+> - Click **Discover Control Path** to find out *which fan* a header actually controls (daemon 2.39.0+).
 > - Click **Test GPU Fan Control** to verify an AMD GPU fan actually responds (~6 s, no lease).
 
 If the report tells you a **driver is missing**, the step-by-step install walkthrough (prerequisites, DKMS, verify, rollback) is on the [Driver Setup](driver-setup.md) page. For the chip and driver matrix, see [Hardware Compatibility](../docs/19_Hardware_Compatibility.md). For vendor-by-vendor BIOS notes, see the [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md). For sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
@@ -93,6 +94,78 @@ If you have just powered the machine on, give the pump a minute and run it again
 - **Curve control for every fan is paused while the test runs**, and each fan holds its last duty. Thermal safety is unaffected and still overrides everything — the test refuses to start while the system is hot or while thermal protection is active, and stops if either happens mid-run.
 - The header's original speed is restored on every exit path on which nothing else owns the fan: finishing, cancelling, a failed write, interference, or a thermal stop. **This happens in the daemon**, so closing the window — or the GUI crashing — does not leave a fan stuck at a test speed.
 - The two exceptions are both deliberate, and both leave the fan running *faster* rather than slower: if thermal protection kicks in it keeps the fan high and the original speed is not put back until it releases, and if the daemon is shutting down the header is handed to the motherboard instead. The result tells you which happened, so the window never claims a speed was restored when it was not.
+
+## Discover Control Path
+
+The other two tests both start from an assumption: that `pwm5` controls the fan reported on `fan5_input`. That is a naming convention, not a measurement, and on real boards it is often wrong — a splitter puts two fans on one tachometer, a Y-cable puts a fan's tachometer on a channel with no PWM at all, and some vendors simply do not line the numbers up.
+
+**Discover Control Path** establishes the relationship instead of assuming it. It nudges one header up or down by a small amount, watches **every** fan tachometer on the board while it does, and reports which ones responded and how confident it is.
+
+You will find it on each PWM header card on the **Hardware** page, beside *Test Control* and *Characterise*. **Requires daemon 2.39.0 or newer**; on an older daemon the button is disabled and its tooltip says why.
+
+### The safety check comes first
+
+The window opens on a **Safety preflight** — a list of what the daemon checked before anything moves:
+
+```text
+Safety preflight
+Pump role             Confirmed
+Safe minimum          30%
+Temperature source    CPU Package · fresh
+PWM ownership         Available
+Original state        Captured
+Supporting cooling    Available
+
+Ready to test
+```
+
+If something is unsafe, **Start is disabled and the window says exactly why** — the system is too hot, thermal protection is active, another test is already running, the header is read-only, or the temperature readings the daemon relies on have gone stale.
+
+The verdict is the **daemon's**, not the app's. Control-OFC displays what the daemon decided; it does not make its own safety judgement and cannot talk the daemon into running something it refused. If the daemon is too old to publish a preflight, the window says so and still lets you start — the daemon runs the same checks when you press the button regardless.
+
+### What it reports
+
+```text
+PWM4 → fan2_input
+Relationship confidence: HIGH
+Direction: positive
+Baseline: 1350 RPM
+Perturbed: 1775 RPM
+Observed change: +31%
+
+Other tach channels:
+fan1: no meaningful response
+fan3: no meaningful response
+```
+
+The channels that did **not** respond are listed too, deliberately. "fan1 did not respond" is evidence; a channel simply missing from the list is indistinguishable from one nobody looked at.
+
+Five outcomes are possible:
+
+| Result | What it means |
+|--------|---------------|
+| **Confirmed** | One channel responded in every cycle, clearly more than anything else moved. |
+| **Probable** | One channel responded every time, but another moved by a comparable amount. |
+| **Ambiguous** | A channel responded in some cycles and not others — not repeatable enough to rely on. |
+| **Multiple responses** | Several channels responded together. Normal for a splitter, and it means the mapping is not one-to-one. |
+| **No tach response** | Nothing moved. **This is not a fault.** The header may drive no tachometer-reporting device at all, or drive one running under its own internal control — which is exactly what an AIO pump does during startup. |
+
+After a successful run the answer is kept: open **Details** on the header card and you will see the relationship, its confidence, and when it was last checked. Control-OFC discards that record automatically if the header stops existing — a new board, a driver change, or the chip starting to publish labels all change the header's identity, and a mapping is only ever reported for hardware that is still the same hardware.
+
+### Why it does not just stop the fan
+
+The classic Linux tool for this (`pwmconfig`) stops each fan in turn and watches for the tachometer that drops to zero. That is effective and it is the single most dangerous thing you can do to a liquid cooler. Control-OFC does not do it, and cannot be made to:
+
+- **The perturbation always moves away from whichever limit is nearer.** A pump idling near its floor is nudged *up*, never down toward a stall.
+- **No header is ever driven to 0%, and a pump never goes below 30%.** The daemon clamps every duty; nothing the app sends can lower that floor.
+- **A pump whose tachometer stops reporting mid-test aborts the run immediately** and puts the header back.
+- **Two cycles are run, not one** — so a fan that happened to drift while the test was looking cannot be mistaken for one that responded.
+- Curve control is paused for this header while the test runs, and every other fan holds its last speed. Thermal protection still overrides everything, and the test refuses to start — or stops — if it engages.
+- The original speed is restored on every exit path, by the **daemon**, so closing the window or crashing the app strands nothing. The same two deliberate exceptions apply as for the sweep above, and both leave the fan running faster rather than slower.
+
+### About the timings
+
+If the result says the telemetry update rate is **unknown**, that is a real answer rather than a missing one. Many Super-I/O drivers do not publish how often they refresh a reading, and if nothing changed during the test there is nothing to infer it from. Control-OFC reports UNKNOWN rather than quoting its own sampling rate as though it were the hardware's — a number that looks precise and is not is worse than no number.
 
 ## Test GPU Fan Control
 

@@ -153,6 +153,7 @@ The active tests, gathered in one place instead of scattered across the page. Ea
 
 - **Test Control** (on each header card) — the quick write-and-read-back test. See [Hardware Troubleshooting § Test PWM Control](hardware-troubleshooting.md#test-pwm-control).
 - **Characterise** (on each header card, and **Characterise Pump** on a device card) — the full sweep, now also reporting response latency and settling time per step. See [§ Characterise PWM Response](hardware-troubleshooting.md#characterise-pwm-response).
+- **Discover Control Path** (on each header card) — finds out *which* fan this header actually controls, by nudging it and watching every tachometer on the board. Opens on a safety preflight that blocks the test if anything is unsafe. Daemon 2.39.0+; disabled with a reason otherwise. See [§ Discover Control Path](hardware-troubleshooting.md#discover-control-path).
 - **Startup / Lifecycle Recording** — records how your cooler behaves across startup, resume and profile changes.
 - **AIO Validation** — records what your cooler actually does and finalises into an evidence summary you can export as CSV or JSON.
 

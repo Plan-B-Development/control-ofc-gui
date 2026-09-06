@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.62.0] — 2026-09-06
+
+**AIO Phase 8 Batch 1 (DEC-333): safety preflight, control-path discovery and
+evidence provenance.** Pairs with `control-ofc-daemon` >= v2.39.0. Additive and
+capability-gated throughout — against an older daemon the new button is hidden
+with a reason and everything else behaves exactly as it did.
+
+### Added
+- **"Discover Control Path" on every PWM header card.** Nudges one header up or
+  down by a small, safe amount and watches every fan tachometer on the board —
+  including monitor-only ones with no PWM of their own — to establish which
+  output really drives which device, instead of trusting sysfs numbering.
+  Reports a confidence, the before/after RPM, the perturbation used, and the
+  channels that did *not* respond. **A pump is never stopped and never driven
+  below its floor**; the daemon enforces that, and the GUI sends no duty at all.
+- **A safety preflight as the dialog's first state.** Eleven checks — target,
+  role, writability, readback, ownership, safe minimum, temperature freshness,
+  thermal state, reclaim state, captured original state and supporting cooling —
+  each with a state and the daemon's own wording. An unsafe condition blocks the
+  Start button and says why. The GUI renders the daemon's verdict; it never
+  computes one.
+- **A "Control relationship" row** in each header card's Details disclosure,
+  with the confidence and a "Last validated" timestamp. Daemon-persisted, so it
+  survives a restart, and dropped automatically when the header stops existing.
+- **Evidence provenance** (`services/provenance.py`). Every reported value is
+  classified COMMANDED / OBSERVED / DERIVED / USER_METADATA / DEVICE_METADATA /
+  UNVERIFIED, exposed through an "Evidence & confidence" disclosure in the
+  validation dialog and embedded as a legend in the JSON export. The export also
+  names the nine properties software *cannot* establish from motherboard sensors
+  at all, because an omitted row reads as a pass.
+- **Control-path discovery as a validation-session diagnostic**, so its result
+  lands in `evidence[]` and flows through the existing export. Offered only when
+  the daemon advertises it — an unknown token would make the daemon reject the
+  whole session rather than skip one diagnostic.
+
+### Changed
+- `HeaderInspectorView` gains `can_discover` / `discover_disabled_reason` and the
+  control-relationship fields; `ValidationEvidence` gains `control_path`.
+- Two new capability flags are read from `GET /capabilities`:
+  `control.control_path_discovery` and `control.diagnostic_preflight`. Both
+  default false, so nothing is probed.
+
 ## [2.61.1] — 2026-09-06
 
 **Guidance correctness only — no behaviour change.** Pairs with

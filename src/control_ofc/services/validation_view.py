@@ -69,6 +69,7 @@ FINDING_LABELS = {
     "control_restoration": "Control restoration",
     "coolant_telemetry": "Coolant telemetry",
     "daemon_restart_recovery": "Daemon restart recovery",
+    "control_path_mapping": "Control-path mapping",
 }
 
 #: Wording for each result token (§7).
@@ -119,6 +120,7 @@ STATE_TONES = {
 _EVIDENCE_LABELS = {
     "pwm_characterization": "PWM/RPM characterisation",
     "pwm_verify": "PWM control verification",
+    "control_path_discovery": "Control-path discovery",
 }
 
 _EVENT_LABELS = {
@@ -138,6 +140,8 @@ _EVENT_LABELS = {
     "characterization_completed": "Characterisation completed",
     "verify_started": "Verification started",
     "verify_completed": "Verification completed",
+    "control_path_discovery_started": "Control-path discovery started",
+    "control_path_discovery_completed": "Control-path discovery completed",
     "user_marker": "Marker",
     "sample_limit_reached": "Sample limit reached",
 }

@@ -18,6 +18,7 @@ paid for:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -52,6 +53,7 @@ class PwmHeaderCard(ContentSizedCard):
 
     test_requested = Signal(str)  # header_id
     characterize_requested = Signal(str)  # header_id
+    discover_requested = Signal(str)  # header_id — AIO Phase 8 Batch 1 §6.2
 
     def __init__(self, view: HeaderInspectorView, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -107,6 +109,18 @@ class PwmHeaderCard(ContentSizedCard):
         self._details.add_widget(self._detail_host)
         root.addWidget(self._details)
 
+        # §6.3: "Control relationship — PWM5 → fan5_input · Confidence: HIGH".
+        # Lives inside the Details disclosure, per §6.3's "surface the
+        # relationship in expanded details", and is HIDDEN when nothing has been
+        # discovered rather than showing an empty row — a row reading "—" implies
+        # a test that ran and found nothing.
+        self._relationship_lbl = QLabel("", self._details)
+        self._relationship_lbl.setObjectName(f"HeaderCard_Relationship_{slug}")
+        self._relationship_lbl.setWordWrap(True)
+        self._relationship_lbl.setProperty("class", "CardMeta")
+        self._relationship_lbl.setVisible(False)
+        self._details.add_widget(self._relationship_lbl)
+
         # ── Actions ──────────────────────────────────────────────────────────
         actions = QHBoxLayout()
         actions.setSpacing(8)
@@ -129,6 +143,16 @@ class PwmHeaderCard(ContentSizedCard):
         )
         self._char_btn.clicked.connect(lambda: self.characterize_requested.emit(self._header_id))
         actions.addWidget(self._char_btn)
+
+        self._discover_btn = make_button(
+            "Discover Control Path",
+            "secondary",
+            object_name=f"HeaderCard_Btn_discover_{slug}",
+            accessible_name=f"Discover which fan {view.title} controls",
+            parent=self,
+        )
+        self._discover_btn.clicked.connect(lambda: self.discover_requested.emit(self._header_id))
+        actions.addWidget(self._discover_btn)
         actions.addStretch(1)
         root.addLayout(actions)
 
@@ -177,6 +201,14 @@ class PwmHeaderCard(ContentSizedCard):
         self._test_btn.setToolTip(view.test_disabled_reason)
         self._char_btn.setEnabled(view.can_characterize)
         self._char_btn.setToolTip(view.characterize_disabled_reason)
+        self._discover_btn.setEnabled(view.can_discover)
+        self._discover_btn.setToolTip(view.discover_disabled_reason)
+
+        relationship = _relationship_text(view)
+        self._relationship_lbl.setText(relationship)
+        # `setVisible`, not a stylesheet trick: the row must genuinely leave the
+        # layout when there is nothing to say.
+        self._relationship_lbl.setVisible(bool(relationship))
 
         # The details block is rebuilt wholesale rather than diffed — but only
         # when it actually differs. A wholesale rebuild cannot leave a stale row
@@ -206,6 +238,25 @@ class PwmHeaderCard(ContentSizedCard):
                 grid, rows, self._detail_host, f"{_slug(view.header_id)}_{_slug(title)}", None
             )
             self._detail_layout.addLayout(grid)
+
+
+def _relationship_text(view: HeaderInspectorView) -> str:
+    """The §6.3 disclosure line, or ``""`` when nothing has been discovered.
+
+    Formatting only — the relationship, the confidence and the timestamp are all
+    the daemon's, carried through the view-model verbatim.
+    """
+    if not view.control_relationship:
+        return ""
+    parts = [f"Control relationship: {view.control_relationship}"]
+    if view.control_relationship_confidence:
+        parts.append(f"Confidence: {view.control_relationship_confidence.upper()}")
+    if view.control_relationship_validated_unix_ms:
+        stamp = datetime.fromtimestamp(
+            view.control_relationship_validated_unix_ms / 1000, tz=UTC
+        ).astimezone()
+        parts.append(f"Last validated: {stamp:%Y-%m-%d %H:%M}")
+    return " · ".join(parts)
 
 
 def _clear_layout(layout: QVBoxLayout | QGridLayout) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -12,6 +13,8 @@ from control_ofc.api.models import (
     Capabilities,
     CharacterizationRun,
     ConfigWriteResult,
+    ControlPathRun,
+    ControlPathStatus,
     CoolingDeviceInventory,
     DaemonConfig,
     DaemonStatus,
@@ -29,6 +32,7 @@ from control_ofc.api.models import (
     OverrideReleaseResult,
     OverrideRenewResult,
     PreferredSensorResult,
+    PreflightReport,
     ProfileActivateResult,
     ProfileDeactivateResult,
     ProfileSearchDirsResult,
@@ -41,6 +45,8 @@ from control_ofc.api.models import (
     parse_capabilities,
     parse_characterization_run,
     parse_config_write,
+    parse_control_path_run,
+    parse_control_path_status,
     parse_cooling_devices,
     parse_daemon_config,
     parse_fans,
@@ -57,6 +63,7 @@ from control_ofc.api.models import (
     parse_override_release,
     parse_override_renew,
     parse_preferred_sensor,
+    parse_preflight_report,
     parse_profile_activate,
     parse_profile_deactivate,
     parse_profile_search_dirs,
@@ -745,6 +752,98 @@ class DaemonClient:
         left high rather than low.
         """
         return parse_characterization_run(self._delete("/diagnostics/characterization"))
+
+    # ── AIO Phase 8 Batch 1: preflight + control-path discovery ──────────
+
+    def diagnostic_preflight(self, header_id: str, diagnostic: str) -> PreflightReport:
+        """GET /diagnostics/preflight — the daemon's safety verdict for one
+        header and one diagnostic.
+
+        **Read-only, and it reserves nothing.** A ``ready`` verdict is a
+        statement about *now*; the diagnostic's own POST still runs its own
+        guards, so a preflight is advice to the operator rather than an
+        authorisation. Calling it does not take the single-flight slot, so it is
+        safe to call while deciding whether to start a run.
+
+        Gate on ``capabilities.control.diagnostic_preflight`` rather than
+        probing — an older daemon 404s this route from the route fallback, which
+        is indistinguishable from a handler 404 without reading ``error.code``.
+
+        The GUI must NOT re-derive the verdict from the rows: the daemon owns
+        the roll-up (the spec's §6.1 is explicit that the GUI reflects daemon
+        decisions), and ``blocking`` already names the rows that caused a block.
+        """
+        return parse_preflight_report(
+            self._get(
+                f"/diagnostics/preflight?header={quote(header_id, safe='')}"
+                f"&diagnostic={quote(diagnostic, safe='')}"
+            )
+        )
+
+    def start_control_path_discovery(
+        self,
+        header_id: str,
+        *,
+        delta_pct: int | None = None,
+        cycles: int | None = None,
+        window_seconds: int | None = None,
+    ) -> ControlPathRun:
+        """POST /hwmon/{header_id}/discover-control-path — establish which tach
+        channel(s) this PWM output actually drives.
+
+        Returns as soon as the daemon accepts the run (``202``); the sweep runs
+        daemon-side and is read back with :meth:`control_path_status`. Gate on
+        ``capabilities.control.control_path_discovery``.
+
+        Every tuning argument is **advisory**: the daemon clamps the
+        perturbation size, the cycle count and the observation window, and
+        chooses the perturbation direction itself. Do not pre-clamp here — a
+        client-side floor would be a second copy of a safety rule the daemon
+        owns, and the two would drift. In particular the GUI must never compute
+        a target duty: 0% is unreachable through this endpoint for any header,
+        and a pump-protected one never crosses its floor, because the daemon
+        enforces both.
+        """
+        body: dict[str, Any] = {}
+        if delta_pct is not None:
+            body["delta_pct"] = delta_pct
+        if cycles is not None:
+            body["cycles"] = cycles
+        if window_seconds is not None:
+            body["window_seconds"] = window_seconds
+        return parse_control_path_run(
+            self._post(f"/hwmon/{header_id}/discover-control-path", json=body)
+        )
+
+    def control_path_status(self) -> ControlPathStatus | None:
+        """GET /diagnostics/control-path — the current or most recent run, plus
+        every persisted relationship.
+
+        ``None`` when the daemon has never run one and holds no records
+        (``404``), which is a normal state and not an error. Every other failure
+        still raises.
+
+        The ``records`` are daemon-persisted and survive a restart; the daemon
+        drops one whose header id no longer appears in discovery, so the GUI can
+        show "Last validated" without owning any invalidation rule of its own.
+        """
+        try:
+            return parse_control_path_status(self._get("/diagnostics/control-path"))
+        except DaemonError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def cancel_control_path_discovery(self) -> ControlPathRun:
+        """DELETE /diagnostics/control-path — ask the running sweep to stop.
+
+        Cooperative, exactly like cancelling a characterisation: the daemon
+        finishes the window it is holding, then restores the header. Where the
+        restore is deliberately skipped (a thermal force, or daemon shutdown)
+        the run says so in ``restore_outcome`` and the header is left high
+        rather than low.
+        """
+        return parse_control_path_run(self._delete("/diagnostics/control-path"))
 
     def active_profile(self) -> ActiveProfileInfo | None:
         """GET /profile/active — query the daemon's currently active profile."""

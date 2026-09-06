@@ -141,6 +141,15 @@ control_ofc/
     dashboard_view.py          # Dashboard page VM — DEC-219 (Phase 7.2)
     controls_view.py           # Controls page VM — DEC-214, grown DEC-219 (Phase 7.3)
     characterization_view.py   # PWM/RPM characterisation dialog VM — DEC-313/315
+    control_path_view.py       # PWM-to-tach control-path discovery VM — DEC-333
+                               #   (AIO Phase 8 Batch 1). Renders what the daemon
+                               #   measured; derives no relationship or confidence.
+    preflight_view.py          # Diagnostic safety-preflight VM — DEC-333. Renders the
+                               #   daemon's verdict and NEVER rolls the rows up itself.
+    provenance.py              # COMMANDED/OBSERVED/DERIVED/USER_METADATA/
+                               #   DEVICE_METADATA/UNVERIFIED classification — DEC-333.
+                               #   Static table for fields fixed by definition; a daemon
+                               #   {value, provenance} envelope always wins over it.
     cooling_device_view.py     # Cooling-device topology VM — DEC-316 (AIO-MB Phase 4),
                                #   grown live telemetry + derived pump strategy in
                                #   DEC-318. Rendered by ui/widgets/cooling_device_card.
@@ -248,6 +257,8 @@ control_ofc/
       inventory_readiness_view.py  # shared hwmon-readiness severity helpers only — view class removed (DEC-200/216)
       theme_editor.py
       aio_config_dialog.py
+      control_path_dialog.py   # "Discover Control Path" — DEC-333. First state is the
+                               #   safety preflight; a blocked verdict disables Start.
       collapsible_section.py
       cooling_device_card.py   # One cooling assembly, thin renderer — DEC-318
       pwm_header_card.py       # One PWM header, thin renderer — DEC-318

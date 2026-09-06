@@ -29,11 +29,13 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QTableWidget,
     QTableWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -58,11 +60,17 @@ from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 #: than beating it, and stopped the moment the dialog closes (§19).
 POLL_INTERVAL_MS = 1000
 
-#: Diagnostics a session can be asked to orchestrate. These are the only two the
-#: daemon accepts; both are existing, lease-owning, floor-clamped operations.
+#: Diagnostics a session can be asked to orchestrate. Each is an existing,
+#: lease-owning, floor-clamped operation the daemon already performs — a session
+#: orchestrates them, it never reimplements one.
+#:
+#: Control-path discovery is offered only against a daemon that advertises it;
+#: the caller filters this list, because sending an unknown token would have the
+#: daemon reject the whole session rather than skip one diagnostic.
 _DIAGNOSTIC_CHOICES = (
     ("pwm_verify", "PWM control test (~10 s)"),
     ("pwm_characterization", "PWM response characterisation (~2-3 min)"),
+    ("control_path_discovery", "Control-path discovery (~1 min)"),
 )
 
 #: Measurement kinds offered for an external observation (§17). Free-form on the
@@ -99,6 +107,7 @@ class ValidationSessionDialog(ModalDialog):
         *,
         kind: str = VALIDATION_KIND_VALIDATION,
         members: list[tuple[str, str]] | None = None,
+        supported_diagnostics: set[str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         lifecycle = kind == VALIDATION_KIND_LIFECYCLE
@@ -115,6 +124,14 @@ class ValidationSessionDialog(ModalDialog):
         self._device_id = device_id
         self._kind = kind
         self._members = list(members or [])
+        # Which diagnostics this daemon actually accepts. `None` means "offer
+        # everything", which is what the pre-Phase-8 callers did.
+        #
+        # Filtered at the CHECKBOX rather than at submit: the daemon rejects a
+        # session whose `diagnostics[]` carries an unknown token outright, so an
+        # unfilterable box would fail the whole session rather than skip one
+        # diagnostic — a worse outcome than not offering it.
+        self._supported_diagnostics = supported_diagnostics
         self._session: ValidationSession | None = None
 
         body = self.body_layout()
@@ -175,6 +192,7 @@ class ValidationSessionDialog(ModalDialog):
         self._findings_table.setVisible(False)
         body.addWidget(self._findings_table)
 
+        body.addWidget(self._build_evidence_section())
         body.addWidget(self._build_measurement_form())
 
         # ── Footer ───────────────────────────────────────────────────────────
@@ -229,6 +247,8 @@ class ValidationSessionDialog(ModalDialog):
 
         self._diag_boxes: list[tuple[str, QCheckBox]] = []
         for token, label in _DIAGNOSTIC_CHOICES:
+            if self._supported_diagnostics is not None and token not in self._supported_diagnostics:
+                continue
             box = QCheckBox(label, host)
             box.setObjectName(f"Validation_Check_{token}")
             box.setAccessibleName(f"Run {label} during this session")
@@ -251,6 +271,76 @@ class ValidationSessionDialog(ModalDialog):
 
         section.add_widget(host)
         self._options_section = section
+        return section
+
+    def _build_evidence_section(self) -> QWidget:
+        """The §6.4 "Evidence & confidence" disclosure.
+
+        Collapsed by default. §6.4 asks for evidence classifications and
+        confidence "without overwhelming the primary view", and the primary view
+        here is already two tables — so this is disclosure, not a fourth panel.
+
+        The provenance legend is static: it explains the vocabulary rather than
+        classifying any particular value, so it is correct before a session has
+        produced anything and needs no data to render.
+        """
+        from control_ofc.services.provenance import (
+            PROVENANCE_LABELS,
+            PROVENANCE_TOOLTIPS,
+            UNVERIFIABLE,
+        )
+
+        section = CollapsibleSection(
+            "Evidence & confidence",
+            "Validation_Section_evidence",
+            expanded=False,
+            parent=self,
+        )
+        host = QWidget(section)
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        intro = QLabel(
+            "Every value in a report is classified by where it came from. "
+            "Control-OFC never presents something it inferred, or something you "
+            "typed in, as a direct hardware measurement."
+        )
+        intro.setObjectName("Validation_Label_evidenceIntro")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(3)
+        for row, (token, label) in enumerate(PROVENANCE_LABELS.items()):
+            name = QLabel(label, host)
+            name.setObjectName(f"Validation_Provenance_{token}")
+            name.setProperty("class", "CardValue")
+            grid.addWidget(name, row, 0)
+            desc = QLabel(PROVENANCE_TOOLTIPS.get(token, ""), host)
+            desc.setObjectName(f"Validation_ProvenanceDetail_{token}")
+            desc.setWordWrap(True)
+            desc.setProperty("class", "CardMeta")
+            grid.addWidget(desc, row, 1)
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+
+        # §5: "Never represent an untested item as PASS." An absent row reads as
+        # a pass to most people, so the things software CANNOT establish are
+        # listed explicitly rather than omitted.
+        unverified = QLabel(
+            "Not measurable from motherboard sensors — these need an external "
+            "instrument and are reported as UNVERIFIED, never as a pass:\n• "
+            + "\n• ".join(text for _, text in UNVERIFIABLE)
+        )
+        unverified.setObjectName("Validation_Label_unverifiable")
+        unverified.setWordWrap(True)
+        unverified.setProperty("class", "CardMeta")
+        layout.addWidget(unverified)
+
+        section.add_widget(host)
         return section
 
     def _build_measurement_form(self) -> QWidget:

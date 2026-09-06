@@ -235,6 +235,22 @@ class ControlCapability:
     # the route fallback, which is indistinguishable from a genuine "no such
     # session" without inspecting `error.code`.
     validation_sessions: bool = False
+    # AIO Phase 8 Batch 1 (daemon >= 2.39.0): `POST
+    # /hwmon/{id}/discover-control-path` plus the GET/DELETE
+    # /diagnostics/control-path pair, and the `control_path_discovery` token on a
+    # validation session's `diagnostics[]`.
+    #
+    # `bool`, not `bool | None`: absence and false mean the same thing here —
+    # hide the button — because there is no older behaviour to fall back to. The
+    # feature did not exist before the flag did.
+    control_path_discovery: bool = False
+    # AIO Phase 8 Batch 1 (daemon >= 2.39.0): `GET /diagnostics/preflight`.
+    #
+    # A SEPARATE flag from `control_path_discovery`, matching the daemon: the
+    # preflight is read-only and also covers the two pre-existing diagnostics, so
+    # the GUI can offer the safety summary on the Test/Characterise dialogs
+    # without offering discovery.
+    diagnostic_preflight: bool = False
     # `WIRE-k` (daemon >= 2.36.0): five features that shipped BEFORE this block
     # had keys for them. Until the daemon grew these flags the GUI detected them
     # by comparing the daemon's version string — which says when a feature first
@@ -2637,6 +2653,322 @@ def parse_characterization_run(data: dict) -> CharacterizationRun:
     )
 
 
+# ── AIO Phase 8 Batch 1: preflight, control-path discovery, provenance ───────
+
+#: Preflight check states. Stable tokens; render an unrecognised one rather than
+#: dropping it (273-i).
+PREFLIGHT_PASS = "pass"
+PREFLIGHT_WARN = "warn"
+PREFLIGHT_FAIL = "fail"
+PREFLIGHT_UNKNOWN = "unknown"
+PREFLIGHT_NOT_APPLICABLE = "not_applicable"
+
+#: Overall preflight verdicts.
+PREFLIGHT_READY = "ready"
+PREFLIGHT_VERDICT_WARN = "warn"
+PREFLIGHT_BLOCKED = "blocked"
+
+#: Diagnostic tokens a preflight may be requested for.
+DIAGNOSTIC_VERIFY = "pwm_verify"
+DIAGNOSTIC_CHARACTERIZATION = "pwm_characterization"
+DIAGNOSTIC_CONTROL_PATH = "control_path_discovery"
+
+#: Relationship outcomes from control-path discovery.
+CONTROL_PATH_CONFIRMED = "confirmed"
+CONTROL_PATH_PROBABLE = "probable"
+CONTROL_PATH_AMBIGUOUS = "ambiguous"
+CONTROL_PATH_NO_RESPONSE = "no_tach_response"
+CONTROL_PATH_MULTIPLE = "multiple_responses"
+
+#: Confidence vocabulary.
+CONFIDENCE_HIGH = "high"
+CONFIDENCE_MEDIUM = "medium"
+CONFIDENCE_LOW = "low"
+CONFIDENCE_UNKNOWN = "unknown"
+
+#: Provenance classifications (Overview § "Non-negotiable design principle").
+#: **Never silently promote a derived or user-supplied value into a direct
+#: hardware observation** — that rule is what these tokens exist to keep visible.
+PROVENANCE_COMMANDED = "COMMANDED"
+PROVENANCE_OBSERVED = "OBSERVED"
+PROVENANCE_DERIVED = "DERIVED"
+PROVENANCE_USER_METADATA = "USER_METADATA"
+PROVENANCE_DEVICE_METADATA = "DEVICE_METADATA"
+PROVENANCE_UNVERIFIED = "UNVERIFIED"
+
+
+@dataclass
+class PreflightCheck:
+    """One row of a preflight report."""
+
+    check_id: str = ""
+    #: ``pass`` | ``warn`` | ``fail`` | ``unknown`` | ``not_applicable``.
+    state: str = ""
+    detail: str = ""
+
+
+@dataclass
+class PreflightReport:
+    """Body of ``GET /diagnostics/preflight``.
+
+    The daemon authors the verdict; the GUI renders it. ``blocking`` names the
+    ``check_id``s that produced ``blocked``, so a client never has to re-derive
+    the roll-up rule — and therefore cannot disagree with it.
+    """
+
+    header_id: str = ""
+    diagnostic: str = ""
+    #: ``ready`` | ``warn`` | ``blocked``.
+    verdict: str = ""
+    checks: list[PreflightCheck] = field(default_factory=list)
+    blocking: list[str] = field(default_factory=list)
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.verdict == PREFLIGHT_BLOCKED
+
+
+@dataclass
+class TachChannel:
+    """A tach channel a discovery run watched."""
+
+    tach_id: str = ""
+    label: str = ""
+    #: ``fanN_input`` with no matching ``pwmN``. Invisible to ``/hwmon/headers``
+    #: and absent from the 1 Hz poll — the daemon reads it only for the duration
+    #: of a discovery run.
+    monitor_only: bool = False
+    is_target_header: bool = False
+
+
+@dataclass
+class TachObservation:
+    """One channel's behaviour across one perturbation cycle."""
+
+    tach_id: str = ""
+    baseline_rpm: int | None = None
+    perturbed_rpm: int | None = None
+    delta_rpm: int | None = None
+    noise_floor_rpm: int = 0
+    responded: bool = False
+
+
+@dataclass
+class DiscoveryCycle:
+    """One perturbation cycle."""
+
+    cycle: int = 0
+    baseline_pct: int = 0
+    perturbed_pct: int = 0
+    direction: str = ""
+    observations: list[TachObservation] = field(default_factory=list)
+
+
+@dataclass
+class ControlPathCandidate:
+    """A candidate PWM to tach relationship."""
+
+    tach_id: str = ""
+    label: str = ""
+    monitor_only: bool = False
+    #: ``high`` | ``medium`` | ``low``.
+    confidence: str = ""
+    #: ``positive`` | ``negative`` — measured, never assumed.
+    direction: str = ""
+    baseline_rpm: int | None = None
+    perturbed_rpm: int | None = None
+    change_pct: float | None = None
+    cycles_responded: int = 0
+    cycles_total: int = 0
+
+
+@dataclass
+class DiscoverySummary:
+    """Derived result over a whole discovery run."""
+
+    #: ``confirmed`` | ``probable`` | ``ambiguous`` | ``no_tach_response`` |
+    #: ``multiple_responses``.
+    relationship: str = ""
+    #: ``high`` | ``medium`` | ``low`` | ``unknown``.
+    confidence: str = ""
+    candidates: list[ControlPathCandidate] = field(default_factory=list)
+    #: ``None`` means UNKNOWN, which the spec requires in preference to a guess.
+    measurement_resolution_ms: int | None = None
+    sample_interval_ms: int = 0
+    sample_count: int = 0
+    confidence_notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ControlPathRun:
+    """A discovery run — the ``202`` body and the ``run`` field of
+    ``GET /diagnostics/control-path``."""
+
+    run_id: str = ""
+    header_id: str = ""
+    state: str = ""
+    delta_pct: int = 0
+    requested_cycles: int = 0
+    window_seconds: int = 0
+    baseline_pct: int = 0
+    perturbed_pct: int = 0
+    direction: str = ""
+    channels: list[TachChannel] = field(default_factory=list)
+    cycles: list[DiscoveryCycle] = field(default_factory=list)
+    summary: DiscoverySummary | None = None
+    original_pct: int | None = None
+    restore_failed: bool = False
+    restore_outcome: str = ""
+    detail: str | None = None
+    completed_unix_ms: int | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self.state == "running"
+
+
+@dataclass
+class ControlPathRecord:
+    """A persisted relationship, keyed by header id.
+
+    Survives a daemon restart, which is what makes the card's "Last validated"
+    row real. The daemon drops a record whose header id no longer appears in
+    discovery, so a board or driver change invalidates it by construction.
+    """
+
+    header_id: str = ""
+    relationship: str = ""
+    confidence: str = ""
+    tach_ids: list[str] = field(default_factory=list)
+    tach_labels: list[str] = field(default_factory=list)
+    direction: str = ""
+    baseline_rpm: int | None = None
+    perturbed_rpm: int | None = None
+    change_pct: float | None = None
+    run_id: str = ""
+    validated_unix_ms: int = 0
+
+
+@dataclass
+class ControlPathStatus:
+    """Body of ``GET /diagnostics/control-path``: the current or most recent run
+    plus every persisted relationship."""
+
+    run: ControlPathRun | None = None
+    records: list[ControlPathRecord] = field(default_factory=list)
+    #: True only when this came from the status endpoint, which is the only reply
+    #: that carries ``records`` at all.
+    #:
+    #: Load-bearing rather than bookkeeping: ``POST`` and ``DELETE`` return a bare
+    #: run, which the client wraps with an empty ``records`` list. Without this
+    #: flag an empty wrapper is indistinguishable from a **legitimately empty**
+    #: ``GET`` — a store discarded as corrupt, say — and a caller that treats
+    #: "no records" as "no news" then keeps showing a relationship the daemon has
+    #: already dropped. That is exactly the stale-truth §6.3 warns against.
+    from_status_endpoint: bool = False
+
+    def record_for(self, header_id: str) -> ControlPathRecord | None:
+        for r in self.records:
+            if r.header_id == header_id:
+                return r
+        return None
+
+
+def parse_preflight_report(data: dict) -> PreflightReport:
+    """Parse a preflight report, tolerating unknown check ids and states."""
+    raw = data.get("checks") or []
+    checks = [
+        PreflightCheck(**_filter_fields(PreflightCheck, c)) for c in raw if isinstance(c, dict)
+    ]
+    blocking = data.get("blocking") or []
+    return PreflightReport(
+        header_id=str(data.get("header_id", "")),
+        diagnostic=str(data.get("diagnostic", "")),
+        verdict=str(data.get("verdict", "")),
+        checks=checks,
+        blocking=[str(b) for b in blocking],
+    )
+
+
+def parse_control_path_run(data: dict) -> ControlPathRun:
+    """Parse a discovery run, tolerating unknown tokens and new fields."""
+    channels = [
+        TachChannel(**_filter_fields(TachChannel, c))
+        for c in (data.get("channels") or [])
+        if isinstance(c, dict)
+    ]
+    cycles = []
+    for c in data.get("cycles") or []:
+        if not isinstance(c, dict):
+            continue
+        obs = [
+            TachObservation(**_filter_fields(TachObservation, o))
+            for o in (c.get("observations") or [])
+            if isinstance(o, dict)
+        ]
+        cycles.append(
+            DiscoveryCycle(
+                cycle=int(c.get("cycle") or 0),
+                baseline_pct=int(c.get("baseline_pct") or 0),
+                perturbed_pct=int(c.get("perturbed_pct") or 0),
+                direction=str(c.get("direction", "")),
+                observations=obs,
+            )
+        )
+    raw_summary = data.get("summary")
+    summary = None
+    if isinstance(raw_summary, dict):
+        candidates = [
+            ControlPathCandidate(**_filter_fields(ControlPathCandidate, c))
+            for c in (raw_summary.get("candidates") or [])
+            if isinstance(c, dict)
+        ]
+        notes = [str(n) for n in (raw_summary.get("confidence_notes") or [])]
+        summary = DiscoverySummary(
+            relationship=str(raw_summary.get("relationship", "")),
+            confidence=str(raw_summary.get("confidence", "")),
+            candidates=candidates,
+            measurement_resolution_ms=raw_summary.get("measurement_resolution_ms"),
+            sample_interval_ms=int(raw_summary.get("sample_interval_ms") or 0),
+            sample_count=int(raw_summary.get("sample_count") or 0),
+            confidence_notes=notes,
+        )
+    return ControlPathRun(
+        run_id=str(data.get("run_id", "")),
+        header_id=str(data.get("header_id", "")),
+        state=str(data.get("state", "")),
+        delta_pct=int(data.get("delta_pct") or 0),
+        requested_cycles=int(data.get("requested_cycles") or 0),
+        window_seconds=int(data.get("window_seconds") or 0),
+        baseline_pct=int(data.get("baseline_pct") or 0),
+        perturbed_pct=int(data.get("perturbed_pct") or 0),
+        direction=str(data.get("direction", "")),
+        channels=channels,
+        cycles=cycles,
+        summary=summary,
+        original_pct=data.get("original_pct"),
+        restore_failed=bool(data.get("restore_failed", False)),
+        restore_outcome=str(data.get("restore_outcome", "")),
+        detail=data.get("detail"),
+        completed_unix_ms=data.get("completed_unix_ms"),
+    )
+
+
+def parse_control_path_status(data: dict) -> ControlPathStatus:
+    """Parse ``GET /diagnostics/control-path``."""
+    raw_run = data.get("run")
+    records = [
+        ControlPathRecord(**_filter_fields(ControlPathRecord, r))
+        for r in (data.get("records") or [])
+        if isinstance(r, dict)
+    ]
+    return ControlPathStatus(
+        run=parse_control_path_run(raw_run) if isinstance(raw_run, dict) else None,
+        records=records,
+        from_status_endpoint=True,
+    )
+
+
 def parse_hwmon_verify_result(data: dict) -> HwmonVerifyResult:
     def _parse_state(raw: dict) -> HwmonVerifyState:
         return HwmonVerifyState(**_filter_fields(HwmonVerifyState, raw))
@@ -2712,6 +3044,7 @@ VALIDATION_RESULT_INTERRUPTED = "interrupted"
 
 # Orchestratable diagnostics.
 VALIDATION_DIAG_CHARACTERIZATION = "pwm_characterization"
+VALIDATION_DIAG_CONTROL_PATH = "control_path_discovery"
 VALIDATION_DIAG_VERIFY = "pwm_verify"
 
 # Session kinds.
@@ -2851,6 +3184,10 @@ class ValidationEvidence:
     detail: str | None = None
     characterization: CharacterizationRun | None = None
     verify: ValidationVerifyEvidence | None = None
+    #: The AIO Phase 8 Batch 1 discovery run, verbatim. Same rule as
+    #: ``characterization``: the relationship, the confidence and the
+    #: measurement resolution are the daemon's, recomputed nowhere.
+    control_path: ControlPathRun | None = None
 
 
 @dataclass
@@ -3032,6 +3369,12 @@ def _validation_evidence_from(raw: dict) -> ValidationEvidence:
     verify = raw.get("verify")
     if isinstance(verify, dict):
         ev.verify = ValidationVerifyEvidence(**_filter_fields(ValidationVerifyEvidence, verify))
+    path = raw.get("control_path")
+    if isinstance(path, dict):
+        # Same rule as `characterization` above: reuse the one parser, so the
+        # run means the same thing whether it arrived on its own endpoint or
+        # inside a session's evidence.
+        ev.control_path = parse_control_path_run(path)
     return ev
 
 

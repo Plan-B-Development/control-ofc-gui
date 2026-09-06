@@ -617,6 +617,37 @@ top-to-bottom:
   chip — every outcome lands in the event log. There is **no** session flag and
   **no** close-time auto-reset: the GUI never writes GPU PWM (DEC-165), so there
   is nothing to undo on close.
+- **Discover Control Path** (DEC-333, AIO Phase 8 Batch 1) — a third button on
+  every **Hardware page** PWM header card, beside *Test Control* and
+  *Characterise*, gated on `control.control_path_discovery` and **disabled with
+  the reason in its tooltip** rather than hidden, so an older daemon explains
+  itself. It opens `ControlPathDiscoveryDialog`, whose **first state is the
+  safety preflight**: eleven rows from `GET /diagnostics/preflight`, each with a
+  state pill and the daemon's own wording, and a verdict chip. A `blocked`
+  verdict **disables Start and lists the blocking reasons**; the GUI reads the
+  daemon's `verdict` and `blocking[]` and never rolls the rows up itself
+  (`docs/08` states the rule). A preflight that could not be fetched is
+  *advisory-unavailable* and does **not** block — the daemon still runs its own
+  guards on the POST, and refusing on a missing advisory would make an older
+  daemon less usable than before the feature existed.
+
+  The result view lists every tach channel watched — responders first with
+  confidence, direction, before/after RPM and repeatability, then the quiet
+  channels with "no meaningful response", because an absent row is
+  indistinguishable from a channel nobody checked. A **failed or skipped restore
+  is surfaced as its own critical-toned line**, not folded into the notes. After
+  a successful run the relationship appears in the header card's *Details*
+  disclosure as "Control relationship … Confidence … Last validated …", read from
+  the daemon's persisted store so it survives a GUI restart.
+
+  A `no_tach_response` result is rendered informationally, never critically: a
+  header may legitimately drive no tach-reporting device, or drive one running
+  under its own internal control.
+- **Evidence & confidence** (DEC-333) — a collapsed disclosure in the validation
+  dialog explaining the six provenance classifications, and naming the nine
+  properties software cannot establish from motherboard sensors at all. Those are
+  listed explicitly rather than omitted, because an omitted row reads as a pass.
+  The same legend is embedded in the JSON export.
 - **Liability disclaimer** (historical objectName
   `Diagnostics_Label_readinessDisclaimer`; retired in the DEC-212 Hardware
   redesign, DEC-158) —

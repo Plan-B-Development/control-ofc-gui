@@ -159,6 +159,18 @@ GUI treats every flag as false / old behaviour (AIP-180):
   fields) need no flag: each is optional on the wire, so absence already means "this daemon did
   not say" and a client falls back rather than believing a defaulted zero.
 
+- `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
+  `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
+  pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
+  **Gate on this rather than probing**, for the reason already stated under
+  `pwm_characterization`: an older daemon `404`s the route from the route fallback, which is
+  indistinguishable from a handler's own `404` without reading `error.code`. It is also the
+  gate on offering the session diagnostic — a session carrying an unknown token is rejected
+  **whole**, so an ungated checkbox breaks validation rather than degrading it.
+- `diagnostic_preflight` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
+  `GET /diagnostics/preflight`. **A separate flag from `control_path_discovery` on purpose:**
+  the preflight is read-only and covers the two pre-existing diagnostics as well, so a client
+  may want the safety summary without offering discovery.
 - `pwm_characterization` (bool, DEC-313) — the daemon exposes `POST /hwmon/{id}/characterize`
   plus the `GET`/`DELETE /diagnostics/characterization` pair: the deeper PWM/RPM response sweep
   that sits **alongside** the quick verify. **`true` since 2.29.0**; absent → `false`.
@@ -1278,7 +1290,10 @@ Body:
 - `kind` (string, optional) — `"validation"` (default) or `"lifecycle"`. One engine and one
   wire type; the discriminator selects which findings matter and what a client presets.
 - `diagnostics` (string[], optional) — what the session should **run**: `"pwm_verify"`
-  and/or `"pwm_characterization"`. **Empty or omitted is legitimate** — a passive recording
+  and/or `"pwm_characterization"`, and from daemon 2.39.0 `"control_path_discovery"`
+  (DEC-333) when `control.control_path_discovery` is advertised — **an unknown token is
+  rejected with the whole session, not skipped**, so a client must gate the option rather
+  than send it hopefully. **Empty or omitted is legitimate** — a passive recording
   session — and yields `not_tested`, never `pass`. An unrecognised token is
   `400 validation_error` rather than a silent skip, which would look like a diagnostic that
   ran and found nothing.
@@ -1295,7 +1310,14 @@ Returns `200` with the full session. `409 already_exists` if one is already reco
 (single-flight), `404 not_found` for an unknown device, `503 persistence_failed` if it
 cannot be written to disk.
 
-Orchestration order is `pwm_verify` then `pwm_characterization`, per member. **A failed
+Orchestration order is `pwm_verify`, then `pwm_characterization`, then
+`control_path_discovery`, per member. Discovery runs **last** deliberately: it perturbs
+around whatever duty it finds, so following the two diagnostics that restore their own
+pre-test duty means it measures the header's settled working point rather than another
+diagnostic's leftovers. Its evidence entry carries the run under `control_path`, verbatim,
+alongside the existing `characterization` and `verify` fields, and it contributes a
+`control_path_mapping` finding whose state is `observed` for any established relationship,
+`not_observed` for a clean no-response and `unknown` for an ambiguous one — **never `fail`**. **A failed
 diagnostic does not abort the session**: a header that fails verify is exactly the
 device-side-override signature, so the sweep after it is more valuable, not less.
 
@@ -1673,6 +1695,10 @@ The calibration endpoint runs a long-running sweep (steps × hold_seconds) that 
   The two fields cannot disagree: the daemon derives the boolean from the token. **The reason is load-bearing, not decoration** — on `skipped_thermal_force` the header is being held high by the thermal ladder on purpose, and the advice `write_failed` warrants ("re-activate your profile to take control back") is the one action a client must *not* prompt for until the ladder releases. A sweep that aborted before writing anything reports `restored`: it left the header exactly where it found it, and claiming otherwise would be a false alarm.
 
   Before 2.30.0 `restore_failed` was `false` on all three non-write exits, i.e. it said "restored" about a header parked at the last swept duty (`AUD2-c`).
+- `GET /diagnostics/preflight?header=<id>&diagnostic=<kind>` — **AIO Phase 8 Batch 1 (DEC-333), daemon ≥ 2.39.0, capability-gated on `control.diagnostic_preflight`.** The daemon's own safety verdict for one header and one diagnostic, before anything is driven. `diagnostic` is one of `pwm_verify` | `pwm_characterization` | `control_path_discovery` and defaults to the last; an unrecognised value is `400 validation_error`. **Read-only: it writes no hardware, takes no lease and claims no slot, so calling it reserves nothing** — a `ready` verdict is a statement about *now*, and the diagnostic's own POST still runs its own guards. Body is `{header_id, diagnostic, verdict, checks[], blocking[]}`. `verdict` is `ready` | `warn` | `blocked`; each check is `{check_id, state, detail}` with `state` in `pass` | `warn` | `fail` | `unknown` | `not_applicable`. **The client must render the daemon's `verdict` rather than rolling the rows up itself** — a second copy of that rule is one that can disagree, and the copy the user is looking at would be the wrong one. `blocking[]` names the `check_id`s that produced `blocked`, so naming the blockers needs no re-derivation either. Check ids are `target_discoverable`, `header_role`, `pwm_writable`, `pwm_readback`, `control_ownership`, `safe_minimum`, `temperature_source`, `thermal_state`, `reclaim_state`, `original_state`, `supporting_cooling`; both ids and states are **opaque tokens** and an unrecognised one must be rendered, never dropped (273-i). **`unknown` and `not_applicable` never block** — lack of evidence must not become a PASS, and its mirror is that it must not become a FAILURE either. **`temperature_source` is per-diagnostic:** a stale temperature source is `fail` for `control_path_discovery` and `warn` for the other two, because those two shipped without a staleness gate and a preflight promising a refusal the daemon will not perform would misdescribe the daemon. `supporting_cooling` is **reported, never acted on** — the engine's write pause already holds sibling members at their last duty, and no diagnostic drives one.
+- `POST /hwmon/{header_id}/discover-control-path` — **AIO Phase 8 Batch 1 (DEC-333), daemon ≥ 2.39.0, capability-gated on `control.control_path_discovery`.** Establishes which tach channel(s) a PWM output *actually* drives, by measurement rather than by sysfs numbering. Body is JSON and may be empty (`{}`); all three fields optional: `delta_pct: u8`, `cycles: u8`, `window_seconds: u64`. Returns **`202`** with the initial run snapshot and runs **daemon-side and detached**; the client polls `GET /diagnostics/control-path`. **Every tuning input is clamped server-side and the client must not pre-clamp, and in particular must never compute a duty:** `delta_pct` clamps into `10..=40`, `cycles` into `2..=3` (the floor is 2 because repeatability is a confidence input, so a one-cycle run must not be able to claim it tested for it), `window_seconds` into `2..=15`. The daemon chooses the perturbation *direction* — always **away from the nearer rail**, so there is headroom and a pump is never walked toward a stall — and clamps every commanded duty into `[max(20, header floor) .. 100]`. **0 % is unreachable through this endpoint for any header and any input**, and a pump-protected header never crosses its 30 % floor; the pump term is the **union** predicate, never the wire `role` (DEC-312). It claims the **same** single-flight slot as verify, calibrate and characterise, so at most one of the four ever drives hardware. Refusals are exactly the characterisation's, plus `400 feature_unavailable` for a read-only header.
+- `GET /diagnostics/control-path` — the current or most recent run **plus every persisted relationship**: `{api_version, run, records[]}`. `404` when the daemon has never run one *and* holds no records. `run` is `null` in that case and carries `{run_id, header_id, state, delta_pct, requested_cycles, window_seconds, baseline_pct, perturbed_pct, direction, channels[], cycles[], summary, original_pct, restore_failed, restore_outcome, detail, completed_unix_ms}`. `state` is opaque (`running` | `complete` | `cancelled` | `aborted` | `failed` today) and must be rendered when unrecognised. `summary` is `null` while running and carries `{relationship, confidence, candidates[], measurement_resolution_ms, sample_interval_ms, sample_count, confidence_notes[]}`. **`relationship` is `confirmed` | `probable` | `ambiguous` | `no_tach_response` | `multiple_responses`, and `no_tach_response` is NOT a failure** — a header may legitimately drive no tach-reporting device, or drive one running under its own internal control, and reporting it as a fault is the wrong conclusion for the same reason `possible_device_override` is. `multiple_responses` is expected for a splitter and must be representable: **do not assume one PWM maps to exactly one tach.** `confidence` is `high` | `medium` | `low` | `unknown`; `unknown` means nothing was measurable, which is distinct from a low-confidence no-response. **`measurement_resolution_ms` is `null` when the cadence could not be established, and a client must render that as UNKNOWN rather than substituting the sample interval** — reporting sub-second timing against a driver that refreshes every 2 s is exactly the false precision this field exists to prevent. `records[]` are daemon-persisted and survive a restart; each is `{header_id, relationship, confidence, tach_ids[], tach_labels[], direction, baseline_rpm, perturbed_rpm, change_pct, run_id, validated_unix_ms}`. **The daemon owns their invalidation**: a record is keyed by the header's stable id (which embeds chip, device, `pwmN` and label) and is dropped at boot when that id no longer appears in discovery, so a client needs no freshness rule of its own.
+- `DELETE /diagnostics/control-path` — asks a running discovery to stop; `202` with the snapshot. Cooperative, and the same cancellation semantics as the characterisation sweep: the window currently being held finishes, then the header is restored. `409 validation_error` when nothing is running. **Cancellation is a courtesy, not the safety mechanism** — the restore is the daemon's job on every exit path on which nothing else owns the header, with the same two deliberate skips (a thermal force, and daemon shutdown), both of which leave the header *high*.
 - `DELETE /diagnostics/characterization` — asks a running sweep to stop; `202` with the snapshot. Cooperative: the point currently settling finishes, then the header is restored. `409 validation_error` when no run is in progress. **Cancellation is a courtesy, not the safety mechanism** — the daemon restores the pre-sweep duty on every exit path on which nothing else owns the header, including the client vanishing, so a GUI that dies mid-sweep strands nothing. The exceptions are the two deliberate skips reported by `restore_outcome` above (a thermal force, and daemon shutdown); both leave the header *high*.
 
 Probes whether a `pwmN` write actually moves the fan, to detect BIOS/EC

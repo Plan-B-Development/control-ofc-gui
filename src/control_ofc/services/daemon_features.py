@@ -43,6 +43,9 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         "preferred_sensors": "2.6.0",  # DEC-200, GET /inventory/hwmon
         "validation_sessions": "2.32.0",  # DEC-317, control.validation_sessions
         "pwm_characterization": "2.29.0",  # DEC-313, control.pwm_characterization
+        # DEC-333, control.control_path_discovery / control.diagnostic_preflight
+        "control_path_discovery": "2.39.0",
+        "diagnostic_preflight": "2.39.0",
         "pump_protection": "2.28.0",  # DEC-311, control.header_roles
         "daemon_config_report": "2.16.0",  # GET /config
         # `remove` array on POST /config/profile-search-dirs. This comment used
@@ -78,6 +81,8 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "daemon_config_report": "daemon_config_report",
         "validation_sessions": "validation_sessions",
         "pwm_characterization": "pwm_characterization",
+        "control_path_discovery": "control_path_discovery",
+        "diagnostic_preflight": "diagnostic_preflight",
         # The flag's name is not the feature id: DEC-311 named the capability
         # after what the daemon *classifies* (header roles), while the GUI names
         # the id after what the user *gets* (pump protection).
@@ -96,6 +101,8 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "preferred_sensors": "preferred sensors",
         "validation_sessions": "validation sessions",
         "pwm_characterization": "PWM characterisation",
+        "control_path_discovery": "control-path discovery",
+        "diagnostic_preflight": "the diagnostic safety preflight",
         "pump_protection": "pump protection",
         "daemon_config_report": "reporting its own configuration",
         "profile_search_dir_removal": "removing a profile search directory",

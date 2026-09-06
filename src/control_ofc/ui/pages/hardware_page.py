@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.api.models import ControlPathRecord
 from control_ofc.services.cooling_device_view import build_cooling_device_views
 from control_ofc.services.daemon_features import daemon_supports, unsupported_feature_message
 from control_ofc.services.diagnostics_service import DiagnosticsService
@@ -72,6 +73,7 @@ from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.cooling_readiness import build_readiness_items
 from control_ofc.ui.pages.diagnostics_workers import (
     _CharacterizationWorker,
+    _ControlPathWorker,
     _HardwareReadinessWorker,
     _ValidationWorker,
     _VerifyWorker,
@@ -79,6 +81,7 @@ from control_ofc.ui.pages.diagnostics_workers import (
 from control_ofc.ui.readiness_merge import ACTION_NONE
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
+from control_ofc.ui.widgets.control_path_dialog import ControlPathDiscoveryDialog
 from control_ofc.ui.widgets.cooling_device_card import CoolingDeviceCard
 from control_ofc.ui.widgets.flow_layout import FlowLayout
 from control_ofc.ui.widgets.pwm_characterization_dialog import PwmCharacterizationDialog
@@ -145,6 +148,10 @@ class HardwarePage(QWidget):
     _char_start_request = Signal(str, object, object)
     _char_poll_request = Signal()
     _char_cancel_request = Signal()
+    _discover_preflight_request = Signal(str, str)
+    _discover_start_request = Signal(str)
+    _discover_poll_request = Signal()
+    _discover_cancel_request = Signal()
     _validation_start_request = Signal(str, str, list, list, dict)
     _validation_poll_request = Signal()
     _validation_stop_request = Signal()
@@ -197,6 +204,13 @@ class HardwarePage(QWidget):
         self._char_thread: QThread | None = None
         self._char_worker: _CharacterizationWorker | None = None
         self._char_dialog: PwmCharacterizationDialog | None = None
+        # AIO Phase 8 Batch 1.
+        self._discover_thread: QThread | None = None
+        self._discover_worker: _ControlPathWorker | None = None
+        self._discover_dialog: ControlPathDiscoveryDialog | None = None
+        #: Persisted PWM to tach relationships, keyed by header id (§6.3). The
+        #: DAEMON owns these and their invalidation; this is a render cache.
+        self._control_paths: dict[str, ControlPathRecord] = {}
         self._validation_thread: QThread | None = None
         self._validation_worker: _ValidationWorker | None = None
         self._validation_dialog: ValidationSessionDialog | None = None
@@ -217,6 +231,13 @@ class HardwarePage(QWidget):
             self._state.headers_updated.connect(self._refresh_cooling_section)
             self._state.capabilities_updated.connect(self._refresh_cooling_section)
             self._state.cooling_devices_updated.connect(self._refresh_cooling_section)
+            # §6.3's "Last validated" row is daemon-persisted, so it must be
+            # fetched once the capability handshake says the route exists. Keyed
+            # to `capabilities_updated` rather than the 1 Hz poll deliberately:
+            # a discovered relationship changes only when someone runs a
+            # discovery, and polling it every second would add a request per
+            # tick for data that is static between runs (§19).
+            self._state.capabilities_updated.connect(self._refresh_control_paths)
         # The pump strategy is derived from the active profile's curve, so it
         # must re-render when that changes — a poll tick alone would leave the
         # line stale until the next fan update happened to arrive.
@@ -554,6 +575,9 @@ class HardwarePage(QWidget):
                 h.id: (state.member_display_name(h.id) if state else "") for h in headers
             },
             enable_revert_counts=self._revert_counts(),
+            # §6.3: the persisted relationship, so the card can carry a "Last
+            # validated" row that survives a GUI restart.
+            control_paths=self._control_paths,
         )
         self._sync_header_cards(header_views)
 
@@ -634,6 +658,7 @@ class HardwarePage(QWidget):
                 card = PwmHeaderCard(view, self._header_container)
                 card.test_requested.connect(self._run_pwm_verify)
                 card.characterize_requested.connect(self._open_characterization)
+                card.discover_requested.connect(self._open_control_path_discovery)
                 self._header_cards[view.header_id] = card
                 self._header_flow.insertWidget(index, card)
             else:
@@ -1229,6 +1254,130 @@ class HardwarePage(QWidget):
         if self._char_dialog is not None:
             self._char_dialog.apply_error(category, message)
 
+    # ── Control-path discovery (AIO Phase 8 Batch 1) ─────────────────
+
+    def _open_control_path_discovery(self, header_id: str) -> None:
+        if not header_id or not self._state:
+            return
+        header = next((h for h in self._state.hwmon_headers if h.id == header_id), None)
+        if header is None:
+            return
+        if not self._ensure_discover_worker():
+            self._show_diag_message("Cannot discover the control path: no daemon connection.")
+            return
+        label = self._state.member_display_name(header_id) or header.label or header_id
+        dialog = ControlPathDiscoveryDialog(
+            header_id,
+            label,
+            # The UNION predicate, never the wire `role` (DEC-312): a header the
+            # user downgraded to `chassis_fan` that the hardware labels PUMP is
+            # still pump-protected daemon-side, and the dialog's warnings must
+            # say so or they promise something the daemon will not do.
+            is_pump=header_is_pump_protected(header, self._capabilities()),
+            parent=self,
+        )
+        dialog.preflight_requested.connect(self._discover_preflight_request.emit)
+        dialog.start_requested.connect(self._discover_start_request.emit)
+        dialog.poll_requested.connect(self._discover_poll_request.emit)
+        dialog.cancel_requested.connect(self._discover_cancel_request.emit)
+        self._discover_dialog = dialog
+        # §6.1: the preflight is the dialog's FIRST state, so ask for it before
+        # the modal blocks rather than after the user has already read "Ready".
+        dialog.request_preflight()
+        try:
+            dialog.exec()
+        finally:
+            dialog.stop_polling()
+            self._discover_dialog = None
+        # A completed run may have changed the persisted relationship, so
+        # re-render the cards from the daemon's own store rather than leaving a
+        # stale "Last validated" behind.
+        self._refresh_control_paths()
+
+    @Slot(object)
+    def _on_discover_update(self, status) -> None:
+        if self._discover_dialog is not None:
+            self._discover_dialog.apply_run(status)
+        # `records` only arrives on the GET; a POST/DELETE reply carries none.
+        # `from_status_endpoint` is what tells the two apart — an empty GET is a
+        # real answer ("the daemon holds no relationships"), an empty wrapper is
+        # no answer at all, and treating them alike leaves a card asserting a
+        # relationship the daemon has already dropped.
+        if status is None or not getattr(status, "from_status_endpoint", False):
+            return
+        latest = {r.header_id: r for r in (status.records or [])}
+        # Re-render only when the map actually MOVED. While the dialog polls at
+        # 1 Hz these records are identical every tick, and the cooling section is
+        # already re-rendered by the 1 Hz `fans_updated` signal — so an
+        # unconditional call here would double the card work every second to draw
+        # bytes that had not changed. Same discipline as the card's own
+        # detail-unchanged early return (DEC-286/287).
+        if latest == self._control_paths:
+            return
+        self._control_paths = latest
+        self._refresh_cooling_section()
+
+    @Slot(str, str)
+    def _on_discover_error(self, category: str, message: str) -> None:
+        if self._discover_dialog is not None:
+            self._discover_dialog.apply_error(category, message)
+
+    @Slot(object)
+    def _on_preflight_ready(self, report) -> None:
+        if self._discover_dialog is not None:
+            self._discover_dialog.apply_preflight(report)
+
+    @Slot(str, str)
+    def _on_preflight_error(self, category: str, message: str) -> None:
+        if self._discover_dialog is not None:
+            self._discover_dialog.apply_preflight_error(category, message)
+
+    def _supported_session_diagnostics(self) -> set[str]:
+        """Which orchestratable diagnostics this daemon accepts.
+
+        The two Phase 5 ones are implied by `validation_sessions`, which the
+        caller has already checked before the button is enabled. Control-path
+        discovery has its own flag and is offered only when the daemon has it —
+        an unknown token in `diagnostics[]` makes the daemon reject the whole
+        session, so offering it against an older daemon would break validation
+        entirely rather than degrade it.
+        """
+        from control_ofc.api.models import (
+            VALIDATION_DIAG_CHARACTERIZATION,
+            VALIDATION_DIAG_CONTROL_PATH,
+            VALIDATION_DIAG_VERIFY,
+        )
+
+        supported = {VALIDATION_DIAG_VERIFY, VALIDATION_DIAG_CHARACTERIZATION}
+        if daemon_supports("control_path_discovery", self._capabilities()):
+            supported.add(VALIDATION_DIAG_CONTROL_PATH)
+        return supported
+
+    def _refresh_control_paths(self) -> None:
+        """Ask the daemon for the persisted relationships (§6.3).
+
+        Gated on the capability rather than probed: an older daemon 404s the
+        route from the route fallback, which is indistinguishable from "no run
+        yet" without reading `error.code`.
+        """
+        if not daemon_supports("control_path_discovery", self._capabilities()):
+            return
+        # Never while the dialog owns the worker.
+        #
+        # The dialog and this background refresh share one worker and therefore
+        # one `run_error` signal, so a failure belonging to THIS request would be
+        # delivered to the dialog as though its own poll had failed: the dialog
+        # would stop its timer mid-run, re-enable Start over a preflight verdict
+        # that had blocked it, and never render `restore_failed` — the one field
+        # the spec says must be surfaced prominently. The dialog polls the same
+        # endpoint every second anyway, so suppressing this costs nothing, and
+        # the `finally` in `_open_control_path_discovery` refreshes once the
+        # dialog closes.
+        if self._discover_dialog is not None:
+            return
+        if self._ensure_discover_worker():
+            self._discover_poll_request.emit()
+
     # ── Validation / lifecycle sessions ──────────────────────────────
 
     def _open_validation(self, *, lifecycle: bool, device_id: str = "") -> None:
@@ -1251,6 +1400,7 @@ class HardwarePage(QWidget):
             device_name,
             kind=VALIDATION_KIND_LIFECYCLE if lifecycle else VALIDATION_KIND_VALIDATION,
             members=members,
+            supported_diagnostics=self._supported_session_diagnostics(),
             parent=self,
         )
         dialog.start_requested.connect(self._on_validation_start)
@@ -1488,6 +1638,24 @@ class HardwarePage(QWidget):
         )
         return ok
 
+    def _ensure_discover_worker(self) -> bool:
+        def connect(w: _ControlPathWorker) -> None:
+            self._discover_preflight_request.connect(
+                w.do_preflight, Qt.ConnectionType.QueuedConnection
+            )
+            self._discover_start_request.connect(w.do_start, Qt.ConnectionType.QueuedConnection)
+            self._discover_poll_request.connect(w.do_poll, Qt.ConnectionType.QueuedConnection)
+            self._discover_cancel_request.connect(w.do_cancel, Qt.ConnectionType.QueuedConnection)
+            w.run_updated.connect(self._on_discover_update, Qt.ConnectionType.QueuedConnection)
+            w.run_error.connect(self._on_discover_error, Qt.ConnectionType.QueuedConnection)
+            w.preflight_ready.connect(self._on_preflight_ready, Qt.ConnectionType.QueuedConnection)
+            w.preflight_error.connect(self._on_preflight_error, Qt.ConnectionType.QueuedConnection)
+
+        self._discover_worker, self._discover_thread, ok = self._ensure_worker(
+            self._discover_worker, self._discover_thread, _ControlPathWorker, connect
+        )
+        return ok
+
     def _ensure_validation_worker(self) -> bool:
         def connect(w: _ValidationWorker) -> None:
             self._validation_start_request.connect(w.do_start, Qt.ConnectionType.QueuedConnection)
@@ -1534,12 +1702,14 @@ class HardwarePage(QWidget):
             (self._readiness_worker, self._readiness_thread, "Readiness"),
             (self._verify_worker, self._verify_thread, "Verify"),
             (self._char_worker, self._char_thread, "Characterization"),
+            (self._discover_worker, self._discover_thread, "ControlPath"),
             (self._validation_worker, self._validation_thread, "Validation"),
         ):
             self._teardown_worker(worker, thread, label)
         self._readiness_worker = self._readiness_thread = None
         self._verify_worker = self._verify_thread = None
         self._char_worker = self._char_thread = None
+        self._discover_worker = self._discover_thread = None
         self._validation_worker = self._validation_thread = None
 
     def set_theme(self, _tokens) -> None:
