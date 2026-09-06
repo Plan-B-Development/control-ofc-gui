@@ -22,6 +22,7 @@ from control_ofc.api.models import (
     ThermalSafetyInfo,
 )
 from control_ofc.services.daemon_features import (
+    DAEMON_FEATURE_CAPABILITY_FLAGS,
     DAEMON_FEATURE_LABELS,
     DAEMON_FEATURE_MINIMUMS,
     requires_daemon,
@@ -314,6 +315,48 @@ class TestUnsupportedFeatureMessagesAreActionable:
         unknown = [f"{loc} -> {fid!r}" for loc, fid in seen if fid not in DAEMON_FEATURE_MINIMUMS]
         assert not unknown, (
             "unknown feature id(s) — these raise KeyError at runtime:\n" + "\n".join(unknown)
+        )
+
+    def test_every_daemon_supports_id_has_a_capability_flag(self):
+        """The THIRD entry point into the registry, and the only silent one.
+
+        The sweep above covers `unsupported_feature_message` and `requires_daemon`
+        because those **raise** on an unknown id. `daemon_supports` does not — it
+        returns `None`, which is falsy, so an unregistered id makes every
+        `if daemon_supports(...)` call site dead on every daemon forever, with no
+        exception, no log line and no failing test.
+
+        That is not hypothetical: it is what DEC-334 shipped. The
+        `pwm_behaviour_characterization` token was gated on an id that was in no
+        registry, so the behaviour diagnostic could not be selected in a
+        validation session on **any** daemon, including one advertising the flag.
+        Fixed for 2.63.1; this test is what stops the next one.
+
+        Note the registry checked here is `DAEMON_FEATURE_CAPABILITY_FLAGS`, not
+        `DAEMON_FEATURE_MINIMUMS` — `daemon_supports` resolves through the former
+        and returns `None` for anything absent from it, whatever the latter holds.
+        """
+        import pathlib
+        import re
+
+        src = pathlib.Path(__file__).resolve().parents[1] / "src" / "control_ofc"
+        call = re.compile(r"daemon_supports\(\s*[\"']([^\"']+)[\"']")
+        seen: list[tuple[str, str]] = []
+        for path in src.rglob("*.py"):
+            if path.name == "daemon_features.py":
+                continue  # defines the registry; its own docstring is prose
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                for m in call.finditer(line):
+                    seen.append((f"{path.relative_to(src)}:{n}", m.group(1)))
+
+        assert seen, "precondition: the sweep must actually find call sites"
+        unflagged = [
+            f"{loc} -> {fid!r}" for loc, fid in seen if fid not in DAEMON_FEATURE_CAPABILITY_FLAGS
+        ]
+        assert not unflagged, (
+            "feature id(s) gated through `daemon_supports` with no entry in "
+            "DAEMON_FEATURE_CAPABILITY_FLAGS — these return None forever, so the "
+            "gated feature is unreachable on every daemon:\n" + "\n".join(unflagged)
         )
 
     def test_call_sites_no_longer_dead_end(self):

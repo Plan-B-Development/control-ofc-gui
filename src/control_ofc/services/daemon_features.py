@@ -43,6 +43,12 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         "preferred_sensors": "2.6.0",  # DEC-200, GET /inventory/hwmon
         "validation_sessions": "2.32.0",  # DEC-317, control.validation_sessions
         "pwm_characterization": "2.29.0",  # DEC-313, control.pwm_characterization
+        # DEC-334, control.pwm_behaviour_characterization. Registered as its OWN
+        # id rather than folded into `pwm_characterization`: an older daemon HAS
+        # the latter and silently ignores the two new request fields instead of
+        # rejecting them, so a client gating on it would render empty hysteresis
+        # and stability panels as though the hardware had produced them.
+        "pwm_behaviour_characterization": "2.40.0",
         # DEC-333, control.control_path_discovery / control.diagnostic_preflight
         "control_path_discovery": "2.39.0",
         "diagnostic_preflight": "2.39.0",
@@ -81,6 +87,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "daemon_config_report": "daemon_config_report",
         "validation_sessions": "validation_sessions",
         "pwm_characterization": "pwm_characterization",
+        "pwm_behaviour_characterization": "pwm_behaviour_characterization",
         "control_path_discovery": "control_path_discovery",
         "diagnostic_preflight": "diagnostic_preflight",
         # The flag's name is not the feature id: DEC-311 named the capability
@@ -101,6 +108,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "preferred_sensors": "preferred sensors",
         "validation_sessions": "validation sessions",
         "pwm_characterization": "PWM characterisation",
+        "pwm_behaviour_characterization": "PWM behaviour characterisation",
         "control_path_discovery": "control-path discovery",
         "diagnostic_preflight": "the diagnostic safety preflight",
         "pump_protection": "pump protection",
@@ -160,15 +168,27 @@ def daemon_supports(feature_id: str, capabilities: object | None) -> bool | None
         or is not connected. The caller keeps whatever fallback it already had —
         a version comparison, or probe-then-recover.
 
-    **``None`` is only reachable for the five `WIRE-k` ids.** The four older
-    entries in ``DAEMON_FEATURE_CAPABILITY_FLAGS`` (``validation_sessions``,
-    ``pwm_characterization``, ``pump_protection``, ``profile_search_dir_removal``)
-    are modelled as plain ``bool`` and default ``False``, so an older daemon reads
-    as a denial here. That is correct for those four — absence and false mean the
-    same thing to the GUI, which is why they were modelled that way — but it means
-    a caller must not read a ``False`` from one of them as "the daemon explicitly
-    said no". Do not "fix" this by making them tri-state without a consumer that
-    needs the distinction; each of their call sites was written for two states.
+    **``None`` is only reachable for the five `WIRE-k` ids** — precisely those
+    modelled on ``ControlCapability`` as ``bool | None``. Every *other* entry in
+    ``DAEMON_FEATURE_CAPABILITY_FLAGS`` is a plain ``bool`` defaulting to
+    ``False``, so an older daemon reads as a denial here. That is correct for
+    them — absence and false mean the same thing to the GUI, which is why they
+    were modelled that way — but it means a caller must not read a ``False``
+    from one of them as "the daemon explicitly said no". Do not "fix" this by
+    making them tri-state without a consumer that needs the distinction; each of
+    their call sites was written for two states.
+
+    **That sentence used to enumerate the plain-``bool`` ids and say there were
+    "four".** It was wrong from DEC-333, which added ``control_path_discovery``
+    and ``diagnostic_preflight`` without touching it, and would have been wrong
+    again at DEC-334. The list and the count are **deleted rather than
+    corrected**, for the reason `CLAUDE.md` gives for deleting the open-item
+    count: a set restated in prose drifts the moment the set changes, and there
+    is a maintained copy — the dataclass itself.
+    `tests/test_wire_g13_x87d.py` owns the pin and already had it:
+    ``test_the_five_flags_default_to_no_answer_and_the_siblings_default_to_false``
+    asserts both defaults against ``ControlCapability`` itself, so the claim above
+    cannot rot without that test going red.
 
     Collapsing ``None`` into ``False`` would be a regression, not a
     simplification. The five flags added for this row exist only from daemon

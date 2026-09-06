@@ -687,6 +687,70 @@ class TestSessionDiagnosticChoice:
         assert "behaviour characterisation" not in texts.lower()
 
 
+class TestSessionDiagnosticGatingCallSite:
+    """The CALL SITE — `HardwarePage._supported_session_diagnostics()`.
+
+    `TestSessionDiagnosticChoice` above hands the dialog `supported_diagnostics`
+    as a **literal set**, so it proves the dialog honours the set and never that
+    the page produces it. That is the extracted-rule trap (DEC-324), and it is
+    exactly how DEC-334 shipped with `pwm_behaviour_characterization` missing
+    from `daemon_features`: `daemon_supports` returns `None` for an unregistered
+    id, `None` is falsy, and the token was therefore offered on **no daemon at
+    all** while every test stayed green.
+
+    The assertion is a RELATIONSHIP against the wire flag, and the choice of
+    right-hand side is the whole point. Asserting against `daemon_supports(...)`
+    would be satisfied by the defect itself — delete the registry entry and both
+    sides go falsy together, so the test passes with the bug present. The flag on
+    `capabilities.control` is the one term that stays true independently.
+    """
+
+    @staticmethod
+    def _page(qtbot, caps):
+        from control_ofc.api.models import ConnectionState
+        from control_ofc.services.app_state import AppState
+        from control_ofc.services.diagnostics_service import DiagnosticsService
+        from control_ofc.ui.pages.hardware_page import HardwarePage
+
+        state = AppState()
+        state.set_connection(ConnectionState.CONNECTED)
+        if caps is not None:
+            state.set_capabilities(caps)
+        page = HardwarePage(state=state, diagnostics_service=DiagnosticsService(state), client=None)
+        qtbot.addWidget(page)
+        return page
+
+    def _assert_tracks_the_flag(self, qtbot, *, advertised: bool) -> bool:
+        caps = _caps(pwm_behaviour_characterization=advertised)
+        page = self._page(qtbot, caps)
+        offered = VALIDATION_DIAG_BEHAVIOUR in page._supported_session_diagnostics()
+        assert offered == caps.control.pwm_behaviour_characterization, (
+            f"the behaviour token must be offered exactly when the daemon "
+            f"advertises the flag (advertised={advertised}, offered={offered})"
+        )
+        return offered
+
+    def test_it_is_offered_when_the_daemon_advertises_the_flag(self, qtbot):
+        assert self._assert_tracks_the_flag(qtbot, advertised=True) is True
+
+    def test_it_is_withheld_when_the_daemon_denies_the_flag(self, qtbot):
+        assert self._assert_tracks_the_flag(qtbot, advertised=False) is False
+
+    def test_no_capabilities_at_all_withholds_it(self, qtbot):
+        """Not connected yet. `None` must read as "do not offer", not as a crash."""
+        page = self._page(qtbot, None)
+        assert VALIDATION_DIAG_BEHAVIOUR not in page._supported_session_diagnostics()
+
+    def test_the_basic_characterisation_token_is_unaffected(self, qtbot):
+        """Precondition: the two tokens are independent.
+
+        Without this, a `_supported_session_diagnostics` that returned the empty
+        set would satisfy the withheld case above and look like a passing gate.
+        """
+        page = self._page(qtbot, _caps(pwm_behaviour_characterization=False))
+        assert VALIDATION_DIAG_CHARACTERIZATION in page._supported_session_diagnostics()
+
+
 class TestClientContract:
     def test_the_behaviour_inputs_reach_the_payload_only_when_given(self):
         from control_ofc.api.client import DaemonClient

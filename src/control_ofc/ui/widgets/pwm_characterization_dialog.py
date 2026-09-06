@@ -33,6 +33,7 @@ from control_ofc.services.characterization_view import (
     build_characterization_view,
     pre_run_warnings,
 )
+from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.preflight_view import PreflightView, build_preflight_view
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.dialog import ModalDialog
@@ -148,8 +149,16 @@ class PwmCharacterizationDialog(ModalDialog):
         # outstanding one. On a busy socket that turns a slow reply into an
         # unbounded backlog, and every queued reply then renders in turn.
         self._poll_in_flight = False
+        # Through the registry, never a raw `getattr` chain: one capability flag
+        # gets ONE gating shape. The two shapes that used to coexist here and in
+        # `hardware_page._supported_session_diagnostics` are what let DEC-334
+        # ship with the id unregistered — this call site worked, the other was
+        # silently always falsy, and nothing compared them. `None` (an older
+        # daemon, or no capabilities at all) collapses to `False` deliberately:
+        # a daemon that did not advertise the flag must not be sent the two new
+        # request fields, because it ignores them rather than rejecting them.
         self._behaviour_supported = bool(
-            getattr(getattr(capabilities, "control", None), "pwm_behaviour_characterization", False)
+            daemon_supports("pwm_behaviour_characterization", capabilities)
         )
 
         body = self.body_layout()

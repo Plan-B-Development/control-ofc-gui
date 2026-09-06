@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.63.1] — 2026-09-06
+
+**Fixes a defect shipped in 2.63.0.** The previous release's note claimed
+"PWM behaviour characterisation as a validation-session diagnostic — offered
+only when the daemon supports it". It was offered on **no daemon at all**: the
+feature was gated on an identifier that had not been added to the capability
+registry, and the lookup answers "the daemon did not say" for an unknown
+identifier, which the gate read as "unsupported". The standalone **Characterise**
+button was never affected — only the checkbox that folds a behaviour
+characterisation into a recorded validation session.
+
+### Fixed
+- **"PWM behaviour characterisation" can now actually be selected when starting
+  a validation session**, against any daemon that advertises it (v2.40.0 or
+  newer). This is the option the 2.63.0 notes described; it now exists.
+
+### Changed
+- The Characterise dialog and the validation-session option now decide whether
+  the daemon supports behaviour characterisation **the same way**. They
+  previously used two different mechanisms for one capability — one of which
+  worked and one of which silently did not — and nothing compared them.
+
 ## [2.63.0] — 2026-09-06
 
 **AIO Phase 8 Batch 2 (DEC-334): PWM behaviour characterisation.** Pairs with
