@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.64.1] — 2026-09-07
+## [2.64.1] — 2026-09-06
 
 **One audit finding from the 2026-09-06 cross-stack audit (DEC-336).** Pairs with
 `control-ofc-daemon` >= v2.41.0 — this is a client-side fix and needs no daemon
