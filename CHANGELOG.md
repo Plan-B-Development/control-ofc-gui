@@ -34,22 +34,14 @@ version it needs, and the new result blocks simply do not appear.
 - A power reading the machine cannot provide now shows as unknown rather than as
   `0 W`. Several systems expose no CPU package power at all, and a zero there
   would have read as an idle processor.
-
-## [2.63.1] — 2026-09-06
-
-**Fixes a defect shipped in 2.63.0.** The previous release's note claimed
-"PWM behaviour characterisation as a validation-session diagnostic — offered
-only when the daemon supports it". It was offered on **no daemon at all**: the
-feature was gated on an identifier that had not been added to the capability
-registry, and the lookup answers "the daemon did not say" for an unknown
-identifier, which the gate read as "unsupported". The standalone **Characterise**
-button was never affected — only the checkbox that folds a behaviour
-characterisation into a recorded validation session.
-
-### Fixed
 - **"PWM behaviour characterisation" can now actually be selected when starting
   a validation session**, against any daemon that advertises it (v2.40.0 or
-  newer). This is the option the 2.63.0 notes described; it now exists.
+  newer). The 2.63.0 notes described this option; it was in fact offered on **no
+  daemon at all**, because the feature was gated on an identifier that had not
+  been added to the capability registry, and the lookup answers "the daemon did
+  not say" for an unknown identifier, which the gate read as "unsupported". The
+  standalone **Characterise** button was never affected — only the checkbox that
+  folds a behaviour characterisation into a recorded validation session.
 
 ### Changed
 - The Characterise dialog and the validation-session option now decide whether
