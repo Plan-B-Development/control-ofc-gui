@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.64.1] — 2026-09-07
+
+**One audit finding from the 2026-09-06 cross-stack audit (DEC-336).** Pairs with
+`control-ofc-daemon` >= v2.41.0 — this is a client-side fix and needs no daemon
+change.
+
+### Fixed
+- **Thermal Observation could become permanently un-startable.** The daemon
+  serves one session at a time and keeps serving the most recently *completed*
+  one indefinitely, so after any session finished — including the opt-in startup
+  recording, which finishes about two minutes after every boot — the dialog
+  showed that session's members, findings and timeline under this cooler's name
+  and its Start button never came back. It now ignores a session belonging to a
+  different cooler or of a different kind, and Start is offered again whenever
+  nothing is actually recording, which is exactly when the daemon will accept a
+  new one. The two sibling diagnostic dialogs already worked this way.
+
 ## [2.64.0] — 2026-09-06
 
 **AIO Phase 8 Batch 3a (DEC-335): thermal observation, steady state and startup

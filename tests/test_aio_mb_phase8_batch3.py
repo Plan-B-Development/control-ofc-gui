@@ -25,8 +25,10 @@ from control_ofc.api.models import (
     STEADY_STATE_DETECTED,
     STEADY_STATE_INSUFFICIENT,
     STEADY_STATE_NOT_ESTABLISHED,
+    VALIDATION_KIND_LIFECYCLE,
     VALIDATION_KIND_THERMAL,
     VALIDATION_KIND_VALIDATION,
+    VALIDATION_STATE_COMPLETED,
     VALIDATION_STATE_RECORDING,
     Capabilities,
     ConnectionState,
@@ -72,8 +74,17 @@ def _caps(**control) -> Capabilities:
     return Capabilities(control=ControlCapability(**control))
 
 
-def _session(*, samples=None, steady=None, fingerprints=None) -> ValidationSession:
-    s = ValidationSession(state=VALIDATION_STATE_RECORDING)
+def _session(
+    *, samples=None, steady=None, fingerprints=None, kind=VALIDATION_KIND_VALIDATION
+) -> ValidationSession:
+    # `kind` and `cooling_device_id` are what `ValidationSessionDialog._is_ours`
+    # matches on (`P8-q`), and the daemon always echoes both — a snapshot whose
+    # kind did not match the dialog it is rendered in is not a shape the daemon
+    # can produce for that dialog. A fixture that left them at their defaults
+    # would be testing a rendering path against a session the dialog will now
+    # (correctly) refuse to adopt.
+    s = ValidationSession(state=VALIDATION_STATE_RECORDING, kind=kind)
+    s.metadata.cooling_device_id = "aio0"
     s.metadata.pump_member = "pump1"
     s.metadata.radiator_members = ["rad1"]
     s.samples = samples if samples is not None else []
@@ -295,6 +306,10 @@ class TestDialogExposesTheThermalBlocks:
     def _dialog(qtbot, kind, session):
         d = ValidationSessionDialog("aio0", "Test AIO", kind=kind, members=[])
         qtbot.addWidget(d)
+        # The daemon echoes the kind it was started with, so a session rendered
+        # in this dialog carries this dialog's kind. Set here rather than at each
+        # call site so every test in the class exercises the adoption path.
+        session.kind = kind
         d.apply_session(session)
         return d
 
@@ -438,8 +453,10 @@ class TestIsolationTemplateGate:
     with it.
     """
 
-    def _recording(self, **sample_kw) -> ValidationSession:
-        s = _session(samples=[ValidationSample(elapsed_ms=0, **sample_kw)])
+    def _recording(self, kind=VALIDATION_KIND_THERMAL, **sample_kw) -> ValidationSession:
+        # Thermal by default: the stage gate is a thermal-observation feature,
+        # and a thermal dialog now adopts only a thermal session (`P8-q`).
+        s = _session(samples=[ValidationSample(elapsed_ms=0, **sample_kw)], kind=kind)
         s.state = VALIDATION_STATE_RECORDING
         return s
 
@@ -524,5 +541,170 @@ class TestIsolationTemplateGate:
 
         plain = ValidationSessionDialog("aio0", "AIO", kind=VALIDATION_KIND_VALIDATION, members=[])
         qtbot.addWidget(plain)
-        plain.apply_session(self._recording(temperature_c=45.0))
+        plain.apply_session(self._recording(kind=VALIDATION_KIND_VALIDATION, temperature_c=45.0))
         assert plain._template_section.isVisibleTo(plain) is False
+
+
+# ── `P8-q`: the dialog owns its session, and Start comes back ────────────────
+
+
+class TestSessionOwnershipAndRestart:
+    """The daemon serves ONE process-global session slot and ``finish()``
+    finalises in place, so ``GET /validation/session`` keeps returning the most
+    recently completed session forever. Before this fix the Thermal dialog
+    stored whatever arrived and gated Start on ``self._session is None``, so
+    after the first session of any kind completed — including the
+    ``[startup] record_startup`` auto-record, which finishes ~2 minutes after
+    every boot — the dialog rendered someone else's session under this device's
+    name and could never be started again for the life of the daemon.
+    """
+
+    @staticmethod
+    def _thermal(qtbot, device_id="aio0"):
+        d = ValidationSessionDialog(device_id, "AIO", kind=VALIDATION_KIND_THERMAL, members=[])
+        qtbot.addWidget(d)
+        return d
+
+    @staticmethod
+    def _completed(*, device_id, kind):
+        s = _session(kind=kind)
+        s.metadata.cooling_device_id = device_id
+        s.state = VALIDATION_STATE_COMPLETED
+        return s
+
+    def test_a_finished_session_of_ours_re_enables_start(self, qtbot):
+        """The headline defect: Start must come back once nothing is recording.
+
+        Asserted as a RELATIONSHIP against ``is_recording`` rather than against
+        a literal ``True``, because the daemon's own admission rule is exactly
+        that — ``ValidationEngine::start`` rejects only a slot that
+        ``is_recording()``, and admits one holding a finished session. A literal
+        would be satisfied by a rule that simply always enables.
+        """
+        d = self._thermal(qtbot)
+        recording = _session(kind=VALIDATION_KIND_THERMAL)
+        recording.metadata.cooling_device_id = "aio0"
+        d.apply_session(recording)
+        # Precondition: while it really is recording, Start is refused. Without
+        # this the assertion below would pass for a button that never disables.
+        assert recording.is_recording is True
+        assert d._start_btn.isEnabled() is False
+
+        done = self._completed(device_id="aio0", kind=VALIDATION_KIND_THERMAL)
+        d.apply_session(done)
+        assert done.is_recording is False
+        assert d._start_btn.isEnabled() is not done.is_recording
+        assert d._start_btn.isEnabled() is True
+        # The options are the configuration of the next session, so they follow.
+        assert d._options_section.isEnabled() is True
+
+    def test_another_devices_session_is_not_rendered_under_this_devices_name(self, qtbot):
+        """The audit's reproduction, as a test."""
+        d = self._thermal(qtbot, device_id="aio0")
+        foreign = self._completed(device_id="OTHER_DEVICE", kind=VALIDATION_KIND_THERMAL)
+        d.apply_session(foreign)
+        assert d.session() is None
+        assert d._start_btn.isEnabled() is True
+
+    def test_a_different_kind_for_this_device_is_not_adopted(self, qtbot):
+        """A completed lifecycle recording — what the startup auto-record leaves
+        behind — carries this device's id but answers a different question."""
+        d = self._thermal(qtbot, device_id="aio0")
+        lifecycle = self._completed(device_id="aio0", kind=VALIDATION_KIND_LIFECYCLE)
+        d.apply_session(lifecycle)
+        assert d.session() is None
+        assert d._start_btn.isEnabled() is True
+
+    def test_a_foreign_session_that_is_still_recording_still_blocks_start(self, qtbot):
+        """Not rendered, but not ignored either: the daemon holds one slot and
+        would answer our start with ``409 already_exists``. Offering a Start
+        that cannot succeed would trade one wrong state for another."""
+        d = self._thermal(qtbot, device_id="aio0")
+        other = _session(kind=VALIDATION_KIND_LIFECYCLE)
+        other.metadata.cooling_device_id = "aio0"
+        assert other.is_recording is True
+        d.apply_session(other)
+        assert d.session() is None
+        assert d._start_btn.isEnabled() is False
+
+    def test_an_empty_device_id_is_still_adopted(self, qtbot):
+        """The two sibling dialogs accept an empty id for the same reason: a
+        daemon that sends none would otherwise blank the dialog permanently."""
+        d = self._thermal(qtbot, device_id="aio0")
+        anon = _session(kind=VALIDATION_KIND_THERMAL)
+        anon.metadata.cooling_device_id = ""
+        d.apply_session(anon)
+        assert d.session() is anon
+
+    def test_a_stale_completed_snapshot_after_start_does_not_kill_the_poll_timer(self, qtbot):
+        """The lost wakeup that making Start re-enablable newly exposes.
+
+        ``apply_session`` stops the poll timer on any non-recording snapshot of
+        ours — correct while a finished session was terminal, but Start is now
+        clickable in that state, and this dialog has no single-poll-in-flight
+        guard. So a poll queued *before* the click can be answered *after* it,
+        delivering the old completed session and stopping the timer that
+        ``_on_validation_start`` had just restarted. The session then records
+        with the dialog frozen on the previous one: Stop, Cancel and Mark all
+        stay disabled because ``recording`` is False, and nothing re-renders.
+
+        Asserted on the realised timer state, not on a flag.
+        """
+        d = self._thermal(qtbot)
+        done = self._completed(device_id="aio0", kind=VALIDATION_KIND_THERMAL)
+        d.apply_session(done)
+        assert d._start_btn.isEnabled() is True
+
+        # The click, and the page's response to it.
+        d._start_btn.click()
+        d.start_polling()
+        assert d._timer.isActive() is True, "precondition: the timer is running again"
+
+        # The stale reply, queued before the click, lands after it.
+        d.apply_session(done)
+        assert d._timer.isActive() is True, (
+            "a poll queued before Start stopped the timer after it — the session "
+            "records with the dialog frozen on the previous one"
+        )
+
+        # And the real reply then arrives and is rendered normally.
+        live = _session(kind=VALIDATION_KIND_THERMAL)
+        live.metadata.cooling_device_id = "aio0"
+        d.apply_session(live)
+        assert d._timer.isActive() is True
+        assert d._stop_btn.isEnabled() is True
+
+    def test_the_timer_still_stops_when_our_session_ends_normally(self, qtbot):
+        """The other half: without this, the fix above could simply never stop
+        the timer, and the dialog would poll forever after a session ended."""
+        d = self._thermal(qtbot)
+        live = _session(kind=VALIDATION_KIND_THERMAL)
+        live.metadata.cooling_device_id = "aio0"
+        d.apply_session(live)
+        d.start_polling()
+        assert d._timer.isActive() is True
+
+        d.apply_session(self._completed(device_id="aio0", kind=VALIDATION_KIND_THERMAL))
+        assert d._timer.isActive() is False
+
+    def test_every_session_dialog_carries_the_ownership_check(self, qtbot):
+        """All three per-target diagnostic dialogs read one global slot, so all
+        three need the guard. Pinned as a set rather than one-by-one, because
+        the defect this fixes was the ONE dialog that lacked what its two
+        siblings had.
+
+        This proves the method EXISTS, never that it is called — measured: it
+        stays green with the call site removed. The wiring is what the four
+        behavioural tests above pin, and they go red without it. Both kinds are
+        kept deliberately (DEC-269's rule, one layer down)."""
+        from control_ofc.ui.widgets.control_path_dialog import ControlPathDiscoveryDialog
+        from control_ofc.ui.widgets.pwm_characterization_dialog import (
+            PwmCharacterizationDialog,
+        )
+
+        for cls in (
+            ValidationSessionDialog,
+            ControlPathDiscoveryDialog,
+            PwmCharacterizationDialog,
+        ):
+            assert callable(getattr(cls, "_is_ours", None)), f"{cls.__name__} has no _is_ours"

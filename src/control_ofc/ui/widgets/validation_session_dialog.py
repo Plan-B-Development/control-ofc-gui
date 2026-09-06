@@ -210,6 +210,13 @@ class ValidationSessionDialog(ModalDialog):
         # diagnostic — a worse outcome than not offering it.
         self._supported_diagnostics = supported_diagnostics
         self._session: ValidationSession | None = None
+        #: Something else owns the daemon's single session slot right now. Not a
+        #: session we may render — only a reason our Start would be refused.
+        self._foreign_recording = False
+        #: A start has been asked for and neither a recording snapshot nor an
+        #: error has come back yet. Suppresses the poll timer's stop-on-finished
+        #: rule for exactly that window — see `apply_session`.
+        self._start_pending = False
 
         body = self.body_layout()
         body.setSpacing(10)
@@ -736,6 +743,7 @@ class ValidationSessionDialog(ModalDialog):
     # ── emitters ─────────────────────────────────────────────────────────────
 
     def _emit_start(self) -> None:
+        self._start_pending = True
         diagnostics = [token for token, box in self._diag_boxes if box.isChecked()]
         sweep = self._sweep_combo.currentData() or ""
         metadata = {}
@@ -782,8 +790,52 @@ class ValidationSessionDialog(ModalDialog):
     def session(self) -> ValidationSession | None:
         return self._session
 
+    def _is_ours(self, session: ValidationSession) -> bool:
+        """Is this snapshot the session this dialog was opened to run?
+
+        ``GET /validation/session`` serves ONE process-global slot and
+        ``finish()`` finalises **in place**, so the daemon keeps serving the most
+        recently completed session indefinitely — a lifecycle recording made an
+        hour ago, or the ``[startup] record_startup`` auto-record from this
+        boot. Rendering that under this dialog's device name would attribute
+        another assembly's members, findings and timeline to this one, which is
+        the same defect ``AUD2-a`` records for the per-header diagnostics and the
+        reason both sibling dialogs carry this method (``control_path_dialog``,
+        ``pwm_characterization_dialog``).
+
+        Matched on device **and** kind: a thermal observation and a validation
+        run of the same assembly answer different questions and render different
+        sections, so a completed validation session is not this dialog's to show.
+
+        An empty ``cooling_device_id`` is accepted, for the same reason the two
+        siblings accept an empty ``header_id``: a daemon that sends none would
+        otherwise blank the dialog permanently.
+        """
+        theirs = session.metadata.cooling_device_id if session.metadata else ""
+        return (not theirs or theirs == self._device_id) and session.kind == self._kind
+
     def apply_session(self, session: ValidationSession | None) -> None:
-        """Render a session (or its absence) from the daemon."""
+        """Render a session (or its absence) from the daemon.
+
+        The poll timer stops on a finished session of ours — **unless a start is
+        pending.** That exception exists because `P8-q` made Start clickable
+        while a finished session is on screen, and this dialog has no
+        single-poll-in-flight guard: a poll issued before the click can be
+        answered after it, and stopping the timer on that stale reply would
+        freeze the dialog on the previous session while the new one records,
+        with Stop, Cancel and Mark all disabled. The flag is cleared by the first
+        recording snapshot, or by `apply_error` if the start was refused.
+        """
+        # [P8-q] A session that is not ours is not rendered — but the fact that
+        # SOMETHING is recording is still load-bearing, because the daemon holds
+        # one slot and would answer our start with 409. Dropping it entirely
+        # would offer a Start that cannot succeed; keeping it as the session
+        # would show another device's data under this one's name.
+        if session is not None and not self._is_ours(session):
+            self._foreign_recording = bool(session.is_recording)
+            session = None
+        else:
+            self._foreign_recording = False
         self._session = session
         if session is None:
             self._state_pill.set_text("Not started")
@@ -796,11 +848,19 @@ class ValidationSessionDialog(ModalDialog):
         view = build_validation_session_view(session)
         self._render(view)
         self._render_thermal(session)
-        if not view.recording:
+        if view.recording:
+            # Our start landed; anything still queued behind it is current.
+            self._start_pending = False
+        elif not self._start_pending:
             self._timer.stop()
         self._apply_enablement()
 
     def apply_error(self, category: str, message: str) -> None:
+        # The start did not take (or a poll failed), so stop holding the timer
+        # open for a session that is not coming. Cleared here rather than only on
+        # a recording snapshot, so a refused start cannot leave the dialog
+        # polling for the rest of its life.
+        self._start_pending = False
         # A soft safety refusal arrives as "unavailable" and is shown verbatim,
         # never prefixed as an error: the daemon declining to move a pump during
         # a thermal event is protection working, not a failure.
@@ -853,7 +913,16 @@ class ValidationSessionDialog(ModalDialog):
     def _apply_enablement(self) -> None:
         recording = bool(self._session and self._session.is_recording)
         finished = self._session is not None and not recording
-        self._start_btn.setEnabled(self._session is None)
+        # [P8-q] Gated on "nothing is recording", NOT on "no session object".
+        # The daemon serves its most recent COMPLETED session forever, so
+        # `self._session is None` made Start un-re-enablable for the life of the
+        # daemon once any session had finished — including the startup
+        # auto-record, which finishes ~2 minutes after every boot. The daemon
+        # itself admits a new session whenever the slot holds a finished one
+        # (`ValidationEngine::start` rejects only `is_recording()`), so this now
+        # matches what the daemon will actually accept.
+        can_start = not recording and not self._foreign_recording
+        self._start_btn.setEnabled(can_start)
         self._mark_btn.setEnabled(recording)
         self._stop_btn.setEnabled(recording)
         self._cancel_btn.setEnabled(recording)
@@ -863,7 +932,11 @@ class ValidationSessionDialog(ModalDialog):
         # file the user would reasonably read as a failed export.
         self._csv_btn.setEnabled(finished or recording)
         self._json_btn.setEnabled(finished or recording)
-        self._options_section.setEnabled(self._session is None)
+        # The options ARE the configuration of the next session, so they follow
+        # Start exactly. Leaving them on `_session is None` would offer an
+        # enabled Start over a form the user could not edit — a second, quieter
+        # version of the same defect.
+        self._options_section.setEnabled(can_start)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
