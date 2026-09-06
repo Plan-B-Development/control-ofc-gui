@@ -700,6 +700,8 @@ class DaemonClient:
         *,
         points_pct: list[int] | None = None,
         settle_seconds: int | None = None,
+        bidirectional: bool | None = None,
+        stability_seconds: int | None = None,
     ) -> CharacterizationRun:
         """POST /hwmon/{header_id}/characterize — start a PWM/RPM sweep.
 
@@ -717,6 +719,15 @@ class DaemonClient:
         second copy of a safety rule the daemon already owns, and the two would
         drift (DEC-252's discipline).
 
+        ``bidirectional`` and ``stability_seconds`` are AIO Phase 8 Batch 2
+        (DEC-334) and need ``capabilities.control.pwm_behaviour_characterization``
+        — a **separate** flag. An older daemon ignores them rather than
+        rejecting them, so sending them ungated yields a plain ascending sweep
+        with no hysteresis or stability data, and a UI that had promised both.
+        Both are advisory in the same way: the daemon chooses which duties carry
+        a dwell and clamps its length, so the run's cost is bounded server-side
+        regardless of what is asked for.
+
         A body is always sent, even when empty, matching the calibrate endpoint:
         the daemon's extractor requires JSON.
         """
@@ -725,6 +736,10 @@ class DaemonClient:
             body["points_pct"] = points_pct
         if settle_seconds is not None:
             body["settle_seconds"] = settle_seconds
+        if bidirectional is not None:
+            body["bidirectional"] = bidirectional
+        if stability_seconds is not None:
+            body["stability_seconds"] = stability_seconds
         return parse_characterization_run(self._post(f"/hwmon/{header_id}/characterize", json=body))
 
     def characterization_status(self) -> CharacterizationRun | None:

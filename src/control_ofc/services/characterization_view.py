@@ -221,6 +221,62 @@ class CharRow:
     control_mode: str = UNKNOWN_TEXT
     response: str = UNKNOWN_TEXT
     settling: str = UNKNOWN_TEXT
+    # ── AIO Phase 8 Batch 2 (DEC-334) ────────────────────────────────────────
+    # Which leg of the walk produced this reading. A bidirectional sweep visits
+    # most duties twice, and a table that did not say which was which would show
+    # two contradictory rows for the same duty with no way to tell them apart.
+    direction: str = UNKNOWN_TEXT
+    # §4's per-point classification, worded. Never "fault" — §4 forbids
+    # inferring cavitation or an electrical failure from tach variability.
+    stability: str = UNKNOWN_TEXT
+
+
+@dataclass(frozen=True)
+class SeriesPoint:
+    """One plotted (duty, RPM) reading."""
+
+    duty_pct: int
+    rpm: int
+
+
+@dataclass(frozen=True)
+class ResponseCurve:
+    """§8.3's plot data, already separated by leg.
+
+    Kept Qt-free so the chart is a thin renderer over a testable view model —
+    the project's view-model + renderer standard. ``has_data`` exists so the
+    dialog can hide the chart rather than draw empty axes, which would imply a
+    measurement that was never taken.
+    """
+
+    rising: list[SeriesPoint] = field(default_factory=list)
+    falling: list[SeriesPoint] = field(default_factory=list)
+    plateaus: list[tuple[int, int]] = field(default_factory=list)
+    low_plateau_to_pct: int | None = None
+    saturation_from_pct: int | None = None
+    #: §8.3's "optional expected/learned band" is not plotted: the daemon
+    #: publishes whether a reading fell outside the learned range, not the band
+    #: itself, and drawing a band from this run's own points would be a
+    #: fabricated reference. The verdict is shown as text instead.
+    has_data: bool = False
+
+
+@dataclass(frozen=True)
+class SummaryRow:
+    """One label/value line in the §8.2 compact block or §8.4 detail block."""
+
+    label: str
+    value: str
+    state: str = "neutral"
+
+
+@dataclass(frozen=True)
+class ProvenanceRow:
+    """§8.6. A value with the classification it was published under."""
+
+    label: str
+    value: str
+    provenance: str
 
 
 @dataclass(frozen=True)
@@ -248,6 +304,20 @@ class CharacterizationView:
     # sampling resolution does not justify it".
     response_latency: str = ""
     settling_time: str = ""
+    # ── AIO Phase 8 Batch 2 (DEC-334) ────────────────────────────────────────
+    #: Derived from the run, not from what was requested: a sweep that aborted
+    #: before its second leg is honestly unidirectional (DEC-325).
+    bidirectional: bool = False
+    #: §8.2's compact block, in the spec's order.
+    summary_rows: list[SummaryRow] = field(default_factory=list)
+    #: §8.4's expandable engineering detail.
+    detail_rows: list[SummaryRow] = field(default_factory=list)
+    curve: ResponseCurve = field(default_factory=ResponseCurve)
+    #: §8.5's cautious wording, or "" when the condition does not hold. Shown as
+    #: a caution, **never** as a generic red "hardware failed".
+    override_warning: str = ""
+    #: §8.6.
+    provenance_rows: list[ProvenanceRow] = field(default_factory=list)
 
 
 # Per-point result wording. A row's verdict combines the two axes, but never
@@ -284,6 +354,78 @@ _TERMINAL_STATUS = {
 }
 
 
+# §8.5, verbatim. The spec dictates cautious wording here, and lists every
+# benign explanation, because the alternative — a red "hardware failed" — is the
+# conclusion this whole diagnostic exists to avoid jumping to.
+OUTSIDE_LEARNED_RANGE_WARNING = (
+    "PWM command and motherboard readback are valid, but reported RPM is "
+    "outside the characterised response range. The connected device may be "
+    "applying internal control, a clamp, startup behaviour, thermal protection, "
+    "or may use different tach mapping/scaling."
+)
+
+_DIRECTION_LABELS = {
+    "ramp": "Start",
+    "falling": "Falling",
+    "rising": "Rising",
+}
+
+# §4's four states, worded. `variable` and `unstable` are OBSERVATIONS: §4 is
+# explicit that tach variability alone does not evidence cavitation, an
+# electrical fault or bubbles, so none of these is a failure word.
+_STABILITY_LABELS = {
+    "stable": ("Stable", "ok"),
+    "variable": ("Variable", "warn"),
+    "unstable": ("Unstable", "warn"),
+    "insufficient_data": ("Too few samples", "neutral"),
+    "unavailable": ("No tach", "neutral"),
+}
+
+_HYSTERESIS_LABELS = {
+    "none": ("Not observed", "ok"),
+    "present": ("Observed", "warn"),
+    "insufficient_data": ("Too little data", "neutral"),
+    "not_tested": ("Not tested", "neutral"),
+}
+
+
+def _fmt_float(value: float | None, suffix: str = "") -> str:
+    return UNKNOWN_TEXT if value is None else f"{value:.1f}{suffix}"
+
+
+def _settling_ms(point) -> int | None:
+    """§5's settling time for one point, or ``None`` when it was not measured.
+
+    ``settled_ms`` is when reported RPM entered its band. ``settle_ms`` is merely
+    how long the daemon *held* the point — and since DEC-334 a stability dwell
+    inflates it, so a step with a 20 s dwell reports 26 000 ms for a fan that
+    settled in 3 s.
+
+    So ``settle_ms`` is used only as the **pre-DEC-334 fallback**, detected by the
+    absence of the per-point stability block: an older daemon sends neither
+    field, and there ``settle_ms`` is the only figure there has ever been. On a
+    current daemon that measured no settling, the answer is ``None`` — "we did
+    not observe it settle" — never the length of the wait, which would report a
+    placeholder as a measurement and is precisely what §5 forbids.
+    """
+    settled = getattr(point, "settled_ms", None)
+    if settled is not None:
+        return settled
+    if getattr(point, "stability", None) is None:
+        return point.settle_ms
+    return None
+
+
+def _stability_text(point) -> str:
+    stab = getattr(point, "stability", None)
+    if stab is None or not stab.verdict:
+        return UNKNOWN_TEXT
+    label, _tone = _STABILITY_LABELS.get(stab.verdict, (_humanise_token(stab.verdict), "neutral"))
+    if stab.cv_pct is not None:
+        return f"{label} ({stab.cv_pct:.1f}%)"
+    return label
+
+
 def _row_for(point) -> CharRow:
     """Build one row. A write failure outranks any readback wording, because the
     write is the thing that did not happen."""
@@ -306,8 +448,215 @@ def _row_for(point) -> CharRow:
         state=state,
         control_mode=_fmt_pwm_enable(point.pwm_enable),
         response=_fmt_seconds(point.first_change_ms),
-        settling=_fmt_seconds(point.settle_ms),
+        settling=_fmt_seconds(_settling_ms(point)),
+        direction=_DIRECTION_LABELS.get(
+            getattr(point, "direction", "") or "",
+            _humanise_token(getattr(point, "direction", "")) or UNKNOWN_TEXT,
+        ),
+        stability=_stability_text(point),
     )
+
+
+def _build_curve(run: CharacterizationRun) -> ResponseCurve:
+    """§8.3's plot data, split by the leg the daemon says produced it.
+
+    The split reads the point's own ``direction`` rather than inferring one from
+    the order the points arrived in: a run that aborted mid-walk, or one from an
+    older daemon that sends no direction at all, would otherwise be sliced into
+    two series that never existed.
+    """
+    rising: list[SeriesPoint] = []
+    falling: list[SeriesPoint] = []
+    for pt in run.points:
+        if pt.rpm_after is None:
+            continue
+        sample = SeriesPoint(duty_pct=pt.requested_pct, rpm=pt.rpm_after)
+        if pt.direction == "rising":
+            rising.append(sample)
+        elif pt.direction == "falling":
+            falling.append(sample)
+        elif not pt.direction:
+            # Pre-DEC-334 daemon: one ascending series, and calling it "rising"
+            # is what it actually was.
+            rising.append(sample)
+    rising.sort(key=lambda s: s.duty_pct)
+    falling.sort(key=lambda s: s.duty_pct)
+    summary = run.summary
+    return ResponseCurve(
+        rising=rising,
+        falling=falling,
+        plateaus=[(pl.from_pct, pl.to_pct) for pl in (summary.plateaus if summary else [])],
+        low_plateau_to_pct=summary.low_plateau_to_pct if summary else None,
+        saturation_from_pct=summary.saturation_from_pct if summary else None,
+        has_data=bool(rising or falling),
+    )
+
+
+def _build_summary_rows(run: CharacterizationRun) -> list[SummaryRow]:
+    """§8.2's compact block, in the spec's order."""
+    summary = run.summary
+    if summary is None:
+        return []
+    rows: list[SummaryRow] = []
+    if summary.min_tested_pct is not None and summary.max_tested_pct is not None:
+        rows.append(
+            SummaryRow("Safe tested range", f"{summary.min_tested_pct}-{summary.max_tested_pct}%")
+        )
+    if summary.min_responsive_pct is not None and summary.max_responsive_pct is not None:
+        rows.append(
+            SummaryRow(
+                "Effective range",
+                f"{summary.min_responsive_pct}-{summary.max_responsive_pct}%",
+            )
+        )
+    elif summary.plateaus:
+        # §3: a sweep that plateaued end to end has no responsive band. Saying so
+        # is an observation about the device, not a fault.
+        rows.append(SummaryRow("Effective range", "no responsive band", "warn"))
+    if summary.min_rpm is not None and summary.max_rpm is not None:
+        rows.append(SummaryRow("Reported RPM range", f"{summary.min_rpm}-{summary.max_rpm}"))
+    if summary.hysteresis_verdict:
+        label, tone = _HYSTERESIS_LABELS.get(
+            summary.hysteresis_verdict,
+            (_humanise_token(summary.hysteresis_verdict), "neutral"),
+        )
+        if summary.hysteresis_pct is not None and summary.hysteresis_verdict == "present":
+            label = f"{label} ({summary.hysteresis_pct:.1f}% of span)"
+        rows.append(SummaryRow("Hysteresis", label, tone))
+    if summary.stability_verdict:
+        label, tone = _STABILITY_LABELS.get(
+            summary.stability_verdict,
+            (_humanise_token(summary.stability_verdict), "neutral"),
+        )
+        rows.append(SummaryRow("RPM stability", label, tone))
+    response = _typical_seconds(p.first_change_ms for p in run.points)
+    if response:
+        rows.append(SummaryRow("Response time", response))
+    settling = _typical_seconds(_settling_ms(p) for p in run.points)
+    if settling:
+        rows.append(SummaryRow("Settling time", settling))
+    # §6, three states. "No model yet" must not read as agreement — the
+    # Overview: "Do not turn lack of evidence into PASS."
+    if summary.outside_learned_range is None:
+        rows.append(SummaryRow("Learned range", "not established yet", "neutral"))
+    elif summary.outside_learned_range:
+        rows.append(SummaryRow("Learned range", "reading outside it", "warn"))
+    else:
+        rows.append(SummaryRow("Learned range", "reading inside it", "ok"))
+    rows.append(
+        SummaryRow(
+            "Device override",
+            "Possible" if summary.possible_device_override else "Not observed",
+            "warn" if summary.possible_device_override else "ok",
+        )
+    )
+    return rows
+
+
+def _build_detail_rows(run: CharacterizationRun) -> list[SummaryRow]:
+    """§8.4's engineering detail, aggregated across the sweep."""
+    summary = run.summary
+    stats = [p.stability for p in run.points if p.stability is not None]
+    rows: list[SummaryRow] = []
+    intervals = {st.sample_interval_ms for st in stats if st.sample_interval_ms}
+    if intervals:
+        rows.append(SummaryRow("Sample interval", f"{max(intervals)} ms"))
+    if summary is not None and summary.measurement_resolution_ms is not None:
+        # §5: publish the resolution the timings were measured at, so nothing
+        # above implies precision the tach cannot support.
+        rows.append(SummaryRow("Measurement resolution", f"{summary.measurement_resolution_ms} ms"))
+    if stats:
+        rows.append(SummaryRow("Samples", str(sum(st.samples for st in stats))))
+        means = [st.mean_rpm for st in stats if st.mean_rpm is not None]
+        if means:
+            # Both ends, stated plainly. It was "Mean RPM (worst step)" showing
+            # `min(means)` — but a low mean at a low duty is the expected
+            # reading, not the worst one, so the label misdescribed the number.
+            rows.append(
+                SummaryRow(
+                    "Mean RPM across steps",
+                    f"{_fmt_float(min(means))} - {_fmt_float(max(means))}",
+                )
+            )
+        devs = [st.stddev_rpm for st in stats if st.stddev_rpm is not None]
+        if devs:
+            rows.append(SummaryRow("Std deviation (worst step)", _fmt_float(max(devs))))
+    if summary is not None:
+        if summary.worst_cv_pct is not None:
+            rows.append(
+                SummaryRow("Coefficient of variation", _fmt_float(summary.worst_cv_pct, "%"))
+            )
+        # Absent is not zero: a daemon that measured nothing must not report "0
+        # dropouts", which reads as a clean tach.
+        if stats:
+            rows.append(SummaryRow("Tach dropouts", str(summary.total_dropouts)))
+            rows.append(SummaryRow("Outliers", str(summary.total_outliers)))
+        if summary.typical_response_ms is not None:
+            rows.append(
+                SummaryRow("Response latency (median)", f"{summary.typical_response_ms} ms")
+            )
+        if summary.typical_settling_ms is not None:
+            rows.append(SummaryRow("Settling time (median)", f"{summary.typical_settling_ms} ms"))
+        if summary.hysteresis_compared_points:
+            rows.append(
+                SummaryRow("Hysteresis comparisons", f"{summary.hysteresis_compared_points} duties")
+            )
+        for span in summary.plateaus:
+            rows.append(
+                SummaryRow(
+                    "Plateau",
+                    f"{span.from_pct}-{span.to_pct}% at {span.rpm_min}-{span.rpm_max} RPM",
+                )
+            )
+    rows.append(
+        SummaryRow(
+            "Settling criterion",
+            "within a fixed band of the rolling median for several consecutive samples",
+        )
+    )
+    return rows
+
+
+def _build_provenance_rows(run: CharacterizationRun) -> list[ProvenanceRow]:
+    """§8.6. Reported and estimated RPM, each labelled with how it was obtained.
+
+    The estimate is shown **only when the daemon sent one**. There is no shipped
+    device policy with a correction factor, so on every machine today this is one
+    row saying the reported figure is OBSERVED — which is the honest answer, and
+    the reason §7's ``physical_rpm`` stays on the UNVERIFIABLE list.
+    """
+    from control_ofc.services import provenance as prov
+
+    last = next((p for p in reversed(run.points) if p.rpm_after is not None), None)
+    if last is None:
+        return []
+    rows = [
+        ProvenanceRow(
+            label="Reported RPM",
+            value=str(last.rpm_after),
+            provenance=run.provenance.get("rpm_after") or prov.classify("rpm_after"),
+        )
+    ]
+    est = last.estimated_physical_rpm
+    if est is not None:
+        envelope = prov.from_envelope({"value": est.value, "provenance": est.provenance})
+        rows.append(
+            ProvenanceRow(
+                label="Estimated physical RPM",
+                value=str(est.value),
+                provenance=envelope.provenance if envelope else est.provenance,
+            )
+        )
+        if est.correction_source:
+            rows.append(
+                ProvenanceRow(
+                    label="Correction",
+                    value=f"x{est.correction_factor:.3f} ({est.correction_source})",
+                    provenance=run.provenance.get("correction_source")
+                    or prov.classify("correction_source"),
+                )
+            )
+    return rows
 
 
 def build_characterization_view(
@@ -381,6 +730,23 @@ def build_characterization_view(
                 "requested duty, which suggests the hardware pins PWM there."
             )
 
+    # §8.5. Command AND readback valid, but RPM outside the learned range —
+    # exactly the three conditions the spec names, and no more. Checking only
+    # `outside_learned_range` would fire on a run whose write never landed, where
+    # the honest finding is the failed write, not the device's behaviour.
+    override_warning = ""
+    if (
+        summary is not None
+        and summary.outside_learned_range
+        and summary.command_acceptance == "pass"
+        and summary.pwm_readback == "pass"
+    ):
+        override_warning = OUTSIDE_LEARNED_RANGE_WARNING
+        if summary.interpretation_states:
+            override_warning += " Possible explanations: " + ", ".join(
+                _humanise_token(t) for t in summary.interpretation_states
+            )
+
     note = restore_note(run)
     if note:
         notes.append(note)
@@ -396,7 +762,13 @@ def build_characterization_view(
         observed_range=observed_range,
         notes=notes,
         response_latency=_typical_seconds(p.first_change_ms for p in run.points),
-        settling_time=_typical_seconds(p.settle_ms for p in run.points),
+        settling_time=_typical_seconds(_settling_ms(p) for p in run.points),
+        bidirectional=any(p.direction == "falling" for p in run.points),
+        summary_rows=_build_summary_rows(run),
+        detail_rows=_build_detail_rows(run),
+        curve=_build_curve(run),
+        override_warning=override_warning,
+        provenance_rows=_build_provenance_rows(run),
     )
 
 

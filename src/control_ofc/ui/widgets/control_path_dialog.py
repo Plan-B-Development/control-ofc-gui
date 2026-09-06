@@ -69,6 +69,8 @@ class ControlPathDiscoveryDialog(ModalDialog):
         self._header_label = header_label
         self._is_pump = is_pump
         self._started = False
+        # P8-e, see `_on_poll_tick`.
+        self._poll_in_flight = False
         self._preflight = build_preflight_view(None)
 
         body = self.body_layout()
@@ -170,7 +172,7 @@ class ControlPathDiscoveryDialog(ModalDialog):
 
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_INTERVAL_MS)
-        self._timer.timeout.connect(self.poll_requested.emit)
+        self._timer.timeout.connect(self._on_poll_tick)
 
         self._render_preflight()
 
@@ -195,6 +197,7 @@ class ControlPathDiscoveryDialog(ModalDialog):
     @Slot()
     def _on_start(self) -> None:
         self._started = True
+        self._poll_in_flight = False
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._status_lbl.setText("Starting…")
@@ -301,9 +304,28 @@ class ControlPathDiscoveryDialog(ModalDialog):
         theirs = getattr(run, "header_id", "") or ""
         return not theirs or theirs == self._header_id
 
+    @Slot()
+    def _on_poll_tick(self) -> None:
+        """P8-e: one poll in flight at a time.
+
+        The timer fires on a fixed 1 Hz cadence whether or not the previous reply
+        has arrived. Without this guard a slow socket queues polls without bound
+        and every queued reply then renders in turn. The flag is cleared by
+        whichever of `apply_run` or `apply_error` answers, so a dropped reply
+        cannot wedge polling: the worker answers on both paths.
+
+        Fixed in BOTH diagnostic dialogs in one change, as the register row
+        requires — the characterisation dialog carries the identical guard.
+        """
+        if self._poll_in_flight:
+            return
+        self._poll_in_flight = True
+        self.poll_requested.emit()
+
     @Slot(object)
     def apply_run(self, status) -> None:
         """Render a status snapshot. Safe to call with ``None``."""
+        self._poll_in_flight = False
         run = getattr(status, "run", None) if status is not None else None
         if run is not None and not self._is_ours(run):
             return
@@ -330,6 +352,7 @@ class ControlPathDiscoveryDialog(ModalDialog):
 
     @Slot(str, str)
     def apply_error(self, category: str, message: str) -> None:
+        self._poll_in_flight = False
         self._timer.stop()
         self._cancel_btn.setEnabled(False)
         self._start_btn.setEnabled(True)

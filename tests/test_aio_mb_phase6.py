@@ -1136,7 +1136,7 @@ class TestCharacterizationCallSite:
         page._char_poll_request.connect(lambda: seen.append("poll"))
         page._char_cancel_request.connect(lambda: seen.append("cancel"))
 
-        dialog.start_requested.emit(_pump_header().id, None, None)
+        dialog.start_requested.emit(_pump_header().id, None, None, None, None)
         dialog.poll_requested.emit()
         dialog.cancel_requested.emit()
         assert seen == ["start", "poll", "cancel"]
@@ -1849,7 +1849,7 @@ class TestWorkerRequestSignalsReachTheirWorker:
             dialog._started = True
             page._char_dialog = dialog
 
-            page._char_start_request.emit(_pump_header().id, None, None)
+            page._char_start_request.emit(_pump_header().id, None, None, None, None)
             qtbot.waitUntil(lambda: any(c[0] == "start" for c in calls), timeout=3000)
             assert calls[0][1] == _pump_header().id
 

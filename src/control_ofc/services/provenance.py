@@ -115,6 +115,32 @@ _FIXED: dict[str, str] = {
     "possible_device_override": PROVENANCE_DERIVED,
     "first_change_ms": PROVENANCE_DERIVED,
     "rpm_response": PROVENANCE_DERIVED,
+    # AIO Phase 8 Batch 2 (DEC-334). The daemon also publishes a per-result
+    # `provenance` sidecar, which WINS over this table when present — this stays
+    # as the fallback for an older daemon and for fields the sidecar omits.
+    "settled_ms": PROVENANCE_DERIVED,
+    "mean_rpm": PROVENANCE_DERIVED,
+    "stddev_rpm": PROVENANCE_DERIVED,
+    "cv_pct": PROVENANCE_DERIVED,
+    "dropouts": PROVENANCE_DERIVED,
+    "outliers": PROVENANCE_DERIVED,
+    "hysteresis_pct": PROVENANCE_DERIVED,
+    "hysteresis_verdict": PROVENANCE_DERIVED,
+    "min_responsive_pct": PROVENANCE_DERIVED,
+    "max_responsive_pct": PROVENANCE_DERIVED,
+    "low_plateau_to_pct": PROVENANCE_DERIVED,
+    "saturation_from_pct": PROVENANCE_DERIVED,
+    "plateaus": PROVENANCE_DERIVED,
+    "stability_verdict": PROVENANCE_DERIVED,
+    "worst_cv_pct": PROVENANCE_DERIVED,
+    "typical_response_ms": PROVENANCE_DERIVED,
+    "typical_settling_ms": PROVENANCE_DERIVED,
+    "outside_learned_range": PROVENANCE_DERIVED,
+    "interpretation_states": PROVENANCE_DERIVED,
+    # §7. The corrected figure is DERIVED; the factor behind it is trusted,
+    # compiled-in device metadata. Keeping them apart is the point: one is
+    # arithmetic, the other is a claim about a specific product.
+    "estimated_physical_rpm": PROVENANCE_DERIVED,
     # User metadata — typed in, never measured, and read by nothing.
     "user_metadata": PROVENANCE_USER_METADATA,
     "external_measurements": PROVENANCE_USER_METADATA,
@@ -123,6 +149,11 @@ _FIXED: dict[str, str] = {
     "device_policy": PROVENANCE_DEVICE_METADATA,
     "effective_min_pwm_pct": PROVENANCE_DEVICE_METADATA,
     "stop_permitted": PROVENANCE_DEVICE_METADATA,
+    "rpm_correction_factor": PROVENANCE_DEVICE_METADATA,
+    "correction_factor": PROVENANCE_DEVICE_METADATA,
+    "correction_source": PROVENANCE_DEVICE_METADATA,
+    "expected_rpm_min": PROVENANCE_DEVICE_METADATA,
+    "expected_rpm_max": PROVENANCE_DEVICE_METADATA,
 }
 
 #: Properties software cannot establish from motherboard hwmon at all.

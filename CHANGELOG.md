@@ -1,5 +1,59 @@
 # Changelog
 
+## [2.63.0] — 2026-09-06
+
+**AIO Phase 8 Batch 2 (DEC-334): PWM behaviour characterisation.** Pairs with
+`control-ofc-daemon` >= v2.40.0. Additive and capability-gated on the new
+`control.pwm_behaviour_characterization` flag — against an older daemon the
+Characterise dialog behaves exactly as it did, because the two new request
+fields are simply not sent.
+
+### Added
+- **The Characterise dialog now walks the header in both directions**, so it can
+  report hysteresis — how far the fan's response differs going down versus going
+  up. The walk descends from the top and climbs back, so it *ends* at the
+  highest duty; an interrupted run therefore leaves the header running fast
+  rather than slow.
+- **A response curve.** Rising and falling series plotted together, with flat
+  regions and the saturation point marked. Hidden entirely when the header has
+  no readable tachometer, rather than drawing empty axes.
+- **A compact result summary** — safe tested range, effective control range,
+  reported RPM range, hysteresis, RPM stability, response and settling time —
+  with the engineering detail (sample interval, measurement resolution, sample
+  count, standard deviation, coefficient of variation, dropouts, outliers,
+  plateaus) in a collapsible section beneath it.
+- **RPM stability per step.** Where the daemon held a duty long enough, each row
+  reports how steady the tachometer was. "Variable" and "unstable" are
+  observations, never faults: tach variability alone does not evidence a
+  failing pump.
+- **A safety preflight on the Characterise dialog**, matching the one
+  Control-Path Discovery has had since Batch 1. The daemon's own checks are the
+  dialog's first screen, and a blocked verdict disables Start with the reason.
+- **Reported versus estimated physical RPM.** Where a validated cooler
+  definition supplies a tachometer correction, both figures are shown with the
+  correction's source. No shipped definition sets one, so today every machine
+  reports RPM as observed and nothing is estimated — which is the honest answer.
+- **"PWM behaviour characterisation" as a validation-session diagnostic.**
+  Offered only when the daemon supports it. Selecting it alongside the basic
+  characterisation runs only the richer one; the daemon treats it as a superset,
+  so no header is swept twice.
+
+### Changed
+- The points table gained **Direction** and **Stability** columns. Direction is
+  necessary rather than decorative: a two-direction sweep measures most duties
+  twice, and without it the table showed two contradictory rows for one duty.
+- An out-of-range response is worded cautiously and lists the benign
+  explanations — an internal controller, a clamp, startup behaviour, thermal
+  protection, or different tachometer scaling. It is never shown as a hardware
+  failure.
+
+### Fixed
+- **Both diagnostic dialogs no longer queue polls behind an unanswered one.**
+  The 1 Hz timer fired regardless of whether the previous reply had arrived, so
+  a slow socket built an unbounded backlog and then replayed it. (`P8-e`)
+- Validation exports now carry provenance rows for **characterisation**
+  evidence, not only control-path evidence. (`P8-d`)
+
 ## [2.62.0] — 2026-09-06
 
 **AIO Phase 8 Batch 1 (DEC-333): safety preflight, control-path discovery and

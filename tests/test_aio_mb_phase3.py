@@ -355,7 +355,14 @@ class TestDialog:
                 },
             )
         )
-        pills = dlg.findChildren(StatusPill)
+        # Scoped to the VERDICT pills by objectName. Counting every StatusPill in
+        # the dialog made this a running total of unrelated UI: DEC-334's §8.6
+        # provenance pill broke it while changing nothing about the verdicts.
+        pills = [
+            p
+            for p in dlg.findChildren(StatusPill)
+            if p.objectName().startswith("Char_Pill_verdict")
+        ]
         assert len(pills) == 3
         for pill in pills:
             assert pill.accessibleName(), "a glyph-free pill still needs a name (DEC-251)"
@@ -711,7 +718,7 @@ class TestSystemStatePageCharacterizationCallSite:
         page._char_poll_request.connect(lambda: polled.append(1))
         page._char_cancel_request.connect(lambda: cancelled.append(1))
 
-        dialog.start_requested.emit(_header().id, None, None)
+        dialog.start_requested.emit(_header().id, None, None, None, None)
         dialog.poll_requested.emit()
         dialog.cancel_requested.emit()
 

@@ -100,7 +100,9 @@ class SystemStatePage(QWidget):
     _hw_diag_request = Signal()
     _rescan_request = Signal()  # DEC-216: footer Rescan Hardware (relocated from Diagnostics)
     # AIO-MB Phase 3 — the deeper PWM/RPM sweep.
-    _char_start_request = Signal(str, object, object)
+    _char_start_request = Signal(str, object, object, object, object)
+    #: AIO Phase 8 Batch 1 §6.1, wired by DEC-334 (header_id, diagnostic).
+    _char_preflight_request = Signal(str, str)
     _char_poll_request = Signal()
     _char_cancel_request = Signal()
 
@@ -655,8 +657,15 @@ class SystemStatePage(QWidget):
             self._char_start_request.connect(w.do_start, Qt.ConnectionType.QueuedConnection)
             self._char_poll_request.connect(w.do_poll, Qt.ConnectionType.QueuedConnection)
             self._char_cancel_request.connect(w.do_cancel, Qt.ConnectionType.QueuedConnection)
+            self._char_preflight_request.connect(w.do_preflight, Qt.ConnectionType.QueuedConnection)
             w.run_updated.connect(self._on_char_update, Qt.ConnectionType.QueuedConnection)
             w.run_error.connect(self._on_char_error, Qt.ConnectionType.QueuedConnection)
+            w.preflight_ready.connect(
+                self._on_char_preflight_ready, Qt.ConnectionType.QueuedConnection
+            )
+            w.preflight_error.connect(
+                self._on_char_preflight_error, Qt.ConnectionType.QueuedConnection
+            )
 
         self._char_worker, self._char_thread, ok = self._ensure_worker(
             self._char_worker, self._char_thread, _CharacterizationWorker, connect
@@ -681,17 +690,35 @@ class SystemStatePage(QWidget):
             label,
             is_pump=header_is_pump_protected(header, getattr(self._state, "capabilities", None)),
             header=header,
+            capabilities=getattr(self._state, "capabilities", None),
             parent=self,
         )
         dialog.start_requested.connect(self._char_start_request.emit)
         dialog.poll_requested.connect(self._char_poll_request.emit)
         dialog.cancel_requested.connect(self._char_cancel_request.emit)
+        dialog.preflight_requested.connect(self._char_preflight_request.emit)
         self._char_dialog = dialog
+        # BEFORE `exec()`, so the daemon's safety statement is the first thing
+        # rendered rather than something that arrives after the user has reached
+        # for Start (Batch 1 §6.1).
+        dialog.request_preflight()
         try:
             dialog.exec()
         finally:
             dialog.stop_polling()
             self._char_dialog = None
+
+    @Slot(object)
+    def _on_char_preflight_ready(self, report: object) -> None:
+        if self._char_dialog is not None:
+            self._char_dialog.apply_preflight(report)
+
+    @Slot(str, str)
+    def _on_char_preflight_error(self, category: str, message: str) -> None:
+        # Advisory only, never `apply_error`: a missing safety advisory must not
+        # disable Start for a run the daemon would accept.
+        if self._char_dialog is not None:
+            self._char_dialog.apply_preflight_error(category, message)
 
     @Slot(object)
     def _on_char_update(self, run: object) -> None:

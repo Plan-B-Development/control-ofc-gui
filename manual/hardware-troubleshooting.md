@@ -95,6 +95,45 @@ If you have just powered the machine on, give the pump a minute and run it again
 - The header's original speed is restored on every exit path on which nothing else owns the fan: finishing, cancelling, a failed write, interference, or a thermal stop. **This happens in the daemon**, so closing the window — or the GUI crashing — does not leave a fan stuck at a test speed.
 - The two exceptions are both deliberate, and both leave the fan running *faster* rather than slower: if thermal protection kicks in it keeps the fan high and the original speed is not put back until it releases, and if the daemon is shutting down the header is handed to the motherboard instead. The result tells you which happened, so the window never claims a speed was restored when it was not.
 
+### Behaviour characterisation (daemon 2.40.0+)
+
+On a current daemon the sweep does more than walk upward once.
+
+It now runs the header **down from its top duty and back up again**, which is what lets it
+report *hysteresis* — whether the fan settles at a different speed approaching a duty from
+above than from below. Some hysteresis is completely normal, and the report says so: a
+built-in controller, a firmware clamp, temperature-dependent behaviour and tach scaling are
+all ordinary explanations. It is not a fault reading.
+
+The dialog also now opens on the **safety preflight** — the same checklist Discover Control
+Path shows — so you can see the daemon's own verdict before anything moves. If it says
+*blocked*, Start is disabled and the reason is on screen.
+
+What you get back:
+
+- a **compact summary** — safe tested range, effective control range (where PWM actually
+  changes speed), reported RPM range, hysteresis, RPM stability, response time and settling
+  time;
+- a **response curve** with the two directions plotted together, flat regions shaded and the
+  saturation point marked;
+- an expandable block with the engineering detail — sample interval, measurement resolution,
+  standard deviation, coefficient of variation, tach dropouts and outliers.
+
+Two things worth knowing about how it words results:
+
+- **Timings are reported at the resolution they were measured at.** The daemon reads the
+  tachometer twice a second, so it says "~1.5 s", never "1,483 ms". A more precise-looking
+  number would be invented.
+- **Reported RPM is what the motherboard says, not necessarily what the pump is doing.**
+  Where a validated cooler definition supplies a correction, both figures are shown with the
+  source of the correction. No cooler ships with one yet, so today you will always see the
+  reported figure labelled as observed — which is the honest answer.
+
+If a reading falls outside what previous runs established for that header, you will see a
+cautious note rather than an error. It lists the likely explanations — internal control, a
+clamp, startup behaviour, thermal protection, or different tach scaling — because an
+unexpected speed is not, on its own, evidence of a failing pump.
+
 ## Discover Control Path
 
 The other two tests both start from an assumption: that `pwm5` controls the fan reported on `fan5_input`. That is a naming convention, not a measurement, and on real boards it is often wrong — a splitter puts two fans on one tachometer, a Y-cable puts a fan's tachometer on a channel with no PWM at all, and some vendors simply do not line the numbers up.

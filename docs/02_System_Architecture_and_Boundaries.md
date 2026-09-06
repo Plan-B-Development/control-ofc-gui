@@ -140,7 +140,11 @@ control_ofc/
                                #   counts, histogram buckets, correlation)
     dashboard_view.py          # Dashboard page VM — DEC-219 (Phase 7.2)
     controls_view.py           # Controls page VM — DEC-214, grown DEC-219 (Phase 7.3)
-    characterization_view.py   # PWM/RPM characterisation dialog VM — DEC-313/315
+    characterization_view.py   # PWM/RPM characterisation dialog VM — DEC-313/315/334.
+                               # Since DEC-334 also owns the §8.2 summary block, the
+                               # §8.3 curve series (split by the daemon's own leg
+                               # label, never by arrival order), the §8.4 detail rows
+                               # and the §8.6 provenance rows
     control_path_view.py       # PWM-to-tach control-path discovery VM — DEC-333
                                #   (AIO Phase 8 Batch 1). Renders what the daemon
                                #   measured; derives no relationship or confidence.
@@ -257,6 +261,10 @@ control_ofc/
       inventory_readiness_view.py  # shared hwmon-readiness severity helpers only — view class removed (DEC-200/216)
       theme_editor.py
       aio_config_dialog.py
+      pwm_response_chart.py    # DEC-334 §8.3. pyqtgraph rising/falling series with
+                               # plateau and saturation markers. Thin renderer over
+                               # ResponseCurve; draws nothing when there is nothing to
+                               # draw, because empty axes read as a measured zero
       control_path_dialog.py   # "Discover Control Path" — DEC-333. First state is the
                                #   safety preflight; a blocked verdict disables Start.
       collapsible_section.py

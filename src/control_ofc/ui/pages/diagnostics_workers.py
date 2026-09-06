@@ -441,6 +441,50 @@ class _HardwareReadinessWorker(_SocketWorker):
             self.probe_error.emit("unavailable", "Connection lost during Super-I/O port probe")
 
 
+def _fetch_preflight(worker, header_id: str, diagnostic: str) -> None:
+    """Fetch a safety preflight on behalf of ``worker`` and emit its result.
+
+    Extracted (DEC-276) rather than copied: DEC-334 gave the characterisation
+    dialog a preflight too, and a rule that lives inside one consumer is a rule
+    the other consumer cannot follow. Both now share this one, including the part
+    that is easy to get wrong.
+
+    **Failure is reported on ``preflight_error``, never ``run_error``.** The
+    preflight is advisory: an older daemon has no such route, and the diagnostic
+    itself still runs every guard the preflight merely reports. A dialog that
+    treated a missing advisory as a run failure would refuse to offer a
+    diagnostic the daemon would happily have performed.
+    """
+    from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+    try:
+        worker.preflight_ready.emit(
+            worker._ensure_client().diagnostic_preflight(header_id, diagnostic)
+        )
+    except DaemonTimeout:
+        worker.preflight_error.emit(
+            "unavailable", "The daemon did not answer the safety preflight in time."
+        )
+    except DaemonUnavailable:
+        worker.preflight_error.emit("unavailable", "Daemon unavailable — safety checks unknown.")
+    except DaemonError as e:
+        # 404 is an older daemon that has no preflight route. Not an error to the
+        # user: the diagnostic itself still runs its own guards.
+        if e.status == 404:
+            worker.preflight_error.emit(
+                "unavailable", unsupported_feature_message("diagnostic_preflight")
+            )
+        else:
+            worker.preflight_error.emit("error", e.message)
+    except (ConnectionError, OSError) as e:
+        log.warning("Safety preflight connection error: %s", e)
+        with contextlib.suppress(Exception):
+            if worker._client is not None:
+                worker._client.close()
+        worker._client = None
+        worker.preflight_error.emit("unavailable", "Connection lost fetching safety checks.")
+
+
 class _CharacterizationWorker(_SocketWorker):
     """Runs the PWM/RPM characterisation calls off the UI thread (AIO-MB Phase 3).
 
@@ -453,6 +497,10 @@ class _CharacterizationWorker(_SocketWorker):
 
     run_updated = Signal(object)  # CharacterizationRun | None
     run_error = Signal(str, str)  # category ('unavailable'|'error'), message
+    # AIO Phase 8 Batch 1 §6.1, wired by DEC-334. Served by THIS worker rather
+    # than a separate thread: it is a short read-only GET on the same socket.
+    preflight_ready = Signal(object)  # PreflightReport
+    preflight_error = Signal(str, str)
 
     def _guard(self, call, what: str) -> None:
         from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
@@ -484,13 +532,28 @@ class _CharacterizationWorker(_SocketWorker):
             self._client = None
             self.run_error.emit("unavailable", f"Connection lost during {what}")
 
-    @Slot(str, object, object)
-    def do_start(self, header_id: str, points: object, settle: object) -> None:
+    @Slot(str, str)
+    def do_preflight(self, header_id: str, diagnostic: str) -> None:
+        _fetch_preflight(self, header_id, diagnostic)
+
+    @Slot(str, object, object, object, object)
+    def do_start(
+        self,
+        header_id: str,
+        points: object,
+        settle: object,
+        bidirectional: object = None,
+        stability: object = None,
+    ) -> None:
         self._guard(
             lambda: self._ensure_client().start_characterization(
                 header_id,
                 points_pct=points if isinstance(points, list) else None,
                 settle_seconds=settle if isinstance(settle, int) else None,
+                # `None` stays `None`: it means "the daemon decides", and an
+                # older daemon must receive the request it has always received.
+                bidirectional=bidirectional if isinstance(bidirectional, bool) else None,
+                stability_seconds=stability if isinstance(stability, int) else None,
             ),
             "characterisation start",
         )
@@ -555,42 +618,7 @@ class _ControlPathWorker(_SocketWorker):
 
     @Slot(str, str)
     def do_preflight(self, header_id: str, diagnostic: str) -> None:
-        """Fetch the safety preflight.
-
-        Failure is reported on its OWN signal, never on ``run_error``: the
-        preflight is advisory, and a dialog that treated a missing advisory as a
-        run failure would refuse to offer a diagnostic the daemon would happily
-        have performed.
-        """
-        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
-
-        try:
-            self.preflight_ready.emit(
-                self._ensure_client().diagnostic_preflight(header_id, diagnostic)
-            )
-        except DaemonTimeout:
-            self.preflight_error.emit(
-                "unavailable", "The daemon did not answer the safety preflight in time."
-            )
-        except DaemonUnavailable:
-            self.preflight_error.emit("unavailable", "Daemon unavailable — safety checks unknown.")
-        except DaemonError as e:
-            # 404 is an older daemon that has no preflight route. Not an error to
-            # the user: the diagnostic itself still runs its own guards.
-            if e.status == 404:
-                self.preflight_error.emit(
-                    "unavailable",
-                    unsupported_feature_message("diagnostic_preflight"),
-                )
-            else:
-                self.preflight_error.emit("error", e.message)
-        except (ConnectionError, OSError) as e:
-            log.warning("Control-path preflight connection error: %s", e)
-            with contextlib.suppress(Exception):
-                if self._client is not None:
-                    self._client.close()
-            self._client = None
-            self.preflight_error.emit("unavailable", "Connection lost fetching safety checks.")
+        _fetch_preflight(self, header_id, diagnostic)
 
     @Slot(str)
     def do_start(self, header_id: str) -> None:

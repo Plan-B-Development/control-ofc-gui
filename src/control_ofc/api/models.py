@@ -224,6 +224,17 @@ class ControlCapability:
     # the handler), and keying feature detection on that is exactly the
     # undocumented coupling the capability exists to replace.
     pwm_characterization: bool = False
+    #: Daemon understands the AIO Phase 8 Batch 2 behaviour inputs
+    #: (``bidirectional``, ``stability_seconds``), publishes the §2-§7
+    #: derivations, and accepts the ``pwm_behaviour_characterization`` session
+    #: diagnostic. True from daemon >= 2.40.0 (DEC-334).
+    #:
+    #: **Gate on this, never on ``pwm_characterization``.** An older daemon
+    #: ignores the two new request fields rather than rejecting them, so an
+    #: ungated client would silently get a plain ascending sweep and render
+    #: empty hysteresis and stability panels as though the hardware had
+    #: produced them.
+    pwm_behaviour_characterization: bool = False
     # DEC-316 (AIO-MB Phase 4, daemon >= 2.31.0): the daemon exposes
     # `GET /inventory/cooling-devices`, `POST /config/cooling-device` and
     # `DELETE /config/cooling-device/{id}`. Gates those ENDPOINTS only — the
@@ -2538,6 +2549,73 @@ def parse_hardware_readiness(data: dict) -> HardwareReadiness:
 
 
 @dataclass
+class PointStability:
+    """§4 statistics over the tach samples retained during one step's hold.
+
+    Absent on a point that retained nothing at all — a failed write, or an abort
+    before the hold opened. ``verdict`` is an **opaque token**
+    (``stable`` | ``variable`` | ``unstable`` | ``insufficient_data`` |
+    ``unavailable``); render an unrecognised one rather than dropping it (273-i).
+
+    ``dropouts`` counts an unreadable reading, or a ``0`` recorded while the
+    window proved the fan was turning. A steadily stopped fan reports **no**
+    dropouts — the daemon distinguishes the two, and the GUI must not
+    re-derive the count from ``min_rpm == 0``.
+    """
+
+    samples: int = 0
+    usable: int = 0
+    dropouts: int = 0
+    outliers: int = 0
+    mean_rpm: float | None = None
+    median_rpm: int | None = None
+    min_rpm: int | None = None
+    max_rpm: int | None = None
+    stddev_rpm: float | None = None
+    #: ``None`` when the mean is zero; a stopped fan has no relative spread.
+    cv_pct: float | None = None
+    verdict: str = ""
+    #: The cadence these readings were actually taken at. §5 forbids implying
+    #: resolution the data does not have, so render timings against this.
+    sample_interval_ms: int = 0
+    dwell_ms: int = 0
+
+
+@dataclass
+class EstimatedRpm:
+    """§7 corrected physical RPM, carried with its provenance.
+
+    The wire's first ``{value, provenance}`` envelope, and the reason
+    :func:`control_ofc.services.provenance.from_envelope` exists. Present only
+    where **trusted compiled-in device metadata** supplies a factor, which no
+    shipped daemon entry does — so this is ``None`` on every machine today and
+    the UI shows RPM as UNVERIFIED.
+
+    ``rpm_after`` remains the raw reported figure and is never overwritten by
+    this (§9: do not overwrite raw evidence with derived values).
+    """
+
+    value: int = 0
+    provenance: str = ""
+    correction_factor: float = 0.0
+    correction_source: str = ""
+
+
+@dataclass
+class PlateauSpan:
+    """A duty span over which reported RPM did not meaningfully change.
+
+    **Not a fault.** §3 is explicit that a plateau must not be reinterpreted as
+    pump failure, and §8.5 forbids a generic red "hardware failed" for it.
+    """
+
+    from_pct: int = 0
+    to_pct: int = 0
+    rpm_min: int = 0
+    rpm_max: int = 0
+
+
+@dataclass
 class CharPoint:
     """One measured point of a PWM/RPM characterisation sweep (AIO-MB Phase 3).
 
@@ -2565,6 +2643,24 @@ class CharPoint:
     readback_verdict: str = ""
     rpm_verdict: str = ""
 
+    # ── AIO Phase 8 Batch 2 (DEC-334), daemon >= 2.40.0 ──────────────
+    #: Which leg of the walk this step belongs to: ``ramp`` | ``falling`` |
+    #: ``rising``. ``ramp`` is the first step in either mode — the only one
+    #: whose approach direction is unknown, because it is entered from the
+    #: captured pre-sweep duty. A hysteresis comparison must exclude it.
+    #: Empty from a daemon that predates the field.
+    direction: str = ""
+    #: 0-based position in the walked plan. A bidirectional walk visits some
+    #: duties twice, so ``requested_pct`` alone does not order the points.
+    step_index: int = 0
+    #: §5. When reported RPM entered its settled band, measured from the write.
+    #: ``None`` means it never settled within the hold — **not** that it settled
+    #: instantly, the same distinction ``first_change_ms`` carries.
+    settled_ms: int | None = None
+    stability: PointStability | None = None
+    #: §7. Present only where trusted device metadata supplies a correction.
+    estimated_physical_rpm: EstimatedRpm | None = None
+
 
 @dataclass
 class CharSummary:
@@ -2588,6 +2684,47 @@ class CharSummary:
     clamp_pct: int | None = None
     possible_device_override: bool = False
     interference_detected: bool = False
+
+    # ── AIO Phase 8 Batch 2 (DEC-334), daemon >= 2.40.0 ──────────────
+    #: §2. Largest rising/falling gap as a percentage of the observed RPM span.
+    hysteresis_pct: float | None = None
+    #: ``none`` | ``present`` | ``insufficient_data`` | ``not_tested``.
+    #: **Never a fault verdict** — §2 lists six legitimate explanations,
+    #: starting with an internal device controller. Opaque token (273-i).
+    hysteresis_verdict: str = ""
+    hysteresis_worst_duty_pct: int | None = None
+    hysteresis_worst_delta_rpm: int | None = None
+    #: How many duties carried readings in **both** directions.
+    hysteresis_compared_points: int = 0
+
+    #: §3. Where PWM changes actually move reported RPM.
+    min_responsive_pct: int | None = None
+    max_responsive_pct: int | None = None
+    low_plateau_to_pct: int | None = None
+    saturation_from_pct: int | None = None
+    plateaus: list[PlateauSpan] = field(default_factory=list)
+
+    #: §4. The **worst** per-point classification, not an average: one unstable
+    #: duty is the finding, and averaging would bury it. Opaque token.
+    stability_verdict: str = ""
+    worst_cv_pct: float | None = None
+    total_dropouts: int = 0
+    total_outliers: int = 0
+
+    #: §5. The cadence the timings were measured at. Render the timings against
+    #: **this**; never assume milliseconds.
+    measurement_resolution_ms: int | None = None
+    typical_response_ms: int | None = None
+    typical_settling_ms: int | None = None
+
+    #: §6. ``True`` outside the learned band, ``False`` inside it, ``None`` when
+    #: nothing has been learned for this header yet. **Three states on purpose:**
+    #: "no model" must not read as "passed".
+    outside_learned_range: bool | None = None
+    learned_range_note: str | None = None
+    #: §6 interpretation states, e.g. ``DEVICE_OVERRIDE_POSSIBLE``.
+    #: **Possibilities, never conclusions.**
+    interpretation_states: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -2622,22 +2759,66 @@ class CharacterizationRun:
     restore_outcome: str = ""
     detail: str | None = None
 
+    # ── AIO Phase 8 Batch 2 (DEC-334), daemon >= 2.40.0 ──────────────
+    #: Whether this run walked both directions. ``False`` from an older daemon.
+    bidirectional: bool = False
+    #: The clamped dwell actually used; ``0`` when none was requested.
+    stability_seconds: int = 0
+    completed_unix_ms: int | None = None
+    #: §9 provenance legend: field name -> classification token. A sidecar, so
+    #: the export needs no per-field wrapping. Empty from an older daemon, in
+    #: which case :mod:`control_ofc.services.provenance`'s static table applies.
+    provenance: dict[str, str] = field(default_factory=dict)
+
     @property
     def is_running(self) -> bool:
         return self.state == "running"
 
 
+def _parse_char_point(raw: dict) -> CharPoint:
+    """One point, with its DEC-334 nested blocks.
+
+    ``stability`` and ``estimated_physical_rpm`` are parsed **only when the
+    daemon sent an object**. Absent stays ``None`` rather than becoming an empty
+    record — a zeroed ``PointStability`` would render as "0 samples, 0 dropouts,
+    stable", which is a claim about hardware from a daemon that said nothing.
+    """
+    point = CharPoint(**_filter_fields(CharPoint, raw))
+    raw_stab = raw.get("stability")
+    point.stability = (
+        PointStability(**_filter_fields(PointStability, raw_stab))
+        if isinstance(raw_stab, dict)
+        else None
+    )
+    raw_est = raw.get("estimated_physical_rpm")
+    point.estimated_physical_rpm = (
+        EstimatedRpm(**_filter_fields(EstimatedRpm, raw_est)) if isinstance(raw_est, dict) else None
+    )
+    return point
+
+
+def _parse_char_summary(raw: dict) -> CharSummary:
+    summary = CharSummary(**_filter_fields(CharSummary, raw))
+    summary.plateaus = [
+        PlateauSpan(**_filter_fields(PlateauSpan, pl))
+        for pl in (raw.get("plateaus") or [])
+        if isinstance(pl, dict)
+    ]
+    summary.interpretation_states = [
+        str(t) for t in (raw.get("interpretation_states") or []) if isinstance(t, str)
+    ]
+    return summary
+
+
 def parse_characterization_run(data: dict) -> CharacterizationRun:
     """Parse a characterisation run, tolerating unknown tokens and new fields."""
     raw_points = data.get("points") or []
-    points = [CharPoint(**_filter_fields(CharPoint, p)) for p in raw_points if isinstance(p, dict)]
+    points = [_parse_char_point(p) for p in raw_points if isinstance(p, dict)]
     raw_summary = data.get("summary")
-    summary = (
-        CharSummary(**_filter_fields(CharSummary, raw_summary))
-        if isinstance(raw_summary, dict)
-        else None
-    )
+    summary = _parse_char_summary(raw_summary) if isinstance(raw_summary, dict) else None
     requested = data.get("requested_points_pct") or []
+    raw_prov = data.get("provenance")
+    provenance = {str(k): str(v) for k, v in raw_prov.items()} if isinstance(raw_prov, dict) else {}
     return CharacterizationRun(
         run_id=str(data.get("run_id", "")),
         header_id=str(data.get("header_id", "")),
@@ -2650,6 +2831,10 @@ def parse_characterization_run(data: dict) -> CharacterizationRun:
         restore_failed=bool(data.get("restore_failed", False)),
         restore_outcome=str(data.get("restore_outcome", "")),
         detail=data.get("detail"),
+        bidirectional=bool(data.get("bidirectional", False)),
+        stability_seconds=int(data.get("stability_seconds") or 0),
+        completed_unix_ms=data.get("completed_unix_ms"),
+        provenance=provenance,
     )
 
 
@@ -2672,6 +2857,11 @@ PREFLIGHT_BLOCKED = "blocked"
 DIAGNOSTIC_VERIFY = "pwm_verify"
 DIAGNOSTIC_CHARACTERIZATION = "pwm_characterization"
 DIAGNOSTIC_CONTROL_PATH = "control_path_discovery"
+#: AIO Phase 8 Batch 2 (DEC-334). The same route and run slot as
+#: ``pwm_characterization``, with the bidirectional walk and the stability dwell
+#: enabled. Requesting both in one session runs only this one — the daemon treats
+#: it as a strict superset and supersedes the basic sweep.
+DIAGNOSTIC_BEHAVIOUR = "pwm_behaviour_characterization"
 
 #: Relationship outcomes from control-path discovery.
 CONTROL_PATH_CONFIRMED = "confirmed"
@@ -3045,6 +3235,13 @@ VALIDATION_RESULT_INTERRUPTED = "interrupted"
 # Orchestratable diagnostics.
 VALIDATION_DIAG_CHARACTERIZATION = "pwm_characterization"
 VALIDATION_DIAG_CONTROL_PATH = "control_path_discovery"
+#: AIO Phase 8 Batch 2 (DEC-334). Capability-gated on
+#: ``control.pwm_behaviour_characterization``: an unknown token in
+#: ``diagnostics[]`` makes the daemon reject the WHOLE session, so offering it
+#: against an older daemon would break validation entirely rather than degrade
+#: it. Requesting it alongside ``VALIDATION_DIAG_CHARACTERIZATION`` runs only
+#: this one — the daemon supersedes the basic sweep with its superset.
+VALIDATION_DIAG_BEHAVIOUR = "pwm_behaviour_characterization"
 VALIDATION_DIAG_VERIFY = "pwm_verify"
 
 # Session kinds.

@@ -70,6 +70,17 @@ POLL_INTERVAL_MS = 1000
 _DIAGNOSTIC_CHOICES = (
     ("pwm_verify", "PWM control test (~10 s)"),
     ("pwm_characterization", "PWM response characterisation (~2-3 min)"),
+    # DEC-334. Filtered out against a daemon without the capability, like every
+    # other entry — an unknown token on the wire fails the WHOLE session, so the
+    # gate is at the checkbox rather than at submit.
+    #
+    # Requesting this AND the basic sweep runs only this one: the daemon treats
+    # it as a strict superset and supersedes the basic run, so a member is never
+    # swept twice. That is why both may be ticked without a warning here.
+    (
+        "pwm_behaviour_characterization",
+        "PWM behaviour characterisation — adds hysteresis and stability (~4-5 min)",
+    ),
     ("control_path_discovery", "Control-path discovery (~1 min)"),
 )
 

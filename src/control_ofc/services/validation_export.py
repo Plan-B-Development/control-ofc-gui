@@ -264,12 +264,26 @@ def _evidence_dict(ev: Any) -> dict[str, Any]:
     from control_ofc.services.provenance import classified_rows
 
     out = _asdict(ev)
-    summary = (out.get("control_path") or {}).get("summary") or {}
-    if summary:
-        rows = classified_rows(summary)
-        if rows:
-            out["provenance_rows"] = [
-                {"field": field, "value": value, "provenance": token}
-                for field, value, token in rows
-            ]
+    # DEC-334: characterisation evidence carries provenance too, and its own
+    # `provenance` sidecar WINS over the static table where the daemon sent one.
+    # Reading only the control-path summary was correct for Batch 1 and became a
+    # silent omission the moment a second diagnostic published derived values.
+    rows: list[tuple[str, object, str]] = []
+    for key in ("control_path", "characterization"):
+        summary = (out.get(key) or {}).get("summary") or {}
+        if summary:
+            rows.extend(classified_rows(summary))
+    sidecar = (out.get("characterization") or {}).get("provenance") or {}
+    if sidecar:
+        # The daemon's own legend replaces the static classification for any
+        # field it names — one source of truth per field, and the daemon's is
+        # the one that produced the value.
+        by_field = {field: (value, token) for field, value, token in rows}
+        for field, (value, token) in list(by_field.items()):
+            by_field[field] = (value, sidecar.get(field, token))
+        rows = [(field, value, token) for field, (value, token) in by_field.items()]
+    if rows:
+        out["provenance_rows"] = [
+            {"field": field, "value": value, "provenance": token} for field, value, token in rows
+        ]
     return out

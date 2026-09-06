@@ -602,6 +602,18 @@ top-to-bottom:
   and *PWM control test* (verify combo, Test PWM Control, Verify All Writable,
   **Characterise PWM Response** — DEC-313, the deeper PWM/RPM sweep, gated on
   `control.pwm_characterization` and hidden entirely without it,
+
+  Since **DEC-334** (daemon ≥ 2.40.0, gated on `control.pwm_behaviour_characterization`)
+  the dialog opens on the daemon's **safety preflight**, exactly as Control-Path Discovery
+  has since DEC-333, and the sweep walks the header **down from the top and back up** so it
+  can report hysteresis. It ends at the highest duty, which is what keeps an interrupted run
+  benign. Results gain a compact summary (safe tested range · effective control range ·
+  reported RPM range · hysteresis · RPM stability · response and settling time), a
+  rising/falling curve, and a collapsible engineering block carrying sample interval,
+  measurement resolution, standard deviation, coefficient of variation, dropouts, outliers
+  and plateaus. **Nothing this adds can report a failure**: hysteresis, plateaus, tach
+  variability and an out-of-learned-range response are all observations, and the last is
+  worded with the benign explanations listed beside it.
   progress + result, and — DEC-120 — **Test GPU Fan Control** with its own
   result label, shown only when a writable AMD GPU is present and the daemon
   supports the verify route, ≥ 1.11.0). Beside the GPU verify button sits

@@ -145,7 +145,9 @@ class HardwarePage(QWidget):
     _readiness_refresh_request = Signal()
     _readiness_probe_request = Signal()
     _verify_request = Signal(str)
-    _char_start_request = Signal(str, object, object)
+    _char_start_request = Signal(str, object, object, object, object)
+    #: AIO Phase 8 Batch 1 §6.1, wired by DEC-334 (header_id, diagnostic).
+    _char_preflight_request = Signal(str, str)
     _char_poll_request = Signal()
     _char_cancel_request = Signal()
     _discover_preflight_request = Signal(str, str)
@@ -1232,12 +1234,19 @@ class HardwarePage(QWidget):
             # say so.
             is_pump=header_is_pump_protected(header, self._capabilities()),
             header=header,
+            capabilities=self._capabilities(),
             parent=self,
         )
         dialog.start_requested.connect(self._char_start_request.emit)
         dialog.poll_requested.connect(self._char_poll_request.emit)
         dialog.cancel_requested.connect(self._char_cancel_request.emit)
+        dialog.preflight_requested.connect(self._char_preflight_request.emit)
         self._char_dialog = dialog
+        # BEFORE `exec()`, so the daemon's safety statement is the dialog's first
+        # rendered state rather than something that appears after the user has
+        # already reached for Start (Batch 1 §6.1). Same ordering as the
+        # control-path dialog.
+        dialog.request_preflight()
         try:
             dialog.exec()
         finally:
@@ -1253,6 +1262,19 @@ class HardwarePage(QWidget):
     def _on_char_error(self, category: str, message: str) -> None:
         if self._char_dialog is not None:
             self._char_dialog.apply_error(category, message)
+
+    @Slot(object)
+    def _on_char_preflight_ready(self, report) -> None:
+        if self._char_dialog is not None:
+            self._char_dialog.apply_preflight(report)
+
+    @Slot(str, str)
+    def _on_char_preflight_error(self, category: str, message: str) -> None:
+        # Advisory only — routed to the dialog's preflight handler, never to
+        # `apply_error`, so a missing safety advisory cannot disable Start for a
+        # run the daemon would accept.
+        if self._char_dialog is not None:
+            self._char_dialog.apply_preflight_error(category, message)
 
     # ── Control-path discovery (AIO Phase 8 Batch 1) ─────────────────
 
@@ -1343,6 +1365,7 @@ class HardwarePage(QWidget):
         entirely rather than degrade it.
         """
         from control_ofc.api.models import (
+            VALIDATION_DIAG_BEHAVIOUR,
             VALIDATION_DIAG_CHARACTERIZATION,
             VALIDATION_DIAG_CONTROL_PATH,
             VALIDATION_DIAG_VERIFY,
@@ -1351,6 +1374,10 @@ class HardwarePage(QWidget):
         supported = {VALIDATION_DIAG_VERIFY, VALIDATION_DIAG_CHARACTERIZATION}
         if daemon_supports("control_path_discovery", self._capabilities()):
             supported.add(VALIDATION_DIAG_CONTROL_PATH)
+        # DEC-334, gated on its OWN flag rather than on `pwm_characterization`:
+        # an older daemon has the latter and would reject the new token.
+        if daemon_supports("pwm_behaviour_characterization", self._capabilities()):
+            supported.add(VALIDATION_DIAG_BEHAVIOUR)
         return supported
 
     def _refresh_control_paths(self) -> None:
@@ -1630,8 +1657,15 @@ class HardwarePage(QWidget):
             self._char_start_request.connect(w.do_start, Qt.ConnectionType.QueuedConnection)
             self._char_poll_request.connect(w.do_poll, Qt.ConnectionType.QueuedConnection)
             self._char_cancel_request.connect(w.do_cancel, Qt.ConnectionType.QueuedConnection)
+            self._char_preflight_request.connect(w.do_preflight, Qt.ConnectionType.QueuedConnection)
             w.run_updated.connect(self._on_char_update, Qt.ConnectionType.QueuedConnection)
             w.run_error.connect(self._on_char_error, Qt.ConnectionType.QueuedConnection)
+            w.preflight_ready.connect(
+                self._on_char_preflight_ready, Qt.ConnectionType.QueuedConnection
+            )
+            w.preflight_error.connect(
+                self._on_char_preflight_error, Qt.ConnectionType.QueuedConnection
+            )
 
         self._char_worker, self._char_thread, ok = self._ensure_worker(
             self._char_worker, self._char_thread, _CharacterizationWorker, connect
