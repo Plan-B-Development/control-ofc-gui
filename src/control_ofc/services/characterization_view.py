@@ -678,7 +678,21 @@ def build_characterization_view(
     progress_text = f"{len(run.points)} of {total} points"
 
     if running:
+        # `P8-bg`: a point is appended only once its hold COMPLETES
+        # (`hwmon_ctl.rs:968-974`), so the worst-case interval below is exactly
+        # how long this dialog can legitimately show nothing new. A behaviour run
+        # adds a stability dwell on up to three steps of the final leg, taking the
+        # real gap to settle + dwell — 26 s at the daemon's defaults. Reporting
+        # only `settle_seconds` there understated the silence roughly fourfold,
+        # which is what makes a healthy run indistinguishable from a wedged one.
+        dwell = run.stability_seconds if run.bidirectional else 0
         status_text = f"Measuring… holding {run.settle_seconds}s per step."
+        if dwell:
+            status_text += (
+                f" Some steps are held a further {dwell}s to measure stability, "
+                f"so a reading can be up to {run.settle_seconds + dwell}s apart — "
+                "a pause that long is normal, not a stall."
+            )
     else:
         status_text = _TERMINAL_STATUS.get(run.state, _humanise_token(run.state))
         if run.detail:

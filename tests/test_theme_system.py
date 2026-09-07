@@ -2055,7 +2055,7 @@ class TestAccessibleNames:
             for n, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1)
             if "a11y: text-at-runtime" in line
         )
-        assert marked == ["ui/components/footer.py:58"], (
+        assert marked == ["ui/components/footer.py:74"], (
             "the runtime-text exemption set changed. Each entry must be a button "
             f"that is genuinely re-labelled at runtime — verify, then update: {marked}"
         )

@@ -348,6 +348,7 @@ class MainWindow(QWidget):
         self.footer.set_operation_mode(self._state.mode)
         self.footer.thermal_clicked.connect(self._open_safety_detail)
         self.footer.readiness_clicked.connect(self._open_readiness)
+        self.footer.session_clicked.connect(self._open_recording_session)
         # DEC-216: the global footer actions moved off the retired Diagnostics
         # page — Rescan surfaces the System State page (so its outcome line is
         # visible) then runs there; Export reuses the Logs page's bundle handler.
@@ -499,10 +500,26 @@ class MainWindow(QWidget):
         self.status_ribbon.set_thermal_state(status.thermal_state)
         self.footer.set_thermal_state(status.thermal_state or "normal")
         self.footer.set_readiness_rollup(self._readiness_for_footer(status))
+        # `P8-bb`: `DaemonStatus.validation_session` has ridden every poll since
+        # Phase 5 and was read by nothing, so a session left recording after its
+        # dialog closed was invisible app-wide for up to a couple of hours.
+        self.footer.set_validation_session(status.validation_session)
 
     def _on_connection_for_footer(self, state: ConnectionState) -> None:
         """Dim the footer's poll-driven chips while the daemon is unreachable."""
         self.footer.set_live(state != ConnectionState.DISCONNECTED)
+
+    def _open_recording_session(self) -> None:
+        """The footer's recording chip was clicked (`P8-bb`).
+
+        Goes to the Hardware page, which is where a session is started and
+        stopped. Deliberately does not re-open the session dialog: the dialog is
+        modeless now, so one may already be open, and a second would poll the
+        same slot twice and give the user two Stop buttons for one session.
+        """
+        from control_ofc.constants import NAV_HARDWARE
+
+        self.sidebar.activate_nav(NAV_HARDWARE)
 
     def _readiness_for_footer(self, status) -> ReadinessRollup | None:
         """The readiness rollup to show on the footer chip, or ``None`` to hide it.

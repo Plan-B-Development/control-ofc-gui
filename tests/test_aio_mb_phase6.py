@@ -1070,6 +1070,25 @@ def _no_exec(monkeypatch, cls):
     return built
 
 
+def _no_show(monkeypatch, cls):
+    """`_no_exec` for a MODELESS dialog (`P8-bd`).
+
+    The session dialog is opened with `show()`, not `exec()`, so patching `exec`
+    captures nothing — which is exactly how this change announced itself: eleven
+    call-site tests failed with `IndexError` on an empty `built` list. Kept as a
+    separate helper rather than folded into `_no_exec` because the two sibling
+    diagnostic dialogs are still modal, and a helper that patched both would stop
+    telling the reader which kind of dialog it is looking at.
+    """
+    built = []
+
+    def fake_show(dialog):
+        built.append(dialog)
+
+    monkeypatch.setattr(cls, "show", fake_show, raising=True)
+    return built
+
+
 class TestCharacterizationCallSite:
     """[SAFETY] DEC-312: the dialog's pump copy is decided by the UNION."""
 
@@ -1164,7 +1183,7 @@ class TestValidationCallSite:
     def _open(self, qtbot, monkeypatch, *, lifecycle=False, device_id=""):
         page, state = _page(qtbot, devices=[_device()])
         _stub_workers(page)
-        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        built = _no_show(monkeypatch, ValidationSessionDialog)
         # DEC-335 turned the boolean discriminator into the wire token; a third
         # kind made `lifecycle: bool` unable to express the argument.
         page._open_validation(
@@ -1211,7 +1230,7 @@ class TestValidationCallSite:
         _stub_workers(page)
         polls: list[int] = []
         page._validation_poll_request.connect(lambda: polls.append(1))
-        _no_exec(monkeypatch, ValidationSessionDialog)
+        _no_show(monkeypatch, ValidationSessionDialog)
         page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         assert polls == [1]
 
@@ -1228,7 +1247,7 @@ class TestValidationCallSite:
     def test_the_lifecycle_button_opens_the_lifecycle_kind(self, qtbot, monkeypatch):
         page, _ = _page(qtbot, devices=[_device()])
         _stub_workers(page)
-        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        built = _no_show(monkeypatch, ValidationSessionDialog)
         page._lifecycle_btn.click()
         assert built[0]._kind == VALIDATION_KIND_LIFECYCLE
         assert "Lifecycle" in built[0].windowTitle()
@@ -1236,14 +1255,14 @@ class TestValidationCallSite:
     def test_the_validation_button_opens_the_validation_kind(self, qtbot, monkeypatch):
         page, _ = _page(qtbot, devices=[_device()])
         _stub_workers(page)
-        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        built = _no_show(monkeypatch, ValidationSessionDialog)
         page._validation_btn.click()
         assert built[0]._kind != VALIDATION_KIND_LIFECYCLE
 
     def test_no_configured_device_explains_itself_instead_of_opening(self, qtbot, monkeypatch):
         page, _ = _page(qtbot)  # no cooling devices
         _stub_workers(page)
-        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        built = _no_show(monkeypatch, ValidationSessionDialog)
         page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         assert built == []
         assert "Configure a cooling device first" in page._diag_result.text()
@@ -1255,7 +1274,7 @@ class TestValidationCallSite:
         second = _device(id="aio1", name="Second Loop")
         page, _ = _page(qtbot, devices=[_device(), second])
         _stub_workers(page)
-        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        built = _no_show(monkeypatch, ValidationSessionDialog)
         page._open_validation(kind=VALIDATION_KIND_VALIDATION, device_id="aio1")
         assert built[0]._device_id == "aio1"
         assert "Second Loop" in built[0]._device_lbl.text()
@@ -1303,7 +1322,7 @@ class TestExportCallSite:
 
         page, _ = _page(qtbot, devices=[_device()])
         _stub_workers(page)
-        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        built = _no_show(monkeypatch, ValidationSessionDialog)
         page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         page._validation_dialog = built[0]
         built[0].apply_session(_session(state="completed"))
@@ -1330,7 +1349,7 @@ class TestExportCallSite:
 
         page, _ = _page(qtbot, devices=[_device()])
         _stub_workers(page)
-        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        built = _no_show(monkeypatch, ValidationSessionDialog)
         page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         page._validation_dialog = built[0]
         built[0].apply_session(_session(state="completed"))
@@ -1345,7 +1364,7 @@ class TestExportCallSite:
 
         page, _ = _page(qtbot, devices=[_device()])
         _stub_workers(page)
-        built = _no_exec(monkeypatch, ValidationSessionDialog)
+        built = _no_show(monkeypatch, ValidationSessionDialog)
         page._open_validation(kind=VALIDATION_KIND_VALIDATION)
         page._validation_dialog = built[0]
         built[0].apply_session(_session(state="completed"))

@@ -20,12 +20,28 @@ from html import escape
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
 
-from control_ofc.api.models import OperationMode, ReadinessRollup
+from control_ofc.api.models import (
+    VALIDATION_KIND_LIFECYCLE,
+    VALIDATION_KIND_THERMAL,
+    VALIDATION_KIND_VALIDATION,
+    OperationMode,
+    ReadinessRollup,
+)
 from control_ofc.constants import APP_VERSION
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.glow import PulsingLed
 from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.status_banner import MODE_LABELS, THERMAL_STATES, format_poll_age
+
+#: Chip wording per session kind. Mirrors `_KIND_TITLES` in the session dialog
+#: rather than importing it — the footer must not depend on a widget module — and
+#: an unknown kind falls back to a neutral word rather than being dropped, per
+#: the 273-i rule that a newer daemon cannot make a state vanish.
+SESSION_KIND_LABELS = {
+    VALIDATION_KIND_VALIDATION: "AIO validation",
+    VALIDATION_KIND_LIFECYCLE: "lifecycle recording",
+    VALIDATION_KIND_THERMAL: "thermal observation",
+}
 
 
 def _divider() -> QFrame:
@@ -74,6 +90,9 @@ class StatusFooter(QWidget):
     #: most-severe readiness item, published so a client can deep-link to it
     #: (`WIRE-r`). Empty when the daemon sent none, or when everything passes.
     readiness_clicked = Signal(str)
+    #: A recording session's chip was clicked — the host navigates to where it
+    #: can be stopped (`P8-bb`).
+    session_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -108,6 +127,20 @@ class StatusFooter(QWidget):
         # Poll freshness — how long since the last successful poll (DEC-222).
         self._poll_age = _meta_label("Not updated yet", "StatusFooter_Label_pollAge")
         layout.addWidget(self._poll_age)
+
+        # `P8-bb`: a recording session is otherwise INVISIBLE once its dialog is
+        # closed. The daemon keeps sampling for up to its cap — a couple of hours
+        # — and before this nothing anywhere in the app said so, because
+        # `DaemonStatus.validation_session` was parsed, unit-tested and read by no
+        # UI code at all (DEC-301's "parsed but never read" trap). The footer is
+        # the right home precisely because it is on every page.
+        self._session_btn = _chip_button(
+            "StatusFooter_Chip_session",
+            "A recording session is running — click to open the page where you can stop it",
+        )
+        self._session_btn.clicked.connect(lambda _=False: self.session_clicked.emit())
+        self._session_btn.hide()
+        layout.addWidget(self._session_btn)
 
         self._thermal_btn = _chip_button("StatusFooter_Chip_thermal", "Show thermal-safety detail")
         self._thermal_btn.clicked.connect(self.thermal_clicked)
@@ -173,6 +206,34 @@ class StatusFooter(QWidget):
         self._thermal_btn.setVisible(live)
         if not live:
             self._readiness_btn.hide()
+            # Same reasoning as the other chips: with no connection we do not
+            # know whether the session is still recording, and a stale "Recording"
+            # following the user across every page would be worse than silence.
+            self._session_btn.hide()
+
+    def set_validation_session(self, summary) -> None:
+        """Show a chip while a session is recording (`P8-bb`).
+
+        Takes the ``validation_session`` miniature straight off ``/status`` —
+        ``None`` when no session has ever run, when the daemon predates 2.32.0,
+        or when the last one finished. Only a *recording* session is announced:
+        the daemon serves its most recent completed session indefinitely, so
+        keying on presence would pin a permanent chip after the first run.
+        """
+        recording = bool(summary is not None and getattr(summary, "is_recording", False))
+        if not recording:
+            self._session_btn.hide()
+            return
+        kind = str(getattr(summary, "kind", "") or "")
+        label = SESSION_KIND_LABELS.get(kind, "Session")
+        samples = int(getattr(summary, "sample_count", 0) or 0)
+        self._session_btn.setText(f"● Recording: {label} ({samples} samples)")
+        # `InfoChip`, not a warning tone: a running session is a normal state the
+        # user asked for, and painting it amber would put a false fault on every
+        # page for two hours. The four real tokens are SuccessChip / WarningChip /
+        # CriticalChip / InfoChip — an invented one would silently style nothing.
+        set_chip_class(self._session_btn, "InfoChip", skip_if_unchanged=True)
+        self._session_btn.show()
 
     def set_warning_count(self, count: int) -> None:
         """Reflect the app's warning count in the health rollup (dumb view)."""

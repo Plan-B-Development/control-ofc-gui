@@ -626,7 +626,19 @@ class DaemonClient:
         return parse_validation_session(self._post("/validation/session/stop"))
 
     def cancel_validation_session(self) -> ValidationSession:
-        """DELETE /validation/session — end without finalising."""
+        """DELETE /validation/session — finalise, and record it as cancelled.
+
+        **The name is the daemon's, not a description** (`P8-bc`). This does not
+        discard anything and it is not the opposite of `stop_validation_session`:
+        `cancel()` is `finish(STATE_CANCELLED)`, and `finish` runs
+        `finalise_in_place` unconditionally — so the session gets the same
+        findings, the same steady-state result, the same startup fingerprints and
+        the same samples, and is persisted exactly as a stopped one is. The only
+        difference is the `state` token on the saved session.
+
+        This docstring said "end without finalising" until `P8-bc`, in company
+        with `docs/08` and the daemon's own comment. It was wrong in all of them.
+        """
         return parse_validation_session(self._delete("/validation/session"))
 
     def add_validation_marker(

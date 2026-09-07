@@ -1454,6 +1454,35 @@ class HardwarePage(QWidget):
         boolean discriminator into a lie by construction, so it takes the wire
         token now and the callers name what they want.
         """
+        # REENTRANCY (`P8-bi`). `exec()` used to make this structurally
+        # impossible: one blocking call, one dialog. `show()` does not, and all
+        # four entry points (`_lifecycle_btn`, `_thermal_btn`, `_validation_btn`
+        # and a device card) stay enabled while a dialog is open — nothing in
+        # `_sync_diagnostic_enablement` consults `_validation_dialog`.
+        #
+        # A second dialog is not merely untidy. The daemon has ONE session slot,
+        # and poll replies route only to `self._validation_dialog`, so the
+        # orphaned window would sit there un-updated but fully interactive: its
+        # Stop, Cancel and Start are wired straight to the page's worker signals
+        # and are forwarded regardless of which dialog is current. Clicking Stop
+        # on the stale window really would stop the live session, while the
+        # window that issued it never showed the result. Measured before the
+        # guard: two dialogs, both 1 Hz timers live, two polls per tick.
+        #
+        # Raise the existing one rather than silently returning (the shape
+        # `_open_control_path_discovery` uses): a dead-feeling button is how the
+        # user ends up clicking again.
+        existing = self._validation_dialog
+        if existing is not None:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
+            if existing.kind() != kind:
+                self._show_diag_message(
+                    "A session window is already open, and the daemon records one "
+                    "session at a time. Close it first to start a different kind."
+                )
+            return
         if not self._ensure_validation_worker():
             self._show_diag_message("Cannot start a session: no daemon connection.")
             return
@@ -1484,11 +1513,39 @@ class HardwarePage(QWidget):
         # fresh start.
         self._validation_poll_request.emit()
         dialog.start_polling()
-        try:
-            dialog.exec()
-        finally:
-            dialog.stop_polling()
+        # MODELESS (`P8-bd`). This was `dialog.exec()`, which Qt documents as
+        # blocking every other window in the application — while all ten of the
+        # dialog's own isolation-template stages instruct the user to set a duty,
+        # and the only place to do that is the Controls page's floor-clamped
+        # override. The dialog was telling the user to do something it prevented.
+        #
+        # `finished` replaces the old `try/finally`: with a non-blocking `show()`
+        # this method returns immediately, so there is no scope left to hang the
+        # teardown on.
+        dialog.finished.connect(lambda _result, d=dialog: self._on_validation_closed(d))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_validation_closed(self, dialog: ValidationSessionDialog) -> None:
+        """Tear down a closed session dialog (`P8-bd`).
+
+        Fenced on identity, not on truthiness: the dialog is modeless, so the
+        user can close one and open another before the first `finished` is
+        delivered, and an unfenced ``= None`` would then clear the *live*
+        dialog's reference and silently stop routing polls to it.
+
+        `deleteLater`, not `WA_DeleteOnClose`: the reference is cleared above
+        first, so nothing can dispatch into a half-destroyed wrapper, and the
+        deletion still goes through Qt's event loop rather than Python's cyclic
+        GC — which is the shiboken `releaseWrapper` use-after-free DEC-230 exists
+        to avoid. Without it every open/close would strand a dialog tree on the
+        page for the life of the window.
+        """
+        dialog.stop_polling()
+        if self._validation_dialog is dialog:
             self._validation_dialog = None
+        dialog.deleteLater()
 
     def _resolve_device(self, device_id: str = "") -> tuple[str, str, list[tuple[str, str]]]:
         """The device a session targets, plus its members for the pickers.

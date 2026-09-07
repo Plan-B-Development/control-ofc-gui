@@ -1393,7 +1393,7 @@ an unrecognised state should read neutrally rather than as an error.
 #### The remaining routes
 
 - `POST /validation/session/stop` — finalise and compute the summary. Returns the session.
-- `DELETE /validation/session` — end without finalising.
+- `DELETE /validation/session` — finalise and persist, recording the session as `cancelled`. **Not a discard, and not the opposite of `stop`** (`P8-bc`): the daemon's `cancel()` is `finish(STATE_CANCELLED)` and `finish` finalises unconditionally, so findings, steady state, startup fingerprints and samples are all computed and stored exactly as they are for `stop`. The only difference is the `state` token. A client must not present this as "throw the recording away" — this document said "end without finalising" and was wrong.
 - `POST /validation/session/event` — place a user marker: `{detail?, member_id?}`.
 - `POST /validation/session/measurement` — attach an externally measured observation:
   `{kind, value, unit?, member_id?, note?}`. **Explicitly untrusted**: the daemon stores and

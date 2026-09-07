@@ -85,9 +85,23 @@ POLL_INTERVAL_MS = 1000
 #: Control-path discovery is offered only against a daemon that advertises it;
 #: the caller filters this list, because sending an unknown token would have the
 #: daemon reject the whole session rather than skip one diagnostic.
+#: Durations are **per member, per diagnostic** — not the session's duration.
+#: They were previously written unqualified ("~10 s", "~2-3 min"), which reads as
+#: how long the whole run takes, and that is the misreading `P8-az` is about: the
+#: session outlives every one of them. The figures are also corrected here from
+#: the daemon's actual constants rather than estimated:
+#:
+#:   verify     ~10 s
+#:   basic      8 points x CHARACTERIZATION_DEFAULT_SETTLE_S 6 s        = ~50 s
+#:   behaviour  15 steps x 6 s + 3 x STABILITY_DEFAULT_S 20 s           = ~2.5 min
+#:   discovery  DISCOVERY_DEFAULT_CYCLES 2 x 2 windows x 6 s            = ~25 s
+#:
+#: Every previous label over-estimated, which is the wrong direction: it trains
+#: the user to expect a long wait and then to read the session's own open-ended
+#: recording as "still working".
 _DIAGNOSTIC_CHOICES = (
-    ("pwm_verify", "PWM control test (~10 s)"),
-    ("pwm_characterization", "PWM response characterisation (~2-3 min)"),
+    ("pwm_verify", "PWM control test (~10 s per member)"),
+    ("pwm_characterization", "PWM response characterisation (~50 s per member)"),
     # DEC-334. Filtered out against a daemon without the capability, like every
     # other entry — an unknown token on the wire fails the WHOLE session, so the
     # gate is at the checkbox rather than at submit.
@@ -97,9 +111,30 @@ _DIAGNOSTIC_CHOICES = (
     # swept twice. That is why both may be ticked without a warning here.
     (
         "pwm_behaviour_characterization",
-        "PWM behaviour characterisation — adds hysteresis and stability (~4-5 min)",
+        "PWM behaviour characterisation — adds hysteresis and stability (~2½ min per member)",
     ),
-    ("control_path_discovery", "Control-path discovery (~1 min)"),
+    ("control_path_discovery", "Control-path discovery (~25 s per member)"),
+)
+
+#: What actually ends a session, stated where the user starts one (`P8-az`).
+#:
+#: The daemon finalises a session by itself in exactly one case: its sample cap,
+#: ``VALIDATION_MAX_SAMPLES`` (7200) x ``VALIDATION_SAMPLE_INTERVAL`` (1 s). That
+#: product is **not on the wire** — ``ValidationSessionSummary`` carries only the
+#: ``sample_limit_reached`` boolean — so the figure below is a second copy of a
+#: daemon constant and will drift if either factor moves. It is stated anyway,
+#: because "records until you stop it" with no figure reads as *indefinitely*,
+#: which is the misunderstanding this whole row is about. Deliberately
+#: approximate so it cannot be read as a precise contract; `P8-az` carries
+#: publishing the real cap on the wire.
+_APPROX_CAP_TEXT = "about two hours"
+
+_END_CONDITION = (
+    "This keeps recording until you press “Stop & Save”. Finishing the "
+    "diagnostics "
+    "below does not end it, and neither does closing this window — left "
+    "alone it stops by itself only when the daemon's sample cap is reached, "
+    f"{_APPROX_CAP_TEXT} in."
 )
 
 #: Measurement kinds offered for an external observation (§17). Free-form on the
@@ -157,6 +192,7 @@ _START_LABELS = {
 }
 
 _FINDING_COLUMNS = ("Check", "Result", "Detail")
+_EVIDENCE_COLUMNS = ("Diagnostic", "Member", "Result", "Detail")
 _MEMBER_COLUMNS = ("Member", "Role", "Samples", "Requested", "Readback", "RPM")
 
 
@@ -189,7 +225,12 @@ class ValidationSessionDialog(ModalDialog):
         thermal = kind == VALIDATION_KIND_THERMAL
         self._thermal = thermal
         title = _KIND_TITLES.get(kind, _KIND_TITLES[VALIDATION_KIND_VALIDATION])
-        super().__init__(title, parent)
+        # `modal=False` (`P8-bd`): the isolation templates tell the user to set a
+        # duty, which only the Controls page can do, so a dialog that blocks the
+        # main window instructs an action it forbids. The scrim goes with it —
+        # `ModalDialog` ties the two together, because a veil over a window the
+        # user can still click is a lie about what is reachable.
+        super().__init__(title, parent, modal=False)
         self.setObjectName("ValidationSessionDialog")
         # `ModalDialog` renders the title into its own header label but does NOT
         # call `setWindowTitle` — every other dialog in this project sets its own
@@ -217,6 +258,13 @@ class ValidationSessionDialog(ModalDialog):
         #: error has come back yet. Suppresses the poll timer's stop-on-finished
         #: rule for exactly that window — see `apply_session`.
         self._start_pending = False
+        #: [P8-w] One poll at a time, matching the guard both sibling dialogs
+        #: already carry. DEC-335 made every reply O(samples) —
+        #: `build_session_trace` walks the sample array six times and the chart
+        #: recreates every curve — against a 7200-sample cap, so on a slow socket
+        #: an unguarded 1 Hz timer queues polls faster than they are answered and
+        #: each one re-renders a longer trace on the GUI thread.
+        self._poll_in_flight = False
 
         body = self.body_layout()
         body.setSpacing(10)
@@ -226,8 +274,13 @@ class ValidationSessionDialog(ModalDialog):
         self._device_lbl.setTextFormat(Qt.TextFormat.PlainText)
         body.addWidget(self._device_lbl)
 
+        # Appended here rather than written into each `_KIND_INTROS` entry: the
+        # end condition is identical for all three kinds, and a fourth kind
+        # should inherit it by existing rather than by someone remembering.
         self._intro = QLabel(
-            _KIND_INTROS.get(kind, _KIND_INTROS[VALIDATION_KIND_VALIDATION]),
+            _KIND_INTROS.get(kind, _KIND_INTROS[VALIDATION_KIND_VALIDATION])
+            + "\n\n"
+            + _END_CONDITION,
             self,
         )
         self._intro.setObjectName("Validation_Label_intro")
@@ -260,6 +313,26 @@ class ValidationSessionDialog(ModalDialog):
         self._member_table.setVisible(False)
         body.addWidget(self._member_table)
 
+        # `P8-bb`: the ONE surface that changes while orchestrated diagnostics
+        # run. `findings` and `steady_state` are derived only at finalisation
+        # (`recorder.rs:213-228`), so without this the dialog is visually frozen
+        # for the whole run and a finished sweep looks identical to a stuck one.
+        # The view-model has built these rows on every poll since Phase 5 and
+        # nothing rendered them — DEC-301's "parsed but never read" trap.
+        self._evidence_caption = QLabel("", self)
+        self._evidence_caption.setObjectName("Validation_Label_evidenceProgress")
+        self._evidence_caption.setWordWrap(True)
+        self._evidence_caption.setProperty("class", "CardMeta")
+        self._evidence_caption.setVisible(False)
+        body.addWidget(self._evidence_caption)
+
+        self._evidence_table = QTableWidget(0, len(_EVIDENCE_COLUMNS), self)
+        self._evidence_table.setObjectName("Validation_Table_evidence")
+        self._evidence_table.setHorizontalHeaderLabels(list(_EVIDENCE_COLUMNS))
+        apply_dense_table(self._evidence_table)
+        self._evidence_table.setVisible(False)
+        body.addWidget(self._evidence_table)
+
         self._findings_table = QTableWidget(0, len(_FINDING_COLUMNS), self)
         self._findings_table.setObjectName("Validation_Table_findings")
         self._findings_table.setHorizontalHeaderLabels(list(_FINDING_COLUMNS))
@@ -286,12 +359,30 @@ class ValidationSessionDialog(ModalDialog):
             "Mark Event", "secondary", object_name="Validation_Btn_mark"
         )
         self._mark_btn.clicked.connect(self._emit_marker)
+        # `P8-bc`: these two were "Stop" (plain) and "Cancel Session" (danger
+        # red), which told the user one keeps the recording and the other throws
+        # it away. Neither is true. `cancel()` is `finish(STATE_CANCELLED)` and
+        # `finish` calls `finalise_in_place` unconditionally, so BOTH compute
+        # findings, steady state and startup fingerprints, and both persist. The
+        # only difference is the state token written on the saved session — so
+        # the red styling was pointing at the wrong risk entirely, and a user who
+        # wanted their evidence had no way to tell which button kept it.
         self._stop_btn = self.add_footer_button(
-            "Stop", "secondary", object_name="Validation_Btn_stop"
+            "Stop & Save", "secondary", object_name="Validation_Btn_stop"
+        )
+        self._stop_btn.setToolTip(
+            "Finalise this session and save it: computes the findings and keeps "
+            "every recorded sample."
         )
         self._stop_btn.clicked.connect(self.stop_requested.emit)
         self._cancel_btn = self.add_footer_button(
-            "Cancel Session", "danger", object_name="Validation_Btn_cancelSession"
+            "Stop & Mark Cancelled", "secondary", object_name="Validation_Btn_cancelSession"
+        )
+        self._cancel_btn.setToolTip(
+            "Also finalises and saves the session, with the same findings and "
+            "samples — it differs only in recording the session as cancelled, "
+            "so you can tell an abandoned run from a completed one later. "
+            "Nothing is discarded."
         )
         self._cancel_btn.clicked.connect(self.cancel_requested.emit)
         self._csv_btn = self.add_footer_button(
@@ -311,7 +402,7 @@ class ValidationSessionDialog(ModalDialog):
         # it is open; the 1 Hz application poll is untouched (§19).
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_INTERVAL_MS)
-        self._timer.timeout.connect(self.poll_requested.emit)
+        self._timer.timeout.connect(self._request_poll)
 
         self._apply_enablement()
 
@@ -781,7 +872,18 @@ class ValidationSessionDialog(ModalDialog):
 
     # ── external updates ─────────────────────────────────────────────────────
 
+    def _request_poll(self) -> None:
+        """Ask for one poll, and only if the last one has been answered."""
+        if self._poll_in_flight:
+            return
+        self._poll_in_flight = True
+        self.poll_requested.emit()
+
     def start_polling(self) -> None:
+        # A stale in-flight flag would wedge polling for good if a previous reply
+        # was lost, and re-arming here costs nothing: the worker answers on both
+        # the success and the error path.
+        self._poll_in_flight = False
         self._timer.start()
 
     def stop_polling(self) -> None:
@@ -789,6 +891,15 @@ class ValidationSessionDialog(ModalDialog):
 
     def session(self) -> ValidationSession | None:
         return self._session
+
+    def kind(self) -> str:
+        """The session kind this dialog was opened to run.
+
+        Public because the page's reentrancy guard needs it (`P8-bi`), and
+        reaching into `_kind` from another module would be a second, quieter
+        coupling.
+        """
+        return self._kind
 
     def _is_ours(self, session: ValidationSession) -> bool:
         """Is this snapshot the session this dialog was opened to run?
@@ -819,18 +930,22 @@ class ValidationSessionDialog(ModalDialog):
 
         The poll timer stops on a finished session of ours — **unless a start is
         pending.** That exception exists because `P8-q` made Start clickable
-        while a finished session is on screen, and this dialog has no
-        single-poll-in-flight guard: a poll issued before the click can be
-        answered after it, and stopping the timer on that stale reply would
+        while a finished session is on screen: a poll issued before the click can
+        be answered after it, and stopping the timer on that stale reply would
         freeze the dialog on the previous session while the new one records,
         with Stop, Cancel and Mark all disabled. The flag is cleared by the first
         recording snapshot, or by `apply_error` if the start was refused.
+
+        The `P8-w` in-flight guard does **not** subsume this. It stops polls
+        overlapping; it cannot stop a single already-dispatched poll from being
+        answered after the click, which is the race this exception covers.
         """
         # [P8-q] A session that is not ours is not rendered — but the fact that
         # SOMETHING is recording is still load-bearing, because the daemon holds
         # one slot and would answer our start with 409. Dropping it entirely
         # would offer a Start that cannot succeed; keeping it as the session
         # would show another device's data under this one's name.
+        self._poll_in_flight = False
         if session is not None and not self._is_ours(session):
             self._foreign_recording = bool(session.is_recording)
             session = None
@@ -843,6 +958,8 @@ class ValidationSessionDialog(ModalDialog):
             self._status_lbl.setText("Ready to start.")
             self._member_table.setVisible(False)
             self._findings_table.setVisible(False)
+            self._evidence_table.setVisible(False)
+            self._evidence_caption.setVisible(False)
             self._apply_enablement()
             return
         view = build_validation_session_view(session)
@@ -856,6 +973,10 @@ class ValidationSessionDialog(ModalDialog):
         self._apply_enablement()
 
     def apply_error(self, category: str, message: str) -> None:
+        # [P8-w] The failed reply IS the answer to the outstanding poll. Without
+        # this the flag would latch on the first socket error and `_request_poll`
+        # would return early forever — a guard that wedges the thing it guards.
+        self._poll_in_flight = False
         # The start did not take (or a poll failed), so stop holding the timer
         # open for a session that is not coming. Cleared here rather than only on
         # a recording snapshot, so a refused start cannot leave the dialog
@@ -909,6 +1030,52 @@ class ValidationSessionDialog(ModalDialog):
                 item = QTableWidgetItem(text)
                 self._findings_table.setItem(row, col, item)
         self._findings_table.setVisible(bool(view.findings))
+
+        self._render_evidence(view)
+
+    def _render_evidence(self, view: ValidationSessionView) -> None:
+        """Draw one row per diagnostic that has finished (`P8-bb`).
+
+        **Deliberately not a progress fraction.** "N of M diagnostics" cannot be
+        computed here: the daemon's `ordered_diagnostics` makes the behaviour
+        token *supersede* the basic one, so a client counting the diagnostics it
+        requested waits forever for a row that is never produced. Counting
+        `*_completed` events is unsound for a second reason — those are
+        synthesised by the recorder tick from the process-global characterisation
+        slot, so they fire for runs this session did not start, and a
+        characterisation refused at the 202 stage attaches evidence and pushes no
+        event at all. So this renders facts as they arrive and counts only what
+        it can actually see: rows that exist.
+        """
+        self._evidence_table.setRowCount(len(view.evidence))
+        for row, ev in enumerate(view.evidence):
+            for col, text in enumerate((ev.label, ev.member_label, ev.outcome_label, ev.detail)):
+                self._evidence_table.setItem(row, col, QTableWidgetItem(text))
+        self._evidence_table.setVisible(bool(view.evidence))
+
+        # NOT `view.diagnostics_note`, which is never empty: a passive session
+        # gets "Recording only — no diagnostics were run.", so keying on it would
+        # tell a user who requested nothing that their diagnostics are running —
+        # the exact class of false statement this change exists to remove.
+        requested = bool(self._session is not None and self._session.requested_diagnostics)
+        if view.evidence:
+            done = len(view.evidence)
+            caption = (
+                f"{done} diagnostic{'' if done == 1 else 's'} finished. "
+                "Each row appears as its diagnostic completes; the findings "
+                "table is computed when the session is finalised."
+            )
+        elif view.recording and requested:
+            # Something was requested and nothing has landed yet. Saying so is
+            # the difference between "working" and "wedged" for up to 2½ min.
+            caption = (
+                "Running the requested diagnostics — none has finished yet. "
+                "The first result appears here when it does."
+            )
+        else:
+            caption = ""
+        self._evidence_caption.setText(caption)
+        self._evidence_caption.setVisible(bool(caption))
 
     def _apply_enablement(self) -> None:
         recording = bool(self._session and self._session.is_recording)

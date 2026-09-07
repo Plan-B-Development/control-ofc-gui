@@ -1,5 +1,86 @@
 # Changelog
 
+## [2.65.0] — 2026-09-07
+
+**Run 1 of the session-lifecycle block (DEC-337).** GUI-only — no daemon change
+and no new capability flag, so it pairs with `control-ofc-daemon` >= v2.41.0
+exactly as v2.64.1 did. Reported as *"the longer tests don't seem to finish on
+their own — they run indefinitely"*; the investigation found two independent
+causes and this release fixes the half that lives in the GUI.
+
+### Fixed
+- **The Stop button is reachable again.** Every dialog in the app inherits
+  `ModalDialog`, which built its content into a plain layout on a top-level
+  window — so the content's minimum height became the *window's* minimum, and a
+  populated session window could be neither shrunk nor scrolled. Measured on a
+  finished Thermal Observation: minimum height 1037 px, rising to 2600 px with
+  the sections expanded, against ~700 px of usable height on a 1366x768 laptop
+  and ~1000 px at 1080p. The footer — which holds **Stop** — was what fell off
+  the bottom, so a recording session was mechanically unstoppable from the GUI
+  on any normal display. The body now scrolls, the window is clamped to the
+  screen's available geometry, and the header and footer stay outside the scroll
+  area so the buttons are reachable at every height. This fixes every dialog in
+  the app, including the pre-existing overflow on the AIO configuration dialog.
+- **A session now shows you that its diagnostics are finishing.** One row per
+  completed diagnostic appears as it completes. Previously nothing on screen
+  changed for the entire run: the findings and steady-state tables are computed
+  only when a session is *finalised*, and the per-diagnostic evidence — which the
+  app had been receiving on every poll since the feature shipped — was rendered
+  nowhere.
+- **A recording session is no longer invisible.** Closing the session window
+  never stopped the recording, and nothing anywhere in the app said so. The
+  footer now shows a **Recording** chip with the live sample count on every page
+  while a session is running; clicking it returns you to the Hardware page.
+- **"Cancel Session" did not cancel anything, and is renamed.** It was styled as
+  a red destructive action beside a plain "Stop", implying one kept your evidence
+  and the other threw it away. Both finalise the session, compute identical
+  findings and steady-state results, and persist it — the only difference is the
+  state recorded on the saved session. They are now **Stop & Save** and **Stop &
+  Mark Cancelled**, both non-destructive in appearance because both are
+  non-destructive in fact. The same false claim is corrected in the API contract
+  (`docs/08`), the client docstring and the daemon's own comments.
+- **The session window no longer blocks the page its own instructions send you
+  to.** Every Thermal Observation isolation-template stage tells you to set a
+  duty, which is only possible on the Controls page — and the window was
+  application-modal, so it forbade the action it instructed. It is now modeless.
+- **Opening a session window twice now raises the one you already have.** The
+  daemon records one session at a time, and until this release the blocking
+  dialog enforced that by accident. With a modeless window it no longer would
+  have: a second click built a rival window and orphaned the first, still
+  polling, still showing a Stop button wired to the live session — so stopping
+  the recording from the stale window would have worked while that window never
+  showed the result. Caught in review of this change, before release.
+- **Long diagnostics no longer look wedged.** A behaviour characterisation holds
+  some steps for a stability dwell on top of the settle, so up to 26 s can pass
+  with nothing new on screen; the dialog said "holding 6s per step", understating
+  the silence roughly fourfold. It now states the real worst-case gap and that a
+  pause that long is normal.
+- **The session dialog no longer queues polls it has not been answered.** It
+  polls at 1 Hz and every reply is proportional to the sample count, so on a slow
+  socket during a long observation the requests accumulated unboundedly, each
+  re-rendering a longer trace on the UI thread. It now allows one poll in flight,
+  matching the guard the two sibling diagnostic dialogs already carried.
+
+### Changed
+- Session option labels now give **per-member, per-diagnostic** durations, and
+  the figures are corrected from the daemon's own constants — PWM control test
+  ~10 s, response characterisation ~50 s, behaviour characterisation ~2½ min,
+  control-path discovery ~25 s. They previously read as the *session's* duration
+  and every one over-estimated, which is what made an open-ended recording look
+  like a diagnostic still working.
+- Every session kind now states its end condition where you start it: it records
+  until you press Stop, finishing the diagnostics does not end it, closing the
+  window does not end it, and left alone it stops by itself only at the daemon's
+  sample cap about two hours in.
+
+### Known limitation
+- **The session itself is still unbounded**, and that half is deliberately not in
+  this release. The daemon's orchestrator does not stop a session when the
+  diagnostics it started have finished, and its only self-termination is the
+  ~2-hour sample cap. Fixing that is a cross-stack change with a new request
+  field and capability flag, tracked as Run 2 (`G21`); this release makes the
+  current behaviour visible and stoppable rather than changing it.
+
 ## [2.64.1] — 2026-09-06
 
 **One audit finding from the 2026-09-06 cross-stack audit (DEC-336).** Pairs with
