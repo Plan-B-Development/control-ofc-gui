@@ -169,7 +169,7 @@ The active tests, gathered in one place instead of scattered across the page. Ea
 
   **Isolation templates** step you through the two comparisons cooler reviews use — *pump influence* (hold the fans, vary the pump) and *radiator influence* (hold the pump, vary the fans). Each stage tells you which duty to set; you set it on the Controls page as usual, and Control-OFC marks the timeline. It will refuse to advance while thermal protection is active or while it cannot read a temperature.
 
-  The session window **stays open while you use the rest of the app**, which is what makes those stages followable — leave it open, switch to Controls, set the duty, and come back to mark the stage. (Before v2.65.0 the window blocked every other page, so the instruction to set a duty could not actually be carried out.)
+  The session window **stays open while you use the rest of the app**, which is what makes those stages followable — leave it open, switch to Controls, set the duty, and come back to mark the stage. (Before v2.65.1 the window blocked every other page, so the instruction to set a duty could not actually be carried out.)
 
   **If CPU package power shows a dash**, your machine does not expose it — AMD systems using `k10temp` commonly do not. That is a gap in what Linux publishes, not a fault, and everything else in the observation still works.
 

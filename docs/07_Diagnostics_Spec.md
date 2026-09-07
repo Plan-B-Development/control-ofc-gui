@@ -824,7 +824,7 @@ Mark Cancelled; records external measurements; and exports CSV and JSON through 
 serializers below, from one `Export` menu button since GUI v2.65.1.
 
 **The two stop buttons differ only in the recorded state, not in what is kept.** They were
-"Stop" and a `danger`-styled "Cancel Session" until GUI v2.65.0, which was false in both the
+"Stop" and a `danger`-styled "Cancel Session" until GUI v2.65.1, which was false in both the
 styling and the wording: `cancel()` is `finish(STATE_CANCELLED)` and finalises exactly as
 `stop` does — same findings, same samples, same persistence (`P8-bc`).
 

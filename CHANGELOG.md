@@ -2,27 +2,11 @@
 
 ## [2.65.1] — 2026-09-07
 
-**Follow-up to v2.65.0 (DEC-337).** GUI-only; pairs with `control-ofc-daemon`
->= v2.41.0, unchanged.
-
-### Fixed
-- **The session window can now be made narrow.** Its footer, not its content,
-  was setting the window's minimum width: the body needs ~184 px and the footer
-  demanded 840. **73 px of that was introduced by v2.65.0 itself** — renaming
-  "Stop"/"Cancel Session" to the truthful "Stop & Save"/"Stop & Mark Cancelled"
-  made the footer wider than it had been before that release (767 → 840). The
-  two export buttons are now a single **Export** button with a menu offering
-  *Samples as CSV* and *Full session as JSON*, which takes the minimum width to
-  706 px — below both the 840 this fixes and the 767 that preceded it. Same
-  exports, same files, one fewer button.
-
-## [2.65.0] — 2026-09-07
-
-**Run 1 of the session-lifecycle block (DEC-337).** GUI-only — no daemon change
-and no new capability flag, so it pairs with `control-ofc-daemon` >= v2.41.0
-exactly as v2.64.1 did. Reported as *"the longer tests don't seem to finish on
-their own — they run indefinitely"*; the investigation found two independent
-causes and this release fixes the half that lives in the GUI.
+**The session-lifecycle block (DEC-337).** GUI-only — no daemon change and no new
+capability flag, so it pairs with `control-ofc-daemon` >= v2.41.0 exactly as
+v2.64.1 did. Reported as *"the longer tests don't seem to finish on their own —
+they run indefinitely"*; the investigation found two independent causes and this
+release fixes the half that lives in the GUI.
 
 ### Fixed
 - **The Stop button is reachable again.** Every dialog in the app inherits
@@ -37,6 +21,12 @@ causes and this release fixes the half that lives in the GUI.
   screen's available geometry, and the header and footer stay outside the scroll
   area so the buttons are reachable at every height. This fixes every dialog in
   the app, including the pre-existing overflow on the AIO configuration dialog.
+- **The session window can now be made narrow, too.** Its footer, not its
+  content, was setting the window's minimum width: the body needs ~184 px and the
+  footer demanded 767. Renaming the buttons (below) would have pushed that to
+  840, so the two export buttons are now a single **Export** button with a menu
+  offering *Samples as CSV* and *Full session as JSON*. The minimum width ends up
+  at 706 px — below both figures. Same exports, same files, one fewer button.
 - **A session now shows you that its diagnostics are finishing.** One row per
   completed diagnostic appears as it completes. Previously nothing on screen
   changed for the entire run: the findings and steady-state tables are computed
