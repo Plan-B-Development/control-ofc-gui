@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.65.1] — 2026-09-07
+
+**Follow-up to v2.65.0 (DEC-337).** GUI-only; pairs with `control-ofc-daemon`
+>= v2.41.0, unchanged.
+
+### Fixed
+- **The session window can now be made narrow.** Its footer, not its content,
+  was setting the window's minimum width: the body needs ~184 px and the footer
+  demanded 840. **73 px of that was introduced by v2.65.0 itself** — renaming
+  "Stop"/"Cancel Session" to the truthful "Stop & Save"/"Stop & Mark Cancelled"
+  made the footer wider than it had been before that release (767 → 840). The
+  two export buttons are now a single **Export** button with a menu offering
+  *Samples as CSV* and *Full session as JSON*, which takes the minimum width to
+  706 px — below both the 840 this fixes and the 767 that preceded it. Same
+  exports, same files, one fewer button.
+
 ## [2.65.0] — 2026-09-07
 
 **Run 1 of the session-lifecycle block (DEC-337).** GUI-only — no daemon change

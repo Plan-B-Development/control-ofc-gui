@@ -818,9 +818,15 @@ the section shows a concise result rather than a card per device.
 `ui/widgets/validation_session_dialog.py`, launched from the Hardware page's *Hardware
 Diagnostics* section. One dialog serves both session kinds, because Phase 5 made them one
 engine with a `kind` discriminator — a second dialog would be the duplication the brief
-forbids. It shows the live status, the per-member telemetry table and the findings summary,
-offers Mark Event / Stop / Cancel, records external measurements, and exports CSV and JSON
-through the Qt-free serializers below.
+forbids. It shows the live status, the per-member telemetry table, a row per orchestrated diagnostic
+as it completes (DEC-337) and the findings summary; offers Mark Event / Stop & Save / Stop &
+Mark Cancelled; records external measurements; and exports CSV and JSON through the Qt-free
+serializers below, from one `Export` menu button since GUI v2.65.1.
+
+**The two stop buttons differ only in the recorded state, not in what is kept.** They were
+"Stop" and a `danger`-styled "Cancel Session" until GUI v2.65.0, which was false in both the
+styling and the wording: `cancel()` is `finish(STATE_CANCELLED)` and finalises exactly as
+`stop` does — same findings, same samples, same persistence (`P8-bc`).
 
 **Charts remain deliberately absent.** The brief's own guidance is "do not make graphing
 mandatory" and "a stable tabular implementation is preferable"; `TimelineChart` is coupled

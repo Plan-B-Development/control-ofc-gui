@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -385,14 +386,28 @@ class ValidationSessionDialog(ModalDialog):
             "Nothing is discarded."
         )
         self._cancel_btn.clicked.connect(self.cancel_requested.emit)
-        self._csv_btn = self.add_footer_button(
-            "Export CSV", "secondary", object_name="Validation_Btn_exportCsv"
+        # ONE export button with a menu, not two side by side (`P8-bh`). The
+        # footer sets this dialog's minimum WIDTH — the body needs 184px and the
+        # footer demanded 840 — and two export buttons were 214px of that. Part
+        # of the excess is DEC-337's own doing: renaming Stop/Cancel Session to
+        # the truthful "Stop & Save"/"Stop & Mark Cancelled" added 73px, taking
+        # the footer from 767 to 840. Merging the exports pays that back and
+        # more. Same `setMenu` shape as `curve_card.py:219` and
+        # `controls_page.py:728` rather than a new primitive.
+        #
+        # `export_requested` still carries the same "csv"/"json" tokens, so
+        # `hardware_page._export_session` is untouched by this.
+        self._export_btn = self.add_footer_button(
+            "Export", "secondary", object_name="Validation_Btn_export"
         )
-        self._csv_btn.clicked.connect(lambda: self.export_requested.emit("csv"))
-        self._json_btn = self.add_footer_button(
-            "Export JSON", "secondary", object_name="Validation_Btn_exportJson"
-        )
-        self._json_btn.clicked.connect(lambda: self.export_requested.emit("json"))
+        self._export_menu = QMenu(self._export_btn)
+        self._csv_action = self._export_menu.addAction("Samples as CSV…")
+        self._csv_action.setObjectName("Validation_Action_exportCsv")
+        self._csv_action.triggered.connect(lambda: self.export_requested.emit("csv"))
+        self._json_action = self._export_menu.addAction("Full session as JSON…")
+        self._json_action.setObjectName("Validation_Action_exportJson")
+        self._json_action.triggered.connect(lambda: self.export_requested.emit("json"))
+        self._export_btn.setMenu(self._export_menu)
         self._close_btn = self.add_footer_button(
             "Close", "ghost", object_name="Validation_Btn_close"
         )
@@ -1097,8 +1112,7 @@ class ValidationSessionDialog(ModalDialog):
         # Exports need a session with content — a session that never started has
         # nothing to serialize, and offering the button would produce an empty
         # file the user would reasonably read as a failed export.
-        self._csv_btn.setEnabled(finished or recording)
-        self._json_btn.setEnabled(finished or recording)
+        self._export_btn.setEnabled(finished or recording)
         # The options ARE the configuration of the next session, so they follow
         # Start exactly. Leaving them on `_session is None` would offer an
         # enabled Start over a form the user could not edit — a second, quieter

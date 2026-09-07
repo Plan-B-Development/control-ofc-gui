@@ -29,6 +29,7 @@ from control_ofc.api.models import (
     ValidationEvidence,
     ValidationSessionSummary,
 )
+from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.dialog import ModalDialog
 from control_ofc.ui.components.footer import StatusFooter
 from control_ofc.ui.widgets.validation_session_dialog import ValidationSessionDialog
@@ -545,3 +546,104 @@ class TestSessionDialogIsNotReentrant:
         assert page._validation_dialog is not None
         assert page._validation_dialog is not first
         assert page._validation_dialog.kind() == VALIDATION_KIND_THERMAL
+
+
+class TestExportIsOneButtonWithAMenu:
+    """`P8-bh`. The footer, not the content, was setting the minimum WIDTH.
+
+    Measured before this change: dialog minimum width 840px against a body
+    needing 184. Two export buttons were 214px of that, and 73px more came from
+    DEC-337's own truthfulness rename (Stop/Cancel Session -> Stop & Save /
+    Stop & Mark Cancelled), which took the footer from 767 to 840. So part of
+    this row is a regression that change introduced, not merely old untidiness.
+    """
+
+    def _dialog(self, qtbot) -> ValidationSessionDialog:
+        dlg = ValidationSessionDialog("aio0", "AIO Cooling System", members=[])
+        qtbot.addWidget(dlg)
+        return dlg
+
+    def test_one_export_button_is_narrower_than_the_two_it_replaced(self, qtbot):
+        """A RELATIONSHIP measured at runtime, never a pixel count.
+
+        The two replaced buttons are rebuilt here in the same widget tree, so
+        they carry the same font and style as the real one — which is what makes
+        this portable. A literal (`< 767`) would be a font metric, and a font
+        metric measured on one machine has reddened all three CI legs of this
+        project before.
+        """
+        dlg = self._dialog(qtbot)
+        old_csv = make_button("Export CSV", "secondary", parent=dlg)
+        old_json = make_button("Export JSON", "secondary", parent=dlg)
+        replaced = old_csv.minimumSizeHint().width() + old_json.minimumSizeHint().width()
+
+        assert dlg._export_btn.minimumSizeHint().width() < replaced, (
+            "the merged button is no narrower than the pair it replaced"
+        )
+
+    def test_the_footer_no_longer_needs_far_more_width_than_the_body(self, qtbot):
+        """The defect in one line: the footer, not the content, set the minimum.
+
+        Asserted as a ratio against the body measured in the same tree rather
+        than a pixel figure. Still generous — the footer legitimately holds six
+        buttons — but it fails if the footer regains a seventh.
+        """
+        dlg = self._dialog(qtbot)
+        footer = dlg._footer.minimumSizeHint().width()
+        body = dlg._body.minimumSizeHint().width()
+        assert body > 0
+        assert footer == dlg.minimumSizeHint().width(), (
+            "the premise of this test has changed — the footer is no longer what "
+            "sets the dialog's minimum width, so re-derive the bound"
+        )
+        assert footer < 4.5 * body, f"footer {footer} vs body {body}"
+
+    def test_the_menu_is_actually_attached_to_the_button(self, qtbot):
+        """Found by the fix-out check, not by reading the code.
+
+        Every other test here triggers the QActions directly, which proves the
+        connections work and proves nothing about whether the user can REACH
+        them. With `setMenu` deleted the whole suite stayed green while the
+        button became inert — the project's "the unit test proves you answered,
+        never that you were asked" trap, in a menu coat.
+        """
+        dlg = self._dialog(qtbot)
+        assert dlg._export_btn.menu() is dlg._export_menu
+        assert set(dlg._export_btn.menu().actions()) == {dlg._csv_action, dlg._json_action}
+
+    def test_the_menu_offers_both_formats(self, qtbot):
+        dlg = self._dialog(qtbot)
+        labels = [a.text() for a in dlg._export_menu.actions()]
+        assert len(labels) == 2
+        assert any("csv" in t.lower() for t in labels)
+        assert any("json" in t.lower() for t in labels)
+
+    @pytest.mark.parametrize("fmt", ["csv", "json"])
+    def test_triggering_an_action_emits_the_wire_token(self, qtbot, fmt):
+        """The ACTION, not a hand-called handler — the connection is the thing
+        most likely to be wrong, and `hardware_page._export_session` switches on
+        exactly these two tokens."""
+        dlg = self._dialog(qtbot)
+        seen = []
+        dlg.export_requested.connect(seen.append)
+        {"csv": dlg._csv_action, "json": dlg._json_action}[fmt].trigger()
+        assert seen == [fmt]
+
+    def test_export_follows_the_same_enablement_rule_as_the_pair_it_replaced(self, qtbot):
+        """Both branches, so it cannot pass with `setEnabled` stuck either way.
+
+        The rule is unchanged from the two-button version: exportable exactly
+        when a session of ours is recording or finished, because a session that
+        never started would produce an empty file the user reads as a failure.
+        """
+        dlg = self._dialog(qtbot)
+        assert dlg._export_btn.isEnabled() is False, "nothing to export before a start"
+
+        dlg.apply_session(_session(state=VALIDATION_STATE_RECORDING))
+        assert dlg._export_btn.isEnabled() is True, "a recording session is exportable"
+
+        dlg.apply_session(_session(state=VALIDATION_STATE_COMPLETED))
+        assert dlg._export_btn.isEnabled() is True, "a finished session is exportable"
+
+        dlg.apply_session(None)
+        assert dlg._export_btn.isEnabled() is False, "no session, nothing to export"

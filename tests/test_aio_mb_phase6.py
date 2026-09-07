@@ -954,7 +954,7 @@ def test_dialog_offers_no_actions_before_a_session_exists(qtbot):
     assert dialog._mark_btn.isEnabled() is False
     # Nothing to export from a session that never started — an empty file would
     # read as a failed export.
-    assert dialog._csv_btn.isEnabled() is False
+    assert dialog._export_btn.isEnabled() is False
 
 
 # ── existing sections keep working ───────────────────────────────────────────
@@ -1499,8 +1499,13 @@ class TestValidationDialogButtons:
         dialog.apply_session(_session(state=VALIDATION_STATE_RECORDING))
         dialog._stop_btn.click()
         dialog._cancel_btn.click()
-        dialog._csv_btn.click()
-        dialog._json_btn.click()
+        # `trigger()`, not `click()` (`P8-bh`): the two export buttons became one
+        # menu button, and clicking it POPS the menu — which the autouse
+        # `_neutralize_modals` fixture does not patch, so a shown popup can block.
+        # Triggering the action still exercises the real connection, which is the
+        # thing worth testing.
+        dialog._csv_action.trigger()
+        dialog._json_action.trigger()
         assert seen == ["stop", "cancel", "export:csv", "export:json"]
 
     def test_mark_event_carries_the_note_field(self, qtbot):
@@ -1605,7 +1610,7 @@ class TestValidationDialogRendering:
         assert dialog._timer.isActive() is False, "a finished session must stop the poll timer"
         assert dialog._stop_btn.isEnabled() is False
         assert dialog._mark_btn.isEnabled() is False
-        assert dialog._csv_btn.isEnabled() is True, "finished evidence is still exportable"
+        assert dialog._export_btn.isEnabled() is True, "finished evidence is still exportable"
 
     def test_a_recording_session_enables_the_live_actions_and_locks_the_options(self, qtbot):
         dialog = self._dialog(qtbot)
