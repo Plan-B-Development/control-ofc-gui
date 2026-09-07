@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.66.0] — 2026-09-07
+
+**Run 2 of the session-lifecycle block (DEC-338).** The other half of v2.65.1:
+that release made a never-ending session *legible*, this one lets you end it.
+Cross-stack — **requires `control-ofc-daemon` >= v2.43.0** for the new option,
+which is capability-gated and simply absent against an older daemon.
+
+### Added
+- **"Stop the session automatically when the diagnostics finish."** A new option
+  on the session start form. Until now a session recorded until you pressed Stop
+  or until the daemon's sample cap — about two hours — even though the
+  diagnostics themselves finish in roughly four minutes. Tick this and the daemon
+  stops and saves the session the moment the last diagnostic completes.
+  - Pre-ticked for **AIO Validation** only. A validation session exists for its
+    diagnostics; a lifecycle or thermal recording is passive by design and its
+    diagnostics are the side dish, so those two default to off.
+  - Unavailable until you tick a diagnostic, with a line saying why — there is
+    nothing to complete otherwise, and the daemon refuses that combination.
+  - Hidden entirely against a daemon that does not support it, rather than greyed
+    out: there is nothing you could do in the dialog to change that.
+- **The intro sentence now describes the ending you will actually get**, and it
+  is rendered from the **daemon's own answer** once a session is running rather
+  than from what the app asked for. Those two can disagree — an older daemon
+  accepts the request and quietly drops the option — and the whole point of this
+  block is that the app must not promise an ending the daemon will not deliver.
+
 ## [2.65.1] — 2026-09-07
 
 **The session-lifecycle block (DEC-337).** GUI-only — no daemon change and no new

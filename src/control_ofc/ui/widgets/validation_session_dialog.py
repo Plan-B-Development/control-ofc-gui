@@ -119,8 +119,12 @@ _DIAGNOSTIC_CHOICES = (
 
 #: What actually ends a session, stated where the user starts one (`P8-az`).
 #:
-#: The daemon finalises a session by itself in exactly one case: its sample cap,
-#: ``VALIDATION_MAX_SAMPLES`` (7200) x ``VALIDATION_SAMPLE_INTERVAL`` (1 s). That
+#: **Absent an auto-stop**, the daemon finalises a session by itself in exactly
+#: one case: its sample cap, ``VALIDATION_MAX_SAMPLES`` (7200) x
+#: ``VALIDATION_SAMPLE_INTERVAL`` (1 s). (That sentence had no qualifier until
+#: DEC-338, which added the second case — ``stop_when_diagnostics_complete``,
+#: rendered by `_END_CONDITION_AUTO_STOP` below. The cap is still the backstop,
+#: and still the only ending against a daemon before 2.43.0.) That
 #: product is **not on the wire** — ``ValidationSessionSummary`` carries only the
 #: ``sample_limit_reached`` boolean — so the figure below is a second copy of a
 #: daemon constant and will drift if either factor moves. It is stated anyway,
@@ -137,6 +141,28 @@ _END_CONDITION = (
     "alone it stops by itself only when the daemon's sample cap is reached, "
     f"{_APPROX_CAP_TEXT} in."
 )
+
+#: The end condition when the daemon has been asked to stop the session itself
+#: (`P8-az`, daemon >= 2.43.0).
+#:
+#: A SECOND string rather than a conditional clause spliced into the first: the
+#: two describe genuinely different lifecycles, and the sample cap is no longer
+#: the interesting fact once the session ends in minutes. The cap is still named,
+#: because it is still the backstop if a diagnostic never returns.
+_END_CONDITION_AUTO_STOP = (
+    "This will stop and save itself as soon as the diagnostics below have "
+    "finished. You can still stop it early with “Stop & Save”. Closing "
+    "this window does not stop it — the recording lives in the daemon, and "
+    "the footer shows it while it runs."
+)
+
+#: The auto-stop option's label and its two hints.
+#:
+#: The disabled hint is not decoration. The option is meaningless without a
+#: diagnostic to complete — the daemon rejects that combination outright — so a
+#: box that simply greys out with no reason reads as a broken control.
+_AUTO_STOP_LABEL = "Stop the session automatically when the diagnostics finish"
+_AUTO_STOP_HINT_NEEDS_DIAGNOSTIC = "Tick a diagnostic above to enable this."
 
 #: Measurement kinds offered for an external observation (§17). Free-form on the
 #: wire; this list is a convenience, and the unit travels with the value.
@@ -200,7 +226,7 @@ _MEMBER_COLUMNS = ("Member", "Role", "Samples", "Requested", "Readback", "RPM")
 class ValidationSessionDialog(ModalDialog):
     """Start, watch, annotate, finish and export one session."""
 
-    start_requested = Signal(str, str, list, list, dict)
+    start_requested = Signal(str, str, list, list, dict, bool)
     poll_requested = Signal()
     stop_requested = Signal()
     cancel_requested = Signal()
@@ -216,6 +242,7 @@ class ValidationSessionDialog(ModalDialog):
         kind: str = VALIDATION_KIND_VALIDATION,
         members: list[tuple[str, str]] | None = None,
         supported_diagnostics: set[str] | None = None,
+        auto_stop_supported: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         # REWRITE (DEC-335): this was `lifecycle = kind == KIND_LIFECYCLE` plus a
@@ -251,6 +278,21 @@ class ValidationSessionDialog(ModalDialog):
         # unfilterable box would fail the whole session rather than skip one
         # diagnostic — a worse outcome than not offering it.
         self._supported_diagnostics = supported_diagnostics
+        #: `P8-az`. Whether this daemon serves `stop_when_diagnostics_complete`.
+        #: Defaults False so a caller that has not been taught to gate cannot
+        #: offer it by omission — the DEC-334 failure was a gated feature whose
+        #: id was never registered, so the gate answered falsy and the feature
+        #: was offered on no daemon at all. Here the untaught default is the
+        #: safe direction: the option is hidden, and the session behaves as it
+        #: always has.
+        self._auto_stop_supported = bool(auto_stop_supported)
+        #: What the user last chose, remembered across the enable/disable the
+        #: diagnostic checkboxes drive. Pre-set for the `validation` kind only —
+        #: that is the kind whose whole purpose is the diagnostics, so a session
+        #: that ends with them is the least surprising default. A lifecycle or
+        #: thermal recording is passive by design and its diagnostics are the
+        #: side dish, so those default off and the user opts in.
+        self._auto_stop_intent = kind == VALIDATION_KIND_VALIDATION
         self._session: ValidationSession | None = None
         #: Something else owns the daemon's single session slot right now. Not a
         #: session we may render — only a reason our Start would be refused.
@@ -278,12 +320,11 @@ class ValidationSessionDialog(ModalDialog):
         # Appended here rather than written into each `_KIND_INTROS` entry: the
         # end condition is identical for all three kinds, and a fourth kind
         # should inherit it by existing rather than by someone remembering.
-        self._intro = QLabel(
-            _KIND_INTROS.get(kind, _KIND_INTROS[VALIDATION_KIND_VALIDATION])
-            + "\n\n"
-            + _END_CONDITION,
-            self,
-        )
+        # Text deliberately left empty here: `_sync_end_condition` owns the
+        # composition, and `_build_start_form` calls it before this method
+        # returns. Formatting the sentence in both places is how the two would
+        # drift the first time either changed.
+        self._intro = QLabel("", self)
         self._intro.setObjectName("Validation_Label_intro")
         self._intro.setWordWrap(True)
         body.addWidget(self._intro)
@@ -438,8 +479,36 @@ class ValidationSessionDialog(ModalDialog):
             box = QCheckBox(label, host)
             box.setObjectName(f"Validation_Check_{token}")
             box.setAccessibleName(f"Run {label} during this session")
+            # The auto-stop option is only meaningful with something to
+            # complete, and the intro sentence changes with it — so both follow
+            # every diagnostic box rather than being read once at Start.
+            box.toggled.connect(self._sync_auto_stop)
             form.addRow("", box)
             self._diag_boxes.append((token, box))
+
+        # ── Auto-stop (`P8-az`) ──────────────────────────────────────────
+        #
+        # HIDDEN, not disabled, against a daemon without the capability. A
+        # disabled control says "not now"; this one is "not on this daemon", and
+        # the difference matters because there is nothing the user can do in
+        # this dialog to change it. Same posture as the diagnostic filter above,
+        # which drops an unsupported token rather than greying it.
+        self._auto_stop_box = QCheckBox(_AUTO_STOP_LABEL, host)
+        self._auto_stop_box.setObjectName("Validation_Check_autoStop")
+        self._auto_stop_box.setAccessibleName(
+            "Stop and save this session automatically once its diagnostics have finished"
+        )
+        self._auto_stop_box.toggled.connect(self._on_auto_stop_toggled)
+        self._auto_stop_hint = QLabel(_AUTO_STOP_HINT_NEEDS_DIAGNOSTIC, host)
+        self._auto_stop_hint.setObjectName("Validation_Label_autoStopHint")
+        self._auto_stop_hint.setProperty("class", "Muted")
+        self._auto_stop_hint.setWordWrap(True)
+        if self._auto_stop_supported:
+            form.addRow("", self._auto_stop_box)
+            form.addRow("", self._auto_stop_hint)
+        else:
+            self._auto_stop_box.setVisible(False)
+            self._auto_stop_hint.setVisible(False)
 
         self._sweep_combo = QComboBox(host)
         self._sweep_combo.setObjectName("Validation_Combo_sweepMember")
@@ -457,7 +526,78 @@ class ValidationSessionDialog(ModalDialog):
 
         section.add_widget(host)
         self._options_section = section
+        self._sync_auto_stop()
         return section
+
+    # ── auto-stop (`P8-az`) ──────────────────────────────────────────────────
+    def _on_auto_stop_toggled(self, checked: bool) -> None:
+        """Record the user's choice, and re-render the end condition.
+
+        Guarded on `isEnabled()` because `_sync_auto_stop` un-ticks the box when
+        the last diagnostic is cleared — without the guard that programmatic
+        change would be recorded as the user changing their mind, and re-ticking
+        a diagnostic would silently come back un-ticked.
+        """
+        if self._auto_stop_box.isEnabled():
+            self._auto_stop_intent = checked
+        self._sync_end_condition()
+
+    def _sync_auto_stop(self) -> None:
+        """Enable the option only while there is something for it to complete.
+
+        The daemon rejects `stop_when_diagnostics_complete` with an empty
+        `diagnostics[]` outright — there is no orchestration task to carry the
+        terminal hop, so the session would run to the sample cap while claiming
+        it would not. Rather than let the user compose a request that can only
+        be refused, the box is unavailable until a diagnostic is ticked, and the
+        hint says so.
+        """
+        any_diagnostic = any(box.isChecked() for _, box in self._diag_boxes)
+        self._auto_stop_box.setEnabled(any_diagnostic)
+        # `blockSignals`: this is the widget following the diagnostics, not the
+        # user changing their mind. See `_on_auto_stop_toggled`.
+        blocked = self._auto_stop_box.blockSignals(True)
+        self._auto_stop_box.setChecked(any_diagnostic and self._auto_stop_intent)
+        self._auto_stop_box.blockSignals(blocked)
+        if self._auto_stop_supported:
+            self._auto_stop_hint.setVisible(not any_diagnostic)
+        self._sync_end_condition()
+
+    def _auto_stop_requested(self) -> bool:
+        """What Start should send. False whenever the option is unavailable."""
+        return (
+            self._auto_stop_supported
+            and self._auto_stop_box.isEnabled()
+            and self._auto_stop_box.isChecked()
+        )
+
+    def _sync_end_condition(self) -> None:
+        """Re-render the intro's end-condition sentence.
+
+        **Once a session exists, this renders the DAEMON'S answer** — the echoed
+        `stop_when_diagnostics_complete` — and not the checkbox. The two can
+        disagree: a daemon that predates the field parses and drops it and
+        returns 200, so a dialog rendering its own request memory would promise
+        an end the daemon has no intention of delivering, which is `P8-az`
+        itself. Before a session exists there is no daemon answer to render, so
+        the checkbox is the only honest source and is used.
+        """
+        session = self._session
+        if session is not None and session.is_recording:
+            # A LIVE session: the daemon's own answer, which is the only honest
+            # source while a session it owns is running.
+            auto = bool(session.stop_when_diagnostics_complete)
+        else:
+            # No session, or a finished one. Either way the options form is
+            # editable again (`_apply_enablement` re-enables it on anything but
+            # `recording`), so the sentence is describing the session the user is
+            # composing NOW — and the checkbox is what will determine it. Reading
+            # the finished session here would caption the next run with the last
+            # run's ending.
+            auto = self._auto_stop_requested()
+        intro = _KIND_INTROS.get(self._kind, _KIND_INTROS[VALIDATION_KIND_VALIDATION])
+        end = _END_CONDITION_AUTO_STOP if auto else _END_CONDITION
+        self._intro.setText(f"{intro}\n\n{end}")
 
     def _build_thermal_sections(self) -> QWidget:
         """The §9.1/§9.2 blocks: live readout, steady state, startup, chart."""
@@ -862,6 +1002,11 @@ class ValidationSessionDialog(ModalDialog):
             diagnostics,
             [sweep] if sweep else [],
             metadata,
+            # Read from the widget rather than from `_auto_stop_intent`: the
+            # intent survives the box being disabled, and sending it while the
+            # box is disabled would post exactly the combination the daemon
+            # refuses.
+            self._auto_stop_requested(),
         )
 
     def _emit_marker(self) -> None:
@@ -968,6 +1113,7 @@ class ValidationSessionDialog(ModalDialog):
             self._foreign_recording = False
         self._session = session
         if session is None:
+            self._sync_end_condition()
             self._state_pill.set_text("Not started")
             self._state_pill.set_state("neutral")
             self._status_lbl.setText("Ready to start.")
@@ -978,6 +1124,7 @@ class ValidationSessionDialog(ModalDialog):
             self._apply_enablement()
             return
         view = build_validation_session_view(session)
+        self._sync_end_condition()
         self._render(view)
         self._render_thermal(session)
         if view.recording:

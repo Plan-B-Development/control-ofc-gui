@@ -272,6 +272,18 @@ class ControlCapability:
     # believes is a thermal observation, receive a perfectly valid ordinary
     # session, and label it wrongly for the rest of its life.
     thermal_observation: bool = False
+    #: `P8-az` (Run 2, daemon >= 2.43.0): the daemon accepts
+    #: ``stop_when_diagnostics_complete`` on ``POST /validation/session`` and
+    #: echoes it back on the session document, so a session can finalise itself
+    #: when its orchestrated diagnostics finish.
+    #:
+    #: **Gate the OFFER on this, and render the ECHO.** An older daemon has the
+    #: session routes and ``serde`` drops an unknown request field rather than
+    #: rejecting it — so it returns ``200`` for a request carrying the flag and
+    #: then records for the full two-hour sample cap. Neither the status nor the
+    #: body distinguishes the two, which is why offering the option ungated
+    #: would put a promise on screen that a whole range of daemons will not keep.
+    validation_auto_stop: bool = False
     # `WIRE-k` (daemon >= 2.36.0): five features that shipped BEFORE this block
     # had keys for them. Until the daemon grew these flags the GUI detected them
     # by comparing the daemon's version string — which says when a feature first
@@ -3537,6 +3549,15 @@ class ValidationSession:
     #: behaviours that hang off it (operator pre-emption and its own retention
     #: slot), and the GUI must not re-derive either.
     auto_started: bool = False
+    #: This session finalises itself when its orchestrated diagnostics finish,
+    #: because the start request asked it to (`P8-az`, daemon >= 2.43.0).
+    #:
+    #: **Render THIS, never what the dialog asked for.** A client that remembers
+    #: its own request cannot tell an accepted flag from one an older daemon
+    #: parsed and dropped; this field is the daemon's own answer. Absent — every
+    #: daemon before 2.43.0 — reads as ``False``, which is exactly right: that
+    #: daemon does not stop the session either.
+    stop_when_diagnostics_complete: bool = False
     #: Per-member startup behaviour (DEC-335 §1). Empty when nothing was
     #: derivable; never a row of zeroes.
     startup_fingerprints: list[ValidationStartupFingerprint] = field(default_factory=list)

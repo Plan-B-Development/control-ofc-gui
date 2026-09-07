@@ -53,6 +53,14 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # session kind; see the flag's own note in `models.py` for why an
         # ungated client mislabels an ordinary session rather than failing.
         "thermal_observation": "2.41.0",
+        # `P8-az` (Run 2), control.validation_auto_stop. Gates the
+        # `stop_when_diagnostics_complete` field on POST /validation/session.
+        # Gate on this, never on `validation_sessions`: an older daemon HAS the
+        # session routes and `serde` drops the unknown field rather than
+        # rejecting it, so the request returns 200 and the session then records
+        # for the full two-hour sample cap while the client says it will stop
+        # itself. Same shape as `pwm_behaviour_characterization` above.
+        "validation_auto_stop": "2.43.0",
         # DEC-333, control.control_path_discovery / control.diagnostic_preflight
         "control_path_discovery": "2.39.0",
         "diagnostic_preflight": "2.39.0",
@@ -90,6 +98,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "preferred_sensors": "preferred_sensors",
         "daemon_config_report": "daemon_config_report",
         "validation_sessions": "validation_sessions",
+        "validation_auto_stop": "validation_auto_stop",
         "pwm_characterization": "pwm_characterization",
         "pwm_behaviour_characterization": "pwm_behaviour_characterization",
         "thermal_observation": "thermal_observation",
@@ -115,6 +124,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "pwm_characterization": "PWM characterisation",
         "pwm_behaviour_characterization": "PWM behaviour characterisation",
         "thermal_observation": "thermal observation sessions",
+        "validation_auto_stop": "stopping a session when its diagnostics finish",
         "control_path_discovery": "control-path discovery",
         "diagnostic_preflight": "the diagnostic safety preflight",
         "pump_protection": "pump protection",

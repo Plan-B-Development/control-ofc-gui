@@ -823,6 +823,25 @@ as it completes (DEC-337) and the findings summary; offers Mark Event / Stop & S
 Mark Cancelled; records external measurements; and exports CSV and JSON through the Qt-free
 serializers below, from one `Export` menu button since GUI v2.65.1.
 
+**A session can also stop itself, from GUI v2.66.0 / daemon 2.43.0 (DEC-338).** The start
+form carries *"Stop the session automatically when the diagnostics finish"*, which sends
+`stop_when_diagnostics_complete` on `POST /validation/session`; the daemon's orchestrator then
+finalises the session when its walk completes. Three GUI rules go with it, and each exists to
+stop the dialog claiming something the daemon will not do:
+
+- **Gated on `control.validation_auto_stop`, and hidden rather than disabled when absent.** An
+  older daemon parses and *drops* the unknown request field instead of rejecting it, so it
+  answers `200` and then records to the two-hour cap — probing cannot distinguish the two.
+- **Unavailable until a diagnostic is ticked**, with a hint saying so. The daemon rejects the
+  flag with an empty `diagnostics[]` (`400 validation_error`), because no orchestration task is
+  spawned for an empty one and there would be nothing to carry the terminal stop.
+- **Pre-ticked for the `validation` kind only** — that kind exists for its diagnostics, while
+  lifecycle and thermal recordings are passive by design.
+
+The intro's end-condition sentence renders the **echoed** `stop_when_diagnostics_complete`
+while a session of ours is recording, and the checkbox otherwise (once a session finishes the
+options form is editable again, so the sentence is describing the run being composed next).
+
 **The two stop buttons differ only in the recorded state, not in what is kept.** They were
 "Stop" and a `danger`-styled "Cancel Session" until GUI v2.65.1, which was false in both the
 styling and the wording: `cancel()` is `finish(STATE_CANCELLED)` and finalises exactly as

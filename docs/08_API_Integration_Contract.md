@@ -150,6 +150,18 @@ GUI treats every flag as false / old behaviour (AIP-180):
   `POST`/`GET`/`DELETE /validation/session`, `/validation/session/stop`,
   `/validation/session/event`, `/validation/session/measurement`, `GET /validation/sessions`
   and `GET /validation/sessions/{id}`. **`true` since 2.32.0**; absent → `false`.
+- `validation_auto_stop` (bool, `P8-az`) — the daemon accepts
+  `stop_when_diagnostics_complete` on `POST /validation/session` and echoes it back on the
+  session document, so a session can finalise itself when its orchestrated diagnostics
+  finish. **`true` since 2.43.0**; absent → `false`.
+
+  Gate the OFFER on this, and do not fall back to a probe. An older daemon has the session
+  routes and `serde` **drops an unknown request field rather than rejecting it**, so a
+  request carrying the flag returns `200` and the session then records to the two-hour
+  sample cap. Neither the status code nor the response body distinguishes the two — the echo
+  is simply absent, which reads as `false` on a client that has the field. Same shape as
+  `thermal_observation`: the flag is the only thing that separates the two *before* the
+  request is made.
 
   Gate on this rather than probing, for the same reason: an older daemon `404`s these routes
   from the route fallback, which is indistinguishable from a genuine "no such session".
@@ -1318,10 +1330,33 @@ Body:
   pump mode, workload name, ambient notes. **Metadata only** — it reaches no safety decision,
   and the daemon does not claim to have detected any of it electronically. Capped at 16 keys
   × 512 bytes.
+- `stop_when_diagnostics_complete` (bool, optional, default `false`; daemon 2.43.0,
+  `control.validation_auto_stop`, `P8-az`) — finalise the session as soon as the
+  orchestrated diagnostics have all run, instead of recording until it is stopped.
+  **Requires at least one entry in `diagnostics`**: the orchestration task is not spawned
+  for an empty one, so there would be nothing to carry the terminal stop, and the session
+  would record to the cap while the echo promised otherwise. The daemon **rejects** that
+  combination with `400 validation_error` rather than accepting a flag nothing can act on.
+  The default is `false` so an existing client and every `curl` user keep exactly today's
+  behaviour; the caller opts in.
 
 Returns `200` with the full session. `409 already_exists` if one is already recording
 (single-flight), `404 not_found` for an unknown device, `503 persistence_failed` if it
-cannot be written to disk.
+cannot be written to disk. `400 validation_error` additionally covers
+`stop_when_diagnostics_complete` sent with an empty `diagnostics`, **or** with a resolved
+sweep set that is empty — the orchestrator walks `members × diagnostics`, so a device with
+no `pump_member` and no explicit `sweep_members` would otherwise finalise instantly with
+nothing recorded.
+
+**The returned body is an ADMISSION-TIME snapshot, not a live one.** It is serialised when
+the session is admitted, before the orchestration task is spawned, so it always reads
+`state: "recording"` with `completed_unix_ms: null`. That was harmless while every session
+outlived its diagnostics; with `stop_when_diagnostics_complete` a short walk — or a sweep
+over a non-writable member, which records `unavailable` and returns at once — can finalise
+the session before the client has finished reading the reply. **Do not render the start
+document as live state**; treat it as the admission receipt and take the session's state
+from the next `GET /validation/session`. The GUI already polls at 1 Hz and self-corrects,
+so this is a rule for new clients rather than a change to an existing one.
 
 Orchestration order is `pwm_verify`, then `pwm_characterization`, then
 `control_path_discovery`, per member. Discovery runs **last** deliberately: it perturbs
@@ -1340,7 +1375,7 @@ device-side-override signature, so the sweep after it is more valuable, not less
 
 The body carries `session_id`, `kind`, `state`, `started_unix_ms`, `completed_unix_ms`,
 `requested_diagnostics`, `sweep_members`, `sample_limit_reached`, `interrupted_reason`,
-`truncated_at_unix_ms`, plus:
+`truncated_at_unix_ms`, `stop_when_diagnostics_complete`, plus:
 
 - `metadata` — everything fixed at session start: the topology, each member's
   `member_kind` / `role` / **`pump_protected`** / `effective_min_pwm_pct` /
@@ -1391,6 +1426,22 @@ PWM control must not be misclassified as a failed write.
 an unrecognised state should read neutrally rather than as an error.
 
 #### The remaining routes
+
+**How a session ends — read this before rendering any duration (`P8-az`).** A session
+records **until it is stopped**. Finishing the diagnostics it orchestrated does not end it,
+and neither does a client disconnecting — the recording lives in the daemon. Left alone it
+finalises itself only at the sample cap: `VALIDATION_MAX_SAMPLES` (7200) ×
+`VALIDATION_SAMPLE_INTERVAL` (1 s) = **a flat two hours**, and that is not shortened for a
+real cooler. With every diagnostic requested the orchestration finishes in ~4 minutes and
+the recorder runs for the remaining ~1 h 56 m. Neither factor is on the wire, so a client
+that states the figure is holding a second copy of a daemon constant — state it
+approximately, or not at all.
+
+Since daemon 2.43.0 a caller may opt into a third ending with
+`stop_when_diagnostics_complete` (above). **Render the ECHOED field, never the request the
+client sent**: the two disagree on exactly the daemons where it matters, because an older
+one accepts the request and drops the field. The field is echoed on the session document
+for that purpose, and it survives finalisation.
 
 - `POST /validation/session/stop` — finalise and compute the summary. Returns the session.
 - `DELETE /validation/session` — finalise and persist, recording the session as `cancelled`. **Not a discard, and not the opposite of `stop`** (`P8-bc`): the daemon's `cancel()` is `finish(STATE_CANCELLED)` and `finish` finalises unconditionally, so findings, steady state, startup fingerprints and samples are all computed and stored exactly as they are for `stop`. The only difference is the `state` token. A client must not present this as "throw the recording away" — this document said "end without finalising" and was wrong.

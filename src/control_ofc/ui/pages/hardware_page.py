@@ -159,7 +159,7 @@ class HardwarePage(QWidget):
     _discover_start_request = Signal(str)
     _discover_poll_request = Signal()
     _discover_cancel_request = Signal()
-    _validation_start_request = Signal(str, str, list, list, dict)
+    _validation_start_request = Signal(str, str, list, list, dict, bool)
     _validation_poll_request = Signal()
     _validation_stop_request = Signal()
     _validation_cancel_request = Signal()
@@ -1498,6 +1498,11 @@ class HardwarePage(QWidget):
             kind=kind,
             members=members,
             supported_diagnostics=self._supported_session_diagnostics(),
+            # `P8-az`. Gated through the registry rather than a raw `getattr`
+            # chain: DEC-334's defect was two gating shapes for one flag, where
+            # the working one hid the broken one for a whole release. One flag,
+            # one gating shape.
+            auto_stop_supported=bool(daemon_supports("validation_auto_stop", self._capabilities())),
             parent=self,
         )
         dialog.start_requested.connect(self._on_validation_start)
@@ -1573,9 +1578,17 @@ class HardwarePage(QWidget):
         return device.id, device.name or device.id, members
 
     def _on_validation_start(
-        self, device_id: str, kind: str, diagnostics: list, sweep: list, metadata: dict
+        self,
+        device_id: str,
+        kind: str,
+        diagnostics: list,
+        sweep: list,
+        metadata: dict,
+        auto_stop: bool,
     ) -> None:
-        self._validation_start_request.emit(device_id, kind, diagnostics, sweep, metadata)
+        self._validation_start_request.emit(
+            device_id, kind, diagnostics, sweep, metadata, auto_stop
+        )
         if self._validation_dialog is not None:
             self._validation_dialog.start_polling()
 

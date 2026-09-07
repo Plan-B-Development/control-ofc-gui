@@ -577,6 +577,7 @@ class DaemonClient:
         diagnostics: list[str] | None = None,
         sweep_members: list[str] | None = None,
         metadata: dict[str, str] | None = None,
+        stop_when_diagnostics_complete: bool = False,
     ) -> ValidationSession:
         """POST /validation/session — begin recording against a cooling device.
 
@@ -590,12 +591,23 @@ class DaemonClient:
         refusal and the hwmon lease, and a client-side copy of any of them would
         be a second definition of a safety rule that would then drift (DEC-252).
 
+        ``stop_when_diagnostics_complete`` asks the daemon to finalise the
+        session as soon as the orchestrated diagnostics finish (`P8-az`). Without
+        it a session records until it is stopped, or until the daemon's two-hour
+        sample cap — which is the whole reason this option exists. **Send it only
+        when ``control.validation_auto_stop`` is true**: an older daemon has the
+        session routes and drops the unknown field rather than rejecting it, so
+        the request returns 200 and the session then runs to the cap while the UI
+        says it will stop itself. Read the accepted value back off the returned
+        session's ``stop_when_diagnostics_complete``, never off this argument.
+
         Raises 409 ``already_exists`` when a session is already recording, 404
         for an unknown device, and 503 ``persistence_failed``. 400
         ``validation_error`` covers an unknown diagnostic, a member that does not
-        belong to the named device, **and every bound**: more than 8
-        ``sweep_members``, more than 16 ``metadata`` keys, or a metadata value
-        over 512 bytes.
+        belong to the named device, ``stop_when_diagnostics_complete`` with an
+        empty ``diagnostics`` (there would be nothing to complete), **and every
+        bound**: more than 8 ``sweep_members``, more than 16 ``metadata`` keys, or
+        a metadata value over 512 bytes.
         """
         body: dict[str, Any] = {"cooling_device_id": cooling_device_id}
         if kind is not None:
@@ -606,6 +618,12 @@ class DaemonClient:
             body["sweep_members"] = sweep_members
         if metadata is not None:
             body["metadata"] = metadata
+        # Sent only when asked for. An older daemon ignores an unknown field, so
+        # a default-false key would be harmless — but omitting it keeps the
+        # request byte-identical to a pre-`P8-az` client's, which is what makes a
+        # capability-gated caller's traffic indistinguishable from the old one.
+        if stop_when_diagnostics_complete:
+            body["stop_when_diagnostics_complete"] = True
         return parse_validation_session(self._post("/validation/session", json=body))
 
     def validation_session(self) -> ValidationSession | None:

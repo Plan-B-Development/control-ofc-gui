@@ -1205,7 +1205,9 @@ class TestValidationCallSite:
         page._validation_marker_request.connect(lambda *a: seen.append(("marker", a)))
         page._validation_measurement_request.connect(lambda *a: seen.append(("measure", a)))
 
-        dialog.start_requested.emit("aio0", "validation", ["pwm_verify"], ["m1"], {"note": "n"})
+        dialog.start_requested.emit(
+            "aio0", "validation", ["pwm_verify"], ["m1"], {"note": "n"}, False
+        )
         dialog.poll_requested.emit()
         dialog.stop_requested.emit()
         dialog.cancel_requested.emit()
@@ -1220,7 +1222,16 @@ class TestValidationCallSite:
             "marker",
             "measure",
         ]
-        assert dict(seen)["start"] == ("aio0", "validation", ["pwm_verify"], ["m1"], {"note": "n"})
+        assert dict(seen)["start"] == (
+            "aio0",
+            "validation",
+            ["pwm_verify"],
+            ["m1"],
+            {"note": "n"},
+            # DEC-338: the auto-stop flag rides the same signal, so this call
+            # site would silently drop it if the page's forwarder went stale.
+            False,
+        )
         assert dict(seen)["measure"] == ("supply_voltage", 12.1, "V", "m1", "note")
 
     def test_opening_polls_immediately_so_an_existing_session_is_shown(self, qtbot, monkeypatch):
@@ -1309,8 +1320,8 @@ class TestValidationCallSite:
         built[0].stop_polling()
         requested: list[tuple] = []
         page._validation_start_request.connect(lambda *a: requested.append(a))
-        page._on_validation_start("aio0", "validation", [], [], {})
-        assert requested == [("aio0", "validation", [], [], {})]
+        page._on_validation_start("aio0", "validation", [], [], {}, False)
+        assert requested == [("aio0", "validation", [], [], {}, False)]
         assert built[0]._timer.isActive(), "a started session must be polled for"
 
 
@@ -1477,6 +1488,11 @@ class TestValidationDialogButtons:
                 ["pwm_characterization"],
                 [_fan_header().id],
                 {"note": "bench run 3"},
+                # DEC-338: the auto-stop flag. `False` here is load-bearing —
+                # this dialog was built without `auto_stop_supported`, i.e.
+                # against a daemon that does not serve it, and the option must
+                # never reach the wire in that state.
+                False,
             )
         ]
 
@@ -1711,6 +1727,9 @@ class TestValidationWorkerRefusalMapping:
             "diagnostics": ["pwm_verify"],
             "sweep_members": ["m1"],
             "metadata": {"note": "n"},
+            # DEC-338. Defaulted rather than omitted, because `do_start`'s own
+            # default is what an untouched call site gets.
+            "stop_when_diagnostics_complete": False,
         }
         assert sessions == [session]
         assert errors == []
@@ -1725,6 +1744,9 @@ class TestValidationWorkerRefusalMapping:
             "diagnostics": None,
             "sweep_members": None,
             "metadata": None,
+            # NOT `None`: unlike the four above, this one is a plain bool with a
+            # real default. "You choose" is not a state it has.
+            "stop_when_diagnostics_complete": False,
         }
 
     def test_poll_stop_and_cancel_each_emit_their_session_snapshot(self):
@@ -1965,7 +1987,7 @@ class TestWorkerRequestSignalsReachTheirWorker:
             qtbot.addWidget(dialog)
             page._validation_dialog = dialog
 
-            page._validation_start_request.emit("aio0", "validation", [], [], {})
+            page._validation_start_request.emit("aio0", "validation", [], [], {}, False)
             page._validation_poll_request.emit()
             page._validation_stop_request.emit()
             page._validation_cancel_request.emit()

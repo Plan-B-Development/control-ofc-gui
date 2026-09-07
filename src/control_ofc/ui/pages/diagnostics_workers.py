@@ -700,7 +700,7 @@ class _ValidationWorker(_SocketWorker):
             self._client = None
             self.session_error.emit("unavailable", f"Connection lost during {label.lower()}.")
 
-    @Slot(str, str, list, list, dict)
+    @Slot(str, str, list, list, dict, bool)
     def do_start(
         self,
         device_id: str,
@@ -708,6 +708,7 @@ class _ValidationWorker(_SocketWorker):
         diagnostics: list,
         sweep_members: list,
         metadata: dict,
+        stop_when_diagnostics_complete: bool = False,
     ) -> None:
         def call() -> None:
             self.session_updated.emit(
@@ -717,6 +718,7 @@ class _ValidationWorker(_SocketWorker):
                     diagnostics=list(diagnostics) or None,
                     sweep_members=list(sweep_members) or None,
                     metadata=dict(metadata) or None,
+                    stop_when_diagnostics_complete=bool(stop_when_diagnostics_complete),
                 )
             )
 
