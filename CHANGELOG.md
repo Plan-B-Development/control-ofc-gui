@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.67.0] — 2026-09-09
 
 **Contract and in-code documentation: eight stale or false claims corrected, and
 one of them was corrected wrongly first (DEC-347, register package `G31` — rows
