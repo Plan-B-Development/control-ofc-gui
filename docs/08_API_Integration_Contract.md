@@ -1322,6 +1322,14 @@ Body:
   session — and yields `not_tested`, never `pass`. An unrecognised token is
   `400 validation_error` rather than a silent skip, which would look like a diagnostic that
   ran and found nothing.
+  **From daemon 2.43.3, repeats are dropped at ingest and the echo is authoritative
+  (DEC-341, `P8-s`).** The list was validated per token and not by count, so a request naming
+  the same diagnostic 2000 times was accepted, persisted verbatim, and walked once per member
+  per repeat. It is now reduced to at most one of each, keeping first-occurrence order, and
+  the started session's `requested_diagnostics` is what the daemon actually took — **render
+  that, not the request you sent**, which is the same rule `stop_when_diagnostics_complete`
+  already follows and for the same reason. No request that used to succeed now fails; an
+  older daemon simply runs the repeats.
 - `sweep_members` (string[], optional) — which members those diagnostics sweep. **Omitted
   defaults to the device's `pump_member`.** Capped at 8; each adds roughly three minutes. An
   entry not belonging to the named device is `400 validation_error`; a non-writable one is
@@ -1457,6 +1465,18 @@ Over-long is `400 validation_error`, never silently truncated. A user-metadata *
 These arrays are capped by *count*, so unbounded text made the session document unbounded —
 and since a session too large to read back is now pruned (see the byte-cap note above),
 that would have been a way to destroy an operator's evidence rather than merely waste disk.
+
+**The byte budgets these bounds feed were re-derived from a measurement in daemon 2.43.3
+(DEC-341, `P8-s`).** They are internal and no client sees them, but the number a client
+*can* reach matters: the reservation for non-sample content was estimated in prose at
+~3.4 MiB and measures **7,938,808 bytes** as a realised file, because an event may carry
+*both* bounded text fields rather than one, a measurement all four, and the `evidence`,
+`findings` and `startup_fingerprints` arrays were never counted at all. **No session was
+being lost:** the worst-case document measures 24,710,972 bytes against a 25,165,824-byte
+cap, so it fitted by 444 KiB — but that margin was accidental rather than designed, and one
+more bounded field would have crossed it while the reservation still claimed room. The
+reservation is now 10 MiB and the session read cap 28 MiB; the caps and text bounds above
+are unchanged, so **nothing a client may send has moved**.
 
 **Ending a session ends the diagnostic it started (daemon ≥ 2.35.1).** A session that
 orchestrated a characterisation used to leave that sweep running after stop/cancel — still
