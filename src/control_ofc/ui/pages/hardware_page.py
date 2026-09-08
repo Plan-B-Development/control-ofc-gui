@@ -725,7 +725,12 @@ class HardwarePage(QWidget):
         if not hasattr(self, "_validation_btn"):
             return
         caps = self._capabilities()
-        supported = bool(getattr(getattr(caps, "control", None), "validation_sessions", False))
+        # `P8-ag`: through `daemon_supports`, like every other gate on this
+        # page. A raw `getattr` chain here and the registry lookup elsewhere is
+        # the exact coexistence DEC-334 shipped on — one flag with two gating
+        # shapes, where the working one hides the broken one. `is True` because
+        # `daemon_supports` is tri-state and "did not say" must not enable.
+        supported = daemon_supports("validation_sessions", caps) is True
         has_device = bool(self._device_cards)
         enabled = supported and has_device
         for button in (self._validation_btn, self._lifecycle_btn):

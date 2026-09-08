@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 
 from ..api.models import Capabilities, ControlPathRecord, FanReading, HwmonHeader
 from ..knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
-from .daemon_features import unsupported_feature_message
+from .daemon_features import daemon_supports, unsupported_feature_message
 from .pump_protection import header_effective_floor_pct, header_is_pump_protected
 
 # ── The capability vocabulary the brief mandates (§4) ────────────────────────
@@ -477,16 +477,18 @@ def build_header_inspector_view(
     )
 
 
+# `P8-ag`: both of these went through `daemon_supports` like every other gate.
+# A raw `getattr` chain here and the registry lookup elsewhere is two gating
+# shapes for one flag — the coexistence DEC-334 shipped on, where the working
+# shape hides the broken one and a rename desynchronises them silently. `is
+# True` because `daemon_supports` is tri-state and "the daemon did not say" must
+# not enable a hardware-perturbing action.
 def _supports_characterization(capabilities: Capabilities | None) -> bool:
-    if capabilities is None:
-        return False
-    return bool(getattr(capabilities.control, "pwm_characterization", False))
+    return daemon_supports("pwm_characterization", capabilities) is True
 
 
 def _supports_discovery(capabilities: Capabilities | None) -> bool:
-    if capabilities is None:
-        return False
-    return bool(getattr(capabilities.control, "control_path_discovery", False))
+    return daemon_supports("control_path_discovery", capabilities) is True
 
 
 def build_header_inspector_views(

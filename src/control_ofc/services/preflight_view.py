@@ -181,6 +181,14 @@ def build_preflight_view(
         for c in report.checks
     ]
     reasons = [r.detail or r.label for r in rows if r.is_blocking]
+    # `P8-aj`: a blocker the daemon NAMED but did not also publish as a check
+    # produced no row at all, so `blocked` was true with an empty reason list and
+    # the dialog rendered "Cannot run this test:" followed by a bullet and
+    # nothing — Start correctly refused, and no reason given, in the one case
+    # where the reason matters most. Fall back to the id itself, humanised;
+    # a token the user can search for beats silence.
+    named = {c.check_id for c in report.checks}
+    reasons += [humanise_token(cid) for cid in report.blocking if cid not in named]
 
     return PreflightView(
         header_id=report.header_id,

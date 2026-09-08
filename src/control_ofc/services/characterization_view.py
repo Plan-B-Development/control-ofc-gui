@@ -529,12 +529,21 @@ def _build_summary_rows(run: CharacterizationRun) -> list[SummaryRow]:
             (_humanise_token(summary.stability_verdict), "neutral"),
         )
         rows.append(SummaryRow("RPM stability", label, tone))
-    response = _typical_seconds(p.first_change_ms for p in run.points)
-    if response:
-        rows.append(SummaryRow("Response time", response))
-    settling = _typical_seconds(_settling_ms(p) for p in run.points)
-    if settling:
-        rows.append(SummaryRow("Settling time", settling))
+    # `P8-x`: the DAEMON owns this derivation (`docs/08`), and publishes it in
+    # `_build_detail_rows` as "Response latency (median)". Rendering both put one
+    # measurement on screen twice in two units, in a single dialog — and they
+    # disagree on any even sample count, because the daemon takes the upper
+    # median while `_typical_seconds` averages the middle pair. The client
+    # computation survives only as the pre-2.40.0 fallback, for a daemon that
+    # publishes neither field.
+    if summary.typical_response_ms is None:
+        response = _typical_seconds(p.first_change_ms for p in run.points)
+        if response:
+            rows.append(SummaryRow("Response time", response))
+    if summary.typical_settling_ms is None:
+        settling = _typical_seconds(_settling_ms(p) for p in run.points)
+        if settling:
+            rows.append(SummaryRow("Settling time", settling))
     # §6, three states. "No model yet" must not read as agreement — the
     # Overview: "Do not turn lack of evidence into PASS."
     if summary.outside_learned_range is None:

@@ -359,6 +359,105 @@ class TestUnsupportedFeatureMessagesAreActionable:
             "gated feature is unreachable on every daemon:\n" + "\n".join(unflagged)
         )
 
+    def test_no_capability_flag_is_gated_by_a_raw_getattr_chain(self):
+        """`P8-ag`: one flag, one gating shape.
+
+        The sweep above proves every `daemon_supports` id resolves. This is its
+        converse, and it is the half DEC-334 actually shipped on: a flag gated
+        through the registry in one place and by a raw `getattr(..., "flag",
+        False)` chain in another. Both shapes work, which is precisely the
+        problem — the working one hides the broken one, and a rename
+        desynchronises them silently, via the shape that fails without an
+        exception, a log line or a failing test.
+
+        Matched on the FLAG NAME as a `getattr` attribute argument, so
+        `getattr(caps, "control", None)` — a navigation step, not a gate — does
+        not trip it.
+        """
+        import pathlib
+        import re
+
+        src = pathlib.Path(__file__).resolve().parents[1] / "src" / "control_ofc"
+        flags = set(DAEMON_FEATURE_CAPABILITY_FLAGS.values())
+        assert flags, "precondition: the registry must not be empty"
+
+        def raw_gates(text: str) -> list[tuple[int, str]]:
+            """Every `getattr(...)` call whose arguments name a capability flag.
+
+            Paren-matched rather than regex-bounded, and run over the WHOLE file
+            rather than line by line. A `[^)]*` pattern cannot cross the inner
+            call of `getattr(getattr(caps, "control", None), "flag", False)` —
+            which is precisely the shape this package removed — and a per-line
+            scan cannot see a call `ruff` wrapped across lines at the 100-column
+            limit. Both would be false negatives in a guard whose entire job is
+            catching the next one.
+            """
+            hits: list[tuple[int, str]] = []
+            for m in re.finditer(r"\bgetattr\(", text):
+                i, depth = m.end(), 1
+                while i < len(text) and depth:
+                    depth += (text[i] == "(") - (text[i] == ")")
+                    i += 1
+                args = text[m.end() : i - 1]
+                for flag in flags:
+                    if f'"{flag}"' in args or f"'{flag}'" in args:
+                        hits.append((text.count("\n", 0, m.start()) + 1, flag))
+            return hits
+
+        # The guard's own regression case: the nested form MUST be caught.
+        sample = next(iter(sorted(flags)))
+        nested = f'getattr(getattr(caps, "control", None), "{sample}", False)'
+        assert raw_gates(nested), (
+            "the sweep cannot see a nested getattr chain — the exact shape "
+            "`P8-ag` was about, so it would have missed the next one"
+        )
+        assert not raw_gates(f'daemon_supports("{sample}", caps) is True'), (
+            "the sweep must not flag the correct shape"
+        )
+
+        # A RATCHET, not a clean sweep. `G29` fixed the sites inside `P8-ag`'s
+        # stated scope; enumerating the rest is what showed the shape is wider
+        # than that row described, and those are recorded as `P8-by` rather than
+        # dragged into a view-layer diff — `pump_protection.py` in particular is
+        # safety-adjacent and is not in this change's blast radius. Every entry
+        # here must eventually go; nothing may be added.
+        known_backlog = {
+            ("services/pump_protection.py", "header_roles"),
+            ("ui/pages/controls_page.py", "header_roles"),
+            ("ui/widgets/fan_wizard.py", "header_roles"),
+            ("ui/pages/settings_page.py", "profile_search_dir_remove"),
+            ("ui/pages/system_state_page.py", "pwm_characterization"),
+        }
+
+        offenders: list[str] = []
+        for path in src.rglob("*.py"):
+            if path.name == "daemon_features.py":
+                continue  # the registry itself resolves flags by name, by design
+            rel = str(path.relative_to(src))
+            for n, flag in raw_gates(path.read_text(encoding="utf-8")):
+                if (rel, flag) not in known_backlog:
+                    offenders.append(f"{rel}:{n} -> {flag!r}")
+
+        assert not offenders, (
+            "capability flag(s) read by a raw `getattr` chain instead of "
+            "`daemon_supports` — two gating shapes for one flag is what let the "
+            "DEC-334 defect ship:\n" + "\n".join(offenders)
+        )
+        # The ratchet's other half: an allowlist that stops matching is an
+        # allowlist that has silently stopped protecting anything.
+        still_present = set()
+        for path in src.rglob("*.py"):
+            rel = str(path.relative_to(src))
+            for _n, flag in raw_gates(path.read_text(encoding="utf-8")):
+                if (rel, flag) in known_backlog:
+                    still_present.add((rel, flag))
+        assert still_present <= known_backlog
+        stale = known_backlog - still_present
+        assert not stale, (
+            "these were fixed — remove them from `known_backlog` and from the "
+            f"`P8-by` row so the ratchet keeps tightening: {sorted(stale)}"
+        )
+
     def test_call_sites_no_longer_dead_end(self):
         """The CALL SITES, swept from source — the helper being right proves nothing.
 

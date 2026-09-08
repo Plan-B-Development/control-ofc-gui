@@ -93,6 +93,36 @@ draw produced anything, so a chart that had stopped rendering entirely gave
 that second claim was verified by making the chart draw nothing and watching
 the old assertion stay green.
 
+**The view layer disagreeing with its own source (register package `G29` —
+rows `P8-x`, `P8-ag`, `P8-aj`).** GUI only.
+
+**The characterisation dialog showed one measurement twice, in two units, and
+the two disagreed.** A client-recomputed median rendered as "Response time
+~N.N s" in the summary block while the daemon's own `typical_response_ms`
+rendered as "Response latency (median) N ms" in the detail block — and they
+differ on any even sample count, because the daemon takes the upper median and
+the client averaged the middle pair. `docs/08` assigns the derivation to the
+daemon, so the daemon's is what shows; the client computation survives only as
+the fallback for a daemon predating 2.40.0. Settling time had the same shape and
+got the same treatment.
+
+**A blocked preflight could refuse a run and give no reason.** The reason list
+was built only from published checks, so a daemon naming a blocker it did not
+also publish as a check rendered "Cannot run this test:" followed by a bullet
+and nothing — Start correctly refused, with the explanation missing in exactly
+the case where it matters most. An unmatched blocker now falls back to its own
+id, humanised.
+
+**Capability flags are gated one way.** Three sites read a flag through a raw
+`getattr` chain while the rest of the app routes through the feature registry —
+the same coexistence that let the v2.63.1 defect ship, where the working shape
+hides the broken one. The sites in that row's scope are now consistent, and a
+test stops new ones appearing — including the nested `getattr(getattr(...))`
+shape, which the first draft of that test could not see and which is exactly the
+shape this change removed. Five further sites elsewhere are recorded rather than
+swept in: they are correct today, and one of them sits on a safety-adjacent
+path that a view-layer change has no business touching.
+
 ## [2.66.0] — 2026-09-07
 
 **Run 2 of the session-lifecycle block (DEC-338).** The other half of v2.65.1:

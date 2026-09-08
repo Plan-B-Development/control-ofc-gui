@@ -430,6 +430,56 @@ class TestPreflightView:
         assert row.is_blocking is True
         assert row.tone == "crit"
 
+    def test_a_blocker_the_daemon_did_not_publish_as_a_check_still_gets_a_reason(self):
+        """`P8-aj`: the one case where the reason matters most.
+
+        `blocking_reasons` was built only from rows, and rows come only from
+        `checks` — so a daemon naming a blocker it did not also publish rendered
+        "Cannot run this test:" followed by a bullet and nothing. Start was
+        correctly refused and the user was told nothing.
+
+        The discriminating arm is a blocker with NO matching check. A blocker
+        that does have one is the pre-fix answer by construction and cannot show
+        the fallback fired.
+        """
+        view = build_preflight_view(
+            parse_preflight_report(
+                _preflight_payload(
+                    verdict=PREFLIGHT_BLOCKED,
+                    blocking=["some_future_guard"],
+                )
+            )
+        )
+        assert view.blocked is True
+        assert view.can_start is False
+        # Precondition: the daemon really did not publish it as a check, or this
+        # asserts nothing about the fallback.
+        assert all(r.check_id != "some_future_guard" for r in view.rows)
+        assert view.blocking_reasons == ["Some future guard"], (
+            "a named blocker with no matching check must still produce a reason; "
+            f"got {view.blocking_reasons}"
+        )
+
+    def test_a_published_blocker_still_uses_its_own_detail_not_the_fallback(self):
+        """The complement: the fallback must not displace a real detail, and must
+        not duplicate a reason that already came from a row."""
+        checks = _preflight_payload()["checks"]
+        checks[7] = {
+            "check_id": "thermal_state",
+            "state": PREFLIGHT_FAIL,
+            "detail": "Thermal safety is forcing fan output (emergency)",
+        }
+        view = build_preflight_view(
+            parse_preflight_report(
+                _preflight_payload(
+                    verdict=PREFLIGHT_BLOCKED, checks=checks, blocking=["thermal_state"]
+                )
+            )
+        )
+        assert view.blocking_reasons == ["Thermal safety is forcing fan output (emergency)"], (
+            "a published blocker must keep its detail and must not be listed twice"
+        )
+
     def test_the_view_reads_the_daemon_verdict_rather_than_re_deriving_it(self):
         """§6.1: "the GUI reflects daemon decisions".
 

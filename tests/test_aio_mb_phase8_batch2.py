@@ -296,7 +296,19 @@ class TestViewModel:
         assert labels["Reported RPM range"] == "950-3000"
         assert "Observed" in labels["Hysteresis"]
         assert labels["RPM stability"] == "Stable"
-        assert labels["Response time"], "§5 timing must appear"
+        # `P8-x`: §5's requirement is that the timing APPEARS, not where. The
+        # daemon owns the derivation, so on a daemon that publishes it the row
+        # is "Response latency (median)" in the detail block, and the client's
+        # own recomputation is deliberately suppressed rather than shown beside
+        # it in a second unit. Asserted against the daemon's field so this
+        # cannot pass on a view that reports no timing at all.
+        detail = {row.label: row.value for row in view.detail_rows}
+        run_summary = _bidi_run().summary
+        assert run_summary is not None and run_summary.typical_response_ms is not None
+        assert detail["Response latency (median)"] == f"{run_summary.typical_response_ms} ms"
+        assert "Response time" not in labels, (
+            "the client recomputation must not be rendered alongside the daemon's"
+        )
 
     def test_an_unlearned_header_is_reported_as_not_established_not_as_agreement(self):
         """§6 three-state. The Overview: "Do not turn lack of evidence into PASS.\""""
@@ -892,6 +904,55 @@ class TestSettlingHonesty:
         view = build_characterization_view(run, header_label="P")
         assert view.rows[0].settling == "6.0 s"
         assert view.settling_time == "~6.0 s"
+
+
+class TestOneMeasurementOneProducer:
+    """`P8-x`: the same measurement must not appear twice in two units."""
+
+    def test_the_daemons_median_displaces_the_client_recomputation(self):
+        run = _bidi_run()
+        assert run.summary is not None
+        assert run.summary.typical_response_ms is not None, (
+            "precondition: this fixture's daemon DOES publish the median"
+        )
+        view = build_characterization_view(run, header_label="P")
+
+        summary_labels = {r.label for r in view.summary_rows}
+        detail_labels = {r.label for r in view.detail_rows}
+
+        # The daemon's row is the one that renders...
+        assert "Response latency (median)" in detail_labels
+        # ...and the client's recomputation of the SAME measurement does not,
+        # which is the whole finding: both were shown, in one dialog, in
+        # different units, disagreeing on any even sample count.
+        assert "Response time" not in summary_labels, (
+            "the client-recomputed median must not be rendered alongside the daemon's own"
+        )
+        assert "Settling time" not in summary_labels
+        assert "Settling time (median)" in detail_labels
+
+    def test_an_older_daemon_still_gets_the_client_fallback(self):
+        """The discriminating arm. Suppressing the client row unconditionally
+        would pass the test above and silently drop the measurement entirely for
+        a daemon predating 2.40.0 — so the case that must still render it is the
+        one worth asserting."""
+        from dataclasses import replace as _replace
+
+        run = _bidi_run()
+        assert run.summary is not None
+        run = _replace(
+            run,
+            summary=_replace(run.summary, typical_response_ms=None, typical_settling_ms=None),
+        )
+        view = build_characterization_view(run, header_label="P")
+
+        summary_labels = {r.label for r in view.summary_rows}
+        detail_labels = {r.label for r in view.detail_rows}
+        assert "Response latency (median)" not in detail_labels, "precondition: daemon said nothing"
+        assert "Response time" in summary_labels, (
+            "with no daemon field the client fallback must still report the timing"
+        )
+        assert "Settling time" in summary_labels
 
 
 class TestChartMarkers:
