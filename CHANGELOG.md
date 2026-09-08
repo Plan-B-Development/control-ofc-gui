@@ -123,6 +123,29 @@ shape this change removed. Five further sites elsewhere are recorded rather than
 swept in: they are correct today, and one of them sits on a safety-adjacent
 path that a view-layer change has no business touching.
 
+**Sixteen wire structs are now pinned against the daemon's own definitions
+(register package `G33` — row `P8-ar`).** Test-only; no behaviour change.
+
+`WIRE-ag` pinned `VoltageEntry` from its first release, noting that an unpinned
+struct is what `WIRE-h` cost. DEC-333/334/335 then added sixteen more — the
+preflight report, the whole control-path discovery family, the characterisation
+point and summary, steady state and startup fingerprints — and pinned none of
+them. An undeclared struct was unchecked rather than failing, so a field the
+daemon added or renamed would have been noticed by a person or not at all.
+
+All sixteen now carry their wire field lists and the sets of fields production
+code must genuinely read. **Checking them found no divergence** — all ~150
+fields have model slots — which confirms the hand-verification recorded on the
+row and, more usefully, means it stays confirmed without anyone repeating it.
+
+**The pin is one-sided for these sixteen, and that is stated rather than
+implied.** The daemon has its own test asserting each struct's serialised key
+set, but it covers the original thirteen only. So these entries catch the GUI
+dropping a field it should model, and do not catch the daemon renaming one —
+the fixture is static data, never a live query. Extending the daemon's test is
+tracked separately; the fixture and the test module now say so instead of
+claiming protection they do not provide.
+
 ## [2.66.0] — 2026-09-07
 
 **Run 2 of the session-lifecycle block (DEC-338).** The other half of v2.65.1:

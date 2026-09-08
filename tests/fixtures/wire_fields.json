@@ -1,5 +1,5 @@
 {
-  "description": "The declared GUI <-> daemon wire-field surface (WIRE-aj). For each daemon Serialize struct the GUI consumes, the exact set of keys it puts on the wire and the dataclass that must model them. Pinned on the daemon side by daemon/src/api/responses.rs::tests::wire_field_surface_is_pinned, which fails if a struct's serialised key set and this list disagree; pinned on this side by tests/test_wire_field_coverage.py, which fails if a declared field has no model slot. Adding a wire field means updating the Rust test, this fixture, and docs/08.",
+  "description": "The declared GUI <-> daemon wire-field surface (WIRE-aj). For each daemon Serialize struct the GUI consumes, the exact set of keys it puts on the wire and the dataclass that must model them. Pinned on this side by tests/test_wire_field_coverage.py, which fails if a declared field has no model slot. THE PIN IS BILATERAL ONLY FOR THE ENTRIES THE DAEMON ALSO PINS: daemon/src/api/responses.rs::tests::wire_field_surface_is_pinned fails if a struct's serialised key set and this list disagree, but it covers the first 13 entries only. The 16 added by G33 (P8-ar) are pinned on the GUI side alone, so they catch the GUI dropping a field and NOT the daemon renaming one — this fixture is static data, never a live query, so a daemon-side rename leaves it stale and this test green. Extending the Rust test to those 16 is P8-ca. Adding a wire field means updating the Rust test where it covers the struct, this fixture, and docs/08.",
   "min_daemon_version": "2.35.4",
   "structs": [
     {
@@ -313,6 +313,432 @@
         "value_v",
         "identified",
         "chip_name"
+      ]
+    },
+    {
+      "daemon": "PreflightReport",
+      "gui": "PreflightReport",
+      "endpoints": [
+        "GET /diagnostics/preflight"
+      ],
+      "note": "DEC-333 §7. `verdict` and `blocking` together decide whether Start is offered — `preflight_view` reads BOTH, deliberately, so an unknown verdict token still fails safe on the field that gates a hardware-perturbing action. `header_id`/`diagnostic` are echoed identity.",
+      "fields": [
+        "header_id",
+        "diagnostic",
+        "verdict",
+        "checks",
+        "blocking"
+      ],
+      "must_be_read": [
+        "verdict",
+        "blocking",
+        "checks"
+      ]
+    },
+    {
+      "daemon": "PreflightCheck",
+      "gui": "PreflightCheck",
+      "endpoints": [
+        "GET /diagnostics/preflight"
+      ],
+      "note": "DEC-333 §7. `state` IS load-bearing (it picks the row tone) but is excluded by test_must_be_read_names_are_distinctive as too common; tests/test_aio_mb_phase8_batch1.py::TestPreflightView asserts the tone at its call site instead.",
+      "fields": [
+        "check_id",
+        "state",
+        "detail"
+      ],
+      "must_be_read": [
+        "check_id",
+        "detail"
+      ]
+    },
+    {
+      "daemon": "ControlPathRun",
+      "gui": "ControlPathRun",
+      "endpoints": [
+        "GET /diagnostics/control-path",
+        "POST /hwmon/{header_id}/discover-control-path (202 snapshot)"
+      ],
+      "note": "DEC-333. `run_id` is the poll fence — a snapshot for another run must not be rendered as this one. `restore_failed`/`restore_outcome` are the honesty pair: the dialog must never claim a header was restored when it was not. `state` is read but too common to pin here.",
+      "fields": [
+        "run_id",
+        "header_id",
+        "state",
+        "delta_pct",
+        "requested_cycles",
+        "window_seconds",
+        "baseline_pct",
+        "perturbed_pct",
+        "direction",
+        "channels",
+        "cycles",
+        "summary",
+        "original_pct",
+        "restore_failed",
+        "restore_outcome",
+        "detail",
+        "completed_unix_ms"
+      ],
+      "must_be_read": [
+        "run_id",
+        "channels",
+        "cycles",
+        "summary",
+        "restore_failed",
+        "restore_outcome"
+      ]
+    },
+    {
+      "daemon": "TachChannel",
+      "gui": "TachChannel",
+      "endpoints": [
+        "GET /diagnostics/control-path"
+      ],
+      "note": "DEC-333. `label` is read but too common to prove a read site. `is_target_header` is parsed and NOT read by the GUI — the daemon uses it to keep the target's channel inside its observation bound (P8-an); no GUI surface distinguishes it. Recorded in P8-bz.",
+      "fields": [
+        "tach_id",
+        "label",
+        "monitor_only",
+        "is_target_header"
+      ],
+      "must_be_read": [
+        "tach_id",
+        "monitor_only"
+      ]
+    },
+    {
+      "daemon": "TachObservation",
+      "gui": "TachObservation",
+      "endpoints": [
+        "GET /diagnostics/control-path"
+      ],
+      "note": "DEC-333. `responded` is the per-cycle verdict the candidate table is built from; the three RPM terms are what the user checks it against.",
+      "fields": [
+        "tach_id",
+        "baseline_rpm",
+        "perturbed_rpm",
+        "delta_rpm",
+        "noise_floor_rpm",
+        "responded"
+      ],
+      "must_be_read": [
+        "baseline_rpm",
+        "perturbed_rpm",
+        "delta_rpm",
+        "responded"
+      ]
+    },
+    {
+      "daemon": "DiscoveryCycle",
+      "gui": "DiscoveryCycle",
+      "endpoints": [
+        "GET /diagnostics/control-path"
+      ],
+      "note": "DEC-333. One perturbation cycle. `direction` matters because a down-perturbation inverts what a positive delta means.",
+      "fields": [
+        "cycle",
+        "baseline_pct",
+        "perturbed_pct",
+        "direction",
+        "observations"
+      ],
+      "must_be_read": [
+        "observations",
+        "baseline_pct",
+        "perturbed_pct",
+        "direction"
+      ]
+    },
+    {
+      "daemon": "ControlPathCandidate",
+      "gui": "ControlPathCandidate",
+      "endpoints": [
+        "GET /diagnostics/control-path"
+      ],
+      "note": "DEC-333. `cycles_responded`/`cycles_total` are rendered as a ratio — a candidate that responded once in five is not the same claim as one that responded five times, and collapsing them would lose that. `label` is read but too common.",
+      "fields": [
+        "tach_id",
+        "label",
+        "monitor_only",
+        "confidence",
+        "direction",
+        "baseline_rpm",
+        "perturbed_rpm",
+        "change_pct",
+        "cycles_responded",
+        "cycles_total"
+      ],
+      "must_be_read": [
+        "tach_id",
+        "confidence",
+        "change_pct",
+        "cycles_responded",
+        "cycles_total"
+      ]
+    },
+    {
+      "daemon": "DiscoverySummary",
+      "gui": "DiscoverySummary",
+      "endpoints": [
+        "GET /diagnostics/control-path"
+      ],
+      "note": "DEC-333. `confidence_notes` is the daemon's own explanation of a low confidence; rendering the verdict without it would state a conclusion and withhold its reason.",
+      "fields": [
+        "relationship",
+        "confidence",
+        "candidates",
+        "measurement_resolution_ms",
+        "sample_interval_ms",
+        "sample_count",
+        "confidence_notes"
+      ],
+      "must_be_read": [
+        "relationship",
+        "confidence",
+        "candidates",
+        "confidence_notes"
+      ]
+    },
+    {
+      "daemon": "ControlPathRecord",
+      "gui": "ControlPathRecord",
+      "endpoints": [
+        "GET /diagnostics/control-path .records[]"
+      ],
+      "note": "DEC-333, the persisted result of an earlier run. `validated_unix_ms` is what makes a stored claim ageable rather than timeless. `tach_ids` is parsed and NOT read — the GUI renders `tach_labels`; recorded in P8-bz.",
+      "fields": [
+        "header_id",
+        "relationship",
+        "confidence",
+        "tach_ids",
+        "tach_labels",
+        "direction",
+        "baseline_rpm",
+        "perturbed_rpm",
+        "change_pct",
+        "run_id",
+        "validated_unix_ms"
+      ],
+      "must_be_read": [
+        "relationship",
+        "confidence",
+        "tach_labels",
+        "validated_unix_ms",
+        "change_pct"
+      ]
+    },
+    {
+      "daemon": "CharPoint",
+      "gui": "CharPoint",
+      "endpoints": [
+        "GET /diagnostics/characterization"
+      ],
+      "note": "DEC-313/334. The two verdicts are deliberately independent and docs/08 forbids collapsing them into one pass/fail; both are pinned so neither can quietly stop being read. `step_index` is parsed and NOT read — the GUI orders by list position; recorded in P8-bz.",
+      "fields": [
+        "requested_pct",
+        "command_accepted",
+        "readback_pct",
+        "readback_raw",
+        "pwm_enable",
+        "rpm_before",
+        "rpm_after",
+        "settle_ms",
+        "first_change_ms",
+        "readback_verdict",
+        "rpm_verdict",
+        "direction",
+        "step_index",
+        "settled_ms",
+        "stability",
+        "estimated_physical_rpm"
+      ],
+      "must_be_read": [
+        "requested_pct",
+        "readback_pct",
+        "rpm_after",
+        "readback_verdict",
+        "rpm_verdict",
+        "estimated_physical_rpm"
+      ]
+    },
+    {
+      "daemon": "CharSummary",
+      "gui": "CharSummary",
+      "endpoints": [
+        "GET /diagnostics/characterization"
+      ],
+      "note": "DEC-313/334. The three top verdicts must stay independent (docs/08). `typical_response_ms`/`typical_settling_ms` are pinned because G29 made them the ONLY producer of those timings — the client recomputation is now just the pre-2.40.0 fallback, so if these stopped being read the dialog would silently show nothing. Three fields are parsed and NOT read: `hysteresis_worst_duty_pct`, `hysteresis_worst_delta_rpm` and `learned_range_note` — recorded in P8-bz.",
+      "fields": [
+        "command_acceptance",
+        "pwm_readback",
+        "rpm_response",
+        "min_tested_pct",
+        "max_tested_pct",
+        "min_rpm",
+        "max_rpm",
+        "monotonic",
+        "dead_zone_upper_pct",
+        "clamp_pct",
+        "possible_device_override",
+        "interference_detected",
+        "hysteresis_pct",
+        "hysteresis_verdict",
+        "hysteresis_worst_duty_pct",
+        "hysteresis_worst_delta_rpm",
+        "hysteresis_compared_points",
+        "min_responsive_pct",
+        "max_responsive_pct",
+        "low_plateau_to_pct",
+        "saturation_from_pct",
+        "plateaus",
+        "stability_verdict",
+        "worst_cv_pct",
+        "total_dropouts",
+        "total_outliers",
+        "measurement_resolution_ms",
+        "typical_response_ms",
+        "typical_settling_ms",
+        "outside_learned_range",
+        "learned_range_note",
+        "interpretation_states"
+      ],
+      "must_be_read": [
+        "command_acceptance",
+        "pwm_readback",
+        "rpm_response",
+        "hysteresis_verdict",
+        "stability_verdict",
+        "typical_response_ms",
+        "typical_settling_ms",
+        "saturation_from_pct",
+        "plateaus",
+        "outside_learned_range",
+        "possible_device_override",
+        "interference_detected"
+      ]
+    },
+    {
+      "daemon": "PointStability",
+      "gui": "PointStability",
+      "endpoints": [
+        "GET /diagnostics/characterization .points[].stability"
+      ],
+      "note": "DEC-334 §5. `usable` against `samples` is the absence-is-not-zero pair: a step that sampled nothing must not read as a clean tach. `median_rpm` and `dwell_ms` are parsed and NOT read — recorded in P8-bz.",
+      "fields": [
+        "samples",
+        "usable",
+        "dropouts",
+        "outliers",
+        "mean_rpm",
+        "median_rpm",
+        "min_rpm",
+        "max_rpm",
+        "stddev_rpm",
+        "cv_pct",
+        "verdict",
+        "sample_interval_ms",
+        "dwell_ms"
+      ],
+      "must_be_read": [
+        "samples",
+        "usable",
+        "dropouts",
+        "outliers",
+        "cv_pct",
+        "verdict"
+      ]
+    },
+    {
+      "daemon": "EstimatedRpm",
+      "gui": "EstimatedRpm",
+      "endpoints": [
+        "GET /diagnostics/characterization .points[].estimated_physical_rpm"
+      ],
+      "note": "DEC-334. `provenance` is what stops a corrected reading being presented as a raw measurement. `value` is read but too common to pin here.",
+      "fields": [
+        "value",
+        "provenance",
+        "correction_factor",
+        "correction_source"
+      ],
+      "must_be_read": [
+        "provenance",
+        "correction_factor",
+        "correction_source"
+      ]
+    },
+    {
+      "daemon": "PlateauSpan",
+      "gui": "PlateauSpan",
+      "endpoints": [
+        "GET /diagnostics/characterization .summary.plateaus[]"
+      ],
+      "note": "DEC-334 §8.3. All four are drawn: the span bounds become a chart region and the RPM pair is the plateau's own claim. tests/test_aio_mb_phase8_batch2.py asserts the realised region against these.",
+      "fields": [
+        "from_pct",
+        "to_pct",
+        "rpm_min",
+        "rpm_max"
+      ],
+      "must_be_read": [
+        "from_pct",
+        "to_pct",
+        "rpm_min",
+        "rpm_max"
+      ]
+    },
+    {
+      "daemon": "SteadyState",
+      "gui": "ValidationSteadyState",
+      "endpoints": [
+        "GET /validation/session .steady_state"
+      ],
+      "note": "DEC-335 §9.2. `criterion` is the daemon's statement of WHICH test it applied; a verdict rendered without it is unfalsifiable to the reader.",
+      "fields": [
+        "verdict",
+        "start_ms",
+        "warmup_ms",
+        "slope_c_per_min",
+        "stddev_c",
+        "mean_c",
+        "peak_c",
+        "confidence",
+        "criterion"
+      ],
+      "must_be_read": [
+        "verdict",
+        "mean_c",
+        "peak_c",
+        "slope_c_per_min",
+        "confidence",
+        "criterion"
+      ]
+    },
+    {
+      "daemon": "StartupFingerprint",
+      "gui": "ValidationStartupFingerprint",
+      "endpoints": [
+        "GET /validation/session .startup_fingerprints[]"
+      ],
+      "note": "DEC-335 §9.1. `interpretation` is the daemon's own reading of the fingerprint and the GUI must render it rather than re-deriving one. `override_observed` is parsed and NOT read — the GUI infers from `override_duration_ms`; recorded in P8-bz.",
+      "fields": [
+        "member_id",
+        "role",
+        "override_observed",
+        "override_duration_ms",
+        "peak_rpm",
+        "requested_pct_during",
+        "readback_pct_during",
+        "post_override_rpm",
+        "transition_ms",
+        "interpretation"
+      ],
+      "must_be_read": [
+        "member_id",
+        "role",
+        "override_duration_ms",
+        "peak_rpm",
+        "interpretation"
       ]
     }
   ]

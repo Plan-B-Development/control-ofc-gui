@@ -22,11 +22,18 @@ Two assertions, and the second is the one that matters
    the GUI parses and no one reads is decoration, and having it in the type is
    precisely what makes the gap invisible.
 
-The declared surface lives in ``tests/fixtures/wire_fields.json`` and is pinned
-on the daemon side by ``daemon/src/api/responses.rs::tests::
-wire_field_surface_is_pinned``. Neither copy can drift alone: a new daemon field
+The declared surface lives in ``tests/fixtures/wire_fields.json``. For the
+entries the daemon ALSO pins — ``daemon/src/api/responses.rs::tests::
+wire_field_surface_is_pinned`` — neither copy can drift alone: a new daemon field
 reds that Rust test, and updating the fixture to match then reds this one until
 the GUI models it.
+
+**That is not true of every entry, and the difference matters.** The Rust test
+covers the first 13 structs; the 16 that ``G33`` added are pinned on this side
+only. A one-sided pin catches the GUI dropping a field it is supposed to model.
+It does NOT catch the daemon renaming one — this fixture is static data and
+never queries a live daemon, so a rename leaves the declared list stale and this
+test green against it. Extending the Rust test to those 16 is ``P8-ca``.
 
 Scope is honest and partial by design: the structs covering ``/sensors``,
 ``/fans``, ``/poll``, ``/hwmon/headers``, ``/inventory/hwmon``,
