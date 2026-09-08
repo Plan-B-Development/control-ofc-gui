@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+**Contract and in-code documentation: eight stale or false claims corrected, and
+one of them was corrected wrongly first (DEC-347, register package `G31` — rows
+`P8-y`, `P8-as`, `P8-at`, `P8-ao`, `P8-bt`, `P8-a`, `P8-j`, `P8-bj`).**
+Documentation only on the GUI side; the daemon side adds one test. No behaviour
+changed in either repo.
+
+**`docs/08` described a Super-I/O response that does not exist.** The
+`0x8883` bridge entry was documented as arriving with `chip_name: null` and "the
+raw `devid`". `SuperIoChipEntry`'s `chip_name` is a non-nullable string carrying
+the literal `"ITE eSPI-to-LPC bridge (not a sensor chip)"`, and the struct has no
+`devid` field at all — so a client written to that text would have branched on
+`chip_name is None`, which can never fire. The DEVID is not published anywhere
+for this case; the entry now says to detect the bridge by that exact string. The
+first replacement written for this paragraph was itself wrong in the same way,
+which is recorded as the general lesson in DEC-347.
+
+**The safety preflight is now documented the way the GUI actually calls it.**
+`GET /diagnostics/preflight` was the one route where two documents said "gate on
+the capability, do not probe" and the code probed. The reason behind that rule —
+a route-fallback `404` is indistinguishable from a handler's own — does not hold
+here, because the handler answers only `200` or `400`. The code was right; the
+docs now say so, with the reason, and a new daemon test pins the property the
+exception rests on.
+
+**A `400` cause was missing from the client contract.** `start_validation_session`
+listed the sweep-member, metadata-key-count and metadata-value bounds but not the
+128-byte bound on a metadata **key** — the one that matters most, since an
+oversized key can push the stored document past the read cap and get the session
+pruned.
+
+**Two retraction survivors and a deferral note.** `validation_view.py` still
+said Phase 6 "deliberately shipped no chart" and cited a register row retired in
+September; `docs/07` still said one dialog serves "both" session kinds (three
+since DEC-335) and led a paragraph with "charts remain deliberately absent" that
+its own next sentence contradicted. All now describe what shipped.
+
 **User-manual truthfulness: five false claims corrected, and a sixth found by
 sweeping (register package `G30` — rows `P8-z`, `P8-aa`, `P8-au`, `P8-av`,
 `P8-aw`).** Documentation only — no GUI behaviour changed, and in every case the

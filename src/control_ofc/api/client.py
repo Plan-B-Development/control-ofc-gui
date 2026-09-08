@@ -606,8 +606,12 @@ class DaemonClient:
         ``validation_error`` covers an unknown diagnostic, a member that does not
         belong to the named device, ``stop_when_diagnostics_complete`` with an
         empty ``diagnostics`` (there would be nothing to complete), **and every
-        bound**: more than 8 ``sweep_members``, more than 16 ``metadata`` keys, or
-        a metadata value over 512 bytes.
+        bound**: more than 8 ``sweep_members``, more than 16 ``metadata`` keys, a
+        metadata **key** over 128 bytes, or a metadata **value** over 512 bytes.
+        The key bound is the one that reads as a technicality and is not: a
+        single oversized key can push the stored document past the store's read
+        cap, and since DEC-320 an over-cap session is pruned — so it destroys the
+        operator's evidence rather than merely wasting disk (``P8-at``).
         """
         body: dict[str, Any] = {"cooling_device_id": cooling_device_id}
         if kind is not None:
@@ -810,9 +814,22 @@ class DaemonClient:
         authorisation. Calling it does not take the single-flight slot, so it is
         safe to call while deciding whether to start a run.
 
-        Gate on ``capabilities.control.diagnostic_preflight`` rather than
-        probing — an older daemon 404s this route from the route fallback, which
-        is indistinguishable from a handler 404 without reading ``error.code``.
+        **Probing is correct here, and this is the route where it is.** The
+        sibling capability entries in ``docs/08`` say to gate on the flag rather
+        than probe, and this docstring used to say so too — but their shared
+        rationale is that a ``404`` from the route fallback (an older daemon)
+        cannot be told from a handler's own ``404`` without reading
+        ``error.code``, and that ambiguity does not exist on this route.
+        ``preflight_handler`` returns only ``200`` or ``400``, so the fallback is
+        the **only** source of a ``404`` and mapping it to "no preflight
+        available" cannot misfire.
+
+        Gating would not be free either: it adds a second thing that has to stay
+        true — the version floor in ``DAEMON_FEATURE_MINIMUMS`` — to a path whose
+        correctness presently depends on nothing but the daemon's own answer, and
+        it buys no user-visible difference, since the advisory reports the same
+        unavailability either way. The rule was stated, never followed, and the
+        code was the half that was right (``P8-as``).
 
         The GUI must NOT re-derive the verdict from the rows: the daemon owns
         the roll-up (the spec's §6.1 is explicit that the GUI reflects daemon

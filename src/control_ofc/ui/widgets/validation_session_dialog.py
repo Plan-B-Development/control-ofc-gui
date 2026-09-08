@@ -1,4 +1,4 @@
-"""The validation / lifecycle session dialog (AIO-MB Phase 6 §12-§17, DEC-318).
+"""The hardware session dialog (AIO-MB Phase 6 §12-§17, DEC-318).
 
 Phase 5 built the whole engine, the typed models, the view-model and the
 serializers, and deliberately shipped no UI. This is that UI, and it is the only

@@ -469,7 +469,10 @@ def _fetch_preflight(worker, header_id: str, diagnostic: str) -> None:
         worker.preflight_error.emit("unavailable", "Daemon unavailable — safety checks unknown.")
     except DaemonError as e:
         # 404 is an older daemon that has no preflight route. Not an error to the
-        # user: the diagnostic itself still runs its own guards.
+        # user: the diagnostic itself still runs its own guards. Probing rather
+        # than capability-gating is deliberate and is justified at
+        # `DaemonClient.diagnostic_preflight` — `preflight_handler` has no 404
+        # branch, so the route fallback is the only 404 this can see (`P8-as`).
         if e.status == 404:
             worker.preflight_error.emit(
                 "unavailable", unsupported_feature_message("diagnostic_preflight")

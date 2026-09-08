@@ -814,11 +814,14 @@ the section shows a concise result rather than a card per device.
 
 ## Implementation: Validation sessions (DEC-317, AIO-MB Phase 5 — backend only)
 
-**Phase 6 (DEC-318, GUI v2.56.0) shipped that UI.** The validation and lifecycle panel is
+**Phase 6 (DEC-318, GUI v2.56.0) shipped that UI.** The session panel is
 `ui/widgets/validation_session_dialog.py`, launched from the Hardware page's *Hardware
-Diagnostics* section. One dialog serves both session kinds, because Phase 5 made them one
-engine with a `kind` discriminator — a second dialog would be the duplication the brief
-forbids. It shows the live status, the per-member telemetry table, a row per orchestrated diagnostic
+Diagnostics* section. One dialog serves **all three** session kinds — validation, lifecycle
+recording and, since DEC-335, thermal observation — because Phase 5 made them one engine
+with a `kind` discriminator, and a dialog per kind would be the duplication the brief
+forbids. (It said "both session kinds" until `P8-bj`; the reason is stated rather than the
+count, because the reason is what stays true when a kind is added.) It shows the live
+status, the per-member telemetry table, a row per orchestrated diagnostic
 as it completes (DEC-337) and the findings summary; offers Mark Event / Stop & Save / Stop &
 Mark Cancelled; records external measurements; and exports CSV and JSON through the Qt-free
 serializers below, from one `Export` menu button since GUI v2.65.1.
@@ -847,7 +850,9 @@ options form is editable again, so the sentence is describing the run being comp
 styling and the wording: `cancel()` is `finish(STATE_CANCELLED)` and finalises exactly as
 `stop` does — same findings, same samples, same persistence (`P8-bc`).
 
-**Charts remain deliberately absent.** The brief's own guidance is "do not make graphing
+**The chart was deferred, and DEC-335 discharged the deferral.** This paragraph led with
+"charts remain deliberately absent" until `P8-bj` — stale from the moment Batch 3a landed,
+and contradicted by its own next sentence. The brief's own guidance is "do not make graphing
 mandatory" and "a stable tabular implementation is preferable"; `TimelineChart` is coupled
 to live `AppState` history and cannot render a session's `samples[]` array without a new
 plot. That was recorded as deferred work and is **discharged by DEC-335**: Batch 3a adds

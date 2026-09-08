@@ -182,7 +182,13 @@ GUI treats every flag as false / old behaviour (AIP-180):
 - `diagnostic_preflight` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `GET /diagnostics/preflight`. **A separate flag from `control_path_discovery` on purpose:**
   the preflight is read-only and covers the two pre-existing diagnostics as well, so a client
-  may want the safety summary without offering discovery.
+  may want the safety summary without offering discovery. **Unlike its neighbours here, this
+  one need not be checked before calling, and the GUI does not check it.** The gate-don't-probe
+  rule exists because a route-fallback `404` cannot be told from a handler's own `404`;
+  `preflight_handler` answers only `200` or `400`, so on this route the fallback is the only
+  `404` and probing is unambiguous. Gate on it if you would rather not offer the button at all
+  — just do not read a `404` here as anything other than "this daemon has no preflight"
+  (`P8-as`).
 - `pwm_characterization` (bool, DEC-313) — the daemon exposes `POST /hwmon/{id}/characterize`
   plus the `GET`/`DELETE /diagnostics/characterization` pair: the deeper PWM/RPM response sweep
   that sits **alongside** the quick verify. **`true` since 2.29.0**; absent → `false`.
@@ -1745,13 +1751,27 @@ and, for an unbound chip, a load `recommendation`). ITE chips are identified
 precisely (DEVID → chip name → driver + DKMS status); the Nuvoton/Winbond family
 is identified at vendor level with the raw DEVID and an `nct6775` recommendation.
 
-**`chip_name` is `null` for DEVID `0x8883` (daemon ≥ 2.38.0, DEC-332).** That
-value is an ITE eSPI→LPC *bridge* answering in place of the chip behind it, not a
-chip. Earlier daemons named it `it8883`, a device that has never existed. The
-entry is still returned — with `vendor: "ite"` and the raw `devid` — because the
-signature is exactly what tells an operator the bridge is latched; only the
-invented name is gone. **A client must not synthesise a chip name from `devid`
-for this value.**
+**DEVID `0x8883` is reported as a bridge, not as a chip (daemon ≥ 2.38.0,
+DEC-332).** That value is an ITE eSPI→LPC *bridge* answering in place of the chip
+behind it. Earlier daemons named it `it8883`, a device that has never existed.
+
+**Detect it by `chip_name`, which is the literal string `"ITE eSPI-to-LPC bridge
+(not a sensor chip)"`, with `vendor: "ite"`.** `chip_name` is a non-nullable
+string on this endpoint and is never `null` — an earlier version of this
+paragraph said it was `null` for this DEVID, and a client written to that text
+would have branched on `chip_name is None`, which can never fire (`P8-y`).
+
+**The DEVID itself is not published for this case, anywhere.**
+`SuperIoChipEntry` carries no `devid` field, and for the bridge specifically it
+carries no route to one either: `expected_module` is `"unknown"`, so
+`recommendation` — the only object with a `reason` string — is `null`, and the
+single `caveats` entry describes the power-cut recovery without naming the value.
+(An *unrecognised* chip that is not the bridge does get its DEVID, in a caveat
+reading "Unrecognized Super-I/O chip (vendor …, DEVID 0x….)".) The earlier text
+said the entry was returned "with the raw `devid`" and told clients not to
+synthesise a name from it; both governed a field that does not exist. **Identify
+the bridge by the `chip_name` string above** — that is the whole of the signal
+the wire carries (`P8-y`).
 
 **GUI usage:** gate an advanced "Probe ports" button on `port_probe_available`;
 disable it with `port_probe_reason` as the tooltip when false. Because the probe
