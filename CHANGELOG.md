@@ -41,6 +41,33 @@ That is this project's documented failure mode (a retraction fixed in one place
 and left standing in another) landing on a row that was *itself* already a
 survivor of it, so the fix is the whole set rather than the two the row named.
 
+**The validation dialog's markers, Start button and enablement rule (DEC-345,
+register package `G27` — rows `P8-ah`, `P8-ai`, `P8-ay`).** GUI only.
+
+**Event markers were unlabelled exactly when you were labelling them.** "Mark
+Event" sent the *session note* field — which lives in the options form and is
+disabled for the whole recording — so every manual marker on a multi-hour
+observation carried the same pre-start string, usually empty. Two different
+things were sharing one widget. There is now an **Event label** field beside the
+live status that stays editable while recording, and it clears after each marker
+so the next one cannot silently inherit the last one's text. The session note is
+unchanged and still start-time metadata.
+
+**A double-click sent two starts.** Enablement only moved when the next poll
+landed about a second later, so the second click reached the daemon and came
+back `409` — the user reading "a validation session is already recording" over a
+session that had just started. The button now goes down on click and stays down
+across the whole start window, including a poll that arrives before the session
+is visible.
+
+**Start was refused during the startup auto-record, which the daemon would have
+accepted.** `ValidationEngine::start` supersedes a still-recording
+`auto_started` session for an operator start; the GUI gated on "nothing is
+recording" and so disabled Start for the ~2 minutes of auto-record after every
+boot. The rule now mirrors the daemon's, including for a session belonging to
+another device — the daemon's slot is process-global and its supersede branch
+does not care whose session it is.
+
 ## [2.66.0] — 2026-09-07
 
 **Run 2 of the session-lifecycle block (DEC-338).** The other half of v2.65.1:

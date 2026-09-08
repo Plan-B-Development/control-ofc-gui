@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QLabel, QPushButton
 from control_ofc.api.models import (
     VALIDATION_KIND_LIFECYCLE,
     VALIDATION_KIND_VALIDATION,
+    VALIDATION_STATE_COMPLETED,
     VALIDATION_STATE_RECORDING,
     Capabilities,
     CharacterizationRun,
@@ -1524,14 +1525,146 @@ class TestValidationDialogButtons:
         dialog._json_action.trigger()
         assert seen == ["stop", "cancel", "export:csv", "export:json"]
 
-    def test_mark_event_carries_the_note_field(self, qtbot):
+    def test_mark_event_carries_the_marker_field_not_the_session_note(self, qtbot):
+        """`P8-ah`: the marker label is its own field, editable while recording.
+
+        This test previously set `_note_edit` and asserted the marker carried it,
+        and it passed — because `setText()` works on a disabled widget when called
+        programmatically. In the running app `_note_edit` lives in
+        `_options_section`, which is disabled for the whole recording, so every
+        real marker carried the same pre-start string. The test bypassed the exact
+        disable that broke the feature, which is why it never caught it.
+        """
         dialog = self._dialog(qtbot)
         seen: list[tuple] = []
         dialog.marker_requested.connect(lambda *a: seen.append(a))
         dialog.apply_session(_session(state=VALIDATION_STATE_RECORDING))
-        dialog._note_edit.setText("resumed from suspend")
+
+        # The precondition that makes this test mean something: while recording,
+        # the session-note field is genuinely unusable, so it cannot be the source.
+        assert not dialog._note_edit.isEnabled()
+        assert dialog._marker_edit.isEnabled()
+
+        dialog._note_edit.setText("session note, not a marker")
+        dialog._marker_edit.setText("resumed from suspend")
         dialog._mark_btn.click()
         assert seen == [("resumed from suspend", "")]
+
+    def test_the_marker_field_clears_so_the_next_marker_does_not_inherit_it(self, qtbot):
+        """Otherwise marker two silently repeats marker one's label."""
+        dialog = self._dialog(qtbot)
+        seen: list[tuple] = []
+        dialog.marker_requested.connect(lambda *a: seen.append(a))
+        dialog.apply_session(_session(state=VALIDATION_STATE_RECORDING))
+
+        dialog._marker_edit.setText("fan curve changed")
+        dialog._mark_btn.click()
+        dialog._mark_btn.click()
+
+        assert seen == [("fan curve changed", ""), ("", "")], (
+            "the second marker must not inherit the first one's label"
+        )
+
+    # ── `P8-ai` / `P8-ay`: Start enablement ──────────────────────────────
+
+    def test_a_second_start_click_emits_nothing(self, qtbot):
+        """`P8-ai`: the click must move enablement now, not one poll later.
+
+        The discriminating assertion is the SECOND click. Asserting the first one
+        emits is the pre-fix answer by construction — it emitted before too.
+        """
+        dialog = self._dialog(qtbot)
+        seen: list[tuple] = []
+        dialog.start_requested.connect(lambda *a: seen.append(a))
+
+        dialog._start_btn.click()
+        dialog._start_btn.click()
+
+        assert len(seen) == 1, f"a double-click must send one start, sent {len(seen)}"
+
+    def test_a_poll_arriving_before_the_session_does_not_re_enable_start(self, qtbot):
+        """The window `_start_pending` exists to cover.
+
+        A poll dispatched before the click is answered after it, reports nothing
+        recording, and runs `_apply_enablement`. Disabling the button in
+        `_emit_start` alone would be undone here, reopening the double-click.
+        """
+        dialog = self._dialog(qtbot)
+        dialog._start_btn.click()
+        assert not dialog._start_btn.isEnabled()
+
+        dialog.apply_session(None)
+        assert not dialog._start_btn.isEnabled(), (
+            "a poll landing before the session became visible must not re-enable Start"
+        )
+
+    def test_a_refused_start_gives_the_button_back(self, qtbot):
+        """The complement, and the reason the disable is not enough on its own.
+
+        Without this the button is dead after any refusal — a thermal
+        `unavailable`, a socket error, a validation failure — because the only
+        other caller is a poll reporting a recording session that never comes.
+        """
+        dialog = self._dialog(qtbot)
+        dialog._start_btn.click()
+        assert not dialog._start_btn.isEnabled()
+
+        dialog.apply_error("unavailable", "thermal protection is active")
+        assert dialog._start_btn.isEnabled(), "a refused start must re-enable Start"
+
+    def test_start_enablement_matches_the_daemons_admission_rule(self, qtbot):
+        """`P8-ay`: assert the RELATIONSHIP, in all four combinations.
+
+        The daemon (`validation/recorder.rs`) is:
+            if current.is_recording() { if !current.auto_started { reject } }
+        i.e. it accepts whenever nothing is recording OR the recording session is
+        `auto_started`, which it supersedes. A literal here would not discriminate
+        — the point is that the GUI's answer equals the daemon's for every case.
+        """
+        for recording, auto_started in (
+            (False, False),
+            (False, True),
+            (True, False),
+            (True, True),
+        ):
+            dialog = self._dialog(qtbot)
+            state = VALIDATION_STATE_RECORDING if recording else VALIDATION_STATE_COMPLETED
+            dialog.apply_session(_session(state=state, auto_started=auto_started))
+
+            daemon_would_accept = (not recording) or auto_started
+            assert dialog._start_btn.isEnabled() == daemon_would_accept, (
+                f"recording={recording} auto_started={auto_started}: GUI says "
+                f"{dialog._start_btn.isEnabled()}, daemon would accept "
+                f"{daemon_would_accept}"
+            )
+
+    def test_a_foreign_auto_record_does_not_block_start(self, qtbot):
+        """The half the row did not name.
+
+        The daemon's slot is process-global and its supersede branch does not care
+        whose session it is, so a foreign auto-record is no more blocking than our
+        own. The foreign session object is discarded on arrival, so the
+        auto-started bit has to be captured before it goes.
+        """
+        dialog = self._dialog(qtbot)
+
+        foreign_manual = _session(
+            session_id="vs-other", state=VALIDATION_STATE_RECORDING, auto_started=False
+        )
+        foreign_manual.metadata.cooling_device_id = "someone-elses-device"
+        dialog.apply_session(foreign_manual)
+        assert not dialog._start_btn.isEnabled(), (
+            "a foreign OPERATOR session is recording — the daemon would refuse us"
+        )
+
+        foreign_auto = _session(
+            session_id="vs-auto", state=VALIDATION_STATE_RECORDING, auto_started=True
+        )
+        foreign_auto.metadata.cooling_device_id = "someone-elses-device"
+        dialog.apply_session(foreign_auto)
+        assert dialog._start_btn.isEnabled(), (
+            "a foreign AUTO-STARTED session is superseded by the daemon, so Start must be offered"
+        )
 
     def test_a_measurement_carries_kind_value_unit_member_and_folded_note(self, qtbot):
         """§17: the wire has no `instrument` field, so it is folded into the

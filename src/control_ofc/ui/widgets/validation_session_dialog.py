@@ -294,9 +294,16 @@ class ValidationSessionDialog(ModalDialog):
         #: side dish, so those default off and the user opts in.
         self._auto_stop_intent = kind == VALIDATION_KIND_VALIDATION
         self._session: ValidationSession | None = None
-        #: Something else owns the daemon's single session slot right now. Not a
-        #: session we may render — only a reason our Start would be refused.
-        self._foreign_recording = False
+        #: Something else owns the daemon's single session slot with a recording
+        #: the daemon would NOT supersede. Not a session we may render — only a
+        #: reason our Start would be refused.
+        #:
+        #: `P8-ay`: the auto-started qualifier is part of the flag's meaning, not
+        #: a caller's job, because the session object it is derived from is
+        #: discarded on the next line. `ValidationEngine::start` supersedes a
+        #: still-recording `auto_started` session for an operator start and does
+        #: not care whose it is, so a foreign auto-record does not block us.
+        self._foreign_blocks_start = False
         #: A start has been asked for and neither a recording snapshot nor an
         #: error has come back yet. Suppresses the poll timer's stop-on-finished
         #: rule for exactly that window — see `apply_session`.
@@ -347,6 +354,8 @@ class ValidationSessionDialog(ModalDialog):
         self._status_lbl.setObjectName("Validation_Label_status")
         self._status_lbl.setWordWrap(True)
         body.addWidget(self._status_lbl)
+
+        body.addWidget(self._build_marker_form())
 
         self._member_table = QTableWidget(0, len(_MEMBER_COLUMNS), self)
         self._member_table.setObjectName("Validation_Table_members")
@@ -892,6 +901,36 @@ class ValidationSessionDialog(ModalDialog):
         section.add_widget(host)
         return section
 
+    def _build_marker_form(self) -> QWidget:
+        """The label the footer's **Mark Event** button sends.
+
+        `P8-ah`: this used to read `_note_edit`, which is the *session* note. That
+        field lives in `_options_section` and is disabled for the whole recording,
+        so every manual marker carried the same pre-start string — usually empty,
+        and empty exactly when the user was annotating what they had just changed.
+        Two different things had been sharing one widget: the session note is
+        start-time metadata, an event label annotates a moment being watched.
+
+        Deliberately **outside** `_options_section` so it stays editable while
+        recording, following `_build_measurement_form`'s shape — an always-editable
+        field whose action button alone is gated on `recording`. Prompt-on-click was
+        the alternative and was rejected: a modal at the moment of the click steals
+        focus and delays the timestamp, and the timestamp is the whole point of a
+        marker during a live observation.
+        """
+        host = QWidget(self)
+        form = QFormLayout(host)
+        form.setContentsMargins(0, 0, 0, 0)
+
+        self._marker_edit = QLineEdit(host)
+        self._marker_edit.setObjectName("Validation_Edit_markerLabel")
+        self._marker_edit.setPlaceholderText(
+            "What changed? Sent with the next Mark Event (optional)"
+        )
+        form.addRow("Event label", self._marker_edit)
+        name_value_control(self._marker_edit, "Label for the next event marker")
+        return host
+
     def _build_measurement_form(self) -> QWidget:
         """External electrical observations (§17).
 
@@ -1008,9 +1047,26 @@ class ValidationSessionDialog(ModalDialog):
             # refuses.
             self._auto_stop_requested(),
         )
+        # `P8-ai`: disable NOW, not when the next poll lands ~1 s later — a
+        # double-click otherwise sent two starts and the daemon answered the
+        # second `409 already_exists`, so the user read "a validation session is
+        # already recording" over a session that did start.
+        #
+        # AFTER the emit, and that ordering is load-bearing: `_apply_enablement`
+        # disables `_options_section`, and `_auto_stop_requested()` above reads
+        # `_auto_stop_box.isEnabled()` — deliberately, so a disabled option is
+        # never posted. Applying enablement first therefore made a ticked box
+        # send `False`. Snapshot the payload, THEN change the state you read it
+        # from. Caught by `test_start_sends_what_the_box_says`, which exists
+        # because it drives `.click()` rather than the handler.
+        self._apply_enablement()
 
     def _emit_marker(self) -> None:
-        self.marker_requested.emit(self._note_edit.text().strip(), "")
+        self.marker_requested.emit(self._marker_edit.text().strip(), "")
+        # Clear it. Otherwise the next marker silently inherits this one's label
+        # — the same staleness `P8-ah` is about, one step smaller, and harder to
+        # notice because the text on screen looks deliberate.
+        self._marker_edit.clear()
 
     def _emit_measurement(self) -> None:
         data = self._m_kind.currentData()
@@ -1107,10 +1163,10 @@ class ValidationSessionDialog(ModalDialog):
         # would show another device's data under this one's name.
         self._poll_in_flight = False
         if session is not None and not self._is_ours(session):
-            self._foreign_recording = bool(session.is_recording)
+            self._foreign_blocks_start = bool(session.is_recording) and not session.auto_started
             session = None
         else:
-            self._foreign_recording = False
+            self._foreign_blocks_start = False
         self._session = session
         if session is None:
             self._sync_end_condition()
@@ -1150,6 +1206,13 @@ class ValidationSessionDialog(ModalDialog):
         self._status_lbl.setText(
             message if category == "unavailable" else f"Session error: {message}"
         )
+        # `P8-ai`: and re-enable. `_start_pending` gates Start, so clearing it
+        # above without re-running the rule would leave the button dead after a
+        # refused start — a thermal `unavailable`, a socket error, a validation
+        # failure — with no way back, because the only other caller is a poll
+        # reporting a recording session that is never coming. A stuck Start is
+        # worse than the double-click this fix is for.
+        self._apply_enablement()
 
     def apply_action_ok(self, message: str) -> None:
         self._status_lbl.setText(message)
@@ -1250,7 +1313,19 @@ class ValidationSessionDialog(ModalDialog):
         # itself admits a new session whenever the slot holds a finished one
         # (`ValidationEngine::start` rejects only `is_recording()`), so this now
         # matches what the daemon will actually accept.
-        can_start = not recording and not self._foreign_recording
+        # `P8-ay`: mirror the daemon's admission rule, which is
+        #     if current.is_recording() { if !current.auto_started { reject } }
+        # (`validation/recorder.rs`). It accepts whenever nothing is recording OR
+        # the recording session is `auto_started`, superseding it. Gating on
+        # `recording` alone refused Start for the ~2 minutes of every boot's
+        # startup auto-record, which the daemon would in fact have taken.
+        own_blocks = recording and not (self._session is not None and self._session.auto_started)
+        # `P8-ai`: hold the button down across the start window too. Disabling it
+        # in `_emit_start` alone would not survive — the next poll lands before
+        # the session is visible, calls this method, and would re-enable into the
+        # same double-click. One rule, one place, rather than the button being
+        # hand-set in two.
+        can_start = not own_blocks and not self._foreign_blocks_start and not self._start_pending
         self._start_btn.setEnabled(can_start)
         self._mark_btn.setEnabled(recording)
         self._stop_btn.setEnabled(recording)
@@ -1264,6 +1339,9 @@ class ValidationSessionDialog(ModalDialog):
         # Start exactly. Leaving them on `_session is None` would offer an
         # enabled Start over a form the user could not edit — a second, quieter
         # version of the same defect.
+        # ...and they follow it through the start window too. `_emit_start` has
+        # already snapshotted these values, so a form left editable here can only
+        # mislead: nothing typed into it reaches the request that is in flight.
         self._options_section.setEnabled(can_start)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
