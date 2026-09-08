@@ -42,7 +42,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from control_ofc.services.thermal_view import SessionTrace
-from control_ofc.ui.theme import ThemeTokens, default_dark_theme
+from control_ofc.ui.theme import ThemeTokens, active_theme
 
 #: Series order, so colours stay stable between redraws.
 _TEMPERATURE = 0
@@ -73,7 +73,11 @@ class SessionTimelineChart(QWidget):
     ) -> None:
         super().__init__(parent)
         self.setObjectName(object_name)
-        self._theme: ThemeTokens = default_dark_theme()
+        # `P8-af`: read the LIVE active theme rather than pinning to default-dark
+        # at construction (the DEC-109 rule `timeline_chart` already follows).
+        # Pinned, this chart sat on the default palette inside a correctly themed
+        # dialog for its whole life, because nothing calls `set_theme` on it.
+        self._theme: ThemeTokens = active_theme()
         self._trace = SessionTrace()
         self._rpm_vb: pg.ViewBox | None = None
 
@@ -125,17 +129,25 @@ class SessionTimelineChart(QWidget):
             # directly beneath it, and hiding them is what makes the two read as
             # one chart rather than two.
             main.getAxis("bottom").setStyle(showValues=False)
-            self._rpm_vb = pg.ViewBox()
-            self._rpm_vb.setLimits(yMin=0)
-            main.scene().addItem(self._rpm_vb)
-            main.showAxis("right")
+            # `P8-af`: create/add/link the RPM ViewBox exactly ONCE. This block
+            # used to run on every `_setup_plots`, and `set_theme` calls that —
+            # so a theme switch orphaned the previous ViewBox in the scene with
+            # its RPM curves never cleared, and connected `sigResized` a second
+            # time. That is why seeding from `active_theme()` alone would not
+            # have been a safe repair: it makes `set_theme` reachable.
+            if self._rpm_vb is None:
+                self._rpm_vb = pg.ViewBox()
+                self._rpm_vb.setLimits(yMin=0)
+                main.scene().addItem(self._rpm_vb)
+                main.showAxis("right")
+                main.getAxis("right").linkToView(self._rpm_vb)
+                main.getAxis("right").setLabel("RPM")
+                self._rpm_vb.setXLink(main.vb)
+                main.vb.sigResized.connect(self._sync_rpm_viewbox)
+            # Restyling the axis IS per-theme and stays here.
             right = main.getAxis("right")
-            right.linkToView(self._rpm_vb)
-            right.setLabel("RPM")
             right.setPen(pg.mkPen(t.chart_axis_text))
             right.setTextPen(pg.mkPen(t.text_secondary))
-            self._rpm_vb.setXLink(main.vb)
-            main.vb.sigResized.connect(self._sync_rpm_viewbox)
 
         power = self._power.getPlotItem()
         if power is not None:

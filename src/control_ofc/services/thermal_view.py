@@ -414,12 +414,18 @@ class SessionTrace:
         The chart draws nothing when this is false. Empty axes read as "we
         measured and found zero" — the same rule `PwmResponseChart` follows.
         """
+        # `P8-ak`: `gpu_power` belongs here. Its absence meant a trace whose
+        # only series was GPU power reported `has_data=False`, so the Timeline
+        # section was hidden and the chart returned before plotting — recorded
+        # data silently dropped. The sibling `has_power` below already counted
+        # it, which is what made the omission look deliberate.
         return bool(
             self.temperature
             or self.coolant
             or self.pump_rpm
             or self.radiator_rpm
             or self.package_power
+            or self.gpu_power
         )
 
     @property

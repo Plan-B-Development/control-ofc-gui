@@ -25,7 +25,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from control_ofc.services.characterization_view import ResponseCurve
-from control_ofc.ui.theme import ThemeTokens, default_dark_theme
+from control_ofc.ui.theme import ThemeTokens, active_theme
 
 #: Series roles, in the order they are assigned theme colours. Falling first so
 #: the two legs are visually distinct even on a palette whose first two entries
@@ -45,7 +45,12 @@ class PwmResponseChart(QWidget):
     ) -> None:
         super().__init__(parent)
         self.setObjectName(object_name)
-        self._theme: ThemeTokens = default_dark_theme()
+        # `P8-af`: the LIVE theme, not default-dark. Pinned, this chart sat on
+        # the default palette inside a correctly themed dialog. Unlike its
+        # sibling `SessionTimelineChart` this one builds no ViewBox, so
+        # `_setup_plot` is idempotent and `set_theme` was already safe to call —
+        # there was simply never a caller.
+        self._theme: ThemeTokens = active_theme()
         self._curve = ResponseCurve()
 
         layout = QVBoxLayout(self)

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+from dataclasses import replace
 
 import pytest
 from PySide6.QtWidgets import QPushButton
@@ -708,3 +709,90 @@ class TestSessionOwnershipAndRestart:
             PwmCharacterizationDialog,
         ):
             assert callable(getattr(cls, "_is_ours", None)), f"{cls.__name__} has no _is_ours"
+
+
+class TestG28ChartsAndTrace:
+    """`P8-af` / `P8-ak`: the two new charts' theme, and the series `has_data` forgot."""
+
+    def test_a_gpu_power_only_trace_is_plottable(self):
+        """`P8-ak`: `has_data` omitted `gpu_power` while `has_power` counted it.
+
+        A trace whose only series was GPU power therefore reported nothing to
+        plot, the Timeline section was hidden and the chart returned before
+        drawing — recorded data silently dropped. Asserted as a RELATIONSHIP
+        against the sibling property, so the two cannot drift apart again.
+        """
+        from control_ofc.services.thermal_view import TracePoint
+
+        trace = SessionTrace(gpu_power=[TracePoint(0.0, 42.0), TracePoint(1.0, 44.0)])
+        assert trace.has_power, "precondition: gpu_power alone is power"
+        assert trace.has_data, (
+            "a trace with a series that `has_power` counts must be plottable; "
+            "otherwise the chart drops data the session actually recorded"
+        )
+
+    def test_an_empty_trace_is_still_not_plottable(self):
+        """The opposite branch — without it a `has_data` stuck at True passes."""
+        assert not SessionTrace().has_data
+
+    def test_the_charts_seed_from_the_live_theme_not_default_dark(self, qtbot):
+        """`P8-af`: pinned to default-dark, both charts sat on the wrong palette
+        inside a correctly themed dialog for their whole life, because nothing
+        calls `set_theme` on them.
+
+        **The active theme is deliberately moved off the default first.** In a
+        stock test environment `active_theme()` IS default-dark, so asserting
+        against it would pass with the fix deleted — the sample has to be one
+        that can actually move (`CLAUDE.md`). The theme is restored afterwards so
+        this cannot leak into another test.
+        """
+        from control_ofc.ui.theme import active_theme, default_dark_theme, set_active_theme
+        from control_ofc.ui.widgets.pwm_response_chart import PwmResponseChart
+
+        restore = active_theme()
+        # A distinguishable palette: same shape, different values, so equality
+        # with default-dark is impossible.
+        distinct = replace(default_dark_theme(), name="G28 Probe", chart_bg="#123456")
+        try:
+            set_active_theme(distinct)
+            assert active_theme().chart_bg == "#123456", "precondition: the theme moved"
+
+            for chart in (SessionTimelineChart(), PwmResponseChart()):
+                qtbot.addWidget(chart)
+                assert chart._theme.chart_bg == distinct.chart_bg, (
+                    f"{type(chart).__name__} seeded from something other than the "
+                    f"live active theme (got {chart._theme.chart_bg})"
+                )
+                assert chart._theme.name == distinct.name
+        finally:
+            set_active_theme(restore)
+
+    def test_re_theming_the_timeline_chart_does_not_orphan_its_rpm_viewbox(self, qtbot):
+        """`P8-af`'s trap, and why seeding alone would not have been a safe fix.
+
+        `set_theme` re-runs `_setup_plots`, which used to build a fresh
+        `pg.ViewBox`, add it to the scene and connect `sigResized` every time —
+        so making `set_theme` reachable would have orphaned the previous ViewBox
+        with its RPM curves never cleared, and duplicated the connection.
+        """
+        import pyqtgraph as pg
+
+        from control_ofc.ui.theme import active_theme
+
+        chart = SessionTimelineChart()
+        qtbot.addWidget(chart)
+        first_vb = chart._rpm_vb
+        assert first_vb is not None, "precondition: the RPM ViewBox exists after construction"
+
+        main = chart._main.getPlotItem()
+        assert main is not None
+        before = [i for i in main.scene().items() if isinstance(i, pg.ViewBox)]
+
+        chart.set_theme(active_theme())
+        chart.set_theme(active_theme())
+
+        assert chart._rpm_vb is first_vb, "the RPM ViewBox must be created once, not per re-theme"
+        after = [i for i in main.scene().items() if isinstance(i, pg.ViewBox)]
+        assert len(after) == len(before), (
+            f"re-theming added {len(after) - len(before)} orphaned ViewBox(es) to the scene"
+        )

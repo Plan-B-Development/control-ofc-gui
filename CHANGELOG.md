@@ -68,6 +68,31 @@ boot. The rule now mirrors the daemon's, including for a session belonging to
 another device — the daemon's slot is process-global and its supersede branch
 does not care whose session it is.
 
+**The two Phase-8 charts, and the two tests that were not watching them
+(DEC-346, register package `G28` — rows `P8-af`, `P8-ak`, `P8-ad`, `P8-aq`).**
+GUI only.
+
+**Both new charts were drawing in the wrong palette.** `SessionTimelineChart`
+and `PwmResponseChart` pinned their theme to default-dark at construction and
+nothing ever called `set_theme` on them, so inside a correctly themed dialog
+they sat on the default colours for their whole life. They now seed from the
+live active theme, like every other chart in the app.
+
+**A session recorded with GPU power and no temperature plotted nothing.**
+`SessionTrace.has_data` omitted `gpu_power` while its sibling `has_power`
+counted it, so such a trace reported nothing to draw, the Timeline section was
+hidden and the chart returned early. Narrow — it needs a session with no
+temperature at all — but it silently dropped data the session really had.
+
+**Two chart tests could not fail.** One asserted only that at least five items
+were on the plot, which `set_curve` satisfies by construction — drawing the
+saturation marker at the wrong duty passed, as did a zero-width plateau band.
+The other compared item counts across a redraw with no check that the first
+draw produced anything, so a chart that had stopped rendering entirely gave
+`0 == 0` and passed. Both now assert realised positions and presence first;
+that second claim was verified by making the chart draw nothing and watching
+the old assertion stay green.
+
 ## [2.66.0] — 2026-09-07
 
 **Run 2 of the session-lifecycle block (DEC-338).** The other half of v2.65.1:

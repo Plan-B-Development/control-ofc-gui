@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import json
 
+import pyqtgraph as pg
+import pytest
 from PySide6.QtWidgets import QCheckBox, QLabel
 
 from control_ofc.api.models import (
@@ -912,8 +914,26 @@ class TestChartMarkers:
         )
         plot = chart._plot_widget.getPlotItem()
         assert plot is not None
-        # Two series plus two plateau regions plus one saturation line.
-        assert len(plot.items) >= 5, f"markers missing: {plot.items}"
+
+        # `P8-ad`: assert the REALISED positions, not the item count. `>= 5` was
+        # satisfied by `set_curve` construction (2 series + 2 regions + 1 line),
+        # so drawing the saturation line at `low_plateau_to_pct` (45) instead of
+        # `saturation_from_pct` (90) passed, and so did a zero-width region. The
+        # fixture already makes those values distinct — "something changed" is
+        # not evidence a rule fired.
+        lines = [i for i in plot.items if isinstance(i, pg.InfiniteLine)]
+        assert len(lines) == 1, f"expected one saturation line, got {lines}"
+        assert lines[0].value() == pytest.approx(90.0), (
+            "the saturation line must sit at saturation_from_pct, not at some "
+            f"other distinct value in the fixture; got {lines[0].value()}"
+        )
+
+        regions = [i for i in plot.items if isinstance(i, pg.LinearRegionItem)]
+        drawn = sorted(tuple(round(v, 6) for v in r.getRegion()) for r in regions)
+        assert drawn == [(30.0, 45.0), (90.0, 100.0)], (
+            f"plateau regions must match curve.plateaus; got {drawn}"
+        )
+        assert all(lo < hi for lo, hi in drawn), "a zero-width plateau marks nothing"
 
     def test_a_redraw_replaces_the_previous_run_rather_than_stacking_on_it(self, qtbot):
         """The dialog calls `set_curve` on every poll while the sweep runs."""
@@ -922,6 +942,11 @@ class TestChartMarkers:
         curve = build_characterization_view(_bidi_run(), header_label="P").curve
         chart.set_curve(curve)
         first = len(chart._plot_widget.getPlotItem().items)
+        # `P8-aq`: presence BEFORE absence. `set_curve` opens with `plot.clear()`
+        # and early-returns when `not curve.has_data`, so without this a draw
+        # that produced nothing at all gave `0 == 0` and passed — the test would
+        # have been green over a chart that had stopped rendering entirely.
+        assert first > 0, "the first draw must actually put items on the plot"
         chart.set_curve(curve)
         assert len(chart._plot_widget.getPlotItem().items) == first
 
