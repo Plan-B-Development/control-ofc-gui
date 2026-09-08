@@ -157,7 +157,7 @@ The active tests, gathered in one place instead of scattered across the page. Ea
 - **Startup / Lifecycle Recording** — records how your cooler behaves across startup, resume and profile changes.
 - **AIO Validation** — records what your cooler actually does and finalises into an evidence summary you can export as CSV or JSON.
 
-- **Thermal Observation** (daemon 2.41.0+, hidden with the required version shown otherwise) — records how your cooler responds to a workload **you** run. While it records you get a live readout of elapsed time, control temperature, CPU package power, pump and radiator duty and RPM, the temperature trend, and whether the temperature has reached a steady state.
+- **Thermal Observation** (daemon 2.41.0+, disabled with the required version in its tooltip otherwise) — records how your cooler responds to a workload **you** run. While it records you get a live readout of elapsed time, control temperature, CPU package power, pump and radiator duty and RPM, the temperature trend, and whether the temperature has reached a steady state.
 
   **Control-OFC does not start, stop or control your workload.** Start your game, render or stress test yourself, then come back and record. Nothing in this observation drives a fan or a pump — it only watches.
 

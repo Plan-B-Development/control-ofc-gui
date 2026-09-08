@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased]
+
+**User-manual truthfulness: five false claims corrected, and a sixth found by
+sweeping (register package `G30` — rows `P8-z`, `P8-aa`, `P8-au`, `P8-av`,
+`P8-aw`).** Documentation only — no GUI behaviour changed, and in every case the
+code was already right and the prose was wrong.
+
+**Two of these were sending users to a dead end.** `manual/hardware-troubleshooting.md`
+said "loading a module for a chip that is not present is harmless" and that
+`sensors-detect` can wedge the Super-I/O bridge "until reboot". Both are DEC-332
+retraction survivors: the shipped `modules-load.d` conf states the opposite in
+full, and the daemon CHANGELOG records that first wording as a false claim. The
+page also contradicted itself — its own recovery section exists *because* the
+load is not harmless, and states correctly that only a full power cut clears the
+latch. A user who rebooted, saw the chip still missing and concluded the board
+was broken was the exact outcome DEC-332 was written to prevent. Both now mirror
+the conf's wording, name the shipped modprobe guard, and link to the recovery.
+
+**A safety rationale was true for the wrong reason.** The Characterise page said
+duties are tested "from low to high, so a run that stops early leaves the fan
+running faster, never slower". The conclusion holds; the reason does not — since
+daemon 2.40.0 the sweep runs *down from the top duty and back up*, so it does
+spend part of a run below where it started. What actually guarantees the fan is
+never left slower is the daemon restoring the header's original speed on every
+exit path, which the next bullet already said. Reworded to rest on the mechanism
+that is real, because this is text a user reads before running a diagnostic on
+their own cooling.
+
+**Two "hidden" claims were "disabled".** Thermal Observation
+(`manual/diagnostics.md`) and the v2.62.0 discovery-button note both said an
+older daemon hides the control; both call `setEnabled(...)` and put the required
+version in the tooltip, with no `setVisible` anywhere. Sibling entries in the
+same two files already had it right, which is what made them outliers rather
+than a policy.
+
+**The sweep found a sixth site the register had not recorded** —
+`manual/driver-setup.md` carried the "until reboot" claim in a second file.
+That is this project's documented failure mode (a retraction fixed in one place
+and left standing in another) landing on a row that was *itself* already a
+survivor of it, so the fix is the whole set rather than the two the row named.
+
 ## [2.66.0] — 2026-09-07
 
 **Run 2 of the session-lifecycle block (DEC-338).** The other half of v2.65.1:
@@ -237,7 +278,7 @@ fields are simply not sent.
 
 **AIO Phase 8 Batch 1 (DEC-333): safety preflight, control-path discovery and
 evidence provenance.** Pairs with `control-ofc-daemon` >= v2.39.0. Additive and
-capability-gated throughout — against an older daemon the new button is hidden
+capability-gated throughout — against an older daemon the new button is disabled
 with a reason and everything else behaves exactly as it did.
 
 ### Added

@@ -172,7 +172,7 @@ Most users on current driver builds need **none** of these. The exceptions, all 
 
 > **Do not force `fan_config=msi_alt1` on an MSI board outside the NCT6687DR families.** B650, B660, X670, Z690 and Z790 boards use the *default* register mapping and are auto-detected correctly. Forcing alt1 there makes the driver read EC offsets that read zero on that silicon, so **every system fan reports 0 RPM** while the CPU fan keeps working. Check which mapping is active with `dmesg | grep 'active fan config'` — that line will also reveal a setting left behind from an earlier attempt.
 
-Two warnings: never use the it87 `force_id` parameter outside testing (upstream: *"should only be used for testing"*), and never run `sensors-detect` after boot on a dual-chip Gigabyte board — it can wedge the SuperIO bridge so the secondary chip vanishes until reboot.
+Two warnings: never use the it87 `force_id` parameter outside testing (upstream: *"should only be used for testing"*), and never run `sensors-detect` after boot on a dual-chip Gigabyte board — it can wedge the Super-I/O bridge so the secondary chip vanishes until the machine is powered down at the wall (a reboot is not enough; the chip stays alive on +5 V standby). The recovery is in [Hardware Troubleshooting](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up).
 
 There is also nothing to gain by running it on these boards. As of 2026-08-26 `sensors-detect` has **no entry for device IDs 0x8688, 0x8689, 0x8696 or 0x8698**, so it cannot identify an IT8688E, IT8689E, IT8696E or IT8698E — the primary chip on essentially every modern Gigabyte board — and it has no NCT6686D entry either. On exactly the boards where running it can do harm, it has nothing useful to tell you.
 
