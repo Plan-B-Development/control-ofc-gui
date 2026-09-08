@@ -1717,6 +1717,21 @@ measured to latch an ITE eSPI→LPC bridge into configuration mode, hiding the
 Super-I/O behind it — and every fan header on it — until the machine is
 disconnected from mains power. Older daemons unlock first and read second.
 
+**On an all-ITE board it never writes the Nuvoton unlock at all (daemon >=
+2.43.5, `X87-k`).** The read-before-write rule above still licenses an unlock
+when nothing answers, and the `0x87,0x87` Nuvoton/Winbond sequence is the one
+that latches the bridge. Where the daemon's curated DMI board table says this
+board's Super-I/O complement is ITE-only, no Nuvoton chip can be waiting behind
+that write, so the leg is **withheld** — the same board list the shipped
+`modprobe` guard uses to keep `nct6775`/`w83627ehf` from writing it. The ITE legs
+are unaffected, so the diagnostic these boards actually need is unchanged.
+
+When a leg is withheld the response carries a `notes[]` entry naming the base
+and the reason. **Clients must render it**: a withheld leg and a genuinely empty
+base are otherwise indistinguishable, and the difference is the one the user
+needs. This is content, not shape — `notes[]` has always been a free-text array,
+so no client change is required and older daemons simply never emit the entry.
+
 **Off by default.** It runs only when the operator has BOTH set
 `[detection] allow_port_probe = true` and installed the `CAP_SYS_RAWIO` systemd
 drop-in. When it cannot run it returns the normal report with
