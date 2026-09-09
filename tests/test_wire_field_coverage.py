@@ -22,25 +22,32 @@ Two assertions, and the second is the one that matters
    the GUI parses and no one reads is decoration, and having it in the type is
    precisely what makes the gap invisible.
 
-The declared surface lives in ``tests/fixtures/wire_fields.json``. For the
-entries the daemon ALSO pins — ``daemon/src/api/responses.rs::tests::
-wire_field_surface_is_pinned`` — neither copy can drift alone: a new daemon field
-reds that Rust test, and updating the fixture to match then reds this one until
-the GUI models it.
+The declared surface lives in ``tests/fixtures/wire_fields.json``, and the daemon
+pins the same lists in ``daemon/src/api/responses.rs::tests::
+wire_field_surface_is_pinned``. A new daemon field reds that Rust test, and
+updating this fixture to match then reds this one until the GUI models it.
 
-**That is not true of every entry, and the difference matters.** The Rust test
-covers the first 13 structs; the 16 that ``G33`` added are pinned on this side
-only. A one-sided pin catches the GUI dropping a field it is supposed to model.
-It does NOT catch the daemon renaming one — this fixture is static data and
-never queries a live daemon, so a rename leaves the declared list stale and this
-test green against it. Extending the Rust test to those 16 is ``P8-ca``.
+**All 29 entries now have a daemon-side arm (``P8-ca``, daemon v2.43.7).** It was
+16 short: ``G33`` declared the Phase 8 structs on this side only, and a one-sided
+pin catches the GUI dropping a field it is supposed to model while missing the
+daemon renaming one — this fixture is static data and never queries a live daemon,
+so a rename left the declared list stale and this test green against it.
 
-Scope is honest and partial by design: the structs covering ``/sensors``,
-``/fans``, ``/poll``, ``/hwmon/headers``, ``/inventory/hwmon``,
-``/inventory/cooling-devices``, ``/capabilities`` (``Limits``) and
-``/diagnostics/hardware`` (``VoltageEntry``) — the surfaces where drift has
-actually happened, plus ones new enough not to have had the chance. Adding a
-struct is a fixture edit plus a Rust arm; it is not automatic.
+**That is not an interlock, and the difference is worth keeping straight.** Each
+side is pinned to its own source — the Rust ``want`` lists against the Rust
+structs, this fixture's ``fields`` against the GUI dataclasses — and *nothing
+compares the two lists to each other*. So a rename reds the Rust test, and a
+developer who fixes it there and forgets this fixture leaves the fixture stale
+with both suites green. Keeping them in step is manual; the Rust assertion message
+names all three places for that reason.
+
+Scope covers the structs behind ``/sensors``, ``/fans``, ``/poll``,
+``/hwmon/headers``, ``/inventory/hwmon``, ``/inventory/cooling-devices``,
+``/capabilities`` (``Limits``) and ``/diagnostics/hardware`` (``VoltageEntry``) —
+the surfaces where drift has actually happened — plus the Phase 8 diagnostic
+surfaces: preflight, control-path discovery, PWM characterisation, steady state
+and the startup fingerprint. Adding a struct is a fixture edit plus a Rust arm;
+it is not automatic.
 """
 
 from __future__ import annotations

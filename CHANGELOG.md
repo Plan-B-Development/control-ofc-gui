@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+**The Phase 8 wire pin gets its daemon-side arm (DEC-349, register package `G38` —
+row `P8-ca`).** Test-side only; no application code changed, so no version bump.
+
+`G33` declared 16 daemon structs — preflight, control-path discovery, PWM
+characterisation, steady state, the startup fingerprint — in
+`tests/fixtures/wire_fields.json` and pinned them on this side alone. That catches
+the GUI dropping a field it is supposed to model, and **not** the daemon renaming
+one: the fixture is static data and never queries a live daemon, so a rename left
+the declared list stale and `test_wire_field_coverage.py` green against it. The
+daemon's `wire_field_surface_is_pinned` now constructs all 29 (daemon v2.43.7), so a
+daemon-side rename reds something instead of nothing.
+
+**It is not an interlock, and the docs now say so.** Each side is pinned to its own
+source and nothing compares the two declared lists, so a rename fixed in the Rust arm
+but not in the fixture still leaves the fixture stale with both suites green. The
+first draft of this change claimed "neither copy can drift alone" at six sites —
+retracting a caveat `G33` had written correctly — which is the overclaiming-correction
+shape DEC-347 exists to warn about. Caught in review.
+
+
 ## [2.67.0] — 2026-09-09
 
 **Contract and in-code documentation: eight stale or false claims corrected, and
