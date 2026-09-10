@@ -20,6 +20,7 @@ from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.polling import PollingService
 from control_ofc.services.profile_service import ProfileService
+from control_ofc.services.single_instance import SingleInstance, default_key, raise_window
 from control_ofc.ui.fonts import register_bundled_fonts
 from control_ofc.ui.main_window import MainWindow
 from control_ofc.ui.theme import (
@@ -141,7 +142,7 @@ def _resolve_startup_theme(theme_name: str) -> ThemeTokens:
     return default_dark_theme()
 
 
-def main() -> None:
+def main() -> int:
     ensure_dirs()
 
     # Defense-in-depth: a last-resort exception hook so nothing fails silently
@@ -168,6 +169,46 @@ def main() -> None:
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName(APP_NAME)
     qt_app.setApplicationVersion(APP_VERSION)
+
+    # Arguments are parsed here — before any settings, theme or profile I/O —
+    # only so the single-instance check below can run early and, when this is a
+    # duplicate launch, exit without having done that work at all. Nothing
+    # between here and the check depends on `args`.
+    parser = argparse.ArgumentParser(description="Control-OFC desktop fan control GUI")
+    parser.add_argument("--socket", default=DEFAULT_SOCKET_PATH, help="Daemon socket path")
+    parser.add_argument("--demo", action="store_true", help="Run in demo mode")
+    args = parser.parse_args()
+
+    # One window per user, per mode (DEC-352).
+    #
+    # The tray opens the GUI on a left click, and the StatusNotifierItem
+    # protocol has no double-click — Plasma delivers `Activate` twice — so
+    # without this a double click starts two complete applications. Demo and
+    # live keep separate keys: refusing `--demo` because a live GUI is open,
+    # and raising that live window instead, would be wrong.
+    #
+    # The key is keyed on `args.demo` — what the user ASKED for — and not on the
+    # resolved mode computed further down, which can become demo via DEC-139's
+    # demo-on-disconnect fallback. That is deliberate: keying on the resolved
+    # mode would mean a plain `control-ofc-gui` that fell back to demo holds the
+    # demo key, so a second plain `control-ofc-gui` (with the daemon now up)
+    # would take the live key and open a second window. Two launches of the same
+    # command must always collapse into one.
+    instance = SingleInstance(default_key(demo=args.demo, socket_path=args.socket))
+    if not instance.acquire():
+        if instance.notify_existing():
+            log.info("Control-OFC is already running — raising the existing window")
+            instance.close()
+            return 0
+        # Rather than leave the user with nothing, fall through and open a
+        # second window.
+        #
+        # Reached only when the write itself fails. `notify_existing` waits for
+        # the kernel to accept the bytes, not for the peer to read them, so a
+        # primary that is alive but not running its event loop still reports
+        # success and this branch does not fire. That is a known gap, recorded
+        # as `T1-j`; it is not a claim that this path covers it.
+        log.warning("Another instance is running but did not respond; opening a new window")
 
     # Register the bundled OFL fonts (Space Grotesk / DM Sans) before any theme
     # stylesheet or app font is applied, so the theme's font tokens resolve
@@ -201,11 +242,6 @@ def main() -> None:
     # (DEC-226).
     theme = _resolve_startup_theme(s.theme_name)
     apply_theme(theme)
-
-    parser = argparse.ArgumentParser(description="Control-OFC desktop fan control GUI")
-    parser.add_argument("--socket", default=DEFAULT_SOCKET_PATH, help="Daemon socket path")
-    parser.add_argument("--demo", action="store_true", help="Run in demo mode")
-    args = parser.parse_args()
 
     socket_path = args.socket
     # DEC-139: when the user opted into demo-on-disconnect, probe the daemon
@@ -298,6 +334,10 @@ def main() -> None:
     )
     window.show()
 
+    # A later launch (tray click, app-menu entry, second terminal) asks this
+    # window to come forward instead of starting its own application.
+    instance.activated.connect(lambda: raise_window(window))
+
     # Allow Ctrl+C to exit cleanly.
     #
     # DEC-257: `close()`, not `quit()`. `qt_app.quit()` tears the event loop down
@@ -328,6 +368,10 @@ def main() -> None:
         polling.shutdown()
     if client:
         client.close()
+    # Released last, and deliberately after the client: the worker-teardown
+    # order above is load-bearing (see tests/test_worker_teardown_p2_2.py) and
+    # nothing here should be inserted into it.
+    instance.close()
 
     sys.exit(exit_code)
 

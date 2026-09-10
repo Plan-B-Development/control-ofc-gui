@@ -37,7 +37,10 @@ This pack is the **working source of truth** for building the Linux-first deskto
 - GUI must **only** talk to the **daemon/API**
 - GUI must **never** talk directly to hardware
 - V1 is **desktop-window first**
-- Tray/minimise-to-tray comes later
+- Tray/minimise-to-tray comes later — **partially delivered, elsewhere.** A tray
+  *client* (`control-ofc-tray`) ships with the daemon package from daemon v2.44.0
+  (DEC-352); it is a separate Rust process, not part of this GUI. Minimise-to-tray
+  in the GUI itself is still not implemented and is still not planned.
 - Default theme is **dark**
 - Branding is restrained and professional; the working UI feels technically credible
 - One **profile** is active at a time

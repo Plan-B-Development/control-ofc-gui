@@ -5,6 +5,26 @@
 ## Purpose
 This file defines how the GUI should consume the current daemon/API safely and predictably.
 
+**The GUI is no longer the only client (DEC-352).** `control-ofc-tray`, shipped
+in the daemon package from daemon v2.44.0, is a second first-class client. It
+uses a strict subset of this contract — `GET /status`, `GET /profiles`,
+`POST /profile/activate`, `POST /profile/deactivate` — and nothing else: no
+lease, no PWM write, no curve evaluation, no hardware read. **No endpoint,
+payload or field was added or changed for it**, which is why nothing else in
+this document moves.
+
+Two consequences worth stating here rather than only in the ADR:
+
+- The architecture rule generalises. "The GUI must never access hardware
+  directly" is now **no client may**, and the tray is bound by it identically.
+- A change to `GET /status` or `GET /profiles` now has two consumers. In
+  particular `daemon_version`, `active_profile_id`, `active_profile_name` and
+  `thermal_state` on `GET /status` are rendered by the tray as well as by the
+  GUI. `thermal_state` in particular: the tray shows a warning line for any
+  value other than `normal`, and — like the GUI's `skipped_controls` handling —
+  renders an unrecognised token rather than dropping it, so a new state is
+  surfaced by an old tray rather than silently ignored.
+
 ## General rules
 1. All I/O goes through the API client layer.
 2. All responses are parsed into typed internal models.

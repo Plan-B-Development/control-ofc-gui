@@ -1,5 +1,41 @@
 # Changelog
 
+## [2.68.0] — 2026-09-10
+
+**The GUI is now single-instance: a second launch raises the first window
+(DEC-352).** Starting `control-ofc-gui` while one is already running no longer
+opens a second copy — the running window is brought to the front instead.
+
+This is the GUI half of the new `control-ofc-tray` shipped in daemon 2.44.0.
+The tray opens the GUI on a left click, and the StatusNotifierItem protocol has
+**no double-click** — Plasma delivers `Activate` twice — so without this a
+double click on the tray icon started two complete PySide6 applications against
+one daemon. It also fixes the same defect for the application-menu entry, which
+has always been able to launch duplicates.
+
+Deduplication lives here rather than in the tray deliberately: the tray cannot
+know about a GUI it did not launch, so a tray-side guard would still duplicate
+in the most likely case — clicking the tray while the window is already open
+behind something else.
+
+**Demo and live instances stay independent.** They use separate keys, so
+`control-ofc-gui --demo` is never refused because a live GUI happens to be
+open, and never silently raises that live window instead.
+
+**Known limitation, stated rather than papered over.** On Wayland, raising a
+window is subject to the compositor's focus-stealing prevention. Under KWin's
+default setting this normally succeeds; where it does not, the window is marked
+as demanding attention in the task bar instead of coming forward. Nothing in
+the GUI can force it — SNI's `Activate` carries no xdg-activation token, so
+there is no proof the request came from a user action to hand over.
+
+Implementation notes worth keeping: the guard is a `QLocalServer` socket in
+`$XDG_RUNTIME_DIR` (per-user, mode 0700, cleared at logout). Contention is
+detected by *connecting* to a peer, never by whether the socket file exists —
+a crash leaves one behind, and, measured on Qt 6.11.1, `QLocalServer.listen()`
+with `UserAccessOption` will unlink and rebind a path even when a live server
+is bound to it, so Qt's own "address in use" check is not available here.
+
 ## [2.67.1] — 2026-09-10
 
 **One flag, one gating shape — the last five raw `getattr` gates are gone

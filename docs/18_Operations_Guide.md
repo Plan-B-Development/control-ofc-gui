@@ -202,6 +202,31 @@ curl --unix-socket /run/control-ofc/control-ofc.sock http://localhost/sensors
 
 ---
 
+## System tray and single-instance behaviour
+
+From daemon v2.44.0 / GUI v2.68.0 (DEC-352) the **daemon package** installs
+`control-ofc-tray`, a StatusNotifierItem client that starts at login via
+`/etc/xdg/autostart/control-ofc-tray.desktop`. It is not part of this GUI and
+holds no state; it reads `GET /status` + `GET /profiles` when its menu opens and
+can activate or deactivate a profile. Operationally it matters only in that:
+
+- **It can launch this GUI**, on a left click. The StatusNotifierItem protocol
+  has no double-click, so Plasma delivers `Activate` twice on a double click.
+- **This GUI is therefore single-instance** (`services/single_instance.py`). A
+  second launch — from the tray, the application menu, or a terminal — raises
+  the running window instead of starting a second application. Demo and live
+  keep separate keys, so `control-ofc-gui --demo` is never blocked by a live GUI.
+- The instance socket lives in `$XDG_RUNTIME_DIR` and is cleared at logout. A
+  crash leaves the socket behind; the next launch detects that it is dead and
+  reclaims it, so no cleanup is needed.
+- **Known limitation:** on Wayland, raising the existing window is subject to
+  KWin's focus-stealing prevention. It usually comes forward; where it does not,
+  the task-bar entry is marked as demanding attention instead. This cannot be
+  fixed from either side — SNI's `Activate` carries no xdg-activation token.
+
+Tray troubleshooting (unit control, logs, disabling autostart) is in
+`man control-ofc-tray`, not here — it is a daemon-package component.
+
 ## Troubleshooting
 
 ### Daemon won't start

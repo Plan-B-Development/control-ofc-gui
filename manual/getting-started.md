@@ -151,6 +151,34 @@ Demo mode generates synthetic sensor temperatures and fan speeds. All features w
 
 You can also enable "Start in demo mode when daemon is unavailable" in Settings so the GUI falls back to demo automatically.
 
+### Only One Window
+
+Launching Control-OFC while it is already running brings the existing window to
+the front rather than opening a second copy. This applies however you start it —
+the system tray, the application menu, or a terminal.
+
+Demo mode is treated separately, so `control-ofc-gui --demo` still opens its own
+window even if a normal Control-OFC is already running.
+
+On Wayland the compositor decides whether a window may jump to the front. Usually
+it does; occasionally it will flag the task-bar entry as needing attention
+instead of raising the window. Clicking that entry brings it up.
+
+### The System Tray
+
+If you are on KDE Plasma, a Control-OFC icon appears in your system tray. It is
+installed with the daemon and starts when you log in.
+
+- **Left click** — open Control-OFC.
+- **Right click** — see which daemon version is running, switch profiles, stop
+  profile control, or open Control-OFC.
+
+The tray never controls fans itself; it asks the daemon, exactly as this
+application does. Closing it changes nothing about cooling.
+
+To turn it off: **System Settings → Autostart**. For anything more, see
+`man control-ofc-tray`.
+
 ## The Status Banner
 
 The horizontal banner at the top of every page shows:

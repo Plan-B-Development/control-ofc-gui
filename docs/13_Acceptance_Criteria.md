@@ -94,7 +94,9 @@
 
 ## Non-acceptance criteria for V1
 The following are explicitly not required for V1 acceptance:
-- tray-first workflow
+- tray-first workflow *(still not required; a separate `control-ofc-tray`
+  process ships with the daemon package from daemon v2.44.0, but this GUI is
+  unchanged in this respect)*
 - full theme editor
 - multi-sensor curve logic
 - user-custom dashboard layout
