@@ -2520,7 +2520,22 @@ daemon's own stable ids run ~40 bytes, so a client posting ids it discovered fro
 publishing a ~220-character label would produce a discovered id the daemon could not
 accept back. No shipping driver does; it is stated because the bound is a byte count and
 the id is not otherwise bounded. A header
-claimed twice within one device is `400`. Exceeding the 16-device cap is `409 already_exists`. Persistence failure is `503 persistence_failed`. Persist-first, then committed in memory, so a failed write changes nothing. Takes effect immediately. **Confers no pump protection** — see the note on `GET /inventory/cooling-devices`.
+claimed twice within one device is `400`. Exceeding the 16-device cap is `409 already_exists`.
+**The cap counts the devices `GET /inventory/cooling-devices` actually publishes, not the
+rows on disk (daemon ≥ 2.43.8, `P8-cc`).** Devices are sanitised on read, so a persisted
+entry the daemon rejects is absent from that listing and its id is never disclosed —
+which meant `DELETE /config/cooling-device/{id}` could not be aimed at it, while it went
+on consuming a slot. A client holding fifteen devices was told "cooling device limit
+reached (16)" with nothing it could delete to proceed. Counting the visible list makes
+the `409` mean what a client can act on; a hand-edited `runtime.toml` may therefore hold
+more than sixteen rows, of which at most sixteen are ever published. **One consequence
+worth knowing before you hand-edit that file:** the daemon keeps the first sixteen
+*valid* rows in file order, so if you later repair the bad line by hand, the surplus
+that repair creates is dropped from the **end** — which is the most recently created
+device, not the one you fixed. It is logged and nothing on the wire reports it. A
+cooling device is metadata the engine never reads (naming a `pump_member` confers no
+floor), so what is lost is UI topology, never pump protection.
+Persistence failure is `503 persistence_failed`. Persist-first, then committed in memory, so a failed write changes nothing. Takes effect immediately. **Confers no pump protection** — see the note on `GET /inventory/cooling-devices`.
 - `DELETE /config/cooling-device/{id}` (DEC-316, daemon ≥ 2.31.0) — remove one cooling device. `404 not_found` when no device has that id, so a second delete is not a silent success. `503 persistence_failed` on a write failure.
 
   **Not advisory, unlike the preferred-sensor writes above.** A `"pump"` assignment is a safety input: it earns that header the 30 % hard floor and the DEC-167 stop-snap exemption, protects it from being stopped by identify, and keeps `/hwmon/{id}/verify` above the floor. It is a **union term** — it can add a floor, never remove one, so assigning `"chassis_fan"` to a header whose label already says `PUMP` does not strip that header's floor. It takes effect **immediately** rather than at next start (a safety floor that waited for a reboot would be a trap), and persists in `runtime.toml` under `[hardware.header_roles]`.
