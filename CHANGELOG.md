@@ -2,6 +2,12 @@
 
 ## [2.68.0] — 2026-09-10
 
+**Pairs with `control-ofc-daemon` >= v2.11.0 — unchanged.** This is a
+client-side change and needs no daemon change: it calls no new endpoint and
+reads no new field. The system tray it pairs with ships in
+**control-ofc-daemon >= v2.44.0**, but the GUI does not require it and behaves
+identically without it.
+
 **The GUI is now single-instance: a second launch raises the first window
 (DEC-352).** Starting `control-ofc-gui` while one is already running no longer
 opens a second copy — the running window is brought to the front instead.
