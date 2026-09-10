@@ -479,7 +479,7 @@ class SystemStatePage(QWidget):
 
     def _supports_characterization(self) -> bool:
         caps = getattr(self._state, "capabilities", None) if self._state else None
-        return bool(caps is not None and getattr(caps.control, "pwm_characterization", False))
+        return daemon_supports("pwm_characterization", caps) is True
 
     def _update_characterize_availability(self) -> None:
         show = self._supports_characterization() and self._verify_combo.count() > 0

@@ -25,11 +25,22 @@ Three halves, and all three are needed:
   recurrences of: *extracting a rule into a testable function does not test the
   call site.*
 
-The declared surface lives in ``tests/fixtures/daemon_config_keys.json`` and is
-pinned on the daemon side by
-``daemon/tests/ipc_integration.rs::get_config_key_set_and_mutability_are_pinned``.
-Neither copy can drift alone: a new daemon key reds that Rust test, and updating
-the fixture to match then reds this one until the key has a control.
+The declared surface lives in ``tests/fixtures/daemon_config_keys.json``, and it
+is the **single declaration** (``P8-cb``):
+``daemon/tests/ipc_integration.rs::get_config_key_set_and_mutability_are_pinned``
+reads that same file and asserts ``GET /config`` against it, while this module
+asserts it against the Settings page. A new daemon key reds the Rust test naming
+the fixture, and updating the fixture then reds this one until the key has a
+control.
+
+**"Neither copy can drift alone" was written here before it was true.** Until
+``P8-cb`` the Rust test carried its own literal array of the nine keys and this
+fixture declared them separately, each checked only against its own side — so a
+key added in one and forgotten in the other left that list stale with both suites
+green. The literal array is gone. What remains is the two *file copies*, which
+are a shared oracle in the ``parity_vectors.json`` shape (DEC-126): byte-identical
+by ``test_fixture_copies_are_byte_identical`` below when both repos are checked
+out as siblings, and by ``.github/workflows/parity.yml`` in single-repo CI.
 """
 
 from __future__ import annotations
@@ -51,6 +62,31 @@ from control_ofc.ui.pages.settings_page import (
 from .test_daemon_config_dec243 import _ConfigClient
 
 FIXTURE = Path(__file__).parent / "fixtures" / "daemon_config_keys.json"
+
+#: The daemon's byte-identical copy, present when both repos are siblings.
+_DAEMON_FIXTURE = (
+    Path(__file__).parents[2]
+    / "control-ofc-daemon"
+    / "daemon"
+    / "tests"
+    / "fixtures"
+    / "daemon_config_keys.json"
+)
+
+
+@pytest.mark.skipif(
+    not _DAEMON_FIXTURE.exists(), reason="daemon repo not checked out alongside the GUI"
+)
+def test_fixture_copies_are_byte_identical():
+    """The GUI and daemon copies of the config-key oracle must agree (`P8-cb`).
+
+    Both sides now read this file rather than declaring the key set twice, so the
+    copies drifting is the only remaining way the two can disagree. Covered here
+    for a sibling checkout and by ``parity.yml`` for single-repo CI.
+    """
+    assert FIXTURE.read_bytes() == _DAEMON_FIXTURE.read_bytes(), (
+        "daemon_config_keys.json drifted between the GUI and daemon copies"
+    )
 
 
 def _declared() -> list[dict]:

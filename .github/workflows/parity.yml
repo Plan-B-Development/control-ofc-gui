@@ -3,7 +3,10 @@ name: Parity oracle sync
 # The GUI demo-evaluator and the daemon control loop are pinned to a SHARED
 # golden files (parity_vectors.json DEC-126, role_classification.json DEC-162,
 # header_role_classification.json AUD3-c/DEC-322 — the classifier that decides
-# whether a client may offer to STOP a pump) — one copy in each repo, required
+# whether a client may offer to STOP a pump, wire_fields.json WIRE-aj/P8-cb — the
+# declared GUI<->daemon wire-field surface both sides pin against,
+# daemon_config_keys.json DEC-285/P8-cb — the declared GET /config key surface) —
+# one copy in each repo, required
 # byte-identical. Each repo's own tests validate against their OWN copy, and the
 # GUI's byte-identity check (test_evaluator_parity.py) skips when the daemon repo
 # isn't checked out — so a drift between the two copies is invisible to
@@ -18,12 +21,16 @@ on:
       - 'tests/fixtures/parity_vectors.json'
       - 'tests/fixtures/role_classification.json'
       - 'tests/fixtures/header_role_classification.json'
+      - 'tests/fixtures/wire_fields.json'
+      - 'tests/fixtures/daemon_config_keys.json'
   push:
     branches: [main]
     paths:
       - 'tests/fixtures/parity_vectors.json'
       - 'tests/fixtures/role_classification.json'
       - 'tests/fixtures/header_role_classification.json'
+      - 'tests/fixtures/wire_fields.json'
+      - 'tests/fixtures/daemon_config_keys.json'
   # DEC-263: the triggers above are path-filtered to the fixtures, so a change to
   # THIS FILE never exercises it — the guard could be broken for months and look
   # fine. Dispatch makes it provable on demand; set wait_seconds=0 to skip the
@@ -67,13 +74,15 @@ jobs:
           # re-compare until the window closes, and only then call it drift.
           # Success is immediate when the peer is already up to date; the wait is
           # paid only on the path that used to be a false red.
-          FILES='parity_vectors.json role_classification.json header_role_classification.json'
+          FILES='parity_vectors.json role_classification.json header_role_classification.json wire_fields.json daemon_config_keys.json'
 
           dec_for() {
             case "$1" in
               parity_vectors.json) echo 'DEC-126' ;;
               role_classification.json) echo 'DEC-162' ;;
               header_role_classification.json) echo 'AUD3-c / DEC-322' ;;
+              wire_fields.json) echo 'WIRE-aj / P8-cb' ;;
+              daemon_config_keys.json) echo 'DEC-285 / P8-cb' ;;
             esac
           }
 

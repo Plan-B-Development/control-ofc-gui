@@ -1374,8 +1374,7 @@ class SettingsPage(QWidget):
         ungated call would report success having pruned nothing.
         """
         caps = self._state.capabilities if self._state else None
-        control = getattr(caps, "control", None)
-        return bool(control and getattr(control, "profile_search_dir_remove", False))
+        return daemon_supports("profile_search_dir_removal", caps) is True
 
     def _search_dir_removal_block(self) -> str:
         """Why the selected search dir cannot be removed, or ``""`` if it can.

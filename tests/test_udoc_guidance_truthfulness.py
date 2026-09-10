@@ -20,6 +20,7 @@ from control_ofc.api.models import (
     HwmonDiagnostics,
     KernelModuleInfo,
     ThermalSafetyInfo,
+    parse_capabilities,
 )
 from control_ofc.services.daemon_features import (
     DAEMON_FEATURE_CAPABILITY_FLAGS,
@@ -415,47 +416,29 @@ class TestUnsupportedFeatureMessagesAreActionable:
             "the sweep must not flag the correct shape"
         )
 
-        # A RATCHET, not a clean sweep. `G29` fixed the sites inside `P8-ag`'s
-        # stated scope; enumerating the rest is what showed the shape is wider
-        # than that row described, and those are recorded as `P8-by` rather than
-        # dragged into a view-layer diff — `pump_protection.py` in particular is
-        # safety-adjacent and is not in this change's blast radius. Every entry
-        # here must eventually go; nothing may be added.
-        known_backlog = {
-            ("services/pump_protection.py", "header_roles"),
-            ("ui/pages/controls_page.py", "header_roles"),
-            ("ui/widgets/fan_wizard.py", "header_roles"),
-            ("ui/pages/settings_page.py", "profile_search_dir_remove"),
-            ("ui/pages/system_state_page.py", "pwm_characterization"),
-        }
-
+        # **The allowlist is gone, and that is the assertion.** `G29` fixed the
+        # sites inside `P8-ag`'s stated scope and enumerated the rest as a
+        # `known_backlog` of five, recorded as `P8-by`; those five were converted
+        # by this change, so the ratchet has finished tightening and this is now
+        # a CLEAN SWEEP over the whole shipped tree. The allowlist and the
+        # "an entry that stopped matching is an allowlist that stopped
+        # protecting anything" half that guarded it are deleted rather than left
+        # empty: an empty allowlist makes that half assert nothing, and a test
+        # that passes by asserting nothing is the trap `CLAUDE.md § Hard-won
+        # lessons` records against. Do not reintroduce it — a flag that cannot
+        # go through `daemon_supports` needs a registry entry, not an exemption.
         offenders: list[str] = []
         for path in src.rglob("*.py"):
             if path.name == "daemon_features.py":
                 continue  # the registry itself resolves flags by name, by design
             rel = str(path.relative_to(src))
             for n, flag in raw_gates(path.read_text(encoding="utf-8")):
-                if (rel, flag) not in known_backlog:
-                    offenders.append(f"{rel}:{n} -> {flag!r}")
+                offenders.append(f"{rel}:{n} -> {flag!r}")
 
         assert not offenders, (
             "capability flag(s) read by a raw `getattr` chain instead of "
             "`daemon_supports` — two gating shapes for one flag is what let the "
             "DEC-334 defect ship:\n" + "\n".join(offenders)
-        )
-        # The ratchet's other half: an allowlist that stops matching is an
-        # allowlist that has silently stopped protecting anything.
-        still_present = set()
-        for path in src.rglob("*.py"):
-            rel = str(path.relative_to(src))
-            for _n, flag in raw_gates(path.read_text(encoding="utf-8")):
-                if (rel, flag) in known_backlog:
-                    still_present.add((rel, flag))
-        assert still_present <= known_backlog
-        stale = known_backlog - still_present
-        assert not stale, (
-            "these were fixed — remove them from `known_backlog` and from the "
-            f"`P8-by` row so the ratchet keeps tightening: {sorted(stale)}"
         )
 
     def test_call_sites_no_longer_dead_end(self):
@@ -481,3 +464,156 @@ class TestUnsupportedFeatureMessagesAreActionable:
             "unsupported-feature strings must come from "
             "services.daemon_features so they name the required version:\n" + "\n".join(offenders)
         )
+
+
+class TestEveryConvertedGateTracksItsWireFlag:
+    """`P8-by`: the five gates the sweep above used to allowlist.
+
+    The sweep proves no raw ``getattr`` chain remains. It cannot prove the
+    replacement gates on the RIGHT flag — ``daemon_supports`` answers ``None``
+    for an unregistered id, ``None`` is falsy, and a gate handed the wrong id is
+    therefore dead on every daemon with no exception, no log line and no failing
+    test. That is the DEC-334 defect exactly, and converting five call sites is
+    five fresh chances to reintroduce it.
+
+    **Asserted against the WIRE FIELD, never against ``daemon_supports``**
+    (DEC-334's second rule). Comparing a gate to ``daemon_supports(id, caps)``
+    would be satisfied by the defect itself: delete the registry entry and both
+    sides go falsy together. ``ControlCapability.<flag>`` is the one term that
+    stays true independently of the registry, so it is the right-hand side here.
+
+    The four page/widget gates are bound to a stub ``self`` rather than a
+    constructed page: each reads ``self._state`` and nothing else, and the
+    production function object is what runs. Constructing four QWidgets would
+    test Qt, not the gate.
+    """
+
+    class _Stub:
+        """The only attribute the five gates touch."""
+
+        def __init__(self, state):
+            self._state = state
+
+    class _State:
+        def __init__(self, capabilities):
+            self.capabilities = capabilities
+
+    class _NoControlBlock:
+        """A capabilities object from a daemon that sent no ``control`` block.
+
+        Not reachable through ``Capabilities`` — its ``control`` has a
+        ``default_factory`` — but it is the shape ``daemon_supports`` documents
+        as "did not say", and the branch a converted gate must still read as
+        False rather than as permission.
+        """
+
+    @staticmethod
+    def _gates():
+        """(name, wire flag, callable taking a capabilities object) for all five."""
+        from control_ofc.ui.pages.controls_page import ControlsPage
+        from control_ofc.ui.pages.settings_page import SettingsPage
+        from control_ofc.ui.pages.system_state_page import SystemStatePage
+        from control_ofc.ui.widgets.fan_wizard import FanConfigWizard
+
+        def bound(fn):
+            def call(caps):
+                stub = TestEveryConvertedGateTracksItsWireFlag._Stub(
+                    TestEveryConvertedGateTracksItsWireFlag._State(caps)
+                )
+                return fn(stub)
+
+            return call
+
+        return [
+            ("pump_protection.daemon_protects_pumps", "header_roles", daemon_protects_pumps),
+            (
+                "ControlsPage._supports_header_roles",
+                "header_roles",
+                bound(ControlsPage._supports_header_roles),
+            ),
+            (
+                "FanConfigWizard.supports_cooling_step",
+                "header_roles",
+                bound(FanConfigWizard.supports_cooling_step),
+            ),
+            (
+                "SettingsPage._daemon_supports_dir_removal",
+                "profile_search_dir_remove",
+                bound(SettingsPage._daemon_supports_dir_removal),
+            ),
+            (
+                "SystemStatePage._supports_characterization",
+                "pwm_characterization",
+                bound(SystemStatePage._supports_characterization),
+            ),
+        ]
+
+    def test_the_sweep_covers_every_gate_this_change_converted(self):
+        """Precondition: five gates were converted, so five must be exercised.
+
+        Without this the parametrisation could silently shrink to one and every
+        assertion below would still pass — "assert you did not skip every case".
+        """
+        assert len(self._gates()) == 5
+
+    @pytest.mark.parametrize("advertised", [True, False])
+    def test_a_gate_opens_exactly_when_its_wire_flag_is_true(self, advertised):
+        for name, flag, gate in self._gates():
+            caps = Capabilities(control=ControlCapability(**{flag: advertised}))
+            # The RELATIONSHIP: the gate must equal the wire field, not a
+            # literal and not the registry's answer about it.
+            assert gate(caps) is advertised, (
+                f"{name} returned {gate(caps)!r} while the daemon advertised "
+                f"control.{flag}={advertised!r} — a gate that ignores its own "
+                f"wire flag is either dead on every daemon or open on all of them"
+            )
+
+    def test_no_answer_is_read_as_a_denial_not_as_permission(self):
+        """``None`` capabilities and a missing ``control`` block both fail safe."""
+        for name, _flag, gate in self._gates():
+            assert gate(None) is False, f"{name} opened with no capabilities at all"
+            assert gate(self._NoControlBlock()) is False, (
+                f"{name} opened against a daemon that sent no control block"
+            )
+
+    def test_a_non_bool_wire_value_closes_the_gate_rather_than_opening_it(self):
+        """The conversion NARROWS, and the narrowing is on the safe side.
+
+        ``_filter_fields`` filters unknown keys and coerces identity fields to
+        ``str``; it does not coerce booleans, and a dataclass does not enforce its
+        annotations at runtime — so a malformed ``control`` block really can put a
+        non-bool in one of these fields (measured: ``parse_capabilities`` keeps
+        ``"yes"`` verbatim). The old ``bool(getattr(...))`` read that as **True**.
+        ``daemon_supports`` returns ``None`` for a non-bool, so ``is True`` reads it
+        as False.
+
+        That direction is the one that matters. ``daemon_protects_pumps`` gates the
+        Fan Wizard's promise that a pump is *never stopped* — opening it wrongly
+        tells the user a guarantee exists when the daemon may drive the pump to 0,
+        which is the DEC-311 lie the capability gate exists to prevent. Closing it
+        wrongly only downgrades the copy to the weaker, true statement.
+        """
+        for name, flag, gate in self._gates():
+            caps = parse_capabilities({"control": {flag: "yes"}})
+            assert getattr(caps.control, flag) == "yes", (
+                f"precondition: parsing must really keep a non-bool in control.{flag}, "
+                f"or this test asserts nothing"
+            )
+            assert gate(caps) is False, (
+                f"{name} opened on a non-bool control.{flag} — the old getattr shape "
+                f"did exactly that, and for the pump gate it promises a guarantee the "
+                f"daemon has not made"
+            )
+
+    def test_each_gate_resolves_through_a_registered_id(self):
+        """The converted ids must be in the registry that ``daemon_supports`` reads.
+
+        The sibling sweep ``test_every_daemon_supports_id_has_a_capability_flag``
+        already scans source for this. Named here too because that sweep proves
+        the id is registered and this proves it is registered to the flag the
+        gate is actually about — a swap between two registered ids passes the
+        sweep and fails here.
+        """
+        for name, flag, _gate in self._gates():
+            matches = [k for k, v in DAEMON_FEATURE_CAPABILITY_FLAGS.items() if v == flag]
+            assert matches, f"{name} gates on control.{flag}, which no registry id maps to"

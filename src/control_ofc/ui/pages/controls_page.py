@@ -60,6 +60,7 @@ from control_ofc.services.cooling_device_view import (
     DEFAULT_COOLING_DEVICE_ID,
     cooling_member_index,
 )
+from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.profile_service import (
     ControlMode,
     CurveConfig,
@@ -1095,8 +1096,7 @@ class ControlsPage(QWidget):
     def _supports_header_roles(self) -> bool:
         """Whether the daemon accepts ``POST /config/header-role`` (DEC-311)."""
         caps = getattr(self._state, "capabilities", None) if self._state else None
-        control = getattr(caps, "control", None) if caps else None
-        return bool(getattr(control, "header_roles", False))
+        return daemon_supports("pump_protection", caps) is True
 
     def _apply_header_roles(self, assignments) -> bool:
         """POST each header-role change, refreshing headers on success (DEC-312).

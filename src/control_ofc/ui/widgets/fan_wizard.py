@@ -63,6 +63,7 @@ from control_ofc.services.cooling_device_view import (
     find_cooling_device,
     merge_cooling_device_payload,
 )
+from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.pump_protection import (
     header_is_pump_protected,
     pump_identify_warning,
@@ -233,8 +234,7 @@ class FanConfigWizard(QWizard):
         skipped entirely and the wizard behaves exactly as it did before.
         """
         caps = getattr(self._state, "capabilities", None)
-        control = getattr(caps, "control", None) if caps else None
-        return bool(getattr(control, "header_roles", False))
+        return daemon_supports("pump_protection", caps) is True
 
     def cooling_membership(self) -> dict[str, CoolingMembership]:
         """Every fan the cooling stack claims, from the inventory then roles."""

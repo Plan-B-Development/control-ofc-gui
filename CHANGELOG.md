@@ -1,9 +1,56 @@
 # Changelog
 
-## [Unreleased]
+## [2.67.1] — 2026-09-10
+
+**One flag, one gating shape — the last five raw `getattr` gates are gone
+(`P8-by`).** `daemon_supports` is the single way the GUI asks whether the
+connected daemon serves a feature, and five sites still read the capability flag
+by hand instead: `daemon_protects_pumps`, the Controls page's and Fan Wizard's
+`header_roles` checks, the Settings page's search-dir-removal check and the
+System State page's characterisation check. Both shapes worked, which is the
+problem — the working one hides the broken one, and DEC-334 shipped exactly that
+way: a feature gated on an id in no registry, silently off on every daemon. The
+five now route through the registry, and the guard that enumerated them as a
+`known_backlog` allowlist has **no allowlist left**: it is a clean sweep of the
+shipped tree, and the "an allowlisted entry that stopped matching" half was
+deleted rather than left empty, because an empty allowlist asserts nothing.
+
+No behaviour change against any well-formed daemon: every one of the five ids
+resolves today, so both shapes agree on every value the wire actually carries. A
+new test pins that they must keep agreeing, asserted against `ControlCapability`'s
+wire field rather than against `daemon_supports` — comparing a gate to the lookup
+would be satisfied by the defect itself, since deleting a registry entry makes both
+sides falsy together.
+
+There is **one** difference, and it is a narrowing on the safe side. `is True`
+accepts only a literal `True`, where `bool(...)` accepted anything truthy — and
+capability parsing does not coerce booleans, so a malformed `control` block really
+can carry a non-bool (measured: `parse_capabilities` keeps `"yes"` verbatim). The
+old shape read that as **yes**; the new one reads it as no answer. For
+`daemon_protects_pumps` that is the difference between telling the user a pump is
+never stopped and telling them the truth, so it is pinned by its own test.
+
+**The wire-field and config-key pins became interlocks instead of workflows
+(`P8-cb`).** `tests/fixtures/wire_fields.json` and
+`tests/fixtures/daemon_config_keys.json` are now **shared oracles** in the
+`parity_vectors.json` shape (DEC-126) — one byte-identical copy per repo, and the
+daemon reads *those* files rather than declaring the same lists again in Rust.
+Before this each side was checked only against its own source and nothing compared
+the two, so a daemon rename fixed in the Rust arm and forgotten in the fixture left
+the fixture stale with both suites green. 29 hardcoded `want` arrays and one
+literal key list are deleted; the copies are guarded by a byte-identity test when
+both repos are siblings and by `parity.yml` in single-repo CI.
+
+**A claim this repo has asserted since DEC-243 is now true rather than merely
+written.** `DECISIONS.md` said of the config-key pin that "neither copy can drift
+alone"; both copies were independent declarations, so either could. Test-side
+only: no application code, no wire shape and no daemon behaviour changes.
 
 **The Phase 8 wire pin gets its daemon-side arm (DEC-349, register package `G38` —
-row `P8-ca`).** Test-side only; no application code changed, so no version bump.
+row `P8-ca`).** Documented under `[Unreleased]` and collapsed into this release.
+Test-side only in itself; the `P8-cb` entry above then replaced the daemon-side
+arms it describes with reads of the shared fixture, so the mechanism below is the
+state this release *passed through*, not the state it ships.
 
 `G33` declared 16 daemon structs — preflight, control-path discovery, PWM
 characterisation, steady state, the startup fingerprint — in

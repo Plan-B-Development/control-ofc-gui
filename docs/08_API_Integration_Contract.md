@@ -2346,15 +2346,32 @@ extends `SensorReading`. A second class claiming to mirror the first is how eigh
 cooling-device fields, including an enforced duty floor, went missing while a docstring
 asserted a field-for-field match.
 
-**The surface is pinned on both sides.** `tests/fixtures/wire_fields.json` declares, per
-daemon `Serialize` struct, the keys it emits and the model that must carry them;
-`daemon/src/api/responses.rs::tests::wire_field_surface_is_pinned` asserts the daemon's
-serialised key set against the same lists, and `tests/test_wire_field_coverage.py` asserts
-each key has a model slot plus — for fields marked load-bearing — a real read site outside
-`api/models.py`. **Adding a field to a pinned struct means updating the Rust arm, the
-fixture, and this document.** Coverage is partial by design: the ten structs behind
-`/sensors`, `/fans`, `/poll`, `/hwmon/headers`, `/inventory/hwmon` and
-`/inventory/cooling-devices`.
+**The surface is pinned on both sides, against ONE declaration (`P8-cb`, GUI v2.67.1 /
+daemon v2.43.8).** `tests/fixtures/wire_fields.json` declares, per daemon `Serialize`
+struct, the keys it emits and the model that must carry them.
+`daemon/src/api/responses.rs::tests::wire_field_surface_is_pinned` **reads that file** and
+asserts the daemon's serialised key set against it; `tests/test_wire_field_coverage.py`
+asserts each declared key has a model slot plus — for fields marked load-bearing — a real
+read site outside `api/models.py`. It is a shared oracle in the `parity_vectors.json`
+shape: one byte-identical copy per repo, compared by a byte-identity test when both are
+checked out as siblings and by `parity.yml` in single-repo CI.
+
+**Adding a field to a pinned struct means updating the fixture — both copies — and this
+document.** Adding a *struct* additionally needs an arm in the Rust test; the fixture and
+the arms are asserted to cover the same set, in both directions, so forgetting either half
+fails rather than passing quietly. Coverage is 29 structs: those behind `/sensors`,
+`/fans`, `/poll`, `/hwmon/headers`, `/inventory/hwmon`, `/inventory/cooling-devices`,
+`/capabilities` (`Limits`) and `/diagnostics/hardware` (`VoltageEntry`), plus the Phase 8
+diagnostic surfaces — preflight, control-path discovery, PWM characterisation, steady
+state and the startup fingerprint. It is still partial by design: a struct not listed
+there is unchecked rather than failing.
+
+**Until v2.67.1 this was a workflow, not an interlock.** The daemon declared its own
+`want` lists and the fixture declared the same lists again, each checked only against its
+own side, with nothing comparing the two — so a rename fixed in one and forgotten in the
+other left that list stale with both suites green. The same applies to
+`daemon_config_keys.json` (§ Config management), which was in the identical shape despite
+this repo's ADR log asserting since DEC-243 that "neither copy can drift alone".
 
 **A default that the GUI would act on points the safe way (DEC-329).** `is_writable`
 defaults `false`, not `true`: the daemon always sends it, so the default is only ever

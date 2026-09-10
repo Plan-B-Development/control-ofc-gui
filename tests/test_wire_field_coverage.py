@@ -22,24 +22,28 @@ Two assertions, and the second is the one that matters
    the GUI parses and no one reads is decoration, and having it in the type is
    precisely what makes the gap invisible.
 
-The declared surface lives in ``tests/fixtures/wire_fields.json``, and the daemon
-pins the same lists in ``daemon/src/api/responses.rs::tests::
-wire_field_surface_is_pinned``. A new daemon field reds that Rust test, and
-updating this fixture to match then reds this one until the GUI models it.
+The declared surface lives in ``tests/fixtures/wire_fields.json`` and it is the
+**single declaration** (``P8-cb``). The daemon's
+``api/responses.rs::tests::wire_field_surface_is_pinned`` reads that same file and
+asserts each struct's serialised key set against it; this module asserts the same
+lists against the GUI dataclasses. A daemon field rename therefore reds the Rust
+test, naming the fixture — and there is no second list anyone can forget.
 
-**All 29 entries now have a daemon-side arm (``P8-ca``, daemon v2.43.7).** It was
-16 short: ``G33`` declared the Phase 8 structs on this side only, and a one-sided
-pin catches the GUI dropping a field it is supposed to model while missing the
-daemon renaming one — this fixture is static data and never queries a live daemon,
-so a rename left the declared list stale and this test green against it.
+**It became an interlock in daemon v2.43.8 / GUI v2.67.1, and was a workflow
+before that.** ``G33`` declared the Phase 8 structs on this side only; ``P8-ca``
+gave all 29 a daemon-side arm — but each side was still pinned to *its own*
+declaration, the Rust ``want`` arrays against the Rust structs and this fixture
+against the dataclasses, with nothing comparing the two lists. A rename fixed in
+the Rust arm and forgotten here left this fixture stale with both suites green.
+The ``want`` arrays are gone; the fixture is what the Rust test reads.
 
-**That is not an interlock, and the difference is worth keeping straight.** Each
-side is pinned to its own source — the Rust ``want`` lists against the Rust
-structs, this fixture's ``fields`` against the GUI dataclasses — and *nothing
-compares the two lists to each other*. So a rename reds the Rust test, and a
-developer who fixes it there and forgets this fixture leaves the fixture stale
-with both suites green. Keeping them in step is manual; the Rust assertion message
-names all three places for that reason.
+**The copies are the remaining seam, and they are guarded.** It is a shared oracle
+in the ``parity_vectors.json`` shape (DEC-126): one byte-identical copy per repo,
+compared by ``test_fixture_copies_are_byte_identical`` below when both repos are
+checked out as siblings, and by ``.github/workflows/parity.yml`` in both repos for
+single-repo CI. Coverage is asserted **both ways** on the daemon side — a struct
+declared here with no arm there, or an arm there for a struct not declared here,
+fails.
 
 Scope covers the structs behind ``/sensors``, ``/fans``, ``/poll``,
 ``/hwmon/headers``, ``/inventory/hwmon``, ``/inventory/cooling-devices``,
@@ -65,6 +69,39 @@ from control_ofc.api import models
 FIXTURE = Path(__file__).parent / "fixtures" / "wire_fields.json"
 SRC = Path(__file__).resolve().parents[1] / "src" / "control_ofc"
 MODELS = SRC / "api" / "models.py"
+
+#: The daemon's byte-identical copy, present when both repos are checked out as
+#: siblings. Same shape as ``test_evaluator_parity._DAEMON_FIXTURE`` (DEC-126).
+_DAEMON_FIXTURE = (
+    Path(__file__).parents[2]
+    / "control-ofc-daemon"
+    / "daemon"
+    / "tests"
+    / "fixtures"
+    / "wire_fields.json"
+)
+
+
+@pytest.mark.skipif(
+    not _DAEMON_FIXTURE.exists(), reason="daemon repo not checked out alongside the GUI"
+)
+def test_fixture_copies_are_byte_identical():
+    """The GUI and daemon copies of the wire oracle must be byte-identical (`P8-cb`).
+
+    This is the half that turns the pin into an **interlock**. Both sides now
+    check their own source against *this file* — the GUI's dataclasses here, the
+    daemon's serialised key sets in ``responses.rs::wire_field_surface_is_pinned``
+    — so a rename reds one of them and names the fixture. What that alone cannot
+    catch is the two COPIES drifting, which is why they are compared here and, for
+    single-repo CI, by ``.github/workflows/parity.yml`` in both repos.
+
+    Before this, each side declared its own list and nothing compared the two: a
+    daemon rename fixed in the Rust arm and forgotten here left this fixture stale
+    with both suites green.
+    """
+    assert FIXTURE.read_bytes() == _DAEMON_FIXTURE.read_bytes(), (
+        "wire_fields.json drifted between the GUI and daemon copies"
+    )
 
 
 def _declared() -> list[dict]:

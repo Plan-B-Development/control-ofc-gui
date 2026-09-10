@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from ..api.models import Capabilities, HwmonHeader
 from ..knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
-from .daemon_features import requires_daemon
+from .daemon_features import daemon_supports, requires_daemon
 
 # Mirrors the daemon's `classify_header_role` label branches (`hwmon/roles.rs`).
 # A label matching any of these classifies the header BEFORE chip mapping is
@@ -41,7 +41,7 @@ def daemon_protects_pumps(capabilities: Capabilities | None) -> bool:
     daemon has no role model, so it drives every identified fan to 0 — pumps
     included — and any copy promising otherwise is a lie.
     """
-    return bool(capabilities is not None and getattr(capabilities.control, "header_roles", False))
+    return daemon_supports("pump_protection", capabilities) is True
 
 
 def pump_identify_warning(capabilities: Capabilities | None) -> str:
