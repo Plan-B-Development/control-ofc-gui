@@ -16,45 +16,167 @@ Qt-free, so both pages render one object and cannot drift apart.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ..api.models import HardwareDiagnosticsResult, HwmonHeader, HwmonVerifyResult
 from ..ui.hwmon_guidance import dual_chip_verify_hint, verification_guidance
-
-#: Result token -> (one-line summary, chip class). The chip class is the shared
-#: vocabulary from ``theme.py``; the summary is the user-facing sentence.
-#:
-#: `pwm_enable_reverted` is the only Critical: it means something else is
-#: actively fighting the daemon for the header. A clamp or an unmoved RPM is a
-#: Warning because both have benign explanations (a firmware minimum, a fan
-#: behind a splitter), and an unavailable RPM is neutral because a header
-#: without a tach is normal hardware, not a fault (§18).
-_STATUS_MAP: dict[str, tuple[str, str]] = {
-    "effective": ("PWM control is working correctly", "SuccessChip"),
-    "pwm_enable_reverted": (
-        "BIOS/EC reverted pwm_enable — fan control is being overridden",
-        "CriticalChip",
-    ),
-    "pwm_value_clamped": ("PWM value was clamped or ignored by hardware", "WarningChip"),
-    "no_rpm_effect": (
-        "PWM accepted but RPM did not change (fan may be disconnected or stalled)",
-        "WarningChip",
-    ),
-    "rpm_unavailable": ("PWM write accepted but RPM readback unavailable", "CardMeta"),
-}
 
 #: The compact per-header verdict shown on a Hardware card (§7).
 VERDICT_PASS = "PASS"
 VERDICT_WARN = "CHECK"
 VERDICT_FAIL = "FAIL"
 
-_VERDICTS: dict[str, str] = {
-    "effective": VERDICT_PASS,
-    "pwm_enable_reverted": VERDICT_FAIL,
-    "pwm_value_clamped": VERDICT_WARN,
-    "no_rpm_effect": VERDICT_WARN,
-    "rpm_unavailable": VERDICT_WARN,
+#: What one verify result says about whether motherboard PWM control *works*.
+#:
+#: This is a SEPARATE axis from severity, and conflating the two is the DEC-358
+#: defect. "How loudly should this be shown?" and "what did we learn about the
+#: hardware?" have different answers for the same token: `rpm_unavailable` is
+#: quiet (a header with no tach is normal hardware) but tells us *nothing*,
+#: while `error:` is loud and also tells us nothing. Only a result that actually
+#: exercised the write path is evidence either way.
+PWM_EVIDENCE_EFFECTIVE = "effective"
+PWM_EVIDENCE_INEFFECTIVE = "ineffective"
+PWM_EVIDENCE_INCONCLUSIVE = "inconclusive"
+
+
+@dataclass(frozen=True)
+class VerifyOutcome:
+    """Everything one ``POST /hwmon/{id}/verify`` result token means.
+
+    One row per token, because this vocabulary had drifted into three copies —
+    the summary/chip map here, a `critical_keys`/`warning_keys`/`short` trio
+    inlined in ``system_state_page._show_verify_all_summary``, and an
+    `all(outcome == "effective")` test in ``_record_verify_outcome``. They
+    disagreed about `rpm_unavailable`, which is what let one sweep show the user
+    a green "complete" chip while persisting `ineffective` (DEC-358). *One
+    token, one row.*
+    """
+
+    summary: str  # the user-facing sentence
+    short: str  # compact label for a sweep line
+    chip_class: str  # shared theme vocabulary from `theme.py`
+    verdict: str  # VERDICT_* — the compact card badge
+    evidence: str  # PWM_EVIDENCE_* — what this says about the hardware
+
+
+#: `pwm_enable_reverted` is the only Critical: it means something else is
+#: actively fighting the daemon for the header. A clamp or an unmoved RPM is a
+#: Warning because both have benign explanations (a firmware minimum, a fan
+#: behind a splitter), and an unavailable RPM is neutral because a header
+#: without a tach is normal hardware, not a fault (§18).
+#:
+#: Evidence column: a clamp and an unmoved RPM are `ineffective` because both
+#: are the write path failing to take. `rpm_unavailable` is `inconclusive`: the
+#: daemon reaches it only after its reverted-enable and clamped-value guards
+#: have both fallen through, and its message is "PWM values held but RPM sensor
+#: unavailable" — so the write was accepted as far as the daemon could tell,
+#: and only the confirmation is missing. (Not quite "the write landed": if the
+#: readback of `pwmN` itself fails, the clamp guard is skipped rather than
+#: passed. That is narrower still, and `inconclusive` remains the honest answer
+#: for it — `ineffective` would assert a failure nothing established. Row
+#: `ACK-m`.) Recording it as `ineffective` is what minted an unclearable alarm
+#: on any board with an empty header, a 3-pin fan, or a pump at rest.
+_OUTCOMES: dict[str, VerifyOutcome] = {
+    "effective": VerifyOutcome(
+        "PWM control is working correctly",
+        "OK",
+        "SuccessChip",
+        VERDICT_PASS,
+        PWM_EVIDENCE_EFFECTIVE,
+    ),
+    "pwm_enable_reverted": VerifyOutcome(
+        "BIOS/EC reverted pwm_enable — fan control is being overridden",
+        "BIOS reclaimed",
+        "CriticalChip",
+        VERDICT_FAIL,
+        PWM_EVIDENCE_INEFFECTIVE,
+    ),
+    "pwm_value_clamped": VerifyOutcome(
+        "PWM value was clamped or ignored by hardware",
+        "clamped",
+        "WarningChip",
+        VERDICT_WARN,
+        PWM_EVIDENCE_INEFFECTIVE,
+    ),
+    "no_rpm_effect": VerifyOutcome(
+        "PWM accepted but RPM did not change (fan may be disconnected or stalled)",
+        "no RPM change",
+        "WarningChip",
+        VERDICT_WARN,
+        PWM_EVIDENCE_INEFFECTIVE,
+    ),
+    "rpm_unavailable": VerifyOutcome(
+        "PWM write accepted but RPM readback unavailable",
+        "no tach",
+        "CardMeta",
+        VERDICT_WARN,
+        PWM_EVIDENCE_INCONCLUSIVE,
+    ),
 }
+
+
+def outcome_for(result: str) -> VerifyOutcome:
+    """The vocabulary row for one result token.
+
+    Two tokens are not in the table and must not be invented into one:
+
+    * an ``error:`` prefix is the *sweep* failing (transport, permission, a
+      daemon refusal), so it is loud but says nothing about the hardware;
+    * an unrecognised token comes from a newer daemon. It renders verbatim
+      rather than being dropped (the 273-i rule) and stays `inconclusive` —
+      guessing an evidence value from a token we do not know is exactly how a
+      verdict gets fabricated.
+    """
+    known = _OUTCOMES.get(result)
+    if known is not None:
+        return known
+    if result.startswith("error:"):
+        return VerifyOutcome(
+            f"Result: {result}", result, "CriticalChip", VERDICT_FAIL, PWM_EVIDENCE_INCONCLUSIVE
+        )
+    return VerifyOutcome(
+        f"Result: {result}", result, "CardMeta", VERDICT_WARN, PWM_EVIDENCE_INCONCLUSIVE
+    )
+
+
+def verify_sweep_outcome(results: Sequence[str]) -> str | None:
+    """What a whole sweep proved about PWM control, or ``None`` if nothing.
+
+    ``None`` means *leave the recorded result alone* — it is not a third
+    verdict. A sweep in which every header came back inconclusive (no tach on
+    any of them) has not refuted a previous clean test and has not confirmed
+    one either; overwriting either way would be a claim nothing measured.
+
+    One bad header still condemns the sweep: a board note says the BIOS may
+    override fan control, and one header that did not take the write is exactly
+    the case the note is about. But an inconclusive header no longer votes,
+    which is the fix — previously it voted *against*.
+    """
+    evidences = [outcome_for(r).evidence for r in results]
+    if any(e == PWM_EVIDENCE_INEFFECTIVE for e in evidences):
+        return PWM_EVIDENCE_INEFFECTIVE
+    if any(e == PWM_EVIDENCE_EFFECTIVE for e in evidences):
+        return PWM_EVIDENCE_EFFECTIVE
+    return None
+
+
+def verify_sweep_chip_class(results: Sequence[str]) -> str:
+    """The chip class for a sweep summary, from the same table as the record.
+
+    Derived from `_OUTCOMES` rather than from a second list of "critical" and
+    "warning" tokens, so the chip the user sees and the evidence the page
+    persists can no longer disagree. The all-inconclusive case is neutral, not
+    green: nothing failed, but nothing was demonstrated either.
+    """
+    outcomes = [outcome_for(r) for r in results]
+    if any(o.chip_class == "CriticalChip" for o in outcomes):
+        return "CriticalChip"
+    if any(o.chip_class == "WarningChip" for o in outcomes):
+        return "WarningChip"
+    if any(o.evidence == PWM_EVIDENCE_EFFECTIVE for o in outcomes):
+        return "SuccessChip"
+    return "CardMeta"
 
 
 @dataclass(frozen=True)
@@ -90,7 +212,8 @@ def build_verify_result_view(
     result. An unrecognised ``result`` token renders verbatim rather than being
     dropped (the 273-i rule) — a newer daemon must not make a verdict vanish.
     """
-    summary, chip_class = _STATUS_MAP.get(result.result, (f"Result: {result.result}", "CardMeta"))
+    outcome = outcome_for(result.result)
+    summary, chip_class = outcome.summary, outcome.chip_class
     lines = [f"Result: {summary}"]
     if result.details:
         lines.append(result.details)
@@ -120,7 +243,7 @@ def build_verify_result_view(
         header_id=result.header_id,
         summary=summary,
         chip_class=chip_class,
-        verdict=_VERDICTS.get(result.result, VERDICT_WARN),
+        verdict=outcome.verdict,
         lines=lines,
         restore_failed=bool(getattr(result, "restore_failed", False)),
     )

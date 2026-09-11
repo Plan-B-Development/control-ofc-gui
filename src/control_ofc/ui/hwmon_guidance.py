@@ -2226,9 +2226,10 @@ def dual_chip_verify_hint(
     Returns None when:
         - the result is `effective` (working correctly — no dual-chip
           confusion to explain)
-        - the result is `pwm_enable_reverted` or `rpm_unavailable` —
-          those failures are clearly BIOS/EC-driven or wiring-driven
-          and adding a dual-chip hint would just be noise
+        - the result is `pwm_enable_reverted` or `rpm_unavailable` — the
+          first is clearly BIOS/EC-driven and the second is not a failure
+          at all but an absent tachometer (DEC-358 ranks it *inconclusive*),
+          so a dual-chip hint would be noise in both cases
         - the board is not a dual-chip target
         - no chips are missing (all expected chips already detected)
     """

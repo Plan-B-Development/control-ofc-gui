@@ -187,7 +187,7 @@ Two rows under the page header, sharing height through the DEC-234 drag handle:
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│ SYSTEM HEALTH OVERVIEW            (full content width)       │
+│ SYSTEM HEALTH OVERVIEW  [pill]      [Refresh] [Open Full Report]│
 └──────────────────────────────────────────────────────────────┘
                           ↕  DEC-234 handle
 ┌───────────────────────────────────────┬──────────────────────┐
@@ -198,9 +198,23 @@ Two rows under the page header, sharing height through the DEC-234 drag handle:
 > Advanced actions                        (fixed, below the handle)
 ```
 
-Health carries the page's densest content — each finding is a severity caption,
-a title, a description, an HTML detail box and a doc button — so it gets the
-whole width. The two status cards moved into a stacked sidebar beside the
+Health carries the page's densest content, and since DEC-357 it holds **two
+collections that are deliberately not ranked together**: the severity-sorted
+*condition* cards (a caption, title, description, HTML detail box and doc
+button each — only what the daemon measured) and, below them, the collapsed
+*"Board notes for this hardware (N)"* section built by `build_board_notes`,
+whose entries carry an **evidence status** rather than a place in the alarm
+stack. It gets the whole width.
+
+Its `SectionHeader` carries the issue-count pill via `add_trailing` and, since
+DEC-358, two controls via `add_action` (right of the stretch): **Refresh**, a
+forced refetch of `/diagnostics/hardware`, and **Open Full Report**. Both were
+previously the last widgets inside *Advanced actions*, which is constructed
+`expanded=False` — so the report, the only entry to `ReadinessReportDialog` in
+the application, was off-screen by default, and the page had no refresh at all
+while rendering a cache that nothing could retake. The split between the two
+header methods is the rule: `add_trailing` for adornments beside the title,
+`add_action` for controls. The two status cards moved into a stacked sidebar beside the
 registry (`SystemState_Splitter_row2`, horizontal, 3:1, persisted by DEC-245
 like every other named splitter).
 

@@ -38,9 +38,15 @@ from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.system_state_view import (
     build_system_state_vm,
     build_verify_headers,
+    clear_silence,
     daemon_version_at_least,
 )
-from control_ofc.services.verify_view import build_verify_result_view
+from control_ofc.services.verify_view import (
+    build_verify_result_view,
+    outcome_for,
+    verify_sweep_chip_class,
+    verify_sweep_outcome,
+)
 from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.pages.diagnostics_workers import (
@@ -163,6 +169,11 @@ class SystemStatePage(QWidget):
         self._char_thread: QThread | None = None
         self._char_dialog: PwmCharacterizationDialog | None = None
         self._hw_diag_fetched = False
+        self._hw_diag_in_flight = False  # guards the header Refresh (DEC-358)
+        #: Live `DaemonStatus.thermal_state`, pushed at 1 Hz — see
+        #: :meth:`set_thermal_state`. ``""`` until the first poll arrives, which
+        #: is what makes the Safety card fall back to the fetched snapshot.
+        self._live_thermal_state = ""
         self._rescan_in_flight = False  # DEC-216: guards the footer Rescan action
         self._last_rendered_diag: HardwareDiagnosticsResult | None = None
 
@@ -231,6 +242,7 @@ class SystemStatePage(QWidget):
         # The notes section's "Test fan control" runs the same sweep as the
         # Advanced actions button — one write path, not a second one.
         self._health_card.verify_requested.connect(self._run_pwm_verify_all)
+        self._build_health_header_actions()
         self._interference_card = InterferenceCard()
         self._safety_card = SafetyCard()
         overview_pane = QWidget()
@@ -437,14 +449,55 @@ class SystemStatePage(QWidget):
         self._gpu_restore_result_label.setVisible(False)
         section.add_widget(self._gpu_restore_result_label)
 
-        # Open Full Report.
+        return section
+
+    def _build_health_header_actions(self) -> None:
+        """Refresh + Open Full Report, on the always-visible health card.
+
+        Both used to live at the foot of the collapsed *Advanced actions*
+        section, which is built ``expanded=False`` — so the report, the only
+        entry to ``ReadinessReportDialog`` anywhere in the app, was genuinely
+        off-screen until you went looking for it, and the page had no refresh
+        affordance at all (DEC-358). A page whose whole content is a cached
+        hardware snapshot needs a way to retake it.
+        """
+        self._refresh_btn = make_button("Refresh", "ghost", object_name="SystemState_Btn_refresh")
+        self._refresh_btn.setToolTip("Re-read hardware diagnostics from the daemon")
+        self._refresh_btn.clicked.connect(self._force_refresh_diagnostics)
+        self._health_card.add_header_action(self._refresh_btn)
+
         self._open_report_btn = make_button(
             "Open Full Report", "ghost", object_name="SystemState_Btn_openReport"
         )
         self._open_report_btn.clicked.connect(self._open_readiness_report)
         self._open_report_btn.setEnabled(False)
-        section.add_widget(self._open_report_btn)
-        return section
+        self._health_card.add_header_action(self._open_report_btn)
+
+    def _force_refresh_diagnostics(self) -> None:
+        """Refetch ``/diagnostics/hardware`` even though the cache is warm.
+
+        Calls the fetch **directly** rather than going near ``showEvent``, whose
+        first branch renders the cache whenever one exists — routing a refresh
+        through it would re-render the same stale payload, which is the bug this
+        button exists to fix, wearing a button.
+
+        ``_hw_diag_fetched`` is latched rather than cleared. Clearing it would
+        arm ``showEvent`` to fetch *again* on the next visit to the page, so a
+        refresh would cost two round trips to the daemon's most expensive
+        endpoint for one press.
+        """
+        if self._hw_diag_in_flight:
+            return
+        self._hw_diag_fetched = True
+        self._hw_diag_in_flight = True
+        self._refresh_btn.setEnabled(False)
+        self._health_card.set_summary("Refreshing hardware diagnostics…")
+        self._fetch_hardware_diagnostics()
+
+    def _end_refresh(self) -> None:
+        """Release the in-flight guard, whichever way the fetch ended."""
+        self._hw_diag_in_flight = False
+        self._refresh_btn.setEnabled(True)
 
     # ── Fetch + render ───────────────────────────────────────────────
 
@@ -455,19 +508,27 @@ class SystemStatePage(QWidget):
             self._render(cached)  # old tab already fetched → render from cache
         elif not self._hw_diag_fetched:
             self._hw_diag_fetched = True  # latch BEFORE emit → a re-show never double-fetches
+            # Arm the same guard the header Refresh uses. Without this, a click
+            # landing while this first fetch is still outstanding is not deduped
+            # — the guard would be narrower than its own docstring claims.
+            self._hw_diag_in_flight = True
+            self._refresh_btn.setEnabled(False)
             self._fetch_hardware_diagnostics()
 
     def _fetch_hardware_diagnostics(self) -> None:
         if not self._client:
             self._health_card.set_summary("Cannot fetch: no daemon connection")
+            self._end_refresh()  # no worker will ever answer → release here
             return
         if not self._ensure_hw_diag_worker():
             self._health_card.set_summary("Cannot fetch: no daemon socket path")
+            self._end_refresh()
             return
         self._hw_diag_request.emit()
 
     @Slot(object)
     def _on_hw_diag_ok(self, result: HardwareDiagnosticsResult) -> None:
+        self._end_refresh()
         # Warm the shared cache (Overview/Sensors read board vendor from it on
         # their next poll) *and* AppState.board_info, which the hwmon label
         # fallback table keys on — set_hw_diagnostics owns both (DEC-229).
@@ -476,6 +537,7 @@ class SystemStatePage(QWidget):
 
     @Slot(str, str)
     def _on_hw_diag_error(self, category: str, message: str) -> None:
+        self._end_refresh()
         if category == "unavailable":
             self._health_card.set_summary(
                 message or "Daemon unavailable — cannot fetch diagnostics"
@@ -498,6 +560,7 @@ class SystemStatePage(QWidget):
             dismissed_notes=set(settings.dismissed_board_notes),
             allow_acknowledge=settings.board_notes_allow_acknowledge,
             allow_dismiss=settings.board_notes_allow_dismiss,
+            live_thermal_state=self._live_thermal_state,
         )
         self._health_card.render(vm)
         self._registry_card.set_summary(vm.summary_line)
@@ -512,13 +575,20 @@ class SystemStatePage(QWidget):
 
     @Slot(str, bool)
     def _on_note_acknowledged(self, ack_key: str, acknowledged: bool) -> None:
-        keys = list(self._settings_svc.settings.acknowledged_board_notes)
-        if acknowledged and ack_key not in keys:
-            keys.append(ack_key)
-        elif not acknowledged and ack_key in keys:
-            keys.remove(ack_key)
+        stored = list(self._settings_svc.settings.acknowledged_board_notes)
+        if acknowledged:
+            if ack_key in stored:
+                return
+            keys = [*stored, ack_key]
         else:
-            return
+            # Clear EVERY entry for this quirk, not the one whose evidence
+            # matches right now. Since DEC-358 a silence is matched by rank, so
+            # a note acknowledged at `unverified` is still acknowledged once it
+            # improves to `not_observed` — but its current ack key was never
+            # stored, and removing only that key would have *appended* it.
+            keys = clear_silence(stored, ack_key.rpartition("@")[0] or ack_key)
+            if keys == stored:
+                return
         self._settings_svc.update(acknowledged_board_notes=keys)
         self._rerender_last_diagnostics()
 
@@ -529,6 +599,26 @@ class SystemStatePage(QWidget):
             return
         keys.append(ack_key)
         self._settings_svc.update(dismissed_board_notes=keys)
+        self._rerender_last_diagnostics()
+
+    @Slot(str)
+    def set_thermal_state(self, state: str) -> None:
+        """Take the live daemon thermal state (1 Hz, DEC-358).
+
+        Re-renders only when the value actually *changes*. The Safety card read
+        its thermal state from ``/diagnostics/hardware``, which this page
+        fetches once, so the row could sit on an hours-old "Normal" — or an
+        hours-old "Emergency" — for as long as the app stayed open. The daemon
+        is the sole writer and acts on thermal safety regardless (DEC-165); what
+        was wrong was this page *reporting* a snapshot as if it were current.
+
+        Guarding on change keeps it off the 1 Hz path: a steady state costs one
+        string comparison per poll and re-renders nothing.
+        """
+        state = state or "normal"
+        if state == self._live_thermal_state:
+            return
+        self._live_thermal_state = state
         self._rerender_last_diagnostics()
 
     def _rerender_last_diagnostics(self) -> None:
@@ -544,28 +634,58 @@ class SystemStatePage(QWidget):
     def _record_verify_outcome(self, results: list[tuple[str, str]]) -> None:
         """Persist what a fan-control test found, for the board-note evidence.
 
-        "Effective" only when **every** tested header wrote cleanly. A board
-        note says the BIOS may override fan control; one header that did not
-        take the write is exactly the case the note is about, so a mixed sweep
-        must not be recorded as a clean bill of health. `no_rpm_effect` counts
-        as unclean for the same reason — an accepted write whose fan never
-        moved is the quirk's own description of itself.
+        The verdict is `verify_view.verify_sweep_outcome` and nothing else, so
+        what is persisted here and the chip shown by
+        :meth:`_show_verify_all_summary` cannot disagree — they did, and that
+        divergence is DEC-358: a sweep of two good headers and one without a
+        tach showed a green "complete" chip while recording `ineffective`,
+        which promoted every triggerless board note to a condition card that
+        re-testing could never clear.
         """
-        if not results:
-            return
-        effective = all(outcome == "effective" for _, outcome in results)
-        self._settings_svc.update(
-            last_pwm_verify_effective="effective" if effective else "ineffective"
-        )
+        outcome = verify_sweep_outcome([result for _, result in results])
+        if outcome is None:
+            return  # nothing was settled — leave the recorded result alone
+        self._settings_svc.update(last_pwm_verify_effective=outcome)
         self._rerender_last_diagnostics()
 
+    def _verify_in_flight(self) -> bool:
+        """Is a single verify or a full sweep currently running?"""
+        return bool(self._verify_all_total) or self._verify_active_header is not None
+
     def _populate_verify_combo(self) -> None:
+        """Rebuild the header dropdown, preserving the user's pick.
+
+        Two things here are load-bearing, and DEC-358 is what made them matter:
+        before it, every re-render followed a **user action**, so a rebuild could
+        only land at a moment the user had chosen. The live thermal push gives
+        this page an autonomous 1 Hz trigger, which can land at any moment —
+        including in the middle of a sweep.
+
+        * The selection is restored **by id**. ``clear()`` resets
+          ``currentIndex`` to 0, so a re-render between picking a header and
+          pressing *Test PWM Control* would silently test a different one.
+        * ``_verify_btn`` is re-enabled **only when nothing is in flight**.
+          ``_run_pwm_verify``/``_run_pwm_verify_all`` disable it deliberately;
+          re-enabling it mid-sweep lets a second concurrent verify start, and
+          ``_on_verify_ok`` appends *any* result into ``_verify_all_results``
+          and drives an extra ``_step_pwm_verify_all()`` whenever a sweep is
+          open — which pops a header the sweep never reported and feeds a
+          corrupted set to ``verify_sweep_outcome``. That lands on
+          ``last_pwm_verify_effective``, i.e. on precisely the board-note
+          evidence this change exists to get right.
+        """
+        previous = self._verify_combo.currentData()
         self._verify_combo.clear()
         headers = self._state.hwmon_headers if self._state else []
         resolve = self._state.fan_display_name if self._state else None
         for text, hid in build_verify_headers(headers, resolve):
             self._verify_combo.addItem(text, hid)
-        self._verify_btn.setEnabled(self._verify_combo.count() > 0)
+        if previous is not None:
+            restored = self._verify_combo.findData(previous)
+            if restored >= 0:
+                self._verify_combo.setCurrentIndex(restored)
+        if not self._verify_in_flight():
+            self._verify_btn.setEnabled(self._verify_combo.count() > 0)
         self._update_characterize_availability()
 
     def _supports_characterization(self) -> bool:
@@ -955,28 +1075,16 @@ class SystemStatePage(QWidget):
             self._verify_all_progress_label.setText("Verify all: no results.")
             return
         self._record_verify_outcome(self._verify_all_results)
-        critical_keys = {"pwm_enable_reverted"}
-        warning_keys = {"pwm_value_clamped", "no_rpm_effect"}
-        has_critical = any(
-            r.startswith("error:") or r in critical_keys for _, r in self._verify_all_results
-        )
-        has_warning = any(r in warning_keys for _, r in self._verify_all_results)
-        css_class = (
-            "CriticalChip" if has_critical else "WarningChip" if has_warning else "SuccessChip"
-        )
+        # Chip class and per-header wording both come from `verify_view`, which
+        # is the same table `_record_verify_outcome` reads. Three inlined copies
+        # of this vocabulary lived here before DEC-358 and one of them disagreed.
+        results = [result for _, result in self._verify_all_results]
         n_done = len(self._verify_all_results)
         lines = [f"Verify all complete ({n_done}/{self._verify_all_total} tested):"]
         for header_id, result_str in self._verify_all_results:
-            short = {
-                "effective": "OK",
-                "pwm_enable_reverted": "BIOS reclaimed",
-                "pwm_value_clamped": "clamped",
-                "no_rpm_effect": "no RPM change",
-                "rpm_unavailable": "no tach",
-            }.get(result_str, result_str)
-            lines.append(f"  • {header_id}: {short}")
+            lines.append(f"  • {header_id}: {outcome_for(result_str).short}")
         self._verify_all_progress_label.setText("\n".join(lines))
-        set_chip_class(self._verify_all_progress_label, css_class)
+        set_chip_class(self._verify_all_progress_label, verify_sweep_chip_class(results))
 
     # ── GPU verify + restore (ported) ────────────────────────────────
 

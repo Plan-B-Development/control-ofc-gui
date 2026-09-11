@@ -20,7 +20,7 @@ same way).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from html import escape
 
@@ -418,16 +418,62 @@ def note_ack_key(key: str, evidence: str) -> str:
     learned this the hard way at DEC-282: an acknowledgement stored against a
     bare condition key muted every future recurrence of that condition, forever.
     ISA-18.2's answer is that acknowledgement marks an *occurrence*, so it
-    cannot reach the next one — and an evidence change is exactly what minting a
-    new occurrence means here. Silence a note while it is unverified and it
-    stays silent; let it become observed and it speaks again, because the key it
-    was silenced under no longer describes it.
+    cannot reach the next one.
 
-    That is also the half of the user's request that the collapse alone does not
-    satisfy: the warning must stop following them once resolved, *without*
-    losing the ability to shout when it matters.
+    The stored format is unchanged from DEC-357 — what changed at DEC-358 is how
+    it is *matched*. Equality made every evidence change void the silence,
+    including changes in the good direction: dismiss two notes, press the page's
+    own **Test fan control** button, have it come back clean, and both notes
+    reappeared because `unverified` had become `not_observed`. The page invited
+    the press and then punished it. Matching is now a rank comparison
+    (:func:`is_silenced`), so a silence survives improvement and breaks only on
+    escalation. Read this key as *"silenced no later than this evidence"*.
     """
     return f"{key}@{evidence}"
+
+
+def silence_index(stored: Iterable[str]) -> dict[str, int]:
+    """Map each quirk key to the HIGHEST evidence rank it was silenced at.
+
+    ``rpartition`` rather than ``split``: a quirk key may contain "@", an
+    evidence token never does, so the last separator is always the real one.
+
+    Highest-wins because the entries accumulate — silence a note while it is
+    unverified, then again once it is observed, and the second is the one that
+    describes what the user chose to live with.
+    """
+    index: dict[str, int] = {}
+    for entry in stored:
+        key, sep, evidence = entry.rpartition("@")
+        if not sep:  # pre-DEC-357 bare key, or corrupt — silence it at its loudest
+            key, evidence = entry, readiness.EVIDENCE_OBSERVED
+        rank = readiness.evidence_rank(evidence)
+        if rank > index.get(key, -1):
+            index[key] = rank
+    return index
+
+
+def is_silenced(index: dict[str, int], key: str, evidence: str) -> bool:
+    """Does a stored silence still cover this note at its current evidence?"""
+    return readiness.evidence_rank(evidence) <= index.get(key, -1)
+
+
+def clear_silence(stored: Iterable[str], key: str) -> list[str]:
+    """Every stored entry except those silencing ``key``.
+
+    Un-acknowledging has to remove *all* of a key's entries, not the one whose
+    evidence happens to match right now. Under rank matching the two differ: a
+    note silenced at `unverified` and since improved to `not_observed` is still
+    silenced, but its current ack key is `key@not_observed`, which was never
+    stored — removing only that would have appended it instead, leaving the note
+    more thoroughly silenced than before the user asked to un-silence it.
+    """
+    out: list[str] = []
+    for entry in stored:
+        entry_key, sep, _ = entry.rpartition("@")
+        if (entry_key if sep else entry) != key:
+            out.append(entry)
+    return out
 
 
 def build_board_notes(
@@ -440,8 +486,8 @@ def build_board_notes(
     allow_dismiss: bool = True,
 ) -> BoardNotesVM:
     """Reference notes for this board/chip, with what this machine says of each."""
-    acknowledged = acknowledged or set()
-    dismissed = dismissed or set()
+    ack_index = silence_index(acknowledged or set())
+    dismiss_index = silence_index(dismissed or set())
     # `condition_keys` is deliberately NOT passed. Precomputing it here meant
     # passing `detect_readiness_problems`' full set — base conditions *plus*
     # anything promoted from a note — which is exactly the shape
@@ -457,7 +503,7 @@ def build_board_notes(
     hidden = 0
     for note in notes:
         ack_key = note_ack_key(note.key, note.evidence)
-        if ack_key in dismissed:
+        if is_silenced(dismiss_index, note.key, note.evidence):
             hidden += 1
             continue
         sd = severity_display(note.quirk.severity)
@@ -490,7 +536,7 @@ def build_board_notes(
                 default_expanded=(
                     sd.default_expanded or note.evidence == readiness.EVIDENCE_OBSERVED
                 ),
-                acknowledged=ack_key in acknowledged,
+                acknowledged=is_silenced(ack_index, note.key, note.evidence),
                 can_acknowledge=allow_acknowledge,
                 can_dismiss=allow_dismiss,
             )
@@ -560,10 +606,29 @@ def _fan_method_state(method: str) -> str:
     return "neutral"
 
 
-def build_safety_gpu_vm(diag: HardwareDiagnosticsResult) -> SafetyGpuVM:
+def build_safety_gpu_vm(
+    diag: HardwareDiagnosticsResult,
+    *,
+    live_thermal_state: str | None = None,
+) -> SafetyGpuVM:
+    """Assemble the Safety & GPU card.
+
+    ``live_thermal_state`` is the 1 Hz ``DaemonStatus.thermal_state`` — the same
+    field `StatusBanner`, the footer and the ribbon read. It wins over the copy
+    in ``diag.thermal_safety`` because the two are not equally fresh:
+    ``/diagnostics/hardware`` is fetched once per page visit, so its thermal
+    state is a snapshot that can be hours old, and this row was rendering it as
+    if it were current. ``None`` (no poll yet) falls back to the snapshot.
+
+    The *threshold* stays on the snapshot deliberately — it is configuration,
+    not state — and is interpolated from what the daemon reported. Never compare
+    it to a literal: the trip point is per-machine (DEC-308).
+    """
     ts = diag.thermal_safety
-    state_key = (ts.state if ts else "").strip().lower()
-    thermal_text = ts.state.capitalize() if ts and ts.state else "Unknown"
+    snapshot_state = ts.state if ts else ""
+    wire_state = live_thermal_state if live_thermal_state else snapshot_state
+    state_key = wire_state.strip().lower()
+    thermal_text = wire_state.capitalize() if wire_state else "Unknown"
     thermal_limit_text = f"Limit: {ts.emergency_threshold_c:.0f} °C" if ts else ""
     thermal_state = _THERMAL_STATE.get(state_key, "neutral")
 
@@ -764,6 +829,7 @@ def build_system_state_vm(
     dismissed_notes: set[str] | None = None,
     allow_acknowledge: bool = True,
     allow_dismiss: bool = True,
+    live_thermal_state: str | None = None,
 ) -> SystemStateVM:
     problems = detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
     n = len(problems)
@@ -798,6 +864,6 @@ def build_system_state_vm(
             allow_dismiss=allow_dismiss,
         ),
         interference=build_interference_vm(diag),
-        safety_gpu=build_safety_gpu_vm(diag),
+        safety_gpu=build_safety_gpu_vm(diag, live_thermal_state=live_thermal_state),
         registry_rows=build_registry_rows(diag),
     )

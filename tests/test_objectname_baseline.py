@@ -42,6 +42,10 @@ SYSTEM_STATE_OBJECTNAMES = frozenset(
         "SystemState_Combo_verifyHeader_A11yLabel",
         "SystemState_Bar_speedRange",
         "SystemState_Btn_openReport",
+        # DEC-358: forced refetch of `/diagnostics/hardware`. The page rendered
+        # a cache that nothing could retake, beside a report button hidden in a
+        # collapsed section; both now sit on the health card's header.
+        "SystemState_Btn_refresh",
         "SystemState_Btn_restoreGpu",
         "SystemState_Btn_verifyAll",
         # DEC-357: the board-notes section — the collapsed home for board/chip

@@ -306,6 +306,36 @@ EVIDENCE_UNVERIFIED = "unverified"
 #: Nothing about this machine could ever confirm or refute it (reference only).
 EVIDENCE_REFERENCE = "reference"
 
+#: The four evidence states in ESCALATION order, quietest first (DEC-358).
+#:
+#: An ordering is what lets a silence be narrower than "forever" without being
+#: as brittle as "until anything at all changes". A dismissal is stored against
+#: the evidence it was made at; it holds while the note stays at or below that
+#: rank and breaks the moment the note escalates past it. So a note dismissed
+#: while *unverified* stays dismissed when a clean fan-control test moves it to
+#: *not_observed* — the good direction — and speaks again if it ever becomes
+#: *observed*.
+EVIDENCE_ORDER: tuple[str, ...] = (
+    EVIDENCE_REFERENCE,
+    EVIDENCE_NOT_OBSERVED,
+    EVIDENCE_UNVERIFIED,
+    EVIDENCE_OBSERVED,
+)
+
+_EVIDENCE_RANK: dict[str, int] = {e: i for i, e in enumerate(EVIDENCE_ORDER)}
+
+
+def evidence_rank(evidence: str) -> int:
+    """Rank one evidence state; an unknown state ranks ABOVE every known one.
+
+    The direction is deliberate and is the safe one. Ranking an unrecognised
+    state low would let it fall under an existing silence and vanish without
+    anything logging that it had appeared; ranking it high breaks the silence,
+    so a state this build does not understand is shown rather than swallowed.
+    """
+    return _EVIDENCE_RANK.get(evidence, len(EVIDENCE_ORDER))
+
+
 #: Triggers whose ABSENCE is real counter-evidence.
 #:
 #: The distinction matters more than it looks. `module_collision` is derived

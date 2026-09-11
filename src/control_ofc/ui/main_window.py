@@ -517,6 +517,11 @@ class MainWindow(QWidget):
         self.status_ribbon.set_uptime(status.uptime_seconds)
         self.status_ribbon.set_thermal_state(status.thermal_state)
         self.footer.set_thermal_state(status.thermal_state or "normal")
+        # DEC-358: the System State page's Safety card showed the thermal state
+        # from `/diagnostics/hardware`, which that page fetches once. Same field,
+        # same source as the ribbon and footer — it was simply the only one of
+        # the four reading a snapshot. The page ignores an unchanged value.
+        self.system_state_page.set_thermal_state(status.thermal_state or "normal")
         self.footer.set_readiness_rollup(self._readiness_for_footer(status))
         # `P8-bb`: `DaemonStatus.validation_session` has ridden every poll since
         # Phase 5 and was read by nothing, so a session left recording after its

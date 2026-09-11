@@ -275,6 +275,7 @@ class HealthCard(ContentSizedCard):
         self._issue_pill = StatusPill("—", "neutral")
         self._issue_pill.setObjectName("SystemState_Pill_issueCount")
         header.add_trailing(self._issue_pill)
+        self._header = header
         v.addWidget(header)
 
         self._summary_label = QLabel("—")
@@ -324,6 +325,16 @@ class HealthCard(ContentSizedCard):
         self._notes_section.add_widget(self._notes_container)
         v.addWidget(self._notes_section)
         v.addStretch(1)
+
+    def add_header_action(self, widget) -> None:
+        """Put a control on this card's header, right-aligned.
+
+        The card owns its header, so the page cannot reach past it — DEC-358
+        needed the report and refresh buttons on the one card that is always
+        on screen, and reaching into ``_header`` from the page would have been
+        the shared-primitive rule broken from the other side.
+        """
+        self._header.add_action(widget)
 
     def set_summary(self, text: str) -> None:
         self._summary_label.setText(text)

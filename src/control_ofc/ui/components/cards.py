@@ -132,3 +132,13 @@ class SectionHeader(QWidget):
         """Add a widget to the right of the title (before the stretch)."""
         layout = self.layout()
         layout.insertWidget(layout.count() - 1, widget)
+
+    def add_action(self, widget: QWidget) -> None:
+        """Add a widget to the far right of the header (after the stretch).
+
+        For controls, where :meth:`add_trailing` is for adornments that belong
+        beside the title — a count pill, a status chip. Keeping them apart is
+        what stops an action button being packed against the title text while
+        the rest of the header sits empty.
+        """
+        self.layout().addWidget(widget)

@@ -1,5 +1,73 @@
 # Changelog
 
+## [2.72.0] — 2026-09-11
+
+**GUI-only; the daemon floor is unchanged at `control-ofc-daemon` >= v2.11.0.**
+No new wire field and no capability consulted — this release pairs with exactly
+the daemons v2.71.0 did.
+
+**A warning you dealt with stops coming back on its own.** v2.71.0 gave board
+notes an *Acknowledge* and a *Dismiss*, and then undid them at the worst
+possible moment: the silence was stored against the note *plus what the machine
+said at the time*, compared exactly, so **any** change in what the machine said
+voided it — including a change for the better. The page offers a **Test fan
+control** button with the hint "N notes can only be confirmed or ruled out by
+writing to a fan header". Press it, get a clean result, and every note you had
+dismissed came back, because `unverified` had become `not_observed`. The app
+asked you to press the one control that undid your own decision.
+
+Silence is now compared by **rank**, not by string: `reference` <
+`not_observed` < `unverified` < `observed`. A dismissal survives things getting
+better and breaks only when they get worse. The guarantee that made v2.71.0's
+design right is kept intact — acknowledging one occurrence still cannot reach a
+later, worse one — and an evidence state a future build does not recognise
+ranks *above* everything known, so it is shown rather than swallowed.
+
+**One idle fan no longer condemns your whole board.** The daemon answers a PWM
+verify with `rpm_unavailable` whenever the header reports no RPM or less than
+100 — an empty header, a 3-pin fan the chip cannot tach, a fan idling at zero,
+a pump at rest — and it reaches that answer only after checking that nothing
+reverted the header and nothing clamped the value. Its message says plainly that
+the *PWM values held*: the write was accepted, and only the confirmation is
+missing. The GUI recorded it as a failure. Measured on one sweep of three headers, two of them perfect:
+
+- the chip on screen read a green **"Verify all complete (3/3 tested)"**;
+- the value persisted beside it was **`ineffective`**.
+
+That false verdict then flipped every hardware note on the board to *observed —
+fan control did not test clean* and minted condition cards that **re-testing
+could never clear**, because the missing tach is missing by construction. A
+result that proves nothing is now recorded as proving nothing: a sweep with no
+usable evidence leaves your previous result alone instead of overwriting it with
+a guess, and the summary chip stays neutral rather than going green.
+
+The deeper cause was three copies of one vocabulary — a summary map, a
+`critical`/`warning` list, and an `all(… == "effective")` test — that disagreed
+about a single token. There is now one table, and the chip you see and the
+verdict that is stored are read from the same row of it.
+
+### Added
+- **Refresh**, on the System Health Overview header. The page rendered a
+  hardware snapshot taken once at startup and re-rendered that same cached copy
+  on every visit, so a problem you actually fixed mid-session — a module
+  unloaded, a daemon restarted, a GPU rebound — kept being reported until you
+  restarted the GUI. This is a forced re-read, not a cache hit.
+
+### Changed
+- **Open Full Report** moved from the foot of the collapsed *Advanced actions*
+  section to the System Health Overview header, beside Refresh. It is the only
+  way into the complete readiness report anywhere in the app, and it was
+  off-screen until you went looking for it. That matters more than placement:
+  the report is the documented recovery path for anything the page hides, so
+  hiding things is only honest while the complete record is one click away.
+- The **Safety & GPU Limits** thermal row now follows the live 1 Hz daemon
+  state, like the banner, the footer and the ribbon already did. It was reading
+  the once-fetched hardware snapshot, so it could show an hours-old "Normal" —
+  or an hours-old "Emergency" — for as long as the app stayed open. The daemon
+  owns thermal safety and acted correctly throughout; what was wrong was this
+  row *reporting* a snapshot as though it were current. The limit beside it is
+  still the per-machine trip point the daemon reported (DEC-308).
+
 ## [2.71.0] — 2026-09-11
 
 **GUI-only; the daemon floor is unchanged at `control-ofc-daemon` >= v2.11.0.**
