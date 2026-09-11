@@ -112,21 +112,32 @@ def test_keys_for_group():
 
 
 # ---------------------------------------------------------------------------
-# update_known_keys: prune dropped hidden keys + emit when a group mode hides a
-# freshly-seen key.
+# update_known_keys: hidden state survives a key leaving the known set (DEC-356),
+# + emit when a group mode hides a freshly-seen key.
 # ---------------------------------------------------------------------------
 
 
-def test_update_known_keys_prunes_dropped_hidden_key():
+def test_update_known_keys_keeps_hidden_state_across_a_drop():
+    """INVERTED by DEC-356. This test previously asserted the opposite — that a
+    key leaving the known set was pruned out of the hidden set, so re-discovering
+    it showed it visible. That pruning is the defect: the model is fed a view that
+    is filtered by construction, so "the key is gone" does not mean "the hardware
+    is gone", and every persisted hidden *fan* series was un-hidden on launch by
+    it. Removal is the user's Settings action (DEC-246), as
+    ``services/orphan_prune.py`` already states for exactly this reason."""
     model = SeriesSelectionModel()
     model.update_known_keys(["sensor:cpu", "sensor:gpu"])
     model.set_visible("sensor:gpu", False)
     assert model.is_hidden("sensor:gpu")
     model.update_known_keys(["sensor:cpu"])  # gpu disappears from the known set
-    # Re-discovering gpu must show it visible — i.e. it was pruned from hidden,
-    # not silently retained across the drop.
+    assert model.is_hidden("sensor:gpu")  # retained while absent
+    # Re-discovering it must bring the hide back with it, not reset to visible.
     model.update_known_keys(["sensor:cpu", "sensor:gpu"])
-    assert model.is_visible("sensor:gpu")
+    assert model.is_hidden("sensor:gpu")
+    assert not model.is_visible("sensor:gpu")
+    # And an untouched sibling is unaffected — the retention is per-key, not a
+    # blanket "hide everything that was ever hidden".
+    assert model.is_visible("sensor:cpu")
 
 
 def test_update_known_keys_emits_when_mode_hides_new_key(qtbot):

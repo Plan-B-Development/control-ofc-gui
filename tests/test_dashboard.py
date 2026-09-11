@@ -17,6 +17,7 @@ from control_ofc.api.models import (
     SubsystemStatus,
     parse_status,
 )
+from control_ofc.services.profile_service import ControlMember, LogicalControl
 from control_ofc.ui.main_window import MainWindow
 
 
@@ -329,10 +330,25 @@ class TestDashboardContent:
         assert "s1" in shown
         assert "s2" in shown
 
-    def test_fan_count_reaches_the_fan_card_header(self, qtbot, window, app_state):
+    def test_fan_count_reaches_the_fan_card_header(self, qtbot, window, app_state, profile_service):
         """DEC-222: the Fans summary card was removed; the fan-cards header now
-        reports the control/fan tally. With no profile active both fans land in
-        the single Unassigned card."""
+        reports the control/fan tally.
+
+        Since DEC-356 the fans have to belong to a control to be counted at all —
+        there is no Unassigned card to pool them into, and an unassigned fan gets
+        no card. So the fixture assigns them, which is also the only state in
+        which the tally means anything.
+        """
+        profile_service.active_profile.controls = [
+            LogicalControl(
+                id="c1",
+                name="Chassis",
+                members=[
+                    ControlMember(source="openfan", member_id="f1"),
+                    ControlMember(source="openfan", member_id="f2"),
+                ],
+            )
+        ]
         app_state.set_connection(ConnectionState.CONNECTED)
         app_state.set_fans(
             [
@@ -340,9 +356,7 @@ class TestDashboardContent:
                 FanReading(id="f2", source="openfan", rpm=1100, age_ms=100),
             ]
         )
-        # The tally is asserted on the fan half only: how the two fans distribute
-        # across controls depends on the fixture profile, but both must be counted.
-        assert "2 fans" in window.dashboard_page._fan_count_label.text()
+        assert window.dashboard_page._fan_count_label.text() == "1 control · 2 fans"
 
     def test_warning_count_shows_in_footer(self, qtbot, window, app_state):
         """DEC-222: warnings surface in the always-visible footer health rollup

@@ -73,13 +73,24 @@ Each card shows:
   showing — a card whose curve renders as a text summary reserves no more room than one
   that paints a sparkline
 
-Two pseudo-cards cover what a control-keyed view would otherwise miss:
-- **Unassigned** — controllable fans no control claims, pooled into one card. With no
-  profile active that is every controllable fan, so a fresh install still sees its
-  hardware rather than an empty page.
+**The band carries controls that are actually driving fans, and nothing else**
+(DEC-356). A control gets a card only while at least one of its members appears in the
+poll — a role with nothing assigned yet does not, and neither does one whose members
+are all absent. A controllable fan no control claims gets no card at all: the Controls
+page owns assigning it and counts them on its **Unassigned Fans (N)** button (DEC-233).
+When that leaves the band empty it is left **empty** — there is no empty-state label,
+because the one it replaced ("No controllable fans detected.") was false in the case it
+fired most often, and a disconnect is already announced by the connection banner.
+
+One pseudo-card remains:
 - **Read-only fans** — one card each, never pooled. They cannot be assigned to a
-  control (DEC-102), and pooling would average away a GPU's measured duty, which for
-  such a fan is the only speed signal there is. Their Edit button is hidden, not dead.
+  control (DEC-102), so unlike an unassigned fan nothing else will ever account for
+  them, and pooling would average away a GPU's measured duty, which for such a fan is
+  the only speed signal there is. Their Edit button is hidden, not dead.
+
+Note the deliberate limit DEC-356 accepts: a **partly** live control still reports its
+missing members as `Offline`, but a control that has gone *fully* dark has no card to
+report them on. That was chosen with the cost stated; see DEC-356 § Part 2.
 
 Cards are **read-only by design**. The override take/renew/release session — deadman,
 monotonic fencing, threaded dispatch (DEC-163/DEC-220) — is owned by the Controls

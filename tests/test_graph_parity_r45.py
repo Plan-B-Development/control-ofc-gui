@@ -63,6 +63,11 @@ class TestIgpuHiddenFromGraph:
             ),
         ]
         state.set_sensors(sensors)
+        # The fan half of the poll, which the real app always delivers right
+        # after the sensor half. Since DEC-356 the page holds the first key
+        # registration until it lands, so that the model never sees a key
+        # universe with the fans structurally missing.
+        state.set_fans([])
 
         # iGPU key should NOT be in the selection model
         known = selection.known_keys()
@@ -85,6 +90,7 @@ class TestIgpuHiddenFromGraph:
             ),
         ]
         state.set_sensors(sensors)
+        state.set_fans([])  # see the sibling test — DEC-356 registration gate
 
         known = page._selection.known_keys()
         assert "sensor:hwmon:amdgpu:0000:03:00.0:edge" in known

@@ -23,7 +23,6 @@ def _vm(**kw):
         control_id="c1",
         card_key="c1",
         label="CPU Fans",
-        is_unassigned=False,
         is_read_only=False,
         fan_count=2,
         member_fan_ids=("f1", "f2"),
@@ -113,18 +112,27 @@ class TestStateChip:
         assert card._state_chip.text() == text
         assert card._state_chip.property("class") == css
 
-    def test_unassigned_card_does_not_claim_auto(self, qtbot):
-        """Nothing is driving it, so "Auto" would be a lie."""
-        card = FanControlCard(_vm(is_unassigned=True, state=FanState.NORMAL))
+    def test_read_only_card_does_not_claim_auto(self, qtbot):
+        """Nothing is driving it, so "Auto" would be a lie. Since DEC-356 removed
+        the unassigned and no-members-yet cards this is the only case left that
+        relabels a NORMAL chip — it was previously the untested one of the three."""
+        card = FanControlCard(_vm(is_read_only=True, state=FanState.NORMAL))
         qtbot.addWidget(card)
-        assert card._state_chip.text() == "Not controlled"
+        assert card._state_chip.text() == "Read-only"
         assert card._state_chip.property("class") == "InfoChip"
 
-    def test_unassigned_card_still_shows_a_real_fault(self, qtbot):
+    def test_read_only_card_still_shows_a_real_fault(self, qtbot):
         """The informational relabel must not mask a stall."""
-        card = FanControlCard(_vm(is_unassigned=True, state=FanState.STALL))
+        card = FanControlCard(_vm(is_read_only=True, state=FanState.STALL))
         qtbot.addWidget(card)
         assert card._state_chip.text() == "Stall"
+
+    def test_a_driven_card_still_reads_auto(self, qtbot):
+        """The opposite branch: a predicate stuck at "always relabel" would pass
+        both tests above."""
+        card = FanControlCard(_vm(is_read_only=False, state=FanState.NORMAL))
+        qtbot.addWidget(card)
+        assert card._state_chip.text() == "Auto"
 
 
 class TestCurvePreview:
@@ -146,11 +154,13 @@ class TestCurvePreview:
         assert card._no_curve.text() == "No curve assigned"
 
     def test_placeholder_text_is_specific_to_why(self, qtbot):
-        unassigned = FanControlCard(_vm(is_unassigned=True, curve=None))
+        """Two arms since DEC-356 dropped the unassigned card: a device with no
+        write path at all, versus a real control with no curve picked yet."""
+        controlled = FanControlCard(_vm(is_read_only=False, curve=None))
         read_only = FanControlCard(_vm(is_read_only=True, curve=None))
-        qtbot.addWidget(unassigned)
+        qtbot.addWidget(controlled)
         qtbot.addWidget(read_only)
-        assert unassigned._no_curve.text() == "Not assigned to a control"
+        assert controlled._no_curve.text() == "No curve assigned"
         assert read_only._no_curve.text() == "No fan control available for this device"
 
 
@@ -163,12 +173,14 @@ class TestEditAffordance:
         card._edit_btn.click()
         assert seen == ["c7"]
 
-    def test_unassigned_card_offers_assign(self, qtbot):
-        card = FanControlCard(_vm(is_unassigned=True, control_id=""))
+    def test_every_control_card_offers_edit(self, qtbot):
+        """DEC-356 removed the "Assign…" wording with the card that needed it —
+        every remaining non-read-only card edits a control that exists."""
+        card = FanControlCard(_vm(control_id="c7"))
         qtbot.addWidget(card)
         card.show()
-        assert card._edit_btn.text() == "Assign…"
-        assert card._edit_btn.isVisible()
+        assert card._edit_btn.text() == "Edit"
+        assert card._edit_btn.isVisibleTo(card)
 
     def test_read_only_card_hides_edit(self, qtbot):
         """A read-only fan cannot be assigned to a control (DEC-102), so an Edit
@@ -237,20 +249,21 @@ class TestUpdateInPlace:
 
 
 class TestMemberlessControl:
-    def test_no_fans_reads_as_unconfigured_not_faulted(self, qtbot):
-        """A control the user just created has no members yet. Painting a red
-        critical "Offline" chip there would both alarm the user mid-setup and make
-        a genuine OFFLINE (an expected fan reporting nothing) indistinguishable."""
+    """DEC-356 stopped ``build_fan_card_vms`` producing a card for a control with
+    no members, so the "No fans" *chip* branch is gone with it. The count label
+    keeps its zero fallback as a defensive render — the widget accepts any VM, and
+    "0 fans" would read worse than naming the state."""
+
+    def test_zero_fan_count_is_worded_not_counted(self, qtbot):
         card = FanControlCard(_vm(fan_count=0, state=FanState.NORMAL))
         qtbot.addWidget(card)
-        assert card._state_chip.text() == "No fans"
-        assert card._state_chip.property("class") == "InfoChip"
         assert card._count.text() == "No fans assigned"
 
-    def test_a_real_fault_still_wins_over_the_unconfigured_label(self, qtbot):
-        card = FanControlCard(_vm(fan_count=0, state=FanState.STALL))
+    def test_a_real_count_is_still_counted(self, qtbot):
+        """The opposite branch, or a fallback stuck on would pass the test above."""
+        card = FanControlCard(_vm(fan_count=3, state=FanState.NORMAL))
         qtbot.addWidget(card)
-        assert card._state_chip.text() == "Stall"
+        assert card._count.text() == "3 fans"
 
 
 class TestUntrustedText:
@@ -500,17 +513,20 @@ class TestTitleRow:
         assert seen == ["c9"]
 
     def test_state_chip_sits_below_the_name_not_beside_it(self, qtbot):
-        """Name + chip + Edit all in one row left the worst case ("Unassigned" +
-        "Not controlled" + "Assign…") 62px for the name and elided it to
-        "Unas…". The chip rides the meta row, which was holding one short token
-        across ~180px, so it costs no height."""
-        card = FanControlCard(_vm(is_unassigned=True, control_id="", label="Unassigned"))
+        """Name + chip + Edit all in one row left the worst case (a short name
+        plus a long chip plus the button) 62px for the name and elided it. The
+        chip rides the meta row, which was holding one short token across
+        ~180px, so it costs no height. (The original worst case was the
+        "Unassigned"/"Not controlled"/"Assign…" card DEC-356 removed; the layout
+        rule it established is what this pins, so the fixture is now the longest
+        chip that still exists.)"""
+        card = FanControlCard(_vm(label="Radiator", state=FanState.OVERRIDE))
         qtbot.addWidget(card)
         card.show()
         assert card._state_chip.y() > card._name.y()
         assert card._state_chip.y() == card._count.y()
         # The name is what identifies the tile: it must not be elided here.
-        assert card._name.elided_text() == "Unassigned"
+        assert card._name.elided_text() == "Radiator"
 
     def test_long_name_elides_but_keeps_its_full_text_and_tooltip(self, qtbot):
         long_name = "Front Radiator Intake Trio (push configuration)"

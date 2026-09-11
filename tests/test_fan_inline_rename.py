@@ -422,7 +422,6 @@ class TestFanCardRename:
             control_id="readonly:amd_gpu:0000:03:00.0",
             card_key="readonly:amd_gpu:0000:03:00.0",
             label="9070XT Fan",
-            is_unassigned=False,
             is_read_only=True,
             fan_count=1,
             member_fan_ids=("amd_gpu:0000:03:00.0",),

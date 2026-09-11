@@ -11,14 +11,17 @@ Supersedes the zone/bucket grouping in the retired ``fan_grouping`` module: the
 Fan Zone and Fan Array sections were removed with the Dashboard rebuild, and the
 per-tile state derivation that was worth keeping moved here intact.
 
-Fans that belong to no control — including *every* controllable fan when no
-profile is active — collect in a single "Unassigned" pseudo-control so the
-Dashboard can still answer "what are the fans doing?" in exactly the state where
-the user most needs an answer. Read-only fans are kept out of that bucket but
-get a card each, so a GPU whose only speed signal is a firmware-reported
-measured duty (DEC-204) still has one place that shows it; a read-only fan that
-a hand-edited profile placed inside a real control renders there instead,
-because the control genuinely exists.
+**The band carries controls that are actually driving fans, and nothing else**
+(DEC-356, superseding DEC-222's "Unassigned" pseudo-card). A control gets a card
+only while at least one of its members appears in the poll: a role with no fans
+assigned yet does not, and neither does one whose members are all absent. Fans
+that belong to no control get no card at all — the Controls page owns assigning
+them, and says how many are waiting (DEC-233).
+
+Read-only fans are the one exception and get a card *each*, so a GPU whose only
+speed signal is a firmware-reported measured duty (DEC-204) still has one place
+that shows it; a read-only fan that a hand-edited profile placed inside a real
+control renders there instead, because the control genuinely exists.
 
 **No PySide import of its own**, and every function here is exercisable without a
 ``QApplication`` — that is the property the tests rely on, and the one to keep.
@@ -32,7 +35,10 @@ Honesty notes (GUI-derived data; daemon fields are never invented):
   curve is absent, unresolved, or a composite Mix/Sync with no single sensor.
 - ``overridden`` mirrors ``DaemonStatus.overrides`` — the daemon is authoritative.
 - A control member with no live reading contributes ``OFFLINE``; it is never
-  hidden to make a card look healthier than it is.
+  hidden to make a card look healthier than it is. Note the deliberate limit
+  DEC-356 accepts: that applies to a control *with* a card, so a **partly** live
+  control still reports its missing members, while a control with no live member
+  at all has no card to report them on.
 """
 
 from __future__ import annotations
@@ -56,15 +62,11 @@ from control_ofc.services.profile_service import (
     member_minimum_pct,
 )
 
-# The pseudo-control id for fans belonging to no real control.
-UNASSIGNED_ID = ""
-UNASSIGNED_LABEL = "Unassigned"
-
 # Card-key prefix for a read-only fan's own card.
 READ_ONLY_PREFIX = "readonly:"
 
-# GUI-generated control ids are uuid4 hex, so they never collide with the two
-# pseudo-card namespaces above — but a hand-edited or shared profile can carry
+# GUI-generated control ids are uuid4 hex, so they never collide with the
+# read-only card namespace above — but a hand-edited or shared profile can carry
 # any string, including "" or a "readonly:"-prefixed one, and nothing upstream
 # rejects it (neither LogicalControl.from_dict nor the daemon's profile
 # validation checks id shape or uniqueness). Cards are therefore keyed by a
@@ -137,7 +139,6 @@ class FanCardVM:
     control_id: str
     card_key: str  # unique per card; == control_id unless a profile forced a clash
     label: str
-    is_unassigned: bool
     is_read_only: bool
     fan_count: int
     member_fan_ids: tuple[str, ...]
@@ -198,11 +199,11 @@ def _avg(values: list[int]) -> int | None:
 def _worst(states: list[FanState]) -> FanState:
     """Worst-of the member states.
 
-    An empty list means the control has no members at all — which is how a
-    freshly-created fan role looks before any fan is assigned. That is not a
-    fault, so it must NOT report OFFLINE: doing so paints a red critical chip on
-    a control the user is still configuring, and makes a genuine OFFLINE (an
-    expected fan reporting nothing) indistinguishable from an unfinished one.
+    The empty-list guard is defensive only since DEC-356: a control with no live
+    member gets no card, so :func:`build_fan_card_vms` no longer calls this with
+    an empty list. It stays because the fallback must remain NORMAL rather than
+    OFFLINE if it ever is — reporting a fault for "nothing to report" would make a
+    genuine OFFLINE (an expected fan reporting nothing) indistinguishable from it.
     """
     return max(states, key=lambda s: _STATE_RANK[s]) if states else FanState.NORMAL
 
@@ -228,17 +229,19 @@ def build_fan_card_vms(
     sensor_values: dict[str, float] | None = None,
     display_name: Callable[[str], str] | None = None,
 ) -> list[FanCardVM]:
-    """Build one card VM per logical control, plus the Unassigned bucket.
+    """Build one card VM per *live* logical control, plus one per read-only fan.
 
     Args:
         fans: displayable live readings from the daemon poll.
-        active_profile: the active profile, or ``None``. With no profile there
-            are no controls, so every controllable fan lands in Unassigned.
+        active_profile: the active profile, or ``None``. With no profile there are
+            no controls, so the result holds read-only fan cards and nothing else
+            (DEC-356) — an unassigned fan is the Controls page's business.
         overrides: ``DaemonStatus.overrides`` — active manual overrides keyed by
             ``control_id`` (DEC-163). Drives the read-only "Override active" chip.
-        headers: hwmon headers, used to decide writability for the Unassigned
-            bucket. Empty/None → hwmon fans are treated as not controllable
-            (we cannot evidence a write path without the header).
+        headers: hwmon headers, used to decide which unclaimed fans have no write
+            path and therefore get a read-only card. Empty/None → hwmon fans are
+            treated as not controllable (we cannot evidence a write path without
+            the header).
         caps: daemon capabilities, used for the GPU write-path decision.
         sensor_values: ``sensor_id -> value_c`` snapshot (page-resolved), used to
             fill each card's ``temp_c`` from its curve's sensor. Keeps this
@@ -248,7 +251,7 @@ def build_fan_card_vms(
             Falls back to the raw id.
 
     Returns:
-        Controls in profile order, then Unassigned last (omitted when empty).
+        Live controls in profile order, then one card per read-only fan.
         Pure and deterministic — no Qt, no I/O, no clock.
     """
     by_id = {f.id: f for f in fans}
@@ -261,17 +264,28 @@ def build_fan_card_vms(
     keys: set[str] = set()
 
     for control in active_profile.controls if active_profile else []:
+        member_ids = [m.member_id for m in control.members]
+        # Claimed before the liveness gate below, so a read-only fan sitting in a
+        # control never also gets its own card — whether or not that control is
+        # rendered.
+        claimed.update(member_ids)
+
+        # DEC-356: the band is for controls that are actually driving fans. A role
+        # with nothing assigned yet has no card, and neither does one whose members
+        # are all absent from the poll. The accepted cost is stated in the ADR and
+        # in this module's docstring: a control that goes fully dark disappears
+        # instead of reporting OFFLINE. A *partly* live one still reports it.
+        if not any(mid in by_id for mid in member_ids):
+            continue
+
         overridden = control.id in override_control_ids
         curve = active_profile.get_curve(control.curve_id) if active_profile else None
         rpms: list[int] = []
         pwms: list[int] = []
         duties: list[int] = []
         states: list[FanState] = []
-        member_ids: list[str] = []
 
         for member in control.members:
-            member_ids.append(member.member_id)
-            claimed.add(member.member_id)
             fan = by_id.get(member.member_id)
             if fan is None:
                 # A profile member with no live reading is OFFLINE, never hidden.
@@ -301,7 +315,6 @@ def build_fan_card_vms(
                 control_id=control.id,
                 card_key=_unique_key(control.id, keys),
                 label=control.name or control.id,
-                is_unassigned=False,
                 is_read_only=False,
                 fan_count=len(control.members),
                 member_fan_ids=tuple(member_ids),
@@ -315,39 +328,13 @@ def build_fan_card_vms(
             )
         )
 
-    # Unassigned: controllable fans no control claims. With no profile active
-    # that is every controllable fan — the Dashboard still shows the hardware.
+    # A controllable fan no control claims gets no card (DEC-356). Read-only fans
+    # get one card each. They cannot be assigned to a control at all (the member
+    # picker refuses them, DEC-102), so unlike an unassigned fan there is no page
+    # that will ever account for them — and a per-fan card is the only way their
+    # reading stays attributable, since pooling a GPU's measured duty would
+    # destroy the very number the card exists to show (DEC-204).
     unclaimed = [f for f in fans if f.id not in claimed]
-    loose = [f for f in unclaimed if is_fan_controllable(f, hdrs, caps)]
-    if loose:
-        rpms = [f.rpm for f in loose if f.rpm is not None]
-        pwms = [f.last_commanded_pwm for f in loose if f.last_commanded_pwm is not None]
-        duties = [f.duty_pct for f in loose if f.duty_pct is not None]
-        states = [_derive_state(f, overridden=False, floor=0.0) for f in loose]
-        cards.append(
-            FanCardVM(
-                control_id=UNASSIGNED_ID,
-                card_key=_unique_key(UNASSIGNED_ID, keys),
-                label=UNASSIGNED_LABEL,
-                is_unassigned=True,
-                is_read_only=False,
-                fan_count=len(loose),
-                member_fan_ids=tuple(sorted(f.id for f in loose)),
-                rpm=_avg(rpms),
-                pwm_pct=_avg(pwms),
-                duty_pct=_avg(duties),
-                temp_c=None,  # no control, so no curve, so no driving sensor
-                state=_worst(states),
-                overridden=False,
-                curve=None,
-            )
-        )
-
-    # Read-only fans get one card each rather than a shared bucket. They cannot
-    # be assigned to a control (the member picker refuses them, DEC-102), so a
-    # per-fan card is the only way their reading stays attributable — pooling a
-    # GPU's measured duty into a shared card would destroy the very number the
-    # card exists to show (DEC-204).
     for fan in sorted(
         (f for f in unclaimed if not is_fan_controllable(f, hdrs, caps)),
         key=lambda f: f.id,
@@ -357,7 +344,6 @@ def build_fan_card_vms(
                 control_id=f"{READ_ONLY_PREFIX}{fan.id}",
                 card_key=_unique_key(f"{READ_ONLY_PREFIX}{fan.id}", keys),
                 label=display_name(fan.id) if display_name else fan.id,
-                is_unassigned=False,
                 is_read_only=True,
                 fan_count=1,
                 member_fan_ids=(fan.id,),

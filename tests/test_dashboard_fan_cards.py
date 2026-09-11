@@ -36,31 +36,63 @@ def _page(qtbot, state, **kw):
     return page
 
 
+def _one_control(profile_service, member="openfan:ch00", cid="c1"):
+    """Give the active profile a single control owning ``member``.
+
+    Since DEC-356 a card exists only for a control with a live member, so a
+    card-level test needs a control — there is no longer an Unassigned pseudo-card
+    to stand in for one. Returns the service so it can be passed inline.
+    """
+    profile_service.active_profile.controls = [
+        LogicalControl(
+            id=cid, name="Chassis", members=[ControlMember(source="openfan", member_id=member)]
+        )
+    ]
+    return profile_service
+
+
 class TestCardsFromState:
-    def test_no_profile_renders_one_unassigned_card(self, qtbot, app_state):
+    def test_no_profile_renders_no_cards(self, qtbot, app_state):
+        """DEC-356: controllable fans nothing is driving get no card. This was one
+        pooled "Unassigned" card; the Controls page owns assigning them and counts
+        them on its "Unassigned Fans (N)" button (DEC-233)."""
         app_state.set_connection(ConnectionState.CONNECTED)
         page = _page(qtbot, app_state)
         app_state.set_fans([_fan("openfan:ch00"), _fan("openfan:ch01")])
-        assert len(page._fan_cards) == 1
-        card = next(iter(page._fan_cards.values()))
+        assert page._fan_cards == {}
+        assert page._fan_cards_layout.count() == 0
+
+    def test_a_live_control_does_render(self, qtbot, app_state, profile_service):
+        """The opposite branch of the test above — without it a page that rendered
+        nothing at all would pass."""
+        app_state.set_connection(ConnectionState.CONNECTED)
+        page = _page(qtbot, app_state, profile_service=_one_control(profile_service))
+        app_state.set_fans([_fan("openfan:ch00")])
+        card = page._fan_cards["c1"]
         assert isinstance(card, FanControlCard)
-        assert card._count.text() == "2 fans"
+        assert card._count.text() == "1 fan"
 
-    def test_header_counts_real_controls_only(self, qtbot, app_state):
-        """With no profile the two fans sit in the Unassigned card, which is NOT a
-        control — reporting "1 control" would overstate how much of the system is
-        actually under curve control."""
+    def test_header_counts_real_controls_only(self, qtbot, app_state, profile_service):
+        """A read-only fan card is NOT a control — reporting it as one would
+        overstate how much of the system is actually under curve control."""
         app_state.set_connection(ConnectionState.CONNECTED)
-        page = _page(qtbot, app_state)
-        app_state.set_fans([_fan("openfan:ch00"), _fan("openfan:ch01")])
-        assert page._fan_count_label.text() == "0 controls · 2 fans"
+        page = _page(qtbot, app_state, profile_service=_one_control(profile_service))
+        app_state.set_fans(
+            [_fan("openfan:ch00"), _fan("nvidia_gpu:a", pwm=None, source="nvidia_gpu")]
+        )
+        assert len(page._fan_cards) == 2  # the control + the read-only fan
+        assert page._fan_count_label.text() == "1 control · 2 fans"
 
-    def test_empty_state_message_when_nothing_is_controllable(self, qtbot, app_state):
+    def test_no_cards_and_no_empty_state_when_nothing_is_driven(self, qtbot, app_state):
+        """DEC-356 removed the empty-state label with the Unassigned card. The
+        band is left genuinely empty: "No controllable fans detected." was false
+        in the case it fired most often — fans present, none assigned."""
         app_state.set_connection(ConnectionState.CONNECTED)
         page = _page(qtbot, app_state)
         app_state.set_fans([])
         assert page._fan_cards == {}
-        assert page._fan_cards_empty.isVisibleTo(page._fan_cards_empty.parentWidget())
+        assert page._fan_cards_layout.count() == 0
+        assert not hasattr(page, "_fan_cards_empty")
 
     def test_cards_follow_the_active_profile(self, qtbot, app_state, profile_service):
         curve = CurveConfig(id="cv", name="C", sensor_id="s0", points=[CurvePoint(30, 20)])
@@ -109,10 +141,10 @@ class TestCardsFromState:
 
 
 class TestReconciliation:
-    def test_repeated_polls_update_in_place(self, qtbot, app_state):
+    def test_repeated_polls_update_in_place(self, qtbot, app_state, profile_service):
         """The 1 Hz refresh must not destroy and recreate widgets."""
         app_state.set_connection(ConnectionState.CONNECTED)
-        page = _page(qtbot, app_state)
+        page = _page(qtbot, app_state, profile_service=_one_control(profile_service))
         app_state.set_fans([_fan("openfan:ch00", rpm=1200)])
         card = next(iter(page._fan_cards.values()))
 
@@ -138,7 +170,7 @@ class TestReconciliation:
         page._refresh_fan_cards()
         assert "c1" not in page._fan_cards
 
-    def test_removed_cards_detach_from_the_flow_layout(self, qtbot, app_state):
+    def test_removed_cards_detach_from_the_flow_layout(self, qtbot, app_state, profile_service):
         """A dropped card must leave FlowLayout's item list, not just the dict.
 
         The cards are reconciled at 1 Hz; if removal only forgot the dict entry,
@@ -147,7 +179,7 @@ class TestReconciliation:
         is what QLayout.removeWidget() drives, so this pins that contract.
         """
         app_state.set_connection(ConnectionState.CONNECTED)
-        page = _page(qtbot, app_state)
+        page = _page(qtbot, app_state, profile_service=_one_control(profile_service))
         layout = page._fan_cards_layout
 
         app_state.set_fans([_fan("openfan:ch00")])
@@ -162,10 +194,10 @@ class TestReconciliation:
             app_state.set_fans([_fan("openfan:ch00")])
         assert layout.count() == len(page._fan_cards) == 1
 
-    def test_disconnect_clears_every_card(self, qtbot, app_state):
+    def test_disconnect_clears_every_card(self, qtbot, app_state, profile_service):
         """A stale card must never survive a disconnect and read as current."""
         app_state.set_connection(ConnectionState.CONNECTED)
-        page = _page(qtbot, app_state)
+        page = _page(qtbot, app_state, profile_service=_one_control(profile_service))
         app_state.set_fans([_fan("openfan:ch00")])
         assert page._fan_cards
 
@@ -186,22 +218,27 @@ class TestReconciliation:
 
 class TestCardOrdering:
     """Layout order must track VM order (controls in profile order, then
-    Unassigned, then read-only), not the order cards happened to be created in."""
+    read-only), not the order cards happened to be created in."""
 
-    def test_unassigned_card_moves_below_controls_when_a_profile_activates(
+    def test_read_only_card_moves_below_controls_when_a_profile_activates(
         self, qtbot, app_state, profile_service
     ):
-        """The common path: the GUI starts with no profile, so the Unassigned card
-        is built first at index 0. Activating a profile appends control cards — so
-        without a positional reconcile the pseudo-card that belongs last is pinned
-        first, permanently."""
+        """The common path: the GUI starts with no profile, so a read-only GPU's
+        card is built first at index 0. Activating a profile appends control
+        cards — so without a positional reconcile the card that belongs last is
+        pinned first, permanently.
+
+        Was the Unassigned card's test until DEC-356 removed that card. The
+        ordering rule is unchanged and still has a first-built card that belongs
+        last, so the case survives with a read-only fan in that role.
+        """
         app_state.set_connection(ConnectionState.CONNECTED)
         page = _page(qtbot, app_state, profile_service=profile_service)
-        fans = [_fan("openfan:ch00"), _fan("openfan:ch01")]
+        fans = [_fan("openfan:ch00"), _fan("nvidia_gpu:z", pwm=None, source="nvidia_gpu")]
 
         profile_service.active_profile.controls = []
         app_state.set_fans(fans)
-        assert _layout_order(page) == [""]  # Unassigned only
+        assert _layout_order(page) == ["readonly:nvidia_gpu:z"]
 
         profile_service.active_profile.controls = [
             LogicalControl(
@@ -211,7 +248,8 @@ class TestCardOrdering:
             )
         ]
         app_state.set_fans(fans)
-        assert _layout_order(page) == ["aaa", ""]  # Unassigned last, not first
+        # Read-only last, not first — the positional reconcile ran.
+        assert _layout_order(page) == ["aaa", "readonly:nvidia_gpu:z"]
 
     def test_a_control_inserted_first_renders_first(self, qtbot, app_state, profile_service):
         app_state.set_connection(ConnectionState.CONNECTED)

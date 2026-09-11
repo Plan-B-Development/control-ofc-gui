@@ -18,7 +18,6 @@ from control_ofc.api.models import (
 )
 from control_ofc.services.fan_cards_view import (
     READ_ONLY_PREFIX,
-    UNASSIGNED_ID,
     FanState,
     build_fan_card_vms,
     is_fan_controllable,
@@ -262,19 +261,21 @@ class TestStatePrecedence:
 
 class TestMemberlessControl:
     """A control with no members yet — what "New Fan Role" produces before the
-    user assigns a fan. It is unconfigured, not faulted."""
+    user assigns a fan. Until DEC-356 it rendered a card carrying a "No fans"
+    chip; the band now shows only controls that are driving fans, so it has none.
+    It is still not *faulted* — it simply has nothing to report here, and the
+    Controls page is where an unconfigured role is visible and finished."""
 
-    def test_empty_control_is_not_reported_as_offline(self):
-        card = build_fan_card_vms(
-            [], active_profile=_profile(_control(member_ids=())), overrides=[]
-        )[0]
-        assert card.state is FanState.NORMAL
-        assert card.fan_count == 0
-
-    def test_empty_control_still_renders_a_card(self):
+    def test_empty_control_gets_no_card(self):
         cards = build_fan_card_vms(
             [], active_profile=_profile(_control(member_ids=())), overrides=[]
         )
+        assert cards == []
+
+    def test_an_empty_control_does_not_suppress_its_siblings(self):
+        empty = _control(control_id="new", name="New Role", member_ids=())
+        live = _control(control_id="c1", name="Chassis", member_ids=("f1",))
+        cards = build_fan_card_vms([_fan("f1")], active_profile=_profile(empty, live), overrides=[])
         assert [c.control_id for c in cards] == ["c1"]
 
 
@@ -294,15 +295,15 @@ class TestCardKeyUniqueness:
         # control_id stays truthful so the Edit deep-link still names the control.
         assert [c.control_id for c in cards] == ["dup", "dup"]
 
-    def test_control_id_colliding_with_the_unassigned_key_is_separated(self):
+    def test_an_empty_control_id_is_carried_through_untouched(self):
+        """A hand-edited profile can name a control "". Nothing upstream rejects
+        it, and since DEC-356 removed the pseudo-card that also keyed on "" there
+        is nothing left for it to collide with — but it must still render, and
+        ``control_id`` must stay the truthful value the Edit deep-link needs."""
         empty_id = _control(control_id="", name="Oddly Named", member_ids=("f1",))
-        cards = build_fan_card_vms(
-            [_fan("f1"), _fan("openfan:ch09")],
-            active_profile=_profile(empty_id),
-            overrides=[],
-        )
-        assert len(cards) == 2
-        assert len({c.card_key for c in cards}) == 2
+        cards = build_fan_card_vms([_fan("f1")], active_profile=_profile(empty_id), overrides=[])
+        assert [c.control_id for c in cards] == [""]
+        assert cards[0].card_key == ""
 
     def test_card_key_equals_control_id_in_the_normal_case(self):
         control = _control(member_ids=("f1",))
@@ -310,36 +311,60 @@ class TestCardKeyUniqueness:
         assert card.card_key == card.control_id == "c1"
 
 
-class TestUnassignedBucket:
-    def test_no_profile_puts_every_controllable_fan_in_one_card(self):
-        """The state a fresh install is in. Without this the Dashboard would show
-        nothing at all — there are no controls to build cards from."""
+class TestUnassignedFansGetNoCard:
+    """DEC-356 (superseding the DEC-222 clause): the band carries controls that
+    are actually driving fans. An unassigned fan is the Controls page's business —
+    it counts them on the "Unassigned Fans (N)" button (DEC-233) and is the only
+    page that can act on one."""
+
+    def test_no_profile_yields_no_cards_at_all(self):
+        """The state a fresh install is in. Was one pooled "Unassigned" card."""
         cards = build_fan_card_vms(
             [_fan("openfan:ch00"), _fan("openfan:ch01")], active_profile=None, overrides=[]
         )
-        assert len(cards) == 1
-        assert cards[0].control_id == UNASSIGNED_ID
-        assert cards[0].is_unassigned is True
-        assert cards[0].fan_count == 2
+        assert cards == []
 
-    def test_fans_claimed_by_a_control_are_not_also_unassigned(self):
+    def test_a_controllable_fan_no_control_claims_gets_no_card(self):
         control = _control(member_ids=("f1",))
         cards = build_fan_card_vms(
             [_fan("f1"), _fan("openfan:ch09")], active_profile=_profile(control), overrides=[]
         )
-        assert [c.control_id for c in cards] == ["c1", UNASSIGNED_ID]
-        assert cards[1].member_fan_ids == ("openfan:ch09",)
+        assert [c.control_id for c in cards] == ["c1"]
+        # The unclaimed fan is absent from every card, not merely uncounted.
+        assert all("openfan:ch09" not in c.member_fan_ids for c in cards)
 
-    def test_no_unassigned_card_when_every_fan_is_claimed(self):
+    def test_a_claimed_fan_still_gets_its_control_card(self):
         control = _control(member_ids=("f1",))
         cards = build_fan_card_vms([_fan("f1")], active_profile=_profile(control), overrides=[])
         assert [c.control_id for c in cards] == ["c1"]
 
-    def test_unassigned_card_has_no_curve_or_temp(self):
-        card = build_fan_card_vms([_fan()], active_profile=None, overrides=[])[0]
-        assert card.curve is None
-        assert card.temp_c is None
-        assert card.overridden is False
+
+class TestOnlyLiveControlsGetCards:
+    """DEC-356: a card requires at least one member in the poll. The user chose
+    this over reporting OFFLINE for a fully dark control, having been shown that
+    cost; a *partly* live control still reports its missing members."""
+
+    def test_a_control_with_no_members_assigned_gets_no_card(self):
+        cards = build_fan_card_vms(
+            [_fan("f1")], active_profile=_profile(_control(member_ids=())), overrides=[]
+        )
+        assert cards == []
+
+    def test_a_control_whose_members_are_all_absent_gets_no_card(self):
+        control = _control(member_ids=("f1", "f2"))
+        cards = build_fan_card_vms(
+            [_fan("openfan:ch09")], active_profile=_profile(control), overrides=[]
+        )
+        assert cards == []
+
+    def test_a_partly_live_control_keeps_its_card_and_reports_offline(self):
+        """The opposite branch — without it a predicate stuck at "never render"
+        would pass the two tests above."""
+        control = _control(member_ids=("f1", "f2"))
+        cards = build_fan_card_vms([_fan("f1")], active_profile=_profile(control), overrides=[])
+        assert [c.control_id for c in cards] == ["c1"]
+        assert cards[0].state is FanState.OFFLINE
+        assert cards[0].fan_count == 2  # still names its full blast radius
 
 
 class TestControllability:
@@ -384,12 +409,14 @@ class TestReadOnlyCards:
         assert all(c.is_read_only for c in cards)
         assert all(c.fan_count == 1 for c in cards)
 
-    def test_read_only_fans_stay_out_of_the_unassigned_bucket(self):
+    def test_read_only_is_the_one_unclaimed_fan_that_still_gets_a_card(self):
+        """DEC-356 dropped the card for an unassigned *controllable* fan. A
+        read-only fan is kept, because no page can ever assign it (DEC-102) and
+        its firmware duty would otherwise have nowhere to show."""
         fans = [_fan("openfan:ch00"), _fan("nvidia_gpu:a", source="nvidia_gpu", pwm=None)]
         cards = build_fan_card_vms(fans, active_profile=None, overrides=[])
-        unassigned = next(c for c in cards if c.is_unassigned)
-        assert unassigned.member_fan_ids == ("openfan:ch00",)
-        assert unassigned.fan_count == 1
+        assert [c.control_id for c in cards] == [f"{READ_ONLY_PREFIX}nvidia_gpu:a"]
+        assert cards[0].member_fan_ids == ("nvidia_gpu:a",)
 
     def test_read_only_fan_inside_a_control_renders_there_instead(self):
         """A hand-edited profile can place one in a control; the control genuinely
@@ -422,19 +449,15 @@ class TestReadOnlyCards:
 
 
 class TestPurity:
-    def test_ordering_is_deterministic_controls_then_unassigned_then_readonly(self):
+    def test_ordering_is_deterministic_controls_then_readonly(self):
         control = _control(member_ids=("f1",))
         fans = [
             _fan("nvidia_gpu:z", source="nvidia_gpu", pwm=None),
-            _fan("openfan:ch09"),
+            _fan("openfan:ch09"),  # unassigned and controllable → no card (DEC-356)
             _fan("f1"),
         ]
         cards = build_fan_card_vms(fans, active_profile=_profile(control), overrides=[])
-        assert [c.control_id for c in cards] == [
-            "c1",
-            UNASSIGNED_ID,
-            f"{READ_ONLY_PREFIX}nvidia_gpu:z",
-        ]
+        assert [c.control_id for c in cards] == ["c1", f"{READ_ONLY_PREFIX}nvidia_gpu:z"]
 
     def test_repeated_calls_are_stable(self):
         control = _control(member_ids=("f1",))

@@ -900,9 +900,9 @@ class MainWindow(QWidget):
         """A Dashboard fan card's Edit was clicked (DEC-222).
 
         The cards are read-only by design — every write lives on the Controls
-        page — so Edit navigates there and focuses the control. An Unassigned card
-        sends "" and simply lands the user on Controls, where the fans can be
-        assigned.
+        page — so Edit navigates there and focuses the control. A hand-edited
+        profile can carry an empty control id, which simply lands the user on
+        Controls without focusing anything.
         """
         self.page_stack.setCurrentIndex(PAGE_CONTROLS)
         self.sidebar.select_page(PAGE_CONTROLS)

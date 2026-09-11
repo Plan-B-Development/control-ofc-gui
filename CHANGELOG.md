@@ -1,5 +1,38 @@
 # Changelog
 
+## [2.70.0] — 2026-09-11
+
+**The chart remembers which series you chose.** Sensors and fans you unticked in
+the Sensors rail stayed hidden for sensors but came back for **fans** on every
+launch, so the graph reverted to showing everything and the rail's fan rows came
+back ticked. All of it now survives a restart — measured on a real config, 30
+hidden series restored as 30 (`DASH-a`).
+
+**A fan that stops no longer forgets that you hid it.** With "hide unused fan
+headers" on (the default) a stopped fan leaves the list, and that was enough to
+lose your choice — it reappeared on the chart when it next spun up. Hiding is
+remembered while hardware is merely off or asleep, because a single poll cannot
+tell "off right now" from "gone for good" (`DASH-b`). Clearing leftovers for
+hardware that really has gone is still **Settings → "Settings for missing
+hardware"**, as before.
+
+**Thermals/Fans no longer re-hides a series you deliberately re-showed.** If you
+picked the Thermals or Fans chart preset, then ticked one out-of-preset series
+back on, the next launch hid it again (`DASH-c`).
+
+**The Dashboard's fan cards now show only the fans your profile is driving.** The
+pooled **Unassigned** card under the graph is gone — that area is for in-use fan
+curves and groups. The **Controls** page is where unassigned fans are counted and
+assigned, on its "Unassigned Fans (N)" button. Read-only fans (an NVIDIA or
+read-only GPU fan) keep a card each, because their firmware-reported speed is the
+only reading they have and no page can assign them.
+
+A control with no fans assigned yet, or whose fans have all stopped reporting, no
+longer gets a card either; if that leaves the area empty, it is left empty. Note
+the trade-off: a control whose fans have *all* gone silent now disappears from the
+Dashboard instead of showing **Offline**. A control with only *some* members
+missing still reports Offline as before.
+
 ## [2.69.0] — 2026-09-11
 
 **Pairs with `control-ofc-daemon` >= v2.11.0; the new `has_active_profile` field

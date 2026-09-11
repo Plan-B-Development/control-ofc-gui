@@ -1615,9 +1615,10 @@ class ControlsPage(QWidget):
         """Select and reveal ``control_id``'s card (DEC-222 Dashboard deep-link).
 
         Returns True when the control exists on this page. A blank or unknown id
-        (the Unassigned card, or a control deleted since the poll) is a no-op that
-        returns False — the caller has still navigated here, which is the useful
-        half of the action.
+        (a control deleted since the poll, or a hand-edited profile whose control
+        id is empty — DEC-356 removed the Unassigned card that used to be the
+        common source of a blank one) is a no-op that returns False: the caller has
+        still navigated here, which is the useful half of the action.
         """
         card = self._control_cards.get(control_id) if control_id else None
         if card is None:

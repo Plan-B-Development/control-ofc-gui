@@ -262,9 +262,13 @@ class TestFirstRunSeeding:
     ):
         _, sel = _page(qtbot, app_state, settings_service, profile_service)
         app_state.set_sensors([_sensor("cpu"), _sensor("disk", "disk_temp")])
-        # Only sensors so far — must NOT seed (disk still visible, flag unset).
+        # Only sensors so far — must NOT seed (disk not decluttered, flag unset).
+        # `is_hidden`, not `is_visible`: since DEC-356 the page holds the first key
+        # registration until the fan half of the poll lands, so `sensor:disk` is
+        # deliberately not yet *known* here and `is_visible` would be False for
+        # that reason rather than because the seeding fired.
         assert settings_service.settings.chart_series_seeded is False
-        assert sel.is_visible("sensor:disk")
+        assert not sel.is_hidden("sensor:disk")
         app_state.set_fans([_fan("f1")])
         assert settings_service.settings.chart_series_seeded is True
         assert not sel.is_visible("sensor:disk")

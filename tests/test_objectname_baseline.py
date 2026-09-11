@@ -111,7 +111,9 @@ DASHBOARD_OBJECTNAMES = frozenset(
         "Dashboard_Frame_serviceHint",
         "Dashboard_Host_fanCards",
         "Dashboard_Label_enableCommand",
-        "Dashboard_Label_fanCardsEmpty",
+        # DEC-356 removed Dashboard_Label_fanCardsEmpty: the fan band holds live
+        # controls only, so "No controllable fans detected." was false in the case
+        # it fired most (fans present, none assigned). An empty band is honest.
         "Dashboard_Label_fanCount",
         "Dashboard_Label_subHwmon",
         # 279-a: the daemon 2.22.0 `controls` subsystem chip (DEC-279). Hidden

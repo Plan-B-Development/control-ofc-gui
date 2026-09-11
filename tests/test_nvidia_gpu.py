@@ -327,7 +327,6 @@ class TestDutyPct:
             control_id="c1",
             card_key="c1",
             label="Fan",
-            is_unassigned=False,
             is_read_only=False,
             fan_count=1,
             member_fan_ids=("hwmon:x:pwm1",),

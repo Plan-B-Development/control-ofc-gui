@@ -118,7 +118,11 @@ control_ofc/
                                #   /diagnostics/hardware once at startup (DEC-229)
     profile_import_service.py  # one-time local->daemon profile import — DEC-161
     profile_service.py         # daemon-backed profile CRUD + local draft cache — DEC-160/161
-    series_selection.py
+    series_selection.py        # which chart series are visible. Stores the *hidden* set, so
+                               #   new hardware auto-appears — and never prunes it when a
+                               #   key leaves the known set: removal is the user-triggered
+                               #   Settings action below, for orphan_prune's reason.
+                               #   DEC-181/245/356
     session_stats.py           # per-sensor session min/max tracker
     single_instance.py         # one GUI per user, per mode; a second launch raises the
                                #   first window instead of starting a second app. Exists
@@ -130,9 +134,17 @@ control_ofc/
     fan_alias_seed.py          # first-run seeding of user fan aliases
     id_migration.py            # stable-id migration across schema/daemon upgrades
     layout_state.py            # persisted per-page layout state
-    orphan_prune.py            # prunes profile members whose hardware no longer exists
+    orphan_prune.py            # finds hidden_chart_series / series_colors entries whose
+                               #   hardware the daemon no longer reports. User-triggered
+                               #   from Settings, never automatic (asleep and unplugged
+                               #   look identical in one poll) — and NOT profile members:
+                               #   member_label feeds the DEC-095/162 floor, so pruning it
+                               #   would move a safety input. DEC-246
     fan_cards_view.py          # Dashboard per-control fan-card VM (DEC-222; replaced
-                               #   the fan-zone grouping VM retired with the zone grid)
+                               #   the fan-zone grouping VM retired with the zone grid).
+                               #   One card per control that has a member in the poll;
+                               #   an unassigned fan gets none (Controls owns assigning,
+                               #   DEC-233), a read-only fan gets one each — DEC-356
     # Qt-free view-models: headless-testable presentation logic the redesign
     # extracted out of ui/pages so the pages stay thin (DEC-208..216, DEC-219).
     # Some import profile_service (loads QtCore, builds no widgets).

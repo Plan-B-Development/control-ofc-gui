@@ -86,8 +86,8 @@ class DashboardPage(QWidget):
     open_readiness = Signal()
 
     # DEC-222: a fan card's Edit was clicked — main_window opens the Controls page
-    # and focuses that control. Carries "" for the Unassigned card, which has no
-    # control to focus.
+    # and focuses that control. Can still carry "" for a hand-edited profile whose
+    # control id is empty, which lands the user on Controls unfocused.
     open_control = Signal(str)
 
     # Stack indices
@@ -113,6 +113,12 @@ class DashboardPage(QWidget):
         self._settings_service = settings_service
         self._client = client
         self._displayable_fan_keys: list[str] = []  # Fan series keys for selection
+        # Whether the fan half of a poll has landed yet (DEC-356). The poll worker
+        # emits `sensors_ready` before `fans_ready` (`polling.py`), so the first
+        # `_on_sensors_updated` runs while `_displayable_fan_keys` is still empty;
+        # registering then hands the selection model a key universe that
+        # structurally cannot contain fans. See `_register_known_keys`.
+        self._fans_polled = False
         self._has_data = False
         # Chart first-run seeding + poll-diff annotation state (DEC-181).
         self._seen_sensors = False
@@ -559,17 +565,17 @@ class DashboardPage(QWidget):
         self._fan_cards_layout = FlowLayout(
             self._fan_cards_host, margin=0, h_spacing=8, v_spacing=8
         )
-        self._fan_cards_empty = QLabel("No controllable fans detected.")
-        self._fan_cards_empty.setObjectName("Dashboard_Label_fanCardsEmpty")
-        self._fan_cards_empty.setProperty("class", "CardMeta")
-
+        # No empty-state label (DEC-356). The band holds live controls only, so
+        # "No controllable fans detected." was false in the case it fired most —
+        # fans present, none assigned — and the Controls page is where an
+        # unassigned fan is counted and acted on. An empty band is the honest
+        # render; disconnection is already announced by the connection banner.
         fan_scroll = QScrollArea()
         fan_scroll.setObjectName("Dashboard_ScrollArea_fanCards")
         fan_scroll.setWidgetResizable(True)
         fan_scroll.setFrameShape(QFrame.Shape.NoFrame)
         fan_scroll.setWidget(self._fan_cards_host)
         fan_scroll.setMinimumHeight(80)
-        fan_layout.addWidget(self._fan_cards_empty)
         fan_layout.addWidget(fan_scroll, 1)
         self._h_splitter.addWidget(fan_pane)
 
@@ -648,7 +654,20 @@ class DashboardPage(QWidget):
 
     def _register_known_keys(self) -> None:
         """Push the displayable sensor + fan keys into the selection model — the
-        single source for both poll handlers."""
+        single source for both poll handlers.
+
+        Held back until the fan half of a poll has arrived (DEC-356). Both drivers
+        — the poll worker and the demo tick — call ``set_fans`` immediately after
+        ``set_sensors``, unconditionally, so this delays the first registration by
+        no poll at all; what it prevents is a *partial* first registration. That
+        mattered twice. The model used to prune the restored hidden set against
+        whatever was known, so a sensors-only first registration silently un-hid
+        every persisted fan series; and DEC-245's one-shot new-key disarm was spent
+        on it, so with a group mode restored the rule still fired on the same poll
+        and re-hid a series the user had deliberately re-shown.
+        """
+        if not self._fans_polled:
+            return
         keys = [f"sensor:{sid}" for sid in self._sensor_panel.displayed_sensor_ids()]
         keys += self._displayable_fan_keys
         self._selection.update_known_keys(keys)
@@ -967,6 +986,11 @@ class DashboardPage(QWidget):
     # ─── Fan updates ─────────────────────────────────────────────────
 
     def _on_fans_updated(self, fans: list[FanReading]) -> None:
+        # Unconditional, and first: an empty list is still a fan poll, and on a
+        # machine with no fans at all it is the only one that will ever arrive —
+        # gating this on `fans` would leave the sensor keys unregistered forever
+        # (DEC-356).
+        self._fans_polled = True
         if fans:
             self._show_content()
             self._seen_fans = True
@@ -1047,10 +1071,10 @@ class DashboardPage(QWidget):
             self._drop_fan_card(key)
 
         # Keep the layout order in step with the VM order (controls in profile
-        # order, then Unassigned, then read-only fans). New cards are appended, so
-        # without this a card created first stays first forever — starting with no
-        # profile and then activating one would pin the Unassigned card above every
-        # control, permanently inverting the documented order.
+        # order, then read-only fans). New cards are appended, so without this a
+        # card created first stays first forever — a read-only GPU seen before a
+        # profile activated would sit above every control, permanently inverting
+        # the documented order.
         for index, vm in enumerate(vms):
             card = self._fan_cards[vm.card_key]
             item = self._fan_cards_layout.itemAt(index)
@@ -1058,16 +1082,15 @@ class DashboardPage(QWidget):
                 self._fan_cards_layout.removeWidget(card)
                 self._fan_cards_layout.insertWidget(index, card)
 
-        # Count only genuine controls: the Unassigned pseudo-card and the per-fan
-        # read-only cards are not controls, and calling them that would overstate
-        # how much of the system is actually under curve control.
+        # Count only genuine controls: a per-fan read-only card is not a control,
+        # and calling it one would overstate how much of the system is actually
+        # under curve control.
         total_fans = sum(vm.fan_count for vm in vms)
-        controls = sum(1 for vm in vms if not vm.is_unassigned and not vm.is_read_only)
+        controls = sum(1 for vm in vms if not vm.is_read_only)
         self._fan_count_label.setText(
             f"{controls} control{'' if controls == 1 else 's'} · "
             f"{total_fans} fan{'' if total_fans == 1 else 's'}"
         )
-        self._fan_cards_empty.setVisible(not vms)
 
     def _drop_fan_card(self, card_key: str) -> None:
         """Remove one card, detaching it from the flow layout before deletion."""
@@ -1083,7 +1106,6 @@ class DashboardPage(QWidget):
         for key in list(self._fan_cards):
             self._drop_fan_card(key)
         self._fan_count_label.setText("")
-        self._fan_cards_empty.setVisible(True)
 
     def _on_fan_alias_changed(self, fan_id: str, display_name: str) -> None:
         del fan_id, display_name  # cards re-resolve their labels on rebuild

@@ -140,9 +140,16 @@ class SeriesSelectionModel(QObject):
 
     def set_only_visible(self, keys: set[str]) -> None:
         """Show exactly ``keys`` (those that are known); hide every other known
-        key. One ``selection_changed`` emit. The primitive behind COMBINED/seed."""
+        key. One ``selection_changed`` emit. The primitive behind COMBINED/seed.
+
+        A hidden key for hardware that is not *currently* known is carried through
+        untouched (DEC-356). Recomputing the hidden set from the known set alone
+        would re-open, at every mode application, exactly the hole
+        :meth:`update_known_keys` used to have: a fan hidden while it was spinning
+        must stay hidden across the polls where it reports nothing.
+        """
         target_visible = self._known_keys & set(keys)
-        new_hidden = self._known_keys - target_visible
+        new_hidden = (self._known_keys - target_visible) | (self._hidden_keys - self._known_keys)
         if new_hidden != self._hidden_keys:
             self._hidden_keys = new_hidden
             self.selection_changed.emit()
@@ -227,14 +234,22 @@ class SeriesSelectionModel(QObject):
         mode (e.g. a new fan stays hidden under Thermals) so the mode doesn't
         silently leak (DEC-181). Emits ``selection_changed`` only if the mode rule
         actually hid a freshly-seen key, so panels/legends re-sync.
+
+        **A key leaving the known set does NOT clear its hidden state** (DEC-356).
+        Removing stale keys is owned by the user-triggered Settings action DEC-246
+        added ("Removed N setting(s) for missing hardware"), for the reason
+        ``services/orphan_prune.py`` already states and enforces: from a single
+        poll "unplugged for good" and "asleep right now" are indistinguishable, so
+        a device that is merely off would silently lose its hide state. The view
+        this method is handed is filtered by construction — ``hide_unused_fan_headers``
+        drops a stopped fan and DEC-193 evicts a quarantined sensor — so pruning
+        against it un-hid series the user had deliberately hidden.
         """
         filtered = {k for k in all_keys if not k.endswith(":pwm")}
         if filtered == self._known_keys:
             return
         added = filtered - self._known_keys
         self._known_keys = filtered
-        # Prune hidden keys that no longer exist
-        self._hidden_keys &= self._known_keys
         # After `restore_mode` the first registration is not "new hardware" — it
         # is the hardware the saved hidden set already describes, so the mode rule
         # must sit that one out or it overwrites the user's own adjustments.

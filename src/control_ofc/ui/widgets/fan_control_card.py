@@ -94,13 +94,15 @@ def _safe_tooltip(text: str) -> str:
 
 
 def _card_slug(control_id: str) -> str:
-    """objectName-safe token for a control id (the Unassigned card has none).
+    """objectName-safe token for a control id.
 
     Read-only fan cards are keyed by fan id, which contains ``:`` separators —
-    sanitise them so every card still gets a unique, well-formed objectName.
+    sanitise them so every card still gets a unique, well-formed objectName. The
+    fallback covers a hand-edited profile carrying an empty or all-punctuation
+    control id, which nothing upstream rejects (see ``fan_cards_view``).
     """
-    token = control_id or "unassigned"
-    return "".join(c if c.isalnum() else "_" for c in token).strip("_") or "unassigned"
+    token = control_id or "unnamed"
+    return "".join(c if c.isalnum() else "_" for c in token).strip("_") or "unnamed"
 
 
 class _CurveBand(CurvePreview):
@@ -129,8 +131,10 @@ class _CurveBand(CurvePreview):
 class FanControlCard(Card):
     """Compact read-only status card for one logical control."""
 
-    # control_id of the card whose Edit was clicked ("" for the Unassigned card,
-    # which has no control to focus — the page just opens Controls).
+    # control_id of the card whose Edit was clicked. Can still be "" — a
+    # hand-edited profile may give a control an empty id, and the page then opens
+    # Controls without focusing anything. DEC-356 removed the Unassigned card,
+    # which used to be the ordinary source of a blank id.
     edit_requested = Signal(str)
     # DEC-227: fan_id the user asked to rename. Read-only cards only — see
     # _renamable_fan_id for why a control card can never emit this.
@@ -164,8 +168,10 @@ class FanControlCard(Card):
         # row of its own — as a ghost button it reads as secondary to the
         # readings, and it stays a real focusable button rather than a hover-only
         # affordance. Only two things share this row: with the chip up here too,
-        # the worst case ("Unassigned" + "Not controlled" + "Assign…") left the
-        # name 62px and elided it to "Unas…", and the name is the identifier.
+        # the worst case left the name 62px and elided it, and the name is the
+        # identifier. (That worst case was the "Unassigned"/"Not controlled"/
+        # "Assign…" card DEC-356 removed; the layout rule it established stands,
+        # and the longest chip that still exists is what now pins it.)
         head = QHBoxLayout()
         head.setSpacing(6)
         # Control names come from the profile and fan labels from user aliases —
@@ -350,6 +356,8 @@ class FanControlCard(Card):
         self._name.setToolTip(
             _safe_tooltip(vm.label) if self._name.elided_text() != vm.label else ""
         )
+        # Defensive since DEC-356: the builder no longer emits a memberless card,
+        # but the widget renders any VM and "0 fans" reads worse than naming it.
         self._count.setText(
             "No fans assigned"
             if vm.fan_count == 0
@@ -380,15 +388,11 @@ class FanControlCard(Card):
 
         text, css = _STATE_CHIP.get(vm.state, ("Auto", "SuccessChip"))
         # "Auto" would be a lie for a fan nothing is driving — say what is
-        # actually true and keep the chip informational.
-        if vm.state == FanState.NORMAL:
-            if vm.is_read_only:
-                text, css = "Read-only", "InfoChip"
-            elif vm.is_unassigned:
-                text, css = "Not controlled", "InfoChip"
-            elif vm.fan_count == 0:
-                # A control the user just created, before assigning any fan.
-                text, css = "No fans", "InfoChip"
+        # actually true and keep the chip informational. Since DEC-356 that is
+        # only the read-only case: the unassigned and no-members-yet cards it also
+        # covered no longer exist, because a card requires a live member.
+        if vm.state == FanState.NORMAL and vm.is_read_only:
+            text, css = "Read-only", "InfoChip"
         self._state_chip.setText(text)
         set_chip_class(self._state_chip, css, skip_if_unchanged=True)
 
@@ -399,12 +403,11 @@ class FanControlCard(Card):
             self._band.setCurrentWidget(self._preview)
         else:
             self._band.setCurrentWidget(self._no_curve)
-            if vm.is_read_only:
-                placeholder = "No fan control available for this device"
-            elif vm.is_unassigned:
-                placeholder = "Not assigned to a control"
-            else:
-                placeholder = "No curve assigned"
+            placeholder = (
+                "No fan control available for this device"
+                if vm.is_read_only
+                else "No curve assigned"
+            )
             self._no_curve.setText(placeholder)
             # The longest form elides in the band at 16pt; keep it reachable.
             self._no_curve.setToolTip(placeholder)
@@ -413,12 +416,8 @@ class FanControlCard(Card):
         # picker refuses it, DEC-102), so offering Edit would be a dead button.
         self._edit_btn.setVisible(not vm.is_read_only)
         self._edit_btn.setMaximumWidth(0 if vm.is_read_only else self._edit_max_width)
-        self._edit_btn.setText("Assign…" if vm.is_unassigned else "Edit")
-        self._edit_btn.setToolTip(
-            "Open the Controls page to assign these fans to a control"
-            if vm.is_unassigned
-            else _safe_tooltip(f"Edit “{vm.label}” on the Controls page")
-        )
+        self._edit_btn.setText("Edit")
+        self._edit_btn.setToolTip(_safe_tooltip(f"Edit “{vm.label}” on the Controls page"))
 
     def set_theme(self, tokens) -> None:
         """Forward the palette to the owner-drawn preview (DEC-109).

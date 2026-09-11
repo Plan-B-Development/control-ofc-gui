@@ -73,11 +73,14 @@ Each card shows:
 
 A dash (`—`) means the value is genuinely unknown — it is never shown as a real `0`.
 
-Two special cards fill in the gaps:
+**This area shows the fans your profile is actually driving.** A control appears here
+while at least one of its fans is reporting. A fan that no control owns does not get a
+card — the **Controls** page is where you assign one, and its **Unassigned Fans (N)**
+button tells you how many are waiting. If nothing is being driven, the area is simply
+empty.
 
-- **Unassigned** — controllable fans that no control owns yet. If no profile is
-  active, every controllable fan appears here, so a fresh install still shows your
-  hardware. Its **Assign…** button opens the Controls page.
+One special card fills in the gap:
+
 - **Read-only fans** — devices with no fan-control write path (typically an NVIDIA or
   read-only GPU fan) get a card each, so you can still read their speed. They have no
   Edit button, because they cannot be assigned to a control.
@@ -126,7 +129,10 @@ into CPU, GPU, **AIO / Liquid** (liquid-cooler coolant temperatures), Motherboar
 and Fans (by source: D-GPU, hwmon, OpenFan). Liquid-cooler pump and radiator fans are
 tagged **(AIO)**. Type in the "Search sensors…" box to filter; click a row's checkbox to
 show/hide its line on the chart; toggle a whole group to declutter. Hidden series persist
-across sessions.
+across sessions — including for a fan that is currently stopped or a device that is
+switched off, which come back hidden rather than reappearing on the chart. Nothing is
+forgotten automatically; **Settings → "Settings for missing hardware"** is what clears
+the leftovers once hardware is gone for good.
 
 ### Naming your fans
 
