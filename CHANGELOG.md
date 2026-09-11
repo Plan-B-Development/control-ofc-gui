@@ -1,5 +1,42 @@
 # Changelog
 
+## [2.68.1] — 2026-09-11
+
+**Pairs with `control-ofc-daemon` >= v2.11.0 — unchanged.** Client-side only: no
+endpoint, field or capability is involved. The tray's half of the same work ships
+in **control-ofc-daemon v2.44.1**; neither release requires the other.
+
+**A second launch that cannot be handed over now opens a window instead of
+vanishing (DEC-353).** The guard reported success as soon as the kernel accepted
+its request, which a running GUI that is *wedged* — alive but not processing
+events — also satisfies. So a second `control-ofc-gui` would exit silently having
+asked a window that would never answer, and the documented "opened a new window
+instead" fallback could not actually fire. The running instance now acknowledges
+the request only once it has genuinely read it, and the second launch waits
+briefly for that acknowledgement before trusting it.
+
+**Known limitation, unchanged and now stated in the register (`T1-m`).** Two
+graphical sessions for the same user still share one GUI: launching in the second
+session raises the window in the first, and the second session shows nothing.
+That is the per-user (not per-session) scope of the guard — one GUI per user is
+almost always what is wanted — and it is a different thing from the defect above.
+
+**The guard no longer trusts a shared directory when there is no
+`$XDG_RUNTIME_DIR` (DEC-353).** In a stripped environment — ssh, a bare tty — the
+socket fell back to a predictable name in the system temporary directory, where
+another local user could have been listening first; this GUI would then have
+connected to them, considered itself a duplicate, and exited without ever opening
+a window. The fallback now creates a directory only you can enter, and checks
+that it really is one — that it is owned by you, that its permissions exclude
+everyone else, and that it has not been replaced by a symlink. It also checks the
+temporary directory *containing* it, because a shared one that is missing the
+sticky bit would let another user move the checked directory aside. Where no
+private directory can be had it uses a fresh unguessable one, so the worst case is
+a duplicate window rather than a GUI that will not start.
+
+Normal sessions are unaffected: `$XDG_RUNTIME_DIR` exists and is already private,
+and that path has not changed.
+
 ## [2.68.0] — 2026-09-10
 
 **Pairs with `control-ofc-daemon` >= v2.11.0 — unchanged.** This is a

@@ -203,11 +203,18 @@ def main() -> int:
         # Rather than leave the user with nothing, fall through and open a
         # second window.
         #
-        # Reached only when the write itself fails. `notify_existing` waits for
-        # the kernel to accept the bytes, not for the peer to read them, so a
-        # primary that is alive but not running its event loop still reports
-        # success and this branch does not fire. That is a known gap, recorded
-        # as `T1-j`; it is not a claim that this path covers it.
+        # This branch is genuinely reachable as of `T1-j`'s fix: the primary
+        # writes an ack once it has actually read the request, so
+        # `notify_existing` returns False for a primary that is alive but not
+        # running its event loop — previously it waited only for the kernel to
+        # take the bytes, which such a process also satisfies, so the branch was
+        # dead code.
+        #
+        # Residual, deliberately not addressed here: when the primary is HEALTHY
+        # but in another graphical session, it acks and raises its own window, so
+        # this does not fire and the user in the second session sees nothing.
+        # That is the per-user (not per-session) key granularity, which is a
+        # design choice rather than a defect — see `T1-j` in the register.
         log.warning("Another instance is running but did not respond; opening a new window")
 
     # Register the bundled OFL fonts (Space Grotesk / DM Sans) before any theme
