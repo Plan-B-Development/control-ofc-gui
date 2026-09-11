@@ -1,5 +1,62 @@
 # Changelog
 
+## [2.71.0] — 2026-09-11
+
+**GUI-only; the daemon floor is unchanged at `control-ofc-daemon` >= v2.11.0.**
+Nothing here touches the API — no new wire field, no capability consulted — so
+this release pairs with exactly the daemons v2.70.0 did.
+
+**System State stops treating "which motherboard you bought" as an emergency.**
+A board/chip quirk matched on hardware identity alone — nothing about your
+machine's state — and any quirk at HIGH or above painted the health card red.
+Measured on a healthy X870E AORUS MASTER with all 8 headers writable and no BIOS
+interference at all: a red `1 ISSUE REQUIRES ATTENTION` pill and **1336 px** of
+advisory prose, against an advisory whose own text says the BIOS *may* override
+fan control. The same daemon reported the machine as fine at the same moment.
+That card is now **139 px** and reads **SYSTEM READY**.
+
+**CRITICAL now means a risk of damaging hardware, and nothing else.** On the
+current advisory set exactly one mechanism qualifies — an out-of-tree `nct6687`
+driver mis-claiming an NCT6797D/NCT6798D chip and writing into its non-volatile
+fan registers, which has bricked a CPU_FAN header in the wild. Losing fan
+control is serious and now reads **ACTION REQUIRED**. Heavy BIOS reclaiming is
+in that group too: the daemon's watchdog takes control straight back and nothing
+is harmed.
+
+**The board's quirks are all still there, one click away.** They moved out of
+the alarm stack into a collapsed **Board notes for this hardware (N)** section,
+each with a plain statement of what this machine actually says about it —
+*observed*, *not present on this system*, *not yet verified*, or *reference for
+this hardware*. The two advisories that really are about hardware damage say in
+their own text "*if diagnostics detected the (nct6687, nct6775) collision*", and
+that condition is now wired: they speak up when the collision is there, and stay
+quiet when it is not.
+
+**A warning you have dealt with stops following you — but can still shout.**
+Each note takes **Acknowledge** (collapse and grey it out) or **Dismiss** (hide
+it). Neither is permanent and neither can gag a real problem: the silence is
+recorded against *what the machine said at the time*, so if a note you quietened
+is later confirmed on your hardware, it comes back. Everything is reversible
+from **Settings → Prompts & Dismissals**, which gains *Acknowledge board notes*,
+*Dismiss board notes*, **Clear acknowledged**, **Restore** and a way to forget a
+recorded fan-control test result. All five are local to this machine and are
+never included in a settings export.
+
+**"Test fan control" where it actually answers something.** Most of these
+advisories are about the BIOS quietly ignoring PWM writes, and no amount of
+inspection can confirm or refute that — only writing to a header can. So a note
+in that position says *not yet verified on this system* and the notes section
+offers a one-click test (the same PWM verification as **Advanced actions**),
+shown only while there is something for it to settle. Test clean and the note
+says so; if any header fails, the note is raised as an action.
+
+**Two presentation rules that had quietly gone missing are back.** Advisory
+detail is collapsed again by default and opens according to severity, instead of
+every paragraph being on screen at once; and MEDIUM/LOW advisories paint amber
+and INFO blue, rather than all borrowing HIGH's orange. The pop-out **Readiness
+Report** is unchanged and remains the complete, unfiltered record — including
+notes you have dismissed on the page — so nothing is lost for support purposes.
+
 ## [2.70.0] — 2026-09-11
 
 **GUI-only; the daemon floor is unchanged at `control-ofc-daemon` >= v2.11.0.**

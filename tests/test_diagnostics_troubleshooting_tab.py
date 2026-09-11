@@ -5,7 +5,8 @@ DEC-124's flattened Hardware-Readiness widget tests were retired when the
 Qt-free view-model. That rendering — the verdict/issue checklist, vendor
 advisories, chip/module registry, BIOS-interference gauge, and the
 verify/GPU/safety blocks — is now covered by ``tests/test_system_state_view.py``
-(``build_issue_cards`` / ``build_registry_rows`` / ``build_interference_vm`` /
+(``build_condition_cards`` / ``build_board_notes`` / ``build_registry_rows`` /
+``build_interference_vm`` /
 ``build_safety_gpu_vm``) and ``tests/test_system_state_page.py``.
 
 The one page-independent assertion those files do not pin is that

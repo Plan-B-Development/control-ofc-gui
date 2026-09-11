@@ -26,6 +26,12 @@ MACHINE_SPECIFIC_KEYS = frozenset(
         "diagnostics_hidden_sensor_ids",
         "sensor_class_overrides",
         "acknowledged_kernel_warnings",
+        # DEC-357: both are keyed on the board/chip a quirk matched, so they
+        # mean nothing on someone else's machine — and a shared export carrying
+        # them would silence a note on hardware that never had it reviewed.
+        "acknowledged_board_notes",
+        "dismissed_board_notes",
+        "last_pwm_verify_effective",
         "fan_aliases_seeded",
         "profiles_dir_override",
         "themes_dir_override",
@@ -45,6 +51,11 @@ MACHINE_SPECIFIC_KEYS = frozenset(
 # settings layer depend on a UI-facing service. `test_chart_modes_match_the_enum`
 # pins the two together so the pair cannot drift.
 _CHART_MODES = frozenset({"thermals", "fans", "combined", "diagnostics"})
+
+# DEC-357. "" is a real state and the default: never tested. Coerced through
+# `_as_enum` so an out-of-vocabulary value on disk degrades to "never tested"
+# rather than being read as evidence the machine never produced.
+_PWM_VERIFY_STATES = frozenset({"", "effective", "ineffective"})
 
 # Bounds on the persisted layout map. The app has nine splitters; the headroom is
 # for retired objectNames a future release leaves behind. Only reachable by hand
@@ -320,6 +331,30 @@ class AppSettings:
     # filter, like logs_search_text — excluded from exports and support bundles.
     logs_source_filter: str = ""
 
+    # DEC-357: board-note lifecycle. Both hold `"<quirk key>@<evidence>"`
+    # strings, NOT bare quirk keys — see `system_state_view.note_ack_key`. The
+    # evidence status is part of the identity so that silencing a note cannot
+    # reach the next occurrence of it: acknowledge a quirk while it is merely
+    # unverified and it stays quiet, but the moment this machine actually
+    # confirms it the key no longer matches and it speaks again. That is
+    # ISA-18.2's acknowledgement rule and the reason `services/alerts` mints a
+    # new occurrence per activation (DEC-282) — an ack stored against a bare
+    # key muted every future recurrence, permanently.
+    acknowledged_board_notes: list[str] = field(default_factory=list)
+    dismissed_board_notes: list[str] = field(default_factory=list)
+    # Whether the affordances are offered at all. Some people want the notes to
+    # stay exactly as they are; both default on because a wall of undismissable
+    # advisories is what this replaced.
+    board_notes_allow_acknowledge: bool = True
+    board_notes_allow_dismiss: bool = True
+    # Last PWM-verify outcome on this machine: "" (never run), "effective", or
+    # "ineffective". The only thing that can settle a quirk whose mechanism is
+    # "writes are accepted and silently ignored" — nothing on
+    # `GET /diagnostics/hardware` reports that, so without this the honest
+    # status is "not yet verified" forever. An observation, not a preference:
+    # machine-specific, and never exported.
+    last_pwm_verify_effective: str = ""
+
     # DEC-156: user overrides forcing a sensor's classification, keyed by stable
     # sensor id -> source_class (only "coolant" today). GUI-owned policy — the
     # daemon stays hardware-truthful; this lets the user mark a coolant sensor
@@ -400,6 +435,13 @@ class AppSettings:
                 data.get("diagnostics_hidden_sensor_ids"), []
             ),
             sensor_class_overrides=_as_sensor_overrides(data.get("sensor_class_overrides"), {}),
+            acknowledged_board_notes=_as_str_list(data.get("acknowledged_board_notes"), []),
+            dismissed_board_notes=_as_str_list(data.get("dismissed_board_notes"), []),
+            board_notes_allow_acknowledge=_as_bool(data.get("board_notes_allow_acknowledge"), True),
+            board_notes_allow_dismiss=_as_bool(data.get("board_notes_allow_dismiss"), True),
+            last_pwm_verify_effective=_as_enum(
+                data.get("last_pwm_verify_effective"), _PWM_VERIFY_STATES, ""
+            ),
             chart_mode=_as_enum(data.get("chart_mode"), _CHART_MODES, "combined"),
             splitter_sizes=_as_splitter_sizes(data.get("splitter_sizes"), {}),
             logs_level_filters=[

@@ -88,12 +88,31 @@ def is_actionable_severity(severity: str) -> bool:
     problem card rendered it WARN while the inline panel rendered it INFO — the
     same advisory reading at two different levels depending on the surface.
     Ranking keeps every surface agreeing about an unknown tier.
+
+    Since DEC-357 this is a statement about the *vocabulary* rather than a gate
+    in any production path: whether the user must act is decided by an observed
+    `VendorQuirk.consequence`, not by the tier. Register row `SSN-k`.
     """
     return severity_display(severity).rank > _INFO_DISPLAY.rank
 
 
 def is_high_severity(severity: str) -> bool:
-    """Is this severity at or above the HIGH tier (i.e. escalates a rollup)?"""
+    """Is this severity at or above the HIGH tier?
+
+    **No production path calls this, deliberately, and it must not regain one
+    that escalates an alarm (DEC-357).** Its only caller used to be the
+    `vendor_quirk` rollup, which made any HIGH-or-above advisory paint the
+    System State health card CRITICAL — on a machine where nothing had been
+    observed at all, because a quirk matches on board identity rather than on
+    state. The tier is still a true statement about the advisory; it is not
+    evidence about the machine, and `docs/03 § Alarm policy` is the rule:
+    severity comes from an observed consequence, never from which table row
+    matched. Kept because the ordering it asserts is pinned by
+    `tests/test_readiness_report.py` and is worth keeping pinned.
+
+    See also `is_actionable_severity`, which has the same status. Register row
+    `SSN-k`.
+    """
     return severity_display(severity).rank >= _SEVERITY_DISPLAY["high"].rank
 
 
@@ -172,15 +191,98 @@ class VendorQuirk:
     platforms (e.g. NCT6687D auto-detected on MSI Z690/Z790 vs.
     NCT6687DR ``msi_alt1`` on MSI Z890). Empty string preserves the
     pre-DEC-110 behaviour (no board scoping).
+
+    `consequence` + `trigger` (DEC-357) are the machine-readable half of what
+    the prose already says, and they exist because `severity` alone cannot
+    answer the only two questions a reader actually has:
+
+    * **`consequence`** — what happens if the mechanism fires. A quirk that can
+      corrupt non-volatile fan registers and one that means "the BIOS may take
+      your fan curve back" are not the same kind of bad, and ranking them on one
+      `severity` axis made the second read like the first.
+    * **`trigger`** — the *observable* condition under which the quirk stops
+      being reference material and becomes a live problem. It names an existing
+      key from :func:`detect_readiness_problems`, so a quirk never mints a
+      condition of its own; it attaches to the condition that already detects
+      its mechanism. ``""`` means the quirk is permanently reference-only.
+
+    Both default, so a quirk that is genuinely just a note needs neither. They
+    are validated against :data:`QUIRK_CONSEQUENCES` / :data:`QUIRK_TRIGGERS` by
+    ``test_every_quirk_declares_a_registered_consequence_and_trigger`` — an unregistered
+    token fails *silently* otherwise (it simply never promotes), which is the
+    failure mode DEC-334 says to weight highest.
     """
 
     vendor_pattern: str
     chip_prefix: str
     severity: str  # "critical" | "high" | "medium" | "info"
     summary: str
+    #: Stable, declared identity — see :func:`quirk_key`. Required on every entry
+    #: in :data:`VENDOR_QUIRKS_DB` and swept by
+    #: ``test_every_quirk_declares_a_unique_stable_id``; the default exists only
+    #: so an ad-hoc quirk built in a test need not invent one.
+    id: str = ""
     details: list[str] = field(default_factory=list)
     platform: str | None = None  # "intel" | "amd" | None (DEC-110)
     board_pattern: str = ""  # case-insensitive substring (DEC-110)
+    consequence: str = "none"  # see QUIRK_CONSEQUENCES (DEC-357)
+    trigger: str = ""  # see QUIRK_TRIGGERS (DEC-357)
+
+
+# What actually happens if a quirk's mechanism fires (DEC-357).
+#
+# "hardware_damage" is the only tier that earns CRITICAL, and on the current
+# data set exactly one mechanism qualifies: the out-of-tree `nct6687` claiming
+# an NCT6797D/NCT6798D and writing into its non-volatile fan registers, which
+# has bricked a CPU_FAN header in the wild. "control_loss" is the far commoner
+# and far milder case — the BIOS/EC takes fan control back, the daemon's
+# watchdog re-asserts it, and nothing is harmed. Before this split the two were
+# ranked on one axis and a HIGH "the BIOS *may* override fan control" advisory
+# rendered as a red CRITICAL on a perfectly healthy board.
+QUIRK_CONSEQUENCES: frozenset[str] = frozenset({"hardware_damage", "control_loss", "none"})
+
+# The observable condition that promotes a quirk from reference material to a
+# live problem (DEC-357). Every token is a `key` emitted by
+# :func:`~control_ofc.ui.widgets.readiness_report.detect_readiness_problems`,
+# deliberately: a quirk attaches to the condition that already detects its
+# mechanism rather than minting a second card saying the same thing. "" means
+# the quirk is never promotable — it is permanent reference material.
+#
+# `module_collision` covers `module_conflict` too (the GUI-side fallback for
+# daemons predating `module_collisions`); the promotion check tests both keys.
+QUIRK_TRIGGERS: frozenset[str] = frozenset({"module_collision", "bios_revert", "dual_chip", ""})
+
+
+def quirk_key(quirk: VendorQuirk) -> str:
+    """A stable identity for one quirk, safe to persist (DEC-357).
+
+    It is the quirk's **declared** ``id``, and both halves of that matter.
+
+    *Declared*, because a derived one does not work. The obvious derivation —
+    the four scope fields, which are what make an entry distinct in the lookup —
+    is **not unique**: six of the 36 entries share a scope tuple with another
+    (four MSI ``nct6687`` quirks alone), because one board/chip pair can carry
+    several unrelated notes. An acknowledgement stored against that key would
+    silence a *different* note than the one the user dismissed.
+
+    *Stable*, because the alternative derivation — hashing ``summary`` — moves
+    the moment someone corrects a typo, and the silence the user asked for would
+    be lost with it. Same reasoning as keying a fan alias on a stable id rather
+    than on a display name.
+
+    An ad-hoc quirk with no id (only tests build those, and nothing persists
+    them) falls back to the scope tuple so callers need not special-case it.
+    """
+    if quirk.id:
+        return quirk.id
+    return ":".join(
+        (
+            quirk.vendor_pattern,
+            quirk.chip_prefix,
+            quirk.platform or "*",
+            quirk.board_pattern or "*",
+        )
+    )
 
 
 CHIP_GUIDANCE_DB: list[ChipGuidance] = [
@@ -797,9 +899,12 @@ def format_driver_status(chip_name: str, loaded: bool) -> str:
 
 VENDOR_QUIRKS_DB: list[VendorQuirk] = [
     VendorQuirk(
+        id="gb-it8689-bios-actively-overrides",
         vendor_pattern="gigabyte",
         chip_prefix="it8689",
         severity="critical",
+        consequence="control_loss",
+        trigger="bios_revert",
         summary="Gigabyte SmartFan 6 + IT8689E — BIOS actively overrides fan control",
         details=[
             "IT8689E Rev 1 (e.g. X670E Aorus Master): the EC's vector-curve "
@@ -823,9 +928,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="gb-it8696-bios-override",
         vendor_pattern="gigabyte",
         chip_prefix="it8696",
         severity="high",
+        consequence="control_loss",
+        trigger="bios_revert",
         summary="Gigabyte SmartFan 6 + IT8696E — BIOS may override fan control",
         details=[
             "The EC firmware continuously evaluates its own fan curves and can "
@@ -838,9 +946,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="gb-it8688-bios-override",
         vendor_pattern="gigabyte",
         chip_prefix="it8688",
         severity="high",
+        consequence="control_loss",
+        trigger="bios_revert",
         summary="Gigabyte SmartFan 5 + IT8688E — BIOS may override fan control",
         details=[
             "SmartFan 5 on Gigabyte X570/B550 boards actively overrides PWM unless "
@@ -857,9 +968,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="gb-it8686-bios-override",
         vendor_pattern="gigabyte",
         chip_prefix="it8686",
         severity="high",
+        consequence="control_loss",
+        trigger="bios_revert",
         summary="Gigabyte SmartFan 5 + IT8686E — BIOS may override fan control",
         details=[
             "Same behaviour as IT8688E: SmartFan 5 overrides PWM unless 'Full Speed' "
@@ -868,6 +982,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="msi-nct6687-headers-read-only",
         vendor_pattern="micro-star",
         chip_prefix="nct6687",
         severity="medium",
@@ -880,6 +995,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asus-nct679-acpi-port-conflict",
         vendor_pattern="asustek",
         chip_prefix="nct679",
         severity="medium",
@@ -899,9 +1015,14 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asus-asuswmi-high-frequency-polling",
         vendor_pattern="asustek",
         chip_prefix="asus_wmi",
         severity="high",
+        # Sensor enrichment only — this driver is never the PWM write path, and
+        # the advisory's own text says 1 Hz is within the kernel-documented safe
+        # band. Nothing here can be observed or resolved, so it never promotes.
+        consequence="none",
         summary="ASUS WMI sensors — high-frequency polling may cause fan/sensor failure",
         details=[
             "Some ASUS BIOS WMI implementations are buggy: frequent polling can "
@@ -917,9 +1038,14 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="msi-nct6687-system-respond-single",
         vendor_pattern="micro-star",
         chip_prefix="nct6687",
         severity="high",
+        # Observable only by writing: a single PWM write is accepted and the fan
+        # does not move. No `/diagnostics/hardware` field reports that, so this
+        # promotes off a failed PWM verify rather than off a condition key.
+        consequence="control_loss",
         summary="MSI X870/B850 — system fans may not respond to single PWM writes",
         details=[
             "Newer MSI X870/B850-class boards require writing all 7 BIOS fan-curve "
@@ -944,6 +1070,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asrock-nct6686-monitoring-works-but",
         vendor_pattern="asrock",
         chip_prefix="nct6686",
         severity="medium",
@@ -964,6 +1091,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asrock-nct6683-sensors-visible-but",
         vendor_pattern="asrock",
         chip_prefix="nct6683",
         severity="medium",
@@ -979,6 +1107,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="gb-it87-prefer-driver-local",
         vendor_pattern="gigabyte",
         chip_prefix="it87",
         severity="info",
@@ -1003,9 +1132,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
     ),
     # ── AM4 400-series additions (DEC-105) ──────────────────────────
     VendorQuirk(
+        id="msi-nct6797-out-tree-nct6687",
         vendor_pattern="micro-star",
         chip_prefix="nct6797",
         severity="critical",
+        consequence="hardware_damage",
+        trigger="module_collision",
         summary=(
             "MSI AM4 + NCT6797D — out-of-tree nct6687 can mis-claim this chip "
             "and corrupt fan registers"
@@ -1037,9 +1169,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="msi-nct6798-out-tree-nct6687",
         vendor_pattern="micro-star",
         chip_prefix="nct6798",
         severity="critical",
+        consequence="hardware_damage",
+        trigger="module_collision",
         summary=(
             "MSI + NCT6798D — out-of-tree nct6687 can mis-claim this chip and corrupt fan registers"
         ),
@@ -1055,6 +1190,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="msi-nct6795-mainline-kernel-coverage",
         vendor_pattern="micro-star",
         chip_prefix="nct6795",
         severity="info",
@@ -1070,9 +1206,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asus-asuswmisensors-kernel-documented-buggy",
         vendor_pattern="asustek",
         chip_prefix="asus_wmi_sensors",
         severity="high",
+        # As with the asus_wmi entry above: enrichment only, never the write path.
+        consequence="none",
         summary=("ASUS AM4 + asus_wmi_sensors — kernel-documented buggy WMI on specific boards"),
         details=[
             "Kernel docs explicitly list these AM4 boards as supported AND "
@@ -1092,6 +1231,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asus-asusecsensors-prime-x470-pro",
         vendor_pattern="asustek",
         chip_prefix="asus_ec_sensors",
         severity="info",
@@ -1104,6 +1244,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asus-asusatk0110-acpi-sensor-read",
         vendor_pattern="asustek",
         chip_prefix="asus_atk0110",
         severity="info",
@@ -1116,6 +1257,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asrock-nct6779-mainline-kernel-coverage",
         vendor_pattern="asrock",
         chip_prefix="nct6779",
         severity="info",
@@ -1130,6 +1272,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asrock-nct6792-mainline-kernel-coverage",
         vendor_pattern="asrock",
         chip_prefix="nct6792",
         severity="info",
@@ -1144,6 +1287,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="gb-it8686-dual-secondary-it8792e",
         vendor_pattern="gigabyte",
         chip_prefix="it8686",
         severity="info",
@@ -1165,6 +1309,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
     ),
     # ── DEC-106: AM4 500-series, AM5 600-series, AM5 800-series ──
     VendorQuirk(
+        id="gb-it8688-common-dual-topology",
         vendor_pattern="gigabyte",
         chip_prefix="it8688",
         severity="info",
@@ -1190,6 +1335,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="msi-nct6687-msi-alt1-auto",
         vendor_pattern="micro-star",
         chip_prefix="nct6687",
         severity="info",
@@ -1226,6 +1372,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="msi-nct6687-out-tree-driver",
         vendor_pattern="micro-star",
         chip_prefix="nct6687",
         severity="medium",
@@ -1247,6 +1394,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asrock-nct6799-legitimate-dual-nuvoton",
         vendor_pattern="asrock",
         chip_prefix="nct6799",
         severity="info",
@@ -1271,6 +1419,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asrock-nct6798-mainline-kernel-coverage",
         vendor_pattern="asrock",
         chip_prefix="nct6798",
         severity="info",
@@ -1286,6 +1435,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asrock-nct6796-mainline-kernel-coverage",
         vendor_pattern="asrock",
         chip_prefix="nct6796",
         severity="info",
@@ -1299,6 +1449,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asus-nct6798-mainline",
         vendor_pattern="asus",
         chip_prefix="nct6798",
         severity="info",
@@ -1321,6 +1472,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
     # previous text promised the working outcome to everyone and named
     # `mmio=on` as the remedy, which is already the driver default.
     VendorQuirk(
+        id="gb-it8696-outcome-varies",
         vendor_pattern="gigabyte",
         chip_prefix="it8696",
         severity="low",
@@ -1355,6 +1507,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
     # (it87_acpi_ignore) does NOT include this board as of 2026-06, so
     # the driver-local parameter remains the documented remediation.
     VendorQuirk(
+        id="gb-it8689-amd-b650gamingxaxv2-acpi-conflict-block",
         vendor_pattern="gigabyte",
         chip_prefix="it8689",
         severity="medium",
@@ -1383,6 +1536,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
     # the opposite platform (e.g. MSI AMD X870E) do not match. Sources
     # cited in DEC-110 / docs/23.
     VendorQuirk(
+        id="asus-asusecsensors-intel-kernel-documented-allowlist",
         vendor_pattern="asustek",
         chip_prefix="asus_ec_sensors",
         severity="info",
@@ -1411,6 +1565,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asus-nct6798-intel-mainline-kernel-coverage",
         vendor_pattern="asustek",
         chip_prefix="nct6798",
         severity="info",
@@ -1429,6 +1584,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="msi-nct6687-intel-auto-detect-msi",
         vendor_pattern="micro-star",
         chip_prefix="nct6687",
         severity="info",
@@ -1450,9 +1606,13 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="msi-nct6687-intel-z890-needs-config-msi",
         vendor_pattern="micro-star",
         chip_prefix="nct6687",
         severity="high",
+        # Same shape as the X870/B850 entry: "writes accepted, RPM unchanged" is
+        # only visible from a verify, never from static discovery.
+        consequence="control_loss",
         platform="intel",
         board_pattern="Z890",
         summary="MSI Z890 + NCT6687DR — needs fan_config=msi_alt1",
@@ -1476,9 +1636,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="gb-it8689-intel-dual-it87952e",
         vendor_pattern="gigabyte",
         chip_prefix="it8689",
         severity="high",
+        consequence="control_loss",
+        trigger="dual_chip",
         platform="intel",
         summary="Gigabyte Intel Z690/Z790 AORUS + IT8689E — dual-chip with IT87952E",
         details=[
@@ -1512,9 +1675,12 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="gb-it8696-intel-dual-it87952e",
         vendor_pattern="gigabyte",
         chip_prefix="it8696",
         severity="high",
+        consequence="control_loss",
+        trigger="dual_chip",
         platform="intel",
         summary="Gigabyte Intel Z890 AORUS + IT8696E — dual-chip with IT87952E",
         details=[
@@ -1533,6 +1699,7 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
         ],
     ),
     VendorQuirk(
+        id="asrock-nct6798-intel-mainline-kernel-coverage",
         vendor_pattern="asrock",
         chip_prefix="nct6798",
         severity="info",

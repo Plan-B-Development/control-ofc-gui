@@ -33,7 +33,7 @@ from control_ofc.services.pump_protection import (
     daemon_protects_pumps,
     pump_identify_warning,
 )
-from control_ofc.services.system_state_view import build_issue_cards
+from control_ofc.services.system_state_view import build_board_notes, build_condition_cards
 from control_ofc.ui.hwmon_guidance import dual_chip_warning_html
 from control_ofc.ui.widgets.readiness_report import detect_readiness_problems
 
@@ -123,22 +123,38 @@ class TestDualChipAlertTruthfulness:
     def test_rendered_system_state_cards_do_not_contradict_each_other(self):
         """The defect was a CONTRADICTION, so this asserts across the surface.
 
-        `build_issue_cards` is what the System State page renders. It emits the
-        dual-chip problem card *and* the Gigabyte/IT8696E vendor advisory for
-        this board. Before the fix one said "no local fix" and the other handed
-        the user a numbered fix — on the same screen. Asserting on either card
-        alone cannot see that, which is why this reads the whole rendered set.
+        The page renders the dual-chip *condition* card and the Gigabyte/IT8696E
+        vendor advisory for this board. Before the fix one said "no local fix"
+        and the other handed the user a numbered fix — on the same screen.
+        Asserting on either alone cannot see that, which is why this reads the
+        whole rendered set.
+
+        DEC-357 split that set in two — conditions above, board notes in a
+        collapsed section below — so the surface is now composed from both
+        builders. The guarantee is unchanged and so is the reason for it: the
+        two still appear on one screen, so they still must not disagree.
         """
-        cards = build_issue_cards(_master_diag())
+        diag = _master_diag()
+        cards = list(build_condition_cards(diag)) + list(build_board_notes(diag).notes)
         keys = {c.key for c in cards}
-        assert "dual_chip" in keys, "precondition: the dual-chip card must render"
-        assert any(k.startswith("vendor_quirk") or k == "vendor_quirk" for k in keys), (
+        assert "dual_chip" in keys, "precondition: the dual-chip condition must render"
+        assert any(k.startswith("gb-it8696") for k in keys), (
             "precondition: the corrected vendor advisory must render alongside it "
-            "— without both cards present this test cannot detect a contradiction"
+            "— without both present this test cannot detect a contradiction"
         )
 
         def text_of(card) -> str:
-            return " ".join((card.title, card.description, card.detail or "")).lower()
+            # A board note has no `description`; a condition card has no
+            # `evidence_text`. Read whichever this one carries so the surface is
+            # genuinely the whole of what the user sees.
+            return " ".join(
+                (
+                    card.title,
+                    getattr(card, "description", "") or "",
+                    getattr(card, "evidence_text", "") or "",
+                    card.detail or "",
+                )
+            ).lower()
 
         surface = " ".join(text_of(c) for c in cards)
         # The honest verdict reaches the screen at all.

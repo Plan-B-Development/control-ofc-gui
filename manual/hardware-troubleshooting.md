@@ -22,7 +22,7 @@ When you fetch hardware diagnostics, the report populates with:
 |---------|-------------------|
 | **Summary** | One-line headline: chip count, writable header count, and overall readiness |
 | **Board info** | Vendor and board name reported by DMI (e.g., `Gigabyte X870E AORUS MASTER`) |
-| **Vendor quirk alert** | Auto-shown when a known vendor + chip combination has documented BIOS-level workarounds (e.g., Gigabyte + IT8696E → Smart Fan 6 BIOS notes) |
+| **Board note** | Listed under *Board notes for this hardware* when a known vendor + chip combination has documented BIOS-level workarounds (e.g., Gigabyte + IT8696E → Smart Fan 6 BIOS notes). Reference material with an evidence status, not an alarm — see [Vendor quirks](#vendor-quirks) |
 | **Chips table** | Each detected Super I/O / sensor chip with its expected driver, load status, mainline-or-not, and PWM header count |
 | **Kernel modules table** | Modules the daemon expects for your hardware: whether they are loaded and whether they ship in the mainline Linux kernel |
 | **ACPI conflicts** | Warnings if an ACPI region claims the same I/O ports as a hwmon driver (most common with `it87` on AMD AM5 boards — driver may need `acpi_enforce_resources=lax`) |
@@ -271,7 +271,11 @@ The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically — 
 
 ## Vendor quirks
 
-When the daemon reports a board vendor and chip combination that matches a known workaround pattern, the Hardware Readiness report automatically renders the relevant guidance — BIOS settings to change, kernel modules to install, or known-issue notes. Each advisory is shown as its own row, most-severe-first, with a colour-coded severity badge that pairs an icon, the word, and a colour — **CRITICAL** (red), **HIGH** (orange), **MEDIUM** (amber), **INFO** (blue) — so an informational note never looks like a warning. The summary is always visible; click **Details** to expand the full explanation and a link to the Hardware Compatibility Guide (CRITICAL and HIGH advisories start expanded; MEDIUM and INFO start collapsed to keep the panel uncluttered). Currently surfaced quirks include:
+When the daemon reports a board vendor and chip combination that matches a known workaround pattern, the System State page renders the relevant guidance — BIOS settings to change, kernel modules to install, or known-issue notes. They live in the collapsed **Board notes for this hardware (N)** section, *below* the conditions and never mixed into them: a quirk matches on which motherboard you own rather than on anything your machine is doing, so it is reference material rather than an alarm. Each note is its own row, most-severe-first, with a colour-coded severity badge that pairs an icon, the word, and a colour — **CRITICAL** (red), **HIGH** (orange), **MEDIUM**/**LOW** (amber), **INFO** (blue) — so an informational note never looks like a warning. The summary is always visible; click **Details** for the full explanation and a link to the Hardware Compatibility Guide (CRITICAL and HIGH start expanded, as does anything confirmed on your machine; MEDIUM, LOW and INFO start collapsed).
+
+Every note also says **what your machine says about it** — *observed*, *not present on this system*, *not yet verified*, or *reference for this hardware*. Most of these quirks describe the BIOS silently ignoring PWM writes, and only writing to a header can settle that, so the section offers a one-click **Test fan control** whenever there is something for it to resolve (it runs the same check as *Verify All Writable* under **Advanced actions**). A clean test marks those notes as not observed; if any header fails, the note is raised as an action above. You can **Acknowledge** a note you have read or **Dismiss** it entirely — both are reversible from **Settings → Prompts & Dismissals**, and neither survives the note later being confirmed on your hardware.
+
+Currently surfaced quirks include:
 
 - **Gigabyte + IT8696E** — Smart Fan 6 BIOS setup notes for AM5 800-series AORUS boards
 - **NCT6798 / NCT6799 on ASUS** — typical driver-loaded paths and ASUS WMI sensor helpers

@@ -103,6 +103,11 @@ SETTINGS_FIELD_WIDGETS: dict[str, str] = {
     # Prompts & Dismissals
     "show_aio_pump_info": "Settings_Check_aioPumpInfo",
     "acknowledged_kernel_warnings": "Settings_Btn_clearKernelWarnings",
+    "board_notes_allow_acknowledge": "Settings_Check_boardNoteAck",
+    "board_notes_allow_dismiss": "Settings_Check_boardNoteDismiss",
+    "acknowledged_board_notes": "Settings_Btn_clearBoardNoteAcks",
+    "dismissed_board_notes": "Settings_Btn_restoreBoardNotes",
+    "last_pwm_verify_effective": "Settings_Btn_clearPwmVerify",
     "daemon_import_prompted": "Settings_Btn_reofferImport",
     "fan_aliases_seeded": "Settings_Btn_reseedAliases",
     "chart_series_seeded": "Settings_Btn_reseedSeries",
@@ -1664,6 +1669,89 @@ class SettingsPage(QWidget):
             )
         )
 
+        # DEC-357 — board notes. A "don't show me this again" with no way back
+        # is a known UX defect, not a preference: the user has deleted part of
+        # the UI with one click and cannot get it back. These four rows are the
+        # way back, and the two toggles let someone who wants the notes left
+        # entirely alone say so.
+        self._board_note_ack_cb = ToggleSwitch()
+        self._board_note_ack_cb.setObjectName("Settings_Check_boardNoteAck")
+        self._board_note_ack_cb.setToolTip(
+            "Offer an Acknowledge button on each board note on the System State page"
+        )
+        v.addLayout(
+            self._setting_row(
+                "Acknowledge board notes",
+                "Let a reviewed board note collapse and grey out",
+                self._board_note_ack_cb,
+            )
+        )
+
+        self._board_note_dismiss_cb = ToggleSwitch()
+        self._board_note_dismiss_cb.setObjectName("Settings_Check_boardNoteDismiss")
+        self._board_note_dismiss_cb.setToolTip(
+            "Offer a Dismiss button on each board note on the System State page"
+        )
+        v.addLayout(
+            self._setting_row(
+                "Dismiss board notes",
+                "Let a board note be hidden from the System State page",
+                self._board_note_dismiss_cb,
+            )
+        )
+
+        self._clear_board_acks_btn = make_button(
+            "Clear acknowledged",
+            "ghost",
+            object_name="Settings_Btn_clearBoardNoteAcks",
+            accessible_name="Clear acknowledged board notes",
+        )
+        self._clear_board_acks_btn.clicked.connect(self._clear_board_note_acks)
+        v.addLayout(
+            self._setting_row(
+                "Acknowledged board notes",
+                "Board/chip notes you have marked as read",
+                self._clear_board_acks_btn,
+            )
+        )
+
+        self._restore_board_notes_btn = make_button(
+            "Restore",
+            "ghost",
+            object_name="Settings_Btn_restoreBoardNotes",
+            accessible_name="Restore dismissed board notes",
+        )
+        self._restore_board_notes_btn.setToolTip(
+            "Show board notes you have dismissed on the System State page again"
+        )
+        self._restore_board_notes_btn.clicked.connect(self._restore_board_notes)
+        v.addLayout(
+            self._setting_row(
+                "Dismissed board notes",
+                "Board/chip notes you have hidden",
+                self._restore_board_notes_btn,
+            )
+        )
+
+        self._clear_pwm_verify_btn = make_button(
+            "Forget result",
+            "ghost",
+            object_name="Settings_Btn_clearPwmVerify",
+            accessible_name="Forget the recorded fan-control test result",
+        )
+        self._clear_pwm_verify_btn.setToolTip(
+            "Discard the recorded fan-control test result, so board notes read "
+            "as unverified until you test again"
+        )
+        self._clear_pwm_verify_btn.clicked.connect(self._clear_pwm_verify_result)
+        v.addLayout(
+            self._setting_row(
+                "Fan-control test result",
+                "What the last PWM write test found on this machine",
+                self._clear_pwm_verify_btn,
+            )
+        )
+
         self._reoffer_import_btn = make_button(
             "Offer again", "ghost", object_name="Settings_Btn_reofferImport"
         )
@@ -1725,6 +1813,21 @@ class SettingsPage(QWidget):
         self._settings_svc.update(acknowledged_kernel_warnings=[])
         self._refresh_reset_buttons()
         self._set_status("Dismissed driver advisories cleared")
+
+    def _clear_board_note_acks(self) -> None:
+        self._settings_svc.update(acknowledged_board_notes=[])
+        self._refresh_reset_buttons()
+        self._set_status("Acknowledged board notes cleared")
+
+    def _restore_board_notes(self) -> None:
+        self._settings_svc.update(dismissed_board_notes=[])
+        self._refresh_reset_buttons()
+        self._set_status("Dismissed board notes restored")
+
+    def _clear_pwm_verify_result(self) -> None:
+        self._settings_svc.update(last_pwm_verify_effective="")
+        self._refresh_reset_buttons()
+        self._set_status("Fan-control test result forgotten")
 
     def _reoffer_profile_import(self) -> None:
         self._settings_svc.update(daemon_import_prompted=False)
@@ -1817,6 +1920,12 @@ class SettingsPage(QWidget):
                 len(s.acknowledged_kernel_warnings),
                 "Clear dismissed",
             ),
+            (
+                self._clear_board_acks_btn,
+                len(s.acknowledged_board_notes),
+                "Clear acknowledged",
+            ),
+            (self._restore_board_notes_btn, len(s.dismissed_board_notes), "Restore"),
             (self._reset_card_sizes_btn, len(s.controls_card_sizes), "Reset all sizes"),
             (self._prune_orphans_btn, self._chart_orphans().total, "Remove"),
         ):
@@ -1828,6 +1937,13 @@ class SettingsPage(QWidget):
         self._reoffer_import_btn.setEnabled(s.daemon_import_prompted)
         self._reseed_aliases_btn.setEnabled(s.fan_aliases_seeded)
         self._reseed_series_btn.setEnabled(s.chart_series_seeded)
+        # Not a count: a recorded verify outcome is one value or absent.
+        self._clear_pwm_verify_btn.setEnabled(bool(s.last_pwm_verify_effective))
+        self._clear_pwm_verify_btn.setText(
+            f"Forget result ({s.last_pwm_verify_effective})"
+            if s.last_pwm_verify_effective
+            else "Forget result"
+        )
 
     def _dir_picker_row(
         self,
@@ -1990,6 +2106,8 @@ class SettingsPage(QWidget):
         )
         self._gpu_zero_rpm_warn_cb.setChecked(s.show_gpu_zero_rpm_warning)
         self._aio_pump_info_cb.setChecked(s.show_aio_pump_info)
+        self._board_note_ack_cb.setChecked(s.board_notes_allow_acknowledge)
+        self._board_note_dismiss_cb.setChecked(s.board_notes_allow_dismiss)
         # Apply the daemon's advertised ceiling BEFORE seeding, so a stored
         # value the daemon will not honour is clamped rather than displayed.
         self._apply_wizard_spindown_limit()
@@ -2036,6 +2154,8 @@ class SettingsPage(QWidget):
             chart_default_range_index=self._chart_range_combo.currentIndex(),
             show_gpu_zero_rpm_warning=self._gpu_zero_rpm_warn_cb.isChecked(),
             show_aio_pump_info=self._aio_pump_info_cb.isChecked(),
+            board_notes_allow_acknowledge=self._board_note_ack_cb.isChecked(),
+            board_notes_allow_dismiss=self._board_note_dismiss_cb.isChecked(),
             wizard_spindown_seconds=self._wizard_spindown_spin.value(),
             hide_igpu_sensors=self._hide_igpu_cb.isChecked(),
             hide_unused_fan_headers=self._hide_unused_fans_cb.isChecked(),

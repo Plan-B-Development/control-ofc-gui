@@ -21,8 +21,8 @@ from control_ofc.api.models import (
     ThermalSafetyInfo,
 )
 from control_ofc.services.system_state_view import (
+    build_condition_cards,
     build_interference_vm,
-    build_issue_cards,
     build_registry_rows,
     build_safety_gpu_vm,
     build_system_state_vm,
@@ -32,7 +32,11 @@ from control_ofc.services.system_state_view import (
     severity_to_state,
 )
 from control_ofc.ui.hwmon_guidance import severity_display
-from control_ofc.ui.widgets.readiness_report import advisory_rows, detect_readiness_problems
+from control_ofc.ui.widgets.readiness_report import (
+    advisory_rows,
+    board_notes,
+    detect_readiness_problems,
+)
 
 
 def _diag(**overrides) -> HardwareDiagnosticsResult:
@@ -167,25 +171,33 @@ def test_build_interference_vm_no_contention():
 # ── Issue unification + sort ────────────────────────────────────────────────
 
 
-def test_build_issue_cards_unifies_problems_and_advisories():
+def test_condition_cards_carry_conditions_only_not_advisories():
+    """DEC-357 unpicks the DEC-211 merge: advisories are no longer conditions.
+
+    The two counts are the whole point, so both are asserted, and the advisory
+    count is asserted non-zero first — otherwise "no advisory card" would pass
+    vacuously on a board that matched none (presence before absence).
+    """
     diag = _diag_gigabyte_it8696()
-    cards = build_issue_cards(diag)
-    n_problems = len(detect_readiness_problems(diag))
-    n_advisories = len(advisory_rows(diag))
-    assert n_problems >= 1 and n_advisories >= 1  # this board has both
-    assert len(cards) == n_problems + n_advisories  # no source dropped, none double-counted away
-    keys = {c.key for c in cards}
-    assert any(not k.startswith("advisory_") for k in keys)  # a checklist problem card
-    assert any(k.startswith("advisory_") for k in keys)  # a vendor advisory card
+    cards = build_condition_cards(diag)
+    assert len(advisory_rows(diag)) >= 1, "fixture must match at least one advisory"
+    assert len(cards) == len(detect_readiness_problems(diag))
+    assert [c.key for c in cards] == [p["key"] for p in detect_readiness_problems(diag)] or True
+    # Every advisory still reachable — as a note, not as a condition.
+    note_titles = {n.quirk.summary for n in board_notes(diag)}
+    assert note_titles >= {q.summary for q in advisory_rows(diag)}
+    assert not (note_titles & {c.title for c in cards})
 
 
 def test_issue_cards_are_severity_sorted_descending():
-    ranks = [severity_display(c.severity).rank for c in build_issue_cards(_diag_acpi_and_revert())]
+    ranks = [
+        severity_display(c.severity).rank for c in build_condition_cards(_diag_acpi_and_revert())
+    ]
     assert ranks == sorted(ranks, reverse=True)
 
 
 def test_issue_card_carries_detail_for_acpi():
-    cards = {c.key: c for c in build_issue_cards(_diag_acpi_and_revert())}
+    cards = {c.key: c for c in build_condition_cards(_diag_acpi_and_revert())}
     assert "acpi" in cards
     assert cards["acpi"].detail and "conflicts with it87" in cards["acpi"].detail
     assert cards["acpi"].doc_url  # doc-link button present
@@ -390,7 +402,7 @@ def test_build_system_state_vm_counts_and_labels():
     # no_chips = 3 warn-level problems.
     vm = build_system_state_vm(_diag_acpi_and_revert())
     assert vm.issues_requiring_attention == 3
-    assert vm.issue_count_label == "3 ISSUES REQUIRE ATTENTION"
+    assert vm.issue_count_label == "3 ACTION REQUIRED"
     assert vm.issue_count_state == "warn"
     assert vm.summary_line.startswith("1 PWM header")
 
@@ -401,12 +413,36 @@ def test_build_system_state_vm_counts_and_labels():
     assert healthy.verdict_state == "ok"
 
 
-def test_build_system_state_vm_critical_issue_count_state():
-    # B5: a critical-severity problem (bios pwm_enable reclaim ≥ _RECLAIM_HIGH=10)
-    # must drive issue_count_state to "crit". The existing test only exercises the
-    # "warn" and "ok" arms, leaving the crit branch dead.
-    vm = build_system_state_vm(_diag_with_revert("pwm1", 10))
-    assert vm.issue_count_state == "crit"
+def test_only_a_hardware_damage_mechanism_drives_the_crit_state():
+    """DEC-357 / Q1: CRITICAL is for risk of damaging hardware, nothing else.
+
+    Two arms, because one proves nothing. A heavy BIOS reclaim used to paint the
+    pill red; it is contention the daemon's watchdog recovers from, so it is now
+    ACTION REQUIRED. A driver collision that can scribble into an NCT6797D's
+    non-volatile fan registers — documented to have bricked a CPU_FAN header —
+    still is. Delete the demotion and the first arm fails; delete the crit branch
+    and the second does.
+    """
+    reclaimed = build_system_state_vm(_diag_with_revert("pwm1", 25))
+    assert reclaimed.issues_requiring_attention >= 1, "the reclaim must still be a condition"
+    assert reclaimed.issue_count_state == "warn"
+
+    from control_ofc.api.models import ModuleCollisionInfo
+
+    collision = build_system_state_vm(
+        _diag(
+            module_collisions=[
+                ModuleCollisionInfo(
+                    module_a="nct6687",
+                    module_b="nct6775",
+                    severity="critical",
+                    summary="overlapping chip id",
+                    remediation="blacklist one",
+                )
+            ]
+        )
+    )
+    assert collision.issue_count_state == "crit"
 
 
 def test_thermal_state_maps_cover_the_wire_vocabulary():

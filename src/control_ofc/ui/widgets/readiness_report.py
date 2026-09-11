@@ -41,9 +41,8 @@ from control_ofc.ui.hwmon_guidance import (
     detect_module_conflicts,
     dual_chip_warning_html,
     format_driver_status,
-    is_actionable_severity,
-    is_high_severity,
     lookup_vendor_quirks,
+    quirk_key,
     severity_display,
 )
 from control_ofc.ui.theme import active_theme
@@ -63,9 +62,6 @@ _MISSING_HEADERS_URL = (
     "manual/hardware-troubleshooting.md"
     "#some-of-my-fan-headers-are-missing--only-5-of-8-show-up"
 )
-# Reclaim count at/above which BIOS interference is treated as critical
-# (mirrors classify_reclaim_severity's HIGH bucket in diagnostics_page).
-_RECLAIM_HIGH = 10
 
 
 def _link(url: str, title: str) -> str:
@@ -86,12 +82,25 @@ def _link(url: str, title: str) -> str:
     )
 
 
-def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
-    """Return the detected readiness problems, in display order.
+def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
+    """The observed readiness conditions, in display order (DEC-357).
 
-    Each problem is ``{key, label, fix, doc_url, doc_title, severity}`` where
+    Each condition is ``{key, label, fix, doc_url, doc_title, severity}`` where
     every string is GUI-authored (no daemon input). ``severity`` is ``"warn"``
     or ``"critical"``.
+
+    Every entry here is derived from something the daemon **measured** on this
+    machine — a collision in the loaded-module list, a chip that did not
+    enumerate, a reclaim the watchdog counted. That is what makes a condition
+    able to clear itself: fix it in BIOS, refetch, and it is gone. Board/chip
+    quirks are not conditions and no longer live here; they are reference
+    material keyed on which motherboard you bought, and they moved to
+    :func:`board_notes` (DEC-357).
+
+    ``severity`` is ``"critical"`` only where the mechanism risks **damaging
+    hardware**. Losing fan control is serious and is ``"warn"`` — the page words
+    that as ACTION REQUIRED. Ranking the two together is what let a HIGH "the
+    BIOS *may* override fan control" advisory paint a healthy board red.
     """
     hw = diag.hwmon
     board = diag.board
@@ -162,39 +171,6 @@ def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
             }
         )
 
-    quirks = []
-    for chip in hw.chips_detected:
-        quirks.extend(
-            lookup_vendor_quirks(
-                board.vendor,
-                chip.chip_name,
-                cpu_vendor=diag.cpu_vendor,
-                board_name=board.name,
-            )
-        )
-    # Info-level quirks are FYI enrichment notes (e.g. asus_ec_sensors), not
-    # problems — they still show in the alert stack, but they must not make a
-    # healthy board read as "needs attention".
-    actionable_quirks = [q for q in quirks if is_actionable_severity(q.severity)]
-    if actionable_quirks:
-        problems.append(
-            {
-                "key": "vendor_quirk",
-                "label": "Board/chip quirk detected",
-                "fix": (
-                    "Review the quirk notes above — most are addressed in BIOS "
-                    "fan settings or by the chip's documented driver options."
-                ),
-                "doc_url": _HW_COMPAT_URL,
-                "doc_title": "Hardware Compatibility Guide",
-                "severity": (
-                    "critical"
-                    if any(is_high_severity(q.severity) for q in actionable_quirks)
-                    else "warn"
-                ),
-            }
-        )
-
     if diag.acpi_conflicts:
         has_it87 = any(c.conflicts_with_driver == "it87" for c in diag.acpi_conflicts)
         fix = (
@@ -231,7 +207,19 @@ def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
                 ),
                 "doc_url": _HW_COMPAT_URL,
                 "doc_title": "Hardware Compatibility Guide",
-                "severity": "critical" if max(reverts.values()) >= _RECLAIM_HIGH else "warn",
+                # DEC-357: never "critical". A reclaim means the BIOS took fan
+                # control back and the daemon's watchdog re-asserted it — the
+                # user must act, but nothing is being damaged, and CRITICAL is
+                # reserved for mechanisms that damage hardware.
+                #
+                # The count is NOT ignored: `classify_reclaim_severity` still
+                # separates the HIGH bucket, and `build_interference_vm` titles
+                # the gauge "High Contention Detected" from it. What changed is
+                # only that heavy contention no longer paints the health card
+                # red. (This module's own `_RECLAIM_HIGH` copy was deleted with
+                # the ternary it served — the live threshold has one definition,
+                # in `diagnostics_readiness`.)
+                "severity": "warn",
             }
         )
 
@@ -294,6 +282,185 @@ def detect_readiness_problems(diag: HardwareDiagnosticsResult) -> list[dict]:
             }
         )
 
+    return problems
+
+
+# ── Board notes: reference material, with an evidence status (DEC-357) ─────
+#
+# A board/chip quirk is knowledge about the hardware, not an observation of it.
+# It matches on (board vendor, chip prefix, CPU vendor, board name) and nothing
+# about the machine's state, so it can never clear — which is ISA-18.2's
+# definition of a nuisance alarm: one that "does not return to normal after the
+# correct response is taken". Presented as an alarm it trains the user to ignore
+# the stack, and the stack is where the real conditions live.
+#
+# So a note carries an *evidence* status instead of a severity rollup, and only
+# an OBSERVED note reaches the condition list.
+
+#: A note has been confirmed on this machine; it is a live problem.
+EVIDENCE_OBSERVED = "observed"
+#: Measured counter-evidence exists — the mechanism is not happening here.
+EVIDENCE_NOT_OBSERVED = "not_observed"
+#: Neither confirmed nor refuted; the check that would settle it has not run.
+EVIDENCE_UNVERIFIED = "unverified"
+#: Nothing about this machine could ever confirm or refute it (reference only).
+EVIDENCE_REFERENCE = "reference"
+
+#: Triggers whose ABSENCE is real counter-evidence.
+#:
+#: The distinction matters more than it looks. `module_collision` is derived
+#: from the loaded-module list and `dual_chip` from expected-vs-detected chips:
+#: both are measured on every fetch whether or not anything has been written, so
+#: "not present" genuinely means "not happening". `bios_revert` is not like
+#: that. `enable_revert_counts` only gains an entry when a reclaim is *counted*
+#: (`entry(id).or_insert(0) += 1` in the daemon's pwm_control watchdog), so an
+#: empty map is indistinguishable between "the BIOS never reclaimed" and "the
+#: daemon has never written, so nothing could have been reclaimed". Reading it
+#: as the former would let the page claim a quirk was refuted on a machine that
+#: has never attempted fan control — the presence-before-absence trap.
+_CONCLUSIVE_ABSENCE: frozenset[str] = frozenset({"module_collision", "dual_chip"})
+
+#: Severity a promoted note carries as a condition, by consequence. Q1: CRITICAL
+#: is for risk of damage to hardware; everything else is ACTION REQUIRED.
+_PROMOTED_SEVERITY: dict[str, str] = {
+    "hardware_damage": "critical",
+    "control_loss": "warn",
+}
+
+
+class BoardNote(NamedTuple):
+    """One board/chip quirk, with what this machine actually says about it."""
+
+    quirk: VendorQuirk
+    key: str  # stable across prose edits — see `quirk_key`
+    evidence: str  # one of the EVIDENCE_* constants
+    evidence_text: str  # the phrasing shown beside the note
+    related_key: str  # condition key this note explains ("" if none)
+
+
+def quirk_evidence(
+    diag: HardwareDiagnosticsResult,
+    quirk: VendorQuirk,
+    condition_keys: set[str],
+    *,
+    pwm_control_verified: bool | None = None,
+) -> tuple[str, str, str]:
+    """Return ``(evidence, evidence_text, related_key)`` for one quirk.
+
+    ``pwm_control_verified`` is the outcome of a PWM write verification on this
+    machine: ``True`` (writes land), ``False`` (they did not), ``None`` (never
+    run). It is the only thing that can settle a quirk whose mechanism is
+    "writes are accepted and silently ignored", because no field on
+    ``GET /diagnostics/hardware`` reports that — which is exactly why the
+    honest answer in the absence of a verify is *unverified* rather than *fine*.
+    """
+    if quirk.consequence == "none":
+        return (EVIDENCE_REFERENCE, "reference for this hardware", "")
+
+    trigger = quirk.trigger
+    if trigger:
+        # `module_conflict` is the GUI-side fallback for daemons that predate
+        # `module_collisions`; it detects the same pair, so it promotes the same
+        # notes. Missing it would silence the damage advisories on exactly the
+        # older daemons least likely to be protected elsewhere.
+        present = trigger in condition_keys or (
+            trigger == "module_collision" and "module_conflict" in condition_keys
+        )
+        if present:
+            return (EVIDENCE_OBSERVED, "observed on this system", trigger)
+        if trigger in _CONCLUSIVE_ABSENCE:
+            return (EVIDENCE_NOT_OBSERVED, "not present on this system", "")
+        # Falls through: absence of this trigger proves nothing on its own.
+
+    if pwm_control_verified is True:
+        return (EVIDENCE_NOT_OBSERVED, "not observed — fan control tested working", "")
+    if pwm_control_verified is False:
+        return (EVIDENCE_OBSERVED, "observed — fan control did not test clean", "")
+    return (EVIDENCE_UNVERIFIED, "not yet verified on this system", "")
+
+
+def board_notes(
+    diag: HardwareDiagnosticsResult,
+    *,
+    condition_keys: set[str] | None = None,
+    pwm_control_verified: bool | None = None,
+) -> list[BoardNote]:
+    """Every board/chip quirk matching this hardware, most-severe first.
+
+    ``condition_keys`` is the set of condition keys already detected; omit it
+    and the base conditions are derived here. Passing it avoids computing them
+    twice when the caller already has them.
+    """
+    if condition_keys is None:
+        # `_base_conditions`, not `detect_readiness_problems`: a trigger must
+        # name a condition the daemon MEASURED. Deriving it from the full set
+        # would include conditions promoted from notes, letting a note's
+        # evidence depend on another note's evidence.
+        condition_keys = {p["key"] for p in _base_conditions(diag)}
+    notes: list[BoardNote] = []
+    for quirk in advisory_rows(diag):
+        evidence, text, related = quirk_evidence(
+            diag, quirk, condition_keys, pwm_control_verified=pwm_control_verified
+        )
+        notes.append(BoardNote(quirk, quirk_key(quirk), evidence, text, related))
+    return notes
+
+
+def promoted_conditions(notes: list[BoardNote]) -> list[dict]:
+    """Conditions minted by an observed note that no existing condition covers.
+
+    A note whose ``related_key`` is set is already explained by a condition card
+    on the page, so promoting it too would print the same problem twice — the
+    duplication that made the old rollup say "review the quirk notes above"
+    while sorting itself above them. Only a note with no owning condition — one
+    whose mechanism only a write can reveal — mints its own.
+    """
+    out: list[dict] = []
+    for note in notes:
+        if note.evidence != EVIDENCE_OBSERVED or note.related_key:
+            continue
+        severity = _PROMOTED_SEVERITY.get(note.quirk.consequence)
+        if severity is None:
+            continue
+        out.append(
+            {
+                "key": f"quirk_{note.key}",
+                "label": note.quirk.summary,
+                "fix": (
+                    "A fan-control test on this system did not come back clean, "
+                    "and this board has a documented quirk that matches. Open the "
+                    "board note below for the remedy."
+                ),
+                "doc_url": _HW_COMPAT_URL,
+                "doc_title": "Hardware Compatibility Guide",
+                "severity": severity,
+            }
+        )
+    return out
+
+
+def detect_readiness_problems(
+    diag: HardwareDiagnosticsResult,
+    *,
+    pwm_control_verified: bool | None = None,
+) -> list[dict]:
+    """Return the conditions requiring the user's attention, in display order.
+
+    Conditions the daemon measured, plus any board note this machine has
+    confirmed and no other condition already covers. Same dict shape as before
+    (``{key, label, fix, doc_url, doc_title, severity}``).
+
+    ``pwm_control_verified`` defaults to ``None`` ("never tested"), under which
+    nothing is promoted — so every existing caller keeps the pre-DEC-357
+    contract of "conditions derived from `diag` alone".
+    """
+    problems = _base_conditions(diag)
+    notes = board_notes(
+        diag,
+        condition_keys={p["key"] for p in problems},
+        pwm_control_verified=pwm_control_verified,
+    )
+    problems.extend(promoted_conditions(notes))
     return problems
 
 

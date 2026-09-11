@@ -27,6 +27,7 @@ from control_ofc.ui.widgets import readiness_report
 from control_ofc.ui.widgets.readiness_report import (
     ReadinessReportDialog,
     board_identity_line,
+    board_notes,
     build_fix_guidance_html,
     build_readiness_report_html,
     chip_rows,
@@ -91,8 +92,15 @@ class TestVerdict:
         text, _ = readiness_verdict(diag)
         assert "1 issue needs attention" in text
 
-    def test_critical_revert_makes_verdict_critical(self):
-        diag = _healthy(
+    def test_heavy_revert_is_action_required_not_critical(self):
+        """DEC-357 / Q1: CRITICAL is reserved for risk of damaging hardware.
+
+        A reclaim means the BIOS took fan control back and the watchdog took it
+        again — the user must act, but nothing is harmed. The second arm is what
+        makes this a test rather than a blanket demotion: a mechanism that CAN
+        damage hardware must still reach CriticalChip from the same function.
+        """
+        reclaimed = _healthy(
             hwmon=HwmonDiagnostics(
                 chips_detected=[
                     HwmonChipInfo(chip_name="nct6779", expected_driver="nct6775", header_count=5)
@@ -102,8 +110,22 @@ class TestVerdict:
                 enable_revert_counts={"pwm1": 25},
             )
         )
-        _, cls = readiness_verdict(diag)
-        assert cls == "CriticalChip"
+        text, cls = readiness_verdict(reclaimed)
+        assert "attention" in text, "it is still a condition, just not a critical one"
+        assert cls == "WarningChip"
+
+        collided = _healthy(
+            module_collisions=[
+                ModuleCollisionInfo(
+                    module_a="nct6687",
+                    module_b="nct6775",
+                    severity="critical",
+                    summary="overlapping chip id",
+                    remediation="blacklist one",
+                )
+            ]
+        )
+        assert readiness_verdict(collided)[1] == "CriticalChip"
 
 
 class TestDetectProblems:
@@ -458,8 +480,13 @@ class TestUnknownSeverityRendersConsistently:
             "the two surfaces disagree about the same quirk"
         )
 
-    def test_detect_readiness_problems_still_reports_a_known_tier(self, monkeypatch):
-        """Guard the other direction: the fix must not silence real problems."""
+    def test_a_known_tier_is_still_surfaced_as_a_board_note(self, monkeypatch):
+        """Guard the other direction: the fix must not silence real advice.
+
+        DEC-357 moved the destination — a quirk is a board note, not a rolled-up
+        condition — but not the guarantee. An actionable tier must still reach a
+        surface the user can read, carrying the tier it was authored at.
+        """
         quirk = VendorQuirk(
             vendor_pattern="acme",
             chip_prefix="xyz",
@@ -468,11 +495,14 @@ class TestUnknownSeverityRendersConsistently:
             details=["Actionable."],
         )
         monkeypatch.setattr(readiness_report, "lookup_vendor_quirks", lambda *a, **k: [quirk])
-        problems = {p["key"]: p for p in detect_readiness_problems(_healthy())}
-        assert "vendor_quirk" in problems, "a medium-severity quirk must still raise a problem"
-        assert problems["vendor_quirk"]["severity"] == "warn", (
-            "medium must roll up as warn, not critical"
-        )
+        notes = {n.quirk.summary: n for n in board_notes(_healthy())}
+        assert quirk.summary in notes
+        note = notes[quirk.summary]
+        assert note.quirk.severity == quirk.severity
+        assert is_actionable_severity(note.quirk.severity) is True
+        # The tier it renders at comes from the map both surfaces derive from,
+        # so the panel and the pop-out report cannot disagree (DEC-115/158).
+        assert severity_display(note.quirk.severity).css_class == "CautionChip"
 
     def test_the_two_predicates_agree_with_the_rendered_presentation(self):
         # The actual coupling under test: anything the panel paints as INFO must

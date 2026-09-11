@@ -411,3 +411,79 @@ Bad:
 - "Something went wrong"
 - "Error!"
 - "Status unknown maybe"
+
+---
+
+## Alarm policy — what is allowed to shout (DEC-357)
+
+This section is canonical for **any** surface that raises a severity. It exists
+because one did not, and a healthy machine spent several releases displaying a
+red CRITICAL card for a property of the motherboard it was built with.
+
+### A condition is not the same thing as knowledge about the hardware
+
+| | **Condition** | **Note** |
+| --- | --- | --- |
+| Derived from | something **observed** on this machine | a static match on hardware identity |
+| Can it clear? | yes — fix the cause, refetch, it is gone | never; it is true of the board forever |
+| Treatment | severity, colour, always visible, counted in the rollup | evidence status, collapsed, never counted |
+
+**Only a condition may raise an alarm.** ISA-18.2 — which `services/alerts.py`
+already implements for the poll-derived conditions — defines an alarm as a state
+*requiring a response*, and names an alarm that does not return to normal after
+the correct response a **nuisance alarm**. Knowledge that cannot clear is
+therefore not an alarm however serious it is, and presenting it as one teaches
+the reader to ignore the list that holds the real ones.
+
+### Severity comes from consequence, never from which rule matched
+
+Rationalise a severity the way ISA-18.2 does — by *consequence* × *time to
+respond* — not by the tier the source table happened to carry:
+
+- **CRITICAL** — a mechanism that risks **damaging hardware**. Reserve it. In
+  this application exactly one qualifies today: the out-of-tree `nct6687` driver
+  mis-claiming an NCT6797D/NCT6798D and writing into its non-volatile fan
+  registers.
+- **ACTION REQUIRED** (`warn`) — the user must do something, including losing fan
+  control entirely. Serious, and still not CRITICAL.
+- Lower tiers are information, and must read like it.
+
+A rule of thumb that catches most mistakes: **if the finding's own text says
+"may", it is not CRITICAL.**
+
+### Knowledge carries evidence, not a rollup
+
+Where a note *can* be confirmed or refuted on this machine, say which:
+`observed` · `not_observed` · `unverified` · `reference`. Three rules make that
+honest.
+
+1. **Absence is only evidence when the absent thing is measured unconditionally.**
+   A counter that is only created when something goes wrong cannot distinguish
+   "it never went wrong" from "nothing ever ran". Prefer *unverified* to a
+   confident *not observed* — claiming a refutation you did not make is worse
+   than admitting you do not know.
+2. **Offer the check that would settle it**, and only while it would settle
+   something.
+3. **A note that is confirmed becomes a condition** — either its own, or, where
+   an existing condition already detects the same mechanism, as an explanation
+   attached to that one. Never both; two cards describing one problem is the
+   defect, not the thoroughness.
+
+### Silence must be reversible, and must not outlive its reason
+
+Acknowledgement and dismissal are **per occurrence**, keyed on the finding *plus
+what the machine said at the time* — the DEC-282 rule, which exists because an
+acknowledgement stored against a bare key once muted every future recurrence
+permanently. And a "don't show me again" with no way back is a defect rather
+than a preference: the user has deleted part of the UI in one click. Every
+dismissal needs a visible, counted restore (Settings ▸ *Prompts & Dismissals*),
+and anything hardware-keyed is machine-specific — never carried in a portable
+export, where it would silence a finding on hardware nobody reviewed it against.
+
+### Reports are not panels
+
+A support artefact (the pop-out **Readiness Report**) stays **complete and
+unfiltered**, including findings dismissed on the page. Noise is appropriate
+there; it is the record. What must not diverge is the *derivation* — panel and
+report read the same formatters (DEC-115), so a verdict corrected in one is
+corrected in both.

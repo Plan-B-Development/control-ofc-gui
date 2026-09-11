@@ -149,7 +149,8 @@ control_ofc/
     # extracted out of ui/pages so the pages stay thin (DEC-208..216, DEC-219).
     # Some import profile_service (loads QtCore, builds no widgets).
     overview_view.py           # Overview page VM — DEC-209
-    system_state_view.py       # System State page VM — DEC-211
+    system_state_view.py       # System State page VM — DEC-211; conditions vs
+                               #   board notes + ack/dismiss lifecycle (DEC-357)
     hardware_view.py           # Hardware / cooling-readiness page VM — DEC-212
     logs_view.py               # Logs page VM — DEC-210; the whole List+Inspector
                                #   derivation since DEC-314 (collapse, filter, facet

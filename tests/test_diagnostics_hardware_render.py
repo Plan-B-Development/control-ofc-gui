@@ -12,7 +12,8 @@ The reclaim helpers now live in ``diagnostics_readiness`` (Cluster C split). The
 widget-layer assertions that drove ``DiagnosticsPage._populate_hw_diagnostics``
 (the reclaim card headline/colour, the Gigabyte+IT8696E VendorQuirk auto-show,
 and the async hw-diag fetch) moved to the retirement's successors:
-``test_system_state_view.py`` (``build_interference_vm`` / ``build_issue_cards``)
+``test_system_state_view.py`` (``build_interference_vm`` /
+``build_condition_cards``)
 and ``test_system_state_page.py`` (worker lifecycle + fetch).
 """
 

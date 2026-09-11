@@ -9,7 +9,7 @@ verbatim from the page (the DEC-219 golden-master pins them).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -29,7 +29,9 @@ from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import BracketCard, Card, ContentSizedCard, SectionHeader
 from control_ofc.ui.components.gauges import RadialGauge
 from control_ofc.ui.components.tables import apply_dense_table
+from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.theme import active_theme
+from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 
 _REGISTRY_COLS = ["Status", "Chip / Component", "Driver", "Driver Status", "Mainline", "Headers"]
 _REG_STATUS = 0
@@ -152,13 +154,116 @@ def _make_issue_card(vm) -> QWidget:
     return card
 
 
+def _make_note_row(vm, on_ack, on_dismiss) -> QWidget:
+    """One board note: severity caption, evidence, title, collapsed detail.
+
+    DEC-357 restores the two DEC-158 rules the DEC-211 page migration dropped.
+
+    * **Progressive disclosure.** The detail lives in a ``CollapsibleSection``
+      opened from ``SeverityDisplay.default_expanded`` — the field that had no
+      production consumer at all while a test went on asserting its values. An
+      always-expanded detail box per advisory is what made this panel 1336px of
+      prose on a healthy machine (Nielsen: defer rarely-needed detail, and no
+      more than two levels).
+    * **Four hues.** The caption takes the themed chip class directly, so
+      MEDIUM/LOW paint amber and INFO blue instead of all three borrowing HIGH's
+      orange from the pill vocabulary. Via ``set_chip_class`` rather than an
+      interpolated inline stylesheet, so it survives a live theme change.
+    """
+    theme = active_theme()
+    card = Card()
+    # `Card` takes no object_name parameter (unlike SectionHeader/RadialGauge/
+    # make_button). Set here rather than widening a shared primitive in this
+    # change — recorded as register row `SSN-j`.
+    card.setObjectName(f"SystemState_BoardNote_{vm.key}")
+    v = QVBoxLayout(card)
+    v.setSpacing(4)
+
+    head = QHBoxLayout()
+    head.setSpacing(8)
+    caption = QLabel(f"{vm.severity_glyph} {vm.severity_word}")
+    caption.setObjectName(f"SystemState_BoardNoteSeverity_{vm.key}")
+    set_chip_class(caption, vm.severity_css)
+    head.addWidget(caption)
+    evidence = QLabel(vm.evidence_text)
+    evidence.setObjectName(f"SystemState_BoardNoteEvidence_{vm.key}")
+    evidence.setProperty("class", "CardMeta")
+    head.addWidget(evidence)
+    head.addStretch(1)
+    if vm.acknowledged:
+        head.addWidget(
+            StatusPill("Acknowledged", "neutral", object_name=f"SystemState_BoardNoteAck_{vm.key}")
+        )
+    v.addLayout(head)
+
+    title = QLabel(vm.title)
+    title.setObjectName(f"SystemState_BoardNoteTitle_{vm.key}")
+    title.setWordWrap(True)
+    # An acknowledged note stays legible but stops competing for attention.
+    title.setStyleSheet(
+        f"color: {theme.text_muted if vm.acknowledged else theme.text_primary}; font-weight: 600;"
+    )
+    v.addWidget(title)
+
+    if vm.detail:
+        section = CollapsibleSection(
+            "Details",
+            object_name=f"SystemState_BoardNoteDetails_{vm.key}",
+            # An acknowledged note always starts closed: the user has said they
+            # have read it, and collapsing it is the whole point of the button.
+            expanded=vm.default_expanded and not vm.acknowledged,
+        )
+        box = QLabel(vm.detail)
+        box.setObjectName(f"SystemState_BoardNoteDetail_{vm.key}")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setWordWrap(True)
+        box.setOpenExternalLinks(True)
+        box.setStyleSheet(
+            f"background: {theme.surface_2}; border: 1px solid {theme.border_default};"
+            " border-radius: 4px; padding: 6px;"
+        )
+        section.add_widget(box)
+        v.addWidget(section)
+
+    actions = QHBoxLayout()
+    actions.addStretch(1)
+    if vm.can_acknowledge:
+        label = "Unacknowledge" if vm.acknowledged else "Acknowledge"
+        ack_btn = make_button(label, "ghost", object_name=f"SystemState_BoardNoteAckBtn_{vm.key}")
+        ack_btn.clicked.connect(lambda _=False, k=vm.ack_key, on=not vm.acknowledged: on_ack(k, on))
+        actions.addWidget(ack_btn)
+    if vm.can_dismiss:
+        dismiss_btn = make_button(
+            "Dismiss", "ghost", object_name=f"SystemState_BoardNoteDismissBtn_{vm.key}"
+        )
+        dismiss_btn.clicked.connect(lambda _=False, k=vm.ack_key: on_dismiss(k))
+        actions.addWidget(dismiss_btn)
+    if actions.count() > 1:
+        v.addLayout(actions)
+    return card
+
+
 # ── cards ────────────────────────────────────────────────────────────────
 
 
 class HealthCard(ContentSizedCard):
-    """System Health Overview — issue-count pill, summary line, and the
-    severity-sorted issue cards. The page also pushes fetch/error text through
-    ``set_summary()``."""
+    """System Health Overview — issue-count pill, summary line, the
+    severity-sorted condition cards, and the collapsed board-notes section
+    (DEC-357). The page also pushes fetch/error text through ``set_summary()``.
+
+    The two halves answer different questions and are deliberately not ranked
+    together. A **condition** was measured on this machine and clears itself
+    when the user fixes it. A **board note** is reference material keyed on
+    which motherboard you bought; it can never clear, so presenting it as an
+    alarm trains the reader to ignore the stack that holds the real ones.
+    """
+
+    #: (ack_key, acknowledged) — the user (un)acknowledged one note.
+    note_acknowledged = Signal(str, bool)
+    #: (ack_key) — the user dismissed one note.
+    note_dismissed = Signal(str)
+    #: The user asked to settle an unverified note by testing fan control.
+    verify_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -183,6 +288,41 @@ class HealthCard(ContentSizedCard):
         self._issues_layout.setContentsMargins(0, 0, 0, 0)
         self._issues_layout.setSpacing(8)
         v.addWidget(self._issues_container)
+
+        # Board notes — one collapsed section, below the conditions. The header
+        # stays visible so the information is never lost, only deferred; the
+        # count is on it so the reader knows what is behind it before opening.
+        self._notes_section = CollapsibleSection(
+            "Board notes", object_name="SystemState_Section_boardNotes", expanded=False
+        )
+        self._notes_subtitle = QLabel("")
+        self._notes_subtitle.setObjectName("SystemState_Label_boardNotesSubtitle")
+        self._notes_subtitle.setProperty("class", "CardMeta")
+        self._notes_subtitle.setWordWrap(True)
+        self._notes_section.add_widget(self._notes_subtitle)
+
+        self._verify_btn = make_button(
+            "Test fan control", "secondary", object_name="SystemState_Btn_verifyBoardNotes"
+        )
+        self._verify_btn.clicked.connect(self.verify_requested)
+        self._verify_row = QWidget()
+        self._verify_row.setObjectName("SystemState_Row_verifyBoardNotes")
+        verify_layout = QHBoxLayout(self._verify_row)
+        verify_layout.setContentsMargins(0, 0, 0, 0)
+        self._verify_hint = QLabel("")
+        self._verify_hint.setObjectName("SystemState_Label_verifyHint")
+        self._verify_hint.setProperty("class", "CardMeta")
+        self._verify_hint.setWordWrap(True)
+        verify_layout.addWidget(self._verify_hint, 1)
+        verify_layout.addWidget(self._verify_btn)
+        self._notes_section.add_widget(self._verify_row)
+
+        self._notes_container = QWidget()
+        self._notes_layout = QVBoxLayout(self._notes_container)
+        self._notes_layout.setContentsMargins(0, 0, 0, 0)
+        self._notes_layout.setSpacing(8)
+        self._notes_section.add_widget(self._notes_container)
+        v.addWidget(self._notes_section)
         v.addStretch(1)
 
     def set_summary(self, text: str) -> None:
@@ -196,17 +336,44 @@ class HealthCard(ContentSizedCard):
             summary = f"{summary}  ·  {vm.board_line}"
         self._summary_label.setText(summary)
         self._rebuild_issue_cards(vm.issue_cards)
+        self._rebuild_board_notes(vm.board_notes)
 
     def _rebuild_issue_cards(self, cards) -> None:
         _clear_layout(self._issues_layout)
         if not cards:
-            ok = QLabel("No hardware issues detected — system ready.")
+            ok = QLabel("No active conditions — fan control is available.")
             ok.setObjectName("SystemState_Label_noIssues")
             ok.setProperty("class", "CardMeta")
             self._issues_layout.addWidget(ok)
             return
         for vm in cards:
             self._issues_layout.addWidget(_make_issue_card(vm))
+
+    def _rebuild_board_notes(self, vm) -> None:
+        _clear_layout(self._notes_layout)
+        self._notes_section.set_title(vm.title)
+        parts = [vm.subtitle]
+        if vm.related_count:
+            n = vm.related_count
+            parts.append(f"{n} relate{'s' if n == 1 else ''} to a condition above")
+        if vm.hidden_count:
+            parts.append(f"{vm.hidden_count} dismissed (restore in Settings)")
+        if vm.acknowledged_count:
+            parts.append(f"{vm.acknowledged_count} acknowledged")
+        self._notes_subtitle.setText(" · ".join(parts))
+        # Only offer the test when it would actually settle something.
+        self._verify_row.setVisible(vm.unverified_count > 0)
+        if vm.unverified_count:
+            n = vm.unverified_count
+            self._verify_hint.setText(
+                f"{n} note{'' if n == 1 else 's'} can only be confirmed or ruled out by "
+                "writing to a fan header."
+            )
+        self._notes_section.setVisible(vm.total > 0)
+        for note in vm.notes:
+            self._notes_layout.addWidget(
+                _make_note_row(note, self.note_acknowledged.emit, self.note_dismissed.emit)
+            )
 
 
 class InterferenceCard(ContentSizedCard):

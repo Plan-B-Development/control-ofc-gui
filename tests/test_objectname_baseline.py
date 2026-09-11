@@ -44,6 +44,16 @@ SYSTEM_STATE_OBJECTNAMES = frozenset(
         "SystemState_Btn_openReport",
         "SystemState_Btn_restoreGpu",
         "SystemState_Btn_verifyAll",
+        # DEC-357: the board-notes section — the collapsed home for board/chip
+        # reference material that used to sort into the alarm stack.
+        "SystemState_Btn_verifyBoardNotes",
+        "SystemState_Label_boardNotesSubtitle",
+        "SystemState_Label_verifyHint",
+        "SystemState_Row_verifyBoardNotes",
+        "SystemState_Section_boardNotes",
+        "SystemState_Section_boardNotes_Content",
+        "SystemState_Section_boardNotes_Header",
+        "SystemState_Section_boardNotes_Persistent",
         # AIO-MB Phase 3 (DEC-313): the deeper PWM/RPM sweep, added beside the
         # quick verify. A deliberate addition, not a refactor artefact.
         "SystemState_Btn_characterize",

@@ -33,14 +33,17 @@ from control_ofc.ui.hwmon_guidance import (
     severity_display,
 )
 from control_ofc.ui.pages.diagnostics_readiness import classify_reclaim_severity
+from control_ofc.ui.widgets import readiness_report as readiness
 from control_ofc.ui.widgets.readiness_report import (
-    advisory_rows,
     board_identity_line,
     chip_rows,
     detect_readiness_problems,
     header_summary_line,
     module_rows,
     readiness_verdict,
+)
+from control_ofc.ui.widgets.readiness_report import (
+    board_notes as board_notes_for,
 )
 
 _HW_COMPAT_URL = (
@@ -178,6 +181,46 @@ class IssueCardVM:
 
 
 @dataclass(frozen=True)
+class BoardNoteVM:
+    """One board/chip reference note (DEC-357).
+
+    Carries an *evidence* status rather than being ranked into the condition
+    stack: a quirk matches on hardware identity, so it can never clear on its
+    own, and an alarm that cannot return to normal is ISA-18.2's definition of a
+    nuisance alarm. `severity` is still here because the tier is real
+    information — it is simply no longer what decides whether the page shouts.
+    """
+
+    key: str  # stable quirk identity (survives prose edits)
+    ack_key: str  # identity an ack/dismissal is stored against — see note_ack_key
+    title: str
+    detail: str | None  # HTML detail box
+    severity: str  # raw ("critical"|"high"|"medium"|"low"|"info")
+    severity_css: str  # themed chip class — all four DEC-158 hues
+    severity_word: str
+    severity_glyph: str
+    evidence: str  # observed | not_observed | unverified | reference
+    evidence_text: str
+    related_key: str  # condition key this note explains ("" if none)
+    default_expanded: bool
+    acknowledged: bool
+    can_acknowledge: bool
+    can_dismiss: bool
+
+
+@dataclass(frozen=True)
+class BoardNotesVM:
+    notes: list[BoardNoteVM]  # visible (dismissed ones are excluded)
+    total: int  # matched for this hardware, before dismissals
+    hidden_count: int
+    acknowledged_count: int
+    related_count: int  # notes explaining a currently-active condition
+    unverified_count: int  # notes a PWM verify would settle
+    title: str
+    subtitle: str
+
+
+@dataclass(frozen=True)
 class InterferenceVM:
     has_contention: bool
     highest_count: int
@@ -233,6 +276,7 @@ class SystemStateVM:
     issue_count_label: str
     issue_count_state: str  # ok | warn | crit
     issue_cards: list[IssueCardVM]
+    board_notes: BoardNotesVM
     interference: InterferenceVM
     safety_gpu: SafetyGpuVM
     registry_rows: list[ChipRegistryRowVM]
@@ -342,31 +386,134 @@ def _issue_card_from_problem(diag: HardwareDiagnosticsResult, problem: dict) -> 
     )
 
 
-def _issue_card_from_advisory(quirk, index: int) -> IssueCardVM:
-    sd = severity_display(quirk.severity)
-    return IssueCardVM(
-        key=f"advisory_{index}",
-        title=quirk.summary,
-        description="",
-        detail=advisory_detail_html(quirk.details) or None,
-        doc_url=_HW_COMPAT_URL,
-        doc_title="Hardware Compatibility Guide",
-        severity=quirk.severity,
-        severity_state=severity_to_state(quirk.severity),
-        severity_word=sd.word,
-        severity_glyph=sd.glyph,
-    )
+def build_condition_cards(
+    diag: HardwareDiagnosticsResult,
+    *,
+    pwm_control_verified: bool | None = None,
+) -> list[IssueCardVM]:
+    """The severity-sorted cards for conditions requiring the user's attention.
 
-
-def build_issue_cards(diag: HardwareDiagnosticsResult) -> list[IssueCardVM]:
-    """Unify the checklist problems + the detailed vendor advisories into one
-    severity-sorted card list (mirrors today's tab, which renders both)."""
-    cards = [_issue_card_from_problem(diag, p) for p in detect_readiness_problems(diag)]
-    cards += [_issue_card_from_advisory(q, i) for i, q in enumerate(advisory_rows(diag))]
-    # Stable sort by severity rank descending: problems precede advisories at
-    # equal rank (Python's sort is stable) → the mockup's card order.
+    DEC-357 removed the vendor advisories from this list. They were merged in
+    here at DEC-211 and the merge is what made the stack unreadable: a static
+    table match on "which motherboard did you buy" sorted alongside — and above
+    — conditions the daemon had actually measured, could never clear, and
+    carried a severity nothing had observed. Advisories are now
+    :func:`build_board_notes`, one collapsed section below.
+    """
+    cards = [
+        _issue_card_from_problem(diag, p)
+        for p in detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
+    ]
     cards.sort(key=lambda c: severity_display(c.severity).rank, reverse=True)
     return cards
+
+
+# ─── Board notes (DEC-357) ─────────────────────────────────────────────────
+
+
+def note_ack_key(key: str, evidence: str) -> str:
+    """The identity an acknowledgement or dismissal is stored against.
+
+    **The evidence status is part of the key, deliberately.** `services/alerts`
+    learned this the hard way at DEC-282: an acknowledgement stored against a
+    bare condition key muted every future recurrence of that condition, forever.
+    ISA-18.2's answer is that acknowledgement marks an *occurrence*, so it
+    cannot reach the next one — and an evidence change is exactly what minting a
+    new occurrence means here. Silence a note while it is unverified and it
+    stays silent; let it become observed and it speaks again, because the key it
+    was silenced under no longer describes it.
+
+    That is also the half of the user's request that the collapse alone does not
+    satisfy: the warning must stop following them once resolved, *without*
+    losing the ability to shout when it matters.
+    """
+    return f"{key}@{evidence}"
+
+
+def build_board_notes(
+    diag: HardwareDiagnosticsResult,
+    *,
+    pwm_control_verified: bool | None = None,
+    acknowledged: set[str] | None = None,
+    dismissed: set[str] | None = None,
+    allow_acknowledge: bool = True,
+    allow_dismiss: bool = True,
+) -> BoardNotesVM:
+    """Reference notes for this board/chip, with what this machine says of each."""
+    acknowledged = acknowledged or set()
+    dismissed = dismissed or set()
+    # `condition_keys` is deliberately NOT passed. Precomputing it here meant
+    # passing `detect_readiness_problems`' full set — base conditions *plus*
+    # anything promoted from a note — which is exactly the shape
+    # `readiness_report.board_notes` documents as wrong: a trigger must name a
+    # condition the daemon measured, or a note's evidence comes to depend on
+    # another note's evidence. Inert as written (a promoted key is `quirk_…`
+    # and no trigger token can match one), and it stayed inert only by an
+    # accident of naming. Letting the callee derive it also stops this
+    # function computing the conditions, and the notes, twice.
+    notes = board_notes_for(diag, pwm_control_verified=pwm_control_verified)
+
+    rows: list[BoardNoteVM] = []
+    hidden = 0
+    for note in notes:
+        ack_key = note_ack_key(note.key, note.evidence)
+        if ack_key in dismissed:
+            hidden += 1
+            continue
+        sd = severity_display(note.quirk.severity)
+        rows.append(
+            BoardNoteVM(
+                key=note.key,
+                ack_key=ack_key,
+                title=note.quirk.summary,
+                detail=advisory_detail_html(note.quirk.details) or None,
+                severity=note.quirk.severity,
+                # The themed chip class, not the coarse pill state. This is what
+                # restores DEC-158's four-hue separation on the page: MEDIUM and
+                # LOW resolve to CautionChip (amber) and INFO to InfoChip (blue),
+                # where `severity_to_state` collapses both into the pill's single
+                # "warn". The class is applied with `set_chip_class`, so it also
+                # repaints on a live theme change — an interpolated token in an
+                # inline stylesheet would freeze at render time.
+                severity_css=sd.css_class,
+                severity_word=sd.word,
+                severity_glyph=sd.glyph,
+                evidence=note.evidence,
+                evidence_text=note.evidence_text,
+                related_key=note.related_key,
+                # DEC-158's other lost rule. The detail box has rendered
+                # unconditionally expanded since the DEC-211 move, which is what
+                # turned this panel into a wall; `default_expanded` had no
+                # production consumer at all while a test went on asserting its
+                # values. An observed note opens regardless of tier — it is the
+                # one the user has to read.
+                default_expanded=(
+                    sd.default_expanded or note.evidence == readiness.EVIDENCE_OBSERVED
+                ),
+                acknowledged=ack_key in acknowledged,
+                can_acknowledge=allow_acknowledge,
+                can_dismiss=allow_dismiss,
+            )
+        )
+
+    related = sum(1 for r in rows if r.related_key)
+    unverified = sum(1 for r in rows if r.evidence == readiness.EVIDENCE_UNVERIFIED)
+    acked = sum(1 for r in rows if r.acknowledged)
+    total = len(notes)
+    if total:
+        subtitle = f"Reference material for {diag.board.name or 'this board'}"
+    else:
+        subtitle = "No documented quirks for this board and chip combination."
+    return BoardNotesVM(
+        notes=rows,
+        total=total,
+        hidden_count=hidden,
+        acknowledged_count=acked,
+        related_count=related,
+        unverified_count=unverified,
+        title=f"Board notes for this hardware ({total})" if total else "Board notes",
+        subtitle=subtitle,
+    )
 
 
 # ─── Interference / safety / registry ──────────────────────────────────────
@@ -609,17 +756,29 @@ def build_verify_headers(
     ]
 
 
-def build_system_state_vm(diag: HardwareDiagnosticsResult) -> SystemStateVM:
-    problems = detect_readiness_problems(diag)
+def build_system_state_vm(
+    diag: HardwareDiagnosticsResult,
+    *,
+    pwm_control_verified: bool | None = None,
+    acknowledged_notes: set[str] | None = None,
+    dismissed_notes: set[str] | None = None,
+    allow_acknowledge: bool = True,
+    allow_dismiss: bool = True,
+) -> SystemStateVM:
+    problems = detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
     n = len(problems)
     verdict_text, verdict_cls = readiness_verdict(diag)
     if n == 0:
         issue_count_label = "SYSTEM READY"
         issue_count_state = "ok"
     else:
-        issue_count_label = (
-            f"{n} ISSUE{'' if n == 1 else 'S'} REQUIRE{'S' if n == 1 else ''} ATTENTION"
-        )
+        # DEC-357: one label, the state carries the tier. The old wording
+        # ("N ISSUES REQUIRE ATTENTION") counted `problems` while the list below
+        # rendered problems *plus* advisories, so the pill and the stack
+        # disagreed about how many things were wrong. ISA-18.2's framing is the
+        # honest one and it is now literally true of this list: an alarm is a
+        # condition requiring a response, and every entry is one.
+        issue_count_label = f"{n} ACTION REQUIRED"
         issue_count_state = "crit" if any(p["severity"] == "critical" for p in problems) else "warn"
     return SystemStateVM(
         board_line=board_identity_line(diag),
@@ -629,7 +788,15 @@ def build_system_state_vm(diag: HardwareDiagnosticsResult) -> SystemStateVM:
         issues_requiring_attention=n,
         issue_count_label=issue_count_label,
         issue_count_state=issue_count_state,
-        issue_cards=build_issue_cards(diag),
+        issue_cards=build_condition_cards(diag, pwm_control_verified=pwm_control_verified),
+        board_notes=build_board_notes(
+            diag,
+            pwm_control_verified=pwm_control_verified,
+            acknowledged=acknowledged_notes,
+            dismissed=dismissed_notes,
+            allow_acknowledge=allow_acknowledge,
+            allow_dismiss=allow_dismiss,
+        ),
         interference=build_interference_vm(diag),
         safety_gpu=build_safety_gpu_vm(diag),
         registry_rows=build_registry_rows(diag),

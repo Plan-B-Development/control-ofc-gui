@@ -236,6 +236,10 @@ class MainWindow(QWidget):
             diagnostics_service=self._diag,
             client=self._client,
             profile_service=self._profile_service,
+            # DEC-357: board-note acknowledgement/dismissal persist here. The
+            # shared service, not a second one — two instances would write the
+            # same file from two in-memory copies and lose each other's keys.
+            settings_service=self._settings_service,
         )
         # DEC-212: Hardware is now its own page (migrated Diagnostics Readiness).
         # Owns its own hardware-readiness worker; deep-links re-point to the

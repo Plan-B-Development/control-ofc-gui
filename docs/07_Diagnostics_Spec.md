@@ -578,8 +578,7 @@ top-to-bottom:
   `severity_display` mapping (DEC-158), so it carries an icon **and** the word
   **and** a colour (`CriticalChip` red / `WarningChip` orange) — colour is never
   the only cue (WCAG 1.4.1).
-- **Advisories** (historical objectName `Diagnostics_Container_advisories`; now
-  folded into the `Hardware_Action_{code}` cards, DEC-158/DEC-212) — board/chip
+- **Advisories** (historical objectName `Diagnostics_Container_advisories`) — board/chip
   vendor quirks, one collapsible row each, most-severe-first. Replaces the old
   single flat `[SEVERITY] …` PlainText label: every advisory now shows a
   per-severity badge (icon + word + colour + weight) and an always-visible
@@ -593,6 +592,33 @@ top-to-bottom:
   strings are rendered (no daemon string is interpolated), so rich text is safe
   (DEC-106). The **dual-chip** setup warning and **ACPI conflicts** sit alongside
   it — advisory, shown only when present.
+
+  > **Updated, 2026-09-11 (DEC-357).** Two corrections in one, because the first
+  > was found while tracing the second.
+  >
+  > *Where they live.* This bullet used to say the advisories were "now folded
+  > into the `Hardware_Action_{code}` cards, DEC-158/DEC-212". They were not —
+  > `cooling_readiness` / `hardware_view` contain no advisory or quirk code at
+  > all. They went to the **System State** page at DEC-211.
+  >
+  > *What they are.* DEC-211 merged them into the health **issue** stack, and
+  > DEC-357 unpicked that: a vendor quirk is a **board note**, not a condition.
+  > `services/system_state_view.build_condition_cards` renders only conditions
+  > the daemon measured; `build_board_notes` renders the quirks in a collapsed
+  > *"Board notes for this hardware (N)"* section below them, via
+  > `widgets/system_state_cards._make_note_row`. A note carries an **evidence
+  > status** (`observed` / `not_observed` / `unverified` / `reference`) rather
+  > than being ranked into the alarm stack, and it can be acknowledged or
+  > dismissed per occurrence. `severity` still governs presentation exactly as
+  > described above; it no longer decides whether the page raises an alarm.
+  >
+  > The collapse rule and the four-hue map described above were **lost** in the
+  > DEC-211 move and are **restored** by DEC-357 on the note rows —
+  > `SeverityDisplay.default_expanded` has a production consumer again, and the
+  > caption takes the themed chip class directly, so MEDIUM/LOW paint
+  > `status_caution` and INFO `status_info`. Register rows `SSN-c` / `SSN-d`,
+  > both closed.
+
 - **Summary + board identity** — the readiness summary line and board identity.
 - **Five flat detail sub-sections** (`CollapsibleSection`, all collapsed by
   default): *Detected hardware* (chip + kernel-module tables), *BIOS

@@ -83,7 +83,7 @@ Several cards collect the things that accumulate quietly as you use the applicat
 |---|---|
 | **Fan Names** | Every fan name in one place, including names for hardware that is no longer plugged in. Those rows are kept on purpose: otherwise a stale name could never be removed. Renaming from the Dashboard or the Overview fan table is unchanged |
 | **Sensors & Chart Series** | Hidden sensors, coolant classification overrides, custom chart colours, hidden chart series — and **Settings for missing hardware** (below) |
-| **Prompts & Dismissals** | Re-arms the AIO pump popup, dismissed driver advisories, the daemon profile-import offer, and the one-time fan-name and chart-series seeding |
+| **Prompts & Dismissals** | Re-arms the AIO pump popup, dismissed driver advisories, the daemon profile-import offer, and the one-time fan-name and chart-series seeding. Also governs the **System State** page's board notes: whether the *Acknowledge* and *Dismiss* buttons appear at all, **Clear acknowledged** / **Restore** to undo them, and a control to forget the recorded fan-control test result so those notes read as unverified again |
 | **Card Layout** | Every Controls-page card size at once (resetting one card by double-clicking its grip is unchanged), and **Reset layout**, which puts every panel divider back to an even split |
 
 ### Remembered layout
@@ -113,7 +113,7 @@ This card (formerly the Import/Export tab) provides full backup and restore of a
 - All saved profiles
 - All custom themes
 
-Machine-specific state is deliberately **excluded** so the file is safe to share or move between machines: window geometry, last page, data-directory overrides, the default export directory, per-series chart colours, card sizes and card/sensor bindings, fan-zone ordering, hidden sensor rows, sensor-class overrides, dismissed kernel warnings, and the one-time profile-import flag. A full snapshot of everything (for same-machine debugging) lives in the **Logs** page's support bundle instead.
+Machine-specific state is deliberately **excluded** so the file is safe to share or move between machines: window geometry, last page, data-directory overrides, the default export directory, per-series chart colours, card sizes and card/sensor bindings, fan-zone ordering, hidden sensor rows, sensor-class overrides, dismissed kernel warnings, acknowledged and dismissed board notes, the recorded fan-control test result, and the one-time profile-import flag. A full snapshot of everything (for same-machine debugging) lives in the **Logs** page's support bundle instead.
 
 ### Import Behaviour
 

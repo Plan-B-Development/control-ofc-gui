@@ -110,6 +110,17 @@ class CollapsibleSection(QWidget):
         """Append a nested layout to the section's content area."""
         self._content_layout.addLayout(layout)
 
+    def set_title(self, title: str) -> None:
+        """Re-label the header, preserving the expanded/collapsed chevron.
+
+        Needed where the title carries a live count — progressive disclosure
+        only works if the reader can see how much is behind the header before
+        deciding to open it (DEC-357). Goes through ``_render_header_text`` so
+        the chevron and the ``&`` mnemonic escaping stay correct.
+        """
+        self._title = title
+        self._render_header_text()
+
     # ── Internals ────────────────────────────────────────────────────
 
     def _on_header_toggled(self, checked: bool) -> None:

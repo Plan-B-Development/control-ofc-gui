@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
+from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.pump_protection import header_is_pump_protected
@@ -90,6 +91,21 @@ _GPU_RESTORE_TOOLTIP_GATED = (
 )
 
 
+def _verified_tristate(recorded: str) -> bool | None:
+    """Persisted verify outcome → the tri-state the note builder wants.
+
+    ``None`` means "never tested", and it is a real answer, not a missing one:
+    a board note whose mechanism is "PWM writes are accepted and silently
+    ignored" cannot be confirmed OR refuted by anything on
+    ``GET /diagnostics/hardware``, so claiming either would be a guess.
+    """
+    if recorded == "effective":
+        return True
+    if recorded == "ineffective":
+        return False
+    return None
+
+
 class SystemStatePage(QWidget):
     """The migrated Troubleshooting content as a standalone page."""
 
@@ -112,6 +128,7 @@ class SystemStatePage(QWidget):
         diagnostics_service: DiagnosticsService | None = None,
         client: DaemonClient | None = None,
         profile_service: ProfileService | None = None,
+        settings_service: AppSettingsService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -120,6 +137,11 @@ class SystemStatePage(QWidget):
         self._diag = diagnostics_service or DiagnosticsService(state)
         self._client = client
         self._profile_service = profile_service
+        # DEC-357: board-note acknowledgement/dismissal and the recorded
+        # fan-control test outcome. Optional so the page stays constructible in
+        # a test without one; it then falls back to its own service, which is
+        # what every other settings consumer here does.
+        self._settings_svc = settings_service or AppSettingsService()
 
         # Worker/thread pairs (lazy).
         self._verify_thread: QThread | None = None
@@ -142,6 +164,7 @@ class SystemStatePage(QWidget):
         self._char_dialog: PwmCharacterizationDialog | None = None
         self._hw_diag_fetched = False
         self._rescan_in_flight = False  # DEC-216: guards the footer Rescan action
+        self._last_rendered_diag: HardwareDiagnosticsResult | None = None
 
         self._build_ui()
 
@@ -203,6 +226,11 @@ class SystemStatePage(QWidget):
         # Full width attacks both halves at once: the same issues wrap less, so
         # they need less height in the same band.
         self._health_card = HealthCard()
+        self._health_card.note_acknowledged.connect(self._on_note_acknowledged)
+        self._health_card.note_dismissed.connect(self._on_note_dismissed)
+        # The notes section's "Test fan control" runs the same sweep as the
+        # Advanced actions button — one write path, not a second one.
+        self._health_card.verify_requested.connect(self._run_pwm_verify_all)
         self._interference_card = InterferenceCard()
         self._safety_card = SafetyCard()
         overview_pane = QWidget()
@@ -456,7 +484,21 @@ class SystemStatePage(QWidget):
             self._health_card.set_summary(f"Diagnostics error: {message}")
 
     def _render(self, diag: HardwareDiagnosticsResult) -> None:
-        vm = build_system_state_vm(diag)
+        # Keep the payload this page last rendered. A board-note acknowledgement
+        # changes only GUI state, so it must re-render without refetching
+        # `/diagnostics/hardware` — the expensive call on this page. Held here
+        # rather than read back from DiagnosticsService so the re-render cannot
+        # silently become a no-op if that cache is warmed by a different path.
+        self._last_rendered_diag = diag
+        settings = self._settings_svc.settings
+        vm = build_system_state_vm(
+            diag,
+            pwm_control_verified=_verified_tristate(settings.last_pwm_verify_effective),
+            acknowledged_notes=set(settings.acknowledged_board_notes),
+            dismissed_notes=set(settings.dismissed_board_notes),
+            allow_acknowledge=settings.board_notes_allow_acknowledge,
+            allow_dismiss=settings.board_notes_allow_dismiss,
+        )
         self._health_card.render(vm)
         self._registry_card.set_summary(vm.summary_line)
         self._interference_card.render(vm.interference)
@@ -467,6 +509,55 @@ class SystemStatePage(QWidget):
         self._open_report_btn.setEnabled(True)
         if self._report_dialog is not None and self._report_dialog.isVisible():
             self._report_dialog.set_html(build_readiness_report_html(diag))
+
+    @Slot(str, bool)
+    def _on_note_acknowledged(self, ack_key: str, acknowledged: bool) -> None:
+        keys = list(self._settings_svc.settings.acknowledged_board_notes)
+        if acknowledged and ack_key not in keys:
+            keys.append(ack_key)
+        elif not acknowledged and ack_key in keys:
+            keys.remove(ack_key)
+        else:
+            return
+        self._settings_svc.update(acknowledged_board_notes=keys)
+        self._rerender_last_diagnostics()
+
+    @Slot(str)
+    def _on_note_dismissed(self, ack_key: str) -> None:
+        keys = list(self._settings_svc.settings.dismissed_board_notes)
+        if ack_key in keys:
+            return
+        keys.append(ack_key)
+        self._settings_svc.update(dismissed_board_notes=keys)
+        self._rerender_last_diagnostics()
+
+    def _rerender_last_diagnostics(self) -> None:
+        """Re-render from the cached payload after a settings-only change.
+
+        Deliberately not a refetch: nothing about the hardware changed, and
+        `/diagnostics/hardware` is the expensive one on this page.
+        """
+        diag = self._last_rendered_diag or self._diag.last_hw_diagnostics
+        if diag is not None:
+            self._render(diag)
+
+    def _record_verify_outcome(self, results: list[tuple[str, str]]) -> None:
+        """Persist what a fan-control test found, for the board-note evidence.
+
+        "Effective" only when **every** tested header wrote cleanly. A board
+        note says the BIOS may override fan control; one header that did not
+        take the write is exactly the case the note is about, so a mixed sweep
+        must not be recorded as a clean bill of health. `no_rpm_effect` counts
+        as unclean for the same reason — an accepted write whose fan never
+        moved is the quirk's own description of itself.
+        """
+        if not results:
+            return
+        effective = all(outcome == "effective" for _, outcome in results)
+        self._settings_svc.update(
+            last_pwm_verify_effective="effective" if effective else "ineffective"
+        )
+        self._rerender_last_diagnostics()
 
     def _populate_verify_combo(self) -> None:
         self._verify_combo.clear()
@@ -863,6 +954,7 @@ class SystemStatePage(QWidget):
         if not self._verify_all_results:
             self._verify_all_progress_label.setText("Verify all: no results.")
             return
+        self._record_verify_outcome(self._verify_all_results)
         critical_keys = {"pwm_enable_reverted"}
         warning_keys = {"pwm_value_clamped", "no_rpm_effect"}
         has_critical = any(
