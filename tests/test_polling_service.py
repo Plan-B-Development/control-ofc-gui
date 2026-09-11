@@ -512,36 +512,66 @@ class TestPollingServiceDisconnected:
 class TestPollingServiceActiveProfile:
     """_on_active_profile updates AppState with daemon's active profile."""
 
-    def test_on_active_profile_sets_name(self, qtbot):
-        """Active profile info from daemon is propagated to AppState."""
+    def test_on_active_profile_sets_name_and_id(self, qtbot):
+        """Active profile info from daemon is propagated to AppState.
+
+        `CTRL-d`: the **id** as well as the name. The id is what main_window
+        routes into ``ProfileService.set_active`` (DEC-194), so it decides which
+        profile the sidebar marks active and the Controls page edits; dropping it
+        here left those reading a value the GUI had invented at load time.
+        Asserted against the info the daemon supplied rather than a literal, so a
+        handler that forwarded the *name* into the id slot fails.
+        """
         state = AppState()
 
         svc = _make_polling_service(state)
         info = ActiveProfileInfo(active=True, profile_id="perf", profile_name="Performance")
         svc._on_active_profile(info)
 
-        assert state.active_profile_name == "Performance"
+        assert state.active_profile_name == info.profile_name
+        assert state.active_profile_id == info.profile_id
 
-    def test_on_active_profile_ignores_inactive(self, qtbot):
-        """When active=False, profile name is not updated."""
+    def test_on_active_profile_clears_when_inactive(self, qtbot):
+        """active=False CLEARS the cached profile — it does not leave a stale one.
+
+        `CTRL-d` deliberately reverses the previous assertion here, which pinned
+        "an inactive response does not update the name". That was the defect:
+        GET /profile/active is the authority on this question, and a daemon that
+        answers "nothing is active" was leaving the GUI naming a profile in the
+        sidebar and the status banner indefinitely. Both fields clear together —
+        a cleared name beside a stale id is the split that let the sidebar and
+        the banner disagree.
+        """
         state = AppState()
         state.set_active_profile("Existing")
+        state.set_active_profile_id("existing")
 
         svc = _make_polling_service(state)
         info = ActiveProfileInfo(active=False, profile_id="", profile_name="")
         svc._on_active_profile(info)
 
-        assert state.active_profile_name == "Existing"
+        assert state.active_profile_name == ""
+        assert state.active_profile_id == ""
 
-    def test_on_active_profile_handles_none(self, qtbot):
-        """None (no active profile response) is handled without error."""
+    def test_on_active_profile_clears_on_none(self, qtbot):
+        """A ``None`` payload is authoritative "nothing is active", not an error.
+
+        `CTRL-d`: the worker swallows a failed /profile/active request **before**
+        it emits (``PollingWorker`` § run loop catches DaemonError/ConnectionError
+        /OSError around the emit), so a ``None`` reaching this slot can only be
+        ``parse_active_profile`` reporting ``active: false``. Clearing is
+        therefore correct — and it is the only correction available against a
+        daemon older than 2.45.0, which cannot say so on the 1 Hz poll.
+        """
         state = AppState()
         state.set_active_profile("Existing")
+        state.set_active_profile_id("existing")
 
         svc = _make_polling_service(state)
         svc._on_active_profile(None)
 
-        assert state.active_profile_name == "Existing"
+        assert state.active_profile_name == ""
+        assert state.active_profile_id == ""
 
 
 class TestPollingServiceHardwareDiagnostics:

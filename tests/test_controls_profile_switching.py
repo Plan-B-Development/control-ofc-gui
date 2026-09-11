@@ -1,11 +1,14 @@
 """Tests for profile selection, switching, and per-profile content isolation in ControlsPage.
 
 DEC-214: the Controls page dropped its own profile combo + Activate button.
-Profile *viewing/editing* on the page is now driven by ``select_profile(id)``
-(tracked in ``_viewed_profile_id``); *activation* and the unsaved-changes-on-
-switch guard moved to the sidebar Apply flow in ``main_window``. These tests
-verify the viewed-profile tracking, per-profile content isolation, and — via a
-real ``MainWindow`` — the relocated unsaved-guard.
+Profile *viewing/editing* on the page is driven by ``select_profile(id)``
+(tracked in ``_viewed_profile_id``); *activation* moved to the sidebar.
+
+DEC-355 (`CTRL-c`) then split the sidebar's two verbs apart: selecting in the
+combo **browses** (view only, no daemon call) and **Apply** activates, so the
+unsaved-changes-on-switch guard moved from Apply to the selection it guards.
+These tests verify the viewed-profile tracking, per-profile content isolation,
+and — via a real ``MainWindow`` — the relocated unsaved-guard.
 """
 
 from __future__ import annotations
@@ -60,8 +63,9 @@ def controls_page(qtbot, app_state, profile_service):
 
 @pytest.fixture()
 def main_window(qtbot, app_state, profile_service, settings_service):
-    """A real MainWindow (client=None, non-demo). DEC-214: the unsaved-changes
-    guard on a profile switch now lives in its sidebar Apply flow."""
+    """A real MainWindow (client=None, non-demo). DEC-355: the unsaved-changes
+    guard on a profile switch lives on the sidebar combo's *selection*, which is
+    what switches the page — Apply only activates."""
     win = MainWindow(
         state=app_state,
         profile_service=profile_service,
@@ -216,8 +220,9 @@ class TestPerProfileContentIsolation:
 # DEC-214: TestProfileActivationUpdatesComboLabel was deleted with the page profile
 # combo — the "* " active-prefix label lived on that combo. Activation itself (setting
 # ProfileService.active_id and bridging AppState.active_profile_name) is covered by
-# test_profile_activation_r24.py and by TestUnsavedGuardOnProfileSwitch below (which
-# drives the sidebar Apply flow that now owns activation).
+# test_profile_activation_r24.py and by TestUnsavedGuardOnProfileSwitch below.
+# DEC-355 moved the active marker onto the sidebar combo's own entry — a
+# "(active)" suffix — which `test_controls_profile_scoping_ctrl.py` covers.
 
 
 class TestDeleteProfileSwitchesToActive:
@@ -254,58 +259,84 @@ class TestDeleteProfileSwitchesToActive:
 
 
 class TestUnsavedGuardOnProfileSwitch:
-    """DEC-214: the unsaved-changes-on-switch guard relocated from the removed page
-    combo to ``main_window._on_sidebar_apply_profile`` (the sidebar Apply flow)."""
+    """DEC-214 relocated the unsaved-changes-on-switch guard from the removed page
+    combo to the sidebar. `CTRL-c` moves it one step further, from **Apply** to
+    the combo's *selection*, because selection is now what switches the page —
+    Apply only activates, and ``ProfileService.activate`` saves first, so there
+    is nothing left for Apply to discard."""
 
     @staticmethod
     def _select_sidebar(main_window, profile_id: str) -> None:
-        combo = main_window.sidebar.profile_combo
-        combo.setCurrentIndex(combo.findData(profile_id))
+        """Drive the real selector, not the handler.
 
-    def test_keep_editing_blocks_switch(self, main_window, profile_service, monkeypatch):
-        """Declining the discard prompt vetoes the switch, keeps edits, and snaps
-        the sidebar combo back to the still-active profile."""
+        ``setCurrentIndex`` is what a user's click produces, and it is the
+        ``currentIndexChanged`` connection — the thing `CTRL-c` added and the
+        thing most likely to be broken — that turns it into a page switch.
+        Calling ``_on_sidebar_profile_selected`` directly would skip exactly that.
+        """
+        combo = main_window.sidebar.profile_combo
+        idx = combo.findData(profile_id)
+        assert idx >= 0, "the profile must be in the selector to select it"
+        assert idx != combo.currentIndex(), (
+            "precondition: the selection has to actually MOVE, or currentIndexChanged "
+            "never fires and this test asserts nothing"
+        )
+        combo.setCurrentIndex(idx)
+
+    def test_keep_editing_blocks_the_switch(self, main_window, profile_service, monkeypatch):
+        """Declining the discard vetoes the switch, keeps the edits, and snaps the
+        sidebar combo back to the profile the page is still showing."""
         active = profile_service.active_profile
         assert active is not None
         assert len(profile_service.profiles) >= 2
         other = next(p for p in profile_service.profiles if p.id != active.id)
 
-        # Simulate in-progress edits on the Controls page, pick a different profile
-        # in the sidebar, then decline the discard.
         main_window.controls_page._set_unsaved(True)
-        self._select_sidebar(main_window, other.id)
         monkeypatch.setattr(main_window.controls_page, "confirm_discard_unsaved", lambda: False)
 
-        main_window._on_sidebar_apply_profile()
+        self._select_sidebar(main_window, other.id)
 
-        assert profile_service.active_id == active.id
+        # The page never moved, so nothing was discarded...
+        assert main_window.controls_page.viewed_profile_id == active.id
         assert main_window.controls_page._has_unsaved is True
-        assert main_window.sidebar.profile_combo.currentData() == active.id
+        # ...and the selector was snapped back to agree with it. Asserted as a
+        # relationship: the combo and the page must never name different profiles.
+        assert (
+            main_window.sidebar.profile_combo.currentData()
+            == main_window.controls_page.viewed_profile_id
+        )
+        # Browsing is not activating — a vetoed switch certainly must not activate.
+        assert profile_service.active_id == active.id
 
-    def test_discard_allows_switch(self, main_window, profile_service, app_state, monkeypatch):
-        """Confirming the discard performs the switch, clears edits, and bridges the
-        new active profile into AppState."""
+    def test_discard_allows_the_switch_without_activating(
+        self, main_window, profile_service, app_state, monkeypatch
+    ):
+        """Confirming the discard moves the page — and that is ALL it does.
+
+        `CTRL-c`'s whole point: selecting a profile shows its curves without
+        running it. The activation assertions below are the ones that would have
+        failed before, when the only way to change the page was **Apply**.
+        """
         active = profile_service.active_profile
         assert active is not None
         assert len(profile_service.profiles) >= 2
         other = next(p for p in profile_service.profiles if p.id != active.id)
 
         main_window.controls_page._set_unsaved(True)
-        self._select_sidebar(main_window, other.id)
         monkeypatch.setattr(main_window.controls_page, "confirm_discard_unsaved", lambda: True)
 
-        main_window._on_sidebar_apply_profile()
+        self._select_sidebar(main_window, other.id)
 
-        assert profile_service.active_id == other.id
-        # Following active_changed the page dropped its unsaved flag.
+        assert main_window.controls_page.viewed_profile_id == other.id
         assert main_window.controls_page._has_unsaved is False
-        # DEC-214: activation bridges into AppState so the banner/dashboard update.
-        assert app_state.active_profile_name == other.name
+        # The daemon was NOT told anything: still active, still named in AppState.
+        assert profile_service.active_id == active.id
+        assert app_state.active_profile_name != other.name
 
-    def test_switch_without_unsaved_does_not_prompt(
-        self, main_window, profile_service, monkeypatch
+    def test_apply_after_selecting_activates_and_bridges_into_app_state(
+        self, main_window, profile_service, app_state
     ):
-        """With no unsaved edits the guard never calls the confirm dialog."""
+        """**Apply** is what activates. Selection above, activation here."""
         active = profile_service.active_profile
         assert active is not None
         assert len(profile_service.profiles) >= 2
@@ -313,7 +344,24 @@ class TestUnsavedGuardOnProfileSwitch:
 
         main_window.controls_page._set_unsaved(False)
         self._select_sidebar(main_window, other.id)
+        assert profile_service.active_id == active.id, "precondition: selection did not activate"
 
+        main_window.sidebar.apply_profile_btn.click()
+
+        assert profile_service.active_id == other.id
+        # DEC-214: activation bridges into AppState so the banner/dashboard update.
+        assert app_state.active_profile_name == other.name
+
+    def test_selecting_without_unsaved_edits_does_not_prompt(
+        self, main_window, profile_service, monkeypatch
+    ):
+        """With no unsaved edits the guard is never consulted."""
+        active = profile_service.active_profile
+        assert active is not None
+        assert len(profile_service.profiles) >= 2
+        other = next(p for p in profile_service.profiles if p.id != active.id)
+
+        main_window.controls_page._set_unsaved(False)
         called = {"n": 0}
 
         def _boom() -> bool:
@@ -321,10 +369,37 @@ class TestUnsavedGuardOnProfileSwitch:
             return True
 
         monkeypatch.setattr(main_window.controls_page, "confirm_discard_unsaved", _boom)
-        main_window._on_sidebar_apply_profile()
+        self._select_sidebar(main_window, other.id)
 
         assert called["n"] == 0
-        assert profile_service.active_id == other.id
+        assert main_window.controls_page.viewed_profile_id == other.id
+
+    def test_apply_does_not_re_prompt_for_the_switch_it_no_longer_performs(
+        self, main_window, profile_service, monkeypatch
+    ):
+        """`CTRL-c` design lock: the guard lives on SELECTION, not on Apply.
+
+        Pins the removal in the same way ``TestNavigationDoesNotGuardUnsaved``
+        pins DEC-214's. Re-adding a guard to Apply would double-prompt a user who
+        edits after selecting, for edits ``activate()`` saves rather than discards.
+        """
+        active = profile_service.active_profile
+        assert active is not None
+
+        # Edits made AFTER the selection settled — the only way to reach Apply
+        # with a dirty page now.
+        main_window.controls_page._set_unsaved(True)
+        called = {"n": 0}
+
+        def _boom() -> bool:
+            called["n"] += 1
+            return True
+
+        monkeypatch.setattr(main_window.controls_page, "confirm_discard_unsaved", _boom)
+        main_window.sidebar.apply_profile_btn.click()
+
+        assert called["n"] == 0
+        assert profile_service.active_id == active.id
 
 
 class TestNavigationDoesNotGuardUnsaved:

@@ -189,7 +189,8 @@ control_ofc/
   # See persistence layout details in docs/11_Persistence_Config_and_File_Layout.md.
   ui/
     main_window.py
-    sidebar.py               # flat 8-entry sidebar nav + bottom Active-Profile selector (DEC-208/214)
+    sidebar.py               # flat 8-entry nav + bottom Profile group (DEC-208/214/355): a
+                             #   BROWSING combo (select = view, Apply = activate) + New/Delete
     status_ribbon.py         # global top status ribbon — brand + daemon-status LED + thermal/warnings (DEC-208)
     status_banner.py
     cooling_readiness.py     # pure daemon-readiness → MergedReadinessItem mapping for the Hardware page (DEC-207)

@@ -749,11 +749,35 @@ the field existed.
 `/status` + `/poll` surface (DEC-194). This lets the GUI reflect an *external* activation (another
 client, `--profile`, a systemd unit) within one 1 Hz poll instead of waiting up to the ~5-minute
 `GET /profile/active` refresh. The GUI reads them from every `/poll`: a present `active_profile_name`
-updates the shown profile immediately (edge-triggered), while an **absent** key — an older daemon that
-never sends it, *or* genuinely no active profile — is parsed as `None` and leaves the periodic
-`GET /profile/active` fetch authoritative (so the field is never misread as "no profile" against a
-pre-2.4.0 daemon). `GET /profile/active` remains the canonical query and the fallback. Note the fast
-path covers activation; external *deactivation* still reconciles on the periodic fallback.
+updates the shown profile immediately (edge-triggered), while an **absent** key is parsed as `None`.
+
+`has_active_profile` (daemon ≥ 2.45.0, additive — `api_version` unchanged, **always serialised,
+including when false**) answers the question the two fields above cannot, and is the reason they are
+still allowed to be omitted (DEC-355). Before it, an absent `active_profile_id` meant *either* "an
+older daemon that never sends it" *or* "genuinely no active profile", and nothing on the wire
+separated them — so a client could not clear a profile name it had already shown, and the GUI left a
+stale one in its sidebar and status banner until it reconnected. Three readings:
+
+| wire | meaning | GUI behaviour |
+| --- | --- | --- |
+| key absent | daemon < 2.45.0 — unknown | leave the `GET /profile/active` fallback authoritative |
+| `false` | authoritatively nothing is active | clear the cached id **and** name |
+| `true` | the id + name are present and current | reflect them |
+
+It is serialised when false for the `verify_active` reason — it is the *presence* of the key that
+tells a client this daemon reports the state at all — and is derived from `active_profile_id.is_some()`
+in the statement that builds the response, so the two can never disagree. **`active_profile_id` itself
+is deliberately NOT changed to an always-serialised `""`:** `control-ofc-tray` reads
+`active_profile_id.is_none()` as "no profile is active" (`tray/src/menu.rs`), and an empty string is
+`is_some()`.
+
+`GET /profile/active` remains the canonical query and the fallback, and the GUI consumes **both** its
+`profile_id` and its `profile_name` on each connect/reconnect — the id routes through
+`AppState.active_profile_id_changed` into `ProfileService.set_active`, which is what marks the profile
+active in the sidebar and decides which one the Controls page edits. A response with `active: false`
+clears both, which is the only correction available against a daemon below 2.45.0. Against a daemon at
+or above it, external *deactivation* now also reconciles on the 1 Hz fast path rather than only on the
+periodic fallback.
 
 `readiness` (daemon ≥ 2.10.0, additive — `api_version` unchanged, **omitted until the daemon has
 cached a rollup**, and by daemons predating the field) is a compact hardware-readiness rollup mirrored
@@ -2022,8 +2046,19 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
   - The GUI calls this when the user deletes the active profile so the
     daemon stops driving fans from a curve whose JSON has been removed.
 - `GET /profile/active` — returns current active profile or `{"active": false}`
-  - GUI queries on connect/reconnect to reflect daemon truth
-  - Prevents stale widget state from misleading user
+  - GUI queries on connect/reconnect (`PollingService._PollWorker`), and the
+    response carries both `profile_id` and `profile_name`.
+  - **Only `profile_name` is consumed today** (`polling.py::_on_active_profile`
+    → `AppState.set_active_profile`), which feeds the status banner. The
+    `profile_id` is logged and discarded: nothing reconciles it into
+    `ProfileService._active_id`, which is seeded to the first profile in the
+    store (`_load_from_daemon` / `_load_from_local`) and thereafter changed only
+    by a GUI-initiated `activate()`. The sidebar's "Active Profile" selector and
+    the Controls page both read *that* value, so they can name a different
+    profile from the banner beside them. Corrected 2026-09-11 — this block
+    previously claimed the query "prevents stale widget state from misleading
+    user", which is true of one widget and false of the two that matter most.
+    Register rows `CTRL-d` / `CTRL-b`.
 
 ### Manual override (DEC-163, daemon ≥ 1.21.0)
 

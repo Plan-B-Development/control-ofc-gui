@@ -93,3 +93,40 @@ def test_animation_controller_broadcasts_and_unregisters(qtbot):
     assert target.states == snapshot  # no longer notified after unregister
     # Leave the shared controller in the active state for other tests.
     ctrl._on_state_changed(Qt.ApplicationState.ApplicationActive)
+
+
+def test_broadcast_survives_a_widget_qt_already_destroyed(qtbot):
+    """`CTRL-i`: a ``WeakSet`` tracks the PYTHON wrapper, not the C++ object.
+
+    When Qt destroys a widget the C++ half goes first and the wrapper survives
+    until the next collection, so the target is still in the set and calling
+    into it raises ``RuntimeError: Internal C++ object already deleted`` — the
+    DEC-230 shiboken lineage, arriving through a broadcast rather than through
+    teardown. One dead LED aborted the broadcast for **every** live one, which
+    is why it surfaced as an unrelated page's failure.
+
+    Asserted on the raise rather than on "the live LED was still reached",
+    deliberately: ``WeakSet`` iteration order is arbitrary, so an
+    order-dependent assertion would pass roughly half the time against the
+    pre-fix code. The dead target is always visited, so the raise is not.
+    """
+    import shiboken6
+
+    ctrl = animation_controller()
+    dead = PulsingLed("ok")
+    alive = PulsingLed("ok")
+    qtbot.addWidget(alive)
+
+    shiboken6.delete(dead)  # destroy the C++ half; the Python wrapper survives
+    assert not shiboken6.isValid(dead)
+    assert dead in ctrl._targets, (
+        "precondition: the destroyed widget is STILL registered — that is the "
+        "whole defect, and if the WeakSet had already dropped it this test "
+        "would be asserting nothing"
+    )
+
+    ctrl._on_state_changed(Qt.ApplicationState.ApplicationInactive)
+
+    assert dead not in ctrl._targets, "the stale entry must be discarded, not merely skipped"
+    assert alive._app_active is False
+    ctrl._on_state_changed(Qt.ApplicationState.ApplicationActive)

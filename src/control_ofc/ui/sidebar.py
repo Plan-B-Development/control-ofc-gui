@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -118,10 +119,18 @@ class Sidebar(QWidget):
 
         layout.addStretch(1)
 
-        # Active-profile selector (bottom-left) — populated + wired by main_window.
+        # Profile browser (bottom-left) — populated + wired by main_window.
+        #
+        # `CTRL-c`: the combo BROWSES, it does not activate. Selecting an entry
+        # moves what the Controls page edits; **Apply** is what tells the daemon
+        # to run it. The header therefore reads "PROFILE" rather than "ACTIVE
+        # PROFILE" — the selection is whatever the user is looking at, and the
+        # active one is marked by a "(active)" suffix on its own entry instead
+        # (main_window._populate_sidebar_profiles). A header naming the selection
+        # "active" was true only until the user touched it.
         layout.addWidget(_separator())
-        profile_title = QLabel("ACTIVE PROFILE")
-        profile_title.setObjectName("Sidebar_Label_activeProfileTitle")
+        profile_title = QLabel("PROFILE")
+        profile_title.setObjectName("Sidebar_Label_profileTitle")
         profile_title.setProperty("class", "SectionHeader")
         layout.addWidget(profile_title)
         self.profile_combo = QComboBox()
@@ -131,7 +140,27 @@ class Sidebar(QWidget):
         self.apply_profile_btn = make_button(
             "Apply", "secondary", object_name="Sidebar_Btn_applyProfile"
         )
+        self.apply_profile_btn.setToolTip("Run the selected profile on the daemon")
         layout.addWidget(self.apply_profile_btn)
+
+        # `CTRL-c`: add/remove live beside the selector. Both delegate to the
+        # Controls page's existing handlers — the capability was never missing,
+        # only unreachable from the one place profiles are chosen (it sat behind
+        # a 32px "⋮" on a page you had to navigate away from the selector to
+        # reach). Rename/Duplicate stay on that menu; these two are the pair the
+        # switching workflow needs.
+        profile_actions = QHBoxLayout()
+        profile_actions.setContentsMargins(0, 0, 0, 0)
+        profile_actions.setSpacing(4)
+        self.new_profile_btn = make_button("New", "secondary", object_name="Sidebar_Btn_newProfile")
+        self.new_profile_btn.setToolTip("Create a new profile")
+        self.delete_profile_btn = make_button(
+            "Delete", "secondary", object_name="Sidebar_Btn_deleteProfile"
+        )
+        self.delete_profile_btn.setToolTip("Delete the selected profile")
+        profile_actions.addWidget(self.new_profile_btn)
+        profile_actions.addWidget(self.delete_profile_btn)
+        layout.addLayout(profile_actions)
 
         # About — pinned at the very bottom.
         self._about_btn = QPushButton("About")

@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 import weakref
 
+import shiboken6
 from PySide6.QtCore import QObject, QPointF, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QPainter, QRadialGradient
 from PySide6.QtWidgets import QWidget
@@ -38,9 +39,19 @@ _ROLE_TOKENS = ("ok", "warn", "crit", "info", "neutral")
 class AnimationController(QObject):
     """Pauses/resumes every registered decorative animation with app focus.
 
-    Targets must expose ``set_app_active(bool)``. Held weakly so a destroyed
-    widget drops out without an explicit unregister (though widgets should still
-    ``cleanup()`` for deterministic teardown).
+    Targets must expose ``set_app_active(bool)``. Held weakly so a
+    garbage-collected widget drops out without an explicit unregister (though
+    widgets should still ``cleanup()`` for deterministic teardown).
+
+    A ``WeakSet`` is **not** sufficient on its own, and the claim that it was
+    stood here until a Controls-page rebuild made it reachable. A weak reference
+    tracks the *Python wrapper*; when Qt destroys a widget (a parent tree going
+    away, a ``deleteLater`` landing) the C++ half goes first and the wrapper
+    survives until the next collection. Such a target is still in the set, and
+    touching it raises ``RuntimeError: Internal C++ object already deleted`` —
+    the DEC-230 shiboken lineage, here arriving through a broadcast rather than
+    through teardown. ``_broadcast`` therefore checks validity and drops the
+    stale entry, which is what makes the sentence above true.
     """
 
     def __init__(self) -> None:
@@ -64,6 +75,13 @@ class AnimationController(QObject):
     def _broadcast(self, active: bool) -> None:
         self._app_active = active
         for target in list(self._targets):
+            # A wrapper whose C++ widget Qt has already destroyed is still in the
+            # WeakSet (see the class docstring). Drop it rather than calling into
+            # it: one dead LED must not abort the broadcast for every live one,
+            # which is what made this surface as an unrelated page's failure.
+            if not shiboken6.isValid(target):
+                self._targets.discard(target)
+                continue
             target.set_app_active(active)
 
     def _on_state_changed(self, state) -> None:

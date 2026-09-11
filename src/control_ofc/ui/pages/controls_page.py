@@ -67,6 +67,7 @@ from control_ofc.services.profile_service import (
     CurvePoint,
     CurveType,
     LogicalControl,
+    Profile,
     ProfileService,
     apply_role_floor,
     mix_candidate_curves,
@@ -223,6 +224,12 @@ class ControlsPage(QWidget):
     """FanControl-style controls: profile bar, control cards grid, curve cards grid."""
 
     profile_activated = Signal(str)
+    # `CTRL-c`: emitted whenever the page changes WHICH profile it renders — by a
+    # sidebar selection, by New/Duplicate, or by following an activation. The
+    # sidebar combo is the selector, so it has to follow the page as well as
+    # drive it; without this, creating a profile moved the page and left the
+    # combo naming the old one.
+    viewed_profile_changed = Signal(str)
 
     # DEC-220: dispatch manual-override HTTP calls to the off-thread worker.
     # Queued to the worker thread; results return via the worker's *_result
@@ -751,15 +758,40 @@ class ControlsPage(QWidget):
     # ─── Profile management ──────────────────────────────────────────
 
     def select_profile(self, profile_id: str) -> None:
-        """View + edit ``profile_id`` on the page (used by New/Duplicate + tests).
+        """View + edit ``profile_id`` on the page.
 
-        The sidebar owns *activation* now (DEC-214); this only changes which
-        profile the page renders. Clears the unsaved flag since a fresh profile
-        is being loaded.
+        The sidebar owns *activation* (DEC-214); this only changes which profile
+        the page renders. Clears the unsaved flag since a fresh profile is being
+        loaded.
+
+        `CTRL-b`/`CTRL-c`: this is now the ONLY thing that moves the page, and it
+        is driven by the sidebar selector as well as by New/Duplicate. It was
+        previously reachable only from New/Duplicate, while the sole clearer of
+        ``_viewed_profile_id`` was a *transition* of the active profile id — so
+        after creating a profile there was no way back to the active one, because
+        applying the already-active profile emits nothing to transition on.
+
+        An id the service does not hold is rejected rather than stored: a stale
+        ``_viewed_profile_id`` silently falls back to the active profile, which
+        is the shape that made the original defect invisible.
         """
-        self._viewed_profile_id = profile_id
+        if profile_id and self._profile_service.get_profile(profile_id) is None:
+            self._log.warning("Ignoring selection of unknown profile %s", profile_id)
+            return
+        self._viewed_profile_id = profile_id or None
         self._refresh_all()
         self._set_unsaved(False)
+        self.viewed_profile_changed.emit(self.viewed_profile_id)
+
+    @property
+    def viewed_profile_id(self) -> str:
+        """The id of the profile currently rendered, or ``""`` when there is none.
+
+        Resolved, not raw: with no explicit selection the page shows the active
+        profile, so that is what it reports.
+        """
+        profile = self._get_current_profile()
+        return profile.id if profile else ""
 
     def has_unsaved_changes(self) -> bool:
         """Whether the viewed profile has in-progress, unsaved edits (DEC-214).
@@ -776,6 +808,7 @@ class ControlsPage(QWidget):
         self._viewed_profile_id = None  # fall back to the active profile
         self._refresh_all()
         self._set_unsaved(False)
+        self.viewed_profile_changed.emit(self.viewed_profile_id)
 
     def _on_profiles_changed(self) -> None:
         """Profiles created/renamed/deleted elsewhere — re-render the page."""
@@ -808,6 +841,24 @@ class ControlsPage(QWidget):
             QMessageBox.StandardButton.Cancel,
         )
         return result == QMessageBox.StandardButton.Discard
+
+    def new_profile(self) -> None:
+        """Create a profile, prompting for its name (`CTRL-c`).
+
+        Public because the sidebar's **New** drives the same flow as the page's
+        "⋮ → New Profile". Deliberately a thin alias rather than a second
+        implementation: the two surfaces must not be able to drift.
+        """
+        self._on_new_profile()
+
+    def delete_profile(self) -> None:
+        """Delete the profile the page is showing, after confirmation (`CTRL-c`).
+
+        The sidebar's **Delete** counterpart to :meth:`new_profile`. The page
+        shows whatever the sidebar has selected, so "the viewed profile" and
+        "the selected profile" are the same thing by construction.
+        """
+        self._on_delete_profile()
 
     def _on_manage_profiles(self) -> None:
         menu = QMenu(self)
@@ -854,10 +905,14 @@ class ControlsPage(QWidget):
         current = self._get_current_profile()
         profile_id = current.id if current else ""
         if profile_id:
+            # `CTRL-f`: name the profile. Only the three starters have ids that
+            # read as words; every user-created profile carries an 8-char uuid,
+            # so this asked the user to confirm deleting "e41bb5ed". The id stays
+            # in the log line, where it is the useful half.
             reply = QMessageBox.question(
                 self,
                 "Delete Profile",
-                f"Delete profile '{profile_id}'? This cannot be undone.",
+                f"Delete profile '{current.name}'? This cannot be undone.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -880,9 +935,27 @@ class ControlsPage(QWidget):
             self._profile_service.delete_profile(profile_id)
             if was_active_locally and self._state is not None:
                 self._state.set_active_profile("")
-            # After deletion, fall back to viewing the active profile.
-            self._viewed_profile_id = None
+            # After deletion, view something that still exists.
+            #
+            # NOT an unconditional `_viewed_profile_id = None`. That used to mean
+            # "fall back to the active profile", which worked only because
+            # `delete_profile` promoted an arbitrary survivor to active. `CTRL-e`
+            # stopped it doing that — the truth after a delete-the-active is that
+            # NOTHING is active — so the old reset now lands on the empty state,
+            # and it also discarded the selection the sidebar had already moved to
+            # while handling `active_changed`. `_get_current_profile` drops a
+            # selection that outlived its profile on its own, so all that is left
+            # to decide is the genuinely-nothing case.
+            #
+            # Choosing what to *look at* is the page's to make; choosing what the
+            # daemon *runs* is not, and this changes only the former.
+            if self._get_current_profile() is None:
+                survivor = next(iter(self._profile_service.profiles), None)
+                if survivor is not None:
+                    self.select_profile(survivor.id)
+                    return
             self._refresh_all()
+            self.viewed_profile_changed.emit(self.viewed_profile_id)
 
     def _on_save_profile(self) -> None:
         profile = self._get_current_profile()
@@ -1013,11 +1086,45 @@ class ControlsPage(QWidget):
     def _refresh_all(self) -> None:
         profile = self._get_current_profile()
         self._update_edited_profile_label(profile)  # DEC-233
-        if not profile:
-            return
-        self._loaded_profile_id = profile.id
-        self._refresh_controls_grid(profile)
-        self._refresh_curves_grid(profile)
+        # `CTRL-a`: refresh against an EMPTY profile rather than returning early.
+        # The early return left the previous profile's cards on screen after the
+        # last profile was deleted — grids never cleared, empty states never
+        # shown, and (worse) `_refresh_controls_grid`'s release of live manual
+        # overrides skipped, so a held override outlived the card that owned it.
+        # Both grids already drive their empty states correctly from an empty
+        # profile, so there is nothing to special-case beyond the stand-in.
+        self._loaded_profile_id = profile.id if profile else None
+        self._update_profile_empty_state(profile is not None)
+        self._refresh_controls_grid(profile or Profile(name=""))
+        self._refresh_curves_grid(profile or Profile(name=""))
+
+    def _update_profile_empty_state(self, has_profile: bool) -> None:
+        """Explain the no-profile state instead of leaving the page inert (`CTRL-g`).
+
+        With no profile the two pane ``+`` buttons guard on
+        ``_get_current_profile`` and return, so a click did nothing and said
+        nothing. Disable them — a disabled button is an honest one — and point
+        the empty-state labels at the action that actually helps.
+        """
+        self._add_control_btn.setEnabled(has_profile)
+        self._add_curve_btn.setEnabled(has_profile)
+        if has_profile:
+            self._controls_empty.setText("No fan roles configured. Click + to create one.")
+            self._curves_empty.setText("No curves. Click + to create one.")
+            self._no_controls_hint.setText(
+                "Create a Fan Role first. Curves are assigned to Fan Roles."
+            )
+        else:
+            # Progressive disclosure (`_refresh_controls_grid`) hides the whole
+            # curves section while there are no controls, so with no profile the
+            # user sees `_controls_empty` and `_no_controls_hint` — both of which
+            # otherwise advise an action that cannot be taken yet. `_curves_empty`
+            # is set for the same reason it exists: it must not be left saying
+            # something false if the disclosure rule ever changes.
+            no_profile = "No profile selected. Use New in the sidebar to create one."
+            self._controls_empty.setText(no_profile)
+            self._curves_empty.setText(no_profile)
+            self._no_controls_hint.setText(no_profile)
 
     def _update_edited_profile_label(self, profile) -> None:
         """Show which profile these edits + Save apply to (DEC-233)."""
@@ -1886,12 +1993,17 @@ class ControlsPage(QWidget):
                         break
 
     def _get_current_profile(self):
-        # DEC-214: the page edits the viewed profile (a New/Duplicate draft) if
-        # one is set, else the active/sidebar-selected profile.
+        # DEC-214: the page edits the profile the sidebar selected (or a
+        # New/Duplicate draft) if one is set, else the active profile.
         if self._viewed_profile_id:
             profile = self._profile_service.get_profile(self._viewed_profile_id)
             if profile is not None:
                 return profile
+            # `CTRL-b`: the selection outlived the profile (deleted elsewhere).
+            # Drop it instead of falling back while still holding it — a
+            # _viewed_profile_id that survives its profile is a selection the
+            # page can never be moved off by anything but another selection.
+            self._viewed_profile_id = None
         return self._profile_service.active_profile
 
     def _show_gpu_zero_rpm_info(self) -> None:

@@ -1,5 +1,58 @@
 # Changelog
 
+## [2.69.0] — 2026-09-11
+
+**Pairs with `control-ofc-daemon` >= v2.11.0; the new `has_active_profile` field
+needs v2.45.0.** Below that the GUI behaves exactly as it did before — the field
+is absent, which it reads as "unknown" and keeps the existing fallback.
+
+**You can now look at a profile without running it.** Selecting a profile in the
+sidebar shows its fan roles and curves on the Controls page; **Apply** is what
+tells the daemon to run it. Until now selecting did nothing at all until you
+pressed Apply, and Apply means activate — so there was no way to inspect or edit
+a profile's curves without making the daemon drive your fans from it (`CTRL-c`).
+
+**Creating a profile no longer strands you in it.** After **New** or
+**Duplicate**, pressing Apply on the profile that was already active did nothing,
+and the page stayed on the new draft — the only way back was to activate a third
+profile. Selecting it in the sidebar now returns the page to it (`CTRL-b`).
+
+**New and Delete are beside the profile selector.** They were already on the
+Controls page behind the "⋮" button, which you could only reach after navigating
+away from where profiles are chosen. Rename and Duplicate stay on that menu.
+
+**The selector names the active profile instead of claiming to be it.** The group
+heading reads "PROFILE" and the profile the daemon is running is marked
+`Balanced (active)` in the list. The old "ACTIVE PROFILE" heading stopped being
+true as soon as the selector could browse.
+
+**The GUI no longer guesses which profile is active.** It used to assume the
+first profile in the store was active until the daemon's first poll said
+otherwise, and the daemon lists profiles by filename — so the wrong one could be
+marked ACTIVE, and **saving it silently activated it** (`CTRL-d`). The GUI now
+waits to be told. With a daemon running no profile at all, nothing is marked
+active — previously the last known profile stayed named in the sidebar and the
+status banner indefinitely, because the daemon had no way to say "nothing".
+
+**Deleting the active profile no longer promotes another one behind your back.**
+It used to make an arbitrary surviving profile locally-active and start editing
+it, while the status banner correctly showed none — the two disagreed (`CTRL-e`).
+
+**The delete prompt names the profile.** It asked "Delete profile 'e41bb5ed'?" —
+the internal id, which every profile you create has instead of a name (`CTRL-f`).
+
+**Deleting your last profile now clears the page.** The previous profile's fan
+roles and curves stayed on screen, the "Editing:" label went blank, and any
+manual override you were holding was never released (`CTRL-a`). The pane **+**
+buttons are disabled rather than silently doing nothing, and the page says to
+create a profile first (`CTRL-g`).
+
+**Fixed: a status-dot animation could raise on a rebuilt page.** The shared
+animation controller could call into a widget Qt had already destroyed. Nothing
+user-visible on its own, but it aborted the update for every other animated dot.
+
+See `DECISIONS.md` DEC-355.
+
 ## [2.68.2] — 2026-09-11
 
 **Pairs with `control-ofc-daemon` >= v2.11.0 — unchanged.** Client-side only: no

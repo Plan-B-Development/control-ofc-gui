@@ -359,11 +359,25 @@ class MainWindow(QWidget):
         # exactly as for the Dashboard's Edit → Controls hop.
         self.logs_page.navigate_requested.connect(self._navigate_to_page)
 
-        # Sidebar active-profile selector (DEC-208): a third profile surface that
+        # Sidebar profile selector (DEC-208): a third profile surface that
         # populates + reflects + applies via the same ProfileService path.
-        self._profile_service.profiles_changed.connect(self._populate_sidebar_profiles)
+        #
+        # `CTRL-c`: the combo BROWSES (selection → the Controls page renders that
+        # profile, no daemon call) and **Apply** activates. Before this the combo
+        # had no `currentIndexChanged` connection at all, so selecting was inert
+        # until Apply — and Apply activates, which meant a profile could not be
+        # looked at without being run. `viewed_profile_changed` closes the loop
+        # in the other direction so New/Duplicate/delete move the selector too.
+        # `profiles_changed` uses a lambda: it carries no argument, and
+        # `_populate_sidebar_profiles` now takes an optional `select_id` that a
+        # direct connection would silently fill from the signal.
+        self._profile_service.profiles_changed.connect(lambda: self._populate_sidebar_profiles())
         self._profile_service.active_changed.connect(self._reflect_sidebar_active_profile)
+        self.sidebar.profile_combo.currentIndexChanged.connect(self._on_sidebar_profile_selected)
         self.sidebar.apply_profile_btn.clicked.connect(self._on_sidebar_apply_profile)
+        self.sidebar.new_profile_btn.clicked.connect(self._on_sidebar_new_profile)
+        self.sidebar.delete_profile_btn.clicked.connect(self._on_sidebar_delete_profile)
+        self.controls_page.viewed_profile_changed.connect(self._reflect_sidebar_viewed_profile)
         self._populate_sidebar_profiles()
 
         # DEC-194: route the daemon-authoritative active-profile id through the
@@ -574,49 +588,118 @@ class MainWindow(QWidget):
         box.setText(self._safety_detail_text())
         box.exec()
 
-    def _populate_sidebar_profiles(self) -> None:
-        """(Re)build the sidebar profile combo from ProfileService (DEC-208)."""
+    def _populate_sidebar_profiles(self, select_id: str | None = None) -> None:
+        """(Re)build the sidebar profile combo from ProfileService (DEC-208).
+
+        `CTRL-c`: the combo is a **browser**, so a rebuild must not snap the user
+        back to the active profile. It keeps whatever is selected (``select_id``
+        overrides, for the cases where the caller knows better) and falls back to
+        the active profile only when that selection no longer exists. Saving
+        emits ``profiles_changed``, and a rebuild that re-selected the active
+        profile there would have moved the selector off the profile being edited.
+
+        The active profile is marked by a ``(active)`` suffix on its own entry.
+        That replaces the old "ACTIVE PROFILE" group header, which stopped being
+        true the moment the combo could browse.
+        """
         combo = self.sidebar.profile_combo
+        active_id = self._profile_service.active_id
+        want = select_id if select_id is not None else (combo.currentData() or active_id)
         with block_signals(combo):
-            active = self._profile_service.active_profile
-            active_id = active.id if active else ""
             combo.clear()
             for profile in self._profile_service.profiles:
-                combo.addItem(profile.name, profile.id)
-            idx = combo.findData(active_id)
+                suffix = " (active)" if profile.id and profile.id == active_id else ""
+                combo.addItem(f"{profile.name}{suffix}", profile.id)
+            idx = combo.findData(want)
+            if idx < 0:
+                idx = combo.findData(active_id)
             if idx < 0 and combo.count() > 0:
                 idx = 0
             if idx >= 0:
                 combo.setCurrentIndex(idx)
+        self._sync_controls_page_to_sidebar()
 
     def _reflect_sidebar_active_profile(self, _profile_id: str = "") -> None:
-        """Move the sidebar combo to the authoritative active profile (DEC-208)."""
+        """Follow an activation: re-mark ``(active)`` and select it (DEC-208).
+
+        A full repopulate, because the marker moves between entries — selecting
+        the right row is no longer enough on its own.
+        """
+        self._populate_sidebar_profiles(select_id=self._profile_service.active_id)
+
+    def _reflect_sidebar_viewed_profile(self, profile_id: str) -> None:
+        """Follow the Controls page's own profile change (`CTRL-c`).
+
+        The page moves itself on New/Duplicate, on a delete, and when it follows
+        an activation. The combo is the selector, so it has to follow the page as
+        well as drive it — without this, creating a profile left the selector
+        naming the previous one while the page edited the new draft.
+        """
         combo = self.sidebar.profile_combo
-        active = self._profile_service.active_profile
-        active_id = active.id if active else ""
-        idx = combo.findData(active_id)
-        if idx >= 0:
+        idx = combo.findData(profile_id)
+        if idx >= 0 and idx != combo.currentIndex():
             with block_signals(combo):
                 combo.setCurrentIndex(idx)
+
+    def _sync_controls_page_to_sidebar(self) -> None:
+        """Make the Controls page render whatever the sidebar selector names.
+
+        `CTRL-c`: anything that moves the selection has to move the page — including
+        a rebuild falling back to the first entry because the daemon is running no
+        profile. A combo naming one profile while the page edits another is the
+        untruth this register is about, and it is how the reported symptom (curves
+        belonging to a profile the user was not looking at) was produced.
+        """
+        profile_id = self.sidebar.profile_combo.currentData() or ""
+        if profile_id and profile_id != self.controls_page.viewed_profile_id:
+            self.controls_page.select_profile(profile_id)
+
+    def _on_sidebar_profile_selected(self, _index: int = -1) -> None:
+        """Browse to the selected profile — view only, no daemon call (`CTRL-c`).
+
+        This is the affordance DEC-214 removed and never replaced: since the
+        Controls page lost its own combo, the ONLY thing that changed which
+        profile the page edited was **Apply**, and Apply means *activate on the
+        daemon*. There was no way to look at a profile's curves without running
+        it. Selection now browses; **Apply** still activates.
+
+        The unsaved-changes guard moves here with the switch it guards. On cancel
+        the combo snaps back to the profile the page is actually showing.
+        """
+        profile_id = self.sidebar.profile_combo.currentData()
+        if not profile_id or profile_id == self.controls_page.viewed_profile_id:
+            return
+        if self.controls_page.has_unsaved_changes() and not (
+            self.controls_page.confirm_discard_unsaved()
+        ):
+            self._reflect_sidebar_viewed_profile(self.controls_page.viewed_profile_id)
+            return
+        self.controls_page.select_profile(profile_id)
+
+    def _on_sidebar_new_profile(self) -> None:
+        """Sidebar **New** — the Controls page's own handler, reachable from the
+        one place profiles are chosen (`CTRL-c`)."""
+        self.controls_page.new_profile()
+
+    def _on_sidebar_delete_profile(self) -> None:
+        """Sidebar **Delete** — deletes the selected profile after confirmation
+        (`CTRL-c`). The page shows the selection, so they are the same profile."""
+        self.controls_page.delete_profile()
 
     def _on_sidebar_apply_profile(self) -> None:
         """Apply the sidebar-selected profile via the shared ProfileService path,
         then re-reflect the authoritative active id (snaps back on failure).
 
-        DEC-214: the Controls page dropped its own profile combo, so the
-        unsaved-changes-on-switch guard relocates here. Prompt before activating
-        a *different* profile while the Controls page has in-progress edits; on
-        cancel, snap the sidebar combo back to the active profile and do nothing.
+        DEC-214 relocated the unsaved-changes-on-switch guard here when the
+        Controls page lost its own combo. `CTRL-c` moves it one step further, to
+        ``_on_sidebar_profile_selected``, because *selection* is now what
+        switches the page — and by the time Apply is pressed the combo and the
+        page already name the same profile. A guard here would fire on edits
+        that activation does not discard: ``ProfileService.activate`` saves
+        first, precisely so the daemon reads the edited version.
         """
         profile_id = self.sidebar.profile_combo.currentData()
         if not profile_id:
-            return
-        if (
-            profile_id != self._profile_service.active_id
-            and self.controls_page.has_unsaved_changes()
-            and not self.controls_page.confirm_discard_unsaved()
-        ):
-            self._reflect_sidebar_active_profile()
             return
         res = self._profile_service.activate(profile_id, client=self._client)
         # DEC-214: bridge activation into AppState (the Controls page's removed
@@ -626,7 +709,12 @@ class MainWindow(QWidget):
             active = self._profile_service.active_profile
             if active is not None:
                 self._state.set_active_profile(active.name)
-        self._reflect_sidebar_active_profile()
+        # Re-mark `(active)` WITHOUT forcing the selection back to the active
+        # profile. On success that already happened — `activate` moved the id, so
+        # `active_changed` ran `_reflect_sidebar_active_profile` — and on FAILURE
+        # forcing it would drag the user out of the profile they were browsing,
+        # which is a thing selection no longer implies. `CTRL-c`.
+        self._populate_sidebar_profiles()
 
     def _on_theme_changed(self, tokens) -> None:
         from control_ofc.ui.theme import apply_theme

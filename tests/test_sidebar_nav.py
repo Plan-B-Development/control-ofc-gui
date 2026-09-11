@@ -148,3 +148,40 @@ def test_profile_selector_widgets_present(qtbot):
     assert sidebar.findChild(QPushButton, "Sidebar_Btn_applyProfile") is not None
     assert isinstance(sidebar.profile_combo, QComboBox)
     assert isinstance(sidebar.apply_profile_btn, QPushButton)
+    # `CTRL-c`: New + Delete live beside the selector, so add/remove/switch are
+    # all in the one place profiles are chosen.
+    assert sidebar.findChild(QPushButton, "Sidebar_Btn_newProfile") is not None
+    assert sidebar.findChild(QPushButton, "Sidebar_Btn_deleteProfile") is not None
+
+
+def test_the_profile_group_names_the_selector_not_its_state(qtbot):
+    """`CTRL-c`: the header stopped being "ACTIVE PROFILE" when the combo gained
+    the ability to browse — the selection is whatever you are looking at, and the
+    active profile is marked on its own entry instead (``main_window``)."""
+    from PySide6.QtWidgets import QLabel
+
+    sidebar = Sidebar()
+    qtbot.addWidget(sidebar)
+    title = sidebar.findChild(QLabel, "Sidebar_Label_profileTitle")
+    assert title is not None
+    assert "ACTIVE" not in title.text().upper()
+
+
+def test_the_profile_group_fits_the_sidebars_fixed_width(qtbot):
+    """Two buttons now share a row inside a 190px fixed-width sidebar.
+
+    Asserted as a **relationship** measured at runtime, never against a pixel
+    count: a literal derived on one machine is a font metric, and a font metric
+    is only portable here because ``tests/conftest.py`` registers the bundled
+    DM Sans — which a label change could still outgrow (DEC-303).
+    """
+    sidebar = Sidebar()
+    qtbot.addWidget(sidebar)
+    sidebar.show()
+    qtbot.waitExposed(sidebar)
+
+    assert sidebar.minimumSizeHint().width() <= sidebar.width()
+    for btn in (sidebar.new_profile_btn, sidebar.delete_profile_btn):
+        assert btn.sizeHint().width() <= btn.width(), (
+            f"{btn.objectName()} ({btn.text()!r}) does not fit its half of the row"
+        )

@@ -196,19 +196,38 @@ class AppState(QObject):
 
     def set_status(self, status: DaemonStatus) -> None:
         self.daemon_status = status
-        # DEC-194: reflect the daemon's active profile on every poll when it is
-        # mirrored onto the status, so an external activation shows within ~1 s
-        # instead of the slow /profile/active refresh. The name drives the status
-        # banner; the id (routed by main_window → ProfileService.set_active) drives
-        # the id-based combo selection + the Controls `*`-active marker. `None`
-        # means an older daemon or no active profile → leave the /profile/active
-        # fallback (_on_active_profile) authoritative rather than clobbering it.
-        # Cheap: both setters are edge-triggered, so a signal fires only on change.
+        self._reflect_daemon_active_profile(status)
+        self.status_updated.emit(status)
+
+    def _reflect_daemon_active_profile(self, status: DaemonStatus) -> None:
+        """Mirror the daemon's active profile off a poll status (DEC-194, `CTRL-d`).
+
+        The name drives the status banner; the id (routed by main_window →
+        ``ProfileService.set_active``) drives the id-based combo selection and
+        the Controls page's viewed profile. Cheap: both setters are
+        edge-triggered, so a signal fires only on change.
+
+        Three cases, and the third is what `CTRL-d` added. ``has_active_profile``
+        is the daemon's *authoritative* answer; the id and name are omitted from
+        the wire whenever nothing is active, so on their own they cannot say
+        whether that absence means "nothing is active" or "this daemon predates
+        the mirror" (DEC-194 chose the latter, which is why a deactivation used
+        to leave a stale profile named in the UI until the GUI reconnected).
+        """
+        if status.has_active_profile is False:
+            # Authoritative: the daemon is running no profile. Clear both, so the
+            # sidebar and the banner stop naming one. Only reachable on a daemon
+            # that actually reports the field.
+            self.set_active_profile_id("")
+            self.set_active_profile("")
+            return
+        # `True` (id + name are present and current) or `None` (older daemon —
+        # leave the slow /profile/active fallback authoritative rather than
+        # clobbering it with a blank).
         if status.active_profile_id is not None:
             self.set_active_profile_id(status.active_profile_id)
         if status.active_profile_name is not None:
             self.set_active_profile(status.active_profile_name)
-        self.status_updated.emit(status)
 
     def set_sensors(self, sensors: list[SensorReading]) -> None:
         self.sensors = sensors

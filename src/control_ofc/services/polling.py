@@ -393,9 +393,24 @@ class PollingService(QObject):
             self._diag.log_event("info", "polling", "Daemon connected")
 
     def _on_active_profile(self, info: ActiveProfileInfo | None) -> None:
-        """Update AppState with the daemon's active profile on connect/reconnect."""
+        """Update AppState with the daemon's active profile on connect/reconnect.
+
+        `CTRL-d`: forwards the **id** as well as the name. The id is what
+        ``main_window`` routes into ``ProfileService.set_active`` (DEC-194), and
+        it is what decides which profile the sidebar marks active and the
+        Controls page edits — so dropping it here left those reading a local
+        value the GUI had invented at load time.
+
+        ``info is None`` is authoritative, not an error: the worker swallows a
+        failed request before it ever emits (``polling`` § run loop), so a `None`
+        that reaches this slot means the daemon answered and said nothing is
+        active. Clearing both fields is therefore correct, and it is the only
+        correction available against a daemon older than 2.45.0, which cannot say
+        so on the 1 Hz poll (`has_active_profile`).
+        """
         if info and info.active:
             log.info("Daemon active profile: %s (id=%s)", info.profile_name, info.profile_id)
+            self._state.set_active_profile_id(info.profile_id or "")
             self._state.set_active_profile(info.profile_name)
             if self._diag is not None:
                 self._diag.log_event(
@@ -406,6 +421,8 @@ class PollingService(QObject):
                 )
         else:
             log.debug("Daemon has no active profile")
+            self._state.set_active_profile_id("")
+            self._state.set_active_profile("")
 
     def _on_hw_diagnostics(self, result) -> None:
         """Hand the startup ``/diagnostics/hardware`` result to its single writer.

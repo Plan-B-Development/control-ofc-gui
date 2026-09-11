@@ -1853,8 +1853,16 @@ class ProfileService(QObject):
                     log.warning("Failed to persist default profile %s: %s", p.id, e)
                     errors.append((p.id, str(e)))
 
-        if not self._active_id and self._profiles:
-            self._active_id = next(iter(self._profiles))
+        # `CTRL-d`: deliberately NO active-id seed here. With a daemon, which
+        # profile is active is the daemon's to state — it arrives on the very
+        # next poll (`has_active_profile` + `active_profile_id`, DEC-194) and on
+        # connect from GET /profile/active. Seeding "the first file in the store"
+        # invented an answer that was right only by coincidence: the daemon lists
+        # profiles sorted by filename, so the GUI marked the alphabetically-first
+        # profile ACTIVE regardless of what was running, and a Save on it
+        # silently activated it (DEC-188). The local/demo path below keeps its
+        # seed — there is no daemon to ask there, so the first profile really is
+        # the active one.
         return errors
 
     def _load_from_local(self) -> list[tuple[str, str]]:
@@ -1987,12 +1995,27 @@ class ProfileService(QObject):
         self._unpublished.discard(profile.id)
 
     def set_active(self, profile_id: str) -> bool:
-        if profile_id in self._profiles:
-            if profile_id != self._active_id:
-                self._active_id = profile_id
-                self.active_changed.emit(profile_id)
-            return True
-        return False
+        """Record which profile the daemon is running; ``""`` means none.
+
+        `CTRL-d`: the empty id is a legitimate value, not a lookup miss. The
+        daemon genuinely runs no profile between a deactivate and the next
+        activate, and until this accepted ``""`` there was no way to say so — the
+        guard rejected it as "unknown id" and left the previous profile marked
+        active in the sidebar, in the Controls page's "Editing:" label, and in
+        ``_on_save_profile``'s DEC-188 re-apply test, which would then silently
+        activate a profile the user never chose.
+
+        An id the GUI does not hold is still rejected (returns ``False``, state
+        untouched) — that is DEC-194's deliberate no-op for a daemon running a
+        profile this client has not loaded, and it must not be confused with the
+        clear.
+        """
+        if profile_id and profile_id not in self._profiles:
+            return False
+        if profile_id != self._active_id:
+            self._active_id = profile_id
+            self.active_changed.emit(profile_id)
+        return True
 
     def activate(self, profile_id: str, *, client: DaemonClient | None) -> ProfileActivateOutcome:
         """Activate a profile end-to-end: persist it, confirm with the daemon,
@@ -2089,7 +2112,17 @@ class ProfileService(QObject):
         self._daemon_ids.discard(profile_id)
         self._unpublished.discard(profile_id)
         if self._active_id == profile_id:
-            self._active_id = next(iter(self._profiles), "")
+            # `CTRL-e`: clear rather than promote an arbitrary survivor. The
+            # caller has just told the daemon to deactivate (DEC-097), so "no
+            # profile is active" is the truth; promoting the next profile in
+            # insertion order made the sidebar label one ACTIVE and the Controls
+            # page start editing it while the status banner — which is
+            # daemon-sourced — correctly showed none.
+            self._active_id = ""
+            # Observers of `active_changed` (the sidebar marker, the Controls
+            # page) need to hear this too; `profiles_changed` alone does not say
+            # the active profile moved.
+            self.active_changed.emit("")
         # delete does not go through save_profile, so emit here for observers.
         self.profiles_changed.emit()
         return True

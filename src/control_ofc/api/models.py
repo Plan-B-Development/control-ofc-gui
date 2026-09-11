@@ -631,6 +631,18 @@ class DaemonStatus:
     # fallback authoritative instead of clobbering it with a blank.
     active_profile_id: str | None = None
     active_profile_name: str | None = None
+    # `CTRL-d`: the daemon's authoritative answer to "is a profile active?",
+    # always serialised from daemon 2.45.0. Tri-state, and all three readings
+    # matter:
+    #   None  — the key is ABSENT: a daemon < 2.45.0. Unknown; leave the
+    #           /profile/active fallback authoritative (the DEC-194 behaviour).
+    #   False — authoritatively nothing is active. Clear the cached id + name;
+    #           the two fields above are absent for a REASON, not by age.
+    #   True  — the id + name above are present and current.
+    # Before this field, `active_profile_id is None` meant both of the first two,
+    # so a deactivation left a stale profile named in the sidebar and the status
+    # banner until the GUI reconnected.
+    has_active_profile: bool | None = None
     # DEC-206: compact hardware-readiness rollup for the Dashboard health chip,
     # mirrored onto every /poll status. `None` when the key is ABSENT (older
     # daemon, or before the daemon's startup seed runs) → the chip is hidden.
@@ -2039,6 +2051,15 @@ def parse_status(data: dict) -> DaemonStatus:
         # present value updates the active profile every poll.
         active_profile_id=data.get("active_profile_id"),
         active_profile_name=data.get("active_profile_name"),
+        # `CTRL-d`: absent key → None ("unknown", old daemon). Coerced through an
+        # isinstance check rather than bool(): a malformed non-boolean must read
+        # as *unknown*, which preserves the pre-2.45.0 fallback, and not as
+        # `False`, which would clear a profile the daemon is really running.
+        has_active_profile=(
+            data.get("has_active_profile")
+            if isinstance(data.get("has_active_profile"), bool)
+            else None
+        ),
         # DEC-206: the compact readiness rollup for the Dashboard chip. Absent
         # key (old daemon / pre-seed) or a malformed object → None ⇒ chip hidden.
         readiness=_parse_readiness_rollup(data.get("readiness")),

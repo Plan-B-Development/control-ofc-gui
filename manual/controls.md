@@ -20,7 +20,7 @@ The page **header** carries the actions that apply to the whole profile:
 
 | Control | What it does |
 |--------|-------------|
-| *Profile name* | A read-only label naming the profile these edits and **Save** apply to. Selection itself is sidebar-owned, so this is how you confirm what **Save** will write to |
+| *Profile name* | A read-only label naming the profile these edits and **Save** apply to — it follows the sidebar selection, and is how you confirm what **Save** will write to |
 | **⋮** | Profile-management menu (create / rename / duplicate / delete) |
 | **Set up ▾** | The hardware-setup menu. It always offers **Auto-Connect Wizard…**, which opens the Fan Wizard to identify and label your physical fans (see [Fan Wizard](fan-wizard.md)). Two further entries appear only when the matching hardware is detected: **Configure AIO…**, one-click liquid-cooler setup (see [Configuring an AIO](#configuring-an-aio--liquid-cooler)), and **Dedicate GPU Fan…**, one-click setup so a writable AMD GPU fan can idle at true 0 RPM (see [Dedicating a GPU fan](#dedicating-a-gpu-fan)) |
 | **Revert** | Discards unsaved changes and restores the last saved version of the profile. Enabled only while there are unsaved edits |
@@ -37,11 +37,18 @@ Below the header the page is a **three-pane** workspace:
 
 ## Managing Profiles
 
-**Selecting and activating** a profile no longer happens on this page — it moved to the sidebar's **Active Profile** selector (a dropdown plus an **Apply** button). Pick a profile there and click **Apply** to hand it to the daemon, whose profile engine then evaluates its curves every second and drives the fans, so they stay controlled even with the GUI closed. If the Controls page has unsaved edits when you switch the active profile from the sidebar, the GUI first asks whether to discard them — cancel, and the sidebar snaps back to the profile that is still active.
+**Selecting and activating** a profile happen in the sidebar's **Profile** group, and they are two separate actions:
 
-**Saving** stays on this page. The header **Save Profile** button (`Ctrl+S`) writes your changes to disk. Saving the **active** profile also re-applies it to the daemon, so an edited curve takes effect immediately instead of only on the next activation. A status chip beside the button reads **"Unsaved changes"** whenever you have modified a profile without saving, then confirms afterwards: "Settings saved" for an inactive profile, "Saved & reapplied to daemon" for the active one (or "Saved — reapply failed (see log)" if the daemon rejects the re-apply — your local edit is still kept), and "Saved locally — daemon offline, not published" when the daemon is unreachable.
+- **Selecting** a profile in the dropdown *shows* it. The Controls page immediately renders that profile's fan roles and curves, and **Save** writes to it. Nothing is sent to the daemon — your fans keep doing exactly what they were doing.
+- **Apply** hands the selected profile to the daemon, whose profile engine then evaluates its curves every second and drives the fans, so they stay controlled even with the GUI closed.
 
-**Creating, renaming, duplicating, and deleting** profiles live under the header's **⋮** menu — **New Profile**, **Rename Profile**, **Duplicate Profile**, and **Delete Profile**. Deleting a profile asks for confirmation and cannot be undone; deleting the currently active profile deactivates it on the daemon first.
+The profile the daemon is actually running is marked **(active)** in the dropdown. That marker — not the current selection — is what tells you which profile is driving your fans.
+
+If the Controls page has unsaved edits when you select a different profile, the GUI first asks whether to discard them; cancel, and the dropdown snaps back to the profile you were looking at.
+
+**Saving** stays on this page. The header **Save** button (`Ctrl+S`) writes your changes to disk. Saving the **active** profile also re-applies it to the daemon, so an edited curve takes effect immediately instead of only on the next activation. A status chip beside the button reads **"Unsaved changes"** whenever you have modified a profile without saving, then confirms afterwards: "Settings saved" for an inactive profile, "Saved & reapplied to daemon" for the active one (or "Saved — reapply failed (see log)" if the daemon rejects the re-apply — your local edit is still kept), and "Saved locally — daemon offline, not published" when the daemon is unreachable.
+
+**Creating and deleting** profiles are available in two places: **New** and **Delete** sit directly beneath the sidebar's profile dropdown, and the full set — **New Profile**, **Rename Profile**, **Duplicate Profile**, **Delete Profile** — lives under the Controls page header's **⋮** menu. Both routes do the same thing. Deleting a profile names it in the confirmation prompt and cannot be undone; deleting the currently active profile deactivates it on the daemon first, after which **no** profile is active until you apply one.
 
 The daemon is the store of record for profiles; the GUI keeps a local draft cache so you can author and edit while disconnected. A profile saved while the daemon is unreachable is held as a **draft**; there is no background auto-sync — open it and **Save** again once the daemon reconnects to publish it. Activation (from the sidebar) is disabled while disconnected — you cannot make a profile active until the daemon can receive it.
 
@@ -189,6 +196,8 @@ These open a small parameter dialog instead:
 ## Empty States
 
 A new profile shows "No fan roles configured. Click + to create one." The Curves section stays hidden until at least one fan role exists — curves are always assigned *to* roles, so the page walks you through creating a role first.
+
+With **no** profile at all — you deleted the last one — the page says so and the **+** buttons are disabled until you create one with **New** in the sidebar.
 
 ---
 
