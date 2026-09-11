@@ -60,6 +60,9 @@ from control_ofc.services.thermal_view import (
     watts_text,
 )
 from control_ofc.ui.pages.hardware_page import HardwarePage
+from control_ofc.ui.pages.system_state_page import SystemStatePage
+from control_ofc.ui.theme import default_dark_theme
+from control_ofc.ui.widgets.pwm_characterization_dialog import PwmCharacterizationDialog
 from control_ofc.ui.widgets.session_timeline_chart import SessionTimelineChart
 from control_ofc.ui.widgets.validation_session_dialog import ValidationSessionDialog
 
@@ -738,7 +741,10 @@ class TestG28ChartsAndTrace:
     def test_the_charts_seed_from_the_live_theme_not_default_dark(self, qtbot):
         """`P8-af`: pinned to default-dark, both charts sat on the wrong palette
         inside a correctly themed dialog for their whole life, because nothing
-        calls `set_theme` on them.
+        called `set_theme` on them. (The second half of that is no longer true —
+        `P8-bx` wired the two hosting dialogs; see `TestP8bxThemePropagation`.
+        Seeding still has to be right on its own, because a dialog opened and
+        never re-themed never receives a switch.)
 
         **The active theme is deliberately moved off the default first.** In a
         stock test environment `active_theme()` IS default-dark, so asserting
@@ -796,3 +802,101 @@ class TestG28ChartsAndTrace:
         assert len(after) == len(before), (
             f"re-theming added {len(after) - len(before)} orphaned ViewBox(es) to the scene"
         )
+
+
+class TestP8bxThemePropagation:
+    """`P8-bx`: a live theme switch reaches the two Phase-8 charts.
+
+    These assert on the PAGE, never on the dialog's own ``set_theme`` — the
+    defect was that nothing called it, and a test that calls it directly passes
+    against exactly that state (`CLAUDE.md`: extracting a rule does not test the
+    call site). The page method is what the MainWindow fan-out actually reaches.
+
+    Each asserts a RELATIONSHIP — the chart now holds *the tokens the page was
+    handed* — with a precondition that those tokens differ from what the chart
+    was born with. Without the precondition the sample cannot move, and the
+    assertion would hold with the wiring deleted.
+    """
+
+    @staticmethod
+    def _distinct_theme():
+        """A palette no chart can already be holding.
+
+        Same shape as default-dark, different ``chart_bg``, so the precondition
+        in each test below can never be vacuously true.
+        """
+        return replace(default_dark_theme(), name="P8-bx Probe", chart_bg="#0b1d2e")
+
+    @staticmethod
+    def _hardware_page(qtbot):
+        state = AppState()
+        state.set_connection(ConnectionState.CONNECTED)
+        state.set_capabilities(_caps())
+        page = HardwarePage(state=state, diagnostics_service=DiagnosticsService(state), client=None)
+        qtbot.addWidget(page)
+        return page
+
+    def test_a_switch_reaches_the_session_dialog_chart(self, qtbot):
+        """The REACHABLE half: `P8-bd` made this dialog modeless, so the user can
+        walk to the Theme page with a session recording in front of them."""
+        page = self._hardware_page(qtbot)
+        dialog = ValidationSessionDialog("aio0", "AIO", members=[])
+        qtbot.addWidget(dialog)
+        page._validation_dialog = dialog
+
+        tokens = self._distinct_theme()
+        assert dialog._chart._theme.chart_bg != tokens.chart_bg, (
+            "precondition: the chart must not already hold the probe palette, or "
+            "this assertion passes with the propagation deleted"
+        )
+
+        page.set_theme(tokens)
+
+        assert dialog._chart._theme is tokens, (
+            "HardwarePage.set_theme must forward to the open session dialog; the "
+            "MainWindow fan-out stops at the page"
+        )
+
+    def test_a_switch_reaches_the_characterization_dialog_chart(self, qtbot):
+        """The LATENT half, wired on purpose: this dialog is `exec()`-modal, so a
+        switch cannot originate while it is open. It is asserted anyway because
+        the wiring is what makes the chart correct if it ever goes modeless —
+        which is exactly what happened to its sibling at `P8-bd`."""
+        page = self._hardware_page(qtbot)
+        dialog = PwmCharacterizationDialog("h1", "AIO_PUMP", is_pump=True)
+        qtbot.addWidget(dialog)
+        page._char_dialog = dialog
+
+        tokens = self._distinct_theme()
+        assert dialog._chart._theme.chart_bg != tokens.chart_bg, "precondition"
+
+        page.set_theme(tokens)
+
+        assert dialog._chart._theme is tokens
+
+    def test_the_system_state_page_forwards_too(self, qtbot):
+        """It opens the same dialog from its own registry table, so the fan-out
+        has to carry the last hop there as well — a page that was missed is
+        indistinguishable from the pre-fix state for anyone who starts there."""
+        state = AppState()
+        state.set_connection(ConnectionState.CONNECTED)
+        page = SystemStatePage(state=state, diagnostics_service=DiagnosticsService(state))
+        qtbot.addWidget(page)
+        dialog = PwmCharacterizationDialog("h1", "CHA_FAN1", is_pump=False)
+        qtbot.addWidget(dialog)
+        page._char_dialog = dialog
+
+        tokens = self._distinct_theme()
+        assert dialog._chart._theme.chart_bg != tokens.chart_bg, "precondition"
+
+        page.set_theme(tokens)
+
+        assert dialog._chart._theme is tokens
+
+    def test_a_switch_with_no_dialog_open_is_harmless(self, qtbot):
+        """The opposite branch. The references are `None` for almost the whole
+        life of both pages, so an unguarded forward would raise on every theme
+        change — a crash in the common case to fix the rare one."""
+        page = self._hardware_page(qtbot)
+        assert page._validation_dialog is None and page._char_dialog is None
+        page.set_theme(self._distinct_theme())

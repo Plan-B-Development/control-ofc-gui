@@ -552,6 +552,23 @@ class PwmCharacterizationDialog(ModalDialog):
 
     # ── lifecycle ────────────────────────────────────────────────────
 
+    def set_theme(self, tokens) -> None:
+        """Forward a live theme switch to the chart (`P8-bx`).
+
+        LATENT, and deliberately so. This dialog runs under ``exec()``, which is
+        application-modal, and the only emitter of ``theme_changed`` is the Theme
+        page inside the main window — so while this dialog is open the user
+        cannot reach the control that would call this. It is wired anyway because
+        the sibling session dialog was modal too until `P8-bd` made it modeless
+        for a reason that applies here as well; if that happens, the chart
+        follows the switch instead of quietly keeping the old palette.
+
+        DEC-346 made ``set_theme`` safe to call repeatedly (the RPM ViewBox is no
+        longer rebuilt per invocation), which is what makes this a two-line
+        forward rather than a chart change.
+        """
+        self._chart.set_theme(tokens)
+
     def stop_polling(self) -> None:
         self._timer.stop()
 

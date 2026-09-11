@@ -1093,7 +1093,7 @@ class SystemStatePage(QWidget):
         self._report_dialog.raise_()
         self._report_dialog.activateWindow()
 
-    def set_theme(self, _tokens) -> None:
+    def set_theme(self, tokens) -> None:
         # The registry floor must track the table. It is derived from the column
         # headers' own size hints, and those scale with the theme's base font —
         # so a floor derived once at construction pins the pane to whatever was
@@ -1107,3 +1107,8 @@ class SystemStatePage(QWidget):
         cached = self._diag.last_hw_diagnostics
         if cached is not None:
             self._render(cached)
+        # `P8-bx`: this page opens the characterization dialog too, so it carries
+        # the last hop for its chart exactly as `hardware_page` does. Latent while
+        # that dialog is `exec()`-modal — see the dialog's own `set_theme`.
+        if self._char_dialog is not None:
+            self._char_dialog.set_theme(tokens)

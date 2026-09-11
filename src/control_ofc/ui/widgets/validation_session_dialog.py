@@ -1105,6 +1105,17 @@ class ValidationSessionDialog(ModalDialog):
     def stop_polling(self) -> None:
         self._timer.stop()
 
+    def set_theme(self, tokens) -> None:
+        """Forward a live theme switch to the timeline chart (`P8-bx`).
+
+        Reachable, unlike the characterization dialog's copy of this: `P8-bd`
+        made this dialog modeless, so the user can walk to the Theme page with a
+        session still recording in front of them. DEC-346 fixed the palette the
+        chart is BORN with; without this the chart then kept that palette for the
+        life of the dialog while everything around it changed.
+        """
+        self._chart.set_theme(tokens)
+
     def session(self) -> ValidationSession | None:
         return self._session
 

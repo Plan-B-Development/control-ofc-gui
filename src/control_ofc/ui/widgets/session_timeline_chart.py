@@ -76,7 +76,10 @@ class SessionTimelineChart(QWidget):
         # `P8-af`: read the LIVE active theme rather than pinning to default-dark
         # at construction (the DEC-109 rule `timeline_chart` already follows).
         # Pinned, this chart sat on the default palette inside a correctly themed
-        # dialog for its whole life, because nothing calls `set_theme` on it.
+        # dialog for its whole life, because nothing called `set_theme` on it.
+        # `P8-bx` then wired the hosting dialog, so a live switch reaches here
+        # too — but the seed still has to be right on its own: a dialog opened
+        # and never re-themed never receives one.
         self._theme: ThemeTokens = active_theme()
         self._trace = SessionTrace()
         self._rpm_vb: pg.ViewBox | None = None

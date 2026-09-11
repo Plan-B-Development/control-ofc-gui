@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.68.2] — 2026-09-11
+
+**Pairs with `control-ofc-daemon` >= v2.11.0 — unchanged.** Client-side only: no
+endpoint, field or capability is involved.
+
+**Switching theme while a recording session is open now recolours its timeline
+chart (`P8-bx`).** The session window is modeless on purpose — its own isolation
+templates tell you to set a duty on the Controls page — so you can change theme
+with a session recording in front of you. The chart kept the palette it opened
+with while the window around it changed. It now follows the switch.
+
+The characterization window's chart is wired the same way, but you will not see
+it change: that window blocks the rest of the application while it is open, so
+the Theme page cannot be reached from it. It is connected so the chart stays
+correct if that window ever becomes modeless, as the session window already did.
+
+Charts have been born with the correct palette since v2.67.0; this is only about
+a switch made while a window is already open.
+
 ## [2.68.1] — 2026-09-11
 
 **Pairs with `control-ofc-daemon` >= v2.11.0 — unchanged.** Client-side only: no

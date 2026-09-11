@@ -1862,9 +1862,21 @@ class HardwarePage(QWidget):
         self._discover_worker = self._discover_thread = None
         self._validation_worker = self._validation_thread = None
 
-    def set_theme(self, _tokens) -> None:
+    def set_theme(self, tokens) -> None:
         if self._last_report is not None:
             self._render(self._last_report)
+        # `P8-bx`: the Phase-8 charts live inside dialogs this page owns, so the
+        # MainWindow fan-out stops here unless this method carries it the last
+        # hop — the same shape `dashboard_page`/`controls_page` use for their own
+        # charts and cards. Guarded on the live reference rather than
+        # `findChildren`: a dialog that has been closed is `deleteLater`d with its
+        # reference already cleared (`_on_validation_closed`), and re-theming a
+        # half-destroyed wrapper is the shiboken use-after-free DEC-230 exists to
+        # avoid.
+        if self._char_dialog is not None:
+            self._char_dialog.set_theme(tokens)
+        if self._validation_dialog is not None:
+            self._validation_dialog.set_theme(tokens)
 
 
 # ── Module helpers ───────────────────────────────────────────────────

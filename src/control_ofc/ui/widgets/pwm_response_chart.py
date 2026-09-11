@@ -49,7 +49,8 @@ class PwmResponseChart(QWidget):
         # the default palette inside a correctly themed dialog. Unlike its
         # sibling `SessionTimelineChart` this one builds no ViewBox, so
         # `_setup_plot` is idempotent and `set_theme` was already safe to call —
-        # there was simply never a caller.
+        # there was simply never a caller. `P8-bx` added one (the hosting dialog
+        # forwards), though it is latent while that dialog is `exec()`-modal.
         self._theme: ThemeTokens = active_theme()
         self._curve = ResponseCurve()
 
