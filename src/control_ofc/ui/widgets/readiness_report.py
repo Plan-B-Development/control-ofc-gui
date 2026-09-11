@@ -82,6 +82,36 @@ def _link(url: str, title: str) -> str:
     )
 
 
+#: How long a header must go without a reclaim before the condition stands down.
+#:
+#: The daemon's watchdog re-asserts manual mode on every reclaim, so a BIOS that
+#: is actively fighting produces them continuously — within a poll cycle or two,
+#: not hours apart. An hour of silence is therefore several orders of magnitude
+#: past "still happening" while staying far short of "it might have stopped by
+#: coincidence". Deliberately not spelled into any name or user-facing string
+#: (DEC-292): interpolate it, never restate it.
+RECLAIM_HISTORIC_AFTER_MS = 60 * 60 * 1000
+
+
+def reclaims_are_historic(hw) -> bool:
+    """True when EVERY counted reclaim is older than the stand-down window.
+
+    Every, not the newest-on-average: one header still being fought over is an
+    active condition regardless of how quiet the others have gone.
+
+    Returns False when the age is unknown for any header that has a count —
+    an older daemon, or a count from before the field existed. Absence of a
+    measurement is not evidence of age, and the safe direction for a warning is
+    to keep showing it.
+    """
+    counts = getattr(hw, "enable_revert_counts", None) or {}
+    ages = getattr(hw, "enable_revert_last_seen_ms", None) or {}
+    hot = [h for h, n in counts.items() if n > 0]
+    if not hot:
+        return False
+    return all(h in ages and ages[h] >= RECLAIM_HISTORIC_AFTER_MS for h in hot)
+
+
 def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
     """The observed readiness conditions, in display order (DEC-357).
 
@@ -195,7 +225,19 @@ def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
         )
 
     reverts = getattr(hw, "enable_revert_counts", None) or {}
-    if reverts and max(reverts.values()) > 0:
+    # DEC-360: a reclaim the watchdog remediated hours ago is history, not a
+    # condition. `_base_conditions`' own docstring says of this list "fix it in
+    # BIOS, refetch, and it is gone" — which was false for this entry, because
+    # the count is monotonic for the daemon's lifetime with no reset path
+    # (`ACK-d`). So ONE reclaim pinned an ACTION REQUIRED card for the whole
+    # uptime, and the honest correction is to date the evidence rather than
+    # discard it: the count is still reported by the Interference Monitor, it
+    # simply stops being an alarm once nothing has happened for a while.
+    #
+    # An unknown age (older daemon, or a count from before this field existed)
+    # does NOT suppress the condition — absence of a measurement is not evidence
+    # that it is old.
+    if reverts and max(reverts.values()) > 0 and not reclaims_are_historic(hw):
         problems.append(
             {
                 "key": "bios_revert",

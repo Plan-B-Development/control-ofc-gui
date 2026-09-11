@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.74.0] — 2026-09-11
+
+**Pairs with `control-ofc-daemon` >= v2.46.0 for the new field; the floor for
+everything else is unchanged at v2.11.0.** An older daemon simply omits it and
+this release behaves exactly as v2.73.0 did.
+
+**A BIOS reclaim the daemon already dealt with stops being an alarm.** The
+reclaim counter never resets while the daemon is running and has no reset path,
+so *one* reclaim — which the watchdog remediates immediately by re-asserting
+manual mode — pinned an **ACTION REQUIRED** card and an "Interference Detected"
+gauge for the rest of that daemon's uptime. Nothing you could do cleared it. The
+page's own promise about conditions, "fix the cause, refetch, and the card is
+gone", was simply false for this one.
+
+The daemon now reports how long ago the most recent reclaim was counted, and the
+evidence is **dated rather than discarded**. Once every affected header has been
+quiet for a while the condition stands down, while the Interference Monitor
+keeps the count and relabels it **Past Interference**, telling you how long ago
+it was and that fan control has been stable since. Nothing is hidden; it stops
+shouting.
+
+If the age is not known — an older daemon, or a count from before the daemon
+started reporting it — the warning stays exactly as it was. Absence of a
+measurement is not evidence that something is old.
+
 ## [2.73.0] — 2026-09-11
 
 **GUI-only; the daemon floor is unchanged at `control-ofc-daemon` >= v2.11.0.**

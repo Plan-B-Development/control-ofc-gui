@@ -206,6 +206,15 @@ button each — only what the daemon measured) and, below them, the collapsed
 whose entries carry an **evidence status** rather than a place in the alarm
 stack. It gets the whole width.
 
+Since DEC-360 the `bios_revert` condition **stands down** once every counted
+header has been quiet for `RECLAIM_HISTORIC_AFTER_MS`, using the daemon's
+`hwmon.enable_revert_last_seen_ms` (daemon ≥ 2.46.0). The count is monotonic for
+the controller's lifetime with no reset path, so before that one reclaim pinned
+an ACTION REQUIRED card for the whole uptime. The Interference Monitor keeps the
+count and relabels it *Past Interference* with the age interpolated — the
+evidence is dated, not discarded. An unknown age (older daemon, or a count
+predating the field) never stands anything down.
+
 Since DEC-359 **every** item on the page carries the same Acknowledge/Dismiss
 lifecycle, through one layer (`services/health_ack.py`): a silence is an
 *occurrence* — `(key, fingerprint, level)` — where the fingerprint must match

@@ -62,6 +62,7 @@ from control_ofc.ui.widgets.readiness_report import (
     EVIDENCE_NOT_OBSERVED,
     EVIDENCE_OBSERVED,
     EVIDENCE_UNVERIFIED,
+    RECLAIM_HISTORIC_AFTER_MS,
     board_notes,
     evidence_rank,
 )
@@ -1123,3 +1124,144 @@ def test_the_retired_keys_stay_fenced_out_of_an_imported_settings_file():
     # of keeping `from_dict`'s migration.
     local = AppSettings.from_dict({"dismissed_board_notes": ["all_readonly@observed"]})
     assert local.dismissed_health_items == ["all_readonly@observed"]
+
+
+# ── DEC-360 Phase 3: a reclaim the watchdog fixed hours ago is history ────
+
+
+def _reclaim_diag(count=3, age_ms=None):
+    """A board with a counted BIOS reclaim, optionally dated."""
+    hw = HwmonDiagnostics(
+        chips_detected=[HwmonChipInfo(chip_name="it8696", expected_driver="it87")],
+        total_headers=8,
+        writable_headers=8,
+        enable_revert_counts={"pwm1": count},
+    )
+    if age_ms is not None:
+        hw.enable_revert_last_seen_ms = {"pwm1": age_ms}
+    return HardwareDiagnosticsResult(
+        hwmon=hw,
+        board=BoardInfo(vendor=_GIGABYTE, name="X870E AORUS MASTER"),
+        thermal_safety=ThermalSafetyInfo(
+            state="normal", cpu_sensor_found=True, emergency_threshold_c=110.0
+        ),
+        cpu_vendor="AMD",
+    )
+
+
+def test_a_recent_reclaim_is_still_a_condition():
+    """The arm that discriminates. Without it, "historic" is indistinguishable
+    from having deleted the condition outright."""
+    recent = _reclaim_diag(age_ms=60_000)  # a minute ago
+    assert "bios_revert" in {c.key for c in build_condition_cards(recent).cards}
+    assert build_interference_vm(recent).severity_state != "neutral"
+
+
+def test_a_reclaim_nothing_has_repeated_stands_down():
+    """The defect: ONE reclaim pinned ACTION REQUIRED for the daemon's uptime.
+
+    `enable_revert_counts` is monotonic with no reset path, so the count alone
+    could never clear — `_base_conditions`' own docstring promised "fix it in
+    BIOS, refetch, and it is gone", which was false for this entry.
+    """
+    old = _reclaim_diag(age_ms=RECLAIM_HISTORIC_AFTER_MS + 1)
+    assert "bios_revert" not in {c.key for c in build_condition_cards(old).cards}
+
+    # Dated, not discarded: the monitor keeps the count and says what it is.
+    vm = build_interference_vm(old)
+    assert vm.has_contention is True
+    assert vm.highest_count == 3, "the evidence must survive standing down"
+    assert vm.severity_state == "neutral"
+    assert vm.title == "Past Interference"
+
+
+def test_an_unknown_reclaim_age_does_not_suppress_the_condition():
+    """An older daemon omits the field. Absence of a measurement is not
+    evidence of age, and the safe direction for a warning is to keep it."""
+    undated = _reclaim_diag(age_ms=None)
+    assert undated.hwmon.enable_revert_last_seen_ms == {}
+    assert "bios_revert" in {c.key for c in build_condition_cards(undated).cards}
+    assert build_interference_vm(undated).severity_state != "neutral"
+
+
+def test_one_active_header_keeps_the_condition_up_for_all_of_them():
+    """`all`, not `any`: a single header still being fought over is active,
+    however quiet the rest have gone."""
+    hw = HwmonDiagnostics(
+        chips_detected=[HwmonChipInfo(chip_name="it8696")],
+        total_headers=8,
+        writable_headers=8,
+        enable_revert_counts={"pwm1": 5, "pwm2": 2},
+    )
+    hw.enable_revert_last_seen_ms = {"pwm1": RECLAIM_HISTORIC_AFTER_MS * 10, "pwm2": 5_000}
+    diag = HardwareDiagnosticsResult(
+        hwmon=hw,
+        board=BoardInfo(vendor=_GIGABYTE, name="X870E"),
+        thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
+        cpu_vendor="AMD",
+    )
+    assert "bios_revert" in {c.key for c in build_condition_cards(diag).cards}
+
+
+def test_the_historic_wording_interpolates_the_reported_age():
+    """DEC-292: a threshold spelled into a string drifts the moment it moves."""
+    vm = build_interference_vm(_reclaim_diag(age_ms=5 * 3_600_000))
+    assert "5 hour" in vm.explanation
+    vm2 = build_interference_vm(_reclaim_diag(age_ms=2 * 3_600_000))
+    assert "2 hour" in vm2.explanation
+    assert vm.explanation != vm2.explanation, "the figure must come from the wire, not a literal"
+
+
+def test_the_wire_field_defaults_empty_on_an_older_daemon():
+    """One wire field, one gating shape (DEC-334)."""
+    from control_ofc.api.models import parse_hardware_diagnostics
+
+    older = parse_hardware_diagnostics({"hwmon": {"enable_revert_counts": {"pwm1": 2}}})
+    assert older.hwmon.enable_revert_counts == {"pwm1": 2}
+    assert older.hwmon.enable_revert_last_seen_ms == {}, "an older daemon must not imply an age"
+
+    # And the opposite arm — the field is genuinely read when the daemon sends it.
+    newer = parse_hardware_diagnostics(
+        {
+            "hwmon": {
+                "enable_revert_counts": {"pwm1": 2},
+                "enable_revert_last_seen_ms": {"pwm1": 7_200_000},
+            }
+        }
+    )
+    assert newer.hwmon.enable_revert_last_seen_ms == {"pwm1": 7_200_000}
+
+
+def test_a_dismissal_expires_when_the_reclaim_episode_ends(qtbot):
+    """Dismiss an active reclaim, let it go historic, and the silence goes too.
+
+    Raised by `ofc:contract-reviewer` as a defect and **refuted by measurement**:
+    DEC-360 makes the condition vanish and later return, which before this change
+    was structurally impossible, so a stale dismissal could in principle cover a
+    genuinely new BIOS fight at the same severity bucket. It does not, because
+    Phase 2's pruning removes a silence whose key the hardware is no longer
+    raising — ISA-18.2's RECOVERED semantics, arrived at from the other
+    direction. This test exists so that stays true: it is the only thing
+    connecting the two halves.
+    """
+    page, svc = _page(qtbot, _reclaim_diag(age_ms=60_000))
+    btn = page.findChild(QPushButton, "SystemState_IssueCardDismissBtn_bios_revert")
+    assert btn is not None, "precondition: an active reclaim must be dismissable"
+    btn.click()
+    assert svc.settings.dismissed_health_items, "precondition: the dismissal was stored"
+    _flush(page)
+
+    # The episode ends. Rendering while historic prunes the now-dead silence.
+    page._render(_reclaim_diag(age_ms=RECLAIM_HISTORIC_AFTER_MS * 5))
+    assert svc.settings.dismissed_health_items == [], (
+        "the silence outlived the occurrence it was taken against"
+    )
+
+    # A NEW fight at the same severity bucket must speak again.
+    assert "bios_revert" in {
+        c.key
+        for c in build_condition_cards(
+            _reclaim_diag(age_ms=30_000),
+            silence=SilenceState(dismissed=frozenset(svc.settings.dismissed_health_items)),
+        ).cards
+    }

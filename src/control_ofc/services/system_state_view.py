@@ -731,6 +731,24 @@ def build_board_notes(
 # ─── Interference / safety / registry ──────────────────────────────────────
 
 
+def _historic_reclaim_text(hw) -> str:
+    """Wording for a reclaim nothing has repeated recently.
+
+    The figure is interpolated from what the daemon reported, never restated
+    (DEC-292: a threshold spelled into a string drifts the moment it moves).
+    """
+    ages = getattr(hw, "enable_revert_last_seen_ms", None) or {}
+    counts = getattr(hw, "enable_revert_counts", None) or {}
+    newest = min((ages[h] for h in counts if h in ages), default=0)
+    hours = max(1, round(newest / 3_600_000))
+    return (
+        f"No reclaim in about {hours} hour(s). The daemon watchdog re-enabled manual "
+        "mode at the time and fan control has been stable since, so this is a record "
+        "of what happened rather than something to act on. The count is kept because "
+        "it never resets while the daemon is running."
+    )
+
+
 def build_interference_vm(
     diag: HardwareDiagnosticsResult,
     *,
@@ -770,6 +788,14 @@ def build_interference_vm(
     severity = classify_reclaim_severity(highest)  # "warn" | "high"
     state = {"ok": "ok", "warn": "warn", "high": "crit"}[severity]
 
+    # DEC-360: the monitor keeps the count either way, but says which it is.
+    # An hours-old reclaim the watchdog already remediated is history, and
+    # rendering it identically to an active fight is what made this panel
+    # permanent — the user could neither clear it nor tell the two apart.
+    historic = readiness.reclaims_are_historic(diag.hwmon)
+    if historic:
+        state = "neutral"
+
     silence = silence or SilenceState()
     ack_index, dismiss_index = silence.index(state_rank, known_state)
     occ = Occurrence(
@@ -797,12 +823,16 @@ def build_interference_vm(
         title=(
             "Interference (quietened)"
             if silence_vm.quiet
+            else "Past Interference"
+            if historic
             else "High Contention Detected"
             if severity == "high"
             else "Interference Detected"
         ),
         explanation=(
-            "The daemon watchdog automatically re-enables manual mode on every reclaim. "
+            _historic_reclaim_text(diag.hwmon)
+            if historic
+            else "The daemon watchdog automatically re-enables manual mode on every reclaim. "
             "Persistently HIGH counts indicate ongoing BIOS contention — see the health "
             "issues above for the BIOS settings to change."
         ),

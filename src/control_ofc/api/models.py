@@ -1170,6 +1170,18 @@ class HwmonDiagnostics:
     total_headers: int = 0
     writable_headers: int = 0
     enable_revert_counts: dict[str, int] = field(default_factory=dict)
+    # DEC-360, daemon >= 2.46.0: age in ms of the most recent counted reclaim,
+    # per header. Dates the counts beside it — that map is monotonic for the
+    # life of the PWM controller and has no reset path, so the count alone
+    # cannot tell an active BIOS fight from one reclaim three weeks ago that the
+    # watchdog already remediated.
+    #
+    # An older daemon omits it, and a header counted but absent here means the
+    # age is UNKNOWN. Both must read as "not known to be old" rather than as
+    # "just now" or "ancient": guessing either way would make the GUI quieter or
+    # louder than the evidence supports, and the safe default for a missing
+    # measurement is to keep presenting what we do know.
+    enable_revert_last_seen_ms: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -2296,6 +2308,7 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         total_headers=hwmon_raw.get("total_headers", 0),
         writable_headers=hwmon_raw.get("writable_headers", 0),
         enable_revert_counts=hwmon_raw.get("enable_revert_counts", {}),
+        enable_revert_last_seen_ms=hwmon_raw.get("enable_revert_last_seen_ms", {}),
     )
 
     gpu_raw = data.get("gpu")

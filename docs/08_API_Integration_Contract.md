@@ -1089,6 +1089,32 @@ as `thermal_state`, so the two cannot disagree by a tick. Render it; never
 compare it to a literal and never assume 105. `release_threshold_c` is still the
 fixed 80 °C. Older daemons report the constant, which remains a correct floor.
 
+**`hwmon.enable_revert_last_seen_ms` dates the reclaim counts (DEC-360, daemon
+≥ 2.46.0).** `hwmon.enable_revert_counts` is cumulative **for the life of the
+PWM controller and has no reset path** — `POST /hwmon/rescan` deliberately does
+not rebuild the controller — so a client reading it alone cannot tell an active
+BIOS fight from a single reclaim hours ago that the daemon's watchdog already
+remediated, and was forced to present both identically and permanently. This map
+reports, per header id, the age in milliseconds of the most recent **counted**
+reclaim.
+
+* It is the age of the reclaim, **not** of the last log line. The watchdog
+  throttles its logging (first reclaim WARN, the rest DEBUG, one summary per
+  interval), so a timestamp taken from emission would stop advancing on exactly
+  the busy headers whose activity matters most.
+* It shares a lifetime with the counts — both live on the controller and reset
+  together — so an age here can never describe a different daemon's count.
+* `skip_serializing_if = "HashMap::is_empty"`, so an older daemon emits nothing
+  and the GUI parser defaults to `{}`. **A header present in
+  `enable_revert_counts` but absent here means the age is UNKNOWN, never "just
+  now" and never "ancient".** Clients must not default it either way: absence of
+  a measurement is not evidence about age, and guessing makes the client quieter
+  or louder than the evidence supports.
+* GUI policy, not daemon policy: the GUI stands the *condition* down once every
+  counted header has been quiet for its own window, while the Interference
+  Monitor keeps showing the count and relabels it. The daemon reports the age
+  and takes no view on what "old" means.
+
 New optional fields added in DEC-101 — both serialise with
 `skip_serializing_if = "Vec::is_empty"`, so older daemons emit nothing
 and the GUI parser defaults to `[]`:
