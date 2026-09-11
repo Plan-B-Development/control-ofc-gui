@@ -206,6 +206,18 @@ button each — only what the daemon measured) and, below them, the collapsed
 whose entries carry an **evidence status** rather than a place in the alarm
 stack. It gets the whole width.
 
+Since DEC-359 **every** item on the page carries the same Acknowledge/Dismiss
+lifecycle, through one layer (`services/health_ack.py`): a silence is an
+*occurrence* — `(key, fingerprint, level)` — where the fingerprint must match
+exactly and the level must not have escalated. Acknowledge is session-only,
+dismiss persists to `dismissed_health_items`. **A condition card is removed when
+silenced; a *reading* is demoted** — the Interference Monitor, the thermal row
+and a GPU advisory keep their values and lose only their alarm state, because
+this section calls them always-visible and the page must not get quieter by
+getting less true. `issues_requiring_attention` is computed before any silencing
+and `conditions_hidden_count` is rendered beneath the list, so the pill and the
+list can be reconciled.
+
 Its `SectionHeader` carries the issue-count pill via `add_trailing` and, since
 DEC-358, two controls via `add_action` (right of the stretch): **Refresh**, a
 forced refetch of `/diagnostics/hardware`, and **Open Full Report**. Both were

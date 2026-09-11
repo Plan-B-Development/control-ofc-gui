@@ -69,7 +69,22 @@ Added in DEC-237 — mirror and reset surfaces for settings authored elsewhere:
   safety-floor path.
 - **Prompts & Dismissals** — re-arm `show_aio_pump_info`, clear
   `acknowledged_kernel_warnings`, re-offer the daemon profile import, re-run the
-  fan-alias and chart-series seeding latches.
+  fan-alias and chart-series seeding latches. Plus, for the System State page's
+  health surfaces (DEC-357 → DEC-359): two toggles governing whether the
+  *Acknowledge* / *Dismiss* affordances appear at all
+  (`board_notes_allow_acknowledge`, `board_notes_allow_dismiss`), one **Restore**
+  clearing `dismissed_health_items`, and one control forgetting
+  `last_pwm_verify_effective` so the notes read as unverified again.
+
+  > **Updated 2026-09-11 (DEC-359).** This bullet was stale for DEC-357 — it
+  > named none of the five keys that shipped in v2.71.0 (`ACK-l`) — and is
+  > corrected here in the change that replaced them. **Acknowledgement is
+  > session-only** and therefore has no settings key and no restore control;
+  > only *dismissal* persists. `acknowledged_board_notes` and
+  > `dismissed_board_notes` are **retired**, folded into `dismissed_health_items`
+  > at load, and the two old board-note rows are replaced by the single
+  > *Restore*. Read `MACHINE_SPECIFIC_KEYS` in `app_settings_service.py` for the
+  > authoritative set — the prose list below has now drifted twice.
 - **Card Layout** — bulk reset of `controls_card_sizes` (per-card reset by
   double-clicking a grip is unchanged, DEC-129).
 
@@ -262,7 +277,11 @@ These belong to the daemon runtime/config:
   hardware-id-keyed maps (`window_geometry`, `last_page_index`, data-dir
   overrides, `series_colors`, `controls_card_sizes`,
   `diagnostics_hidden_sensor_ids`, `sensor_class_overrides`,
-  `acknowledged_kernel_warnings`, `fan_aliases_seeded`, `daemon_import_prompted`, and the
+  `acknowledged_kernel_warnings`, `dismissed_health_items` (DEC-359 — every
+  silenced System State item; hardware-keyed, so meaningless on another machine
+  and a shared export carrying it would quieten a warning on hardware that never
+  had it reviewed), `last_pwm_verify_effective`, `fan_aliases_seeded`,
+  `daemon_import_prompted`, and the
   DEC-245 view-state keys `splitter_sizes`, `logs_level_filters`, `logs_search_text`
   and `logs_source_filter`) are excluded — the
   authoritative set is `MACHINE_SPECIFIC_KEYS` in `app_settings_service.py`, which is

@@ -325,6 +325,16 @@ EVIDENCE_ORDER: tuple[str, ...] = (
 _EVIDENCE_RANK: dict[str, int] = {e: i for i, e in enumerate(EVIDENCE_ORDER)}
 
 
+def known_evidence(evidence: str) -> bool:
+    """Is this a level from the evidence vocabulary? (DEC-359 remediation.)
+
+    See `health_ack.build_index`: an unrecognised *stored* level must void its
+    silence rather than maximise it, which is the opposite of the rule
+    `evidence_rank` applies to the *current* level.
+    """
+    return evidence in _EVIDENCE_RANK
+
+
 def evidence_rank(evidence: str) -> int:
     """Rank one evidence state; an unknown state ranks ABOVE every known one.
 

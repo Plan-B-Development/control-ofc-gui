@@ -1,5 +1,73 @@
 # Changelog
 
+## [2.73.0] — 2026-09-11
+
+**GUI-only; the daemon floor is unchanged at `control-ofc-daemon` >= v2.11.0.**
+No new wire field and no capability consulted.
+
+**Everything in the System Health Overview can now be quietened — and one rule
+governs all of it.** v2.71.0 gave the *board notes* an Acknowledge and a
+Dismiss and left every other half of the page exactly as it was: the condition
+cards the page actually ranks, the Interference Monitor, the thermal row and the
+GPU advisories had no lifecycle at all. They do now, through one shared layer
+rather than four copies of one.
+
+**Acknowledge means "I have read this now" and lasts for the session. Dismiss
+persists** until you restore it in Settings, or until the thing gets worse. That
+is a change from v2.71.0, where acknowledgement persisted — an acknowledgement
+that outlives the session is a dismissal wearing the wrong label, and having two
+kinds of silence with one name is what produced this round of work. **Anything
+you had already acknowledged is kept, folded into your dismissals**, because you
+had told the app you were done with it and making it reappear on upgrade would be
+the exact failure this release is about.
+
+**A silence is keyed on the occurrence, not on the problem.** Dismiss "ACPI I/O
+port conflict" for the two ranges you know about and a third range speaks again.
+Dismiss a driver-module collision and a collision between a *different* pair of
+modules still speaks. What does **not** wake it is the same problem continuing,
+or getting better.
+
+The one exception is deliberate: **BIOS reclaim counts are keyed on the severity
+band, never the raw number.** The count only ever rises while the daemon is
+running, so keying on it would mint a new occurrence on every single reclaim and
+your dismissal would last about one second. It comes back when contention
+crosses into HIGH.
+
+**Two things can never be quietened.** The `N ACTION REQUIRED` count keeps
+counting what you have dismissed, so the page can never read SYSTEM READY while
+fan control is actually broken — a dismissed condition is reported as
+`N dismissed` beneath the list so the two numbers reconcile. And the readings
+that must stay true are **demoted, not deleted**: the Interference Monitor keeps
+its gauge and its count, the CPU thermal row keeps its state and your CPU's own
+emergency limit, and a silenced GPU advisory keeps its text. Only the alarm
+colour goes. The live thermal alarm reaches you through the banner, the footer
+and the status ribbon regardless — none of them consults any of this, and the
+daemon acts on thermal safety whatever the GUI is showing.
+
+### Fixed
+- **You cannot dismiss the CPU thermal row while it is actually critical.** A
+  dismissal is recorded against how loud things were when you took it, so one
+  taken at the top would have applied to every state after it — permanently.
+  Acknowledge still works there; it lasts only for the session.
+- **A dismissal is never silently lost.** Pruning stale dismissals is skipped
+  entirely when the hardware snapshot is incomplete (no chips enumerated, as
+  happens for a moment after a daemon restart), because that state is
+  indistinguishable from "your hardware can no longer report this" and the
+  cleanup writes to disk.
+- **"Don't show again" on a GPU driver advisory now works everywhere.** It
+  silenced the startup popup and nothing else, so the identical advisory kept
+  rendering on the System State page forever. A silencing decision belongs to
+  the item, not to whichever window showed it first.
+
+### Changed
+- **Settings ▸ Prompts & Dismissals** now has one **Restore** covering
+  everything you have hidden on the System State page, replacing the separate
+  board-note rows. *Clear acknowledged* is gone: acknowledgement is session-only,
+  so there is nothing stored for it to clear.
+- Dismissals are pruned against what your hardware can actually report, so the
+  restore counter stops promising to bring back things that can no longer occur,
+  and the list cannot grow without bound.
+
 ## [2.72.0] — 2026-09-11
 
 **GUI-only; the daemon floor is unchanged at `control-ofc-daemon` >= v2.11.0.**

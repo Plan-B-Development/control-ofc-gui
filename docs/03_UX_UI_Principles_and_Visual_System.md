@@ -480,6 +480,26 @@ dismissal needs a visible, counted restore (Settings ▸ *Prompts & Dismissals*)
 and anything hardware-keyed is machine-specific — never carried in a portable
 export, where it would silence a finding on hardware nobody reviewed it against.
 
+### One silencing layer, and two things it may never reach (DEC-359)
+
+Every silenceable item on a health surface goes through `services/health_ack.py`.
+A silence is an **occurrence** — `(key, fingerprint, level)` — so a finding whose
+evidence *changed* speaks again, while the same finding continuing, or improving,
+stays quiet. **Acknowledge is session-only; dismiss persists.** One rule on every
+surface: two kinds of silence under one word is what produced this work.
+
+Two limits are absolute.
+
+**A health number is never quietened by a button.** The count is computed before
+any silencing, and the hidden total is published beside it so a shorter list and
+an unchanged count can be reconciled. A page that can be made to read SYSTEM
+READY while control is unavailable is a worse defect than the noise being removed
+(`AlertLedger.active_count` states the same rule for alerts).
+
+**A reading is demoted, never deleted.** Whether silencing removes an item is a
+property of the *item*: an alarm can go, a measurement cannot. Making a page
+quieter by making it less true is the opposite of the fix.
+
 ### Reports are not panels
 
 A support artefact (the pop-out **Readiness Report**) stays **complete and

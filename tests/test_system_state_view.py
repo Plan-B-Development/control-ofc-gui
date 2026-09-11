@@ -179,7 +179,7 @@ def test_condition_cards_carry_conditions_only_not_advisories():
     vacuously on a board that matched none (presence before absence).
     """
     diag = _diag_gigabyte_it8696()
-    cards = build_condition_cards(diag)
+    cards = build_condition_cards(diag).cards
     assert len(advisory_rows(diag)) >= 1, "fixture must match at least one advisory"
     assert len(cards) == len(detect_readiness_problems(diag))
     assert [c.key for c in cards] == [p["key"] for p in detect_readiness_problems(diag)] or True
@@ -191,13 +191,14 @@ def test_condition_cards_carry_conditions_only_not_advisories():
 
 def test_issue_cards_are_severity_sorted_descending():
     ranks = [
-        severity_display(c.severity).rank for c in build_condition_cards(_diag_acpi_and_revert())
+        severity_display(c.severity).rank
+        for c in build_condition_cards(_diag_acpi_and_revert()).cards
     ]
     assert ranks == sorted(ranks, reverse=True)
 
 
 def test_issue_card_carries_detail_for_acpi():
-    cards = {c.key: c for c in build_condition_cards(_diag_acpi_and_revert())}
+    cards = {c.key: c for c in build_condition_cards(_diag_acpi_and_revert()).cards}
     assert "acpi" in cards
     assert cards["acpi"].detail and "conflicts with it87" in cards["acpi"].detail
     assert cards["acpi"].doc_url  # doc-link button present

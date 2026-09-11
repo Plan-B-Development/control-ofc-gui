@@ -135,7 +135,7 @@ class TestDualChipAlertTruthfulness:
         two still appear on one screen, so they still must not disagree.
         """
         diag = _master_diag()
-        cards = list(build_condition_cards(diag)) + list(build_board_notes(diag).notes)
+        cards = build_condition_cards(diag).cards + list(build_board_notes(diag).notes)
         keys = {c.key for c in cards}
         assert "dual_chip" in keys, "precondition: the dual-chip condition must render"
         assert any(k.startswith("gb-it8696") for k in keys), (

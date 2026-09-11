@@ -37,14 +37,17 @@ from control_ofc.api.models import (
     KernelModuleInfo,
     ThermalSafetyInfo,
 )
+from control_ofc.services.health_ack import Occurrence, build_index, clear_key, is_silenced
 from control_ofc.services.system_state_view import (
+    SilenceState,
     build_board_notes,
+    build_condition_cards,
+    build_interference_vm,
     build_safety_gpu_vm,
     build_system_state_vm,
-    clear_silence,
-    is_silenced,
+    condition_fingerprint,
     note_ack_key,
-    silence_index,
+    state_rank,
 )
 from control_ofc.services.verify_view import (
     PWM_EVIDENCE_EFFECTIVE,
@@ -54,6 +57,7 @@ from control_ofc.services.verify_view import (
     verify_sweep_chip_class,
     verify_sweep_outcome,
 )
+from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.widgets.readiness_report import (
     EVIDENCE_NOT_OBSERVED,
     EVIDENCE_OBSERVED,
@@ -61,6 +65,27 @@ from control_ofc.ui.widgets.readiness_report import (
     board_notes,
     evidence_rank,
 )
+from control_ofc.ui.widgets.readiness_report import evidence_rank as _rank
+
+
+def silence_index(stored):
+    """DEC-358's note-local index, now `health_ack.build_index` (DEC-359).
+
+    Kept as a test-local shim so the Phase-1 assertions still read as they were
+    written — they pin a RULE (a silence survives improvement, breaks on
+    escalation) that is unchanged, and rewriting them alongside the move would
+    have made it impossible to see that the rule did not move with the code.
+    """
+    return build_index(stored, _rank)
+
+
+def _silenced(index, key, evidence):
+    return is_silenced(index, Occurrence(key, "", evidence), _rank(evidence))
+
+
+def clear_silence(stored, key):
+    return clear_key(stored, key)
+
 
 _GIGABYTE = "Gigabyte Technology Co., Ltd."
 
@@ -162,24 +187,24 @@ def test_a_confirmed_note_still_breaks_its_own_dismissal():
 def test_a_silence_is_matched_by_rank_not_by_string_equality():
     """The rule itself, at the unit it is implemented in."""
     index = silence_index({note_ack_key("q", EVIDENCE_UNVERIFIED)})
-    assert is_silenced(index, "q", EVIDENCE_UNVERIFIED) is True
-    assert is_silenced(index, "q", EVIDENCE_NOT_OBSERVED) is True, "improvement holds the silence"
-    assert is_silenced(index, "q", EVIDENCE_OBSERVED) is False, "escalation breaks it"
-    assert is_silenced(index, "other", EVIDENCE_UNVERIFIED) is False
+    assert _silenced(index, "q", EVIDENCE_UNVERIFIED) is True
+    assert _silenced(index, "q", EVIDENCE_NOT_OBSERVED) is True, "improvement holds the silence"
+    assert _silenced(index, "q", EVIDENCE_OBSERVED) is False, "escalation breaks it"
+    assert _silenced(index, "other", EVIDENCE_UNVERIFIED) is False
 
 
 def test_the_loudest_stored_silence_wins():
     index = silence_index(
         {note_ack_key("q", EVIDENCE_UNVERIFIED), note_ack_key("q", EVIDENCE_OBSERVED)}
     )
-    assert is_silenced(index, "q", EVIDENCE_OBSERVED) is True
+    assert _silenced(index, "q", EVIDENCE_OBSERVED) is True
 
 
 def test_a_quirk_key_containing_an_at_sign_still_parses():
     """`rpartition`, not `split` — evidence never contains "@", a key might."""
     index = silence_index({note_ack_key("vendor@board", EVIDENCE_UNVERIFIED)})
-    assert is_silenced(index, "vendor@board", EVIDENCE_UNVERIFIED) is True
-    assert is_silenced(index, "vendor", EVIDENCE_UNVERIFIED) is False
+    assert _silenced(index, "vendor@board", EVIDENCE_UNVERIFIED) is True
+    assert _silenced(index, "vendor", EVIDENCE_UNVERIFIED) is False
 
 
 def test_clearing_a_silence_removes_every_evidence_it_was_stored_at():
@@ -197,7 +222,7 @@ def test_clearing_a_silence_removes_every_evidence_it_was_stored_at():
     ]
     remaining = clear_silence(stored, "q")
     assert remaining == [note_ack_key("other", EVIDENCE_UNVERIFIED)]
-    assert is_silenced(silence_index(remaining), "q", EVIDENCE_NOT_OBSERVED) is False
+    assert _silenced(silence_index(remaining), "q", EVIDENCE_NOT_OBSERVED) is False
 
 
 # ── ACK-a: one verify vocabulary, two consumers that cannot disagree ──────
@@ -617,3 +642,484 @@ def test_the_report_button_is_disabled_until_there_is_something_to_report(qtbot)
 def test_the_poll_status_model_still_carries_the_field_the_page_reads():
     """One wire field, one gating shape (DEC-334)."""
     assert DaemonStatus().thermal_state == "normal"
+
+
+# ── DEC-359 Phase 2: every health surface gets the same lifecycle ─────────
+
+
+def _msi_collision():
+    """A board with a real, measured condition — a driver-module collision."""
+    from control_ofc.api.models import ModuleCollisionInfo
+
+    return HardwareDiagnosticsResult(
+        hwmon=HwmonDiagnostics(
+            chips_detected=[HwmonChipInfo(chip_name="nct6798", expected_driver="nct6775")],
+            total_headers=5,
+            writable_headers=5,
+        ),
+        board=BoardInfo(vendor="Micro-Star International Co., Ltd.", name="MAG B450"),
+        module_collisions=[ModuleCollisionInfo(module_a="nct6775", module_b="nct6687")],
+        thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
+        cpu_vendor="AMD",
+    )
+
+
+def _condition(diag, key):
+    return next(c for c in build_condition_cards(diag).cards if c.key == key)
+
+
+def test_a_condition_can_be_dismissed_and_the_pill_still_counts_it():
+    """The user's limit, pinned: a health number is never quietened by a button.
+
+    Both halves are the assertion. The card must leave the list (that is the
+    request) **and** the count must not move (that is the safety limit), so a
+    page can never read SYSTEM READY while fan control is actually broken.
+    """
+    diag = _msi_collision()
+    card = _condition(diag, "module_collision")
+    assert card.silence.token, "precondition: the condition must be silenceable"
+
+    loud = build_system_state_vm(diag)
+    quiet = build_system_state_vm(
+        diag, silence=SilenceState(dismissed=frozenset({card.silence.token}))
+    )
+    assert "module_collision" not in {c.key for c in quiet.issue_cards}
+    assert quiet.conditions_hidden_count == 1
+    assert quiet.issues_requiring_attention == loud.issues_requiring_attention
+    assert quiet.issue_count_label == loud.issue_count_label
+
+
+def test_a_changed_condition_speaks_again():
+    """The occurrence rule for conditions: the fingerprint is the evidence.
+
+    Sampled on `acpi`, whose fingerprint can genuinely move, rather than on a
+    binary condition whose fingerprint is constant — a binary one would pass
+    with the fingerprint deleted entirely (`CLAUDE.md`: pick the sample that
+    can move).
+    """
+    from control_ofc.api.models import AcpiConflictInfo
+
+    def _with(conflicts):
+        return HardwareDiagnosticsResult(
+            hwmon=HwmonDiagnostics(
+                chips_detected=[HwmonChipInfo(chip_name="it8696")],
+                total_headers=8,
+                writable_headers=8,
+            ),
+            board=BoardInfo(vendor=_GIGABYTE, name="X870E"),
+            acpi_conflicts=conflicts,
+            thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
+            cpu_vendor="AMD",
+        )
+
+    one = _with(
+        [AcpiConflictInfo(io_range="0x290", claimed_by="ACPI", conflicts_with_driver="it87")]
+    )
+    two = _with(
+        [
+            AcpiConflictInfo(io_range="0x290", claimed_by="ACPI", conflicts_with_driver="it87"),
+            AcpiConflictInfo(io_range="0x300", claimed_by="ACPI", conflicts_with_driver="it87"),
+        ]
+    )
+    token = _condition(one, "acpi").silence.token
+    assert _condition(one, "acpi").silence.token != _condition(two, "acpi").silence.token, (
+        "precondition: a second conflict must be a different occurrence"
+    )
+
+    silenced = SilenceState(dismissed=frozenset({token}))
+    assert "acpi" not in {c.key for c in build_condition_cards(one, silence=silenced).cards}
+    assert "acpi" in {c.key for c in build_condition_cards(two, silence=silenced).cards}, (
+        "a condition whose evidence changed must speak again"
+    )
+
+
+def test_a_reclaim_count_rising_does_not_break_its_own_dismissal():
+    """`bios_revert` fingerprints the BUCKET, never the raw count.
+
+    The count is monotonic within a daemon lifetime (`ACK-d`), so fingerprinting
+    it would mint a new occurrence on every reclaim and the dismissal would
+    survive exactly one tick — indistinguishable from not having one. The second
+    arm proves the bucket still escalates, or this is just a permanent mute.
+    """
+
+    def _with(count):
+        return HardwareDiagnosticsResult(
+            hwmon=HwmonDiagnostics(
+                chips_detected=[HwmonChipInfo(chip_name="it8696")],
+                total_headers=8,
+                writable_headers=8,
+                enable_revert_counts={"pwm1": count},
+            ),
+            board=BoardInfo(vendor=_GIGABYTE, name="X870E"),
+            thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
+            cpu_vendor="AMD",
+        )
+
+    token = _condition(_with(1), "bios_revert").silence.token
+    silenced = SilenceState(dismissed=frozenset({token}))
+    keys = lambda d: {c.key for c in build_condition_cards(d, silence=silenced).cards}  # noqa: E731
+
+    assert "bios_revert" not in keys(_with(2)), "one more reclaim un-silenced the dismissal"
+    assert "bios_revert" not in keys(_with(9))
+    assert "bios_revert" in keys(_with(20)), "crossing into HIGH must speak again"
+
+
+def test_the_interference_monitor_is_demoted_never_deleted():
+    """A reading, not an alarm: quietening drops the colour, not the number."""
+    diag = HardwareDiagnosticsResult(
+        hwmon=HwmonDiagnostics(
+            chips_detected=[HwmonChipInfo(chip_name="it8696")],
+            total_headers=8,
+            writable_headers=8,
+            enable_revert_counts={"pwm1": 4},
+        ),
+        board=BoardInfo(vendor=_GIGABYTE, name="X870E"),
+        thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
+        cpu_vendor="AMD",
+    )
+    loud = build_interference_vm(diag)
+    assert loud.severity_state == "warn"
+    quiet = build_interference_vm(
+        diag, silence=SilenceState(dismissed=frozenset({loud.silence.token}))
+    )
+    assert quiet.severity_state == "neutral", "the alarm must stop"
+    assert quiet.has_contention is True, "the reading must not vanish"
+    assert quiet.highest_count == loud.highest_count
+    assert quiet.gauge_fraction == loud.gauge_fraction
+
+
+def test_the_thermal_row_is_demoted_never_deleted_and_escalation_wins():
+    """The row the user put in scope over my recommendation.
+
+    The second arm is what makes that safe: a silence taken at `normal` is
+    outranked by a live escalation to `emergency`, which DEC-358's live-poll
+    wiring delivers within a second.
+    """
+    diag = _healthy_gigabyte()
+    loud = build_safety_gpu_vm(diag)
+    silenced = SilenceState(dismissed=frozenset({loud.thermal_silence.token}))
+
+    quiet = build_safety_gpu_vm(diag, silence=silenced)
+    assert quiet.thermal_state == "neutral"
+    assert quiet.thermal_text == loud.thermal_text, "the reading must not vanish"
+    assert quiet.thermal_limit_text == loud.thermal_limit_text
+
+    hot = build_safety_gpu_vm(diag, live_thermal_state="emergency", silence=silenced)
+    assert hot.thermal_state == "crit", "an emergency must outrank a silence taken at normal"
+
+
+def test_a_dismissed_kernel_advisory_is_honoured_on_the_page(qtbot):
+    """`ACK-h`: "Don't show again" silenced the popup and nothing else."""
+    from control_ofc.api.models import GpuDiagnosticsInfo, KernelWarning
+
+    del qtbot
+    diag = HardwareDiagnosticsResult(
+        hwmon=HwmonDiagnostics(chips_detected=[HwmonChipInfo(chip_name="it8696")]),
+        board=BoardInfo(vendor=_GIGABYTE, name="X870E"),
+        gpu=GpuDiagnosticsInfo(
+            model_name="RX 7900 XTX",
+            fan_control_method="pmfw_curve",
+            kernel_warnings=[KernelWarning(id="kw-1", severity="high", message="SMU regression")],
+        ),
+        thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
+        cpu_vendor="AMD",
+    )
+    loud = build_safety_gpu_vm(diag)
+    row = next(r for r in loud.gpu_rows if r.label.startswith("Advisory"))
+    assert row.state == "warn", "precondition: the advisory must be an alarm to begin with"
+
+    quiet = build_safety_gpu_vm(diag, silence=SilenceState(kernel_warnings=frozenset({"kw-1"})))
+    quiet_row = next(r for r in quiet.gpu_rows if r.label.startswith("Advisory"))
+    assert quiet_row.state == "neutral", "the startup dismissal was ignored on this page"
+    assert quiet_row.value == row.value, "the advisory text must still be readable"
+
+
+def test_an_unrelated_dismissal_does_not_silence_the_advisory():
+    """The opposite arm — the filter must key on THIS warning's id."""
+    from control_ofc.api.models import GpuDiagnosticsInfo, KernelWarning
+
+    diag = HardwareDiagnosticsResult(
+        hwmon=HwmonDiagnostics(chips_detected=[HwmonChipInfo(chip_name="it8696")]),
+        board=BoardInfo(vendor=_GIGABYTE, name="X870E"),
+        gpu=GpuDiagnosticsInfo(
+            model_name="RX 7900 XTX",
+            fan_control_method="pmfw_curve",
+            kernel_warnings=[KernelWarning(id="kw-1", severity="high", message="SMU regression")],
+        ),
+        thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
+        cpu_vendor="AMD",
+    )
+    vm = build_safety_gpu_vm(diag, silence=SilenceState(kernel_warnings=frozenset({"kw-OTHER"})))
+    row = next(r for r in vm.gpu_rows if r.label.startswith("Advisory"))
+    assert row.state == "warn"
+
+
+def test_the_collision_fingerprint_reads_the_fields_that_exist():
+    """A different pair of colliding modules is a different occurrence.
+
+    The first draft read `driver_a`/`driver_b` through `getattr(..., "")`.
+    Those attributes do not exist on `ModuleCollisionInfo` — and `getattr` with
+    a default does not raise, so every collision fingerprinted identically and a
+    dismissal taken on one pair would have silenced a completely different pair.
+    Asserted as "these two differ" rather than against a literal digest, so it
+    still holds if the hash or the separator changes.
+    """
+    from control_ofc.api.models import ModuleCollisionInfo
+
+    def _with(a, b):
+        return HardwareDiagnosticsResult(
+            hwmon=HwmonDiagnostics(
+                chips_detected=[HwmonChipInfo(chip_name="nct6798")],
+                total_headers=5,
+                writable_headers=5,
+            ),
+            board=BoardInfo(vendor="Micro-Star International Co., Ltd.", name="MAG B450"),
+            module_collisions=[ModuleCollisionInfo(module_a=a, module_b=b)],
+            thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
+            cpu_vendor="AMD",
+        )
+
+    one = condition_fingerprint(_with("nct6775", "nct6687"), "module_collision")
+    two = condition_fingerprint(_with("it87", "it87_dkms"), "module_collision")
+    assert one and two, "a collision must produce a non-empty fingerprint"
+    assert one != two, "two different collisions fingerprinted identically"
+
+    token = _condition(_with("nct6775", "nct6687"), "module_collision").silence.token
+    silenced = SilenceState(dismissed=frozenset({token}))
+    assert "module_collision" not in {
+        c.key for c in build_condition_cards(_with("nct6775", "nct6687"), silence=silenced).cards
+    }
+    assert "module_collision" in {
+        c.key for c in build_condition_cards(_with("it87", "it87_dkms"), silence=silenced).cards
+    }, "a dismissal on one module pair silenced a different pair"
+
+
+# ── The call sites: a real click, through the real signal, on each surface ──
+#
+# `CLAUDE.md`'s most-repeated lesson, and the reviewer's P2: every assertion
+# above this line calls a view-model builder, which proves the RULE and says
+# nothing about the WIRING. This change connected new signals on two cards and
+# passed two bound emitters into a third builder; those connections are the part
+# most likely to be broken, and nothing was exercising them.
+
+
+def _interference_diag(count=4):
+    return HardwareDiagnosticsResult(
+        hwmon=HwmonDiagnostics(
+            chips_detected=[HwmonChipInfo(chip_name="it8696", expected_driver="it87")],
+            total_headers=8,
+            writable_headers=8,
+            enable_revert_counts={"pwm1": count},
+        ),
+        board=BoardInfo(vendor=_GIGABYTE, name="X870E AORUS MASTER"),
+        thermal_safety=ThermalSafetyInfo(
+            state="normal", cpu_sensor_found=True, emergency_threshold_c=110.0
+        ),
+        cpu_vendor="AMD",
+    )
+
+
+def test_clicking_dismiss_on_the_interference_monitor_persists_it(qtbot):
+    """InterferenceCard.note_dismissed → page handler → settings → re-render."""
+    page, svc = _page(qtbot, _interference_diag())
+    btn = page.findChild(QPushButton, "SystemState_InterferenceDismissBtn_monitor")
+    assert btn is not None, "the Interference Monitor offered no Dismiss button"
+
+    btn.click()
+    assert svc.settings.dismissed_health_items, "the click never reached the page handler"
+    assert page._interference_card is not None
+    _flush(page)
+
+    # The reading survives; only the alarm stops. Asserted on the re-rendered
+    # view-model rather than on the click's return value.
+    vm = build_interference_vm(
+        _interference_diag(),
+        silence=SilenceState(dismissed=frozenset(svc.settings.dismissed_health_items)),
+    )
+    assert vm.severity_state == "neutral"
+    assert vm.highest_count == 4
+
+
+def test_clicking_dismiss_on_the_thermal_row_persists_it(qtbot):
+    """SafetyCard.note_dismissed → page handler → settings."""
+    page, svc = _page(qtbot, _interference_diag())
+    btn = page.findChild(QPushButton, "SystemState_ThermalDismissBtn_cpu")
+    assert btn is not None, "the thermal row offered no Dismiss button"
+    btn.click()
+    assert any(t.startswith("thermal@") for t in svc.settings.dismissed_health_items), (
+        "the thermal row's click never reached the page handler"
+    )
+    assert page._safety_card is not None
+    _flush(page)
+
+
+def test_the_thermal_row_offers_no_dismiss_while_the_alarm_is_firing(qtbot):
+    """You cannot permanently mute an alarm while it is firing.
+
+    A dismissal is stored at the level it was taken and this row has a fixed
+    empty fingerprint, so one taken at `crit` would satisfy every future state —
+    permanently, across restarts. Both arms: the button is absent while critical
+    and present when it is not, or the guard has simply deleted the feature.
+    """
+    page, _svc = _page(qtbot, _interference_diag())
+    assert page.findChild(QPushButton, "SystemState_ThermalDismissBtn_cpu") is not None, (
+        "precondition: Dismiss must be offered while the row is calm"
+    )
+
+    page.set_thermal_state("emergency")
+    # The old row was removed with deleteLater(); without dispatching those,
+    # findChild returns the corpse and this assertion is about a dead widget.
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert page.findChild(QPushButton, "SystemState_ThermalDismissBtn_cpu") is None, (
+        "a firing thermal alarm could be muted permanently"
+    )
+    # Acknowledge stays — session-only, which is what ISA-18.2 says an active
+    # alarm should accept. Without this arm the guard could have deleted the
+    # whole affordance rather than just the permanent half.
+    assert page.findChild(QPushButton, "SystemState_ThermalAckBtn_cpu") is not None
+
+    page.set_thermal_state("normal")
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert page.findChild(QPushButton, "SystemState_ThermalDismissBtn_cpu") is not None, (
+        "Dismiss must come back once the alarm clears"
+    )
+
+
+def test_clicking_dismiss_on_a_condition_card_removes_it_and_keeps_the_count(qtbot):
+    """The condition card's new action row, driven through the real button."""
+    from PySide6.QtWidgets import QLabel
+
+    diag = _msi_collision()
+    page, svc = _page(qtbot, diag)
+    pill_before = page.findChild(StatusPill, "SystemState_Pill_issueCount").text()
+    btn = page.findChild(QPushButton, "SystemState_IssueCardDismissBtn_module_collision")
+    assert btn is not None, "the condition card offered no Dismiss button"
+
+    btn.click()
+    assert svc.settings.dismissed_health_items, "the click never reached the page handler"
+    _flush(page)
+
+    assert page.findChild(QPushButton, "SystemState_IssueCardDismissBtn_module_collision") is None
+    after = page.findChild(StatusPill, "SystemState_Pill_issueCount")
+    assert after.text() == pill_before, "dismissing a condition changed the health count"
+    hidden = page.findChild(QLabel, "SystemState_Label_hiddenConditions")
+    assert hidden is not None and "1 dismissed" in hidden.text(), (
+        "a shorter list and an unchanged pill must be reconcilable by the reader"
+    )
+
+
+def test_acknowledging_a_condition_is_session_only(qtbot):
+    """The same wiring, on the Acknowledge half."""
+    page, svc = _page(qtbot, _msi_collision())
+    btn = page.findChild(QPushButton, "SystemState_IssueCardAckBtn_module_collision")
+    assert btn is not None
+    btn.click()
+    assert page._session_acks, "the acknowledgement did not take effect"
+    assert svc.settings.dismissed_health_items == [], "an acknowledgement must not persist"
+    _flush(page)
+
+
+def test_an_unrecognised_stored_level_does_not_silence_anything():
+    """Fail loud, not fail open.
+
+    A stored level from another vocabulary — a corrupt token, or one folded in
+    from the retired board-note key — used to rank ABOVE every known level and
+    therefore silence its item at every severity including `crit`. Measured:
+    `state_rank("observed")` is 4 against `state_rank("crit")` of 3.
+    """
+    diag = _msi_collision()
+    card = _condition(diag, "module_collision")
+    # Take the REAL token and swap only its level. The first draft built
+    # `f"{key}@observed"`, which has an empty fingerprint where the real
+    # occurrence has a digest — so it could never match on `(key, fingerprint)`
+    # and the test passed with the vocabulary guard deleted. It was proving the
+    # fingerprint works, not the guard (`CLAUDE.md`: the arm where the lookup
+    # finds nothing returns the pre-fix answer by construction).
+    hostile = card.silence.token.rpartition("@")[0] + "@observed"
+    assert hostile != card.silence.token
+    assert hostile.startswith(card.silence.token.rpartition("@")[0] + "@"), (
+        "precondition: the hostile token must share the real occurrence's fingerprint"
+    )
+    assert state_rank("observed") > state_rank("crit"), "precondition: it really does outrank crit"
+
+    silenced = build_condition_cards(diag, silence=SilenceState(dismissed=frozenset({hostile})))
+    assert "module_collision" in {c.key for c in silenced.cards}, (
+        "an unrecognised stored level silenced a critical condition"
+    )
+
+
+def test_a_module_conflict_dismissal_survives_an_unrelated_module_loading():
+    """The fingerprint is the conflicting PAIR, not every loaded known module.
+
+    `kernel_modules` is the daemon's curated KNOWN_MODULES filtered to loaded —
+    Fintek, Winbond, SMSC, three ASUS WMI drivers and more. Fingerprinting all
+    of it meant loading any unrelated sensor module resurrected the dismissal,
+    and the manual tells users to press *Rescan Hardware* right after doing
+    exactly that.
+    """
+    from control_ofc.api.models import KernelModuleInfo
+
+    def _with(mods):
+        return HardwareDiagnosticsResult(
+            hwmon=HwmonDiagnostics(
+                chips_detected=[HwmonChipInfo(chip_name="nct6798")],
+                total_headers=5,
+                writable_headers=5,
+            ),
+            board=BoardInfo(vendor="Micro-Star International Co., Ltd.", name="MAG B450"),
+            kernel_modules=[KernelModuleInfo(name=m, loaded=True) for m in mods],
+            thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
+            cpu_vendor="AMD",
+        )
+
+    pair = ["nct6775", "nct6687"]
+    before = _with(pair)
+    assert "module_conflict" in {c.key for c in build_condition_cards(before).cards}, (
+        "precondition: the fixture must actually raise the conflict"
+    )
+    token = _condition(before, "module_conflict").silence.token
+    silenced = SilenceState(dismissed=frozenset({token}))
+
+    after = _with([*pair, "asus_wmi_sensors"])  # an unrelated sensor driver loads
+    assert "module_conflict" not in {
+        c.key for c in build_condition_cards(after, silence=silenced).cards
+    }, "an unrelated module loading resurrected the dismissal"
+
+    # The arm that discriminates: a DIFFERENT conflicting pair must still speak.
+    other = _with(["it87", "it87_dkms"])
+    if "module_conflict" in {c.key for c in build_condition_cards(other).cards}:
+        assert "module_conflict" in {
+            c.key for c in build_condition_cards(other, silence=silenced).cards
+        }, "a dismissal on one pair silenced a different pair"
+
+
+def test_the_retired_keys_stay_fenced_out_of_an_imported_settings_file():
+    """`MACHINE_SPECIFIC_KEYS` has TWO consumers, and only one was considered.
+
+    It filters what LEAVES (`portable_dict`) and what is allowed IN
+    (`SettingsPage._import_settings`). Dropping the two retired names cost
+    nothing on the export side — they are no longer fields — but opened the
+    import side, because `from_dict` still gives them a live effect by folding
+    them into `dismissed_health_items`. A foreign file could then hide health
+    conditions on hardware that had never been reviewed.
+    """
+    from control_ofc.services.app_settings_service import MACHINE_SPECIFIC_KEYS, AppSettings
+
+    for retired in ("acknowledged_board_notes", "dismissed_board_notes"):
+        assert retired in MACHINE_SPECIFIC_KEYS, f"{retired} is no longer fenced from imports"
+    assert "dismissed_health_items" in MACHINE_SPECIFIC_KEYS
+
+    # The import filter, reproduced exactly as `settings_page` applies it.
+    incoming = {
+        "dismissed_board_notes": ["all_readonly@observed"],
+        "acknowledged_board_notes": ["module_collision@observed"],
+        "dismissed_health_items": ["acpi#deadbeef@warn"],
+        "card_size": "compact",  # a portable key, to prove the filter still lets one through
+    }
+    merged = {k: v for k, v in incoming.items() if k not in MACHINE_SPECIFIC_KEYS}
+    assert merged == {"card_size": "compact"}, "a foreign file could seed a local silence"
+
+    # And the fold itself still works for a LOCAL file, which is the whole point
+    # of keeping `from_dict`'s migration.
+    local = AppSettings.from_dict({"dismissed_board_notes": ["all_readonly@observed"]})
+    assert local.dismissed_health_items == ["all_readonly@observed"]

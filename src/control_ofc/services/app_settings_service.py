@@ -29,9 +29,19 @@ MACHINE_SPECIFIC_KEYS = frozenset(
         # DEC-357: both are keyed on the board/chip a quirk matched, so they
         # mean nothing on someone else's machine — and a shared export carrying
         # them would silence a note on hardware that never had it reviewed.
+        "last_pwm_verify_effective",
+        "dismissed_health_items",
+        # RETIRED as fields by DEC-359 and KEPT HERE deliberately. This set is
+        # read by TWO consumers: `portable_dict` (what leaves) and
+        # `SettingsPage._import_settings` (what is allowed in). Dropping these
+        # two names cost nothing on the export side — they are no longer
+        # fields — but it opened the import side, because `from_dict` still
+        # gives them a live effect by folding them into
+        # `dismissed_health_items`. A foreign settings file could then hide
+        # health conditions on hardware that had never been reviewed. Removing
+        # an entry from a set with two consumers requires checking both.
         "acknowledged_board_notes",
         "dismissed_board_notes",
-        "last_pwm_verify_effective",
         "fan_aliases_seeded",
         "profiles_dir_override",
         "themes_dir_override",
@@ -144,6 +154,12 @@ def _as_sensor_overrides(value: object, default: dict[str, str]) -> dict[str, st
     if not isinstance(value, dict):
         return dict(default)
     return {k: v for k, v in value.items() if isinstance(k, str) and v in _SENSOR_OVERRIDE_VALUES}
+
+
+def _merge_unique(primary: list[str], extra: list[str]) -> list[str]:
+    """`primary` followed by anything in `extra` it does not already contain."""
+    seen = set(primary)
+    return [*primary, *(x for x in extra if x not in seen and not seen.add(x))]
 
 
 def _as_str_list(value: object, default: list[str]) -> list[str]:
@@ -340,8 +356,24 @@ class AppSettings:
     # ISA-18.2's acknowledgement rule and the reason `services/alerts` mints a
     # new occurrence per activation (DEC-282) — an ack stored against a bare
     # key muted every future recurrence, permanently.
-    acknowledged_board_notes: list[str] = field(default_factory=list)
-    dismissed_board_notes: list[str] = field(default_factory=list)
+    # DEC-359 RETIRED `acknowledged_board_notes`. Acknowledgement is now
+    # session-only on every surface — "I have read this now" — and an
+    # acknowledgement that outlived the session was a dismissal wearing the
+    # wrong label. `from_dict` FOLDS any stored value into `dismissed_health_items`
+    # rather than discarding it: the user asked for those notes to be quiet, and
+    # dropping the key would have made every previously-acknowledged note
+    # reappear on upgrade, which is the exact failure this register exists to
+    # remove. Migration is one-way and one-time; the key is not written back.
+    # DEC-359: ONE list for every silenceable item on the System State page —
+    # conditions, board notes, the Interference Monitor, the thermal row, GPU
+    # advisories. Tokens are `key[#fingerprint]@level` (`services/health_ack`),
+    # of which DEC-357's `<quirk key>@<evidence>` is a strict subset, so both
+    # retired keys fold in at load with no reformatting.
+    #
+    # One key because one layer: two lists meaning the same thing is how a
+    # dismissal gets written to one and read from the other, which is a bug this
+    # change made and caught before it shipped.
+    dismissed_health_items: list[str] = field(default_factory=list)
     # Whether the affordances are offered at all. Some people want the notes to
     # stay exactly as they are; both default on because a wall of undismissable
     # advisories is what this replaced.
@@ -435,8 +467,20 @@ class AppSettings:
                 data.get("diagnostics_hidden_sensor_ids"), []
             ),
             sensor_class_overrides=_as_sensor_overrides(data.get("sensor_class_overrides"), {}),
-            acknowledged_board_notes=_as_str_list(data.get("acknowledged_board_notes"), []),
-            dismissed_board_notes=_as_str_list(data.get("dismissed_board_notes"), []),
+            # DEC-359 one-way migration: a previously-acknowledged note folds
+            # into the dismissal list. Both hide the note; the only difference
+            # under the new rule is persistence, and the OLD acknowledgement was
+            # persistent — so folding it in is what *preserves* the user's
+            # choice. Dropping the key instead would have made every note they
+            # had already dealt with reappear on upgrade, which is precisely the
+            # "a warning you dealt with comes back" failure being fixed.
+            dismissed_health_items=_merge_unique(
+                _as_str_list(data.get("dismissed_health_items"), []),
+                _merge_unique(
+                    _as_str_list(data.get("dismissed_board_notes"), []),
+                    _as_str_list(data.get("acknowledged_board_notes"), []),
+                ),
+            ),
             board_notes_allow_acknowledge=_as_bool(data.get("board_notes_allow_acknowledge"), True),
             board_notes_allow_dismiss=_as_bool(data.get("board_notes_allow_dismiss"), True),
             last_pwm_verify_effective=_as_enum(

@@ -455,11 +455,17 @@ def test_the_new_settings_fields_round_trip_and_stay_machine_specific():
             "last_pwm_verify_effective": "effective",
         }
     )
-    assert s.acknowledged_board_notes == ["a@unverified"]
+    # DEC-359 retired BOTH board-note keys into one list, and the fold is a
+    # migration rather than a drop: an acknowledgement was persistent under
+    # DEC-357, so discarding it would make every note the user had already dealt
+    # with reappear on upgrade — the exact failure this register exists to
+    # remove. Asserted as membership, not order, because the merge is a union.
+    assert set(s.dismissed_health_items) == {"a@unverified", "b@reference"}
     assert s.board_notes_allow_dismiss is False
     assert s.last_pwm_verify_effective == "effective"
     portable = s.portable_dict()
     for key in (
+        "dismissed_health_items",
         "acknowledged_board_notes",
         "dismissed_board_notes",
         "last_pwm_verify_effective",
@@ -475,7 +481,7 @@ def test_the_new_settings_fields_round_trip_and_stay_machine_specific():
 def test_condition_cards_and_notes_are_disjoint():
     """The merge DEC-211 introduced is gone, asserted on a board with both."""
     diag = _msi_nct6798(module_collisions=[_COLLISION])
-    cards = build_condition_cards(diag)
+    cards = build_condition_cards(diag).cards
     notes = build_board_notes(diag)
     assert cards and notes.notes
     assert not ({c.title for c in cards} & {n.title for n in notes.notes})
@@ -558,7 +564,14 @@ def test_the_notes_section_is_collapsed_and_its_header_carries_the_count(qtbot):
     assert section._content.isHidden() is False
 
 
-def test_acknowledging_a_note_persists_and_re_renders(qtbot):
+def test_acknowledging_a_note_is_session_only_and_re_renders(qtbot):
+    """DEC-359: acknowledge means "I have read this now", so it does not persist.
+
+    Two arms, and the second is the one that discriminates. Asserting only that
+    the session set gained the token would pass with acknowledgement *also*
+    being written to settings; asserting only that settings stayed empty would
+    pass with the button doing nothing at all.
+    """
     from PySide6.QtWidgets import QPushButton
 
     page, svc = _page(qtbot)
@@ -567,13 +580,14 @@ def test_acknowledging_a_note_persists_and_re_renders(qtbot):
     assert btn is not None and btn.text() == "Acknowledge"
     # `.click()`, not the handler: the connection is the thing most likely broken.
     btn.click()
-    assert svc.settings.acknowledged_board_notes == [note.ack_key]
+    assert note.ack_key in page._session_acks, "the acknowledgement did not take effect"
+    assert svc.settings.dismissed_health_items == [], "an acknowledgement must not persist"
     # The page re-rendered from the cached payload, so the button flipped.
     _flush(page)
     flipped = page.findChild(QPushButton, f"SystemState_BoardNoteAckBtn_{note.key}")
     assert flipped.text() == "Unacknowledge"
     flipped.click()
-    assert svc.settings.acknowledged_board_notes == []
+    assert page._session_acks == set()
 
 
 def test_dismissing_a_note_removes_its_row(qtbot):
@@ -583,7 +597,7 @@ def test_dismissing_a_note_removes_its_row(qtbot):
     note = next(n for n in build_board_notes(_healthy_gigabyte()).notes if n.can_dismiss)
     before = len(_note_widgets(page, QFrame, "SystemState_BoardNote_"))
     page.findChild(QPushButton, f"SystemState_BoardNoteDismissBtn_{note.key}").click()
-    assert svc.settings.dismissed_board_notes == [note.ack_key]
+    assert svc.settings.dismissed_health_items == [note.ack_key]
     _flush(page)
     assert page.findChild(QFrame, f"SystemState_BoardNote_{note.key}") is None
     assert len(_note_widgets(page, QFrame, "SystemState_BoardNote_")) == before - 1

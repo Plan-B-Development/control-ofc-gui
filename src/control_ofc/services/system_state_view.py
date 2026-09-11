@@ -20,11 +20,14 @@ same way).
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from html import escape
+from typing import NamedTuple
 
 from control_ofc.api.models import HardwareDiagnosticsResult, HwmonHeader
+from control_ofc.services import health_ack
+from control_ofc.services.health_ack import Occurrence
 from control_ofc.ui.hwmon_guidance import (
     advisory_detail_html,
     detect_module_conflicts,
@@ -166,6 +169,71 @@ def interference_gauge_fraction(count: int) -> float:
 # ─── View-model dataclasses ────────────────────────────────────────────────
 
 
+class ConditionCards(NamedTuple):
+    """What `build_condition_cards` returns.
+
+    A named pair rather than a bare tuple: the hidden count is not optional
+    bookkeeping, it is what reconciles the `N ACTION REQUIRED` pill with a
+    shorter list, and a caller that unpacks two anonymous values is one rename
+    away from silently dropping it.
+    """
+
+    cards: list[IssueCardVM]
+    hidden_count: int
+
+
+@dataclass(frozen=True)
+class SilenceState:
+    """Everything the page knows about what the user has quietened (DEC-359).
+
+    One carrier rather than five keyword arguments threaded through four
+    builders. `CLAUDE.md` records the failure mode it avoids: two arguments to
+    the same call derived from different sources eventually disagree, and the
+    call site is where nobody looks. Here the two halves are read from one
+    settings object and one session set, at one place, and travel together.
+
+    `acknowledged` is **session-only** and `dismissed` **persists** — one rule
+    on every surface (the user's decision, 2026-09-11). `kernel_warnings` is the
+    pre-existing `acknowledged_kernel_warnings` set, honoured here so a
+    "Don't show again" pressed on the startup popup also quietens the identical
+    advisory on this page (`ACK-h`); it is persistent because it always was.
+    """
+
+    acknowledged: frozenset[str] = frozenset()
+    dismissed: frozenset[str] = frozenset()
+    kernel_warnings: frozenset[str] = frozenset()
+    allow_acknowledge: bool = True
+    allow_dismiss: bool = True
+
+    def index(self, rank_of, known_level=None) -> tuple[dict, dict]:
+        """`(acknowledged_index, dismissed_index)` for one rank scale."""
+        return (
+            health_ack.build_index(self.acknowledged, rank_of, known_level),
+            health_ack.build_index(self.dismissed, rank_of, known_level),
+        )
+
+
+@dataclass(frozen=True)
+class SilenceVM:
+    """How one silenceable item should be rendered.
+
+    `hidden` is the caller's decision to drop the row entirely; `quiet` demotes
+    an item that must stay on screen. The two are deliberately different, and
+    which one applies is a property of the *item*, not of the button pressed —
+    see `build_interference_vm`.
+    """
+
+    token: str = ""  # what a press stores; "" when the item cannot be silenced
+    acknowledged: bool = False
+    dismissed: bool = False
+    can_acknowledge: bool = False
+    can_dismiss: bool = False
+
+    @property
+    def quiet(self) -> bool:
+        return self.acknowledged or self.dismissed
+
+
 @dataclass(frozen=True)
 class IssueCardVM:
     key: str
@@ -178,6 +246,10 @@ class IssueCardVM:
     severity_state: str  # crit | warn | info
     severity_word: str
     severity_glyph: str
+    #: DEC-359. A condition is an alarm, so silencing it REMOVES the card —
+    #: unlike the status readings, which are demoted instead. The
+    #: `N ACTION REQUIRED` pill still counts it either way.
+    silence: SilenceVM = field(default_factory=SilenceVM)
 
 
 @dataclass(frozen=True)
@@ -230,6 +302,8 @@ class InterferenceVM:
     gauge_fraction: float
     title: str
     explanation: str
+    #: DEC-359 — demote-not-delete; see `build_interference_vm`.
+    silence: SilenceVM = field(default_factory=SilenceVM)
 
 
 @dataclass(frozen=True)
@@ -237,6 +311,10 @@ class GpuConstraintRowVM:
     label: str
     value: str
     state: str  # ok | warn | crit | neutral
+    #: DEC-359. Only a row that can raise an alarm is silenceable — an `ok` or
+    #: `neutral` row has nothing to quieten, and giving it a button would be
+    #: noise of a different kind.
+    silence: SilenceVM = field(default_factory=SilenceVM)
 
 
 @dataclass(frozen=True)
@@ -250,6 +328,9 @@ class SafetyGpuVM:
     speed_min: int | None
     speed_max: int | None
     speed_bar_visible: bool
+    #: DEC-359 — the CPU thermal row, silenceable by the user's explicit
+    #: decision. Demoted, never removed: see `build_safety_gpu_vm`.
+    thermal_silence: SilenceVM = field(default_factory=SilenceVM)
 
 
 @dataclass(frozen=True)
@@ -276,6 +357,9 @@ class SystemStateVM:
     issue_count_label: str
     issue_count_state: str  # ok | warn | crit
     issue_cards: list[IssueCardVM]
+    #: Conditions the user dismissed. Counted in the pill, absent from the list
+    #: — this is what lets a reader reconcile the two (DEC-359).
+    conditions_hidden_count: int
     board_notes: BoardNotesVM
     interference: InterferenceVM
     safety_gpu: SafetyGpuVM
@@ -390,7 +474,8 @@ def build_condition_cards(
     diag: HardwareDiagnosticsResult,
     *,
     pwm_control_verified: bool | None = None,
-) -> list[IssueCardVM]:
+    silence: SilenceState | None = None,
+) -> ConditionCards:
     """The severity-sorted cards for conditions requiring the user's attention.
 
     DEC-357 removed the vendor advisories from this list. They were merged in
@@ -400,12 +485,31 @@ def build_condition_cards(
     carried a severity nothing had observed. Advisories are now
     :func:`build_board_notes`, one collapsed section below.
     """
-    cards = [
-        _issue_card_from_problem(diag, p)
-        for p in detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
-    ]
+    silence = silence or SilenceState()
+    ack_index, dismiss_index = silence.index(state_rank, known_state)
+
+    cards: list[IssueCardVM] = []
+    hidden = 0
+    for problem in detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified):
+        occ = condition_occurrence(diag, problem)
+        rank = state_rank(occ.level)
+        if health_ack.is_silenced(dismiss_index, occ, rank):
+            hidden += 1
+            continue
+        card = _issue_card_from_problem(diag, problem)
+        cards.append(
+            replace(
+                card,
+                silence=SilenceVM(
+                    token=health_ack.occurrence_token(occ),
+                    acknowledged=health_ack.is_silenced(ack_index, occ, rank),
+                    can_acknowledge=silence.allow_acknowledge,
+                    can_dismiss=silence.allow_dismiss,
+                ),
+            )
+        )
     cards.sort(key=lambda c: severity_display(c.severity).rank, reverse=True)
-    return cards
+    return ConditionCards(cards, hidden)
 
 
 # ─── Board notes (DEC-357) ─────────────────────────────────────────────────
@@ -432,48 +536,104 @@ def note_ack_key(key: str, evidence: str) -> str:
     return f"{key}@{evidence}"
 
 
-def silence_index(stored: Iterable[str]) -> dict[str, int]:
-    """Map each quirk key to the HIGHEST evidence rank it was silenced at.
+#: Rank for the pill-state vocabulary shared by conditions, the Interference
+#: Monitor, the thermal row and the GPU advisory rows (DEC-359).
+#:
+#: One scale for four surfaces, because they already share `severity_to_state`.
+#: The alternative — a scale per surface — is the shape DEC-334 calls "two
+#: gating shapes for one flag", and it would mean a condition and the monitor
+#: explaining it could disagree about whether something had got worse.
+_STATE_RANK: dict[str, int] = {"neutral": 0, "ok": 0, "info": 1, "warn": 2, "crit": 3}
 
-    ``rpartition`` rather than ``split``: a quirk key may contain "@", an
-    evidence token never does, so the last separator is always the real one.
 
-    Highest-wins because the entries accumulate — silence a note while it is
-    unverified, then again once it is observed, and the second is the one that
-    describes what the user chose to live with.
+def known_state(state: str) -> bool:
+    """Is this a level from the pill-state vocabulary? (DEC-359 remediation.)
+
+    Passed to `health_ack.build_index` so a STORED level from another
+    vocabulary — an evidence word, a corrupt token, an imported one — voids its
+    silence instead of maximising it. Needed because DEC-359 merged the board
+    notes (evidence scale) and every other surface (pill scale) into one list.
     """
-    index: dict[str, int] = {}
-    for entry in stored:
-        key, sep, evidence = entry.rpartition("@")
-        if not sep:  # pre-DEC-357 bare key, or corrupt — silence it at its loudest
-            key, evidence = entry, readiness.EVIDENCE_OBSERVED
-        rank = readiness.evidence_rank(evidence)
-        if rank > index.get(key, -1):
-            index[key] = rank
-    return index
+    return state in _STATE_RANK
 
 
-def is_silenced(index: dict[str, int], key: str, evidence: str) -> bool:
-    """Does a stored silence still cover this note at its current evidence?"""
-    return readiness.evidence_rank(evidence) <= index.get(key, -1)
+def state_rank(state: str) -> int:
+    """Rank a pill state; an unknown state ranks ABOVE every known one.
 
-
-def clear_silence(stored: Iterable[str], key: str) -> list[str]:
-    """Every stored entry except those silencing ``key``.
-
-    Un-acknowledging has to remove *all* of a key's entries, not the one whose
-    evidence happens to match right now. Under rank matching the two differ: a
-    note silenced at `unverified` and since improved to `not_observed` is still
-    silenced, but its current ack key is `key@not_observed`, which was never
-    stored — removing only that would have appended it instead, leaving the note
-    more thoroughly silenced than before the user asked to un-silence it.
+    Same direction as `evidence_rank`, for the same reason: a state this build
+    does not understand must break a silence rather than hide inside it.
     """
-    out: list[str] = []
-    for entry in stored:
-        entry_key, sep, _ = entry.rpartition("@")
-        if (entry_key if sep else entry) != key:
-            out.append(entry)
-    return out
+    return _STATE_RANK.get(state, max(_STATE_RANK.values()) + 1)
+
+
+def condition_fingerprint(diag: HardwareDiagnosticsResult, key: str) -> str:
+    """What produced this condition, as a digest (DEC-359).
+
+    The fingerprint is what makes a silence an *occurrence* rather than a
+    permanent mute: dismiss "ACPI I/O port conflict" for the two ranges you know
+    about, and a third range makes it a new occurrence that speaks again.
+
+    Three of these deserve their reasoning recorded, because the obvious choice
+    is wrong in each:
+
+    * ``bios_revert`` fingerprints the severity **bucket**, never the raw
+      reclaim count. The count is monotonic within a daemon lifetime
+      (`ACK-d`), so fingerprinting it would mint a new occurrence on every
+      single reclaim — the dismissal would survive for exactly one tick, which
+      is indistinguishable from not having one.
+    * ``module_collision`` fingerprints the *pairs*, not the count: swapping
+      which two modules collide is a different problem with a different fix.
+    * a binary condition gets ``""`` — there is only one way for it to be true,
+      so the rank comparison alone carries the escalation.
+    """
+    hw = diag.hwmon
+    if key == "module_collision":
+        # `module_a`/`module_b`, NOT `driver_a`/`driver_b`. The first draft used
+        # the latter through `getattr(..., "")`, which does not raise — it
+        # silently yields empty strings, so every collision fingerprinted
+        # identically and a *different* pair of modules would have been covered
+        # by an older dismissal. Found by writing the test, not by reading the
+        # code, which is why the field names are asserted in it.
+        return health_ack.fingerprint(
+            f"{c.module_a}:{c.module_b}" for c in (getattr(diag, "module_collisions", []) or [])
+        )
+    if key == "module_conflict":
+        # The conflicting PAIR, not the loaded known-module set. `kernel_modules`
+        # is the daemon's curated `KNOWN_MODULES` filtered to what is loaded —
+        # Fintek, Winbond, SMSC, three ASUS WMI drivers and more — so
+        # fingerprinting all of it meant loading ANY unrelated sensor module
+        # changed the occurrence and resurrected the dismissal. The app invites
+        # exactly that: the manual tells users to press *Rescan Hardware* right
+        # after loading a sensor module. Mirror of the `module_collision` arm's
+        # bug in the opposite direction — that one was too narrow, this too wide.
+        return health_ack.fingerprint(
+            f"{c.module_a}:{c.module_b}"
+            for c in detect_module_conflicts([m.name for m in diag.kernel_modules if m.loaded])
+        )
+    if key == "dual_chip":
+        detected = {c.chip_name for c in hw.chips_detected}
+        return health_ack.fingerprint(set(diag.expected_chips) - detected)
+    if key == "acpi":
+        return health_ack.fingerprint(
+            f"{c.io_range}:{c.claimed_by}:{c.conflicts_with_driver}" for c in diag.acpi_conflicts
+        )
+    if key == "bios_revert":
+        reverts = getattr(hw, "enable_revert_counts", None) or {}
+        if not reverts:
+            return ""
+        # The bucket, not the number — see the docstring.
+        return health_ack.fingerprint([classify_reclaim_severity(max(reverts.values()))])
+    return ""
+
+
+def condition_occurrence(diag: HardwareDiagnosticsResult, problem: dict) -> Occurrence:
+    """The occurrence identity for one condition dict."""
+    key = problem["key"]
+    return Occurrence(
+        key=key,
+        fingerprint=condition_fingerprint(diag, key),
+        level=severity_to_state(problem["severity"]),
+    )
 
 
 def build_board_notes(
@@ -486,8 +646,12 @@ def build_board_notes(
     allow_dismiss: bool = True,
 ) -> BoardNotesVM:
     """Reference notes for this board/chip, with what this machine says of each."""
-    ack_index = silence_index(acknowledged or set())
-    dismiss_index = silence_index(dismissed or set())
+    ack_index = health_ack.build_index(
+        acknowledged or set(), readiness.evidence_rank, readiness.known_evidence
+    )
+    dismiss_index = health_ack.build_index(
+        dismissed or set(), readiness.evidence_rank, readiness.known_evidence
+    )
     # `condition_keys` is deliberately NOT passed. Precomputing it here meant
     # passing `detect_readiness_problems`' full set — base conditions *plus*
     # anything promoted from a note — which is exactly the shape
@@ -503,7 +667,9 @@ def build_board_notes(
     hidden = 0
     for note in notes:
         ack_key = note_ack_key(note.key, note.evidence)
-        if is_silenced(dismiss_index, note.key, note.evidence):
+        occ = Occurrence(key=note.key, fingerprint="", level=note.evidence)
+        note_rank = readiness.evidence_rank(note.evidence)
+        if health_ack.is_silenced(dismiss_index, occ, note_rank):
             hidden += 1
             continue
         sd = severity_display(note.quirk.severity)
@@ -536,7 +702,7 @@ def build_board_notes(
                 default_expanded=(
                     sd.default_expanded or note.evidence == readiness.EVIDENCE_OBSERVED
                 ),
-                acknowledged=is_silenced(ack_index, note.key, note.evidence),
+                acknowledged=health_ack.is_silenced(ack_index, occ, note_rank),
                 can_acknowledge=allow_acknowledge,
                 can_dismiss=allow_dismiss,
             )
@@ -565,7 +731,27 @@ def build_board_notes(
 # ─── Interference / safety / registry ──────────────────────────────────────
 
 
-def build_interference_vm(diag: HardwareDiagnosticsResult) -> InterferenceVM:
+def build_interference_vm(
+    diag: HardwareDiagnosticsResult,
+    *,
+    silence: SilenceState | None = None,
+) -> InterferenceVM:
+    """The BIOS-reclaim gauge, with a silencing decision attached (DEC-359).
+
+    **Silencing this card demotes it; it never removes it.** The distinction is
+    a property of the item, not of the button: a condition card is an *alarm*
+    and dismissing an alarm you have dealt with is the whole request, but this
+    card is a *reading* — `docs/07` calls it and Safety & GPU "always-visible"
+    and says the page "keeps its safety-relevant readings on screen". Deleting
+    the reading would make the page quieter by making it less true, which is the
+    opposite of the fix. Quietened, the gauge keeps its number and loses its
+    alarm state.
+
+    Fingerprinted on the severity **bucket**, matching `condition_fingerprint`'s
+    `bios_revert` arm — the count is monotonic within a daemon lifetime
+    (`ACK-d`), so fingerprinting the raw number would mint a new occurrence on
+    every reclaim and the silence would last exactly one tick.
+    """
     reverts = getattr(diag.hwmon, "enable_revert_counts", None) or {}
     positive = {k: v for k, v in reverts.items() if v > 0}
     if not positive:
@@ -582,19 +768,45 @@ def build_interference_vm(diag: HardwareDiagnosticsResult) -> InterferenceVM:
     header_id = max(positive, key=lambda k: positive[k])
     highest = positive[header_id]
     severity = classify_reclaim_severity(highest)  # "warn" | "high"
+    state = {"ok": "ok", "warn": "warn", "high": "crit"}[severity]
+
+    silence = silence or SilenceState()
+    ack_index, dismiss_index = silence.index(state_rank, known_state)
+    occ = Occurrence(
+        key="interference",
+        fingerprint=health_ack.fingerprint([severity]),
+        level=state,
+    )
+    rank = state_rank(state)
+    silence_vm = SilenceVM(
+        token=health_ack.occurrence_token(occ),
+        acknowledged=health_ack.is_silenced(ack_index, occ, rank),
+        dismissed=health_ack.is_silenced(dismiss_index, occ, rank),
+        can_acknowledge=silence.allow_acknowledge,
+        can_dismiss=silence.allow_dismiss,
+    )
     return InterferenceVM(
         has_contention=True,
         highest_count=highest,
         header_id=header_id,
         severity=severity,
-        severity_state={"ok": "ok", "warn": "warn", "high": "crit"}[severity],
+        # Demoted, not deleted: the count and the gauge stay exactly as they
+        # are and only the alarm state drops to neutral.
+        severity_state="neutral" if silence_vm.quiet else state,
         gauge_fraction=interference_gauge_fraction(highest),
-        title="High Contention Detected" if severity == "high" else "Interference Detected",
+        title=(
+            "Interference (quietened)"
+            if silence_vm.quiet
+            else "High Contention Detected"
+            if severity == "high"
+            else "Interference Detected"
+        ),
         explanation=(
             "The daemon watchdog automatically re-enables manual mode on every reclaim. "
             "Persistently HIGH counts indicate ongoing BIOS contention — see the health "
             "issues above for the BIOS settings to change."
         ),
+        silence=silence_vm,
     )
 
 
@@ -610,6 +822,7 @@ def build_safety_gpu_vm(
     diag: HardwareDiagnosticsResult,
     *,
     live_thermal_state: str | None = None,
+    silence: SilenceState | None = None,
 ) -> SafetyGpuVM:
     """Assemble the Safety & GPU card.
 
@@ -624,6 +837,9 @@ def build_safety_gpu_vm(
     not state — and is interpolated from what the daemon reported. Never compare
     it to a literal: the trip point is per-machine (DEC-308).
     """
+    silence = silence or SilenceState()
+    ack_index, dismiss_index = silence.index(state_rank, known_state)
+
     ts = diag.thermal_safety
     snapshot_state = ts.state if ts else ""
     wire_state = live_thermal_state if live_thermal_state else snapshot_state
@@ -631,6 +847,44 @@ def build_safety_gpu_vm(
     thermal_text = wire_state.capitalize() if wire_state else "Unknown"
     thermal_limit_text = f"Limit: {ts.emergency_threshold_c:.0f} °C" if ts else ""
     thermal_state = _THERMAL_STATE.get(state_key, "neutral")
+
+    # The thermal row, silenceable by the user's explicit decision (2026-09-11)
+    # against this investigation's recommendation. Two things make that safe and
+    # both are load-bearing:
+    #
+    #  * it is DEMOTED, never removed — the state and the per-machine limit stay
+    #    on screen, and only the alarm colour drops;
+    #  * the silence is keyed on the LIVE poll state (DEC-358), so an escalation
+    #    to `emergency` outranks any silence taken at `normal` and the row
+    #    speaks again within a second. Before DEC-358 this row read a snapshot
+    #    fetched once, which could never escalate — a dismissal there would have
+    #    been the permanent mute this whole register exists to remove.
+    #
+    # And the live alarm the user must never miss does not come through here at
+    # all: `thermal_state` reaches `StatusBanner`, the footer and the ribbon by
+    # their own paths, none of which consults a silencing list. The daemon acts
+    # regardless of every one of them (DEC-165).
+    thermal_occ = Occurrence(key="thermal", fingerprint="", level=thermal_state)
+    thermal_rank = state_rank(thermal_state)
+    # **You cannot permanently mute an alarm while it is firing.** A dismissal is
+    # stored at the level it was taken, and this row has a fixed empty
+    # fingerprint, so one taken at `crit` satisfies `rank <= stored` for every
+    # future state — permanent, and across restarts. The comment here used to
+    # claim escalation always wins; that is true of a silence taken at a quieter
+    # state and FALSE of one taken at the top, which is the case that matters.
+    # So Dismiss is withheld while the row is critical. Acknowledge stays: it is
+    # session-only, which is exactly the "I have seen it" that ISA-18.2 says an
+    # active alarm should accept.
+    thermal_alarm_active = thermal_rank >= state_rank("crit")
+    thermal_silence = SilenceVM(
+        token=health_ack.occurrence_token(thermal_occ),
+        acknowledged=health_ack.is_silenced(ack_index, thermal_occ, thermal_rank),
+        dismissed=health_ack.is_silenced(dismiss_index, thermal_occ, thermal_rank),
+        can_acknowledge=silence.allow_acknowledge,
+        can_dismiss=silence.allow_dismiss and not thermal_alarm_active,
+    )
+    if thermal_silence.quiet:
+        thermal_state = "neutral"
 
     rows: list[GpuConstraintRowVM] = []
     gpu_model = ""
@@ -689,9 +943,33 @@ def build_safety_gpu_vm(
                 GpuConstraintRowVM("Firmware min PWM", f"{gpu.fan_minimum_pwm}%", "neutral")
             )
         for kw in gpu.kernel_warnings:
+            state = severity_to_state(kw.severity)
+            # `ACK-h`: "Don't show again" on the startup popup stores `kw.id` in
+            # `acknowledged_kernel_warnings`, and this row ignored it — the same
+            # advisory, dismissed once, re-rendered here forever. `api/models`
+            # states outright that this list mirrors
+            # `/capabilities.amd_gpu.kernel_warnings`, so the ids are one
+            # vocabulary and the filter was one `in` away. A silencing decision
+            # belongs to the ITEM, not to whichever widget showed it first.
+            occ = Occurrence(key=f"gpu_advisory_{kw.id}", fingerprint="", level=state)
+            rank = state_rank(state)
+            already = kw.id in silence.kernel_warnings
             rows.append(
                 GpuConstraintRowVM(
-                    f"Advisory ({kw.severity})", kw.message, severity_to_state(kw.severity)
+                    f"Advisory ({kw.severity})",
+                    kw.message,
+                    "neutral"
+                    if already
+                    or health_ack.is_silenced(ack_index, occ, rank)
+                    or health_ack.is_silenced(dismiss_index, occ, rank)
+                    else state,
+                    silence=SilenceVM(
+                        token=health_ack.occurrence_token(occ),
+                        acknowledged=health_ack.is_silenced(ack_index, occ, rank),
+                        dismissed=already or health_ack.is_silenced(dismiss_index, occ, rank),
+                        can_acknowledge=silence.allow_acknowledge,
+                        can_dismiss=silence.allow_dismiss,
+                    ),
                 )
             )
 
@@ -741,6 +1019,7 @@ def build_safety_gpu_vm(
         thermal_text=thermal_text,
         thermal_limit_text=thermal_limit_text,
         thermal_state=thermal_state,
+        thermal_silence=thermal_silence,
         has_gpu=bool(rows),
         gpu_model=gpu_model,
         gpu_rows=rows,
@@ -830,6 +1109,7 @@ def build_system_state_vm(
     allow_acknowledge: bool = True,
     allow_dismiss: bool = True,
     live_thermal_state: str | None = None,
+    silence: SilenceState | None = None,
 ) -> SystemStateVM:
     problems = detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
     n = len(problems)
@@ -846,6 +1126,16 @@ def build_system_state_vm(
         # condition requiring a response, and every entry is one.
         issue_count_label = f"{n} ACTION REQUIRED"
         issue_count_state = "crit" if any(p["severity"] == "critical" for p in problems) else "warn"
+    # `n` above is `len(problems)` and is deliberately computed BEFORE any
+    # silencing, so the pill counts what is wrong with the machine rather than
+    # what is on screen. `AlertLedger.active_count` states the rule: a health
+    # number is never quietened by a button, and a page that can be made to read
+    # SYSTEM READY while fan control is dead is a worse defect than the noise
+    # this change removes. `conditions_hidden_count` is what reconciles the two
+    # for the reader — without it the pill and the list simply disagree.
+    issue_cards, conditions_hidden = build_condition_cards(
+        diag, pwm_control_verified=pwm_control_verified, silence=silence
+    )
     return SystemStateVM(
         board_line=board_identity_line(diag),
         summary_line=header_summary_line(diag.hwmon),
@@ -854,16 +1144,19 @@ def build_system_state_vm(
         issues_requiring_attention=n,
         issue_count_label=issue_count_label,
         issue_count_state=issue_count_state,
-        issue_cards=build_condition_cards(diag, pwm_control_verified=pwm_control_verified),
+        issue_cards=issue_cards,
+        conditions_hidden_count=conditions_hidden,
         board_notes=build_board_notes(
             diag,
             pwm_control_verified=pwm_control_verified,
-            acknowledged=acknowledged_notes,
-            dismissed=dismissed_notes,
-            allow_acknowledge=allow_acknowledge,
-            allow_dismiss=allow_dismiss,
+            acknowledged=set(silence.acknowledged) if silence else acknowledged_notes,
+            dismissed=set(silence.dismissed) if silence else dismissed_notes,
+            allow_acknowledge=silence.allow_acknowledge if silence else allow_acknowledge,
+            allow_dismiss=silence.allow_dismiss if silence else allow_dismiss,
         ),
-        interference=build_interference_vm(diag),
-        safety_gpu=build_safety_gpu_vm(diag, live_thermal_state=live_thermal_state),
+        interference=build_interference_vm(diag, silence=silence),
+        safety_gpu=build_safety_gpu_vm(
+            diag, live_thermal_state=live_thermal_state, silence=silence
+        ),
         registry_rows=build_registry_rows(diag),
     )

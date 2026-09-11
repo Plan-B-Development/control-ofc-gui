@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.services.system_state_view import SilenceVM
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import BracketCard, Card, ContentSizedCard, SectionHeader
@@ -93,7 +94,40 @@ def _ensure_items(table: QTableWidget, row: int, ncols: int) -> None:
             table.setItem(row, col, QTableWidgetItem())
 
 
-def _make_issue_card(vm) -> QWidget:
+def _silence_actions(silence, prefix: str, key: str, on_ack, on_dismiss) -> QHBoxLayout | None:
+    """The Acknowledge/Dismiss row, shared by every silenceable surface (DEC-359).
+
+    Extracted from ``_make_note_row`` rather than merged with it. The plan for
+    this change proposed fusing ``_make_issue_card`` and ``_make_note_row`` into
+    one builder; reading them shows that is wrong — one is a ``BracketCard``
+    with a description and a doc button, the other a ``Card`` with evidence
+    text, a collapsible detail and greying. Fusing them would add conditionals,
+    not remove them. What they genuinely share is *this*, and `CLAUDE.md`'s rule
+    is the one that applies: when a second surface needs a rule, extraction is
+    the change.
+
+    Returns ``None`` when nothing can be pressed, so no caller has to reproduce
+    the "only add the row if it has buttons" test.
+    """
+    if not silence.token or not (silence.can_acknowledge or silence.can_dismiss):
+        return None
+    actions = QHBoxLayout()
+    actions.addStretch(1)
+    if silence.can_acknowledge:
+        label = "Unacknowledge" if silence.acknowledged else "Acknowledge"
+        btn = make_button(label, "ghost", object_name=f"{prefix}AckBtn_{key}")
+        btn.clicked.connect(
+            lambda _=False, t=silence.token, on=not silence.acknowledged: on_ack(t, on)
+        )
+        actions.addWidget(btn)
+    if silence.can_dismiss and not silence.dismissed:
+        btn = make_button("Dismiss", "ghost", object_name=f"{prefix}DismissBtn_{key}")
+        btn.clicked.connect(lambda _=False, t=silence.token: on_dismiss(t))
+        actions.addWidget(btn)
+    return actions
+
+
+def _make_issue_card(vm, on_ack=None, on_dismiss=None) -> QWidget:
     theme = active_theme()
     color = _severity_border_color(vm.severity_state, theme)
     # DEC-258: the shared BracketCard, not a hand-rolled twin. This built the
@@ -150,6 +184,10 @@ def _make_issue_card(vm) -> QWidget:
         doc_row.addWidget(btn)
         doc_row.addStretch(1)
         v.addLayout(doc_row)
+    if on_ack is not None and on_dismiss is not None:
+        actions = _silence_actions(vm.silence, "SystemState_IssueCard", vm.key, on_ack, on_dismiss)
+        if actions is not None:
+            v.addLayout(actions)
     row.addWidget(body, 1)
     return card
 
@@ -225,20 +263,23 @@ def _make_note_row(vm, on_ack, on_dismiss) -> QWidget:
         section.add_widget(box)
         v.addWidget(section)
 
-    actions = QHBoxLayout()
-    actions.addStretch(1)
-    if vm.can_acknowledge:
-        label = "Unacknowledge" if vm.acknowledged else "Acknowledge"
-        ack_btn = make_button(label, "ghost", object_name=f"SystemState_BoardNoteAckBtn_{vm.key}")
-        ack_btn.clicked.connect(lambda _=False, k=vm.ack_key, on=not vm.acknowledged: on_ack(k, on))
-        actions.addWidget(ack_btn)
-    if vm.can_dismiss:
-        dismiss_btn = make_button(
-            "Dismiss", "ghost", object_name=f"SystemState_BoardNoteDismissBtn_{vm.key}"
-        )
-        dismiss_btn.clicked.connect(lambda _=False, k=vm.ack_key: on_dismiss(k))
-        actions.addWidget(dismiss_btn)
-    if actions.count() > 1:
+    # The same row every other silenceable surface uses. `BoardNoteVM` keeps its
+    # own flat fields (DEC-357's shape) and adapts to the shared carrier here,
+    # rather than being rewritten — the objectNames are pinned by the baseline
+    # test and by four DEC-357 tests, and churning them would buy nothing.
+    actions = _silence_actions(
+        SilenceVM(
+            token=vm.ack_key,
+            acknowledged=vm.acknowledged,
+            can_acknowledge=vm.can_acknowledge,
+            can_dismiss=vm.can_dismiss,
+        ),
+        "SystemState_BoardNote",
+        vm.key,
+        on_ack,
+        on_dismiss,
+    )
+    if actions is not None:
         v.addLayout(actions)
     return card
 
@@ -346,19 +387,36 @@ class HealthCard(ContentSizedCard):
         if vm.board_line:
             summary = f"{summary}  ·  {vm.board_line}"
         self._summary_label.setText(summary)
-        self._rebuild_issue_cards(vm.issue_cards)
+        self._rebuild_issue_cards(vm.issue_cards, vm.conditions_hidden_count)
         self._rebuild_board_notes(vm.board_notes)
 
-    def _rebuild_issue_cards(self, cards) -> None:
+    def _rebuild_issue_cards(self, cards, hidden: int = 0) -> None:
         _clear_layout(self._issues_layout)
         if not cards:
-            ok = QLabel("No active conditions — fan control is available.")
+            ok = QLabel(
+                "No active conditions — fan control is available."
+                if not hidden
+                # Never "all clear" while something is merely hidden. The pill
+                # above still counts the dismissed conditions, so claiming the
+                # machine is healthy here would make the card contradict its own
+                # header — and the pill is the half that is right.
+                else "No conditions shown — every active one is dismissed."
+            )
             ok.setObjectName("SystemState_Label_noIssues")
             ok.setProperty("class", "CardMeta")
             self._issues_layout.addWidget(ok)
-            return
-        for vm in cards:
-            self._issues_layout.addWidget(_make_issue_card(vm))
+        else:
+            for vm in cards:
+                self._issues_layout.addWidget(
+                    _make_issue_card(vm, self.note_acknowledged.emit, self.note_dismissed.emit)
+                )
+        if hidden:
+            # What reconciles the pill with a shorter list. Without it the two
+            # simply disagree and the user has no way to find out why.
+            note = QLabel(f"{hidden} dismissed — restore in Settings ▸ Prompts & Dismissals.")
+            note.setObjectName("SystemState_Label_hiddenConditions")
+            note.setProperty("class", "CardMeta")
+            self._issues_layout.addWidget(note)
 
     def _rebuild_board_notes(self, vm) -> None:
         _clear_layout(self._notes_layout)
@@ -435,6 +493,13 @@ class InterferenceCard(ContentSizedCard):
         self._interference_explain.setProperty("class", "CardMeta")
         self._interference_explain.setWordWrap(True)
         v.addWidget(self._interference_explain)
+        self._actions_layout = QVBoxLayout()
+        self._actions_layout.setContentsMargins(0, 0, 0, 0)
+        v.addLayout(self._actions_layout)
+
+    #: (token, acknowledged) / (token) — DEC-359, same shape as HealthCard's.
+    note_acknowledged = Signal(str, bool)
+    note_dismissed = Signal(str)
 
     def render(self, vm) -> None:
         if vm.has_contention:
@@ -450,6 +515,19 @@ class InterferenceCard(ContentSizedCard):
         self._header_id_label.setText(vm.header_id or "")
         self._header_id_label.setVisible(bool(vm.header_id))
         self._interference_explain.setText(vm.explanation)
+        # Demote-not-delete: the gauge, the count and the header keep rendering
+        # exactly as they did; `severity_state` is what the VM neutralises. The
+        # reading stays true and only the alarm stops (DEC-359).
+        _clear_layout(self._actions_layout)
+        actions = _silence_actions(
+            vm.silence,
+            "SystemState_Interference",
+            "monitor",
+            self.note_acknowledged.emit,
+            self.note_dismissed.emit,
+        )
+        if actions is not None:
+            self._actions_layout.addLayout(actions)
 
 
 class SafetyCard(ContentSizedCard):
@@ -463,6 +541,8 @@ class SafetyCard(ContentSizedCard):
             SectionHeader("Safety & GPU Limits", object_name="SystemState_SectionHeader_safety")
         )
 
+        self._thermal_actions = QVBoxLayout()
+        self._thermal_actions.setContentsMargins(0, 0, 0, 0)
         thermal_row = QHBoxLayout()
         tl = QLabel("CPU Thermal State")
         tl.setProperty("class", "CardMeta")
@@ -475,6 +555,7 @@ class SafetyCard(ContentSizedCard):
         self._thermal_pill.setObjectName("SystemState_Pill_thermal")
         thermal_row.addWidget(self._thermal_pill)
         v.addLayout(thermal_row)
+        v.addLayout(self._thermal_actions)
 
         self._gpu_model_label = QLabel("")
         self._gpu_model_label.setObjectName("SystemState_Label_gpuModel")
@@ -503,22 +584,52 @@ class SafetyCard(ContentSizedCard):
         v.addWidget(self._speed_bar_holder)
         self._speed_bar_holder.setVisible(False)
 
+    #: (token, acknowledged) / (token) — DEC-359, same shape as HealthCard's.
+    note_acknowledged = Signal(str, bool)
+    note_dismissed = Signal(str)
+
     def render(self, vm) -> None:
+        # DEMOTE, NEVER REMOVE. The state and the per-machine limit stay on
+        # screen whatever the user has silenced — `vm.thermal_state` is already
+        # neutralised by the VM, so quietening drops the colour and nothing
+        # else. Deleting a thermal reading to make the page quieter would make
+        # it less true, and the live emergency reaches the user through
+        # StatusBanner / footer / ribbon regardless, none of which consults a
+        # silencing list (DEC-165 — the daemon acts either way).
         thermal = vm.thermal_text
         if vm.thermal_limit_text:
             thermal = f"{thermal}  ({vm.thermal_limit_text})"
         self._thermal_label.setText(thermal)
         self._thermal_pill.set_text(vm.thermal_text)
         self._thermal_pill.set_state(vm.thermal_state)
+        _clear_layout(self._thermal_actions)
+        thermal_actions = _silence_actions(
+            vm.thermal_silence,
+            "SystemState_Thermal",
+            "cpu",
+            self.note_acknowledged.emit,
+            self.note_dismissed.emit,
+        )
+        if thermal_actions is not None:
+            self._thermal_actions.addLayout(thermal_actions)
 
         _clear_layout(self._gpu_rows_layout)
         self._gpu_model_label.setText(vm.gpu_model if vm.has_gpu else "No discrete GPU detected")
         theme = active_theme()
-        for r in vm.gpu_rows:
+        for i, r in enumerate(vm.gpu_rows):
             label = QLabel(f"{r.label}: {r.value}")
             label.setWordWrap(True)
             label.setStyleSheet(f"color: {_row_state_color(r.state, theme)};")
             self._gpu_rows_layout.addWidget(label)
+            row_actions = _silence_actions(
+                r.silence,
+                "SystemState_GpuRow",
+                str(i),
+                self.note_acknowledged.emit,
+                self.note_dismissed.emit,
+            )
+            if row_actions is not None:
+                self._gpu_rows_layout.addLayout(row_actions)
 
         if vm.speed_bar_visible and vm.speed_min is not None and vm.speed_max is not None:
             self._speed_label.setText(f"Firmware speed range: {vm.speed_min}% - {vm.speed_max}%")

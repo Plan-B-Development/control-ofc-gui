@@ -34,11 +34,12 @@ from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.services.health_ack import clear_key, parse_token, prune
 from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.system_state_view import (
+    SilenceState,
     build_system_state_vm,
     build_verify_headers,
-    clear_silence,
     daemon_version_at_least,
 )
 from control_ofc.services.verify_view import (
@@ -95,6 +96,27 @@ _GPU_RESTORE_TOOLTIP_GATED = (
     "The active profile is driving the GPU fan — remove it from its fan role "
     "or deactivate the profile first."
 )
+
+
+def _silence_key(token: str) -> str:
+    """The bare item key inside a silence token, for un-silencing."""
+    occ = parse_token(token)
+    return occ.key if occ else token
+
+
+def _live_silence_keys(vm) -> set[str]:
+    """Every key the CURRENT hardware can raise, for pruning (`ACK-g`).
+
+    Derived from the rendered view-model rather than re-walked from `diag`, so
+    it cannot drift from what the page actually offers a button for — the
+    DEC-115 rule, and the reason this is not a second enumeration of the
+    condition set.
+    """
+    keys = {_silence_key(c.silence.token) for c in vm.issue_cards if c.silence.token}
+    keys |= {n.key for n in vm.board_notes.notes}
+    keys |= {"interference", "thermal"}
+    keys |= {_silence_key(r.silence.token) for r in vm.safety_gpu.gpu_rows if r.silence.token}
+    return keys
 
 
 def _verified_tristate(recorded: str) -> bool | None:
@@ -170,10 +192,18 @@ class SystemStatePage(QWidget):
         self._char_dialog: PwmCharacterizationDialog | None = None
         self._hw_diag_fetched = False
         self._hw_diag_in_flight = False  # guards the header Refresh (DEC-358)
+        self._pruned_for = None  # payload identity the silences were last pruned against
         #: Live `DaemonStatus.thermal_state`, pushed at 1 Hz — see
         #: :meth:`set_thermal_state`. ``""`` until the first poll arrives, which
         #: is what makes the Safety card fall back to the fetched snapshot.
         self._live_thermal_state = ""
+        #: Acknowledgements, SESSION-ONLY (DEC-359, the user's "one rule
+        #: everywhere"). Deliberately not persisted: an acknowledgement means
+        #: "I have read this now", and one that outlives the session is a
+        #: dismissal wearing the wrong label — which is exactly what
+        #: `acknowledged_board_notes` had become. Dismissal is the persistent
+        #: form, and it is the one with a Settings restore behind it.
+        self._session_acks: set[str] = set()
         self._rescan_in_flight = False  # DEC-216: guards the footer Rescan action
         self._last_rendered_diag: HardwareDiagnosticsResult | None = None
 
@@ -245,6 +275,12 @@ class SystemStatePage(QWidget):
         self._build_health_header_actions()
         self._interference_card = InterferenceCard()
         self._safety_card = SafetyCard()
+        # Every silenceable surface routes to ONE pair of handlers (DEC-359).
+        # `ACK-h` existed because a silencing decision was owned by the widget
+        # that happened to show the item first; one destination is the fix.
+        for card in (self._interference_card, self._safety_card):
+            card.note_acknowledged.connect(self._on_note_acknowledged)
+            card.note_dismissed.connect(self._on_note_dismissed)
         overview_pane = QWidget()
         overview_pane.setObjectName("SystemState_Pane_healthOverview")
         # No explicit height floor, and removing the old literal 190 is the
@@ -552,15 +588,26 @@ class SystemStatePage(QWidget):
         # rather than read back from DiagnosticsService so the re-render cannot
         # silently become a no-op if that cache is warmed by a different path.
         self._last_rendered_diag = diag
+        if diag is not self._pruned_for:
+            # Once per FETCHED payload, not once per render. What the hardware
+            # can raise only changes when the payload does, and a re-render is
+            # now triggered by a 1 Hz thermal change, an ack toggle or a
+            # dismissal — none of which alters the live key set, and all of
+            # which would otherwise pay for a second full view-model build.
+            self._pruned_for = diag
+            self._prune_silences(diag)
         settings = self._settings_svc.settings
         vm = build_system_state_vm(
             diag,
             pwm_control_verified=_verified_tristate(settings.last_pwm_verify_effective),
-            acknowledged_notes=set(settings.acknowledged_board_notes),
-            dismissed_notes=set(settings.dismissed_board_notes),
-            allow_acknowledge=settings.board_notes_allow_acknowledge,
-            allow_dismiss=settings.board_notes_allow_dismiss,
             live_thermal_state=self._live_thermal_state,
+            silence=SilenceState(
+                acknowledged=frozenset(self._session_acks),
+                dismissed=frozenset(settings.dismissed_health_items),
+                kernel_warnings=frozenset(settings.acknowledged_kernel_warnings),
+                allow_acknowledge=settings.board_notes_allow_acknowledge,
+                allow_dismiss=settings.board_notes_allow_dismiss,
+            ),
         )
         self._health_card.render(vm)
         self._registry_card.set_summary(vm.summary_line)
@@ -574,31 +621,35 @@ class SystemStatePage(QWidget):
             self._report_dialog.set_html(build_readiness_report_html(diag))
 
     @Slot(str, bool)
-    def _on_note_acknowledged(self, ack_key: str, acknowledged: bool) -> None:
-        stored = list(self._settings_svc.settings.acknowledged_board_notes)
+    def _on_note_acknowledged(self, token: str, acknowledged: bool) -> None:
+        """(Un)acknowledge one item, for the session only (DEC-359).
+
+        Every silenceable surface routes here — conditions, board notes, the
+        Interference Monitor, the thermal row, the GPU advisories — because a
+        silencing decision belongs to the item, not to the widget that happened
+        to show it (`ACK-h` is that rule being broken by the previous design).
+        """
+        key = _silence_key(token)
+        before = len(self._session_acks)
         if acknowledged:
-            if ack_key in stored:
-                return
-            keys = [*stored, ack_key]
+            self._session_acks.add(token)
         else:
-            # Clear EVERY entry for this quirk, not the one whose evidence
-            # matches right now. Since DEC-358 a silence is matched by rank, so
-            # a note acknowledged at `unverified` is still acknowledged once it
-            # improves to `not_observed` — but its current ack key was never
-            # stored, and removing only that key would have *appended* it.
-            keys = clear_silence(stored, ack_key.rpartition("@")[0] or ack_key)
-            if keys == stored:
-                return
-        self._settings_svc.update(acknowledged_board_notes=keys)
+            # Clear EVERY token for this key, not the one matching right now:
+            # under occurrence matching the row's current token may never have
+            # been stored, and removing only it would leave an older silence
+            # standing (DEC-358 found the same trap one dimension down).
+            self._session_acks = set(clear_key(self._session_acks, key))
+        if len(self._session_acks) == before and acknowledged:
+            return
         self._rerender_last_diagnostics()
 
     @Slot(str)
-    def _on_note_dismissed(self, ack_key: str) -> None:
-        keys = list(self._settings_svc.settings.dismissed_board_notes)
-        if ack_key in keys:
+    def _on_note_dismissed(self, token: str) -> None:
+        """Dismiss one item, persistently, until Settings restore or escalation."""
+        stored = list(self._settings_svc.settings.dismissed_health_items)
+        if token in stored:
             return
-        keys.append(ack_key)
-        self._settings_svc.update(dismissed_board_notes=keys)
+        self._settings_svc.update(dismissed_health_items=[*stored, token])
         self._rerender_last_diagnostics()
 
     @Slot(str)
@@ -613,13 +664,55 @@ class SystemStatePage(QWidget):
         was wrong was this page *reporting* a snapshot as if it were current.
 
         Guarding on change keeps it off the 1 Hz path: a steady state costs one
-        string comparison per poll and re-renders nothing.
+        string comparison per poll and re-renders nothing. It is also what makes
+        DEC-359's thermal-row dismissal safe — an escalation re-ranks the row
+        within a second and outranks any silence taken at a quieter state.
         """
         state = state or "normal"
         if state == self._live_thermal_state:
             return
         self._live_thermal_state = state
         self._rerender_last_diagnostics()
+
+    def _prune_silences(self, diag) -> None:
+        """Drop persisted dismissals this hardware can no longer raise (`ACK-g`).
+
+        Two reasons it runs on render rather than on load. The live key set is
+        only knowable once `/diagnostics/hardware` has been fetched — pruning at
+        load would have nothing to compare against and would delete everything.
+        And the Settings restore counter is the one place the user sees this
+        list, so a stale entry there is not merely untidy: it promises to
+        restore something that can never come back.
+
+        A HIDDEN dismissal is still live: it is pruned against the keys the
+        hardware can *raise*, which `_live_silence_keys` takes from the rendered
+        VM including the notes and rows currently being silenced. Pruning
+        against what is *visible* would delete every dismissal the moment it
+        took effect, which is the bug this guard would otherwise introduce.
+        """
+        stored = list(self._settings_svc.settings.dismissed_health_items)
+        if not stored:
+            return
+        # NEVER prune off an incomplete snapshot. `/diagnostics/hardware` returns
+        # 200 with an empty `chips_detected` when no hwmon chip enumerated — the
+        # GUI models that as its own `no_chips` condition, so it is a normal
+        # payload, not an error. Every board-note and chip-scoped key vanishes
+        # from the live set in that state, and this method PERSISTS its result,
+        # so a transient one (a daemon restart mid-session) would delete the
+        # user's dismissals irreversibly. Pruning is an optimisation; losing a
+        # preference is not, so when in doubt do nothing.
+        if not diag.hwmon.chips_detected:
+            return
+        probe = build_system_state_vm(
+            diag,
+            pwm_control_verified=_verified_tristate(
+                self._settings_svc.settings.last_pwm_verify_effective
+            ),
+            live_thermal_state=self._live_thermal_state,
+        )
+        kept = prune(stored, _live_silence_keys(probe))
+        if kept != stored:
+            self._settings_svc.update(dismissed_health_items=kept)
 
     def _rerender_last_diagnostics(self) -> None:
         """Re-render from the cached payload after a settings-only change.

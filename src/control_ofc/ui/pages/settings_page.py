@@ -105,8 +105,7 @@ SETTINGS_FIELD_WIDGETS: dict[str, str] = {
     "acknowledged_kernel_warnings": "Settings_Btn_clearKernelWarnings",
     "board_notes_allow_acknowledge": "Settings_Check_boardNoteAck",
     "board_notes_allow_dismiss": "Settings_Check_boardNoteDismiss",
-    "acknowledged_board_notes": "Settings_Btn_clearBoardNoteAcks",
-    "dismissed_board_notes": "Settings_Btn_restoreBoardNotes",
+    "dismissed_health_items": "Settings_Btn_restoreHealthItems",
     "last_pwm_verify_effective": "Settings_Btn_clearPwmVerify",
     "daemon_import_prompted": "Settings_Btn_reofferImport",
     "fan_aliases_seeded": "Settings_Btn_reseedAliases",
@@ -1676,13 +1675,21 @@ class SettingsPage(QWidget):
         # entirely alone say so.
         self._board_note_ack_cb = ToggleSwitch()
         self._board_note_ack_cb.setObjectName("Settings_Check_boardNoteAck")
+        # The label says what the toggle DOES, not where it started. DEC-359
+        # widened these two settings from board notes to every silenceable item
+        # on the System State page, and leaving them titled "board notes" meant a
+        # user unticking one to stop acknowledging notes silently also lost the
+        # ability to acknowledge condition cards, the thermal row and the GPU
+        # advisories. The KEY keeps its old name (`board_notes_allow_*`) so no
+        # settings migration is needed — only the wording was wrong.
         self._board_note_ack_cb.setToolTip(
-            "Offer an Acknowledge button on each board note on the System State page"
+            "Offer an Acknowledge button on every item in the System State health "
+            "overview — conditions, board notes, interference and GPU advisories"
         )
         v.addLayout(
             self._setting_row(
-                "Acknowledge board notes",
-                "Let a reviewed board note collapse and grey out",
+                "Acknowledge health items",
+                "Let a reviewed item quieten for the rest of this session",
                 self._board_note_ack_cb,
             )
         )
@@ -1690,46 +1697,38 @@ class SettingsPage(QWidget):
         self._board_note_dismiss_cb = ToggleSwitch()
         self._board_note_dismiss_cb.setObjectName("Settings_Check_boardNoteDismiss")
         self._board_note_dismiss_cb.setToolTip(
-            "Offer a Dismiss button on each board note on the System State page"
+            "Offer a Dismiss button on every item in the System State health "
+            "overview — conditions, board notes, interference and GPU advisories"
         )
         v.addLayout(
             self._setting_row(
-                "Dismiss board notes",
-                "Let a board note be hidden from the System State page",
+                "Dismiss health items",
+                "Let an item be hidden until you restore it, or it gets worse",
                 self._board_note_dismiss_cb,
             )
         )
 
-        self._clear_board_acks_btn = make_button(
-            "Clear acknowledged",
-            "ghost",
-            object_name="Settings_Btn_clearBoardNoteAcks",
-            accessible_name="Clear acknowledged board notes",
-        )
-        self._clear_board_acks_btn.clicked.connect(self._clear_board_note_acks)
-        v.addLayout(
-            self._setting_row(
-                "Acknowledged board notes",
-                "Board/chip notes you have marked as read",
-                self._clear_board_acks_btn,
-            )
-        )
-
-        self._restore_board_notes_btn = make_button(
+        # DEC-359 retired "Clear acknowledged". Acknowledgement is session-only
+        # now, so there is nothing stored to clear and a button offering to
+        # clear it would be a control that does nothing — restart the app and
+        # the acknowledgements are gone. Its place is taken by the restore for
+        # the surfaces that GAINED a lifecycle in the same change.
+        self._restore_health_btn = make_button(
             "Restore",
             "ghost",
-            object_name="Settings_Btn_restoreBoardNotes",
-            accessible_name="Restore dismissed board notes",
+            object_name="Settings_Btn_restoreHealthItems",
+            accessible_name="Restore dismissed health items",
         )
-        self._restore_board_notes_btn.setToolTip(
-            "Show board notes you have dismissed on the System State page again"
+        self._restore_health_btn.setToolTip(
+            "Show everything you have dismissed on the System State page again — "
+            "conditions, board notes, interference and GPU advisories"
         )
-        self._restore_board_notes_btn.clicked.connect(self._restore_board_notes)
+        self._restore_health_btn.clicked.connect(self._restore_health_items)
         v.addLayout(
             self._setting_row(
-                "Dismissed board notes",
-                "Board/chip notes you have hidden",
-                self._restore_board_notes_btn,
+                "Dismissed health items",
+                "Conditions, board notes, interference and advisories you have hidden",
+                self._restore_health_btn,
             )
         )
 
@@ -1814,15 +1813,10 @@ class SettingsPage(QWidget):
         self._refresh_reset_buttons()
         self._set_status("Dismissed driver advisories cleared")
 
-    def _clear_board_note_acks(self) -> None:
-        self._settings_svc.update(acknowledged_board_notes=[])
+    def _restore_health_items(self) -> None:
+        self._settings_svc.update(dismissed_health_items=[])
         self._refresh_reset_buttons()
-        self._set_status("Acknowledged board notes cleared")
-
-    def _restore_board_notes(self) -> None:
-        self._settings_svc.update(dismissed_board_notes=[])
-        self._refresh_reset_buttons()
-        self._set_status("Dismissed board notes restored")
+        self._set_status("Dismissed health items restored")
 
     def _clear_pwm_verify_result(self) -> None:
         self._settings_svc.update(last_pwm_verify_effective="")
@@ -1920,12 +1914,7 @@ class SettingsPage(QWidget):
                 len(s.acknowledged_kernel_warnings),
                 "Clear dismissed",
             ),
-            (
-                self._clear_board_acks_btn,
-                len(s.acknowledged_board_notes),
-                "Clear acknowledged",
-            ),
-            (self._restore_board_notes_btn, len(s.dismissed_board_notes), "Restore"),
+            (self._restore_health_btn, len(s.dismissed_health_items), "Restore"),
             (self._reset_card_sizes_btn, len(s.controls_card_sizes), "Reset all sizes"),
             (self._prune_orphans_btn, self._chart_orphans().total, "Remove"),
         ):
