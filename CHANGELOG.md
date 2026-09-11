@@ -2,6 +2,10 @@
 
 ## [2.70.0] — 2026-09-11
 
+**GUI-only; the daemon floor is unchanged at `control-ofc-daemon` >= v2.11.0.**
+Nothing here touches the API — no new wire field, no capability consulted — so
+this release pairs with exactly the daemons v2.69.0 did.
+
 **The chart remembers which series you chose.** Sensors and fans you unticked in
 the Sensors rail stayed hidden for sensors but came back for **fans** on every
 launch, so the graph reverted to showing everything and the rail's fan rows came
