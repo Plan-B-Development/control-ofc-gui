@@ -265,6 +265,8 @@ The Hardware Readiness report surfaces a per-header count with a severity ramp:
 
 The verdict takes the highest severity across all headers, so if any single header is in HIGH state the whole report alerts you to it.
 
+Since v2.74.0 the count is **dated**, not merely counted. The daemon reports how long ago each header's most recent reclaim was, and once every affected header has been quiet for long enough the **System State** condition stands down: the **Interference Monitor** keeps the count, relabels it **Past Interference**, and tells you how long ago it was. The count itself never resets while the daemon is running, so this is what separates a BIOS fighting you *now* from one that lost the argument hours ago — the severity ramp above describes a live fight. If the age is not known, because the daemon predates the report or the count does, the warning stays exactly as it was: absence of a measurement is not evidence that something is old.
+
 Since v2.56.0 each header's own card in **Cooling Hardware** shows this count too, in its **Details ▸ Capabilities** block — a header that has never been reclaimed reads *Not observed*. A header currently under firmware control **and** with reclaims on record shows a **Control reclaimed** status; a header that was reclaimed in the past but is back under the daemon's control does not, because that is contention the daemon won rather than a live problem.
 
 The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically — control still works in the WARN/HIGH cases, but BIOS Smart Fan 6 should be set to "Manual" for the affected headers (see the vendor guidance the report auto-shows for Gigabyte + IT8696E systems).

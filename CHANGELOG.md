@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.74.0] — 2026-09-11
+## [2.74.0] — 2026-09-12
 
 **Pairs with `control-ofc-daemon` >= v2.46.0 for the new field; the floor for
 everything else is unchanged at v2.11.0.** An older daemon simply omits it and
