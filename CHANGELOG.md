@@ -1,5 +1,46 @@
 # Changelog
 
+## [2.75.0] — 2026-09-12
+
+**Pairs with `control-ofc-daemon` >= v2.47.0 for the new `backend_unavailable`
+skip token; the floor for everything else is unchanged at v2.11.0.** An older
+daemon never sends the token and this release behaves exactly as v2.74.0 did,
+except for the two surfaces below, which are driven by `capabilities` and work
+against any daemon.
+
+**The OpenFan Controller is optional, so a machine without one no longer
+mentions it.** Its absence was never an *alert* here — no banner, no warning
+chip, no readiness item — but it was permanently *present*, on surfaces a user
+without the hardware has no reason to see (register `OFN`):
+
+- **The Logs page's "Controller (OpenFan)" diagnostics card is hidden when no
+  controller is reported.** It was built unconditionally, and refreshing it on a
+  machine without one printed `Present: No` followed by *"Check USB connection
+  and serial device permissions"* — remediation advice predicated on the device
+  existing, which also reached the exported support bundle. The card returns by
+  itself when a controller is adopted later (a rescan, or a slow enumeration), so
+  nothing needs a restart.
+- **The OpenFan inventory line is hidden when absent** — the Overview "Device
+  Discovery" row and the Dashboard "Subsystem Status" chip, which both rendered a
+  permanent *Not present* / *not detected* for hardware the user may never have
+  had. The GPU rows deliberately keep theirs: a machine has a GPU, so "not
+  detected" there is information.
+- **An unhealthy OpenFan subsystem still shows.** Hiding the chip while nothing
+  is present must not hide a controller that dropped off mid-session — that is a
+  real fault, and it surfaces exactly as before.
+- The absent-controller text itself now states a fact rather than prescribing a
+  remedy, since it remains reachable through the support bundle.
+
+**New skip reason rendered: `backend_unavailable`.** A control whose fans are all
+on hardware the daemon cannot reach — canonically an OpenFan-member control on a
+machine with no controller, which a profile exported from a machine that *has*
+one will produce — is now painted "Not controlled" with *"none of its fans are on
+hardware this daemon can reach"*, instead of silently commanding nothing.
+
+The two serial rows in Settings ▸ Daemon Configuration are deliberately
+**unchanged**: they are the only way to pin a port for a controller that is
+attached but not being detected, which is precisely when someone needs them.
+
 ## [2.74.0] — 2026-09-12
 
 **Pairs with `control-ofc-daemon` >= v2.46.0 for the new field; the floor for

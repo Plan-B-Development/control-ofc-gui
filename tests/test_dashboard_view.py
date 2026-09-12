@@ -37,11 +37,31 @@ def _fan(id="f", source="openfan", rpm=1000, pwm=50, age_ms=100):
 
 class TestCapabilitiesVM:
     def test_absent_devices_and_hwmon_info_banner(self):
-        vm = build_capabilities_vm(Capabilities())
-        assert vm.openfan.text == "OpenFan: not detected"
-        assert vm.openfan.css_class == "PageSubtitle"
+        caps = Capabilities()
+        vm = build_capabilities_vm(caps)
+        # `OFN-g`: an absent OpenFan Controller produces NO chip at all. Asserted
+        # as a relationship against the wire field rather than against the old
+        # literal, so a build that stopped consulting `present` fails here.
+        assert (vm.openfan is not None) == caps.openfan.present
+        assert vm.openfan is None
+        # hwmon is the opposite branch in the same VM and must be unaffected —
+        # without it, a build that returned None for every chip would pass.
         assert vm.hwmon.text == "hwmon: not detected"
         assert vm.hwmon_banner is not None and vm.hwmon_banner.kind == "info"
+
+    def test_openfan_chip_presence_tracks_the_wire_field(self):
+        """`OFN-g`: the chip exists if and only if the daemon reports a controller.
+
+        Both arms in one test. The absent arm alone passes against a build that
+        never produces a chip; the present arm alone passes against one that
+        always does.
+        """
+        for present in (True, False):
+            caps = Capabilities(openfan=OpenfanCapability(present=present, channels=4))
+            vm = build_capabilities_vm(caps)
+            assert (vm.openfan is not None) == caps.openfan.present, (
+                f"openfan chip presence disagreed with the wire field for {present=}"
+            )
 
     def test_present_writable_devices_no_banner(self):
         caps = Capabilities(

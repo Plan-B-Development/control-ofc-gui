@@ -14,6 +14,7 @@ from control_ofc.api.models import (
     FeatureFlags,
     HwmonCapability,
     HwmonHeader,
+    OpenfanCapability,
     SensorReading,
     SensorThresholds,
 )
@@ -249,8 +250,32 @@ def test_build_device_discovery_hwmon_all_readonly_warn():
 
 def test_build_device_discovery_none():
     vm = ov.build_device_discovery_vm(None, None)
-    assert vm.openfan == "OpenFan: —"
+    # `OFN-g`: no capabilities yet means the OpenFan row is hidden, not shown as
+    # a placeholder. Otherwise every start would flash "OpenFan: —" and then drop
+    # it a second later on a machine that has no controller.
+    assert vm.openfan is None
+    # The other rows DO keep their placeholder — without this the test would pass
+    # against a VM that returned None for everything.
+    assert vm.hwmon == "hwmon: —"
     assert vm.hwmon_warn is False
+
+
+def test_openfan_row_presence_tracks_the_wire_field():
+    """`OFN-g`: the Overview row exists iff the daemon reports a controller.
+
+    Asserted as a relationship against `caps.openfan.present`, with both arms.
+    A literal-string assertion would be satisfied by a build that ignored the
+    wire field entirely, which is the defect this line exists to prevent.
+    """
+    for present in (True, False):
+        caps = Capabilities(openfan=OpenfanCapability(present=present, channels=3))
+        vm = ov.build_device_discovery_vm(caps, 2)
+        assert (vm.openfan is not None) == caps.openfan.present, (
+            f"openfan row presence disagreed with the wire field for {present=}"
+        )
+        # The GPU rows are the deliberate contrast (`OFN-g` was a user decision,
+        # not a blanket rule): they keep "Not detected" whatever OpenFan does.
+        assert "Not detected" in vm.amd_gpu
 
 
 def test_the_age_note_does_not_claim_age_is_the_poll_time():

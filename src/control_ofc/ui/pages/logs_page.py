@@ -99,6 +99,7 @@ from control_ofc.ui.widgets.log_event_model import LogEventModel
 from control_ofc.ui.widgets.log_row_delegate import LogRowDelegate
 
 if TYPE_CHECKING:
+    from control_ofc.api.models import Capabilities
     from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.app_state import AppState
 
@@ -653,13 +654,13 @@ class LogsPage(QWidget):
         v = QVBoxLayout(body)
         v.setContentsMargins(2, 8, 2, 2)
         v.setSpacing(10)
-        self._daemon_preview = self._add_probe(
+        self._daemon_preview, _ = self._add_probe(
             v,
             "Daemon Status",
             "daemonStatus",
             lambda: self._fill_sync_probe(self._daemon_preview, self._diag.format_daemon_status),
         )
-        self._controller_preview = self._add_probe(
+        self._controller_preview, self._controller_card = self._add_probe(
             v,
             "Controller (OpenFan)",
             "controllerStatus",
@@ -667,7 +668,13 @@ class LogsPage(QWidget):
                 self._controller_preview, self._diag.format_controller_status
             ),
         )
-        self._gpu_preview = self._add_probe(
+        # `OFN-d`: the OpenFan Controller is optional hardware. Its probe appears
+        # only once the daemon reports one, so a machine without one is not shown
+        # a permanent card — nor its remediation advice — for something it does
+        # not have. Re-evaluated on every capabilities poll, so a controller
+        # adopted later (or by `POST /fans/openfan/rescan`) brings the card back.
+        self._apply_controller_card_visibility()
+        self._gpu_preview, _ = self._add_probe(
             v,
             "GPU State",
             "gpuStatus",
@@ -675,7 +682,21 @@ class LogsPage(QWidget):
         )
         return self._scroller(body, "Logs_Scroll_diagnostics")
 
-    def _add_probe(self, box: QVBoxLayout, title: str, slug: str, handler) -> QPlainTextEdit:
+    def _add_probe(
+        self, box: QVBoxLayout, title: str, slug: str, handler
+    ) -> tuple[QPlainTextEdit, QWidget]:
+        """Build one Diagnostics probe. Returns its text pane AND its container.
+
+        The container exists so a probe can be hidden as a unit — heading,
+        Refresh button and pane together (`OFN-d`). Hiding only the pane would
+        leave an orphaned title and a button for hardware the user may not own.
+        """
+        card = QWidget()
+        card.setObjectName(f"Logs_Card_{slug}")
+        inner = QVBoxLayout(card)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(4)
+
         head = QHBoxLayout()
         heading = QLabel(title)
         heading.setProperty("class", "CardSubtitle")
@@ -684,7 +705,7 @@ class LogsPage(QWidget):
         btn = make_button("Refresh", "ghost", object_name=f"Logs_Btn_{slug}")
         btn.clicked.connect(handler)
         head.addWidget(btn)
-        box.addLayout(head)
+        inner.addLayout(head)
 
         preview = QPlainTextEdit()
         preview.setObjectName(f"Logs_Text_{slug}")
@@ -695,8 +716,10 @@ class LogsPage(QWidget):
         preview.setMaximumBlockCount(2000)
         preview.setPlaceholderText("Not fetched yet.")
         _mono(preview)
-        box.addWidget(preview, 1)
-        return preview
+        inner.addWidget(preview, 1)
+
+        box.addWidget(card, 1)
+        return preview, card
 
     def _build_journal_tab(self) -> QWidget:
         body = QWidget()
@@ -781,6 +804,11 @@ class LogsPage(QWidget):
 
         self._diag.event_appended.connect(self._on_event_appended)
         self._diag.events_cleared.connect(self._on_events_cleared)
+
+        # `OFN-d`: a controller adopted after startup (DEC-265 rescan, or a late
+        # USB enumeration) must bring its probe card back without a restart.
+        if self._state is not None:
+            self._state.capabilities_updated.connect(self._apply_controller_card_visibility)
         self._install_shortcuts()
 
     def _install_shortcuts(self) -> None:
@@ -1235,12 +1263,24 @@ class LogsPage(QWidget):
         """
         if index == _TAB_DIAGNOSTICS and not self._diag_loaded:
             self._diag_loaded = True
+            self._apply_controller_card_visibility()
             self._fill_sync_probe(self._daemon_preview, self._diag.format_daemon_status)
             self._fill_sync_probe(self._controller_preview, self._diag.format_controller_status)
             self._fill_sync_probe(self._gpu_preview, self._diag.format_gpu_status)
         elif index == _TAB_JOURNAL and not self._journal_loaded:
             self._journal_loaded = True
             self._fetch_journal()
+
+    def _apply_controller_card_visibility(self, _caps: Capabilities | None = None) -> None:
+        """Show the OpenFan probe only when the daemon reports a controller.
+
+        `OFN-d`. Deliberately keyed on ``capabilities.openfan.present`` and not on
+        "has the user configured a serial port": a configured-but-unadopted port
+        is a fault the daemon already warns about, and the card would show
+        nothing useful about it that the Daemon Status probe does not.
+        """
+        caps = self._state.capabilities if self._state is not None else None
+        self._controller_card.setVisible(caps is not None and caps.openfan.present)
 
     @staticmethod
     def _fill_sync_probe(preview: QPlainTextEdit, fetch_fn) -> None:

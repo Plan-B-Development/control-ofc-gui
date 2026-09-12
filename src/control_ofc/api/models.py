@@ -458,6 +458,16 @@ SKIP_REASON_VALUES: tuple[str, ...] = (
     "sensor_unavailable",
     "mix_unresolvable",
     "sync_unresolvable",
+    # `OFN-j`, daemon >= 2.47.0. Unlike its four siblings this is not a
+    # curve-resolution failure: the curve evaluated and an output was computed,
+    # and the DELIVERY has nowhere to go because every member's backend is
+    # absent. Canonically an `openfan:` member on a machine with no
+    # OpenFanController — a profile exported from a machine that has one imports
+    # cleanly onto one that does not — but it is not OpenFan-specific: an
+    # `hwmon:` member on a board with no writable header reports identically.
+    # Raised only when EVERY member is undeliverable; a partly-live control is
+    # still commanding fans and is deliberately not listed.
+    "backend_unavailable",
 )
 
 

@@ -323,8 +323,16 @@ class DiagnosticsService(QObject):
             lines.append(f"  Write support: {'Yes' if of.write_support else 'No'}")
             lines.append(f"  RPM support: {'Yes' if of.rpm_support else 'No'}")
         else:
-            lines.append("  No OpenFan controller detected by daemon.")
-            lines.append("  Check USB connection and serial device permissions.")
+            # `OFN-d`: state the fact, do not prescribe a remedy. The old text
+            # ("Check USB connection and serial device permissions") is advice
+            # predicated on the device existing, and the OpenFan Controller is
+            # optional — on a machine that never had one it read as a fault.
+            # The Logs page hides this probe entirely when absent; this branch
+            # remains reachable through the support bundle and any direct caller,
+            # so it must not lie there either.
+            lines.append("  No OpenFan controller detected by the daemon.")
+            lines.append("  This is expected if you do not have one — motherboard and GPU")
+            lines.append("  fan control are unaffected.")
 
         hw = caps.hwmon
         lines.append("")

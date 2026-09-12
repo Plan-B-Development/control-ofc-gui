@@ -145,9 +145,11 @@ class CapabilitiesVM:
 
     ``hwmon_banner``
     of ``None`` hides the banner; ``api_skew_message`` of ``None`` means no skew
-    (the page hides that banner and clears the warning)."""
+    (the page hides that banner and clears the warning). ``openfan`` of ``None``
+    hides the chip the same way (`OFN-g`) — the controller is optional hardware,
+    so its absence is not a subsystem status worth a permanent chip."""
 
-    openfan: SubsystemChipVM
+    openfan: SubsystemChipVM | None
     hwmon: SubsystemChipVM
     hwmon_banner: HwmonBannerVM | None
     api_skew_message: str | None
@@ -160,10 +162,11 @@ def build_capabilities_vm(
     banner, API-skew message). Pure — the page applies the side effects (repolish,
     warning add/remove, log)."""
     of = caps.openfan
-    if of.present:
-        openfan = SubsystemChipVM(f"OpenFan: detected ({of.channels} ch)", "SuccessChip")
-    else:
-        openfan = SubsystemChipVM("OpenFan: not detected", "PageSubtitle")
+    openfan = (
+        SubsystemChipVM(f"OpenFan: detected ({of.channels} ch)", "SuccessChip")
+        if of.present
+        else None
+    )
 
     hw = caps.hwmon
     if hw.present:

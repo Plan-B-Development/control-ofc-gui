@@ -304,7 +304,18 @@ class DaemonHealthVM:
 
 @dataclass(frozen=True)
 class DeviceDiscoveryVM:
-    openfan: str
+    """Device inventory for the Overview card.
+
+    ``openfan`` of ``None`` HIDES the row (`OFN-g`). The OpenFan Controller is
+    optional hardware, and a permanent "Not present" line on a machine that never
+    had one is the absence advertising itself. The GPU rows deliberately keep
+    theirs: a machine has a GPU, so "not detected" there is information.
+
+    ``None`` also covers the pre-poll state, so the row does not appear and then
+    vanish a second later on every start.
+    """
+
+    openfan: str | None
     hwmon: str
     hwmon_warn: bool
     amd_gpu: str
@@ -416,7 +427,7 @@ def build_device_discovery_vm(
 ) -> DeviceDiscoveryVM:
     if caps is None:
         return DeviceDiscoveryVM(
-            openfan="OpenFan: —",
+            openfan=None,
             hwmon="hwmon: —",
             hwmon_warn=False,
             amd_gpu="AMD GPU: —",
@@ -426,15 +437,18 @@ def build_device_discovery_vm(
             features="Features: —",
         )
     of = caps.openfan
-    of_status = f"Present ({of.channels} ch" if of.present else "Not present"
     if of.present:
+        of_status = f"Present ({of.channels} ch"
         parts = []
         if of.write_support:
             parts.append("write")
         if of.rpm_support:
             parts.append("RPM")
         of_status += ", " + "+".join(parts) + ")" if parts else ")"
-    openfan = f"OpenFan: {of_status}"
+        openfan: str | None = f"OpenFan: {of_status}"
+    else:
+        # `OFN-g`: optional hardware that is not here says nothing at all.
+        openfan = None
 
     hwmon_text, hwmon_warn = hwmon_overview_text(caps.hwmon, writable_headers)
 

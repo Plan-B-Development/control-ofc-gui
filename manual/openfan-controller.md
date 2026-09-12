@@ -23,7 +23,9 @@ This is the same boundary as the rest of Control-OFC: the daemon owns the hardwa
 
 ## Detection and device paths
 
-The daemon **auto-detects** the controller at startup — in the common case there is nothing to configure. It scans for USB serial devices (`/dev/ttyACM*`, and `/dev/ttyUSB*` for adapters that present that way) and connects to the OpenFan Controller it finds.
+The daemon **auto-detects** the controller at startup — in the common case there is nothing to configure. It lists the USB serial devices that exist (`/dev/ttyACM*`, and `/dev/ttyUSB*` for adapters that present that way), then opens each in turn and asks it to identify itself; only a device that answers as an OpenFan Controller is adopted.
+
+If you have **other** USB-serial hardware attached — an Arduino, a 3D printer — it is worth knowing that identifying a device means opening it, and on Linux opening a serial port asserts DTR, which resets Arduino-class boards. The daemon opens each candidate at most once per attempt for that reason. It also keeps the search short when you have not named a port (two attempts, about three seconds) and long when you have (about 30 seconds), because a port you configured is one you have said is there.
 
 For a setup that survives reboots and re-plugging, prefer a **stable device path**. A name like `ttyACM0` can change order between boots; the `/dev/serial/by-id/` path does not:
 
@@ -78,7 +80,7 @@ How roles, curves, and profiles fit together is covered in [Profiles and Curves]
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
-| Controller not detected | Daemon started before the device was plugged in, or a non-standard port | Plug in the controller, then `sudo systemctl restart control-ofc-daemon`. Confirm the device exists with `ls /dev/ttyACM*`. If it only appears under a non-standard path, set `[serial] port` explicitly (see above) |
+| Controller not detected | Daemon started before the device was plugged in, or a non-standard port | Plug in the controller, then use **Rescan Hardware** in the footer — no restart needed. Confirm the device exists with `ls /dev/ttyACM*`. If it only appears under a non-standard path, set `[serial] port` explicitly (see above), which also makes the daemon retry for longer at boot |
 | Detected, but no fans show RPM | Fans not connected to populated channels, or 3-pin fans with no tachometer | A `0` RPM on an empty or tach-less channel is normal. Connect a known-good 4-pin fan to confirm |
 | Worked, then stopped after unplug / replug | USB re-enumeration | The daemon detects the dropout and **auto-reconnects** — after 5 consecutive failed reads it re-scans for the device with a backoff (about 1 s, up to 30 s) and resumes when it reappears. Pinning the `by-id` path makes reconnection reliable |
 | Permission denied on the serial port | The service is not in the serial group (most likely on non-Arch distros) | Add the serial group via a systemd drop-in (see permissions above), then restart the daemon |

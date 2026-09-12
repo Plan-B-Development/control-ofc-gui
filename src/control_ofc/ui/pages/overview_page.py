@@ -314,6 +314,9 @@ class OverviewPage(QWidget):
             _meta(QLabel("Device Discovery"), "Overview_Label_deviceTitle", cls="PageSubtitle")
         )
         self._openfan_label = _meta(QLabel("OpenFan: —"), "Overview_Label_openfan")
+        # `OFN-g`: hidden until a controller is actually reported, so a machine
+        # without one never mentions it — including during the pre-poll window.
+        self._openfan_label.setVisible(False)
         vl.addWidget(self._openfan_label)
         hwmon_row = QHBoxLayout()
         self._hwmon_label = _meta(QLabel("hwmon: —"), "Overview_Label_hwmon")
@@ -395,7 +398,9 @@ class OverviewPage(QWidget):
         self._age_note_label.setText(dh.age_note)
 
         dd = build_device_discovery_vm(self._caps, writable)
-        self._openfan_label.setText(dd.openfan)
+        self._openfan_label.setVisible(dd.openfan is not None)
+        if dd.openfan is not None:
+            self._openfan_label.setText(dd.openfan)
         self._hwmon_label.setText(dd.hwmon)
         set_chip_class(self._hwmon_label, "WarningChip" if dd.hwmon_warn else "")
         self._hwmon_warn_pill.setVisible(dd.hwmon_warn)

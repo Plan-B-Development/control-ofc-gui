@@ -649,13 +649,15 @@ by up to three seconds. It is display-only and the GUI does not currently render
 | `sensor_unavailable` | The curve's sensor is absent — not present on this machine, or age-filtered out as stale |
 | `mix_unresolvable` | A Mix produced no value at all (no children, none resolvable, a `subtract` missing its minuend, a cycle, or the depth backstop). A Mix with *some* inputs resolvable is **not** skipped — it runs on the survivors (DEC-272) |
 | `sync_unresolvable` | A Sync whose target is unset, is the control itself, or was not computed this tick |
+| `backend_unavailable` | **daemon >= 2.47.0 (`OFN-j`).** Every one of the control's members targets a backend this daemon does not have, so the control resolves perfectly and commands nothing. NOT a curve-resolution failure — the curve evaluated and an output was computed; the *delivery* has nowhere to go. Canonically an `openfan:` member on a machine with no OpenFanController, but not OpenFan-specific: an `hwmon:` member on a board with no writable header reports identically. Raised only when **every** member is undeliverable — a control with one live member and one dead one is still commanding fans, so it is **not** listed (the daemon logs that case once per activation instead) |
 
 Adding a token is additive; renaming one is breaking. A client **must** render an unrecognised token
 rather than dropping the entry — otherwise a newer daemon reintroduces exactly the silence this field
 removes.
 
 An **overridden** control is never listed: the engine short-circuits an active override before curve
-resolution. Note the scope of that guarantee — it is **per evaluation tick, not per response**.
+resolution, and `backend_unavailable` honours the same exclusion deliberately — an override has its own
+surface, and this invariant is what lets a client treat the two arrays as disjoint in the steady state. Note the scope of that guarantee — it is **per evaluation tick, not per response**.
 `GET /status` composes `overrides[]` live from the override table but `skipped_controls[]` from the
 last *completed* tick, and an override is taken synchronously by `POST /control/{id}/override`
 independently of the 1 Hz tick. So a client that takes an override on a control currently listed as

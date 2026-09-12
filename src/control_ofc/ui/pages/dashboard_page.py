@@ -356,6 +356,11 @@ class DashboardPage(QWidget):
         # The subsystem status + reason are daemon-supplied; render verbatim so
         # a stray '<...>' in a reason string can't be reinterpreted as rich text.
         self._sub_openfan_label.setTextFormat(Qt.TextFormat.PlainText)
+        # `OFN-g`: hidden until a controller is reported present, or until the
+        # daemon reports the openfan subsystem as unhealthy below. The controller
+        # is optional hardware; a permanent "not detected" chip on a machine that
+        # never had one is the absence advertising itself.
+        self._sub_openfan_label.setVisible(False)
         sub_layout.addWidget(self._sub_openfan_label)
 
         self._sub_hwmon_label = QLabel("hwmon: unknown")
@@ -748,12 +753,15 @@ class DashboardPage(QWidget):
 
     def _on_capabilities_updated(self, caps: Capabilities) -> None:
         vm = build_capabilities_vm(caps)
-        self._sub_openfan_label.setText(vm.openfan.text)
-        self._sub_openfan_label.setProperty("class", vm.openfan.css_class)
+        # `OFN-g`: None hides the chip entirely, the same way `hwmon_banner` does.
+        self._sub_openfan_label.setVisible(vm.openfan is not None)
+        if vm.openfan is not None:
+            self._sub_openfan_label.setText(vm.openfan.text)
+            self._sub_openfan_label.setProperty("class", vm.openfan.css_class)
+            repolish(self._sub_openfan_label)
         self._sub_hwmon_label.setText(vm.hwmon.text)
         self._sub_hwmon_label.setProperty("class", vm.hwmon.css_class)
-        for lbl in (self._sub_openfan_label, self._sub_hwmon_label):
-            repolish(lbl)
+        repolish(self._sub_hwmon_label)
 
         # Hwmon info/warning banner on the live page (None \u2192 hide).
         if vm.hwmon_banner is None:
@@ -907,6 +915,11 @@ class DashboardPage(QWidget):
                 reason = f" ({sub.reason})" if sub.reason else ""
                 self._sub_openfan_label.setText(f"OpenFan: {sub.status}{reason}")
                 set_chip_class(self._sub_openfan_label, "WarningChip")
+                # `OFN-g` hides this chip while no controller is present, but an
+                # UNHEALTHY openfan subsystem is a real fault and must still show
+                # — a link that dropped off mid-session is exactly the warning the
+                # brief asked to preserve. Mirrors the `controls` branch below.
+                self._sub_openfan_label.setVisible(True)
             elif sub.name == "hwmon" and sub.status != "ok":
                 reason = f" ({sub.reason})" if sub.reason else ""
                 self._sub_hwmon_label.setText(f"hwmon: {sub.status}{reason}")

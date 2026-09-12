@@ -141,6 +141,7 @@ _SKIP_REASONS: dict[str, str] = {
     "sensor_unavailable": "its sensor is unavailable",
     "mix_unresolvable": "none of its combined inputs could be read",
     "sync_unresolvable": "the control it mirrors is not running",
+    "backend_unavailable": "none of its fans are on hardware this daemon can reach",
 }
 
 
