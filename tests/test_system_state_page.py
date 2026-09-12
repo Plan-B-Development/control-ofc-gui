@@ -11,8 +11,16 @@ from __future__ import annotations
 
 import types
 
+import pytest
 from PySide6.QtGui import QDesktopServices, QShowEvent
-from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QTableWidget, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QWidget,
+)
 
 from control_ofc.api.models import (
     AcpiConflictInfo,
@@ -25,6 +33,7 @@ from control_ofc.api.models import (
     HwmonDiagnostics,
     HwmonHeader,
     HwmonVerifyResult,
+    KernelModuleInfo,
     OperationMode,
 )
 from control_ofc.services.app_state import AppState
@@ -661,3 +670,162 @@ def test_on_gpu_restore_error_shows_critical(qtbot):
     assert page._gpu_restore_result_label.property("class") == "CriticalChip"
     assert "sysfs gone" in page._gpu_restore_result_label.text()
     assert any(e.level == "error" and e.source == "gpu" for e in page._diag.events)
+
+
+# ── `ACK-q`: the registry table must fit what it renders ──────────────────
+
+
+@pytest.fixture()
+def restore_app_theme(qtbot):
+    """Save/restore everything ``apply_theme`` mutates.
+
+    Mirrors the fixture in ``test_theme_typography_r30.py``. The registry-layout
+    tests below MUST apply the real theme: without it the app stylesheet is
+    empty, so ``.DenseTable::item`` contributes no padding and the base font is
+    Qt's default rather than DM Sans at the theme's size — and **both** terms of
+    the `ACK-q` defect vanish. Measured: the fix-out-must-fail check passed
+    green on an unthemed page, i.e. the first draft of these tests was blind in
+    exactly the way `CLAUDE.md` warns about, and only applying the theme made
+    them able to fail.
+    """
+    from PySide6.QtGui import QPalette
+
+    from control_ofc.ui import theme as theme_mod
+
+    app = QApplication.instance()
+    saved = (QPalette(app.palette()), app.styleSheet(), app.font(), theme_mod._active_theme)
+    try:
+        yield app
+    finally:
+        app.setPalette(saved[0])
+        app.setStyleSheet(saved[1])
+        app.setFont(saved[2])
+        theme_mod._active_theme = saved[3]
+
+
+def _registry_page(qtbot):
+    """A shown, THEMED page carrying a registry row whose Status pill is a word.
+
+    Shown, and measured from the shown widget, because the defect is entirely
+    in realised geometry: `sizeHintForColumn` asks the delegate about the ITEM,
+    the Status column's content is a *cell widget*, and the two answers differ
+    by more than the pill (DEC-314 — the unit test proves you answered, never
+    that you were asked).
+    """
+    from control_ofc.ui.theme import apply_theme, default_dark_theme
+
+    apply_theme(default_dark_theme())
+    page, _ = _page(qtbot)
+    page._render(
+        _diag(
+            hwmon=HwmonDiagnostics(
+                chips_detected=[
+                    HwmonChipInfo(chip_name="it8696", expected_driver="it87", header_count=5)
+                ],
+                total_headers=5,
+                writable_headers=5,
+            ),
+            kernel_modules=[
+                KernelModuleInfo(name="it87", loaded=True, in_mainline=False),
+                KernelModuleInfo(name="k10temp", loaded=True, in_mainline=True),
+            ],
+        )
+    )
+    page.resize(1215, 760)
+    page.show()
+    QApplication.processEvents()
+    return page
+
+
+def test_the_registry_status_pills_are_not_clipped(qtbot, restore_app_theme):
+    """`LOADED` and `MODULE` rendered as `LOADE` and `MODU` on the shipped
+    release screenshot, and every test stayed green because none of them looked
+    at a realised width.
+
+    Asserted as a relationship against each pill's own `sizeHint`, never
+    against a pixel count — the required width is a font metric, and the only
+    portable form of that assertion is "the widget got at least what it asked
+    for" (`CLAUDE.md`, DEC-303/DEC-258).
+    """
+    page = _registry_page(qtbot)
+    table = page.findChild(QTableWidget, "SystemState_Table_registry")
+    pills = []
+    for row in range(table.rowCount()):
+        holder = table.cellWidget(row, 0)
+        assert holder is not None
+        pills.append(holder.findChild(StatusPill))
+    assert pills, "precondition: the table must have rendered at least one status pill"
+    assert any(p.sizeHint().width() > table.horizontalHeader().sectionSizeHint(0) for p in pills), (
+        "precondition: at least one pill must need more room than the 'Status' header itself, "
+        "or the column is wide enough by accident and the test proves nothing"
+    )
+    for pill in pills:
+        assert pill.width() >= pill.sizeHint().width(), (
+            f"the {pill.text()!r} pill was clipped to {pill.width()}px "
+            f"of the {pill.sizeHint().width()}px it asked for"
+        )
+
+
+def test_the_registry_columns_fit_the_pane_they_are_given(qtbot, restore_app_theme):
+    """The `Headers` column was cut off mid-word by 59px of overflow.
+
+    One long `Driver Status` value sized the whole table under
+    `ResizeToContents`. Asserted against the realised viewport rather than a
+    width, and with a precondition that the long value is actually present —
+    without it the row set could shrink and the test would pass by having
+    nothing to overflow with.
+    """
+    page = _registry_page(qtbot)
+    table = page.findChild(QTableWidget, "SystemState_Table_registry")
+    driver_status = [table.item(r, 3).text() for r in range(table.rowCount())]
+    assert max((len(t) for t in driver_status), default=0) > len("Driver Status"), (
+        "precondition: a value longer than its own header must be present"
+    )
+    total = sum(table.columnWidth(c) for c in range(table.columnCount()))
+    assert total <= table.viewport().width(), (
+        f"the columns need {total}px in a {table.viewport().width()}px viewport, "
+        "so the last one is clipped"
+    )
+    assert table.columnWidth(5) >= table.horizontalHeader().sectionSizeHint(5), (
+        "the 'Headers' column is narrower than its own header text"
+    )
+
+
+def test_an_elided_driver_status_stays_readable_in_the_tooltip(qtbot, restore_app_theme):
+    """Eliding is only honest if the full text is recoverable."""
+    page = _registry_page(qtbot)
+    table = page.findChild(QTableWidget, "SystemState_Table_registry")
+    row = max(range(table.rowCount()), key=lambda r: len(table.item(r, 3).text()))
+    full = table.item(row, 3).text()
+    assert full, "precondition: the row must carry a driver status"
+    assert full in table.item(row, 3).toolTip()
+
+
+def test_the_driver_status_tooltip_does_not_grow_on_re_render(qtbot, restore_app_theme):
+    """`_ensure_items` reuses items, so a read-then-prepend accumulates.
+
+    The first draft composed this tooltip by reading the item's own previous
+    value. The reset loop above it only overwrites when the row has chip
+    guidance — and a kernel-module row never does — so every re-render added
+    another copy, and this page re-renders on every acknowledgement, dismissal
+    and theme change. Raised by `ofc:python-gui-reviewer`; measured at four
+    copies after four renders.
+
+    Asserted as a relationship between two renders rather than against a
+    literal string, and on the row that has NO chip guidance — the row with
+    guidance was stable even with the defect, so sampling it would prove
+    nothing (`CLAUDE.md`: pick the sample that can move).
+    """
+    page = _registry_page(qtbot)
+    table = page.findChild(QTableWidget, "SystemState_Table_registry")
+    plain = [r for r in range(table.rowCount()) if not table.item(r, 1).toolTip()]
+    assert plain, "precondition: a row without chip guidance is what accumulates"
+    row = plain[0]
+    first = table.item(row, 3).toolTip()
+    assert first, "precondition: the row must carry a driver-status tooltip at all"
+
+    for _ in range(3):
+        page._render(page._last_rendered_diag)
+    assert table.item(row, 3).toolTip() == first, (
+        "the tooltip grew across re-renders — it is being composed from itself"
+    )

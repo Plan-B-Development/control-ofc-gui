@@ -26,7 +26,7 @@ that pins each separately would have passed while it was live.
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from control_ofc.api.models import (
     BoardInfo,
@@ -58,6 +58,7 @@ from control_ofc.services.verify_view import (
     verify_sweep_outcome,
 )
 from control_ofc.ui.components.badges import StatusPill
+from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.readiness_report import (
     EVIDENCE_NOT_OBSERVED,
     EVIDENCE_OBSERVED,
@@ -1265,3 +1266,75 @@ def test_a_dismissal_expires_when_the_reclaim_episode_ends(qtbot):
             silence=SilenceState(dismissed=frozenset(svc.settings.dismissed_health_items)),
         ).cards
     }
+
+
+# ── `ACK-r`: Acknowledge must DEMOTE a condition, not just relabel a button ──
+
+
+def test_acknowledging_a_condition_demotes_it_in_the_view_model():
+    """Both arms, and both against the silence rather than against a literal.
+
+    The pre-fix code computed `SilenceVM.acknowledged` for every card and then
+    only ever wrote it into `silence`, so `severity_state` stayed exactly as
+    loud as before — the crit bracket, the glyph colour and the severity word
+    all unchanged. A test asserting `severity_state == "neutral"` would be
+    satisfied by a card that was neutral for some other reason, so the
+    assertion is the RELATIONSHIP `neutral iff quiet` (DEC-324), with the loud
+    arm carried alongside to stop a stuck predicate passing.
+    """
+    diag = _msi_collision()
+    loud = _condition(diag, "module_collision")
+    assert loud.silence.token, "precondition: the condition must be silenceable"
+    assert not loud.silence.quiet, "precondition: it starts un-silenced"
+    assert loud.severity_state != "neutral", (
+        "precondition: the un-acknowledged card must have something to demote"
+    )
+
+    quiet = next(
+        c
+        for c in build_condition_cards(
+            diag, silence=SilenceState(acknowledged=frozenset({loud.silence.token}))
+        ).cards
+        if c.key == "module_collision"
+    )
+    assert quiet.silence.quiet, "precondition: the acknowledgement was applied"
+    assert quiet.severity_state == "neutral"
+    # The raw severity is untouched, so the card keeps its place in the sort
+    # and does not jump under the reader — and the pill above still counts it.
+    assert quiet.severity == loud.severity
+    assert quiet.severity_word == loud.severity_word
+
+
+def test_the_acknowledged_condition_card_says_so_on_screen(qtbot):
+    """The rendered card, not the VM — the defect was that nothing changed.
+
+    `isVisibleTo(parent)`, never `isVisible()`: under `offscreen` nothing is
+    shown, so `isVisible()` is False for every widget and the assertion would
+    pass with the whole pill deleted (`CLAUDE.md`, DEC-324).
+    """
+    from control_ofc.ui.components.cards import BracketCard
+
+    page, _svc = _page(qtbot, _msi_collision())
+    key = "module_collision"
+    card = page.findChild(BracketCard, f"SystemState_IssueCard_{key}")
+    title = page.findChild(QLabel, f"SystemState_IssueTitle_{key}")
+    assert card is not None and title is not None
+    loud_state = card.property("state")
+    loud_style = title.styleSheet()
+    assert page.findChild(StatusPill, f"SystemState_IssueAck_{key}") is None, (
+        "precondition: an un-acknowledged card carries no Acknowledged marker"
+    )
+
+    page.findChild(QPushButton, f"SystemState_IssueCardAckBtn_{key}").click()
+    _flush(page)
+
+    acked_card = page.findChild(BracketCard, f"SystemState_IssueCard_{key}")
+    acked_title = page.findChild(QLabel, f"SystemState_IssueTitle_{key}")
+    marker = page.findChild(StatusPill, f"SystemState_IssueAck_{key}")
+    assert marker is not None, "nothing on screen says the card was acknowledged"
+    assert marker.isVisibleTo(page)
+    assert acked_card.property("state") != loud_state, "the bracket stayed as loud as before"
+    assert acked_card.property("state") == "neutral"
+    assert acked_title.styleSheet() != loud_style, "the title was not demoted"
+    assert active_theme().text_muted in acked_title.styleSheet()
+    _flush(page)

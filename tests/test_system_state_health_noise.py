@@ -305,12 +305,12 @@ def test_acknowledgement_cannot_reach_the_next_occurrence():
     ack = note_ack_key(note.key, note.evidence)
 
     quiet = build_board_notes(diag, acknowledged={ack})
-    assert [n.acknowledged for n in quiet.notes if n.key == note.key] == [True]
+    assert [n.silence.acknowledged for n in quiet.notes if n.key == note.key] == [True]
     assert quiet.acknowledged_count == 1
 
     # Same note, now confirmed on this machine: a different occurrence.
     loud = build_board_notes(diag, pwm_control_verified=False, acknowledged={ack})
-    assert [n.acknowledged for n in loud.notes if n.key == note.key] == [False]
+    assert [n.silence.acknowledged for n in loud.notes if n.key == note.key] == [False]
     assert loud.acknowledged_count == 0
 
 
@@ -341,9 +341,9 @@ def test_a_dismissal_cannot_hide_the_note_once_it_is_confirmed():
 def test_settings_toggles_gate_the_affordances():
     diag = _healthy_gigabyte()
     both = build_board_notes(diag)
-    assert all(n.can_acknowledge and n.can_dismiss for n in both.notes)
+    assert all(n.silence.can_acknowledge and n.silence.can_dismiss for n in both.notes)
     neither = build_board_notes(diag, allow_acknowledge=False, allow_dismiss=False)
-    assert not any(n.can_acknowledge or n.can_dismiss for n in neither.notes)
+    assert not any(n.silence.can_acknowledge or n.silence.can_dismiss for n in neither.notes)
 
 
 # ── Presentation rules DEC-211 dropped ────────────────────────────────────
@@ -575,12 +575,14 @@ def test_acknowledging_a_note_is_session_only_and_re_renders(qtbot):
     from PySide6.QtWidgets import QPushButton
 
     page, svc = _page(qtbot)
-    note = next(n for n in build_board_notes(_healthy_gigabyte()).notes if n.can_acknowledge)
+    note = next(
+        n for n in build_board_notes(_healthy_gigabyte()).notes if n.silence.can_acknowledge
+    )
     btn = page.findChild(QPushButton, f"SystemState_BoardNoteAckBtn_{note.key}")
     assert btn is not None and btn.text() == "Acknowledge"
     # `.click()`, not the handler: the connection is the thing most likely broken.
     btn.click()
-    assert note.ack_key in page._session_acks, "the acknowledgement did not take effect"
+    assert note.silence.token in page._session_acks, "the acknowledgement did not take effect"
     assert svc.settings.dismissed_health_items == [], "an acknowledgement must not persist"
     # The page re-rendered from the cached payload, so the button flipped.
     _flush(page)
@@ -594,10 +596,10 @@ def test_dismissing_a_note_removes_its_row(qtbot):
     from PySide6.QtWidgets import QFrame, QPushButton
 
     page, svc = _page(qtbot)
-    note = next(n for n in build_board_notes(_healthy_gigabyte()).notes if n.can_dismiss)
+    note = next(n for n in build_board_notes(_healthy_gigabyte()).notes if n.silence.can_dismiss)
     before = len(_note_widgets(page, QFrame, "SystemState_BoardNote_"))
     page.findChild(QPushButton, f"SystemState_BoardNoteDismissBtn_{note.key}").click()
-    assert svc.settings.dismissed_health_items == [note.ack_key]
+    assert svc.settings.dismissed_health_items == [note.silence.token]
     _flush(page)
     assert page.findChild(QFrame, f"SystemState_BoardNote_{note.key}") is None
     assert len(_note_widgets(page, QFrame, "SystemState_BoardNote_")) == before - 1
@@ -648,3 +650,119 @@ def test_a_failed_sweep_raises_a_condition_on_the_page(qtbot):
     assert pill.state() == "warn", "action required, never critical (Q1)"
     assert _note_widgets(page, QFrame, "SystemState_IssueCard_quirk_")
     del svc
+
+
+# ── `ACK-v`: a note the reader opened must survive a re-render ────────────
+
+
+def _note_sections(page):
+    from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
+
+    return {
+        w.objectName().removeprefix("SystemState_BoardNoteDetails_"): w
+        for w in page.findChildren(CollapsibleSection)
+        if w.objectName().startswith("SystemState_BoardNoteDetails_")
+    }
+
+
+def test_an_open_board_note_survives_a_re_render_it_did_not_ask_for(qtbot):
+    """DEC-358 gave this page a re-render trigger with no user action behind it.
+
+    `set_thermal_state` re-renders on any `normal`/`recovery`/`emergency`
+    change, and `_rebuild_board_notes` destroys and recreates every section —
+    so an open note snapped shut while the reader was in it. The sibling that
+    *was* hardened against the same new trigger is `_populate_verify_combo`.
+
+    Two preconditions carry the test, and without either one it asserts
+    nothing. The sampled note must start **collapsed**, so expanding it is a
+    change that can be lost (`CLAUDE.md`: pick the sample that can move); and
+    the section object must actually be **recreated**, or a trigger that
+    quietly did nothing would look like a successful carry.
+    """
+    page, _svc = _page(qtbot)
+    before = _note_sections(page)
+    key = next((k for k, s in before.items() if not s.is_expanded()), None)
+    assert key is not None, "precondition: a collapsed note is needed to expand"
+    sampled = before[key]
+    # Expanded by CLICKING the header, not by calling `set_expanded` — the carry
+    # restores through `set_expanded`, so driving it the same way would prove
+    # only that the setter round-trips its own writer. `CLAUDE.md`: `.click()`,
+    # not `_handler()`. Raised by `ofc:python-gui-reviewer`.
+    from PySide6.QtWidgets import QPushButton
+
+    header = sampled.findChild(QPushButton, f"{sampled.objectName()}_Header")
+    assert header is not None, "precondition: the section must expose its header button"
+    header.click()
+    assert sampled.is_expanded(), "precondition: the click opened it"
+
+    page.set_thermal_state("emergency")
+    _flush(page)
+
+    after = _note_sections(page)
+    assert key in after, "the note disappeared, so the carry proves nothing"
+    assert after[key] is not sampled, (
+        "precondition: the section was not rebuilt, so this run never exercised the carry"
+    )
+    assert after[key].is_expanded(), "the note the reader had open snapped shut under them"
+
+
+def test_acknowledging_a_note_still_closes_it(qtbot):
+    """The other arm — the carry must not defeat the button's whole purpose.
+
+    Acknowledge means "I have read this", and collapsing the detail is what it
+    buys. A carry that restored the expansion unconditionally would make the
+    button do nothing visible, which is the `ACK-r` defect arriving from the
+    opposite direction.
+    """
+    from PySide6.QtWidgets import QPushButton
+
+    page, _svc = _page(qtbot)
+    note = next(
+        n for n in build_board_notes(_healthy_gigabyte()).notes if n.silence.can_acknowledge
+    )
+    section = _note_sections(page).get(note.key)
+    assert section is not None, "precondition: the sampled note must have a detail section"
+    section.set_expanded(True)
+    assert section.is_expanded(), "precondition: it is open before the acknowledgement"
+
+    page.findChild(QPushButton, f"SystemState_BoardNoteAckBtn_{note.key}").click()
+    _flush(page)
+
+    reopened = _note_sections(page)[note.key]
+    assert reopened is not section, "precondition: the row was rebuilt"
+    assert not reopened.is_expanded(), "acknowledging a note left its detail open"
+
+
+def test_unacknowledging_a_note_reopens_a_detail_that_opens_by_default(qtbot):
+    """The reverse edge of the carry, and it is not symmetry for its own sake.
+
+    Acknowledge collapses a note; Unacknowledge used to hand the detail back,
+    because `_make_note_row` recomputes `default_expanded and not acknowledged`.
+    The first draft of the `ACK-v` carry restored the collapse that Acknowledge
+    had imposed, so Unacknowledge left a HIGH note shut and its only visible
+    effect was on its own label — which is the `ACK-r` defect reintroduced by
+    the fix for `ACK-v`. Found by `ofc:python-gui-reviewer`.
+
+    Sampled on a note that opens by default, because one that does not could
+    not distinguish the two behaviours (`CLAUDE.md`: pick the sample that can
+    move).
+    """
+    from PySide6.QtWidgets import QPushButton
+
+    page, _svc = _page(qtbot)
+    notes = {n.key: n for n in build_board_notes(_healthy_gigabyte()).notes}
+    key = next((k for k, n in notes.items() if n.default_expanded), None)
+    assert key is not None, "precondition: a note that opens by default is needed"
+    assert _note_sections(page)[key].is_expanded(), "precondition: it starts open"
+
+    page.findChild(QPushButton, f"SystemState_BoardNoteAckBtn_{key}").click()
+    _flush(page)
+    assert not _note_sections(page)[key].is_expanded(), (
+        "precondition: acknowledging collapsed it, which is what is being undone"
+    )
+
+    page.findChild(QPushButton, f"SystemState_BoardNoteAckBtn_{key}").click()
+    _flush(page)
+    assert _note_sections(page)[key].is_expanded(), (
+        "unacknowledging left the detail shut, so the button only renamed itself"
+    )

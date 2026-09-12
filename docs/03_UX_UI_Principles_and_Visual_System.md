@@ -500,6 +500,12 @@ READY while control is unavailable is a worse defect than the noise being remove
 property of the *item*: an alarm can go, a measurement cannot. Making a page
 quieter by making it less true is the opposite of the fix.
 
+**And whichever it is, the item must visibly change (DEC-363).** Relabelling the
+control that was pressed is feedback about the button; the user reads the item.
+An affordance whose only effect is on itself is indistinguishable from one that
+is broken — which is precisely how a condition card spent three releases
+accepting Acknowledge and staying exactly as loud.
+
 ### Reports are not panels
 
 A support artefact (the pop-out **Readiness Report**) stays **complete and

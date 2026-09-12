@@ -167,10 +167,17 @@ def test_registry_floor_is_derived_from_its_own_columns(qtbot):
     page = _page(qtbot)
     registry = page.findChild(QWidget, "SystemState_Card_registry")
     header = registry._registry_table.horizontalHeader()
-    columns = sum(header.sectionSizeHint(c) for c in range(header.count()))
-    # The floor holds every column header, plus the card's chrome — never less
-    # than the columns themselves, and never the wildly inflated
-    # QHeaderView.length() (which setStretchLastSection pads with free space).
+    # DEC-363: Status contributes the width its PILL needs, not its header's —
+    # that column holds a cell widget, whose requirement `sectionSizeHint` cannot
+    # see. Recomputed from the card's own accessor rather than restated, so the
+    # two cannot drift; with no rows rendered it falls back to the header hint,
+    # which is why this still reads as "every column header" here.
+    columns = sum(
+        registry._status_column_width() if c == 0 else header.sectionSizeHint(c)
+        for c in range(header.count())
+    )
+    # The floor holds every column header (and the Status pill), plus the card's
+    # chrome — never less than the columns themselves.
     assert registry.minimumWidth() >= columns
     # Asserted as the EXACT decomposition, recomputed from the same widgets, so
     # nothing here is a pixel value that only holds on one font stack. A first
@@ -185,9 +192,12 @@ def test_registry_floor_is_derived_from_its_own_columns(qtbot):
     scrollbar = registry._registry_table.verticalScrollBar().sizeHint().width()
     assert scrollbar > 0
     assert registry.content_min_width() == columns + chrome + scrollbar
-    # And never the wildly inflated QHeaderView.length(), which
-    # setStretchLastSection pads with whatever free space the table happens to
-    # have (measured 638 against a true 540 on an otherwise identical table).
+    # And never `QHeaderView.length()`, which is the realised width of the
+    # sections rather than what they need. DEC-363 turned `setStretchLastSection`
+    # off for this table and gave `Driver Status` `Stretch` instead, so the
+    # padding now lands on that column rather than on `Headers` — the inflation
+    # is the same and it has simply moved, which is why this assertion is
+    # unchanged and its old explanation was not.
     assert registry.content_min_width() < header.length()
 
 

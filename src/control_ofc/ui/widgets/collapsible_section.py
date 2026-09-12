@@ -110,6 +110,31 @@ class CollapsibleSection(QWidget):
         """Append a nested layout to the section's content area."""
         self._content_layout.addLayout(layout)
 
+    def is_expanded(self) -> bool:
+        """Whether the content area is currently open.
+
+        Read by callers that destroy and rebuild a list of sections and have to
+        carry the user's disclosure choice across it (`ACK-v`). The state was
+        already tracked; it simply had no way out, so every rebuild reset it.
+        """
+        return self._expanded
+
+    def set_expanded(self, expanded: bool) -> None:
+        """Open or close the section programmatically.
+
+        Goes through the header button so the chevron, the checked state and
+        the content visibility cannot disagree — setting ``_expanded`` directly
+        is the bug this method exists to stop anyone writing. ``toggled`` is
+        **not** emitted: this is a restore, not a user action, and a listener
+        that cannot tell the two apart would record a choice nobody made.
+        """
+        if expanded == self._expanded:
+            return
+        blocked = self._header.blockSignals(True)
+        self._header.setChecked(expanded)
+        self._header.blockSignals(blocked)
+        self._apply_expanded(expanded)
+
     def set_title(self, title: str) -> None:
         """Re-label the header, preserving the expanded/collapsed chevron.
 

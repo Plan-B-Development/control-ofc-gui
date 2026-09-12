@@ -219,12 +219,24 @@ Since DEC-359 **every** item on the page carries the same Acknowledge/Dismiss
 lifecycle, through one layer (`services/health_ack.py`): a silence is an
 *occurrence* — `(key, fingerprint, level)` — where the fingerprint must match
 exactly and the level must not have escalated. Acknowledge is session-only,
-dismiss persists to `dismissed_health_items`. **A condition card is removed when
-silenced; a *reading* is demoted** — the Interference Monitor, the thermal row
-and a GPU advisory keep their values and lose only their alarm state, because
-this section calls them always-visible and the page must not get quieter by
-getting less true. `issues_requiring_attention` is computed before any silencing
-and `conditions_hidden_count` is rendered beneath the list, so the pill and the
+dismiss persists to `dismissed_health_items`. **Which of the two acts is what
+decides whether an item leaves the screen: Dismiss removes a condition card,
+Acknowledge demotes it** (DEC-363) — the crit bracket goes neutral, the title
+greys and an *Acknowledged* pill appears, and the card keeps its place in the
+severity sort because only `severity_state` is neutralised, never the raw
+`severity` the sort reads. A **reading** is only ever demoted — the Interference
+Monitor, the thermal row and a GPU advisory keep their values and lose only
+their alarm state, because this section calls them always-visible and the page
+must not get quieter by getting less true.
+
+> This paragraph read "a condition card is removed when silenced" until
+> 2026-09-12, which stated one rule for two different actions and is where
+> `ACK-r` came from: Acknowledge on a condition card relabelled its own button
+> and changed nothing else for three releases, while every sibling surface
+> demoted. Dismiss was the half that worked, which is what made it plausible.
+
+`issues_requiring_attention` is computed before any silencing and
+`conditions_hidden_count` is rendered beneath the list, so the pill and the
 list can be reconciled.
 
 Its `SectionHeader` carries the issue-count pill via `add_trailing` and, since

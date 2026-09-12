@@ -246,9 +246,18 @@ class IssueCardVM:
     severity_state: str  # crit | warn | info
     severity_word: str
     severity_glyph: str
-    #: DEC-359. A condition is an alarm, so silencing it REMOVES the card —
-    #: unlike the status readings, which are demoted instead. The
-    #: `N ACTION REQUIRED` pill still counts it either way.
+    #: DEC-359, corrected by DEC-363. **Which of the two acts decides what
+    #: happens to the card: Dismiss removes it, Acknowledge demotes it** — the
+    #: bracket goes neutral, the title greys and an *Acknowledged* pill appears,
+    #: and it keeps its place in the severity sort because only `severity_state`
+    #: is neutralised, never the raw `severity` the sort reads. A status
+    #: *reading* is only ever demoted. The `N ACTION REQUIRED` pill counts the
+    #: card either way.
+    #:
+    #: This comment said "silencing it REMOVES the card" until 2026-09-12, which
+    #: stated one rule for two different actions and is where `ACK-r` came from:
+    #: Acknowledge relabelled its own button and changed nothing else for three
+    #: releases. Left standing it would invite the defect straight back.
     silence: SilenceVM = field(default_factory=SilenceVM)
 
 
@@ -264,7 +273,6 @@ class BoardNoteVM:
     """
 
     key: str  # stable quirk identity (survives prose edits)
-    ack_key: str  # identity an ack/dismissal is stored against — see note_ack_key
     title: str
     detail: str | None  # HTML detail box
     severity: str  # raw ("critical"|"high"|"medium"|"low"|"info")
@@ -275,9 +283,14 @@ class BoardNoteVM:
     evidence_text: str
     related_key: str  # condition key this note explains ("" if none)
     default_expanded: bool
-    acknowledged: bool
-    can_acknowledge: bool
-    can_dismiss: bool
+    #: `ACK-o`. One carrier, like every other silenceable surface. This used to
+    #: be four flat fields (`ack_key` / `acknowledged` / `can_acknowledge` /
+    #: `can_dismiss`) that the widget adapted into a `SilenceVM` at render time
+    #: — two shapes for one concept, with the adapter as the place they could
+    #: drift. `silence.token` is :func:`note_ack_key`, and `silence.dismissed`
+    #: is always False by construction because a dismissed note is dropped from
+    #: `notes` rather than rendered quiet.
+    silence: SilenceVM = field(default_factory=SilenceVM)
 
 
 @dataclass(frozen=True)
@@ -311,9 +324,17 @@ class GpuConstraintRowVM:
     label: str
     value: str
     state: str  # ok | warn | crit | neutral
-    #: DEC-359. Only a row that can raise an alarm is silenceable — an `ok` or
-    #: `neutral` row has nothing to quieten, and giving it a button would be
-    #: noise of a different kind.
+    #: DEC-359. **Only the kernel-warning advisory rows are silenceable**, at
+    #: every state including `info` — see `build_safety_gpu_vm`. Every other row
+    #: here takes the default empty `SilenceVM`, including three that genuinely
+    #: raise an alarm (`Overdrive: disabled`, `ppfeaturemask NOT set` and
+    #: `amdgpu binding not bound`, all `warn`).
+    #:
+    #: `ACK-t`: this comment used to say the opposite — "only a row that can
+    #: raise an alarm is silenceable" — which is a rule nobody wrote and which
+    #: reads as a promise to whoever extends this list. Whether those three warn
+    #: rows *should* become silenceable is a behaviour question, deliberately
+    #: not settled here; it has its own register row.
     silence: SilenceVM = field(default_factory=SilenceVM)
 
 
@@ -497,15 +518,26 @@ def build_condition_cards(
             hidden += 1
             continue
         card = _issue_card_from_problem(diag, problem)
+        silence_vm = SilenceVM(
+            token=health_ack.occurrence_token(occ),
+            acknowledged=health_ack.is_silenced(ack_index, occ, rank),
+            can_acknowledge=silence.allow_acknowledge,
+            can_dismiss=silence.allow_dismiss,
+        )
         cards.append(
             replace(
                 card,
-                silence=SilenceVM(
-                    token=health_ack.occurrence_token(occ),
-                    acknowledged=health_ack.is_silenced(ack_index, occ, rank),
-                    can_acknowledge=silence.allow_acknowledge,
-                    can_dismiss=silence.allow_dismiss,
-                ),
+                silence=silence_vm,
+                # `ACK-r`: demoted, not deleted — the same move the interference
+                # gauge, the thermal row and the GPU advisories already make.
+                # Acknowledge used to relabel its own button and change nothing
+                # else, leaving the crit bracket and the severity colour exactly
+                # as loud as before on the loudest surface this page has. The
+                # raw `severity` is untouched, so the card keeps its rank in the
+                # sort and does not jump under the user; only the alarm state
+                # drops. Dismiss is the other half and already worked — that
+                # card is filtered out above.
+                severity_state="neutral" if silence_vm.quiet else card.severity_state,
             )
         )
     cards.sort(key=lambda c: severity_display(c.severity).rank, reverse=True)
@@ -676,7 +708,6 @@ def build_board_notes(
         rows.append(
             BoardNoteVM(
                 key=note.key,
-                ack_key=ack_key,
                 title=note.quirk.summary,
                 detail=advisory_detail_html(note.quirk.details) or None,
                 severity=note.quirk.severity,
@@ -702,15 +733,18 @@ def build_board_notes(
                 default_expanded=(
                     sd.default_expanded or note.evidence == readiness.EVIDENCE_OBSERVED
                 ),
-                acknowledged=health_ack.is_silenced(ack_index, occ, note_rank),
-                can_acknowledge=allow_acknowledge,
-                can_dismiss=allow_dismiss,
+                silence=SilenceVM(
+                    token=ack_key,
+                    acknowledged=health_ack.is_silenced(ack_index, occ, note_rank),
+                    can_acknowledge=allow_acknowledge,
+                    can_dismiss=allow_dismiss,
+                ),
             )
         )
 
     related = sum(1 for r in rows if r.related_key)
     unverified = sum(1 for r in rows if r.evidence == readiness.EVIDENCE_UNVERIFIED)
-    acked = sum(1 for r in rows if r.acknowledged)
+    acked = sum(1 for r in rows if r.silence.acknowledged)
     total = len(notes)
     if total:
         subtitle = f"Reference material for {diag.board.name or 'this board'}"

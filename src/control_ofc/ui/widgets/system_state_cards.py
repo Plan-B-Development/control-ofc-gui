@@ -9,7 +9,7 @@ verbatim from the page (the DEC-219 golden-master pins them).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QRect, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -18,13 +18,14 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLayout,
+    QStyle,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from control_ofc.services.system_state_view import SilenceVM
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import BracketCard, Card, ContentSizedCard, SectionHeader
@@ -36,7 +37,15 @@ from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 
 _REGISTRY_COLS = ["Status", "Chip / Component", "Driver", "Driver Status", "Mainline", "Headers"]
 _REG_STATUS = 0
+_REG_DRIVER_STATUS = 3
 _REG_MAINLINE = 4
+
+#: Width of the throwaway rect handed to ``SE_ItemViewItemText`` when measuring
+#: the style's cell inset (`ACK-q`). Any width wider than the padding works —
+#: the answer taken from it is ``probe - text_rect.width()``, so the value
+#: cancels out; it is named rather than inlined so it cannot be read as a
+#: layout constant.
+_INSET_PROBE_WIDTH = 200
 
 # ── shared UI helpers (card-local) ───────────────────────────────────────
 
@@ -147,14 +156,38 @@ def _make_issue_card(vm, on_ack=None, on_dismiss=None) -> QWidget:
     body = QWidget()
     v = QVBoxLayout(body)
     v.setSpacing(4)
+    # `ACK-r`: the caption shares its row with an "Acknowledged" marker, the
+    # same shape and the same words `_make_note_row` already uses — the VM has
+    # neutralised `severity_state` by this point, so without the pill the card
+    # just goes quietly grey and nothing on screen says why.
+    #
+    # The marker keys on `acknowledged` and the demotion on `quiet`, and that is
+    # deliberate rather than an oversight: the pill NAMES an action, so it must
+    # not appear for a silence taken some other way, while the greying follows
+    # whatever made the card quiet. The two coincide today because a dismissed
+    # condition is filtered out of the list before it reaches this renderer. If
+    # that ever changes, the pill needs wording for the other case — it must not
+    # simply be re-pointed at `quiet`.
+    head = QHBoxLayout()
+    head.setSpacing(8)
     caption = QLabel(f"{vm.severity_glyph} {vm.severity_word}")
     caption.setObjectName(f"SystemState_IssueSeverity_{vm.key}")
     caption.setStyleSheet(f"color: {color}; font-weight: bold;")
-    v.addWidget(caption)
+    head.addWidget(caption)
+    head.addStretch(1)
+    if vm.silence.acknowledged:
+        head.addWidget(
+            StatusPill("Acknowledged", "neutral", object_name=f"SystemState_IssueAck_{vm.key}")
+        )
+    v.addLayout(head)
     title = QLabel(vm.title)
     title.setObjectName(f"SystemState_IssueTitle_{vm.key}")
     title.setWordWrap(True)
-    title.setStyleSheet(f"color: {theme.text_primary}; font-weight: 600;")
+    # An acknowledged condition stays legible but stops competing for attention
+    # — the board note's rule, applied to the surface above it.
+    title.setStyleSheet(
+        f"color: {theme.text_muted if vm.silence.quiet else theme.text_primary}; font-weight: 600;"
+    )
     v.addWidget(title)
     if vm.description:
         desc = QLabel(vm.description)
@@ -228,7 +261,7 @@ def _make_note_row(vm, on_ack, on_dismiss) -> QWidget:
     evidence.setProperty("class", "CardMeta")
     head.addWidget(evidence)
     head.addStretch(1)
-    if vm.acknowledged:
+    if vm.silence.acknowledged:
         head.addWidget(
             StatusPill("Acknowledged", "neutral", object_name=f"SystemState_BoardNoteAck_{vm.key}")
         )
@@ -239,7 +272,8 @@ def _make_note_row(vm, on_ack, on_dismiss) -> QWidget:
     title.setWordWrap(True)
     # An acknowledged note stays legible but stops competing for attention.
     title.setStyleSheet(
-        f"color: {theme.text_muted if vm.acknowledged else theme.text_primary}; font-weight: 600;"
+        f"color: {theme.text_muted if vm.silence.acknowledged else theme.text_primary};"
+        " font-weight: 600;"
     )
     v.addWidget(title)
 
@@ -249,7 +283,9 @@ def _make_note_row(vm, on_ack, on_dismiss) -> QWidget:
             object_name=f"SystemState_BoardNoteDetails_{vm.key}",
             # An acknowledged note always starts closed: the user has said they
             # have read it, and collapsing it is the whole point of the button.
-            expanded=vm.default_expanded and not vm.acknowledged,
+            # A runtime expansion the user made is carried back over this by
+            # `HealthCard._rebuild_board_notes` (`ACK-v`).
+            expanded=vm.default_expanded and not vm.silence.acknowledged,
         )
         box = QLabel(vm.detail)
         box.setObjectName(f"SystemState_BoardNoteDetail_{vm.key}")
@@ -263,22 +299,12 @@ def _make_note_row(vm, on_ack, on_dismiss) -> QWidget:
         section.add_widget(box)
         v.addWidget(section)
 
-    # The same row every other silenceable surface uses. `BoardNoteVM` keeps its
-    # own flat fields (DEC-357's shape) and adapts to the shared carrier here,
-    # rather than being rewritten — the objectNames are pinned by the baseline
-    # test and by four DEC-357 tests, and churning them would buy nothing.
-    actions = _silence_actions(
-        SilenceVM(
-            token=vm.ack_key,
-            acknowledged=vm.acknowledged,
-            can_acknowledge=vm.can_acknowledge,
-            can_dismiss=vm.can_dismiss,
-        ),
-        "SystemState_BoardNote",
-        vm.key,
-        on_ack,
-        on_dismiss,
-    )
+    # The same row, and now the same carrier, as every other silenceable
+    # surface (`ACK-o`). This used to adapt four flat `BoardNoteVM` fields into
+    # a throwaway `SilenceVM` here — one concept in two shapes, with this call
+    # the place they could drift. The objectNames are unchanged: they key off
+    # `vm.key`, which the reshape never touched.
+    actions = _silence_actions(vm.silence, "SystemState_BoardNote", vm.key, on_ack, on_dismiss)
     if actions is not None:
         v.addLayout(actions)
     return card
@@ -309,6 +335,8 @@ class HealthCard(ContentSizedCard):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("SystemState_Card_health")
+        #: note key -> was it acknowledged at the previous render (`ACK-v`).
+        self._note_was_acknowledged: dict[str, bool] = {}
         v = QVBoxLayout(self)
         header = SectionHeader(
             "System Health Overview", object_name="SystemState_SectionHeader_health"
@@ -418,7 +446,46 @@ class HealthCard(ContentSizedCard):
             note.setProperty("class", "CardMeta")
             self._issues_layout.addWidget(note)
 
+    def _carried_note_expansion(self, vm) -> dict[str, bool]:
+        """Which notes the user has open right now, to survive the rebuild.
+
+        `ACK-v`. Every re-render destroys and recreates these sections, so an
+        open detail snapped shut under the reader. DEC-358 made that reachable
+        with no user action at all — a `normal`/`recovery`/`emergency`
+        transition re-renders the page — but it was already reachable by
+        acknowledging one note while another was open, so the carry is keyed on
+        the section rather than on which trigger fired.
+
+        The case that must NOT carry is a note whose acknowledgement the user
+        has just **changed**, in either direction: collapsing it is what
+        Acknowledge buys, and re-opening a note that opens by default is what
+        Unacknowledge gives back. Both are decided here, against the previous
+        render's flags, because by the time ``_make_note_row`` runs a state the
+        user chose and a state a button imposed look identical.
+
+        The reverse edge was missed in the first draft and found by
+        ``ofc:python-gui-reviewer``: carrying it restored the collapse that
+        Acknowledge had imposed, so Unacknowledge left a HIGH note shut when it
+        used to reopen it — the `ACK-r` shape (a button whose only visible
+        effect is on itself) reintroduced by the fix for `ACK-v`.
+        """
+        carried: dict[str, bool] = {}
+        for i in range(self._notes_layout.count()):
+            row = self._notes_layout.itemAt(i).widget()
+            if row is None:
+                continue
+            for section in row.findChildren(CollapsibleSection):
+                key = section.objectName().removeprefix("SystemState_BoardNoteDetails_")
+                carried[key] = section.is_expanded()
+        for note in vm.notes:
+            was = self._note_was_acknowledged.get(note.key)
+            if was is not None and was != note.silence.acknowledged:
+                carried.pop(note.key, None)
+        self._note_was_acknowledged = {n.key: n.silence.acknowledged for n in vm.notes}
+        return carried
+
     def _rebuild_board_notes(self, vm) -> None:
+        carried = self._carried_note_expansion(vm)
         _clear_layout(self._notes_layout)
         self._notes_section.set_title(vm.title)
         parts = [vm.subtitle]
@@ -440,9 +507,14 @@ class HealthCard(ContentSizedCard):
             )
         self._notes_section.setVisible(vm.total > 0)
         for note in vm.notes:
-            self._notes_layout.addWidget(
-                _make_note_row(note, self.note_acknowledged.emit, self.note_dismissed.emit)
-            )
+            row = _make_note_row(note, self.note_acknowledged.emit, self.note_dismissed.emit)
+            if note.key in carried:
+                section = row.findChild(
+                    CollapsibleSection, f"SystemState_BoardNoteDetails_{note.key}"
+                )
+                if section is not None:
+                    section.set_expanded(carried[note.key])
+            self._notes_layout.addWidget(row)
 
 
 class InterferenceCard(ContentSizedCard):
@@ -667,11 +739,75 @@ class RegistryCard(Card):
         self._registry_table.setHorizontalHeaderLabels(_REGISTRY_COLS)
         apply_dense_table(self._registry_table)
         self._registry_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._registry_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._registry_table.horizontalHeader().setStretchLastSection(True)
+        header = self._registry_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # `ACK-q`, second half. The six columns wanted 812px against a 753px
+        # viewport at the default window size, so `Headers` was clipped to
+        # "Hea…" on the shipped release screenshot. The surplus all sits in
+        # `Driver Status`, whose widest real value is a whole sentence
+        # ("it87 loaded (out-of-tree: it87-dkms-git (AUR))", 307px), and
+        # `ResizeToContents` sizes a column to the longest cell in it — so that
+        # one string set the table's width and every other column paid for it.
+        # Stretching it instead hands it whatever is left, the default delegate
+        # elides what does not fit, and `render` puts the full text in the
+        # cell's tooltip. Measured after the change: 753px total, zero overflow.
+        #
+        # `setStretchLastSection` has to go with it — two sections cannot both
+        # absorb the surplus, and `Headers` is the narrow one that should keep
+        # its content width.
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(_REG_DRIVER_STATUS, QHeaderView.ResizeMode.Stretch)
+        # Fixed, because the width this column needs is the one thing
+        # `ResizeToContents` cannot see — see `_status_column_width`.
+        header.setSectionResizeMode(_REG_STATUS, QHeaderView.ResizeMode.Fixed)
         v.addWidget(self._registry_table)
+
+    def _status_column_width(self) -> int:
+        """Narrowest the Status column can be without clipping its pill.
+
+        `ACK-q`. Measured on the reference board at the shipped window size:
+        ``ResizeToContents`` sized this column to **81px** against a **101px**
+        need (the widest pill's 69px hint, plus the holder's 12px of margins,
+        plus the style's 20px inset), so the pill was handed 49px of the 66px
+        it asked for and the release screenshot shipped `LOADE` and `MODU`.
+        The mechanism is that the column holds a *cell widget*, and
+        ``sizeHintForColumn`` asks the delegate about the ITEM — which is empty
+        here — so the widget's own requirement never reaches the header. The
+        same family as DEC-314: the unit test proves you answered, never that
+        you were asked.
+
+        Three terms, each measured rather than written down:
+
+        * the widest pill actually rendered, from its own ``sizeHint``;
+        * the holder layout's margins, read off that layout;
+        * the item inset the style applies to a cell widget, taken from
+          ``SE_ItemViewItemText``. That is the QSS ``.DenseTable::item``
+          padding (10px each side today) and it tracks the theme — measured
+          against a placed widget as ``visualRect().width() - holder.width()``
+          and the two agree at 20.
+
+        Falls back to the header's own hint before the first render, when there
+        is no pill to measure.
+        """
+        header = self._registry_table.horizontalHeader()
+        widest = 0
+        for row in range(self._registry_table.rowCount()):
+            holder = self._registry_table.cellWidget(row, _REG_STATUS)
+            if holder is None:
+                continue
+            layout = holder.layout()
+            pill = layout.itemAt(0).widget()
+            margins = layout.contentsMargins()
+            widest = max(widest, pill.sizeHint().width() + margins.left() + margins.right())
+        if not widest:
+            return header.sectionSizeHint(_REG_STATUS)
+        option = QStyleOptionViewItem()
+        option.rect = QRect(0, 0, _INSET_PROBE_WIDTH, 0)
+        text_rect = self._registry_table.style().subElementRect(
+            QStyle.SubElement.SE_ItemViewItemText, option, self._registry_table
+        )
+        inset = _INSET_PROBE_WIDTH - text_rect.width()
+        return max(header.sectionSizeHint(_REG_STATUS), widest + inset)
 
     def content_min_width(self) -> int:
         """Narrowest this card can be and still show all six column headers.
@@ -680,16 +816,27 @@ class RegistryCard(Card):
         a literal silently tracks today's column set and the theme's base font,
         and drifts the moment either moves. ``sectionSizeHint`` is each column's
         content-based hint and is stable at every widget width — unlike
-        ``QHeaderView.length()``, which the shipped ``setStretchLastSection``
-        inflates by whatever free space the table happens to have (measured 638
-        against a true 540), so length() would bake that surplus into the floor.
+        ``QHeaderView.length()``, which is the *realised* width of the sections
+        and is inflated by whatever free space the table happens to have
+        (measured 638 against a true 540), so length() would bake that surplus
+        into the floor. `ACK-q` moved which column absorbs that surplus — it is
+        `Driver Status` under ``Stretch`` now, rather than the last section —
+        but not the fact that it exists, so this reasoning is unchanged.
 
         Rows wider than the floor still scroll inside the table. The floor only
         keeps the *headers* — Status, Chip / Component, Driver, Driver Status,
         Mainline, Headers — from being dragged or resized out of reach.
+
+        `ACK-q`: Status is the one column whose real requirement is not its
+        header, because a pill has to fit inside it, so it contributes
+        :meth:`_status_column_width` instead. Without that the floor promised
+        room for a header while the cell under it clipped.
         """
         header = self._registry_table.horizontalHeader()
-        columns = sum(header.sectionSizeHint(c) for c in range(header.count()))
+        columns = sum(
+            self._status_column_width() if c == _REG_STATUS else header.sectionSizeHint(c)
+            for c in range(header.count())
+        )
         margins = self.layout().contentsMargins()
         chrome = margins.left() + margins.right() + 2 * self._registry_table.frameWidth()
         # The scrollbar takes its width out of the viewport as soon as there are
@@ -727,4 +874,24 @@ class RegistryCard(Card):
             if vm.tooltip:
                 for c in range(1, len(_REGISTRY_COLS)):
                     self._registry_table.item(i, c).setToolTip(vm.tooltip)
+            # `ACK-q`: Driver Status now stretches and therefore elides, so the
+            # full sentence has to be recoverable. It leads the tooltip; the
+            # chip guidance, where there is any, keeps its place below it.
+            #
+            # Composed from the VM alone, never by reading the item's own
+            # previous tooltip. `_ensure_items` REUSES items across renders, and
+            # the loop above only overwrites them when `vm.tooltip` is truthy —
+            # which it never is for a kernel-module row — so a read-then-prepend
+            # accumulated one copy per render, and this page re-renders on every
+            # acknowledgement, dismissal and theme change (measured: four
+            # renders, four copies). Found by `ofc:python-gui-reviewer`.
+            if vm.driver_status:
+                detail = f"{vm.driver_status}\n\n{vm.tooltip}" if vm.tooltip else vm.driver_status
+                self._registry_table.item(i, _REG_DRIVER_STATUS).setToolTip(detail)
             _set_pill(self._registry_table, i, _REG_STATUS, vm.status_label, vm.status_state)
+        # After the pills exist, because the width is derived from them, and the
+        # card's floor has to move with it — the page re-asserts that floor only
+        # on a theme change, so a card that never re-derived here would promise
+        # a pane narrow enough to clip what it just rendered.
+        self._registry_table.setColumnWidth(_REG_STATUS, self._status_column_width())
+        self.setMinimumWidth(self.content_min_width())

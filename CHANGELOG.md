@@ -1,5 +1,42 @@
 # Changelog
 
+## [2.75.1] — 2026-09-12
+
+**No daemon change and no new daemon requirement** — the pairing floor is
+unchanged from v2.75.0.
+
+**Acknowledging a health condition now visibly quietens it.** Pressing
+**Acknowledge** on a card in System Health Overview used to relabel its own
+button to *Unacknowledge* and change nothing else: the red bracket, the severity
+glyph and the severity word stayed exactly as loud as before, on the noisiest
+surface the page has. Every other silenceable item already dimmed itself — the
+Interference Monitor, the thermal row, the GPU advisories and the board notes.
+Condition cards now do the same, and carry the same **Acknowledged** marker the
+board notes use, so it is clear *why* a card went quiet. Dismiss is unchanged
+(it removes the card), and the `N ACTION REQUIRED` count still counts everything
+that is wrong with the machine — a button has never been able to make this page
+read healthier than the hardware is, and still cannot.
+
+**A board note you have open no longer snaps shut while you are reading it.**
+Anything that re-rendered the page — acknowledging a different note, or a live
+thermal-state change from the daemon — rebuilt the notes list and reset every
+expanded detail. Your disclosure choice is now carried across the rebuild. A
+note you acknowledge yourself still collapses, because that is what the button
+is for — and un-acknowledging it opens the detail back up if it is one that
+opens by default.
+
+**The Hardware Registry table fits its pane.** Status pills rendered as `LOADE`
+and `MODU`, and the `Headers` column was cut off mid-word — both visible on the
+release screenshot. The Status column is now sized from the pill it actually
+draws, and the long *Driver Status* text shortens with the full sentence moved
+into its tooltip, which removes the overflow that clipped the last column.
+
+Internal: `BoardNoteVM` carries the same `SilenceVM` every other surface uses
+(no visible change); `CollapsibleSection` gained `is_expanded()`/`set_expanded()`;
+the `GpuConstraintRowVM.silence` comment described a rule the code does not
+implement and stated it backwards, and is corrected to what the code does.
+See `DECISIONS.md` DEC-363.
+
 ## [2.75.0] — 2026-09-12
 
 **Pairs with `control-ofc-daemon` >= v2.47.0 for the new `backend_unavailable`
