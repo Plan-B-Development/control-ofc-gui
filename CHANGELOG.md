@@ -2,9 +2,14 @@
 
 ## [Unreleased]
 
+## [2.75.3] — 2026-09-15
+
+**No daemon change and no new daemon requirement** — the pairing floor is
+unchanged from v2.75.0.
+
 ### Internal
 
-**No user-visible change in this entry — three tests and one comment.**
+**No user-visible change in this release — three tests and one comment.**
 
 **The guard that protects your dismissals from a momentary blind spot is now
 tested.** When the daemon reports a valid hardware snapshot in which no chip
