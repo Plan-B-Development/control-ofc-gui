@@ -1244,8 +1244,12 @@ class HardwarePage(QWidget):
         self._show_diag_message("Testing PWM control… (about 10 seconds)")
         self._verify_request.emit(header_id)
 
-    @Slot(object)
-    def _on_verify_ok(self, result: HwmonVerifyResult) -> None:
+    # `requested_header_id` is the header the worker was asked about (row
+    # `ACK-n`). This page runs one verify at a time and has no sweep to
+    # attribute a result to, so it does not read it — the argument is here
+    # because the signal carries it, and the System State page's sweep does.
+    @Slot(object, str)
+    def _on_verify_ok(self, result: HwmonVerifyResult, requested_header_id: str) -> None:
         header = None
         if self._state:
             header = next((h for h in self._state.hwmon_headers if h.id == result.header_id), None)
@@ -1254,8 +1258,8 @@ class HardwarePage(QWidget):
         )
         self._show_diag_message(view.text)
 
-    @Slot(str, str)
-    def _on_verify_error(self, category: str, message: str) -> None:
+    @Slot(str, str, str)
+    def _on_verify_error(self, category: str, message: str, requested_header_id: str) -> None:
         # A soft safety refusal is protection working, not a failure — show the
         # daemon's own message rather than prefixing it as an error.
         self._show_diag_message(message if category == "unavailable" else f"Test failed: {message}")

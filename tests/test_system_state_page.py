@@ -266,9 +266,9 @@ def test_verify_all_state_machine_drains(qtbot):
     page._verify_request.connect(emitted.append)
     page._run_pwm_verify_all()
     assert emitted == ["pwm1"]
-    page._on_verify_ok(HwmonVerifyResult(header_id="pwm1", result="effective"))
+    page._on_verify_ok(HwmonVerifyResult(header_id="pwm1", result="effective"), "pwm1")
     assert emitted == ["pwm1", "pwm2"]
-    page._on_verify_ok(HwmonVerifyResult(header_id="pwm2", result="pwm_enable_reverted"))
+    page._on_verify_ok(HwmonVerifyResult(header_id="pwm2", result="pwm_enable_reverted"), "pwm2")
     assert page._verify_all_total == 0  # finished
     assert "2/2 tested" in page._verify_all_progress_label.text()
     assert page._verify_all_progress_label.property("class") == "CriticalChip"
@@ -410,7 +410,7 @@ def test_run_pwm_verify_guards(qtbot):
 
 def test_on_verify_error_shows_message(qtbot):
     page, _ = _page(qtbot)
-    page._on_verify_error("unavailable", "daemon down")
+    page._on_verify_error("unavailable", "daemon down", "pwm1")
     assert "daemon down" in page._verify_result_label.text()
     assert not page._verify_result_label.isHidden()
 

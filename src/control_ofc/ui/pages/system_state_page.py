@@ -44,6 +44,7 @@ from control_ofc.services.system_state_view import (
 )
 from control_ofc.services.verify_view import (
     build_verify_result_view,
+    gpu_outcome_for,
     outcome_for,
     verify_sweep_chip_class,
     verify_sweep_outcome,
@@ -184,6 +185,11 @@ class SystemStatePage(QWidget):
         self._verify_all_queue: list[str] = []
         self._verify_all_results: list[tuple[str, str]] = []
         self._verify_all_total = 0
+        #: The header the SWEEP is waiting on, distinct from
+        #: `_verify_active_header`, which is whatever was last requested by any
+        #: path. A result is the sweep's only when it matches this (row
+        #: `ACK-n`); see `_on_verify_ok`.
+        self._verify_all_pending: str | None = None
         self._gpu_verify_bdf: str | None = None
         self._gpu_verify_unsupported = False
         self._report_dialog: ReadinessReportDialog | None = None
@@ -1075,18 +1081,44 @@ class SystemStatePage(QWidget):
         self._verify_active_header = header_id
         self._verify_request.emit(header_id)
 
-    @Slot(object)
-    def _on_verify_ok(self, result: HwmonVerifyResult) -> None:
+    @Slot(object, str)
+    def _on_verify_ok(self, result: HwmonVerifyResult, header_id: str) -> None:
+        """A verify finished. ``header_id`` is the header it was REQUESTED for.
+
+        The sweep accepts a result only when that header is the one it is
+        waiting on (row `ACK-n`). Attributing by "is a sweep open" instead meant
+        a verify started by any other path both injected a foreign result into
+        `_verify_all_results` and popped an extra header off the queue — so the
+        sweep skipped a header and `verify_sweep_outcome` persisted a verdict
+        over a set it had not produced, onto the board-note evidence. DEC-358
+        closed the one reachable route to that (the button can no longer be
+        re-enabled mid-sweep), which made a UI guard the only thing standing
+        between a background re-render and a corrupted verdict; this makes the
+        guard a convenience again rather than a correctness dependency.
+
+        A non-matching result is shown and then ignored, and the sweep keeps
+        waiting. It cannot wedge on one: every request the sweep emits produces
+        exactly one `verify_ok` or `verify_error` carrying that same requested
+        header, so its own answer always arrives.
+        """
         self._show_verify_result(result)
         self._verify_btn.setEnabled(True)
         self._verify_btn.setText("Test PWM Control")
         self._verify_active_header = None
-        if self._verify_all_total > 0:
-            self._verify_all_results.append((result.header_id, result.result))
+        if self._verify_all_total > 0 and header_id == self._verify_all_pending:
+            self._verify_all_pending = None
+            self._verify_all_results.append((header_id, result.result))
             self._step_pwm_verify_all()
 
-    @Slot(str, str)
-    def _on_verify_error(self, category: str, message: str) -> None:
+    @Slot(str, str, str)
+    def _on_verify_error(self, category: str, message: str, header_id: str) -> None:
+        """A verify failed. ``header_id`` is the header it was REQUESTED for.
+
+        Same attribution rule as :meth:`_on_verify_ok`, and it needs the same
+        evidence: the header used to come from `_verify_active_header`, which is
+        overwritten by whichever path requested last, so a foreign failure was
+        recorded against whatever the sweep happened to be testing.
+        """
         if category == "unavailable":
             self._verify_result_label.setText(message or "Daemon unavailable during verify")
         else:
@@ -1094,9 +1126,9 @@ class SystemStatePage(QWidget):
         self._verify_result_label.setVisible(True)
         self._verify_btn.setEnabled(True)
         self._verify_btn.setText("Test PWM Control")
-        header_id = self._verify_active_header or "unknown"
         self._verify_active_header = None
-        if self._verify_all_total > 0:
+        if self._verify_all_total > 0 and header_id == self._verify_all_pending:
+            self._verify_all_pending = None
             self._verify_all_results.append((header_id, f"error:{category}"))
             self._step_pwm_verify_all()
 
@@ -1136,6 +1168,7 @@ class SystemStatePage(QWidget):
             return
         self._verify_all_queue = list(writable)
         self._verify_all_results = []
+        self._verify_all_pending = None
         self._verify_all_total = len(writable)
         self._verify_btn.setEnabled(False)
         self._verify_all_btn.setEnabled(False)
@@ -1146,6 +1179,7 @@ class SystemStatePage(QWidget):
 
     def _finish_verify_all(self) -> None:
         self._verify_all_total = 0
+        self._verify_all_pending = None
         self._verify_btn.setEnabled(self._verify_combo.count() > 0)
         self._verify_all_btn.setEnabled(True)
         self._verify_all_btn.setText("Verify All Writable")
@@ -1161,6 +1195,7 @@ class SystemStatePage(QWidget):
             f"Testing {index}/{self._verify_all_total}: {header_id}"
         )
         self._verify_active_header = header_id
+        self._verify_all_pending = header_id
         self._verify_request.emit(header_id)
 
     def _show_verify_all_summary(self) -> None:
@@ -1250,36 +1285,16 @@ class SystemStatePage(QWidget):
         self._gpu_verify_btn.setText("Test GPU Fan Control")
 
     def _show_gpu_verify_result(self, result: GpuVerifyResult) -> None:
-        summary_map = {
-            "effective": (
-                "GPU fan control is working — the fan responded to the test.",
-                "SuccessChip",
-            ),
-            "zero_rpm_suppressed": (
-                "GPU fan control works; the fan is in zero-RPM idle (normal).",
-                "SuccessChip",
-            ),
-            "rpm_unavailable": (
-                "Write confirmed via curve read-back, but this GPU exposes no fan-RPM sensor.",
-                "WarningChip",
-            ),
-            "curve_not_applied": ("The GPU ignored the fan-control write.", "CriticalChip"),
-            "no_rpm_effect": (
-                "The fan curve was applied but the fan did not respond.",
-                "CriticalChip",
-            ),
-            "pwm_enable_reverted": (
-                "The BIOS/EC reclaimed GPU fan control during the test.",
-                "CriticalChip",
-            ),
-            "write_failed": (
-                "The GPU fan write was rejected by the driver/firmware.",
-                "CriticalChip",
-            ),
-        }
-        summary, css_class = summary_map.get(
-            result.result, (f"GPU verify: {result.result}", "CardMeta")
-        )
+        # REWRITE (the vocabulary left, the assembly stayed): the seven-token
+        # `summary_map` that lived here is now `verify_view._GPU_OUTCOMES`, for
+        # DEC-276's reason — a rule inside one consumer is a rule no other
+        # consumer can follow (row `ACK-k`). It is a table of its own and must
+        # stay one: it shares four token names with the hwmon set and disagrees
+        # with it on `rpm_unavailable`. The line assembly below is GPU-specific
+        # (test speed, `gpu_verify_problems`, the restore note) and has one
+        # consumer, so it stays on the page.
+        outcome = gpu_outcome_for(result.result)
+        summary, css_class = outcome.summary, outcome.chip_class
         lines = [f"Result: {summary}"]
         init, final = result.initial_state, result.final_state
         if init.rpm is not None and final.rpm is not None:

@@ -116,13 +116,36 @@ _OUTCOMES: dict[str, VerifyOutcome] = {
 }
 
 
+#: What an unrecognised token says to the user, for either vocabulary.
+#:
+#: 273-i says render an unknown token rather than drop it, and this is the
+#: sentence that stops the user reading it as a hardware fault: the only way to
+#: reach it is a daemon newer than this GUI, so the action is an upgrade, not an
+#: investigation. It is deliberately *not* a guess at what the token means —
+#: inventing a meaning is how a verdict gets fabricated.
+_UNRECOGNISED_HINT = "this daemon reports a result this version of the GUI does not recognise"
+
+
+def _unrecognised_summary(token: str) -> str:
+    """The bare token, with the version-gap hint. No ``Result: `` prefix."""
+    return f"{token} ({_UNRECOGNISED_HINT})"
+
+
 def outcome_for(result: str) -> VerifyOutcome:
     """The vocabulary row for one result token.
+
+    ``summary`` is a bare sentence and **never carries the ``Result: ``
+    prefix** — :func:`build_verify_result_view`, the one caller that renders it,
+    owns that. Both fallback arms below used to bake the prefix in while the
+    caller added it again, so an unrecognised token rendered as ``Result:
+    Result: <token>`` (row `ACK-j`). One prefix, one owner.
 
     Two tokens are not in the table and must not be invented into one:
 
     * an ``error:`` prefix is the *sweep* failing (transport, permission, a
-      daemon refusal), so it is loud but says nothing about the hardware;
+      daemon refusal), so it is loud but says nothing about the hardware. It
+      carries no hint: this GUI synthesises the token itself, so it is not a
+      version gap and telling the user to upgrade would be a lie;
     * an unrecognised token comes from a newer daemon. It renders verbatim
       rather than being dropped (the 273-i rule) and stays `inconclusive` —
       guessing an evidence value from a token we do not know is exactly how a
@@ -133,10 +156,10 @@ def outcome_for(result: str) -> VerifyOutcome:
         return known
     if result.startswith("error:"):
         return VerifyOutcome(
-            f"Result: {result}", result, "CriticalChip", VERDICT_FAIL, PWM_EVIDENCE_INCONCLUSIVE
+            result, result, "CriticalChip", VERDICT_FAIL, PWM_EVIDENCE_INCONCLUSIVE
         )
     return VerifyOutcome(
-        f"Result: {result}", result, "CardMeta", VERDICT_WARN, PWM_EVIDENCE_INCONCLUSIVE
+        _unrecognised_summary(result), result, "CardMeta", VERDICT_WARN, PWM_EVIDENCE_INCONCLUSIVE
     )
 
 
@@ -247,3 +270,81 @@ def build_verify_result_view(
         lines=lines,
         restore_failed=bool(getattr(result, "restore_failed", False)),
     )
+
+
+# ── GPU fan verify — a SEPARATE vocabulary (row `ACK-k`) ─────────────────────
+#
+# `POST /gpu/{id}/fan/verify` answers with its own token set. Four names are
+# shared with the hwmon set above — `effective`, `no_rpm_effect`,
+# `pwm_enable_reverted`, `rpm_unavailable` — and TWO of them MEAN SOMETHING
+# ELSE, which is the whole reason these are two tables and not one.
+#
+# **Do not merge them.** DEC-358's rule is "one token, one row", and it is a
+# rule *within* a vocabulary — the shared names are what make merging look
+# attractive and make it wrong. Concretely: `rpm_unavailable` is neutral
+# (`CardMeta`) on the hwmon side, where a header without a tach is ordinary
+# hardware, and a `WarningChip` here, where a GPU exposing no fan-RPM sensor is
+# unexpected enough to mention. `no_rpm_effect` is a Warning there and Critical
+# here for the same reason: a case fan behind a splitter has benign
+# explanations, a GPU fan that ignored an applied curve does not.
+#
+# This lives here rather than inlined in `system_state_page` for DEC-276's
+# reason — a rule inside one consumer is a rule the other consumers cannot
+# follow — and NOT because the two tables are converging. The type is
+# deliberately narrower than `VerifyOutcome`: the GPU path feeds no sweep, no
+# board-note evidence and no compact card badge, so it has no `short`,
+# `verdict` or `evidence` column. Giving it an `evidence` column it does not use
+# is exactly the invitation this comment exists to refuse.
+
+
+@dataclass(frozen=True)
+class GpuVerifyOutcome:
+    """What one ``POST /gpu/{id}/fan/verify`` result token means."""
+
+    summary: str  # the user-facing sentence — no ``Result: `` prefix
+    chip_class: str  # shared theme vocabulary from `theme.py`
+
+
+_GPU_OUTCOMES: dict[str, GpuVerifyOutcome] = {
+    "effective": GpuVerifyOutcome(
+        "GPU fan control is working — the fan responded to the test.",
+        "SuccessChip",
+    ),
+    "zero_rpm_suppressed": GpuVerifyOutcome(
+        "GPU fan control works; the fan is in zero-RPM idle (normal).",
+        "SuccessChip",
+    ),
+    "rpm_unavailable": GpuVerifyOutcome(
+        "Write confirmed via curve read-back, but this GPU exposes no fan-RPM sensor.",
+        "WarningChip",
+    ),
+    "curve_not_applied": GpuVerifyOutcome(
+        "The GPU ignored the fan-control write.",
+        "CriticalChip",
+    ),
+    "no_rpm_effect": GpuVerifyOutcome(
+        "The fan curve was applied but the fan did not respond.",
+        "CriticalChip",
+    ),
+    "pwm_enable_reverted": GpuVerifyOutcome(
+        "The BIOS/EC reclaimed GPU fan control during the test.",
+        "CriticalChip",
+    ),
+    "write_failed": GpuVerifyOutcome(
+        "The GPU fan write was rejected by the driver/firmware.",
+        "CriticalChip",
+    ),
+}
+
+
+def gpu_outcome_for(result: str) -> GpuVerifyOutcome:
+    """The GPU vocabulary row for one result token.
+
+    Same contract as :func:`outcome_for`: the summary is bare and the caller
+    owns the ``Result: `` prefix, and an unrecognised token renders verbatim
+    with the version-gap hint rather than being dropped (273-i).
+    """
+    known = _GPU_OUTCOMES.get(result)
+    if known is not None:
+        return known
+    return GpuVerifyOutcome(_unrecognised_summary(result), "CardMeta")

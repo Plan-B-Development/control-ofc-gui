@@ -83,8 +83,14 @@ class _VerifyWorker(_SocketWorker):
     the UI thread so the rest of the GUI (polling, splitter, menus) keeps
     reacting during the hardware probe."""
 
-    verify_ok = Signal(object)  # HwmonVerifyResult
-    verify_error = Signal(str, str)  # category ('unavailable'|'error'), message
+    # Both arms echo the header the verify was REQUESTED for, so a consumer can
+    # tell whose result this is rather than inferring it from "what did I ask
+    # for most recently" (row `ACK-n`). The requested id is used deliberately in
+    # preference to the daemon's echo in `HwmonVerifyResult.header_id`: it is
+    # the only identity the error arm has at all, and it makes both arms answer
+    # the same question.
+    verify_ok = Signal(object, str)  # HwmonVerifyResult, requested header_id
+    verify_error = Signal(str, str, str)  # category ('unavailable'|'error'), message, header_id
 
     @Slot(str)
     def do_verify(self, header_id: str) -> None:
@@ -92,7 +98,7 @@ class _VerifyWorker(_SocketWorker):
 
         try:
             result = self._ensure_client().verify_hwmon_pwm(header_id)
-            self.verify_ok.emit(result)
+            self.verify_ok.emit(result, header_id)
         except DaemonTimeout:
             # DEC-098: a verify timeout means the daemon was slow — the write
             # may still have landed. Don't say "unavailable", which implies
@@ -103,23 +109,24 @@ class _VerifyWorker(_SocketWorker):
                 "unavailable",
                 "Verify timed out (>8s). The daemon may have completed the "
                 "write — re-check the fan and re-run if needed.",
+                header_id,
             )
         except DaemonUnavailable:
-            self.verify_error.emit("unavailable", "Daemon unavailable during verify")
+            self.verify_error.emit("unavailable", "Daemon unavailable during verify", header_id)
         except DaemonError as e:
             # A safety refusal is not a failure — show the daemon's message
             # verbatim (soft), not as an error. See `_is_soft_safety_refusal`.
             if _is_soft_safety_refusal(e):
-                self.verify_error.emit("unavailable", e.message)
+                self.verify_error.emit("unavailable", e.message, header_id)
             else:
-                self.verify_error.emit("error", e.message)
+                self.verify_error.emit("error", e.message, header_id)
         except (ConnectionError, OSError) as e:
             log.warning("Verify worker connection error: %s", e)
             with contextlib.suppress(Exception):
                 if self._client is not None:
                     self._client.close()
             self._client = None
-            self.verify_error.emit("unavailable", "Connection lost during verify")
+            self.verify_error.emit("unavailable", "Connection lost during verify", header_id)
 
 
 class _GpuVerifyWorker(_SocketWorker):

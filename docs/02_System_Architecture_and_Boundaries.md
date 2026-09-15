@@ -189,6 +189,12 @@ control_ofc/
     verify_view.py             # PWM verify result wording — DEC-318. Extracted from
                                #   system_state_page so Hardware and System State
                                #   render ONE object rather than two copies.
+                               #   Holds TWO vocabularies, deliberately not one
+                               #   (DEC-364): `_OUTCOMES` for POST /hwmon/{id}/verify
+                               #   and `_GPU_OUTCOMES` for POST /gpu/{id}/fan/verify.
+                               #   They share four token names and disagree on two —
+                               #   do not merge them. A row's `summary` is bare; the
+                               #   caller owns the "Result: " prefix.
     pump_protection.py         # THE pump-protection predicate + the enforced-floor
                                #   lookup. Daemon-first since DEC-316: prefers the
                                #   header's reported stop_permitted /

@@ -12,8 +12,12 @@ from control_ofc.ui.pages.diagnostics_workers import _GpuVerifyWorker, _VerifyWo
 
 
 def _capture(worker):
+    # `*rest` because this helper serves both workers and they no longer have
+    # the same arity: `_VerifyWorker.verify_error` gained the requested header
+    # id (row `ACK-n`), `_GpuVerifyWorker`'s did not. The category/message pair
+    # is what these tests are about, and it is common to both.
     seen: list[tuple[str, str]] = []
-    worker.verify_error.connect(lambda cat, msg: seen.append((cat, msg)))
+    worker.verify_error.connect(lambda cat, msg, *rest: seen.append((cat, msg)))
     return seen
 
 

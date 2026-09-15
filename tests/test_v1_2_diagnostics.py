@@ -441,7 +441,8 @@ class TestSystemStateVerifyWorker:
                 test_pwm_percent=70,
                 wait_seconds=6,
                 details="PWM control working",
-            )
+            ),
+            "h1",
         )
 
         assert page._verify_btn.isEnabled()

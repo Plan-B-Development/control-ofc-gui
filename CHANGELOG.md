@@ -1,5 +1,42 @@
 # Changelog
 
+## [2.75.2] — 2026-09-15
+
+**No daemon change and no new daemon requirement** — the pairing floor is
+unchanged from v2.75.0.
+
+**A fan test result from a newer daemon no longer reads like a fault.** If the
+daemon is newer than the GUI it can report a test outcome this version has never
+heard of. That case is deliberately shown rather than hidden, but it was shown
+badly: the line read `Result: Result: some_token`, with the word doubled and no
+indication of why the GUI had nothing to say about it. It now reads the token
+once and says plainly that this daemon is reporting a result this version of the
+GUI does not recognise — so the answer is "update the GUI", not "investigate the
+fan". The same applies to the GPU fan test. Every recognised result is worded
+exactly as before.
+
+### Internal
+
+**A fan test result is now attributed to the test that asked for it.** *Verify
+All Writable* collected whatever result arrived while it was running, rather than
+the result for the header it was waiting on. A test started by any other route
+mid-sweep was therefore both added to the sweep's findings and counted as one of
+its headers — so the sweep skipped a header and saved a verdict about a set of
+fans it had not tested. That verdict is what the "your BIOS may be overriding fan
+control" note is measured against. **This was reachable**: *Verify All Writable*
+disables *Test PWM Control* when it starts, but the single-header button is
+switched back on as soon as the first header reports and is never switched off
+again, so it is live for the rest of the sweep. Pressing it was enough. The sweep
+is now correct on its own terms rather than depending on a button staying
+disabled. A result that is not the sweep's is still shown to you — it is simply
+not counted as evidence.
+
+**The GPU fan-test vocabulary moved out of the page** into the same module as the
+motherboard one, as a separate and explicitly named table. The two share four
+result names and disagree on two of them, and they now have a test asserting that
+disagreement, so a future tidy-up cannot quietly merge them and reclassify a GPU
+result as if it were a case fan.
+
 ## [2.75.1] — 2026-09-12
 
 **No daemon change and no new daemon requirement** — the pairing floor is
