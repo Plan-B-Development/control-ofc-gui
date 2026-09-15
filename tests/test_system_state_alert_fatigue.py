@@ -37,7 +37,17 @@ from control_ofc.api.models import (
     KernelModuleInfo,
     ThermalSafetyInfo,
 )
-from control_ofc.services.health_ack import Occurrence, build_index, clear_key, is_silenced
+from control_ofc.services.health_ack import (
+    SILENCE_CAP,
+    Occurrence,
+    build_index,
+    clear_key,
+    fingerprint,
+    is_silenced,
+    occurrence_token,
+    parse_token,
+    prune,
+)
 from control_ofc.services.system_state_view import (
     SilenceState,
     build_board_notes,
@@ -58,6 +68,11 @@ from control_ofc.services.verify_view import (
     verify_sweep_outcome,
 )
 from control_ofc.ui.components.badges import StatusPill
+from control_ofc.ui.hwmon_guidance import (
+    AMD_GPU_GUIDANCE_DB,
+    VENDOR_QUIRKS_DB,
+    quirk_key,
+)
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.readiness_report import (
     EVIDENCE_NOT_OBSERVED,
@@ -1338,3 +1353,148 @@ def test_the_acknowledged_condition_card_says_so_on_screen(qtbot):
     assert acked_title.styleSheet() != loud_style, "the title was not demoted"
     assert active_theme().text_muted in acked_title.styleSheet()
     _flush(page)
+
+
+# ── `ACK-s`: the guard that refuses to prune off an incomplete snapshot ──
+
+
+def _no_chips_diag():
+    """A valid 200 that enumerated nothing — e.g. a daemon restart mid-session.
+
+    Not an error payload: `/diagnostics/hardware` returns 200 with an empty
+    `chips_detected` when no hwmon chip enumerated, and the GUI models that as
+    its own `no_chips` condition.
+    """
+    return HardwareDiagnosticsResult(
+        hwmon=HwmonDiagnostics(chips_detected=[]),
+        board=BoardInfo(vendor=_GIGABYTE, name="X870E AORUS MASTER"),
+        thermal_safety=ThermalSafetyInfo(
+            state="normal", cpu_sensor_found=True, emergency_threshold_c=110.0
+        ),
+        cpu_vendor="AMD",
+    )
+
+
+def test_an_empty_chip_snapshot_must_not_delete_the_users_dismissals(qtbot):
+    """`ACK-s`: pruning is an optimisation; losing a preference is not.
+
+    Two-armed, and the second arm is the one that makes the first mean
+    something: an assertion that *nothing was pruned* is satisfied just as well
+    by pruning being dead altogether, which is exactly the state this test was
+    written to escape — the guard had no test, and deleting its two lines left
+    the whole suite green.
+    """
+    page, svc = _page(qtbot, _reclaim_diag(age_ms=60_000))
+    btn = page.findChild(QPushButton, "SystemState_IssueCardDismissBtn_bios_revert")
+    assert btn is not None, "precondition: an active reclaim must be dismissable"
+    btn.click()
+    stored = list(svc.settings.dismissed_health_items)
+    assert stored, "precondition: the dismissal was stored"
+
+    # Arm 1 — the guard. The reclaim key vanishes from the live set along with
+    # every other chip-scoped key, and `_prune_silences` PERSISTS its result, so
+    # without the guard this render deletes the dismissal irreversibly.
+    page._render(_no_chips_diag())
+    assert svc.settings.dismissed_health_items == stored, (
+        "an empty-but-valid hardware snapshot deleted a persisted dismissal"
+    )
+
+    # Arm 2 — the discriminator. A COMPLETE snapshot that no longer raises the
+    # key still prunes, so arm 1 is the guard firing rather than pruning being
+    # broken or unreachable.
+    page._render(_reclaim_diag(age_ms=RECLAIM_HISTORIC_AFTER_MS * 5))
+    assert svc.settings.dismissed_health_items == [], (
+        "pruning never resumed once the snapshot was complete again"
+    )
+    _flush(page)
+
+
+def test_prune_caps_by_keeping_the_most_recent_silences():
+    """`ACK-s`: assert the WINDOW the cap keeps, not merely the length.
+
+    A length-only assertion passes with `kept[:cap]`, which keeps the oldest
+    entries and drops the newest — the worse of the two failures, since the
+    newest silence is the one the user just took and the only one they would
+    notice going missing.
+    """
+    over = [
+        occurrence_token(Occurrence(key="k", fingerprint=f"{i:012x}", level="warn"))
+        for i in range(SILENCE_CAP + 17)
+    ]
+    kept = prune(over, {"k"})
+    assert len(kept) == SILENCE_CAP
+    assert kept == over[-SILENCE_CAP:], "the cap dropped the newest entries, not the oldest"
+
+    # The opposite arm: below the cap nothing is dropped, so the slice above is
+    # the cap firing and not a truncation that runs unconditionally.
+    under = over[: SILENCE_CAP - 1]
+    assert prune(under, {"k"}) == under
+
+
+# ── `ACK-u`: no persisted key may contain the fingerprint separator ──
+
+
+def _data_driven_silence_keys():
+    """Every silenceable key that comes from a DATA TABLE rather than a literal.
+
+    Scope, stated because it is narrower than "every key": these are the sites
+    where a new key is added by appending a row, touching no parsing code at
+    all, which is the way the constraint gets broken by accident. The
+    hand-written condition literals in `readiness_report.py` are not swept —
+    there is no registry to sweep them from, and each sits beside the code that
+    raises it. `AMD_GPU_GUIDANCE_DB` is the in-repo mirror of the daemon's
+    `KernelWarning.id` vocabulary, so it is the enumerable half of that one.
+    """
+    keys: list[str] = []
+    for quirk in VENDOR_QUIRKS_DB:
+        keys.append(quirk_key(quirk))  # the board-note occurrence
+        keys.append(f"quirk_{quirk_key(quirk)}")  # the condition promoted from it
+    keys += [f"gpu_advisory_{g.warning_id}" for g in AMD_GPU_GUIDANCE_DB]
+    keys += ["interference", "thermal"]  # the two fixed keys built in view code
+    return keys
+
+
+def test_every_data_driven_key_survives_being_stored_as_a_silence():
+    """`ACK-u`: a key containing `#` is silently truncated when it is read back.
+
+    Asserted as a round trip rather than as a character-class check, because the
+    round trip is the property that actually matters and it stays true if the
+    token grammar ever moves. Both fingerprint shapes, because they leave
+    `parse_token` by different branches — a board note stores `fingerprint=""`
+    and emits no `#` at all, a condition stores a digest and does.
+
+    The failure this prevents is silent, which is why it is worth a test over an
+    inert constraint: a board note's occurrence carries `fingerprint=""`, so a
+    `#` in its key means it can never match its own stored token — Dismiss would
+    appear to do nothing — while `prune`, keyed on the truncated half, would
+    delete the entry on the next render.
+    """
+    assert VENDOR_QUIRKS_DB and AMD_GPU_GUIDANCE_DB, "precondition: the id tables are populated"
+    keys = _data_driven_silence_keys()
+
+    # The precondition names each of the four contributions rather than bounding
+    # the total, because a lower bound cannot discriminate one going missing:
+    # the sweep yields ~76 keys against a bound of 38, so deleting the whole
+    # `quirk_`-prefixed vocabulary would still satisfy it and the round trip
+    # below would simply iterate fewer keys, all passing. Samples are read from
+    # the tables at runtime, so this stays a relationship rather than a literal.
+    a_quirk = quirk_key(VENDOR_QUIRKS_DB[0])
+    an_advisory = AMD_GPU_GUIDANCE_DB[0].warning_id
+    for expected in (
+        a_quirk,  # the board-note occurrence
+        f"quirk_{a_quirk}",  # the condition promoted from it
+        f"gpu_advisory_{an_advisory}",  # the GPU advisory row
+        "interference",
+        "thermal",
+    ):
+        assert expected in keys, f"the sweep lost the vocabulary {expected!r} belongs to"
+
+    digest = fingerprint(["evidence"])
+    assert digest and len(digest) == 12, "precondition: a real digest, not the empty one"
+
+    for key in keys:
+        for shape in ("", digest):
+            occ = Occurrence(key=key, fingerprint=shape, level="warn")
+            assert parse_token(occurrence_token(occ)) == occ, (
+                f"{key!r} does not survive a store/read round trip"
+            )

@@ -100,11 +100,28 @@ def occurrence_token(occ: Occurrence) -> str:
 def parse_token(token: str) -> Occurrence | None:
     """Split a stored token, or ``None`` if it is not one.
 
-    ``rpartition``/``partition`` rather than ``split``: a key may contain both
-    separators (a quirk id can carry ``#``, a header id carries ``:`` and could
-    carry ``@``), a level never does, and a fingerprint is hex. So the **last**
-    ``@`` ends the key+fingerprint, and the **first** ``#`` after that split
-    begins the fingerprint.
+    ``rpartition("@")`` rather than ``split``: a level never contains ``@``, so
+    taking the **last** one always ends the key+fingerprint correctly — even for
+    a key that contains ``@`` itself, which round-trips cleanly. That is a
+    genuine property of the parse and not a claim that such a key exists; none
+    currently does.
+
+    The ``#`` is asymmetric, and its ``partition`` is a **constraint on keys
+    rather than a capability of this parser**: it takes the *first* ``#``, so
+    ``a#b@warn`` parses as ``key="a", fingerprint="b"``. **No key may contain
+    ``#``.** An earlier version of this paragraph justified ``partition`` by
+    saying a quirk id *can* carry one — it cannot, and the code contradicted the
+    claim (`ACK-u`). The constraint holds today: 0 of the 38 declared ids carry
+    one — 36 ``VENDOR_QUIRKS_DB`` quirks and 2 ``AMD_GPU_GUIDANCE_DB``
+    advisories, a split worth naming because the count that reached `ACK-u` came
+    from ``grep -c 'id="'``, which also matches ``warning_id="`` and so called
+    all 38 of them quirks.
+
+    ``tests/test_system_state_alert_fatigue.py`` asserts the constraint over
+    both tables, because breaking it fails **silently**: a board note's
+    occurrence carries ``fingerprint=""``, so it could never match its own
+    stored token and Dismiss would appear to do nothing, while ``prune``, keyed
+    on the truncated half, would delete the entry on the next render.
     """
     head, sep, level = token.rpartition("@")
     if not sep or not head:

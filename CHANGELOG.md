@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+### Internal
+
+**No user-visible change in this entry — three tests and one comment.**
+
+**The guard that protects your dismissals from a momentary blind spot is now
+tested.** When the daemon reports a valid hardware snapshot in which no chip
+enumerated — briefly the case across a daemon restart — the System State page
+deliberately does *not* tidy up its list of dismissed warnings, because in that
+instant it cannot tell a warning that has gone away from one it simply cannot
+see, and the tidy-up is written to disk. That refusal was correct and had no
+test: removing it left the whole suite green. It now has one, together with a
+test for the hard cap on how many dismissals are stored, which keeps the most
+recent rather than the oldest.
+
+**A comment that described the opposite of what its code does.** The routine
+that reads a stored dismissal back explained one of its choices by saying an
+identifier may contain a `#`. None does, and one that did would be silently cut
+short — the dismissal would appear to do nothing. The comment now states the
+real constraint, and a test asserts it over the two tables where identifiers are
+declared, so a future addition that broke it would fail rather than misbehave
+quietly.
+
 ## [2.75.2] — 2026-09-15
 
 **No daemon change and no new daemon requirement** — the pairing floor is
