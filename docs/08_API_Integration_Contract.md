@@ -484,10 +484,26 @@ Daemons < 2.22.0 emit no `controls` entry; a client must treat its absence as
 
 `thermal_state` (daemon ≥1.13.0, additive — `api_version` unchanged) is one of
 `"normal" | "recovery" | "emergency" | "no_sensor_fallback"`. While it is not
-`"normal"` the daemon is forcing all OpenFan+hwmon PWM (GPU fans excluded —
-DEC-130) and holding the hwmon lease as `thermal-safety`; the GUI has no loop
-to stand down (DEC-165) and simply shows a single poll-driven thermal warning.
-Older daemons omit the field — the GUI defaults it to `"normal"`.
+`"normal"` the daemon is forcing every OpenFan channel and writable hwmon header
+**this machine has** (GPU fans excluded — DEC-130) and holding the hwmon lease as
+`thermal-safety`; the GUI has no loop to stand down (DEC-165) and simply shows a
+single poll-driven thermal warning. Older daemons omit the field — the GUI
+defaults it to `"normal"`.
+
+**A non-`"normal"` `thermal_state` does NOT imply that any fan was written**
+(DEC-371). On a machine with no fan backend at all — a GPU-only box, or a VM —
+the ladder still latches, still publishes `"emergency"`, and reaches nothing,
+because GPU fans are excluded by design. The same is true, and is **not** even
+distinguishable in the daemon's own log, on a board whose every hwmon `pwmN` is
+read-only (register row `OFN-ad`). There is no wire field for any of this: the
+no-backend case is reported only in the log, at `error` level since 2.47.5
+(*"Thermal safety override reached NO fans"*), and a client cannot tell the
+cases apart from `/poll`.
+So a thermal banner is a statement about the daemon's **state**, never a promise
+that cooling was applied — do not word one as though fans are now at 100%. A
+client that wants to bound the case can note that `fans[]` carrying no `openfan:`
+and no writable `hwmon:` entry is the same condition, but that is inference, not
+contract.
 
 On daemon ≥ 2.19.0, `"no_sensor_fallback"` has a **second trigger**: a CPU
 reading that is merely *stale* now counts as no reading (DEC-267). The safety
