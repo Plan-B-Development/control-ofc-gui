@@ -90,9 +90,15 @@ This endpoint should drive:
 - source-specific labels and messages
 
 Notable fields:
-- `devices.openfan.channels` is always **10** in V1 (OpenFan v1 hardware has
-  10 channels). The field is hardcoded daemon-side — do not assume it can
-  vary per device.
+- `devices.openfan.channels` is **10 when a controller is attached and `0` when
+  none is** (OpenFan v1 hardware has 10 channels, and that is the only hardware
+  the daemon speaks to — so the count varies with *presence*, never with the
+  device). `rpm_support` behaves the same way. **Changed in daemon 2.47.4
+  (`OFN-k`):** both were hardcoded `10`/`true` before it, so a machine with no
+  controller advertised ten RPM-capable channels of hardware that did not exist.
+  A client that reads `present` first — which it must — sees no difference
+  between the two daemons; one that does not is no longer lied to by the newer
+  one. Do not derive presence from `channels != 0`: read `present`.
 - `devices.amd_gpu.pci_id` (legacy) and `devices.amd_gpu.pci_bdf` (canonical)
   both carry the same PCI BDF address during the transition window; GUI
   parsers accept either name (see DEC-042 and the 2026-04-22
@@ -2249,12 +2255,15 @@ Old daemons predating the route answer `404`, which the GUI treats as
     - *"an OpenFan rescan is already in progress"* — single-flight; two racing
       probes would open the same tty and the loser would install a controller
       over the winner's. `retryable` is the `validation_error` default.
-    - *"…was attempted moments ago"* — the repeat-probe cooldown (10-e), which
-      applies only while the candidate **port set is unchanged**: a newly
-      attached controller enumerates a new tty, so a genuine retry proceeds at
-      once. This one sets **`retryable: true`**, because it clears in seconds
-      and a client keying its backoff off that field must not read the wait as
-      permanent. Since DEC-291 it is evaluated **before** the already-connected
+    - *"a probe over the same ports was attempted moments ago"* — the
+      repeat-probe cooldown (10-e), which applies only while the candidate
+      **port set is unchanged**. This one sets **`retryable: true`**, because it
+      clears in seconds and a client keying its backoff off that field must not
+      read the wait as permanent. **Wording changed in daemon 2.47.4 (`OFN-u`)
+      — match on `"moments ago"`, not on the whole sentence:** it previously
+      read *"an OpenFan rescan over the same ports was attempted moments ago"*,
+      which attributed to the client an action the daemon itself often took (see
+      the set-change caveat below). Since DEC-291 it is evaluated **before** the already-connected
       no-op, and the ports are enumerated *without opening them*, so a refused
       rescan no longer resets Arduino-class boards — which is the entire point
       of rationing it.
@@ -2311,9 +2320,13 @@ Error codes and HTTP statuses:
 - 409 `thermal_abort` (source: `"hardware"`, retryable: true) — a fan diagnostic was aborted or refused due to high temperature: calibration aborts mid-sweep, and a verify refuses to start while any sensor is over the 85 °C limit (DEC-201, daemon ≥ 2.6.0)
 - 409 `validation_error` (source: `"validation"`, retryable: false **except two cases described below, which are `true`: the rescan cooldown, and the DEC-297 thermal-forcing refusal shared by both verify endpoints and calibrate**) — a fan diagnostic (`POST /fans/openfan/{ch}/calibrate`, `POST /hwmon/{id}/verify`, or `POST /gpu/{id}/fan/verify`) when another calibration **or** verify is already in progress (they share a single-flight pause, DEC-191, daemon ≥ 2.2.2). Retry once the in-flight operation completes. (HTTP 409 with the `validation_error` code — matches the long-standing "calibration already in progress" response shape.) `POST /fans/openfan/rescan` uses the same shape for its own single-flight (DEC-265, daemon ≥ 2.18.0), on a **separate** flag — a rescan and a calibration do not block each other. On daemon ≥ 2.22.0 that endpoint returns this same 409 shape for a **second** reason: a 10-second cooldown between probes (10-e, DEC-279), because each probe asserts DTR on every candidate tty and that resets Arduino-class boards.
 
-Two things distinguish the cooldown 409 from the single-flight 409, and a client that retries automatically should read the second one. The `message` differs — the cooldown says "over the same ports was attempted moments ago" and names the seconds to wait. More usefully, the cooldown carries **`retryable: true`** while the single-flight 409 carries `retryable: false`; that field is the documented signal for exactly this decision, and a condition that clears in ten seconds must not present as permanent. No `429` was added: the documented code set is a contract and no client would branch differently on the status alone.
+Two things distinguish the cooldown 409 from the single-flight 409, and a client that retries automatically should read the second one. The `message` differs — the cooldown says "over the same ports was attempted moments ago" and names the seconds to wait. (On daemon ≥ 2.47.4 the full sentence is *"a probe over the same ports was attempted moments ago"*; before that it named the caller's action, *"an OpenFan rescan over the same ports…"* — `OFN-u`. Match on the substring above, which both spellings contain, never on the whole sentence.) More usefully, the cooldown carries **`retryable: true`** while the single-flight 409 carries `retryable: false`; that field is the documented signal for exactly this decision, and a condition that clears in ten seconds must not present as permanent. No `429` was added: the documented code set is a contract and no client would branch differently on the status alone.
 
-**The cooldown applies only while the candidate port set is unchanged.** Attaching a controller enumerates a new tty, so plugging one in and rescanning immediately is *not* refused — that retry is the endpoint's primary purpose and rate-limiting it on elapsed time alone was a defect corrected before release. What is spaced is a client re-probing hardware that has not changed, which cannot succeed and does reset boards. **Since DEC-291 (daemon ≥ 2.23.5) the cooldown is checked FIRST**, so this is no longer true: a successful rescan followed by another within the window answers `409`, not `200 already_connected`. It still never re-probes or re-adopts — idempotent in effect, not in status code. The reason for the change is that the port list the cooldown compares used to be built by *opening* every candidate, so the boards were reset before the cooldown could refuse anything; enumeration no longer opens, and the check now runs before any other branch can step in front of it.
+**The cooldown applies only while the candidate port set is unchanged**, and attaching a controller enumerates a new tty — rate-limiting on elapsed time alone was a defect corrected before release, because "plug it in and click rescan" is the endpoint's primary purpose. What is spaced is a probe over hardware that has not changed, which cannot succeed and does reset boards.
+
+**But the set-change exemption is not reserved for the client, and the daemon can consume it (`OFN-u`, corrected 2026-09-12 — this paragraph previously claimed such a retry is "*not* refused", which is false).** The daemon's own post-boot adoption loop probes on this same guard, and `RescanGuard`'s drop re-stamps the cooldown with the **new** candidate set. So if the loop reaches a newly attached controller first, a user clicking *Rescan Hardware* within the 10-second cooldown meets `elapsed < COOLDOWN && same_port_set(new)` and **is** refused, on the one endpoint whose purpose is recovery without a restart. The collision is confined to the post-boot adoption window (60 s auto-detect, 180 s when a serial port is configured) and needs the two probes inside 10 s of each other, so it is uncommon rather than impossible; outside that window no daemon-side probe runs and the exemption is the client's alone. Residual impact is small — the refusal is `retryable: true` and names the wait, and inside the window the loop keeps probing on its own — but a client must not present this 409 as "you already did that". Treat it as "a probe just happened" and retry when the message says to.
+
+**Since DEC-291 (daemon ≥ 2.23.5) the cooldown is checked FIRST**, ahead of the already-connected no-op, so a successful rescan followed by another within the window answers `409`, not `200 already_connected`. It still never re-probes or re-adopts — idempotent in effect, not in status code. The reason for the change is that the port list the cooldown compares used to be built by *opening* every candidate, so the boards were reset before the cooldown could refuse anything; enumeration no longer opens, and the check now runs before any other branch can step in front of it.
 - 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
 - 500 `internal_error` (source: `"internal"`, retryable: true)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)
