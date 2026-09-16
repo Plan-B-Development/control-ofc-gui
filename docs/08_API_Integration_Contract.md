@@ -1998,7 +1998,35 @@ to cover the worst-case ~7.5 s round-trip. See the "Per-call timeouts
 Response (daemon `HwmonVerifyResponse` ↔ GUI `HwmonVerifyResult`):
 - `header_id: str`
 - `result: str` — `"effective"`, `"pwm_enable_reverted"`,
-  `"pwm_value_clamped"`, `"no_rpm_effect"`, or `"rpm_unavailable"`
+  `"pwm_value_clamped"`, `"no_rpm_effect"`, `"rpm_unavailable"`, or — **daemon
+  ≥ 2.48.0, DEC-373** — `"pwm_readback_unavailable"`. An unrecognised token
+  **must be rendered rather than dropped** (273-i); there is no capability flag
+  for the sixth, and none is needed, because an older client's unknown-token
+  arm already renders it neutrally and abstains from any sweep verdict.
+
+  **`rpm_unavailable` and `pwm_readback_unavailable` are both inconclusive and
+  they are not interchangeable (`ACK-m`).** `rpm_unavailable` means the daemon's
+  reverted-enable and clamped-value guards both **passed** and only the tach
+  confirmation is missing — "the write was accepted, the effect is unconfirmed".
+  `pwm_readback_unavailable` means a post-write readback produced *nothing*, so
+  those guards were **skipped rather than passed** and even the acceptance is
+  unestablished. Two readbacks reach it: `pwmN` itself, and a `pwmN_enable` that
+  was readable *before* the write and not after. A header with no `pwmN_enable`
+  file at all is ordinary hardware and is unaffected — it reads absent in both
+  snapshots and still reports `rpm_unavailable`.
+
+  It is **not** a failure verdict and must not be painted as one: the causes are
+  a transient sysfs I/O error or the chip being removed / its driver unbound
+  mid-test, none of which is a finding about the board's fan control. Before
+  2.48.0 this case was absorbed by `rpm_unavailable`, whose message asserts
+  "PWM values held" — a claim nothing had established.
+
+  **The reach is deliberately narrow.** The new token is consulted only where
+  `rpm_unavailable` would have been returned. A header whose tach moved in the
+  expected direction after the write still reports `effective`, and one whose
+  tach did not still reports `no_rpm_effect`, even where the readback failed:
+  the tach is evidence independent of the readback, and discarding it would
+  trade a true positive for a claim those two arms never made.
 - `initial_state`, `final_state` — `{pwm_enable, pwm_raw, pwm_percent,
   rpm}`, each sub-field optional
 - `test_pwm_percent: int`, `wait_seconds: int`, `details: str`

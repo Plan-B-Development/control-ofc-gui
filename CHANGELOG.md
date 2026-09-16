@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+## [2.76.0] — 2026-09-16
+
+**A PWM verify result that could claim more than the daemon had checked now has
+its own wording (DEC-373, register row `ACK-m`). Pairs with daemon v2.48.0.**
+Nothing on this page changes on an older daemon — the new result simply never
+arrives — so there is **no new daemon requirement** and the pairing floor is
+unchanged from v2.75.0.
+
+**What the verify could tell you.** *Verify PWM* on the Hardware page writes a
+test duty to a header, waits, reads it back, then puts it back. If the read-back
+**failed** — a transient I/O error, or the sensor chip disappearing mid-test —
+the daemon's two safety checks were skipped rather than passed, and on a header
+with no usable tach the result still came back as *"PWM write accepted but RPM
+readback unavailable"*. Nothing had established that the write was accepted.
+
+Daemon v2.48.0 reports that case separately, and this release gives it a proper
+sentence rather than a raw token:
+
+> **PWM readback failed, so whether the write held could not be confirmed**
+
+with next-step advice of its own — re-run, and check `dmesg` for the sensor
+chip's driver if it repeats — rather than *"listen for fan speed changes"*,
+which is the right advice for a missing tach and the wrong advice for a missing
+readback.
+
+**It is not an alarm, and it will not become one.** Like the no-tach result, it
+is neutral and **inconclusive**: it does not condemn your board, it does not flip
+a hardware note to *fan control did not test clean*, and a *Verify all* sweep
+containing one simply leaves your previous verdict alone rather than overwriting
+it either way. A transient read error is not a finding about your motherboard.
+
+**A fan that visibly responded is still a pass.** The new result is used only
+where the no-tach one would have been. GPU fan verify is unchanged — it already
+handled this case correctly, and the two verify vocabularies stay deliberately
+separate (DEC-364).
+
+### Documentation
+
+Also carries three `docs/08_API_Integration_Contract.md` corrections committed
+since v2.75.5, from the daemon-side DEC-370/371/372 work: the OpenFan capability
+shape and the rescan cooldown, that a non-`normal` `thermal_state` does not imply
+a fan was written, and that a read-only-`pwmN` board reaches the no-fans alarm.
+
 ## [2.75.5] — 2026-09-16
 
 **No daemon change and no new daemon requirement** — the pairing floor is unchanged

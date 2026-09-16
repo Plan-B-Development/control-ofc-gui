@@ -1917,7 +1917,13 @@ def verification_guidance(
 
     *result* is one of the daemon's verify outcomes: "effective",
     "pwm_enable_reverted", "pwm_value_clamped", "no_rpm_effect",
-    "rpm_unavailable".
+    "rpm_unavailable", or — daemon >= 2.48.0 — "pwm_readback_unavailable".
+
+    Returns ``None`` for any token this function has no advice for, including
+    an unrecognised one. That is the right default and not an oversight: the
+    advice here is board-specific next steps, and inventing one for a token
+    whose meaning this GUI does not know is how a verdict gets fabricated
+    (``verify_view._UNRECOGNISED_HINT`` owns saying so instead).
     """
     if result == "effective":
         return None
@@ -1989,6 +1995,20 @@ def verification_guidance(
             "The PWM value was written but RPM feedback is not available on this "
             "header, so the actual effect cannot be confirmed. Listen for fan speed "
             "changes or check another monitoring tool to verify control is working."
+        )
+
+    # `ACK-m` / DEC-373. Deliberately different advice from the branch above,
+    # because the user's next step is different: there the write is known to
+    # have been accepted and only the confirmation is missing, so "listen to
+    # the fan" closes it. Here nothing about the write was established, so the
+    # next step is to re-run — and to check whether the chip is still there.
+    if result == "pwm_readback_unavailable":
+        return (
+            "The test duty was written, but reading the header back afterwards "
+            "failed, so whether it held could not be confirmed. This is usually "
+            "transient — re-run the test. If it repeats, check `dmesg` for the "
+            "sensor chip's driver; a chip that was removed or unbound mid-test "
+            "produces exactly this result."
         )
 
     return None
@@ -2202,10 +2222,12 @@ def dual_chip_verify_hint(
     Returns None when:
         - the result is `effective` (working correctly — no dual-chip
           confusion to explain)
-        - the result is `pwm_enable_reverted` or `rpm_unavailable` — the
-          first is clearly BIOS/EC-driven and the second is not a failure
-          at all but an absent tachometer (DEC-358 ranks it *inconclusive*),
-          so a dual-chip hint would be noise in both cases
+        - the result is `pwm_enable_reverted`, `rpm_unavailable` or
+          `pwm_readback_unavailable` — the first is clearly BIOS/EC-driven,
+          the second is not a failure at all but an absent tachometer
+          (DEC-358 ranks it *inconclusive*), and the third established
+          nothing about the write either way (`ACK-m` / DEC-373), so a
+          dual-chip hint would be noise in all three cases
         - the board is not a dual-chip target
         - no chips are missing (all expected chips already detected)
     """

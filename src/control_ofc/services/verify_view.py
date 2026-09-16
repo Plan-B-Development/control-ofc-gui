@@ -69,14 +69,22 @@ class VerifyOutcome:
 #: Evidence column: a clamp and an unmoved RPM are `ineffective` because both
 #: are the write path failing to take. `rpm_unavailable` is `inconclusive`: the
 #: daemon reaches it only after its reverted-enable and clamped-value guards
-#: have both fallen through, and its message is "PWM values held but RPM sensor
+#: have both *passed*, and its message is "PWM values held but RPM sensor
 #: unavailable" — so the write was accepted as far as the daemon could tell,
-#: and only the confirmation is missing. (Not quite "the write landed": if the
-#: readback of `pwmN` itself fails, the clamp guard is skipped rather than
-#: passed. That is narrower still, and `inconclusive` remains the honest answer
-#: for it — `ineffective` would assert a failure nothing established. Row
-#: `ACK-m`.) Recording it as `ineffective` is what minted an unclearable alarm
-#: on any board with an empty header, a 3-pin fan, or a pump at rest.
+#: and only the confirmation is missing. Recording it as `ineffective` is what
+#: minted an unclearable alarm on any board with an empty header, a 3-pin fan,
+#: or a pump at rest.
+#:
+#: The caveat that used to sit here — that a *failed* readback skips the clamp
+#: guard rather than passing it, so `rpm_unavailable` could be returned having
+#: established less than it says — **is retracted** (row `ACK-m`, DEC-373).
+#: Daemon >= 2.48.0 returns `pwm_readback_unavailable` for that case instead,
+#: so the sentence above is now unqualified. Both are `inconclusive`, and that
+#: is the point: the split is about what the *user* is told, not about the
+#: evidence, which was never anything either way. Against an older daemon the
+#: caveat still holds and the unknown-token arm is not involved — that daemon
+#: says `rpm_unavailable`, which this table answers correctly for the common
+#: case and slightly over-generously for the rare one.
 _OUTCOMES: dict[str, VerifyOutcome] = {
     "effective": VerifyOutcome(
         "PWM control is working correctly",
@@ -109,6 +117,22 @@ _OUTCOMES: dict[str, VerifyOutcome] = {
     "rpm_unavailable": VerifyOutcome(
         "PWM write accepted but RPM readback unavailable",
         "no tach",
+        "CardMeta",
+        VERDICT_WARN,
+        PWM_EVIDENCE_INCONCLUSIVE,
+    ),
+    # `ACK-m` / DEC-373, daemon >= 2.48.0. Deliberately the same three
+    # presentation columns as `rpm_unavailable` above: both are neutral, both
+    # are `inconclusive`, and neither is a hardware fault. What differs is the
+    # *sentence*, which is the whole reason this is a sixth token — the row
+    # above claims the write was accepted, and here nothing established that.
+    #
+    # `CardMeta` rather than `WarningChip` on purpose. A transient sysfs read
+    # failure is not a finding about the board, and painting it as one would
+    # recreate the DEC-358 alarm this vocabulary exists to stop minting.
+    "pwm_readback_unavailable": VerifyOutcome(
+        "PWM readback failed, so whether the write held could not be confirmed",
+        "no readback",
         "CardMeta",
         VERDICT_WARN,
         PWM_EVIDENCE_INCONCLUSIVE,

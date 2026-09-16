@@ -46,6 +46,7 @@ For motherboard hwmon headers it is often unclear whether a write actually reach
 | **PWM value was clamped or ignored** | The write was accepted but the value the hardware reports back differs from what was written (or differs more than expected). Often a partial BIOS override |
 | **PWM accepted but RPM did not change** | Write took effect at the sysfs level but the fan did not respond. Either the header has nothing connected, the fan is stalled, or there is no tachometer to confirm |
 | **PWM accepted; RPM readback unavailable** | Write looks fine but the board does not provide a `fan*_input` value for this header to confirm |
+| **PWM readback failed** | Reading the header back after the write did not return a value at all, so whether the duty held could not be confirmed — and there was no usable RPM reading to corroborate it either. **This is not evidence the write failed, and not a finding about your board.** It is almost always transient: re-run the test. If it repeats, check `dmesg` for the sensor chip's driver — a chip removed or unbound mid-test produces exactly this. Requires daemon v2.48.0 or newer; an older daemon reported this case as *PWM accepted; RPM readback unavailable*, which claimed more than it had checked |
 
 The result panel also shows the initial → final RPM and `pwm_enable` values, plus a **Next step** suggestion tailored to the result and your board vendor.
 

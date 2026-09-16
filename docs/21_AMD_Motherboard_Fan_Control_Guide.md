@@ -1080,7 +1080,10 @@ a safe write-capability test:
 3. Waits ~3 seconds and reads the RPM response
 4. Restores the original PWM value
 5. Reports one of: `effective`, `pwm_enable_reverted`, `pwm_value_clamped`,
-   `no_rpm_effect`, `rpm_unavailable`
+   `no_rpm_effect`, `rpm_unavailable`, or — daemon ≥ 2.48.0 —
+   `pwm_readback_unavailable` (the post-write readback produced nothing, so
+   nothing about the write was established; re-run). See `docs/08` for how the
+   last two differ.
 
 This test determines the actual write capability regardless of what the
 driver claims.
