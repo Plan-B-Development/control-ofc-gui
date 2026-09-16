@@ -43,7 +43,8 @@ icon must:
 - ship as a vector (`assets/branding/app_icon/app_icon.svg`)
 
 ## Typography
-- System default sans-serif by default
+- Bundled OFL faces, registered at startup by `register_bundled_fonts()` before any
+  theme is applied: **DM Sans** (body) and **Space Grotesk** (headings)
 - Base font size: 10pt
 - User-configurable font family and base size from the Theme page
 - No decorative or script faces in operational UI

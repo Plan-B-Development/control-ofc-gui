@@ -336,12 +336,14 @@ available and should annotate Tctl with a note explaining its nature.
 
 Reference: https://docs.kernel.org/hwmon/k10temp.html
 
-### ASUS CPUTIN bogus on NCT6776F
+### ASUS CPUTIN bogus on the nct6775 family
 
 The kernel documentation states: "On various ASUS boards with NCT6776F, CPUTIN
 is not really connected and reports unreasonable temperatures."
 
-When `chip_name` is `nct6776` and `board_vendor` contains "ASUS", the CPUTIN
+When `chip_name` is any of the nct6775 family — `nct6775`, `nct6776`, `nct6779`,
+`nct6791`, `nct6792`, `nct6793`, `nct6795`, `nct6796`, `nct6797`, `nct6798`,
+`nct6799` — and `board_vendor` contains "ASUS", the CPUTIN
 channel is classified as `bogus` with `low` confidence and notes explaining the
 issue. This is a well-documented kernel driver quirk, not a GUI assumption.
 

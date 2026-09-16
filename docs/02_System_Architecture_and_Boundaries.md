@@ -109,10 +109,15 @@ control_ofc/
   services/
     app_settings_service.py
     app_state.py
+    daemon_features.py         # capability-gated feature ids -> wording. ONE gating shape
+                               #   per flag: a raw getattr chain elsewhere is the DEC-334
+                               #   defect, where an unregistered id answered None and the
+                               #   feature was offered on no daemon at all
     demo_controller.py        # demo-only curve evaluator (no daemon, no hardware) — DEC-165
     demo_service.py
     diagnostics_service.py     # event log + support bundle; sole writer of the shared
                                #   /diagnostics/hardware cache AND AppState.board_info (DEC-229)
+    health_ack.py              # acknowledge/dismiss lifecycle for health findings — DEC-358/359
     history_store.py
     polling.py                 # 1 Hz poll + periodic capabilities cycle; prefetches
                                #   /diagnostics/hardware once at startup (DEC-229)
@@ -285,6 +290,8 @@ control_ofc/
       inventory_readiness_view.py  # shared hwmon-readiness severity helpers only — view class removed (DEC-200/216)
       theme_editor.py
       aio_config_dialog.py
+      pwm_characterization_dialog.py  # "Characterise PWM Response" — DEC-313/315/334.
+                               #   Thin renderer over characterization_view
       pwm_response_chart.py    # DEC-334 §8.3. pyqtgraph rising/falling series with
                                # plateau and saturation markers. Thin renderer over
                                # ResponseCurve; draws nothing when there is nothing to

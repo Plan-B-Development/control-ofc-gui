@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Documentation
+
+**Two things the docs told you to do would not have worked.** The README's
+development-extras list named `ruff >= 0.4` where the real pin is `ruff >= 0.15.20, <
+0.16` (upper-bounded on purpose — a formatter's output is version-dependent), and
+`mutmut >= 3.5` where the floor is **3.6**, because 3.5.0 raises
+`RuntimeError: context has already been set` on Python 3.14. It also omitted `vulture`
+and `pyyaml` entirely. A contributor following it installed a known-broken mutmut and a
+ruff nine minor versions below the one the formatter gate assumes. Separately, the user
+manual told you to set `allow_port_probe = true` in `daemon.toml` without naming the
+**`[detection]`** table it has to live under — so the flag silently did nothing, after
+you had already installed the root-equivalent `CAP_SYS_RAWIO` drop-in for it. Every
+other site in both repos names the table correctly.
+
+**Both sensor guides understated a quirk's reach.** The bogus ASUS `CPUTIN` reading was
+described as an `nct6776` problem; DEC-294 widened it to the whole 11-chip nct6775
+family, and both code legs have carried all eleven since. Only the prose lagged. Six
+scope sites corrected across `docs/20` and `docs/22`; the verbatim kernel-documentation
+quotations are deliberately left alone, because the kernel really does say NCT6776F.
+
+**Also corrected:** `docs/06` claimed the GUI reads curve floors and stale-data
+timeouts from `GET /capabilities`'s `limits` — it reads exactly one field from there,
+and the curve floors are GUI-baked policy (DEC-095); `docs/03` and `docs/15` said the
+app uses the system default font when it ships, registers and defaults to DM Sans and
+Space Grotesk (DEC-303 makes that load-bearing, so the old advice would have undone
+it); `docs/02`'s module tree gained three files it omitted; the OpenFan architecture
+doc's thermal trigger now states DEC-308's unconditional 115°C cap; and
+`CONTRIBUTING.md` no longer quotes a test count that had drifted by 43%.
+
+**No application behaviour changed.** Register rows `DOC-d`, `DOC-e`, `DOC-f`, `DOC-g`,
+`DOC-m`, `DOC-n`, `DOC-q`, `DOC-r`, `DOC-s`, from the 2026-09-16
+`/ofc:docs-correctness` audit.
+
 ## [2.76.0] — 2026-09-16
 
 **A PWM verify result that could claim more than the daemon had checked now has

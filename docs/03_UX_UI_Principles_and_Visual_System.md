@@ -101,7 +101,13 @@ Use moderate density:
 - no spreadsheet-like clutter on default screens
 
 ## Typography
-Use the system/Qt defaults unless a clear reason exists not to.
+The app ships and registers its own OFL faces — **DM Sans** (body), **Space Grotesk**
+(headings) — via `register_bundled_fonts()` at startup, and `ThemeTokens` defaults to
+them. Do not fall back to the system/Qt default: DEC-303 made the bundled font
+load-bearing so text metrics mean the same thing on this host and in CI, and a page
+that opts out reintroduces the font-metric portability trap. Family and base size stay
+user-configurable from the Theme page.
+
 Tone of copy:
 - short
 - clear

@@ -255,7 +255,10 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 - **Violation:** Returns `FanControlError::Validation` — command is rejected
 
 ### Thermal Emergency (global)
-- **Trigger:** CPU Tctl ≥ the trip point — 105°C, or the CPU's own reported ceiling + 5°C where higher (DEC-308)
+- **Trigger:** CPU Tctl ≥ the trip point — at least 105°C, raised per-machine to
+  `min(CPU-reported design ceiling + 5°C, 115°C)` where the kernel publishes the ceiling
+  (DEC-308). The 115°C cap is unconditional; read `emergency_threshold_c` from
+  `GET /diagnostics/hardware` rather than deriving it
 - **Action:** Force all OpenFan channels to 100% PWM
 - **Hold:** Until Tctl ≤ 80°C
 - **Recovery:** 60% PWM floor for two cycles (release + 1), then resume profile control

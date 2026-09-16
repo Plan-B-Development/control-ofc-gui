@@ -166,7 +166,8 @@ the actual CPU temperature rises.
 The kernel recommends ignoring CPUTIN on affected ASUS boards and using
 PECI 0 or TSI 0 instead.
 
-**GUI handling:** When the chip is `nct6776` and the board vendor is ASUS,
+**GUI handling:** When the chip is any of the 11-chip nct6775 family (`nct6775`
+through `nct6799`, DEC-294) and the board vendor is ASUS,
 the GUI classifies CPUTIN as `bogus` at `low` confidence with an explanatory
 note.
 
@@ -453,7 +454,7 @@ address for stable identity across reboots.
 | `asus_ec_sensors` | high | Best-in-class semantic labels |
 | `asus_wmi_sensors` | medium_high | Same labels but WMI polling risk |
 | `nct6775` with labels | medium | Source configured by firmware |
-| `nct6775` `CPUTIN` on NCT6776F | low (bogus) | Known kernel-documented issue |
+| `nct6775`-family `CPUTIN` on ASUS | low (bogus) | Known kernel-documented issue |
 
 ### ASRock
 
@@ -563,9 +564,11 @@ explanatory note. Never presents Tctl as "actual CPU temperature."
 
 Reference: https://docs.kernel.org/hwmon/k10temp.html
 
-### Quirk 2: ASUS CPUTIN bogus on NCT6776F
+### Quirk 2: ASUS CPUTIN bogus on the nct6775 family
 
-**Applies to:** Some ASUS boards with nct6776 chip
+**Applies to:** Some ASUS boards with any nct6775-family chip — `nct6775`, `nct6776`,
+`nct6779`, `nct6791`, `nct6792`, `nct6793`, `nct6795`, `nct6796`, `nct6797`, `nct6798`,
+`nct6799` (DEC-294 widened this from `nct6776` alone; both code legs carry the same 11)
 
 **Symptom:** CPUTIN reports unreasonably high temperatures (e.g., 115C at
 idle) or temperatures that move inversely to actual CPU load.

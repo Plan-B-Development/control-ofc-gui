@@ -193,7 +193,13 @@ the Arch package — listed here for transparency):
   pyqtgraph imports it unconditionally even on Linux
 
 Development extras (`pip install -e ".[dev]"`):
-- `pytest >= 8.0`, `pytest-qt >= 4.3`, `pytest-timeout >= 2.3`, `pytest-cov >= 5`, `ruff >= 0.4`, `pip-audit >= 2.7`, `mutmut >= 3.5`
+- `pytest >= 8.0`, `pytest-qt >= 4.3`, `pytest-timeout >= 2.3`, `pytest-cov >= 5`,
+  `ruff >= 0.15.20, < 0.16`, `pip-audit >= 2.7`, `vulture >= 2.16`, `mutmut >= 3.6`,
+  `pyyaml >= 6`
+
+Two bounds are deliberate, not lazy: `ruff` is **upper**-bounded because a formatter's
+output is version-dependent, and `mutmut`'s floor is 3.6 because 3.5.0 raises on Python
+3.14. `pyproject.toml` explains both at the pin and is the source of record.
 
 ## Configuration
 
