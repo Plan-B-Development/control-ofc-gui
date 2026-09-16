@@ -293,8 +293,8 @@ owned by PMFW (DEC-130).
 
 ### Daemon thermal-emergency override (daemon-owned)
 The daemon owns one absolute backstop independent of the GUI: at or above
-the trip point on the hottest CpuTemp sensor, all OpenFan channels and writable
-hwmon headers are driven to 100% (see `daemon/src/safety.rs`, DEC-022).
+the trip point on the hottest CpuTemp sensor, every OpenFan channel and writable
+hwmon header the machine has is driven to 100% (see `daemon/src/safety.rs`, DEC-022).
 This is non-editable and fires regardless of profile content. **The trip point
 is per-machine (DEC-308)** — at least 105°C, raised to `min(ceiling + 5 °C, 115 °C)` where the kernel publishes the
 CPU's own design ceiling — and `/diagnostics/hardware`

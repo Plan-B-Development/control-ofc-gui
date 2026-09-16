@@ -467,7 +467,7 @@ the form `"N controls not being commanded — their fans hold their last speed"`
 
 **It is `warn` and never `crit`, deliberately.** Those fans are not stopped, and
 the thermal-emergency rule reaches every OpenFan channel and writable hwmon header
-regardless of what is listed — it writes them all, commanded or not (`force_all_with_floor`). `crit`
+the machine has, regardless of what is listed — it writes them all, commanded or not (`force_all_with_floor`). `crit`
 stays reserved for a subsystem that has actually failed. But it *does* move
 `overall_status` to `"warn"`, so a client whose ribbon reads only `overall_status`
 will now show a warning in a state that previously read fully healthy — this is
@@ -2202,8 +2202,8 @@ copy is a lie against that daemon.
 identify duty by re-issuing `stop` inside the deadman window. This is an **accepted, bounded risk**
 (2026-07-21 audit): identification requires changing any fan by design (DEC-166), the deadman
 limits an abandoned hold to one TTL, and a thermal emergency outranks the overlay — the daemon's
-thermal `force_all_with_floor` (and the no-sensor 40 % fallback) drives every OpenFan + writable
-hwmon header directly, spinning a stalled fan back up regardless of standing identify holds.
+thermal `force_all_with_floor` (and the no-sensor 40 % fallback) drives every OpenFan channel + writable
+hwmon header the machine has directly, spinning a stalled fan back up regardless of standing identify holds.
 DEC-311 narrows this further for the case that mattered most: a header the daemon knows to be a
 pump can no longer be held at 0 by anyone. "Knows to be a pump" is a **union** — the header's own
 label/chip evidence OR the user's assignment — so `POST /config/header-role {"role": "chassis_fan"}`

@@ -322,7 +322,7 @@ If writes still fail **after** upgrading, the cause is hardware prerequisites ra
 
 The daemon enforces a single thermal safety rule (non-negotiable, not configurable):
 - **Trigger**: hottest CPU temperature reaches the emergency limit. That limit is **per-machine** (DEC-308): 105°C is the floor and the fallback, raised to `min(CPU-reported design ceiling + 5°C, 115°C)` where the kernel publishes the ceiling (`tempN_crit`). `GET /diagnostics/hardware` reports the value in use — read it there, never assume 105
-- **Action**: Force all OpenFan channels and writable hwmon headers to 100% PWM. GPU fans are excluded — there is no GPU emergency threshold; AMD PMFW firmware protects the GPU independently (DEC-130)
+- **Action**: Force every OpenFan channel and writable hwmon header the machine has to 100% PWM. GPU fans are excluded — there is no GPU emergency threshold; AMD PMFW firmware protects the GPU independently (DEC-130)
 - **Hold**: Until temperature drops below 80°C
 - **Recovery**: Apply a 60% PWM recovery floor for two cycles (the release cycle and one more), then resume active profile control
 - **Fallback**: Apply a 40% PWM floor (OpenFan + hwmon) if no CPU sensor is reachable for 5 consecutive poll cycles

@@ -35,6 +35,18 @@ doc's thermal trigger now states DEC-308's unconditional 115°C cap; and
 `DOC-m`, `DOC-n`, `DOC-q`, `DOC-r`, `DOC-s`, from the 2026-09-16
 `/ofc:docs-correctness` audit.
 
+**The thermal emergency's reach is now described the same way everywhere.** DEC-371
+qualified it in the daemon's own source — the ladder drives every OpenFan channel and
+writable hwmon header **the machine has**, which on a GPU-only box or a board whose
+every `pwmN` is read-only is none at all — but roughly a dozen prose sites across both
+repos still said "all OpenFan and hwmon fans" without the qualifier. They were
+*unqualified* rather than false ("all OpenFan channels" over a machine with none is
+vacuously true), and `docs/08` had reached the point of contradicting itself: one
+paragraph carried the qualifier and two did not. **Nothing about what the daemon does
+has changed, and the reach itself is unchanged** — DEC-307 still gives every output
+`max(commanded, forced)`, and an output no control commands still receives the forced
+duty, which is what preserves the emergency's reach. Register row `OFN-ag`.
+
 ## [2.76.0] — 2026-09-16
 
 **A PWM verify result that could claim more than the daemon had checked now has

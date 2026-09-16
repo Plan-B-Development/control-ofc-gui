@@ -259,7 +259,9 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
   `min(CPU-reported design ceiling + 5°C, 115°C)` where the kernel publishes the ceiling
   (DEC-308). The 115°C cap is unconditional; read `emergency_threshold_c` from
   `GET /diagnostics/hardware` rather than deriving it
-- **Action:** Force all OpenFan channels to 100% PWM
+- **Action:** Force every OpenFan channel the machine has to 100% PWM — and every
+  writable hwmon header it has too, because the rule is not OpenFan-specific. GPU fans
+  are excluded by design (DEC-130)
 - **Hold:** Until Tctl ≤ 80°C
 - **Recovery:** 60% PWM floor for two cycles (release + 1), then resume profile control
 - **Implementation:** `ThermalSafetyRule.evaluate()` called every 1s in profile engine
