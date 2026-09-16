@@ -1,16 +1,23 @@
 # OpenFan Controller Integration — Technical Deep-Dive
 
-> **Snapshot, not source of truth.** This document was inspected against
-> daemon v0.2.0. The serial protocol described below is firmware-side and
-> has not changed since — the wire format, baud rate, command ABI, and
-> calibration sweep mechanics remain accurate. Daemon-side details (error
-> codes, endpoint paths, lock granularity) have evolved through many releases since;
-> see `daemon.md` § Module Map and the daemon `CHANGELOG.md` for current
-> behaviour.
+> **Part snapshot, part current — and the split is exact.** Everything here is
+> the v0.2.0 snapshot **except § 2 (Discovery and Connection), § 10 (Failure
+> Modes) and § 1's closing detection sentence**, which were re-verified against
+> daemon v2.48.0. The snapshot portion remains accurate because it is
+> firmware-side: wire format, baud rate, command ABI and calibration sweep
+> mechanics have not changed. The re-verified portion had to be rewritten because
+> DEC-291 and DEC-361 rebuilt detection and boot adoption, and **the 5-retry
+> 1–16 s ladder it used to describe no longer exists**. Other daemon-side details
+> (error codes, endpoint paths, lock granularity) have evolved through many
+> releases and are **not** tracked here; see `daemon.md` § Module Map, § Startup
+> Sequence and the daemon `CHANGELOG.md`.
 
 **For:** OpenFan Controller firmware developers and hardware integrators
-**Snapshot taken at:** Daemon v0.2.0
-**Evidence level:** All claims verified against the v0.2.0 Rust source
+**Snapshot taken at:** Daemon v0.2.0 (protocol) · daemon v2.48.0 (§ 1 tail, § 2, § 10)
+**Evidence level:** Protocol claims verified against the v0.2.0 Rust source; the
+re-verified sections against `main.rs`, `serial/adoption.rs`,
+`serial/real_transport.rs`, `api/handlers/openfan.rs` and `polling.rs` at
+daemon v2.48.0
 
 ---
 
@@ -24,24 +31,68 @@
 - **Flow control:** None
 - **Library:** `serialport` crate v4.9.0 (wraps POSIX termios)
 
-The daemon uses a stable device path via `/dev/serial/by-id/` (recommended) or auto-detects by scanning `/dev/ttyACM0`–`/dev/ttyACM9`.
+The daemon uses a stable device path via `/dev/serial/by-id/` (recommended) or auto-detects from the enumerated `/dev/ttyACM*` and `/dev/ttyUSB*` candidates.
 
 ---
 
 ## 2. Discovery and Connection
 
-### Startup Detection
-1. Check `serial.port` in config (explicit path)
-2. If not configured: auto-detect via `auto_detect_port()` (libudev or `/dev/ttyACM*` scan)
-3. Open port with `RealSerialTransport::open(path, timeout)`
-4. Port timeout set at open time (default 500ms per read operation)
+> **Re-verified against daemon v2.48.0.** This section, unlike the protocol
+> sections below, is *not* the v0.2.0 snapshot — discovery and adoption were
+> rebuilt by DEC-291 (enumerate without opening) and DEC-361 (boot makes one
+> attempt; the rest of the search is detached).
 
-### Retry on Failure
-- **5 retries** with exponential backoff: 1s, 2s, 4s, 8s, 16s
-- If all retries fail: daemon starts without OpenFan (degrades gracefully)
-- **Runtime auto-reconnect (R43):** after 5 consecutive read errors the daemon
-  enters reconnect mode — it re-runs `auto_detect_port` and retries with its own
-  capped backoff, recovering a disconnected device without a daemon restart
+### Startup Detection — exactly ONE attempt
+1. **Enumerate**, do not probe: `serial_port_candidates_enumerated()` lists
+   `/dev/ttyACM*` / `/dev/ttyUSB*` via libudev, falling back to a `Path::exists`
+   scan of `/dev/ttyACM0`–`9` and `/dev/ttyUSB0`–`9`. A configured
+   `serial.port` goes first but is never the *only* candidate (DEC-250).
+   **Nothing is opened here** — the split exists because `open(2)` on a tty
+   asserts DTR, which resets Arduino-class boards (DEC-291).
+2. **Identify**: `first_openfan_port()` opens each candidate in turn — **at most
+   once per candidate** — and accepts only one that answers the `ReadAllRpm`
+   handshake (DEC-250). Openability is not identity: a modem or 3D printer on
+   that tty would otherwise accept every write with `Ok`.
+3. Port timeout set at open time (`serial.timeout_ms`, default 500ms per read)
+4. **Then boot moves on.** This used to be a ladder of up to six attempts
+   sleeping 1+2+4+8+16 s that ran *ahead* of the API server, both poll loops and
+   the profile engine — so the daemon answered nothing and evaluated no thermal
+   safety for ~31 s. DEC-361 removed it.
+
+### If Nothing Was Adopted — the detached search
+The profile engine and the IPC server start regardless; the daemon is fully
+serving throughout. `post_boot_adoption_loop` is then spawned — **only** if boot
+adopted nothing — and drives `POST /fans/openfan/rescan`'s own handler rather
+than probing directly, so it cannot skip the identity handshake or the poll-loop
+spawn.
+
+| | Value |
+|---|---|
+| Window | **60s** auto-detect · **180s** when `serial.port` is configured |
+| Tick | 5s (`POST_BOOT_ADOPTION_INTERVAL`) |
+| Probes when | the enumerated candidate set **differs** from what boot last tried |
+| Handshake retries | 3, for a device that enumerates before its firmware answers — spent only on a probe that actually ran (`OFN-w`) |
+| Stops on | first adoption, window expiry, or shutdown |
+
+Both windows are far longer than the ~31 s ladder they replace, because waiting
+now costs nothing. A machine whose serial devices never change is never
+re-probed, so an unrelated Arduino on the bus is not reset once per tick.
+
+Do **not** attribute that skipping to the rescan cooldown: its predicate is
+`elapsed < COOLDOWN && same_port_set(..)`, an **AND**, so it *spaces* repeat
+probes to one per ten seconds and never skips one. The loop owns its own
+candidate-set comparison for exactly that reason (DEC-361).
+
+### Runtime auto-reconnect (R43)
+After **5 consecutive read errors** the OpenFan poll loop enters reconnect mode:
+it re-runs `auto_detect_port()` with its own capped backoff, recovering a
+disconnected device without a daemon restart. This is the **one remaining caller
+of the opening detection** — DEC-291 moved boot and rescan onto the
+non-opening enumeration but deliberately left this path, because it runs only
+after a controller that was *already adopted* has dropped off, so there is a
+known device to re-find rather than a bus to survey. A re-opened transport is
+re-verified for identity (DEC-250/255) and the write-coalescing cache is
+invalidated before it goes live (DEC-256).
 
 ### Assumptions About Device
 - Device responds within 500ms per line
@@ -265,7 +316,7 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 
 | Failure | Detection | Recovery | Impact |
 |---------|-----------|----------|--------|
-| Device not found at startup | Port open fails | 5 retries with backoff | Daemon runs without OpenFan |
+| Device not found at startup | No enumerated candidate answers the `ReadAllRpm` handshake | One boot attempt, then a detached 60s / 180s search that re-probes only when the candidate set changes | Daemon runs without OpenFan, fully serving throughout; adopts without a restart if the device appears |
 | Device disconnects during operation | Next read/write returns I/O error | **Auto-reconnect (R43)** — after 5 consecutive errors the daemon re-detects and reconnects with backoff; no restart needed | Fan control pauses until reconnect |
 | Firmware enters debug loop | 50 debug lines exceeded | Command fails with Protocol error | Affected write skipped |
 | Response timeout | 500ms per read_line | SerialError::Timeout returned | Write skipped for this cycle |

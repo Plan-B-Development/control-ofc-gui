@@ -107,10 +107,15 @@ Both `FanController` (OpenFan serial) and `HwmonPwmController` (motherboard PWM)
 ```
 1. Load config from /etc/control-ofc/daemon.toml (defaults if missing)
 2. Initialize StateCache (shared in-memory state)
-3. Detect OpenFanController serial device
-   └─ Retry loop: 5 retries with exponential backoff (1s, 2s, 4s, 8s, 16s)
-   └─ Auto-detect: scans /dev/ttyACM0–9 or uses libudev
-   └─ Opens at 115,200 baud, 8N1, no flow control
+3. Detect OpenFanController serial device — EXACTLY ONE attempt (DEC-361)
+   └─ Enumerate candidates WITHOUT opening them: libudev, falling back to a
+      path scan of /dev/ttyACM0–9 and /dev/ttyUSB0–9 (DEC-291)
+   └─ Identify: open each candidate at most once, accept only one answering
+      the ReadAllRpm handshake (DEC-250). Opens at 115,200 baud, 8N1, no flow
+      control
+   └─ If nothing is adopted, the search continues AFTER step 7 — see below.
+      There is no startup retry ladder; the 1+2+4+8+16 s loop that used to sit
+      here ran ahead of steps 4–7 and was removed by DEC-361
 4. Discover hwmon PWM headers from /sys/class/hwmon/
 5. Load initial profile (CLI --profile > OPENFAN_PROFILE env > persisted state > none)
 6. Construct AppState with all controllers, cache
@@ -118,7 +123,13 @@ Both `FanController` (OpenFan serial) and `HwmonPwmController` (motherboard PWM)
    ├─ hwmon sensor polling loop (1s interval)
    ├─ OpenFan RPM polling loop (1s interval, if connected)
    ├─ Profile engine loop (1Hz, evaluates curves and writes PWM)
-   └─ IPC HTTP server on Unix socket
+   ├─ IPC HTTP server on Unix socket
+   └─ post_boot_adoption_loop — ONLY if step 3 adopted nothing. Spawned after
+      the IPC server, so the daemon is already answering. 5s tick for 60s
+      (180s with [serial] port set), probing only when the enumerated
+      candidate set differs from what step 3 tried. Drives
+      POST /fans/openfan/rescan's own handler, so it cannot skip the identity
+      handshake or the poll-loop spawn (DEC-361)
 8. Wait for Ctrl+C signal
 9. Signal all tasks to shutdown
 10. Clean up socket file
@@ -366,7 +377,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 |-----------|-----------|----------|-------------|------|
 | CPU Tctl ≥ trip point (≥105°C, per-machine — DEC-308) | Profile engine polls cache | Force every OpenFan channel + writable hwmon header the machine has to 100% (auto-lease via force_take, R43) | Fans max until 80°C | GPU fans excluded by design — PMFW self-protects (DEC-130) |
 | CPU Tctl ≤ 80°C (after emergency) | Safety rule evaluate() | Release + 60% recovery for 2 cycles (release + 1) | Fans drop to 60% for two cycles, then profile resumes | None |
-| Serial device not found | Retry loop (5×, exponential backoff) | Daemon starts without OpenFan | GUI shows "not connected" | ~~Auto-reconnect at runtime not implemented~~ — **shipped in R43**: after 5 consecutive errors the daemon enters reconnect mode (auto-detect + backoff) |
+| Serial device not found | No enumerated candidate answers the identity handshake | One boot attempt, then a detached 60 s / 180 s search (DEC-361) that re-probes only when the candidate set changes; after that, `POST /fans/openfan/rescan` | Daemon starts and serves normally without OpenFan; adopts with no restart if the device appears | ~~Auto-reconnect at runtime not implemented~~ — **shipped in R43**: after 5 consecutive errors the poll loop enters reconnect mode (`auto_detect_port`, retried on a doubling backoff **capped at 30 poll intervals** — so 1s–30s at the default 1s `polling.poll_interval_ms`, and proportionally shorter if you have lowered it) |
 | Serial timeout (no response) | Per-read serialport timeout (500ms) | Returns `SerialError::Timeout` | Write skipped for this cycle | No automatic retry of failed commands |
 | Debug line flooding | MAX_DEBUG_LINES=50 + wall-clock deadline | Returns `SerialError::Protocol` | Write fails, logged | Cannot recover without restart |
 | 0% PWM > 8 seconds | Per-channel `stop_started_at` tracking | Reject further 0% commands | Fan restarts at last non-zero | Only protects API writes, not direct sysfs |
@@ -432,7 +443,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Profile activation via API | **Implemented** | `POST /profile/activate` |
 | Auto-reconnect on serial disconnect | **Implemented (R43)** | After 5 consecutive errors the daemon enters reconnect mode (auto-detect + backoff); no restart needed |
 | AIO pump support | **Placeholder only** | Struct exists, no implementation |
-| udev hotplug detection | **Not implemented** | Static detection at startup only |
+| udev hotplug detection | **Not implemented** | No udev subscription. Not the same as "startup only" since DEC-361: the post-boot loop re-enumerates every 5s for 60s/180s and adopts a controller plugged in during that window; `POST /fans/openfan/rescan` covers it afterwards |
 
 ---
 

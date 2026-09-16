@@ -329,8 +329,12 @@ If the daemon does not expose a runtime reload endpoint, do not fake a daemon co
 ### Reconnect controller
 The daemon exposes `POST /hwmon/rescan` (surfaced as *Rescan Hardware* in the
 System State page since DEC-147) for hwmon re-enumeration; serial-controller
-reconnection remains daemon-automatic (5× backoff + runtime reconnect mode),
-so no GUI reconnect button exists:
+reconnection remains daemon-automatic — a detached 60s / 180s post-boot search
+(DEC-361) plus the poll loop's runtime reconnect mode after 5 consecutive read
+errors — so no GUI reconnect button exists. (The startup "5× backoff" this line
+used to name was the ladder DEC-361 deleted; the *Rescan Hardware* action gained
+a `POST /fans/openfan/rescan` leg in DEC-265 for a controller that appears after
+the post-boot window closes.)
 - refresh status
 - explain that new fan-control hardware may require a daemon restart
 - the rescan result line carries that note verbatim

@@ -22,7 +22,7 @@ column therefore reads N/A throughout. Live manual override and fan identify are
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Startup device detection | IMPLEMENTED | hwmon + serial auto-detect at daemon start |
-| Serial startup retry | IMPLEMENTED | 5x exponential backoff (1-16s) |
+| Serial startup retry | **REMOVED (DEC-361)** | Boot makes exactly one attempt. The 5x 1–16s ladder ran ahead of the API server and the profile engine and was deleted; a detached 60s / 180s post-boot search replaces it |
 | **Serial runtime reconnect** | **IMPLEMENTED (R43)** | After 5 consecutive errors, enters reconnect mode with backoff |
 | hwmon manual rescan | IMPLEMENTED | `POST /hwmon/rescan` endpoint |
 | GUI rescan button | **IMPLEMENTED (DEC-147)** | The global footer's "Rescan Hardware" action (moved there by DEC-208; DEC-147 introduced it on the System State page) — restores the `DaemonClient.hwmon_rescan` wrapper, pushes fresh headers through `AppState`, chains a diagnostics refetch. New *motherboard* fan-control hardware still requires a daemon restart (daemon-side limit); an OpenFan controller does not, since DEC-265 gave the same button a `POST /fans/openfan/rescan` leg. |

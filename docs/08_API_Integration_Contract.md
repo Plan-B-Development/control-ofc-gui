@@ -2312,15 +2312,28 @@ Old daemons predating the route answer `404`, which the GUI treats as
       of rationing it.
   - `404 not_found` on any daemon before 2.18.0. **Gate on
     `capabilities.control.openfan_rescan`.**
-  - **Why this exists.** The daemon adopts its controller during startup only.
-    A device that enumerated a moment too late, or that failed the DEC-250
-    identity handshake once, previously left the daemon with no OpenFan backend
-    for the whole process lifetime — and since the profile engine's thermal
-    `force_all_with_floor` reaches OpenFan fans through that same backend, the thermal
-    emergency silently lost its OpenFan leg too. A failed boot connect only
-    logs a warning, so `Restart=on-failure` never fired and nothing recovered
-    it. Adoption uses the same identity-verified path as boot, so a port that
-    opens but is not an OpenFanController is still refused.
+  - **Why this exists.** A device that enumerates a moment too late, or that
+    fails the DEC-250 identity handshake once, must not leave the daemon with no
+    OpenFan backend for the whole process lifetime — the profile engine's
+    thermal `force_all_with_floor` reaches OpenFan fans through that same
+    backend, so losing it silently costs the emergency its OpenFan leg. A failed
+    boot connect only logs, so `Restart=on-failure` never fires and nothing
+    recovers it. Adoption uses the same identity-verified path as boot, so a
+    port that opens but is not an OpenFanController is still refused.
+  - **Boot is no longer the only adoption point (DEC-361, daemon ≥ 2.47.0), and
+    a client must not describe it as one.** Boot makes exactly **one** attempt;
+    if it adopts nothing, the daemon then runs a detached search for **60s**
+    (**180s** when `[serial] port` is configured) that drives *this endpoint's
+    own handler* on a 5s tick, probing only when the enumerated candidate set
+    differs from what boot tried. So a `503` here is not evidence that boot was
+    the last word, and on a machine where the controller is plugged in shortly
+    after boot the GUI may observe a controller appear with no user action and
+    no restart — poll-diff, as for any other hardware change. The endpoint
+    remains the route for a device that appears **after** that window, which is
+    the case *Rescan Hardware* exists for. Because the loop shares this handler,
+    it also shares the single-flight guard and the cooldown: a user rescan
+    during the window can legitimately answer `409` against a probe the daemon
+    itself started.
   - Called by the GUI as part of the global footer's *Rescan Hardware*
     action, not as a separate button: that action is what a user reaches for
     when hardware is missing, and requiring them to know *which kind* of

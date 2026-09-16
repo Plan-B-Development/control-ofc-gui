@@ -115,6 +115,42 @@ sudo systemctl restart control-ofc-daemon
 ls -la /dev/serial/by-id/
 ```
 
+### How the OpenFanController is adopted at boot (DEC-291 / DEC-361)
+The controller is **optional hardware**, and a machine without one must pay
+neither a boot stall nor a warning that reads like a fault. Boot therefore makes
+**exactly one** adoption attempt:
+
+1. **Enumerate** the `/dev/ttyACM*` and `/dev/ttyUSB*` candidates via libudev,
+   falling back to a path scan. A configured `serial.port` is tried first but is
+   never the only candidate — so a wrong value cannot remove OpenFan control
+   (DEC-250). **Nothing is opened at this step** (DEC-291).
+2. **Identify** each candidate by opening it — at most once per candidate — and
+   asking for `ReadAllRpm`. Only a device that answers is adopted; a tty that
+   merely opens is refused, because one that is not an OpenFanController would
+   accept every write with `Ok`.
+3. **Move on.** The profile engine, the hwmon poll loop and the IPC server start
+   regardless, so the daemon is answering the API and evaluating thermal safety
+   from this point whether or not a controller was found. (The *OpenFan* poll
+   loop is the one thing that is conditional — there is no transport to poll
+   until something is adopted.)
+
+If nothing was adopted, the search continues **in the background** for **60
+seconds**, or **180 seconds** if you have set `[serial] port`. It re-probes only
+when the set of serial devices actually *changes*, so plugging the controller in
+during that window is picked up within a few seconds, while a machine whose
+devices never change is never re-probed. That matters if you have other
+USB-serial hardware attached: identifying a device means opening it, and on
+Linux opening a serial port asserts DTR, which **resets Arduino-class boards**.
+
+After the window closes, use the GUI's **Rescan Hardware** action (or
+`POST /fans/openfan/rescan`) to adopt a controller without restarting the
+daemon. A controller that was adopted and then dropped off is recovered
+automatically by the poll loop's own reconnect, with no action needed.
+
+> Before DEC-361 this was a ladder of up to six attempts sleeping 1+2+4+8+16 s
+> that ran *ahead* of the API server and the profile engine. If you are reading
+> older notes that describe a ~31 s startup retry, they no longer apply.
+
 ---
 
 ## CLI arguments
@@ -239,7 +275,15 @@ sudo journalctl -u control-ofc-daemon -f
 - Check device exists: `ls /dev/ttyACM*`
 - Check permissions: `ls -la /dev/ttyACM0`
 - Use stable path: `ls /dev/serial/by-id/`
-- The daemon retries detection 5 times with exponential backoff (1s, 2s, 4s, 8s, 16s)
+- The daemon makes **one** detection attempt at startup, then keeps looking in
+  the background for 60s — 180s if you have set `[serial] port`. Plugging the
+  controller in during that window is adopted within a few seconds, with no
+  restart. See [How the OpenFanController is adopted at boot](#how-the-openfancontroller-is-adopted-at-boot-dec-291--dec-361)
+- After the window closes: use **Rescan Hardware** in the GUI footer, or
+  `curl -X POST --unix-socket /run/control-ofc/control-ofc.sock http://localhost/fans/openfan/rescan`
+- `journalctl -u control-ofc-daemon | grep -i openfan` — an adopted controller
+  logs `OpenFanController connected on <port>`. On a machine with none, the
+  absence is logged at `info`, not as a warning: it is optional hardware
 
 ### hwmon fans not detected
 - Check sysfs exists: `ls /sys/class/hwmon/`
