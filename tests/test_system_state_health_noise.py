@@ -40,7 +40,6 @@ from control_ofc.ui.hwmon_guidance import (
     QUIRK_CONSEQUENCES,
     QUIRK_TRIGGERS,
     VENDOR_QUIRKS_DB,
-    is_high_severity,
     quirk_key,
     severity_display,
 )
@@ -52,6 +51,7 @@ from control_ofc.ui.widgets.readiness_report import (
     board_notes,
     detect_readiness_problems,
 )
+from tests.severity_invariants import is_high_severity
 
 # The live machine this was reproduced on: a healthy Gigabyte X870E AORUS
 # MASTER, 8/8 headers writable, no collision, no ACPI conflict, no reclaim. It

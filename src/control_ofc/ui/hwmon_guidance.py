@@ -77,43 +77,19 @@ _SEVERITY_DISPLAY: dict[str, SeverityDisplay] = {
 
 _INFO_DISPLAY = _SEVERITY_DISPLAY["info"]
 
-
-def is_actionable_severity(severity: str) -> bool:
-    """Does this advisory severity represent a problem the user should act on?
-
-    Ranked off :func:`severity_display`, never off a string compare against
-    ``"info"``. The two are not equivalent: an unrecognised severity degrades to
-    the calm INFO *presentation* but is not the literal string ``"info"``, so a
-    ``severity != "info"`` test classified it as actionable and the aggregated
-    problem card rendered it WARN while the inline panel rendered it INFO — the
-    same advisory reading at two different levels depending on the surface.
-    Ranking keeps every surface agreeing about an unknown tier.
-
-    Since DEC-357 this is a statement about the *vocabulary* rather than a gate
-    in any production path: whether the user must act is decided by an observed
-    `VendorQuirk.consequence`, not by the tier. Register row `SSN-k`.
-    """
-    return severity_display(severity).rank > _INFO_DISPLAY.rank
-
-
-def is_high_severity(severity: str) -> bool:
-    """Is this severity at or above the HIGH tier?
-
-    **No production path calls this, deliberately, and it must not regain one
-    that escalates an alarm (DEC-357).** Its only caller used to be the
-    `vendor_quirk` rollup, which made any HIGH-or-above advisory paint the
-    System State health card CRITICAL — on a machine where nothing had been
-    observed at all, because a quirk matches on board identity rather than on
-    state. The tier is still a true statement about the advisory; it is not
-    evidence about the machine, and `docs/03 § Alarm policy` is the rule:
-    severity comes from an observed consequence, never from which table row
-    matched. Kept because the ordering it asserts is pinned by
-    `tests/test_readiness_report.py` and is worth keeping pinned.
-
-    See also `is_actionable_severity`, which has the same status. Register row
-    `SSN-k`.
-    """
-    return severity_display(severity).rank >= _SEVERITY_DISPLAY["high"].rank
+# ⚠ A tier is a statement about the ADVISORY, never evidence about the MACHINE
+# (DEC-357). Do not add a consumer that escalates an alarm from a severity: a
+# quirk matches on board identity, so ranking off this map painted the System
+# State health card CRITICAL on a board where nothing had been observed at all.
+# `docs/03 § Alarm policy` is the rule — severity comes from an observed
+# consequence (`VendorQuirk.consequence`), never from which table row matched.
+#
+# The two predicates that read this map for exactly that purpose,
+# `is_actionable_severity` and `is_high_severity`, lost their last production
+# caller in DEC-357 and now live in `tests/severity_invariants.py` (row `SSN-k`).
+# They still pin the vocabulary rule they always encoded — nothing the panel
+# paints as INFO may be counted a problem, and only CRITICAL/HIGH escalate — but
+# they are no longer reachable from any render path, which is the point.
 
 
 def severity_display(severity: str) -> SeverityDisplay:

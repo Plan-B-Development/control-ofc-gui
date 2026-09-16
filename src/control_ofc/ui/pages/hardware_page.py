@@ -314,8 +314,7 @@ class HardwarePage(QWidget):
         layout.addStretch(1)
 
     def _build_checklist_card(self) -> QWidget:
-        card = Card()
-        card.setObjectName("Hardware_Card_checklist")
+        card = Card(object_name="Hardware_Card_checklist")
         v = QVBoxLayout(card)
         header = SectionHeader(
             "System Readiness Checklist", object_name="Hardware_SectionHeader_checklist"
@@ -347,8 +346,7 @@ class HardwarePage(QWidget):
         return card
 
     def _build_actions_card(self) -> QWidget:
-        card = Card()
-        card.setObjectName("Hardware_Card_actions")
+        card = Card(object_name="Hardware_Card_actions")
         v = QVBoxLayout(card)
         header = SectionHeader("Recommended Actions", object_name="Hardware_SectionHeader_actions")
         self._action_count_label = QLabel("—")
@@ -373,8 +371,7 @@ class HardwarePage(QWidget):
         return card
 
     def _build_superio_card(self) -> QWidget:
-        card = Card()
-        card.setObjectName("Hardware_Card_superio")
+        card = Card(object_name="Hardware_Card_superio")
         self._superio_card = card
         v = QVBoxLayout(card)
         v.addWidget(
@@ -388,8 +385,7 @@ class HardwarePage(QWidget):
         return card
 
     def _build_voltages_card(self) -> QWidget:
-        card = Card()
-        card.setObjectName("Hardware_Card_voltages")
+        card = Card(object_name="Hardware_Card_voltages")
         v = QVBoxLayout(card)
         v.addWidget(SectionHeader("Voltages", object_name="Hardware_SectionHeader_voltages"))
         self._voltages_container = QWidget()
@@ -402,8 +398,7 @@ class HardwarePage(QWidget):
     # ── Cooling Hardware + Diagnostics (AIO-MB Phase 6) ──────────────
 
     def _build_cooling_card(self) -> QWidget:
-        card = Card()
-        card.setObjectName("Hardware_Card_cooling")
+        card = Card(object_name="Hardware_Card_cooling")
         v = QVBoxLayout(card)
         v.setContentsMargins(16, 16, 16, 16)
         v.setSpacing(10)
@@ -448,8 +443,7 @@ class HardwarePage(QWidget):
         return card
 
     def _build_diagnostics_card(self) -> QWidget:
-        card = Card()
-        card.setObjectName("Hardware_Card_diagnostics")
+        card = Card(object_name="Hardware_Card_diagnostics")
         v = QVBoxLayout(card)
         v.setContentsMargins(16, 16, 16, 16)
         v.setSpacing(10)

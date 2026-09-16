@@ -19,8 +19,6 @@ from control_ofc.api.models import (
 )
 from control_ofc.ui.hwmon_guidance import (
     VendorQuirk,
-    is_actionable_severity,
-    is_high_severity,
     severity_display,
 )
 from control_ofc.ui.widgets import readiness_report
@@ -37,6 +35,7 @@ from control_ofc.ui.widgets.readiness_report import (
     readiness_verdict,
     thermal_line,
 )
+from tests.severity_invariants import is_actionable_severity, is_high_severity
 
 
 def _healthy(**ov) -> HardwareDiagnosticsResult:
@@ -452,6 +451,34 @@ class TestUnknownSeverityRendersConsistently:
         assert is_high_severity("high") is True
         for sev in ("warn", "medium", "info", "low", "some-future-tier"):
             assert is_high_severity(sev) is False, f"{sev} must not escalate to critical"
+
+    def test_no_production_module_can_reach_the_tier_predicates(self):
+        """`SSN-k`/DEC-357: they live in tests so they cannot regain a caller.
+
+        ``is_high_severity``'s last caller was the ``vendor_quirk`` rollup, which
+        made any HIGH-or-above advisory paint the System State health card
+        CRITICAL on a board where nothing had been observed at all — a quirk
+        matches on board identity, so the tier is a statement about the advisory
+        and never evidence about the machine. Moving both out of ``src/`` is what
+        makes that unrepeatable; this asserts the move held.
+
+        Comment lines are excluded deliberately: ``hwmon_guidance.py`` names both
+        predicates in the warning it keeps at the definition site, and a
+        source-scanning guard that matches its own explanation is a known trap
+        (`CLAUDE.md § Hard-won lessons`).
+        """
+        src = Path(__file__).resolve().parent.parent / "src" / "control_ofc"
+        offenders = [
+            f"{path.relative_to(src)}:{i}"
+            for path in sorted(src.rglob("*.py"))
+            for i, line in enumerate(path.read_text().splitlines(), 1)
+            if ("is_high_severity" in line or "is_actionable_severity" in line)
+            and not line.lstrip().startswith("#")
+        ]
+        assert offenders == [], (
+            "an advisory's TIER must not reach a render path — these predicates "
+            f"belong in tests/severity_invariants.py (SSN-k): {offenders}"
+        )
 
     def test_detect_readiness_problems_does_not_escalate_an_unknown_tier(self, monkeypatch):
         """The CALL SITE, not the helper.

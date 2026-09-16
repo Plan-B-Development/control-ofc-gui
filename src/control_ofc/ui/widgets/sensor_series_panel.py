@@ -55,6 +55,7 @@ _GROUP_ORDER = [
     "fans_gpu",
     "fans_hwmon",
     "fans_openfan",
+    "fans_other",
 ]
 
 # Series-key envelope for a fan row: "fan:<fan_id>:rpm". Fan ids contain colons of
@@ -72,6 +73,11 @@ _GROUP_LABELS = {
     "fans_gpu": "Fans \u2014 D-GPU",
     "fans_hwmon": "Fans \u2014 hwmon",
     "fans_openfan": "Fans \u2014 OpenFan",
+    # A fan source none of the arms in `_rebuild_fan_items` recognises. Empty on
+    # every machine today; it exists so a future source is filed honestly rather
+    # than absorbed by the OpenFan arm, which used to be the else-fallback and
+    # would have labelled unknown hardware as OpenFan (row `OFN-m`).
+    "fans_other": "Fans \u2014 Other",
 }
 
 
@@ -511,8 +517,15 @@ class SensorSeriesPanel(QFrame):
                     group_key = "fans_gpu"
                 elif "hwmon" in f.source:
                     group_key = "fans_hwmon"
-                else:
+                elif f.source == "openfan":
                     group_key = "fans_openfan"
+                else:
+                    # Named explicitly rather than reached by else-fallback: an
+                    # unrecognised source must fail visibly, not inherit the
+                    # OpenFan label (`OFN-m`, and the DEC-334 registry lesson —
+                    # a lookup that silently absorbs unknown ids produces a
+                    # confident wrong answer instead of an error).
+                    group_key = "fans_other"
                 group_label = _GROUP_LABELS[group_key]
                 group_item = self._ensure_group(group_key, group_label)
 

@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [2.75.4] — 2026-09-16
+
+**No daemon change and no new daemon requirement** — the pairing floor is
+unchanged from v2.75.0.
+
+### Internal
+
+**No visible change on any machine that exists today — one latent mislabel
+removed and two pieces of tidying that stop it recurring.**
+
+**A fan on unfamiliar hardware will no longer be labelled "OpenFan".** The
+Sensors rail's chart list groups fan rows under a header per source — GPU,
+hwmon, OpenFan. Anything it did not recognise fell through to the OpenFan
+header, so if a future release ever adds a fourth kind of fan controller, its
+fans would have appeared under the wrong name rather than visibly as something
+new. Unrecognised sources now get their own neutral "Fans — Other" group. That
+group is empty on every machine today; it exists so the next one is filed
+honestly.
+
+**Two housekeeping items behind the scenes.** The shared card widget now takes
+its name the same way every other shared component does, so ten places stop
+working around it. And two helper functions that decide how loudly a board
+advisory reads — which deliberately have no caller, because an advisory's tier
+describes the advisory and not your machine — have moved out of the application
+code entirely, into the tests that pin what they mean. A rule the code cannot
+break is worth more than one a comment asks nobody to break.
+
+See `DECISIONS.md` DEC-366 (the `G42` package: register rows `SSN-j`, `SSN-k`,
+`OFN-m`).
+
 ## [2.75.3] — 2026-09-15
 
 **No daemon change and no new daemon requirement** — the pairing floor is

@@ -2171,8 +2171,7 @@ class SettingsPage(QWidget):
     # ─── Preferred sensors (daemon, DEC-200) ───────────────────────
 
     def _build_preferred_sensors_group(self) -> QWidget:
-        group = Card()
-        group.setObjectName("Settings_Group_preferredSensors")
+        group = Card(object_name="Settings_Group_preferredSensors")
         v = QVBoxLayout(group)
         v.setSpacing(8)
 

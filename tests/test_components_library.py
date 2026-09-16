@@ -4,6 +4,9 @@ dense table, segmented control, and the modal-dialog base.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from PySide6.QtWidgets import QLabel, QPushButton, QTableWidget, QVBoxLayout, QWidget
 
 from control_ofc.ui.components.badges import StatusPill, pill_class_for
@@ -130,6 +133,62 @@ def test_content_sized_card_is_safe_before_it_has_a_layout_or_a_width(qtbot):
     QVBoxLayout(unsized).addWidget(QLabel("x"))
     qtbot.addWidget(unsized)
     assert unsized.minimumSizeHint().height() >= 0
+
+
+def test_card_takes_an_object_name_like_every_other_shared_primitive(qtbot):
+    """`SSN-j`: ``Card`` was the one shared primitive taking no ``object_name``.
+
+    `CLAUDE.md § GUI component standard`: "Every shared component takes a
+    settable ``object_name`` … Match the ``RadialGauge``/``SectionHeader``/
+    ``make_button`` parameter shape."
+    """
+    card = Card(object_name="Card_underTest")
+    qtbot.addWidget(card)
+    assert card.objectName() == "Card_underTest"
+    # `.Card` is a QSS *class* selector matched off the property, not off the
+    # objectName — a new parameter must not displace it.
+    assert card.property("class") == "Card"
+
+    # Omitted, it leaves Qt's default empty name rather than stringifying None.
+    anon = Card()
+    qtbot.addWidget(anon)
+    assert anon.objectName() == ""
+
+    # ContentSizedCard inherits the parameter; it needs no constructor of its own.
+    sized = ContentSizedCard(object_name="ContentSizedCard_underTest")
+    qtbot.addWidget(sized)
+    assert sized.objectName() == "ContentSizedCard_underTest"
+    assert sized.property("class") == "Card"
+
+
+_CARD_CTOR = re.compile(r"^(\s*)(\w+) = (?:ContentSized)?Card\(\s*\)\s*$")
+
+
+def test_no_production_card_is_still_named_after_construction():
+    """The sweep half of `SSN-j`, and what keeps it swept.
+
+    The runtime test above proves the parameter works; it cannot prove any call
+    site uses it (`CLAUDE.md`: an AST lint proves the call was written, not that
+    it worked — keep both kinds). This reads the source, so re-rolling the old
+    ``Card()`` + ``setObjectName(...)`` pattern on a new page fails here rather
+    than in the next audit. An anonymous ``Card()`` that is never named is not
+    an offender; only the two-step is.
+    """
+    src = Path(__file__).resolve().parent.parent / "src" / "control_ofc"
+    offenders: list[str] = []
+    for path in sorted(src.rglob("*.py")):
+        lines = path.read_text().splitlines()
+        for i, line in enumerate(lines):
+            m = _CARD_CTOR.match(line)
+            if m is None:
+                continue
+            named = re.compile(rf"^\s*{re.escape(m.group(2))}\.setObjectName\(")
+            if any(named.match(w) for w in lines[i + 1 : i + 5]):
+                offenders.append(f"{path.relative_to(src)}:{i + 1}")
+    assert offenders == [], (
+        "Card now takes object_name=... — pass it at construction rather than "
+        f"calling setObjectName afterwards (SSN-j): {offenders}"
+    )
 
 
 def test_section_header(qtbot):

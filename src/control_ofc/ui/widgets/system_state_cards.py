@@ -242,11 +242,7 @@ def _make_note_row(vm, on_ack, on_dismiss) -> QWidget:
       interpolated inline stylesheet, so it survives a live theme change.
     """
     theme = active_theme()
-    card = Card()
-    # `Card` takes no object_name parameter (unlike SectionHeader/RadialGauge/
-    # make_button). Set here rather than widening a shared primitive in this
-    # change — recorded as register row `SSN-j`.
-    card.setObjectName(f"SystemState_BoardNote_{vm.key}")
+    card = Card(object_name=f"SystemState_BoardNote_{vm.key}")
     v = QVBoxLayout(card)
     v.setSpacing(4)
 

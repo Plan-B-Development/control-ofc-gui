@@ -11,10 +11,24 @@ def _slug(text: str) -> str:
 
 
 class Card(QFrame):
-    """A calm surface card (``.Card`` QSS)."""
+    """A calm surface card (``.Card`` QSS).
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    ``object_name`` matches the parameter shape of every other shared primitive
+    (``BracketCard`` / ``SectionHeader`` / ``RadialGauge`` / ``make_button``),
+    per `CLAUDE.md § GUI component standard`. Before this, ``Card`` was the one
+    primitive that took none, so each caller needing a unique objectName set it
+    after construction — register row `SSN-j`.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        object_name: str | None = None,
+    ) -> None:
         super().__init__(parent)
+        if object_name:
+            self.setObjectName(object_name)
         self.setProperty("class", "Card")
 
 

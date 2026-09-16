@@ -274,8 +274,7 @@ class OverviewPage(QWidget):
         row.setSpacing(12)
 
         # Daemon-health card.
-        daemon_card = Card()
-        daemon_card.setObjectName("Overview_Card_daemonHealth")
+        daemon_card = Card(object_name="Overview_Card_daemonHealth")
         dl = QVBoxLayout(daemon_card)
         title_row = QHBoxLayout()
         self._daemon_version_label = _meta(
@@ -307,8 +306,7 @@ class OverviewPage(QWidget):
         row.addWidget(daemon_card, 1)
 
         # Device-discovery card.
-        device_card = Card()
-        device_card.setObjectName("Overview_Card_deviceDiscovery")
+        device_card = Card(object_name="Overview_Card_deviceDiscovery")
         vl = QVBoxLayout(device_card)
         vl.addWidget(
             _meta(QLabel("Device Discovery"), "Overview_Label_deviceTitle", cls="PageSubtitle")
