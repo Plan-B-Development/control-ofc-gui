@@ -491,14 +491,13 @@ single poll-driven thermal warning. Older daemons omit the field — the GUI
 defaults it to `"normal"`.
 
 **A non-`"normal"` `thermal_state` does NOT imply that any fan was written**
-(DEC-371). On a machine with no fan backend at all — a GPU-only box, or a VM —
+(DEC-371). On a machine with no fan output the daemon can drive — a GPU-only box,
+a VM, or (since 2.47.6, DEC-372) a board whose every hwmon `pwmN` is read-only —
 the ladder still latches, still publishes `"emergency"`, and reaches nothing,
-because GPU fans are excluded by design. The same is true, and is **not** even
-distinguishable in the daemon's own log, on a board whose every hwmon `pwmN` is
-read-only (register row `OFN-ad`). There is no wire field for any of this: the
-no-backend case is reported only in the log, at `error` level since 2.47.5
-(*"Thermal safety override reached NO fans"*), and a client cannot tell the
-cases apart from `/poll`.
+because GPU fans are excluded by design. **There is no wire field for this**: the
+daemon reports it only in its log, at `error` level (*"Thermal safety override
+reached NO fans"*), so a client cannot tell that case apart from a force that
+reached fans.
 So a thermal banner is a statement about the daemon's **state**, never a promise
 that cooling was applied — do not word one as though fans are now at 100%. A
 client that wants to bound the case can note that `fans[]` carrying no `openfan:`
