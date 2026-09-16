@@ -591,7 +591,8 @@ class TestParserFailureModes:
         # Wizard's spin-down ceiling from `openfan_stop_timeout_s` rather than
         # from a literal that matched the daemon constant by coincidence. The
         # other two remain unmodelled, and the assertion below is what keeps
-        # that deliberate (they are declared inert in wire_fields.json).
+        # that deliberate (they are declared `unmodelled` in wire_fields.json,
+        # which since `AU-d` is a different bucket from `inert`).
         assert caps.limits.openfan_stop_timeout_s == 0
         assert not hasattr(caps.limits, "pwm_percent_min"), (
             "The daemon clamps authoritatively (DEC-163); a GUI mirror of the PWM "

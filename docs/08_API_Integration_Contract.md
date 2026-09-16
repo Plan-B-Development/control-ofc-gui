@@ -2434,10 +2434,22 @@ daemon v2.43.8).** `tests/fixtures/wire_fields.json` declares, per daemon `Seria
 struct, the keys it emits and the model that must carry them.
 `daemon/src/api/responses.rs::tests::wire_field_surface_is_pinned` **reads that file** and
 asserts the daemon's serialised key set against it; `tests/test_wire_field_coverage.py`
-asserts each declared key has a model slot plus — for fields marked load-bearing — a real
-read site outside `api/models.py`. It is a shared oracle in the `parity_vectors.json`
-shape: one byte-identical copy per repo, compared by a byte-identity test when both are
-checked out as siblings and by `parity.yml` in single-repo CI.
+asserts each declared key has a model slot plus a real read site outside `api/models.py`.
+It is a shared oracle in the `parity_vectors.json` shape: one byte-identical copy per
+repo, compared by a byte-identity test when both are checked out as siblings and by
+`parity.yml` in single-repo CI.
+
+**The read check is exhaustive, and until GUI v2.75.5 it was opt-in (`AU-d`).** Every
+declared field must be classified, and adding one fails the GUI suite until it is:
+`must_be_read` (a production read site must exist), `inert` (nothing reads it — with the
+reason), `not_assertable` (the name is too common for a name-based check to prove
+anything, e.g. `id`/`label`/`source`), or `unmodelled` (no GUI slot — with the reason).
+`inert` is checked the other way round as well, so a field that acquires a consumer has
+to be reclassified rather than quietly keeping a stale exemption. "A read" means an
+attribute access, a keyword, a binding, or a string in **argument** position
+(`getattr(o, "f", d)`, `d.get("f")`, `d["f"]`) — a string sitting in a dict-literal key
+declares a table entry and is not a read, which is what three fields known only to
+`services/provenance.py` had been claiming.
 
 **Adding a field to a pinned struct means updating the fixture — both copies — and this
 document.** Adding a *struct* additionally needs an arm in the Rust test; the fixture and

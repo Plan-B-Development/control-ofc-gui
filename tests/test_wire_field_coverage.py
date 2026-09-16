@@ -22,6 +22,37 @@ Two assertions, and the second is the one that matters
    the GUI parses and no one reads is decoration, and having it in the type is
    precisely what makes the gap invisible.
 
+The classification is EXHAUSTIVE, and it did not used to be (``AU-d``)
+----------------------------------------------------------------------
+``must_be_read`` was opt-in, so this module could only confirm the reads someone
+had already thought to declare — it could not *discover* a new parsed-but-unread
+field, which is the failure that produced ``WIRE-e``/``WIRE-f``/``WIRE-m``/
+``WIRE-o``/``WIRE-y`` in the first place (all five were found by a manual sweep).
+Measured at the time: 107 of 286 declared fields carried a read assertion, so the
+paragraph above **overstated its reach** — it addressed 37% of the category it
+named. That claim is retracted; what follows is what replaces it.
+
+Every declared field now lands in exactly one bucket, and the choice is forced by
+``test_every_declared_field_is_classified``:
+
+``must_be_read``
+    A production read site outside ``api/models.py`` must exist. Checked.
+``inert``
+    Nothing reads it, with the reason. Checked *the other way* by
+    ``test_inert_fields_are_really_unread`` — the day someone wires one up, the
+    fixture must move it, so this is a live claim and not a dead list.
+``not_assertable``
+    The name is too common for a name-based check to prove anything about it
+    (``id``, ``label``, ``source``, …). No read claim is made; the bucket is
+    restricted to :data:`TOO_COMMON` so it cannot become an escape hatch.
+``unmodelled``
+    No GUI slot at all, with the reason. Checked by
+    ``test_declared_unmodelled_fields_are_really_absent``.
+
+Adding a wire field therefore fails this module until someone says which of those
+it is. That is the whole point of the inversion: the guard's reach is now the
+same size as its subject.
+
 The declared surface lives in ``tests/fixtures/wire_fields.json`` and it is the
 **single declaration** (``P8-cb``). The daemon's
 ``api/responses.rs::tests::wire_field_surface_is_pinned`` reads that same file and
@@ -116,36 +147,65 @@ def _declared() -> list[dict]:
     return structs
 
 
-def _docstring_nodes(tree: ast.AST) -> set[int]:
-    """Ids of the ``Constant`` nodes that are docstrings, so they can be skipped."""
-    out: set[int] = set()
+#: Names that appear in thousands of unrelated lines, so a name-based check can
+#: prove nothing about them. ``must_be_read`` may not contain one and
+#: ``not_assertable`` may contain nothing else.
+TOO_COMMON = frozenset({"id", "label", "source", "name", "kind", "state", "value", "index"})
+
+
+def _key_strings(tree: ast.AST) -> set[str]:
+    """String literals used to LOOK SOMETHING UP, as opposed to merely written.
+
+    ``getattr(obj, "field", default)``, ``data.get("field")`` and
+    ``data["field"]`` are reads that an identifier-only walk misses, so they have
+    to count. A string literal sitting in a **dict-literal key** position does
+    not: it declares a table entry, not a read.
+
+    The distinction is not academic (``AU-d``). ``services/provenance.py`` maps
+    wire-field names to a provenance class, so every name in that table matched a
+    bare ``Constant`` walk — and three ``must_be_read`` entries
+    (``TachObservation.delta_rpm``, ``PointStability.dropouts`` and ``.outliers``)
+    were satisfied by **nothing but that table**, i.e. by a mapping *about* the
+    field rather than by anyone reading it. Restricting to argument position
+    moves those three to ``inert`` where they belong, while keeping
+    ``Limits.openfan_stop_timeout_s`` (read as
+    ``getattr(getattr(caps, "limits", None), "openfan_stop_timeout_s", 0)`` at
+    ``settings_page.py:2072``) and ``CharPoint.settled_ms`` (``getattr(point,
+    "settled_ms", None)``), which are real reads that only exist in string form.
+    """
+    out: set[str] = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id == "getattr" and len(node.args) >= 2:
+                candidate = node.args[1]
+            elif (
+                isinstance(func, ast.Attribute)
+                and func.attr in {"get", "pop", "setdefault"}
+                and node.args
+            ):
+                candidate = node.args[0]
+            else:
+                continue
+        elif isinstance(node, ast.Subscript):
+            candidate = node.slice
+        else:
             continue
-        body = getattr(node, "body", None)
-        if not body:
-            continue
-        first = body[0]
-        if (
-            isinstance(first, ast.Expr)
-            and isinstance(first.value, ast.Constant)
-            and isinstance(first.value.value, str)
-        ):
-            out.add(id(first.value))
+        if isinstance(candidate, ast.Constant) and isinstance(candidate.value, str):
+            out.add(candidate.value)
     return out
 
 
 def _names_used(tree: ast.AST) -> set[str]:
-    """Identifiers and string keys this AST actually *uses*.
+    """Identifiers and lookup keys this AST actually *uses*.
 
     Four node kinds cover how a wire field is reached: ``obj.field``
     (``Attribute``), ``Cls(field=…)`` (``keyword``), a bare binding or read
-    (``Name``), and — the one an identifier-only walk misses —
-    ``getattr(obj, "field", default)`` / ``data.get("field")``, which is a string
-    ``Constant``. Docstrings are excluded; comments are not in the AST at all,
-    which is the whole reason this reads the tree rather than the text.
+    (``Name``), and a lookup key in argument or subscript position — see
+    :func:`_key_strings` for why the last one is not simply "any string".
+    Comments are not in the AST at all, which is the whole reason this reads the
+    tree rather than the text.
     """
-    skip = _docstring_nodes(tree)
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute):
@@ -154,45 +214,60 @@ def _names_used(tree: ast.AST) -> set[str]:
             names.add(node.arg)
         elif isinstance(node, ast.Name):
             names.add(node.id)
-        elif (
-            isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip
-        ):
-            names.add(node.value)
+    return names | _key_strings(tree)
+
+
+def _attribute_reads(tree: ast.AST) -> set[str]:
+    """Only ``obj.field`` accesses. Used for ``api/models.py`` alone.
+
+    In that file a *computed property* is a consumer and ``from_dict`` is not,
+    and the two are told apart by shape: ``requested_duty`` reads
+    ``self.pwm_commanded_pct`` (an ``Attribute``), while the parser writes
+    ``cycle=int(c.get("cycle") or 0)`` — a keyword and a lookup key, both of
+    which describe the field being *created* rather than read. Counting the
+    latter would let every parsed field satisfy the read check via the parser
+    that produced it, which is the tautology this module exists to avoid.
+    """
+    return {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+
+
+def _consumer_names() -> set[str]:
+    """Every name production code outside ``api/models.py`` reads.
+
+    This is what an ``inert`` claim is checked against: "nothing reads it" means
+    nothing *outside the parser that created it*, because ``models.py`` mentions
+    every field it parses by construction.
+    """
+    names: set[str] = set()
+    for path in sorted(SRC.rglob("*.py")):
+        if path == MODELS:
+            continue
+        names |= _names_used(ast.parse(path.read_text(), filename=str(path)))
     return names
 
 
 def _production_names() -> set[str]:
-    """Every identifier production code *uses*, as opposed to merely declares.
+    """Every name production code reads, ``api/models.py``'s own properties included.
 
-    A substring search over raw source counts comments and docstrings, so a field
-    could satisfy ``must_be_read`` by being *described* somewhere rather than
-    read — and a guard a prose mention can satisfy is the failure mode
-    ``CLAUDE.md § Hard-won lessons`` records for source-scanning tests. Hence the
-    AST.
-
-    ``api/models.py`` is included, but **only its function bodies**. That
-    distinction is the point, and it is not the same as excluding the file: a
-    field *declaration* there is not a consumer, while a method that computes
-    from the field is — `FanReading.requested_duty` reads `pwm_commanded_pct`
-    and is the single site every caller goes through (DEC-276, `WIRE-j`).
-    Excluding the whole file called that field unread; including the whole file
-    would let the bare declaration satisfy the check, which is the tautology this
-    test exists to avoid.
+    :func:`_consumer_names` plus the attribute reads inside ``models.py``'s
+    function bodies. That addition is deliberate and narrow: ``requested_duty``
+    reads ``pwm_commanded_pct`` and is the single site every caller goes through
+    (DEC-276, ``WIRE-j``), so excluding the whole file would call that field
+    unread — while including the file wholesale would let ``from_dict``'s own
+    parse of a field stand in for someone reading it. Attributes only splits
+    those two apart; see :func:`_attribute_reads`.
     """
-    names: set[str] = set()
-    for path in sorted(SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        if path == MODELS:
-            for node in ast.walk(tree):
-                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                    for stmt in node.body:
-                        names |= _names_used(stmt)
-        else:
-            names |= _names_used(tree)
+    names = _consumer_names()
+    tree = ast.parse(MODELS.read_text(), filename=str(MODELS))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for stmt in node.body:
+                names |= _attribute_reads(stmt)
     return names
 
 
 PRODUCTION_NAMES = _production_names()
+CONSUMER_NAMES = _consumer_names()
 
 
 @pytest.mark.parametrize("struct", _declared(), ids=lambda s: s["daemon"])
@@ -253,12 +328,19 @@ def test_load_bearing_fields_are_read_by_production_code(struct: dict) -> None:
     )
 
 
-def test_must_be_read_names_are_declared_fields() -> None:
-    """A typo in ``must_be_read`` would make the read-check vacuous for that field."""
+def test_classification_names_are_declared_fields() -> None:
+    """A typo in any bucket makes that field's classification vacuous.
+
+    Widened from ``must_be_read`` alone (``AU-d``): a misspelled ``inert`` entry
+    would leave the real field unclassified *and* leave a claim about a field
+    that does not exist, and the exhaustiveness check below would then blame the
+    wrong name.
+    """
     for struct in _declared():
         declared = set(struct["fields"])
-        stray = sorted(set(struct.get("must_be_read", [])) - declared)
-        assert not stray, f"{struct['daemon']}: must_be_read names not on the wire: {stray}"
+        for bucket in ("must_be_read", "inert", "not_assertable", "unmodelled"):
+            stray = sorted(set(struct.get(bucket, [])) - declared)
+            assert not stray, f"{struct['daemon']}: {bucket} names not on the wire: {stray}"
 
 
 def test_must_be_read_names_are_distinctive() -> None:
@@ -269,10 +351,120 @@ def test_must_be_read_names_are_distinctive() -> None:
     "passes with the rule deleted" trap as an ``isVisible()`` assertion under
     offscreen Qt.
     """
-    too_common = {"id", "label", "source", "name", "kind", "state", "value", "index"}
     for struct in _declared():
-        bad = sorted(set(struct.get("must_be_read", [])) & too_common)
+        bad = sorted(set(struct.get("must_be_read", [])) & TOO_COMMON)
         assert not bad, (
             f"{struct['daemon']}: {bad} are too common to prove a read site; "
             f"assert them at a specific call site instead."
         )
+
+
+# ---------------------------------------------------------------------------
+# The inverted default (`AU-d`)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("struct", _declared(), ids=lambda s: s["daemon"])
+def test_every_declared_field_is_classified(struct: dict) -> None:
+    """Every wire field must be in exactly one bucket — this is the inversion.
+
+    Before ``AU-d``, ``must_be_read`` was opt-in: a field added to the fixture
+    with no entry anywhere was silently exempt from the read check, so this
+    module could confirm the reads someone had already declared and could never
+    *discover* a new unread one. Adding a field now fails here until someone says
+    which of the four it is, which is the only way the guard's reach can match
+    the category it names.
+
+    Disjointness is asserted too, and it is not pedantry: a field in both
+    ``must_be_read`` and ``inert`` carries two contradictory claims, and each of
+    the checks below would pass its own half.
+    """
+    fields = list(struct["fields"])
+    buckets = {
+        b: set(struct.get(b, [])) for b in ("must_be_read", "inert", "not_assertable", "unmodelled")
+    }
+
+    overlaps = []
+    names = sorted(buckets)
+    for i, a in enumerate(names):
+        for b in names[i + 1 :]:
+            for shared in sorted(buckets[a] & buckets[b]):
+                overlaps.append(f"{shared} ({a} + {b})")
+    assert not overlaps, (
+        f"{struct['daemon']}: fields claimed by two buckets at once: {overlaps}. "
+        f"A field is read, or inert, or unprovable, or unmodelled — not two of them."
+    )
+
+    classified = set().union(*buckets.values())
+    unclassified = [f for f in fields if f not in classified]
+    assert not unclassified, (
+        f"{struct['daemon']} declares {sorted(unclassified)} with no classification. "
+        f"Every wire field must say which it is: 'must_be_read' (a production read "
+        f"site exists), 'inert' (nothing reads it — give the reason), "
+        f"'not_assertable' (the name is too common to prove anything), or "
+        f"'unmodelled' (no GUI slot — give the reason)."
+    )
+
+
+@pytest.mark.parametrize("struct", _declared(), ids=lambda s: s["daemon"])
+def test_inert_fields_are_really_unread(struct: dict) -> None:
+    """An ``inert`` claim that is no longer true is a stale claim.
+
+    This is what stops the gap list rotting into a dead one: the day a field
+    declared inert acquires a consumer, the fixture has to move it into
+    ``must_be_read``. Same discipline as
+    ``test_declared_unmodelled_fields_are_really_absent``, and the same failure
+    it guards against — a retraction left standing (documentation protocol
+    rule 2).
+
+    Checked against :data:`CONSUMER_NAMES`, not :data:`PRODUCTION_NAMES`, because
+    ``models.py``'s own ``from_dict`` mentions every field it parses; against the
+    wider set this assertion would be vacuous for the four entries whose stated
+    reason is precisely that the parser is their only mention.
+    """
+    inert = struct.get("inert", {})
+    if not inert:
+        pytest.skip("nothing declared inert")
+    now_read = sorted(name for name in inert if name in CONSUMER_NAMES)
+    assert not now_read, (
+        f"{struct['gui']} declares {now_read} inert, but production code outside "
+        f"api/models.py now uses those names. Move them to 'must_be_read' — an "
+        f"exemption that has outlived its reason is worse than no exemption."
+    )
+
+
+@pytest.mark.parametrize("struct", _declared(), ids=lambda s: s["daemon"])
+def test_not_assertable_names_are_really_ambiguous(struct: dict) -> None:
+    """``not_assertable`` is restricted to the names that genuinely prove nothing.
+
+    Without this the bucket is an escape hatch: any awkward field could be filed
+    here and the inversion above would be satisfied while asserting nothing about
+    it — the same shape as an ``isVisible()`` assertion under offscreen Qt, which
+    passes with the rule deleted.
+    """
+    declared = struct.get("not_assertable", {})
+    if not declared:
+        pytest.skip("nothing declared not_assertable")
+    abusable = sorted(set(declared) - TOO_COMMON)
+    assert not abusable, (
+        f"{struct['daemon']}: {abusable} are distinctive enough to assert a read "
+        f"site for. 'not_assertable' is only for names in TOO_COMMON; declare "
+        f"these 'must_be_read' or 'inert' instead."
+    )
+
+
+@pytest.mark.parametrize("struct", _declared(), ids=lambda s: s["daemon"])
+def test_every_exemption_carries_a_reason(struct: dict) -> None:
+    """A bucket entry with an empty reason is an unexplained exemption.
+
+    The reason is what the next person reads to decide whether the exemption
+    still holds; without it the fixture records that a check was skipped and not
+    why, which is how a skip outlives its cause.
+    """
+    for bucket in ("inert", "not_assertable", "unmodelled"):
+        entries = struct.get(bucket, {})
+        assert isinstance(entries, dict), (
+            f"{struct['daemon']}: '{bucket}' must be a name→reason map"
+        )
+        blank = sorted(name for name, reason in entries.items() if not str(reason).strip())
+        assert not blank, f"{struct['daemon']}: {bucket} entries with no reason: {blank}"

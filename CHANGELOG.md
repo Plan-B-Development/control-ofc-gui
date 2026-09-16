@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+## [2.75.5] — 2026-09-16
+
+**No daemon change and no new daemon requirement** — the pairing floor is unchanged
+from v2.75.0, and **nothing changes on any machine that runs this**. Daemon v2.47.2
+carries the matching copy of a shared *test* fixture, which only matters to developers
+who check out both repositories side by side.
+
+### Internal
+
+**Nothing you can see changed. Two test guards that looked like they covered a
+category, and did not, now do.**
+
+**The application's own startup was untested.** Everything the GUI does between
+launching and showing you a window — loading your settings, applying your directory
+overrides, installing the bundled theme presets, applying your theme, deciding whether
+to start in demo mode, and wiring the daemon connection to the window — ran in no test
+at all. The individual decisions were well tested; nothing checked that they were
+actually plugged together. A new test now starts the application for real, three
+different ways (demo, live, and the "daemon is not there so fall back to demo" path),
+and checks the pieces are connected to each other rather than to the right-looking
+values. Startup code coverage went from 57% to 83%.
+
+**The guard that checks the GUI reads what the daemon sends now covers everything the
+daemon sends.** It had an opt-in list, so it confirmed the fields someone had
+remembered to enrol — 107 of 286 — and could never discover a new field that gets
+parsed and then ignored, which is the exact bug it exists to find. Every field is now
+classified, and adding one to the wire fails the test suite until somebody says whether
+it is read, deliberately unread, or unprovable either way.
+
+Classifying them turned up three things worth knowing. Two fields were being counted as
+"read" by the parser that created them; three more by a lookup table that merely
+*mentions* them. And `GET /inventory/hwmon` turns out to be modelled, parsed and used by
+nothing at all — recorded for a decision rather than fixed here, since nothing displays
+wrong information today, only nothing.
+
 ## [2.75.4] — 2026-09-16
 
 **No daemon change and no new daemon requirement** — the pairing floor is

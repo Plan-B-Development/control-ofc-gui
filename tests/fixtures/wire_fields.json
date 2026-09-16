@@ -1,5 +1,5 @@
 {
-  "description": "The declared GUI <-> daemon wire-field surface (WIRE-aj). For each daemon Serialize struct the GUI consumes, the exact set of keys it puts on the wire and the dataclass that must model them. THIS FILE IS THE SINGLE DECLARATION AND BOTH REPOS CHECK AGAINST IT (P8-cb, daemon v2.43.8 / GUI v2.67.1): tests/test_wire_field_coverage.py fails if a declared field has no GUI model slot, and daemon/src/api/responses.rs::tests::wire_field_surface_is_pinned reads THIS list and fails if a struct's serialised key set disagrees with it -- so a daemon rename reds the Rust test naming this file, and there is no second list to forget. It is a shared oracle in the parity_vectors.json shape: one byte-identical copy per repo (tests/fixtures here, daemon/tests/fixtures there), compared by test_fixture_copies_are_byte_identical when both repos are checked out as siblings and by .github/workflows/parity.yml in single-repo CI. Until P8-cb the daemon declared its own want-lists and nothing compared the two, so a rename fixed there and forgotten here left this fixture stale with both suites green. A struct declared here with no daemon-side arm, or an arm for a struct not declared here, fails the Rust test's coverage assertion. Adding a wire field means updating this fixture (both copies) and docs/08.",
+  "description": "The single declaration of the daemon's serialised wire surface, shared byte-identically by both repos (P8-cb). Every field is classified: must_be_read (a production read site must exist), inert (nothing reads it, with the reason), not_assertable (the name is too common for a name-based check to prove anything), or unmodelled (no GUI slot, with the reason). The classification is exhaustive by test, so adding a field forces the choice (AU-d).",
   "min_daemon_version": "2.35.4",
   "structs": [
     {
@@ -25,11 +25,22 @@
         "control_eligible"
       ],
       "must_be_read": [
-        "control_eligible",
-        "thresholds",
         "value_c",
-        "rate_c_per_s"
-      ]
+        "age_ms",
+        "rate_c_per_s",
+        "session_min_c",
+        "session_max_c",
+        "chip_name",
+        "temp_type",
+        "thresholds",
+        "control_eligible"
+      ],
+      "not_assertable": {
+        "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "kind": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "source": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      }
     },
     {
       "daemon": "FanEntry",
@@ -52,11 +63,20 @@
         "pwm_commanded_pct"
       ],
       "must_be_read": [
+        "rpm",
+        "last_commanded_pwm",
+        "duty_pct",
+        "age_ms",
         "stall_detected",
+        "pwm_enable_mode",
+        "fan_alarm",
         "pwm_readback_pct",
-        "pwm_commanded_pct",
-        "duty_pct"
-      ]
+        "pwm_commanded_pct"
+      ],
+      "not_assertable": {
+        "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "source": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      }
     },
     {
       "daemon": "PwmHeaderEntry",
@@ -89,14 +109,33 @@
         "tach_pulses_per_rev"
       ],
       "must_be_read": [
+        "chip_name",
+        "device_id",
+        "pwm_index",
+        "supports_enable",
+        "rpm_available",
         "is_writable",
+        "pwm_mode",
+        "is_aio",
         "role",
         "role_source",
         "effective_min_pwm_pct",
         "stop_permitted",
+        "cooling_device_id",
+        "pwm_freq_hz",
         "supported_pwm_enable_modes",
-        "pwm_freq_hz"
-      ]
+        "rpm_min_threshold",
+        "rpm_max_threshold",
+        "tach_pulses_per_rev"
+      ],
+      "inert": {
+        "min_pwm_percent": "parsed and never read; adjudicated in register row WIRE-ak",
+        "max_pwm_percent": "parsed and never read; adjudicated in register row WIRE-ak"
+      },
+      "not_assertable": {
+        "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      }
     },
     {
       "daemon": "PwmHeaderEntry",
@@ -104,7 +143,6 @@
       "endpoints": [
         "GET /inventory/hwmon .pwm_controls"
       ],
-      "note": "The SAME daemon struct as GET /hwmon/headers. Two GUI names for one wire shape is how WIRE-h stayed invisible: HwmonHeader was kept current and InventoryPwmControl was not, while its docstring claimed a field-for-field mirror.",
       "fields": [
         "id",
         "label",
@@ -129,7 +167,35 @@
         "rpm_max_threshold",
         "tach_pulses_per_rev"
       ],
-      "must_be_read": []
+      "must_be_read": [
+        "chip_name",
+        "device_id",
+        "pwm_index",
+        "supports_enable",
+        "rpm_available",
+        "is_writable",
+        "pwm_mode",
+        "is_aio",
+        "role",
+        "role_source",
+        "effective_min_pwm_pct",
+        "stop_permitted",
+        "cooling_device_id",
+        "pwm_freq_hz",
+        "supported_pwm_enable_modes",
+        "rpm_min_threshold",
+        "rpm_max_threshold",
+        "tach_pulses_per_rev"
+      ],
+      "inert": {
+        "min_pwm_percent": "parsed and never read; adjudicated in register row WIRE-ak",
+        "max_pwm_percent": "parsed and never read; adjudicated in register row WIRE-ak"
+      },
+      "not_assertable": {
+        "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "The SAME daemon struct as GET /hwmon/headers. Two GUI names for one wire shape is how WIRE-h stayed invisible: HwmonHeader was kept current and InventoryPwmControl was not, while its docstring claimed a field-for-field mirror."
     },
     {
       "daemon": "InventoryTempSensor",
@@ -137,7 +203,6 @@
       "endpoints": [
         "GET /inventory/hwmon .temp_sensors"
       ],
-      "note": "serde(flatten) over SensorEntry, so every SensorEntry key rides here too",
       "fields": [
         "id",
         "kind",
@@ -157,9 +222,26 @@
         "rationale"
       ],
       "must_be_read": [
+        "value_c",
+        "age_ms",
+        "rate_c_per_s",
+        "session_min_c",
+        "session_max_c",
+        "chip_name",
+        "temp_type",
+        "thresholds",
+        "control_eligible",
         "classification",
+        "confidence",
         "rationale"
-      ]
+      ],
+      "not_assertable": {
+        "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "kind": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "source": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "serde(flatten) over SensorEntry, so every SensorEntry key rides here too"
     },
     {
       "daemon": "FanInputEntry",
@@ -174,7 +256,17 @@
         "label",
         "fan_index"
       ],
-      "must_be_read": []
+      "must_be_read": [
+        "chip_name"
+      ],
+      "inert": {
+        "fan_index": "no production read site (measured 2026-09-16, AU-d)"
+      },
+      "not_assertable": {
+        "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "source": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      }
     },
     {
       "daemon": "DefaultCpuEntry",
@@ -189,8 +281,13 @@
         "source"
       ],
       "must_be_read": [
-        "sensor_id"
-      ]
+        "sensor_id",
+        "confidence",
+        "rationale"
+      ],
+      "not_assertable": {
+        "source": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      }
     },
     {
       "daemon": "HwmonInventoryResponse",
@@ -207,10 +304,15 @@
         "preferences"
       ],
       "must_be_read": [
+        "api_version",
         "temp_sensors",
         "default_cpu",
         "preferences"
-      ]
+      ],
+      "inert": {
+        "pwm_controls": "nothing calls DaemonClient.inventory_hwmon(), so the whole response is parsed and unread; only parse_hwmon_inventory's own pwm_controls= keyword mentions it (AU-g)",
+        "monitor_only_fans": "nothing calls DaemonClient.inventory_hwmon(), so the whole response is parsed and unread (AU-g)"
+      }
     },
     {
       "daemon": "DevicePolicySummary",
@@ -230,7 +332,18 @@
       ],
       "must_be_read": [
         "display_name"
-      ]
+      ],
+      "inert": {
+        "minimum_safe_pwm_pct": "parsed and never read; adjudicated in register row WIRE-e",
+        "supports_stop": "parsed and never read; adjudicated in register row WIRE-e",
+        "startup_override_seconds": "parsed and never read; adjudicated in register row WIRE-e",
+        "expected_rpm_min": "parsed and never read; adjudicated in register row WIRE-e",
+        "expected_rpm_max": "parsed and never read; adjudicated in register row WIRE-e",
+        "internal_control_possible": "parsed and never read; adjudicated in register row WIRE-e"
+      },
+      "not_assertable": {
+        "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      }
     },
     {
       "daemon": "CoolingDeviceEntry",
@@ -254,8 +367,18 @@
       "must_be_read": [
         "pump_member",
         "radiator_members",
-        "coolant_telemetry"
-      ]
+        "auxiliary_members",
+        "preferred_sensor",
+        "fallback_sensor",
+        "coolant_sensor",
+        "coolant_telemetry",
+        "device_policy"
+      ],
+      "not_assertable": {
+        "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "name": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "kind": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      }
     },
     {
       "daemon": "CoolingDevicesResponse",
@@ -268,12 +391,15 @@
         "cooling_devices",
         "available_policies"
       ],
-      "unmodelled": {
-        "api_version": "Sub-envelope api_version, recorded inert in register row WIRE-ak: the GUI gates on GET /capabilities, never on a per-response version."
-      },
       "must_be_read": [
         "cooling_devices"
-      ]
+      ],
+      "inert": {
+        "available_policies": "parsed and never read; adjudicated in register row WIRE-e"
+      },
+      "unmodelled": {
+        "api_version": "Sub-envelope api_version, recorded inert in register row WIRE-ak: the GUI gates on GET /capabilities, never on a per-response version."
+      }
     },
     {
       "daemon": "Limits",
@@ -286,13 +412,13 @@
         "pwm_percent_max",
         "openfan_stop_timeout_s"
       ],
+      "must_be_read": [
+        "openfan_stop_timeout_s"
+      ],
       "unmodelled": {
         "pwm_percent_min": "Inert: the daemon clamps authoritatively (DEC-163) and ships 0 on every build. The P3 capability cleanup deleted the GUI mirror for exactly this reason and set the bar for re-adding at 'find a consumer first'; this field still has none.",
         "pwm_percent_max": "Inert: as pwm_percent_min. Ships 100 on every build."
-      },
-      "must_be_read": [
-        "openfan_stop_timeout_s"
-      ]
+      }
     },
     {
       "daemon": "VoltageEntry",
@@ -300,7 +426,6 @@
       "endpoints": [
         "GET /diagnostics/hardware .voltages"
       ],
-      "note": "WIRE-ag / DEC-331. Pinned from the first release that publishes it rather than after a divergence: WIRE-h is what an unpinned new struct costs. `label` is genuinely read (it is the Rail column) but is excluded from must_be_read by test_must_be_read_names_are_distinctive — the name is too common to prove a read site; tests/test_wire_ag_voltages.py asserts it at the call site instead. `id` has no GUI consumer yet, and the wire identity is modelled anyway because the model mirrors the wire; `channel` is read only as a display sort key.",
       "fields": [
         "id",
         "chip_name",
@@ -310,10 +435,16 @@
         "identified"
       ],
       "must_be_read": [
+        "chip_name",
+        "channel",
         "value_v",
-        "identified",
-        "chip_name"
-      ]
+        "identified"
+      ],
+      "not_assertable": {
+        "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "WIRE-ag / DEC-331. Pinned from the first release that publishes it rather than after a divergence: WIRE-h is what an unpinned new struct costs. `label` is genuinely read (it is the Rail column) but is excluded from must_be_read by test_must_be_read_names_are_distinctive \u2014 the name is too common to prove a read site; tests/test_wire_ag_voltages.py asserts it at the call site instead. `id` has no GUI consumer yet, and the wire identity is modelled anyway because the model mirrors the wire; `channel` is read only as a display sort key."
     },
     {
       "daemon": "PreflightReport",
@@ -321,7 +452,6 @@
       "endpoints": [
         "GET /diagnostics/preflight"
       ],
-      "note": "DEC-333 §7. `verdict` and `blocking` together decide whether Start is offered — `preflight_view` reads BOTH, deliberately, so an unknown verdict token still fails safe on the field that gates a hardware-perturbing action. `header_id`/`diagnostic` are echoed identity.",
       "fields": [
         "header_id",
         "diagnostic",
@@ -330,10 +460,13 @@
         "blocking"
       ],
       "must_be_read": [
+        "header_id",
+        "diagnostic",
         "verdict",
-        "blocking",
-        "checks"
-      ]
+        "checks",
+        "blocking"
+      ],
+      "note": "DEC-333 \u00a77. `verdict` and `blocking` together decide whether Start is offered \u2014 `preflight_view` reads BOTH, deliberately, so an unknown verdict token still fails safe on the field that gates a hardware-perturbing action. `header_id`/`diagnostic` are echoed identity."
     },
     {
       "daemon": "PreflightCheck",
@@ -341,7 +474,6 @@
       "endpoints": [
         "GET /diagnostics/preflight"
       ],
-      "note": "DEC-333 §7. `state` IS load-bearing (it picks the row tone) but is excluded by test_must_be_read_names_are_distinctive as too common; tests/test_aio_mb_phase8_batch1.py::TestPreflightView asserts the tone at its call site instead.",
       "fields": [
         "check_id",
         "state",
@@ -350,7 +482,11 @@
       "must_be_read": [
         "check_id",
         "detail"
-      ]
+      ],
+      "not_assertable": {
+        "state": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "DEC-333 \u00a77. `state` IS load-bearing (it picks the row tone) but is excluded by test_must_be_read_names_are_distinctive as too common; tests/test_aio_mb_phase8_batch1.py::TestPreflightView asserts the tone at its call site instead."
     },
     {
       "daemon": "ControlPathRun",
@@ -359,7 +495,6 @@
         "GET /diagnostics/control-path",
         "POST /hwmon/{header_id}/discover-control-path (202 snapshot)"
       ],
-      "note": "DEC-333. `run_id` is the poll fence — a snapshot for another run must not be rendered as this one. `restore_failed`/`restore_outcome` are the honesty pair: the dialog must never claim a header was restored when it was not. `state` is read but too common to pin here.",
       "fields": [
         "run_id",
         "header_id",
@@ -381,12 +516,26 @@
       ],
       "must_be_read": [
         "run_id",
+        "header_id",
+        "delta_pct",
+        "requested_cycles",
+        "window_seconds",
+        "baseline_pct",
+        "perturbed_pct",
+        "direction",
         "channels",
         "cycles",
         "summary",
+        "original_pct",
         "restore_failed",
-        "restore_outcome"
-      ]
+        "restore_outcome",
+        "detail",
+        "completed_unix_ms"
+      ],
+      "not_assertable": {
+        "state": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "DEC-333. `run_id` is the poll fence \u2014 a snapshot for another run must not be rendered as this one. `restore_failed`/`restore_outcome` are the honesty pair: the dialog must never claim a header was restored when it was not. `state` is read but too common to pin here."
     },
     {
       "daemon": "TachChannel",
@@ -394,7 +543,6 @@
       "endpoints": [
         "GET /diagnostics/control-path"
       ],
-      "note": "DEC-333. `label` is read but too common to prove a read site. `is_target_header` is parsed and NOT read by the GUI — the daemon uses it to keep the target's channel inside its observation bound (P8-an); no GUI surface distinguishes it. Recorded in P8-bz.",
       "fields": [
         "tach_id",
         "label",
@@ -404,7 +552,14 @@
       "must_be_read": [
         "tach_id",
         "monitor_only"
-      ]
+      ],
+      "inert": {
+        "is_target_header": "parsed and never read; adjudicated in register row P8-bz"
+      },
+      "not_assertable": {
+        "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "DEC-333. `label` is read but too common to prove a read site. `is_target_header` is parsed and NOT read by the GUI \u2014 the daemon uses it to keep the target's channel inside its observation bound (P8-an); no GUI surface distinguishes it. Recorded in P8-bz."
     },
     {
       "daemon": "TachObservation",
@@ -412,7 +567,6 @@
       "endpoints": [
         "GET /diagnostics/control-path"
       ],
-      "note": "DEC-333. `responded` is the per-cycle verdict the candidate table is built from; the three RPM terms are what the user checks it against.",
       "fields": [
         "tach_id",
         "baseline_rpm",
@@ -422,11 +576,16 @@
         "responded"
       ],
       "must_be_read": [
+        "tach_id",
         "baseline_rpm",
         "perturbed_rpm",
-        "delta_rpm",
         "responded"
-      ]
+      ],
+      "inert": {
+        "delta_rpm": "only a key in the provenance table, which describes the field rather than reading it; was declared must_be_read on that evidence until AU-d tightened the read definition",
+        "noise_floor_rpm": "only a key in the provenance table, which describes the field rather than reading it (AU-d)"
+      },
+      "note": "DEC-333. `responded` is the per-cycle verdict the candidate table is built from; the three RPM terms are what the user checks it against."
     },
     {
       "daemon": "DiscoveryCycle",
@@ -434,7 +593,6 @@
       "endpoints": [
         "GET /diagnostics/control-path"
       ],
-      "note": "DEC-333. One perturbation cycle. `direction` matters because a down-perturbation inverts what a positive delta means.",
       "fields": [
         "cycle",
         "baseline_pct",
@@ -443,11 +601,15 @@
         "observations"
       ],
       "must_be_read": [
-        "observations",
         "baseline_pct",
         "perturbed_pct",
-        "direction"
-      ]
+        "direction",
+        "observations"
+      ],
+      "inert": {
+        "cycle": "only reached by models.py's own from_dict keyword, which is a parse site and not a read"
+      },
+      "note": "DEC-333. One perturbation cycle. `direction` matters because a down-perturbation inverts what a positive delta means."
     },
     {
       "daemon": "ControlPathCandidate",
@@ -455,7 +617,6 @@
       "endpoints": [
         "GET /diagnostics/control-path"
       ],
-      "note": "DEC-333. `cycles_responded`/`cycles_total` are rendered as a ratio — a candidate that responded once in five is not the same claim as one that responded five times, and collapsing them would lose that. `label` is read but too common.",
       "fields": [
         "tach_id",
         "label",
@@ -470,11 +631,19 @@
       ],
       "must_be_read": [
         "tach_id",
+        "monitor_only",
         "confidence",
+        "direction",
+        "baseline_rpm",
+        "perturbed_rpm",
         "change_pct",
         "cycles_responded",
         "cycles_total"
-      ]
+      ],
+      "not_assertable": {
+        "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "DEC-333. `cycles_responded`/`cycles_total` are rendered as a ratio \u2014 a candidate that responded once in five is not the same claim as one that responded five times, and collapsing them would lose that. `label` is read but too common."
     },
     {
       "daemon": "DiscoverySummary",
@@ -482,7 +651,6 @@
       "endpoints": [
         "GET /diagnostics/control-path"
       ],
-      "note": "DEC-333. `confidence_notes` is the daemon's own explanation of a low confidence; rendering the verdict without it would state a conclusion and withhold its reason.",
       "fields": [
         "relationship",
         "confidence",
@@ -496,8 +664,12 @@
         "relationship",
         "confidence",
         "candidates",
+        "measurement_resolution_ms",
+        "sample_interval_ms",
+        "sample_count",
         "confidence_notes"
-      ]
+      ],
+      "note": "DEC-333. `confidence_notes` is the daemon's own explanation of a low confidence; rendering the verdict without it would state a conclusion and withhold its reason."
     },
     {
       "daemon": "ControlPathRecord",
@@ -505,7 +677,6 @@
       "endpoints": [
         "GET /diagnostics/control-path .records[]"
       ],
-      "note": "DEC-333, the persisted result of an earlier run. `validated_unix_ms` is what makes a stored claim ageable rather than timeless. `tach_ids` is parsed and NOT read — the GUI renders `tach_labels`; recorded in P8-bz.",
       "fields": [
         "header_id",
         "relationship",
@@ -520,12 +691,21 @@
         "validated_unix_ms"
       ],
       "must_be_read": [
+        "header_id",
         "relationship",
         "confidence",
         "tach_labels",
-        "validated_unix_ms",
-        "change_pct"
-      ]
+        "direction",
+        "baseline_rpm",
+        "perturbed_rpm",
+        "change_pct",
+        "run_id",
+        "validated_unix_ms"
+      ],
+      "inert": {
+        "tach_ids": "parsed and never read; adjudicated in register row P8-bz"
+      },
+      "note": "DEC-333, the persisted result of an earlier run. `validated_unix_ms` is what makes a stored claim ageable rather than timeless. `tach_ids` is parsed and NOT read \u2014 the GUI renders `tach_labels`; recorded in P8-bz."
     },
     {
       "daemon": "CharPoint",
@@ -533,7 +713,6 @@
       "endpoints": [
         "GET /diagnostics/characterization"
       ],
-      "note": "DEC-313/334. The two verdicts are deliberately independent and docs/08 forbids collapsing them into one pass/fail; both are pinned so neither can quietly stop being read. `step_index` is parsed and NOT read — the GUI orders by list position; recorded in P8-bz.",
       "fields": [
         "requested_pct",
         "command_accepted",
@@ -554,12 +733,25 @@
       ],
       "must_be_read": [
         "requested_pct",
+        "command_accepted",
         "readback_pct",
+        "pwm_enable",
         "rpm_after",
+        "settle_ms",
+        "first_change_ms",
         "readback_verdict",
         "rpm_verdict",
+        "direction",
+        "settled_ms",
+        "stability",
         "estimated_physical_rpm"
-      ]
+      ],
+      "inert": {
+        "readback_raw": "only a key in the provenance table, which describes the field rather than reading it (AU-d)",
+        "rpm_before": "only a key in the provenance table, which describes the field rather than reading it (AU-d)",
+        "step_index": "parsed and never read; adjudicated in register row P8-bz"
+      },
+      "note": "DEC-313/334. The two verdicts are deliberately independent and docs/08 forbids collapsing them into one pass/fail; both are pinned so neither can quietly stop being read. `step_index` is parsed and NOT read \u2014 the GUI orders by list position; recorded in P8-bz."
     },
     {
       "daemon": "CharSummary",
@@ -567,7 +759,6 @@
       "endpoints": [
         "GET /diagnostics/characterization"
       ],
-      "note": "DEC-313/334. The three top verdicts must stay independent (docs/08). `typical_response_ms`/`typical_settling_ms` are pinned because G29 made them the ONLY producer of those timings — the client recomputation is now just the pre-2.40.0 fallback, so if these stopped being read the dialog would silently show nothing. Three fields are parsed and NOT read: `hysteresis_worst_duty_pct`, `hysteresis_worst_delta_rpm` and `learned_range_note` — recorded in P8-bz.",
       "fields": [
         "command_acceptance",
         "pwm_readback",
@@ -606,16 +797,39 @@
         "command_acceptance",
         "pwm_readback",
         "rpm_response",
+        "min_tested_pct",
+        "max_tested_pct",
+        "min_rpm",
+        "max_rpm",
+        "monotonic",
+        "dead_zone_upper_pct",
+        "clamp_pct",
+        "possible_device_override",
+        "interference_detected",
+        "hysteresis_pct",
         "hysteresis_verdict",
-        "stability_verdict",
-        "typical_response_ms",
-        "typical_settling_ms",
+        "hysteresis_compared_points",
+        "min_responsive_pct",
+        "max_responsive_pct",
+        "low_plateau_to_pct",
         "saturation_from_pct",
         "plateaus",
+        "stability_verdict",
+        "worst_cv_pct",
+        "total_dropouts",
+        "total_outliers",
+        "measurement_resolution_ms",
+        "typical_response_ms",
+        "typical_settling_ms",
         "outside_learned_range",
-        "possible_device_override",
-        "interference_detected"
-      ]
+        "interpretation_states"
+      ],
+      "inert": {
+        "hysteresis_worst_duty_pct": "parsed and never read; adjudicated in register row P8-bz",
+        "hysteresis_worst_delta_rpm": "parsed and never read; adjudicated in register row P8-bz",
+        "learned_range_note": "parsed and never read; adjudicated in register row P8-bz"
+      },
+      "note": "DEC-313/334. The three top verdicts must stay independent (docs/08). `typical_response_ms`/`typical_settling_ms` are pinned because G29 made them the ONLY producer of those timings \u2014 the client recomputation is now just the pre-2.40.0 fallback, so if these stopped being read the dialog would silently show nothing. Three fields are parsed and NOT read: `hysteresis_worst_duty_pct`, `hysteresis_worst_delta_rpm` and `learned_range_note` \u2014 recorded in P8-bz."
     },
     {
       "daemon": "PointStability",
@@ -623,7 +837,6 @@
       "endpoints": [
         "GET /diagnostics/characterization .points[].stability"
       ],
-      "note": "DEC-334 §5. `usable` against `samples` is the absence-is-not-zero pair: a step that sampled nothing must not read as a clean tach. `median_rpm` and `dwell_ms` are parsed and NOT read — recorded in P8-bz.",
       "fields": [
         "samples",
         "usable",
@@ -642,11 +855,21 @@
       "must_be_read": [
         "samples",
         "usable",
-        "dropouts",
-        "outliers",
+        "mean_rpm",
+        "min_rpm",
+        "max_rpm",
+        "stddev_rpm",
         "cv_pct",
-        "verdict"
-      ]
+        "verdict",
+        "sample_interval_ms"
+      ],
+      "inert": {
+        "dropouts": "only a key in the provenance table; CharSummary.total_dropouts is the figure the UI actually renders (AU-d)",
+        "outliers": "only a key in the provenance table; CharSummary.total_outliers is the figure the UI actually renders (AU-d)",
+        "median_rpm": "parsed and never read; adjudicated in register row P8-bz",
+        "dwell_ms": "parsed and never read; adjudicated in register row P8-bz"
+      },
+      "note": "DEC-334 \u00a75. `usable` against `samples` is the absence-is-not-zero pair: a step that sampled nothing must not read as a clean tach. `median_rpm` and `dwell_ms` are parsed and NOT read \u2014 recorded in P8-bz."
     },
     {
       "daemon": "EstimatedRpm",
@@ -654,7 +877,6 @@
       "endpoints": [
         "GET /diagnostics/characterization .points[].estimated_physical_rpm"
       ],
-      "note": "DEC-334. `provenance` is what stops a corrected reading being presented as a raw measurement. `value` is read but too common to pin here.",
       "fields": [
         "value",
         "provenance",
@@ -665,7 +887,11 @@
         "provenance",
         "correction_factor",
         "correction_source"
-      ]
+      ],
+      "not_assertable": {
+        "value": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "DEC-334. `provenance` is what stops a corrected reading being presented as a raw measurement. `value` is read but too common to pin here."
     },
     {
       "daemon": "PlateauSpan",
@@ -673,7 +899,6 @@
       "endpoints": [
         "GET /diagnostics/characterization .summary.plateaus[]"
       ],
-      "note": "DEC-334 §8.3. All four are drawn: the span bounds become a chart region and the RPM pair is the plateau's own claim. tests/test_aio_mb_phase8_batch2.py asserts the realised region against these.",
       "fields": [
         "from_pct",
         "to_pct",
@@ -685,7 +910,8 @@
         "to_pct",
         "rpm_min",
         "rpm_max"
-      ]
+      ],
+      "note": "DEC-334 \u00a78.3. All four are drawn: the span bounds become a chart region and the RPM pair is the plateau's own claim. tests/test_aio_mb_phase8_batch2.py asserts the realised region against these."
     },
     {
       "daemon": "SteadyState",
@@ -693,7 +919,6 @@
       "endpoints": [
         "GET /validation/session .steady_state"
       ],
-      "note": "DEC-335 §9.2. `criterion` is the daemon's statement of WHICH test it applied; a verdict rendered without it is unfalsifiable to the reader.",
       "fields": [
         "verdict",
         "start_ms",
@@ -707,12 +932,16 @@
       ],
       "must_be_read": [
         "verdict",
+        "start_ms",
+        "warmup_ms",
+        "slope_c_per_min",
+        "stddev_c",
         "mean_c",
         "peak_c",
-        "slope_c_per_min",
         "confidence",
         "criterion"
-      ]
+      ],
+      "note": "DEC-335 \u00a79.2. `criterion` is the daemon's statement of WHICH test it applied; a verdict rendered without it is unfalsifiable to the reader."
     },
     {
       "daemon": "StartupFingerprint",
@@ -720,7 +949,6 @@
       "endpoints": [
         "GET /validation/session .startup_fingerprints[]"
       ],
-      "note": "DEC-335 §9.1. `interpretation` is the daemon's own reading of the fingerprint and the GUI must render it rather than re-deriving one. `override_observed` is parsed and NOT read — the GUI infers from `override_duration_ms`; recorded in P8-bz.",
       "fields": [
         "member_id",
         "role",
@@ -738,8 +966,16 @@
         "role",
         "override_duration_ms",
         "peak_rpm",
+        "requested_pct_during",
+        "readback_pct_during",
+        "post_override_rpm",
+        "transition_ms",
         "interpretation"
-      ]
+      ],
+      "inert": {
+        "override_observed": "parsed and never read; adjudicated in register row P8-bz"
+      },
+      "note": "DEC-335 \u00a79.1. `interpretation` is the daemon's own reading of the fingerprint and the GUI must render it rather than re-deriving one. `override_observed` is parsed and NOT read \u2014 the GUI infers from `override_duration_ms`; recorded in P8-bz."
     }
   ]
 }

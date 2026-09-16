@@ -342,7 +342,7 @@ class Limits:
     # a GUI mirror described a decision the GUI does not make — and that
     # deletion set the bar for re-adding: *find a consumer first*.
     # `openfan_stop_timeout_s` has one; those two still do not, and both are
-    # 0/100 on every shipping daemon. Declared inert in
+    # 0/100 on every shipping daemon. Declared `unmodelled` in
     # `tests/fixtures/wire_fields.json` so the coverage test records the
     # exemption rather than silently missing them.
     openfan_stop_timeout_s: int = 0
