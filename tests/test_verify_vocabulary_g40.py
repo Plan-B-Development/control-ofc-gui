@@ -9,6 +9,12 @@ Three register rows, one change set (DEC-364):
 * `ACK-n` — a verify result was attributed to an open sweep by "is a sweep
   running", not by "did the sweep ask for this".
 
+`ACK-z` was opened by that change and closed later, in the same file: the
+sweep disabled *Test PWM Control* and both result handlers switched it back on
+again. Its tests sit with `ACK-n`'s because they share the `_sweep` fixture and
+because the two rows are one story — `ACK-z` is the route that made `ACK-n`
+live.
+
 Written as relationships rather than literals wherever the literal would also
 be satisfied by the defect (`CLAUDE.md § Hard-won lessons`).
 """
@@ -193,7 +199,15 @@ def test_the_gpu_page_renders_the_gpu_table_and_not_the_hwmon_one(qtbot):
 
 
 def _sweep(qtbot):
-    """A page with a real two-header sweep open, waiting on its first header."""
+    """A page with a real two-header sweep open, waiting on its first header.
+
+    The combo is filled through `_populate_verify_combo` — the same method
+    `_render` calls — because the page only builds it when hardware diagnostics
+    arrive, and `_verify_btn`'s gate reads its count (row `ACK-z`). Asserted as
+    a precondition below: an empty combo would keep the button disabled for a
+    reason that has nothing to do with the sweep, and every assertion about it
+    would pass for the wrong one.
+    """
     page = _page(
         qtbot,
         headers=[
@@ -202,6 +216,11 @@ def _sweep(qtbot):
         ],
     )
     page._ensure_verify_worker = lambda: True  # type: ignore[method-assign]  # no real thread
+    page._populate_verify_combo()
+    assert page._verify_combo.count() == 2, "precondition: the header combo must be populated"
+    assert page._verify_btn.isEnabled() is True, (
+        "precondition: the button must start enabled, or 'disabled mid-sweep' proves nothing"
+    )
     emitted: list[str] = []
     page._verify_request.connect(emitted.append)
     page._run_pwm_verify_all()
@@ -291,30 +310,161 @@ def test_a_foreign_result_does_not_wedge_the_sweep(qtbot):
     _flush(page)
 
 
-def test_the_single_header_button_is_live_mid_sweep(qtbot):
-    """Why `ACK-n` was LIVE rather than latent, pinned rather than asserted.
+# ── ACK-z — the sweep's intent is not overridden by its own results ──────
+
+
+def test_the_single_header_button_stays_dead_for_the_whole_sweep(qtbot):
+    """`ACK-z`: the second route, and the one that made `ACK-n` live.
 
     `ACK-n` recorded that DEC-358 had closed the reachable path to a foreign
     result, by stopping a background re-render from re-enabling the button. That
-    is one route and there is a second, older one the row did not account for:
-    `_on_verify_ok` re-enables `_verify_btn` **unconditionally**, and
-    `_step_pwm_verify_all` never disables it again — so from the moment the first
-    header reports until the sweep ends, *Test PWM Control* is clickable, which
-    is exactly the concurrent verify the attribution fix exists to survive.
+    is one route and there was a second, older one the row did not account for:
+    `_on_verify_ok` re-enabled `_verify_btn` **unconditionally** and
+    `_step_pwm_verify_all` never disabled it again — so from the moment the
+    first header reported until the sweep ended, *Test PWM Control* was
+    clickable, which is exactly the concurrent verify the attribution fix exists
+    to survive.
 
-    Sampled after the first result and before the last, because the button is
-    legitimately enabled once the sweep has finished — a test that looked at the
-    end state would pass against a sweep that kept it disabled throughout.
+    **Both arms are asserted in one test on purpose.** Sampled only mid-sweep,
+    this passes against a fix that disables the button forever; sampled only at
+    the end, it passes against a sweep that never disabled it at all. Neither
+    half is evidence without the other, which is why the closing arm is here
+    rather than in a sibling test that could be deleted on its own.
     """
     page, emitted = _sweep(qtbot)
     page._on_verify_ok(HwmonVerifyResult(header_id="pwm1", result="effective"), "pwm1")
 
     assert page._verify_all_total > 0, "precondition: the sweep must still be running"
     assert emitted == ["pwm1", "pwm2"], "precondition: it must have advanced, not finished"
-    assert page._verify_btn.isEnabled() is True, (
-        "if this fails the second route has been closed — good, but then `ACK-z` "
-        "is fixed and this test and the severity claims that cite it must be re-read"
+    assert page._verify_btn.isEnabled() is False, (
+        "the sweep disabled *Test PWM Control* and its own first result switched it "
+        "back on — the button now offers an action the page will not honour"
     )
+
+    # Closing arm: it must come back, or "fixed" means "disabled forever".
+    page._on_verify_ok(HwmonVerifyResult(header_id="pwm2", result="effective"), "pwm2")
+    assert page._verify_all_total == 0, "precondition: the sweep must have finished"
+    assert page._verify_btn.isEnabled() is True, "the sweep ended and the button never came back"
+    _flush(page)
+
+
+def test_the_error_arm_also_leaves_the_button_dead_mid_sweep(qtbot):
+    """`_on_verify_error` carried the identical unconditional re-enable.
+
+    The success arm above cannot see it: a sweep whose headers all *fail* never
+    runs `_on_verify_ok` at all, so a fix applied to one handler and not the
+    other leaves the defect fully reachable on every board where the verify
+    errors — which, for a header the daemon cannot write, is every board.
+    """
+    page, emitted = _sweep(qtbot)
+    page._on_verify_error("unavailable", "gone", "pwm1")
+
+    assert page._verify_all_total > 0, "precondition: the sweep must still be running"
+    assert emitted == ["pwm1", "pwm2"], "precondition: it must have advanced, not finished"
+    assert page._verify_btn.isEnabled() is False, (
+        "the error arm re-enabled the button the sweep had disabled"
+    )
+
+    page._on_verify_error("unavailable", "gone", "pwm2")
+    assert page._verify_all_total == 0, "precondition: the sweep must have finished"
+    assert page._verify_btn.isEnabled() is True, "the sweep ended and the button never came back"
+    _flush(page)
+
+
+def _single_verify(qtbot):
+    """An ORDINARY single verify, driven through the real entry point.
+
+    Not a direct slot call. `_run_pwm_verify` is what sets
+    `_verify_active_header`, and that field is the whole trap: it is still set
+    when the result handler runs, so a re-enable gated on `_verify_in_flight()`
+    alone disables the button permanently. A fixture that calls the slot without
+    it cannot see that — the extracted-rule trap, one field over.
+    """
+    page = _page(
+        qtbot,
+        headers=[
+            HwmonHeader(id="pwm1", is_writable=True),
+            HwmonHeader(id="pwm2", is_writable=True),
+        ],
+    )
+    page._ensure_verify_worker = lambda: True  # type: ignore[method-assign]  # no real thread
+    page._populate_verify_combo()  # as `_render` does — see `_sweep`
+    assert page._verify_combo.count() == 2, "precondition: the header combo must be populated"
+    emitted: list[str] = []
+    page._verify_request.connect(emitted.append)
+    page._run_pwm_verify()
+    assert emitted, "precondition: the verify must actually have been requested"
+    assert page._verify_active_header == emitted[0], (
+        "precondition: the field that springs the trap must really be set, or this "
+        "test passes against the gate it exists to check"
+    )
+    assert page._verify_btn.isEnabled() is False, "precondition: the button must be disabled"
+    assert page._verify_all_total == 0, "precondition: no sweep is open"
+    return page, emitted[0]
+
+
+def test_an_ordinary_single_verify_gives_the_button_back(qtbot):
+    """The trap: gating the re-enable without clearing the state first.
+
+    `_verify_in_flight()` reads `_verify_active_header`, which `_on_verify_ok`
+    clears two lines *after* the old re-enable sat. Gate the re-enable there and
+    every ordinary verify disables *Test PWM Control* for the rest of the
+    session — no error, no log line, and the pre-existing slot-level test cannot
+    see it because its page never set the field.
+    """
+    page, header_id = _single_verify(qtbot)
+
+    page._on_verify_ok(HwmonVerifyResult(header_id=header_id, result="effective"), header_id)
+
+    assert page._verify_active_header is None, "the in-flight marker was not cleared"
+    assert page._verify_btn.isEnabled() is True, (
+        "an ordinary single verify left the button disabled — the gate read "
+        "`_verify_active_header` before the handler cleared it"
+    )
+    _flush(page)
+
+
+def test_an_ordinary_single_verify_that_FAILS_gives_the_button_back(qtbot):
+    """The same trap on the error arm, which has the same two lines."""
+    page, header_id = _single_verify(qtbot)
+
+    page._on_verify_error("unavailable", "gone", header_id)
+
+    assert page._verify_active_header is None, "the in-flight marker was not cleared"
+    assert page._verify_btn.isEnabled() is True, (
+        "a failed single verify left the button disabled for the rest of the session"
+    )
+    _flush(page)
+
+
+def test_the_button_gate_is_one_shape_wherever_it_is_read(qtbot):
+    """A RELATIONSHIP, not a literal — the four call sites must agree.
+
+    Every assertion above states an expected boolean, each of which a
+    single-site fix could satisfy while the other sites kept their own
+    expressions (DEC-334: one flag, one gating shape). This asserts the button
+    matches `_sync_verify_button_enabled`'s own predicate after each handler
+    runs, so a call site that stops routing through the helper fails here even
+    when its answer happens to be right.
+    """
+    page, emitted = _sweep(qtbot)
+
+    def expected() -> bool:
+        return not page._verify_in_flight() and page._verify_combo.count() > 0
+
+    page._on_verify_ok(HwmonVerifyResult(header_id="pwm1", result="effective"), "pwm1")
+    # `emitted` is asserted, not dropped: satisfying RUF059 by renaming it to a
+    # dummy would delete the only evidence that the sample below is mid-sweep.
+    assert emitted == ["pwm1", "pwm2"], "precondition: the sweep advanced rather than finishing"
+    assert expected() is False, "precondition: mid-sweep must be an in-flight sample"
+    assert page._verify_btn.isEnabled() == expected()
+
+    page._populate_verify_combo()  # the autonomous 1 Hz re-render, mid-sweep
+    assert page._verify_btn.isEnabled() == expected(), "a re-render disagreed with the gate"
+
+    page._on_verify_ok(HwmonVerifyResult(header_id="pwm2", result="effective"), "pwm2")
+    assert expected() is True, "precondition: the finished sample must differ from the first"
+    assert page._verify_btn.isEnabled() == expected()
     _flush(page)
 
 

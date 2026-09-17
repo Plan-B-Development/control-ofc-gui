@@ -560,12 +560,20 @@ def _state_with_headers():
 def test_a_live_thermal_change_cannot_re_enable_verify_mid_sweep(qtbot):
     """Reviewer P1: the autonomous re-render must not unlock a hardware write.
 
-    `_render` calls `_populate_verify_combo`, which re-enables `_verify_btn`.
-    Before DEC-358 every re-render followed a user action; the live thermal push
-    can land at any instant, including inside a sweep. `_on_verify_ok` appends
-    *any* result into `_verify_all_results` and steps the queue whenever a sweep
-    is open, so a second concurrent verify pops a header the sweep never
-    reported and corrupts the verdict this change persists.
+    `_render` calls `_populate_verify_combo`, which syncs `_verify_btn`'s
+    enabled state. Before DEC-358 every re-render followed a user action; the
+    live thermal push can land at any instant, including inside a sweep.
+
+    **The stakes have since dropped and the guard has not.** When this was
+    written, `_on_verify_ok` appended *any* result into `_verify_all_results`
+    and stepped the queue whenever a sweep was open, so a second concurrent
+    verify popped a header the sweep never reported and corrupted the verdict
+    the change persists. DEC-364 made attribution provenance-based, so a foreign
+    result is now shown and then ignored; DEC-377 closed the second route to one
+    (the handlers' own unconditional re-enable). What this still pins is that a
+    background re-render cannot offer the user a hardware write the page has
+    deliberately withdrawn — which is now the whole of the claim, not a
+    convenience on top of a correctness dependency.
     """
     page, _svc = _page(qtbot)
     page._state = _state_with_headers()

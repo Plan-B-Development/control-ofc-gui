@@ -1,6 +1,42 @@
 # Changelog
 
-## [Unreleased]
+## [2.76.3] — 2026-09-17
+
+### Fixed
+
+**`Verify All Writable` no longer hands *Test PWM Control* back in the middle of its own
+sweep.** The sweep disables the single-header button deliberately, and both result
+handlers switched it straight back on again on every result — so from the first header's
+result until the sweep ended, the button offered an action the page would not honour, and
+a click cost a redundant hardware probe queued behind the sweep's own (`ACK-z`, DEC-377).
+Nothing was corrupted by it: DEC-364 already made sweep attribution provenance-based, so a
+verify started mid-sweep is shown to the user and then ignored rather than recorded
+against a header it did not test.
+
+The button's enabled state now has **one** definition — `_sync_verify_button_enabled()` —
+where it previously had four expressions across five call sites, which is what let a
+handler that had never heard of the sweep override the sweep's intent (DEC-334's one flag,
+one gating shape). Two stale comments in the same file were corrected with it: the claim
+that DEC-358 had closed "the one reachable route" to a foreign verify (there were two, and
+this closes the second), and a description of a corruption DEC-364 had already made
+unreachable.
+
+### Tests
+
+The test that **pinned** this defect is inverted, renamed, and now carries its closing arm
+in the same test body — a button disabled forever passes the mid-sweep assertion alone,
+and a button never disabled passes the end-state assertion alone, so neither half is
+evidence without the other. Four tests join it: the `_on_verify_error` twin (a sweep whose
+headers all fail never runs the success handler at all), two driven through
+`_run_pwm_verify` rather than the slot, and one asserting the button matches the shared
+predicate at three points including a mid-sweep re-render.
+
+The two slot-driven ones exist because the register's own suggested fix **does not work**
+and the pre-existing test cannot see that: gating the re-enable in place disables the
+button permanently after every ordinary single verify, since the field the gate reads is
+cleared two lines below it. Validity-checked in both directions — the genuine pre-fix
+shape reddens three tests, the suggested fix reddens exactly those two, each at its own
+assertion.
 
 ### Documentation
 
@@ -20,7 +56,8 @@ and the daemon reports `kind: "mb"` where the GUI's own interpretation layer cal
 same channel `cpu_peci`/`amd_tsi`. No duty, floor or threshold moves either way; it can
 only remove a candidate from the hottest-CPU max-reduce, never add one.
 
-No source, test or packaging file changed.
+That documentation pass changed no source, test or packaging file; it ships here because
+it landed between releases.
 
 ## [2.76.2] — 2026-09-17
 

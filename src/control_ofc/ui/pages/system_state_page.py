@@ -751,6 +751,25 @@ class SystemStatePage(QWidget):
         """Is a single verify or a full sweep currently running?"""
         return bool(self._verify_all_total) or self._verify_active_header is not None
 
+    def _sync_verify_button_enabled(self) -> None:
+        """The ONE gating shape for *Test PWM Control* (row `ACK-z`).
+
+        There used to be four expressions for one button: this rule guarded by
+        `_verify_in_flight` in `_populate_verify_combo`, a bare
+        ``setEnabled(True)`` in each result handler, and an ungated
+        ``count() > 0`` in `_finish_verify_all`. The handlers had never heard of
+        the sweep, so they re-enabled the button the sweep had deliberately
+        disabled — DEC-334's lesson, that a second gating shape for one flag
+        hides the broken one for as long as the working one keeps agreeing.
+
+        **Every caller settles its own state first.** `_on_verify_ok` clears
+        `_verify_active_header` *before* calling this; gating the re-enable
+        while that field still names the header that has just reported would
+        leave the button disabled forever after an ordinary single verify,
+        because `_verify_in_flight` would still be true.
+        """
+        self._verify_btn.setEnabled(not self._verify_in_flight() and self._verify_combo.count() > 0)
+
     def _populate_verify_combo(self) -> None:
         """Rebuild the header dropdown, preserving the user's pick.
 
@@ -763,15 +782,16 @@ class SystemStatePage(QWidget):
         * The selection is restored **by id**. ``clear()`` resets
           ``currentIndex`` to 0, so a re-render between picking a header and
           pressing *Test PWM Control* would silently test a different one.
-        * ``_verify_btn`` is re-enabled **only when nothing is in flight**.
-          ``_run_pwm_verify``/``_run_pwm_verify_all`` disable it deliberately;
-          re-enabling it mid-sweep lets a second concurrent verify start, and
-          ``_on_verify_ok`` appends *any* result into ``_verify_all_results``
-          and drives an extra ``_step_pwm_verify_all()`` whenever a sweep is
-          open — which pops a header the sweep never reported and feeds a
-          corrupted set to ``verify_sweep_outcome``. That lands on
-          ``last_pwm_verify_effective``, i.e. on precisely the board-note
-          evidence this change exists to get right.
+        * ``_verify_btn``'s enabled state comes from
+          :meth:`_sync_verify_button_enabled` — one gating shape, shared with
+          both result handlers and ``_finish_verify_all`` (row `ACK-z`).
+          ``_run_pwm_verify``/``_run_pwm_verify_all`` disable it deliberately,
+          and a rebuild that re-enabled it mid-sweep would let a second
+          concurrent verify start. DEC-364 made that survivable rather than
+          corrupting — a foreign result is now shown and then ignored, because
+          the sweep matches on the header it actually asked for — so what
+          remains is a button offering an action the page will not honour, plus
+          a needless hardware probe.
         """
         previous = self._verify_combo.currentData()
         self._verify_combo.clear()
@@ -783,8 +803,7 @@ class SystemStatePage(QWidget):
             restored = self._verify_combo.findData(previous)
             if restored >= 0:
                 self._verify_combo.setCurrentIndex(restored)
-        if not self._verify_in_flight():
-            self._verify_btn.setEnabled(self._verify_combo.count() > 0)
+        self._sync_verify_button_enabled()
         self._update_characterize_availability()
 
     def _supports_characterization(self) -> bool:
@@ -1073,8 +1092,8 @@ class SystemStatePage(QWidget):
         self._verify_btn.setText("Testing...")
         self._verify_result_label.setVisible(False)
         if not self._ensure_verify_worker():
-            self._verify_btn.setEnabled(True)
             self._verify_btn.setText("Test PWM Control")
+            self._sync_verify_button_enabled()
             self._verify_result_label.setText("Verify unavailable: no socket path")
             self._verify_result_label.setVisible(True)
             return
@@ -1090,11 +1109,16 @@ class SystemStatePage(QWidget):
         a verify started by any other path both injected a foreign result into
         `_verify_all_results` and popped an extra header off the queue — so the
         sweep skipped a header and `verify_sweep_outcome` persisted a verdict
-        over a set it had not produced, onto the board-note evidence. DEC-358
-        closed the one reachable route to that (the button can no longer be
-        re-enabled mid-sweep), which made a UI guard the only thing standing
-        between a background re-render and a corrupted verdict; this makes the
-        guard a convenience again rather than a correctness dependency.
+        over a set it had not produced, onto the board-note evidence.
+
+        There were TWO routes to that foreign verify and `ACK-n` accounted for
+        one: DEC-358 stopped a background re-render re-enabling the button. The
+        second was *this handler*, which re-enabled ``_verify_btn``
+        unconditionally on every result while ``_step_pwm_verify_all`` never
+        disabled it again — so the button was live from the first result to the
+        last (row `ACK-z`, closed by :meth:`_sync_verify_button_enabled`). With
+        both closed, the attribution guard below is a convenience again rather
+        than the only thing standing between a click and a corrupted verdict.
 
         A non-matching result is shown and then ignored, and the sweep keeps
         waiting. It cannot wedge on one: every request the sweep emits produces
@@ -1102,9 +1126,11 @@ class SystemStatePage(QWidget):
         header, so its own answer always arrives.
         """
         self._show_verify_result(result)
-        self._verify_btn.setEnabled(True)
-        self._verify_btn.setText("Test PWM Control")
+        # Settle the state BEFORE the gate reads it: `_verify_in_flight` is
+        # still true here until this field is cleared.
         self._verify_active_header = None
+        self._verify_btn.setText("Test PWM Control")
+        self._sync_verify_button_enabled()
         if self._verify_all_total > 0 and header_id == self._verify_all_pending:
             self._verify_all_pending = None
             self._verify_all_results.append((header_id, result.result))
@@ -1124,9 +1150,9 @@ class SystemStatePage(QWidget):
         else:
             self._verify_result_label.setText(f"Verify error: {message}")
         self._verify_result_label.setVisible(True)
-        self._verify_btn.setEnabled(True)
+        self._verify_active_header = None  # before the gate reads it — see `_on_verify_ok`
         self._verify_btn.setText("Test PWM Control")
-        self._verify_active_header = None
+        self._sync_verify_button_enabled()
         if self._verify_all_total > 0 and header_id == self._verify_all_pending:
             self._verify_all_pending = None
             self._verify_all_results.append((header_id, f"error:{category}"))
@@ -1180,7 +1206,7 @@ class SystemStatePage(QWidget):
     def _finish_verify_all(self) -> None:
         self._verify_all_total = 0
         self._verify_all_pending = None
-        self._verify_btn.setEnabled(self._verify_combo.count() > 0)
+        self._sync_verify_button_enabled()
         self._verify_all_btn.setEnabled(True)
         self._verify_all_btn.setText("Verify All Writable")
 

@@ -22,6 +22,7 @@ from control_ofc.api.models import (
     ConnectionState,
     HardwareDiagnosticsResult,
     HwmonDiagnostics,
+    HwmonHeader,
     HwmonVerifyResult,
     HwmonVerifyState,
     KernelModuleInfo,
@@ -427,8 +428,19 @@ class TestSystemStateVerifyWorker:
         assert page._verify_thread is None
 
     def test_on_verify_ok_re_enables_button(self, qtbot):
-        """A successful verify result re-enables the button and shows the label."""
-        page, _ = _ss_page(qtbot)
+        """A successful verify result re-enables the button and shows the label.
+
+        The state carries a writable header because the button's gate now
+        includes ``_verify_combo.count() > 0`` — one gating shape for all four
+        call sites (row `ACK-z`). A page with no headers is not a state
+        production can reach here: `_run_pwm_verify` returns early on an empty
+        combo, so no result can arrive for a page that has none.
+        """
+        state = _make_state()
+        state.set_hwmon_headers([HwmonHeader(id="h1", is_writable=True)])
+        page, _ = _ss_page(qtbot, state=state)
+        page._populate_verify_combo()  # as `_render` does when diagnostics arrive
+        assert page._verify_combo.count() == 1, "precondition: the combo must be populated"
         page._verify_btn.setEnabled(False)
         page._verify_btn.setText("Testing...")
 
