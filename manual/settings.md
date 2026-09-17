@@ -49,8 +49,8 @@ Settings that belong to the daemon rather than to this application. Every value 
 |---------|-------|-------------|
 | **Startup delay** | 0-30s | Tells the daemon to wait this many seconds after boot before detecting hardware. Useful if your fan controller initialises slowly. Takes effect on the next daemon restart |
 | **Poll interval** | 250-2000 ms | How often the daemon reads your hardware |
-| **Serial port** | a `/dev/tty…` path | The OpenFan device path. Leave blank to auto-detect |
-| **Serial timeout** | 50-1000 ms | Read timeout for the OpenFan device |
+| **Serial port** | a `/dev/tty…` path | The OpenFan device path. Leave blank to auto-detect. If the daemon reports no controller, the row says so and adds *"set a path here to pin one the daemon is not finding"* — the field stays editable, because naming the port explicitly is how you rescue a controller that is plugged in but not being adopted |
+| **Serial timeout** | 50-1000 ms | Read timeout for the OpenFan device. Also annotated when no controller is detected |
 | **Super-I/O port probe** | on/off | Opt-in active chip detection. The switch is only half the requirement — it also needs a root systemd drop-in, and the row says so |
 | **NVIDIA telemetry** | on/off | Opt-in read-only NVML. Same drop-in caveat |
 

@@ -247,6 +247,9 @@ class SettingsPage(QWidget):
         self._series_selection = series_selection
         # Guards the alias table's itemChanged handler while it is repopulated.
         self._populating_aliases = False
+        #: Sublabels of rows that asked to be recorded, keyed by the caller's own
+        #: key (see `_setting_row`). Must exist before any card is built.
+        self._row_sublabels: dict[str, QLabel] = {}
         # DEC-243 daemon-config state. `_daemon_config_unsupported` latches on a
         # 404 so a pre-2.16.0 daemon is asked once, mirroring the DEC-200
         # preferred-sensor precedent; `_populating_daemon_cfg` stops the render
@@ -332,10 +335,31 @@ class SettingsPage(QWidget):
         # Load current values
         self._load_current_settings()
 
+        # `OFN-e`: demote the two OpenFan rows in the Daemon Configuration card
+        # while no controller is reported. Called once here for capabilities that
+        # already landed, then kept current by the signal — this page had no
+        # AppState connection at all before, so a controller appearing or
+        # vanishing mid-session would otherwise have left stale wording until the
+        # next construction.
+        self._apply_openfan_presence_annotation()
+        if self._state is not None:
+            self._state.capabilities_updated.connect(self._on_capabilities_updated)
+
     # ─── Tab builders ────────────────────────────────────────────────
 
-    def _setting_row(self, title: str, subtitle: str, control: QWidget) -> QHBoxLayout:
+    def _setting_row(
+        self, title: str, subtitle: str, control: QWidget, *, sublabel_key: str = ""
+    ) -> QHBoxLayout:
         """A mockup settings row: a title + sublabel on the left, a control right.
+
+        ``sublabel_key`` records the sublabel in ``self._row_sublabels`` so a
+        caller can rewrite it later — this row builds the label and then drops
+        the reference on the floor, which is why the two OpenFan daemon-config
+        rows had no way to say "no controller detected" (`OFN-e`). It is opt-in
+        and inert by default: a row that passes no key behaves exactly as before,
+        and nothing reads a key it did not register. The consumer subscripts the
+        dict rather than using ``.get``, so a refactor that drops the key fails
+        loudly at construction instead of silently annotating nothing (DEC-379).
 
         DEC-268: the row also *names* the control for assistive tech. A
         ``ToggleSwitch`` carries no text of its own — the label beside it is a
@@ -357,6 +381,8 @@ class SettingsPage(QWidget):
         sub = QLabel(subtitle)
         sub.setProperty("class", "CardMeta")
         text.addWidget(sub)
+        if sublabel_key:
+            self._row_sublabels[sublabel_key] = sub
         row.addLayout(text, 1)
         row.addWidget(control)
         # Every control on this page that carries no text of its own gets the row
@@ -900,6 +926,25 @@ class SettingsPage(QWidget):
         ("detection.enable_nvidia_telemetry", "NVIDIA telemetry", "Opt-in read-only NVML"),
     )
 
+    #: Sentence appended to a row's sublabel while the daemon reports no OpenFan
+    #: controller (`OFN-e`). The daemon emits `serial.port` and `serial.timeout_ms`
+    #: on every machine — `api/handlers/config.rs` has no hardware gate — so two of
+    #: this card's six rows name hardware the user may not own.
+    #:
+    #: These rows are ANNOTATED, never hidden, and never disabled. Hiding them is
+    #: the obvious fix and it is wrong: `serial.port` is precisely how a user pins
+    #: a controller that is attached but not being detected, which is the one
+    #: situation where the field matters most and the one where `present` is False.
+    #: The `serial.port` wording says so, rather than leaving the user to guess why
+    #: an editable field is telling them their hardware is missing.
+    _OPENFAN_ABSENT_NOTES = (
+        (
+            "serial.port",
+            "No controller detected — set a path here to pin one the daemon is not finding.",
+        ),
+        ("serial.timeout_ms", "No controller detected."),
+    )
+
     def _build_daemon_config_card(self) -> QWidget:
         card = Card()
         v = QVBoxLayout(card)
@@ -1007,7 +1052,7 @@ class SettingsPage(QWidget):
         # Per-row source/restart annotation, keyed by config key.
         self._daemon_row_notes: dict[str, QLabel] = {}
         for key, title, subtitle in self._DAEMON_ROWS:
-            v.addLayout(self._setting_row(title, subtitle, controls[key]))
+            v.addLayout(self._setting_row(title, subtitle, controls[key], sublabel_key=key))
             note = QLabel("")
             note.setObjectName(f"Settings_Label_daemonNote_{key.replace('.', '_')}")
             # DEC-231: interpolates daemon-supplied strings, one of which
@@ -2047,6 +2092,43 @@ class SettingsPage(QWidget):
         return card
 
     # ─── Logic ───────────────────────────────────────────────────────
+
+    def _apply_openfan_presence_annotation(self) -> None:
+        """Say "no controller detected" on the two OpenFan daemon-config rows.
+
+        `OFN-e`. The daemon publishes `serial.port` and `serial.timeout_ms`
+        unconditionally, so on a machine with no OpenFan controller this card
+        carries two rows describing hardware that is not there, worded as though
+        it is. Neither row is hidden or disabled — see `_OPENFAN_ABSENT_NOTES`
+        for why the obvious fix is the wrong one.
+
+        Conservative in the direction that matters: the annotation appears only
+        when capabilities exist AND report the controller absent. With no
+        capabilities the rows read exactly as they always have — "the daemon has
+        not said" is not "there is no controller", and a startup window that
+        briefly claimed missing hardware would be its own defect.
+        """
+        caps = getattr(self._state, "capabilities", None) if self._state else None
+        absent = caps is not None and not getattr(getattr(caps, "openfan", None), "present", False)
+        # `_DAEMON_ROWS` stays the one source of the base wording — a second copy
+        # here would drift the moment someone edited the row it came from.
+        subtitles = {key: subtitle for key, _title, subtitle in self._DAEMON_ROWS}
+        for key, note in self._OPENFAN_ABSENT_NOTES:
+            # Subscript, never `.get`: a row that stopped registering its
+            # sublabel must fail here rather than annotate nothing (DEC-379).
+            label = self._row_sublabels[key]
+            base = subtitles[key]
+            label.setText(f"{base}. {note}" if absent else base)
+
+    def _on_capabilities_updated(self, caps) -> None:
+        """Re-annotate when `/capabilities` lands (`OFN-e`).
+
+        The payload is ignored on purpose: `_apply_openfan_presence_annotation`
+        reads `AppState`, so the signal path and the direct call in `__init__`
+        cannot drift into answering differently.
+        """
+        del caps
+        self._apply_openfan_presence_annotation()
 
     def _apply_wizard_spindown_limit(self) -> None:
         """Bound the wizard spin-down timer by what the daemon will actually honour.

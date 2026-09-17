@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.78.0] — 2026-09-17
+
+### Changed
+
+**The OpenFan Controller stops being mentioned as though you have one**
+(`OFN-e`, `OFN-q`, DEC-381). Two surfaces still described the controller in the
+present tense on a machine that has none — the last two the OFN sweep had left
+open, and the pair the sweep had deliberately stopped at because both needed a
+decision rather than a fix.
+
+**Overview ▸ Daemon Health** no longer lists `openfan: ok — no OpenFanController
+connected`. The daemon reports an `openfan` subsystem on every machine, healthy
+and empty, and this card rendered the whole health model verbatim — so the one
+line on the page that said "OpenFanController" out loud was the line about not
+having one. It is dropped only while it is **healthy**: an `openfan` subsystem
+reporting `warn` or `crit` is a real fault — a controller unplugged mid-session,
+a serial link that dropped — and still appears, exactly as the Dashboard's
+OpenFan chip has behaved since v2.75.0. The daemon's own health model reaches
+the support bundle and the system report unchanged.
+
+**Settings ▸ Daemon Configuration** now says so on the two OpenFan rows instead
+of leaving them to imply hardware you may not own. `Serial port` and `Serial
+timeout` are published by every daemon regardless of what is attached, so two of
+that card's six rows described an OpenFan device unconditionally. They now read
+"No controller detected" while the daemon reports none — and `Serial port` adds
+*"set a path here to pin one the daemon is not finding"*, because that field is
+precisely how you rescue a controller that is plugged in but not being adopted.
+
+**Both rows stay visible and stay editable.** Hiding them is the obvious change
+and it is the wrong one: `present: false` is exactly the state a user needs the
+port field in.
+
 ## [2.77.0] — 2026-09-17
 
 ### Added

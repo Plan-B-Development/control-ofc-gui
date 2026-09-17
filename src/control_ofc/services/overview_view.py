@@ -393,8 +393,28 @@ def build_daemon_health_vm(
         if status.uptime_seconds is not None
         else "Uptime: —"
     )
+    # `OFN-q`: the daemon reports an `openfan` subsystem on every machine,
+    # healthy and empty, so this card printed `openfan: ok — no OpenFanController
+    # connected` to users who own no controller. Drop that line where
+    # capabilities say there is none — but ONLY while it is healthy.
+    #
+    # The health condition is the load-bearing half, and it is the posture
+    # DEC-361 already took one surface over: `dashboard_page.py`'s chip carries
+    # "an UNHEALTHY openfan subsystem is a real fault and must still show". It
+    # also covers the one skew window this filter has. `/capabilities` refreshes
+    # every 300 s while `/status` polls at 1 Hz, so a controller that drops
+    # mid-session can be reported `warn` here for minutes while `present` is
+    # still the stale `False`; that warning feeds `overall_status`, and a
+    # degraded `Status:` pill must never lose its explanation.
+    #
+    # Scoped to this card. `services/diagnostics_service.py` renders the same
+    # array into the support bundle and the system report, and those stay
+    # verbatim — a support bundle carries the daemon's health model whole.
+    openfan_absent = caps is not None and not caps.openfan.present
     subsystem_lines = []
     for s in status.subsystems:
+        if openfan_absent and s.name == "openfan" and s.status == "ok":
+            continue
         age = f" (age {s.age_ms}ms)" if s.age_ms is not None else ""
         reason = f" — {s.reason}" if s.reason else ""
         subsystem_lines.append(f"{s.name}: {s.status}{age}{reason}")

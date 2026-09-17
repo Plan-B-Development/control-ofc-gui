@@ -429,8 +429,15 @@ These differences are **expected behavior**, not a bug. The GUI poll cycle (1000
 - Show subsystem `reason` text from daemon alongside age (e.g., "readings fresh", "readings stale").
   Treat it as **daemon prose, not contract** — render it, never match on it. On daemon ≥ 2.24.2 a
   partial-coverage wording also appears ("N of M readings stale — the poll loop is running but is
-  not refreshing them"), and an absent OpenFanController reads "no OpenFanController connected"
-  (DEC-302)
+  not refreshing them"). An absent OpenFanController reads "no OpenFanController connected"
+  (DEC-302) — but **since GUI v2.78.0 the Overview card does not render that entry at all**
+  when `/capabilities` reports `openfan.present == false` *and* the subsystem's own `status`
+  is `ok` (DEC-381). The daemon still emits it; the wire shape in `docs/08` is unchanged, and
+  the support bundle and system report still carry the full array. The health condition is
+  load-bearing: an `openfan` subsystem reporting `warn` or `crit` is still rendered, because
+  it feeds `overall_status` and the `Status:` pill must not degrade with its explanation
+  hidden — `/capabilities` refreshes every 300 s against `/status`'s 1 Hz, so the two can
+  disagree for minutes after a controller is unplugged mid-session
 - Include an explanatory note: "Age = how long ago this subsystem's data was last refreshed".
   **Not** "time since the daemon last polled it": on daemon ≥ 2.24.2 the **`openfan`** entry reports
   the worse of poll *liveness* and data *freshness*, so when a poll is running but not covering every

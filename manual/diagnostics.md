@@ -17,7 +17,7 @@ The **Overview** page answers *"is the daemon healthy, what hardware was found, 
 | **Daemon version** | Version of the running daemon and its API |
 | **Status** | Overall health: "healthy", "warning", or "critical" |
 | **Uptime** | How long the daemon has been running since last restart |
-| **Subsystems** | List of subsystems (openfan, hwmon_sensors, hwmon_pwm) with their status and age |
+| **Subsystems** | List of the subsystems the daemon reports — `openfan`, `hwmon`, `engine` and `controls` — with their status and age. If you have no OpenFan Controller the `openfan` line is left out rather than listed as healthy-and-empty; it reappears the moment that subsystem reports a fault, so an adopted controller that drops off mid-session is still shown |
 
 **Age** is the time in milliseconds since the daemon last polled that hardware subsystem. A low age (under 1000ms) means the data is fresh. A high age means the daemon is having trouble reaching that hardware.
 
