@@ -354,9 +354,32 @@ reporting a plausible-looking constant 115 C outranked every healthy CPU sensor,
 latched the thermal emergency, and never released (release requires <= 80 C). Every
 fan sat at 100% on a cold machine until the daemon restarted. The daemon now
 classifies the same chip+vendor+label as `mb`, so the channel never reaches the
-ladder. `nct6776`'s `PECI`/`TSI` labels — the sources the kernel docs tell you to
-prefer — classify as `cpu` in the same change; before it they fell through to a
-generic fallback that recognised neither.
+ladder. The same change also promotes the sources the kernel docs tell you to
+prefer: on `nct6775`, `nct6776`, `nct6683`, `nct6686` and `nct6687`, a label
+containing `AMD TSI`, `TSI`, `PECI` or `CPU` classifies as `cpu`
+(`hwmon/discovery.rs:242`). Before it they fell through to a generic fallback
+that recognised neither `PECI` nor `TSI`.
+
+**Those are two different chip lists, and they are different on purpose — do not
+unify them.** The bogus-CPUTIN gate above covers *eleven* chips **and** requires
+an ASUS board vendor **and** an exact `cputin` label
+(`is_known_bogus_cpu_sensor`, `discovery.rs:192`). The `PECI`/`TSI` promotion
+covers *five* chips and is not vendor-gated at all. They overlap only on
+`nct6775` and `nct6776`, and the bogus gate runs first (`discovery.rs:226`
+before `:242`), so on an ASUS board `CPUTIN` is demoted before the promotion arm
+is reached. Widening the vendor-gated list to match the other one would demote a
+real CPU sensor on every non-ASUS board carrying the same chip — the opposite
+fault, and the worse one.
+
+Note one consequence of the lists differing in the *other* direction. The GUI's
+own interpretation layer (`knowledge/sensor_knowledge.py`) routes all eleven
+nct6775-family chips to `_classify_nct6775`, and `nct6683`/`nct6686`/`nct6687`
+to `_classify_nct6683`; both promote `TSI`/`PECI` to a CPU source (`amd_tsi` /
+`cpu_peci`, `medium_high`). The daemon's arm names five chips. So for the other
+nine family members — `nct6779`, `nct6791`, `nct6792`, `nct6793`, `nct6795`,
+`nct6796`, `nct6797`, `nct6798`, `nct6799` — the nct6775-family table earlier in
+this document reports `cpu_peci`/`amd_tsi` while the daemon's wire `kind` for
+the same channel is `mb`. Tracked as `DOC-w`.
 
 Reference: https://docs.kernel.org/hwmon/nct6775.html
 

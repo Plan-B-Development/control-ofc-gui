@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Documentation
+
+**`docs/20` described the daemon's PECI/TSI classification as `nct6776`'s alone; the arm
+covers five chips** — `nct6775`, `nct6776`, `nct6683`, `nct6686` and `nct6687` — and
+promotes any label containing `AMD TSI`, `TSI`, `PECI` or `CPU` (`DOC-u`). The corrected
+passage also writes down the thing the deferral was protecting: that arm and the
+bogus-CPUTIN gate beside it are **two different chip lists on purpose** — eleven chips,
+ASUS-gated, exact-label `cputin` versus five chips and no vendor gate — and unifying them
+would demote a real CPU sensor on every non-ASUS board carrying the same chip.
+
+**Checking that opened `DOC-w`** (recorded, not fixed): the lists also differ in the other
+direction. `AUD-x` widened the bogus-CPUTIN set to the eleven-chip nct6775 family without
+widening the five-chip promotion arm, so on the other nine members a `PECI`/`TSI` channel
+falls to the generic fallback — which matches `cpu`/`tctl`/`tccd` but not `peci`/`tsi` —
+and the daemon reports `kind: "mb"` where the GUI's own interpretation layer calls the
+same channel `cpu_peci`/`amd_tsi`. No duty, floor or threshold moves either way; it can
+only remove a candidate from the hottest-CPU max-reduce, never add one.
+
+No source, test or packaging file changed.
+
 ## [2.76.2] — 2026-09-17
 
 ### Changed
