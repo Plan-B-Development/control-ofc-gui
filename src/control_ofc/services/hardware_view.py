@@ -25,11 +25,22 @@ from control_ofc.ui.widgets.inventory_readiness_view import _AUTO_EXPAND_RANK, _
 # Daemon severity → StatusPill state / checklist badge word / verdict.
 _STATE: dict[str, str] = {"ok": "ok", "info": "info", "warning": "warn", "critical": "crit"}
 _BADGE: dict[str, str] = {"ok": "PASS", "info": "INFO", "warning": "WARN", "critical": "FAIL"}
+
+#: The Hardware page's verdict, and it says "HARDWARE" out loud on purpose
+#: (`SSN-i`, DEC-379). This page and System State answer two different, narrower
+#: questions — "is this machine's hardware/driver stack set up for fan control?"
+#: here, from the daemon's evidence-based `GET /inventory/hardware-readiness`;
+#: "what on this machine needs a response right now?" there, from observation in
+#: ISA-18.2 vocabulary. Neither owns a global verdict. The words used to be a
+#: bare `READY` against System State's `SYSTEM READY`, which is two different
+#: answers a glance apart in near-identical words — and the section header this
+#: pill trails was called "System Readiness Checklist", putting the other page's
+#: noun on this page's question. Both are renamed; keep them distinguishable.
 _VERDICT: dict[str, tuple[str, str]] = {
-    "ok": ("READY", "ok"),
-    "info": ("READY", "ok"),
-    "warning": ("NEEDS ATTENTION", "warn"),
-    "critical": ("NEEDS ATTENTION", "crit"),
+    "ok": ("HARDWARE READY", "ok"),
+    "info": ("HARDWARE READY", "ok"),
+    "warning": ("HARDWARE NEEDS ATTENTION", "warn"),
+    "critical": ("HARDWARE NEEDS ATTENTION", "crit"),
 }
 _CONFIDENCE_RANK: dict[str, int] = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
 
@@ -173,7 +184,7 @@ def build_readiness_summary(hw: HardwareReadiness) -> ReadinessSummaryVM:
     crit_count = sum(1 for m in items if _norm(m.severity) == "critical")
     info_count = sum(1 for m in items if _norm(m.severity) == "info")
     overall = _norm(hw.overall)
-    verdict_word, verdict_state = _VERDICT.get(overall, ("NEEDS ATTENTION", "warn"))
+    verdict_word, verdict_state = _VERDICT.get(overall, ("HARDWARE NEEDS ATTENTION", "warn"))
 
     top = (hw.rollup.top_summary or "").strip()
     top_summary_line = f"Most important next step: {top}" if (top and overall != "ok") else ""

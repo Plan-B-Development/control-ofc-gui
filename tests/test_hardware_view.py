@@ -107,14 +107,16 @@ def test_summary_counts_and_verdict():
     s = build_readiness_summary(hw)
     assert (s.pass_count, s.warn_count, s.crit_count, s.info_count) == (2, 1, 1, 1)
     assert s.to_fix == 2
-    assert (s.verdict_word, s.verdict_state) == ("NEEDS ATTENTION", "crit")
+    assert (s.verdict_word, s.verdict_state) == ("HARDWARE NEEDS ATTENTION", "crit")
     assert [seg.label for seg in s.segments] == ["PASS", "WARN", "CRIT", "INFO"]  # no N/A
 
 
 def test_verdict_ready_for_ok_and_info():
-    assert build_readiness_summary(_hw(overall="ok")).verdict_word == "READY"
+    assert build_readiness_summary(_hw(overall="ok")).verdict_word == "HARDWARE READY"
     assert build_readiness_summary(_hw(overall="info")).verdict_state == "ok"
-    assert build_readiness_summary(_hw(overall="warning")).verdict_word == "NEEDS ATTENTION"
+    assert (
+        build_readiness_summary(_hw(overall="warning")).verdict_word == "HARDWARE NEEDS ATTENTION"
+    )
 
 
 def test_summary_last_scanned_line_formats_age():

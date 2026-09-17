@@ -6,7 +6,9 @@ one source of truth (no drift):
 
 * :func:`detect_readiness_problems` — the single problem-detection pass. Both
   the verdict banner and the "To fix" guidance derive from it.
-* :func:`readiness_verdict` — the one-line status shown at the top of the card.
+* :func:`readiness_verdict` — the one-line status that leads the pop-out
+  report. It has exactly one render site (`build_readiness_report_html`) since
+  DEC-379 deleted the unread `SystemStateVM.verdict_text` pair (`ACK-i`).
 * :func:`build_fix_guidance_html` — GUI-authored "To fix" bullets (disclaimer +
   clickable doc links). Deliberately contains **no daemon-supplied strings**, so
   it is safe to render as rich text without the escaping dance DEC-106 requires.
@@ -607,10 +609,24 @@ def gpu_verify_problems(result: GpuVerifyResult) -> list[dict]:
     return [{**spec, "doc_url": arch_url, "doc_title": arch_title, "severity": "critical"}]
 
 
-def readiness_verdict(diag: HardwareDiagnosticsResult) -> tuple[str, str]:
-    """Return ``(verdict_text, css_class)`` for the readiness banner."""
+def readiness_verdict(
+    diag: HardwareDiagnosticsResult,
+    *,
+    pwm_control_verified: bool | None = None,
+) -> tuple[str, str]:
+    """Return ``(verdict_text, css_class)`` for the readiness banner.
+
+    ``pwm_control_verified`` is the same tri-state
+    :func:`detect_readiness_problems` takes and must be threaded from the same
+    place the page's own pill gets it (`SSN-l`, DEC-379). Before it was added
+    here, this function called the detector bare while
+    :func:`~control_ofc.services.system_state_view.build_system_state_vm`
+    passed the flag, so the pop-out report could open with "✓ System ready" on a
+    machine whose System State page read "1 ACTION REQUIRED" — the report is
+    that page's answer at length, not a second opinion (`SSN-i`).
+    """
     hw = diag.hwmon
-    problems = detect_readiness_problems(diag)
+    problems = detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
     ts = diag.thermal_safety
     thermal = f"thermal safety {ts.state}" if ts and ts.state else "thermal safety unknown"
     if not problems:
@@ -623,20 +639,29 @@ def readiness_verdict(diag: HardwareDiagnosticsResult) -> tuple[str, str]:
     phrase = "issue needs" if n == 1 else "issues need"
     critical = any(p["severity"] == "critical" for p in problems)
     cls = "CriticalChip" if critical else "WarningChip"
-    return (
-        f"⚠ {n} {phrase} attention — see the checklist below, "
-        f"or open the full report for the complete detail",
-        cls,
-    )
+    # "see the checklist below, or open the full report" named neither thing
+    # that is here: the only render site is the top of the full report itself,
+    # where "the checklist" means the System State page's condition cards and
+    # "the full report" is the document you are already reading. "To fix" is a
+    # real section of this report and the last one before the footer.
+    return (f'⚠ {n} {phrase} attention — see "To fix" below', cls)
 
 
-def build_fix_guidance_html(diag: HardwareDiagnosticsResult) -> str | None:
+def build_fix_guidance_html(
+    diag: HardwareDiagnosticsResult,
+    *,
+    pwm_control_verified: bool | None = None,
+) -> str | None:
     """Return the "To fix" block (rich text), or ``None`` when nothing is wrong.
 
     GUI-authored content only — safe to render as rich text with external
     links enabled (no daemon strings are interpolated; DEC-106).
+
+    ``pwm_control_verified`` threads for the same reason it does on
+    :func:`readiness_verdict` (`SSN-l`): without it this block was empty on
+    exactly the machines whose promoted board note is the thing to fix.
     """
-    problems = detect_readiness_problems(diag)
+    problems = detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
     if not problems:
         return None
     parts = ["<b>To fix:</b>"]
@@ -778,14 +803,22 @@ def thermal_line(ts) -> str | None:
     )
 
 
-def build_readiness_report_html(diag: HardwareDiagnosticsResult) -> str:
+def build_readiness_report_html(
+    diag: HardwareDiagnosticsResult,
+    *,
+    pwm_control_verified: bool | None = None,
+) -> str:
     """Build the full, self-contained HTML report for the pop-out window.
 
     Daemon-supplied strings are HTML-escaped; GUI guidance text is trusted.
+
+    ``pwm_control_verified`` is passed straight through to both derivations
+    below, which is what makes this report the System State page's answer at
+    length rather than an independent one (`SSN-i` / `SSN-l`).
     """
     t = active_theme()
     hw = diag.hwmon
-    verdict_text, verdict_cls = readiness_verdict(diag)
+    verdict_text, verdict_cls = readiness_verdict(diag, pwm_control_verified=pwm_control_verified)
     sev_color = severity_hex(verdict_cls, t)
 
     def h(title: str) -> str:
@@ -870,7 +903,7 @@ def build_readiness_report_html(diag: HardwareDiagnosticsResult) -> str:
         )
 
     # To fix
-    fix = build_fix_guidance_html(diag)
+    fix = build_fix_guidance_html(diag, pwm_control_verified=pwm_control_verified)
     if fix:
         out.append(h("To fix"))
         out.append(f'<div style="color:{t.status_warn}">{fix}</div>')

@@ -22,10 +22,19 @@ from dataclasses import dataclass, field
 from ..api.models import HardwareDiagnosticsResult, HwmonHeader, HwmonVerifyResult
 from ..ui.hwmon_guidance import dual_chip_verify_hint, verification_guidance
 
-#: The compact per-header verdict shown on a Hardware card (§7).
-VERDICT_PASS = "PASS"
-VERDICT_WARN = "CHECK"
-VERDICT_FAIL = "FAIL"
+# `VERDICT_PASS` / `VERDICT_WARN` / `VERDICT_FAIL` used to live here, as "the
+# compact per-header verdict shown on a Hardware card (§7)". That badge was
+# never wired at any point between GUI v2.56.0 and v2.76.5: `_on_verify_ok`
+# puts `view.text` in a page-level message area, and `PwmHeaderCard`'s title row
+# already carries the role pill. DEC-379 deleted them with `SSN-i`'s answer —
+# each surface answers its own narrower question, and a per-header PASS/CHECK/
+# FAIL is a THIRD granularity, narrower than either of the two that exist.
+#
+# Nothing is lost that cannot be re-derived: PASS/CHECK/FAIL was a word for a
+# `chip_class`, and both axes it encoded already have a live reader —
+# `chip_class` (how loud) and `evidence` (what it means about the hardware).
+# A future badge derives from those rather than carrying a third column that
+# is assembled and discarded on every result (row `ACK-y`).
 
 #: What one verify result says about whether motherboard PWM control *works*.
 #:
@@ -56,7 +65,6 @@ class VerifyOutcome:
     summary: str  # the user-facing sentence
     short: str  # compact label for a sweep line
     chip_class: str  # shared theme vocabulary from `theme.py`
-    verdict: str  # VERDICT_* — the compact card badge
     evidence: str  # PWM_EVIDENCE_* — what this says about the hardware
 
 
@@ -90,35 +98,30 @@ _OUTCOMES: dict[str, VerifyOutcome] = {
         "PWM control is working correctly",
         "OK",
         "SuccessChip",
-        VERDICT_PASS,
         PWM_EVIDENCE_EFFECTIVE,
     ),
     "pwm_enable_reverted": VerifyOutcome(
         "BIOS/EC reverted pwm_enable — fan control is being overridden",
         "BIOS reclaimed",
         "CriticalChip",
-        VERDICT_FAIL,
         PWM_EVIDENCE_INEFFECTIVE,
     ),
     "pwm_value_clamped": VerifyOutcome(
         "PWM value was clamped or ignored by hardware",
         "clamped",
         "WarningChip",
-        VERDICT_WARN,
         PWM_EVIDENCE_INEFFECTIVE,
     ),
     "no_rpm_effect": VerifyOutcome(
         "PWM accepted but RPM did not change (fan may be disconnected or stalled)",
         "no RPM change",
         "WarningChip",
-        VERDICT_WARN,
         PWM_EVIDENCE_INEFFECTIVE,
     ),
     "rpm_unavailable": VerifyOutcome(
         "PWM write accepted but RPM readback unavailable",
         "no tach",
         "CardMeta",
-        VERDICT_WARN,
         PWM_EVIDENCE_INCONCLUSIVE,
     ),
     # `ACK-m` / DEC-373, daemon >= 2.48.0. Deliberately the same three
@@ -134,7 +137,6 @@ _OUTCOMES: dict[str, VerifyOutcome] = {
         "PWM readback failed, so whether the write held could not be confirmed",
         "no readback",
         "CardMeta",
-        VERDICT_WARN,
         PWM_EVIDENCE_INCONCLUSIVE,
     ),
 }
@@ -179,11 +181,9 @@ def outcome_for(result: str) -> VerifyOutcome:
     if known is not None:
         return known
     if result.startswith("error:"):
-        return VerifyOutcome(
-            result, result, "CriticalChip", VERDICT_FAIL, PWM_EVIDENCE_INCONCLUSIVE
-        )
+        return VerifyOutcome(result, result, "CriticalChip", PWM_EVIDENCE_INCONCLUSIVE)
     return VerifyOutcome(
-        _unrecognised_summary(result), result, "CardMeta", VERDICT_WARN, PWM_EVIDENCE_INCONCLUSIVE
+        _unrecognised_summary(result), result, "CardMeta", PWM_EVIDENCE_INCONCLUSIVE
     )
 
 
@@ -231,11 +231,14 @@ class VerifyResultView:
     """Render-ready presentation of one ``POST /hwmon/{id}/verify`` result."""
 
     header_id: str
-    summary: str
     #: Theme chip class — "SuccessChip" | "WarningChip" | "CriticalChip" | "CardMeta".
     chip_class: str
-    #: Compact verdict for a card badge.
-    verdict: str
+    # No `summary` and no `verdict`. Both were produced on every build and read
+    # by nothing (row `ACK-y`, DEC-379) — `summary` is still load-bearing INSIDE
+    # `build_verify_result_view`, which composes `lines[0]` from it, so what went
+    # is the copy on the returned view, not the value. Both consumers render
+    # `text`; a caller that wants the bare sentence asks `outcome_for` for it,
+    # which is where the vocabulary lives.
     #: The full multi-line body, already assembled in reading order.
     lines: list[str] = field(default_factory=list)
     #: True when the daemon could not put the header back where it found it.
@@ -288,9 +291,7 @@ def build_verify_result_view(
 
     return VerifyResultView(
         header_id=result.header_id,
-        summary=summary,
         chip_class=chip_class,
-        verdict=outcome.verdict,
         lines=lines,
         restore_failed=bool(getattr(result, "restore_failed", False)),
     )
@@ -315,10 +316,12 @@ def build_verify_result_view(
 # This lives here rather than inlined in `system_state_page` for DEC-276's
 # reason — a rule inside one consumer is a rule the other consumers cannot
 # follow — and NOT because the two tables are converging. The type is
-# deliberately narrower than `VerifyOutcome`: the GPU path feeds no sweep, no
-# board-note evidence and no compact card badge, so it has no `short`,
-# `verdict` or `evidence` column. Giving it an `evidence` column it does not use
-# is exactly the invitation this comment exists to refuse.
+# deliberately narrower than `VerifyOutcome`: the GPU path feeds no sweep and no
+# board-note evidence, so it has no `short` or `evidence` column. Giving it an
+# `evidence` column it does not use is exactly the invitation this comment
+# exists to refuse. (It named a `verdict` column too, until DEC-379 deleted that
+# one from `VerifyOutcome` as well — the hwmon path had no reader for it either,
+# which is the same refusal, arrived at rather later; row `ACK-y`.)
 
 
 @dataclass(frozen=True)

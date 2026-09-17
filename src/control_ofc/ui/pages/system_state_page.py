@@ -605,7 +605,7 @@ class SystemStatePage(QWidget):
         settings = self._settings_svc.settings
         vm = build_system_state_vm(
             diag,
-            pwm_control_verified=_verified_tristate(settings.last_pwm_verify_effective),
+            pwm_control_verified=self._pwm_verified(),
             live_thermal_state=self._live_thermal_state,
             silence=SilenceState(
                 acknowledged=frozenset(self._session_acks),
@@ -624,7 +624,9 @@ class SystemStatePage(QWidget):
         self._update_gpu_verify_availability(diag)
         self._open_report_btn.setEnabled(True)
         if self._report_dialog is not None and self._report_dialog.isVisible():
-            self._report_dialog.set_html(build_readiness_report_html(diag))
+            self._report_dialog.set_html(
+                build_readiness_report_html(diag, pwm_control_verified=self._pwm_verified())
+            )
 
     @Slot(str, bool)
     def _on_note_acknowledged(self, token: str, acknowledged: bool) -> None:
@@ -711,9 +713,7 @@ class SystemStatePage(QWidget):
             return
         probe = build_system_state_vm(
             diag,
-            pwm_control_verified=_verified_tristate(
-                self._settings_svc.settings.last_pwm_verify_effective
-            ),
+            pwm_control_verified=self._pwm_verified(),
             live_thermal_state=self._live_thermal_state,
         )
         kept = prune(stored, _live_silence_keys(probe))
@@ -1414,11 +1414,27 @@ class SystemStatePage(QWidget):
 
     # ── Open Full Report + theme ─────────────────────────────────────
 
+    def _pwm_verified(self) -> bool | None:
+        """The recorded PWM-verify tri-state, for every derivation on this page.
+
+        One flag, one gating shape (`CLAUDE.md § Hard-won lessons`, DEC-334).
+        Four things on this page need the value; before DEC-379 **two** of them
+        had it, as literal copies of
+        ``_verified_tristate(settings.last_pwm_verify_effective)``, and the other
+        two — the pop-out report's banner and its "To fix" block — did not, so
+        both ran as though PWM control had never been tested and the report
+        opened "✓ System ready" on a machine whose own pill above it read
+        "1 ACTION REQUIRED" (`SSN-l`). Threading the argument fixes those two;
+        this accessor is what stops a fifth consumer repeating the omission,
+        because it is the only way to obtain the value.
+        """
+        return _verified_tristate(self._settings_svc.settings.last_pwm_verify_effective)
+
     def _open_readiness_report(self) -> None:
         diag = self._diag.last_hw_diagnostics
         if diag is None:
             return
-        html = build_readiness_report_html(diag)
+        html = build_readiness_report_html(diag, pwm_control_verified=self._pwm_verified())
         if self._report_dialog is None:
             self._report_dialog = ReadinessReportDialog(html, self)
         else:

@@ -316,8 +316,13 @@ class HardwarePage(QWidget):
     def _build_checklist_card(self) -> QWidget:
         card = Card(object_name="Hardware_Card_checklist")
         v = QVBoxLayout(card)
+        # "Hardware", not "System": this checklist is the Hardware page's own
+        # narrower question, and the System State page owns the other one
+        # (`SSN-i`, DEC-379). The explicit `object_name` is what keeps the
+        # rename a copy change — `SectionHeader` would otherwise derive its
+        # objectName from the title, and every findChild test would move with it.
         header = SectionHeader(
-            "System Readiness Checklist", object_name="Hardware_SectionHeader_checklist"
+            "Hardware Readiness Checklist", object_name="Hardware_SectionHeader_checklist"
         )
         self._verdict_pill = StatusPill("—", "neutral")
         self._verdict_pill.setObjectName("Hardware_Pill_verdict")

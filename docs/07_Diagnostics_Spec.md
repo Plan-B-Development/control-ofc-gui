@@ -774,13 +774,30 @@ visibility-gated labels keep working unchanged inside the sections.
 
 ### Readiness verdict, auto-fetch, "To fix", and pop-out report (DEC-113)
 - **Verdict banner** — a prominent, always-visible one-line status at the top
-  of the report, computed by `readiness_report.readiness_verdict(diag)`:
+  of the report, computed by
+  `readiness_report.readiness_verdict(diag, pwm_control_verified=…)`:
   `✓ System ready — N headers, M writable · thermal safety <state>`
-  (`SuccessChip`) or `⚠ K issue(s) need attention …` (`WarningChip` /
-  `CriticalChip`). It leads the report with an at-a-glance answer. Problem
-  detection lives in one place (`detect_readiness_problems`) so the verdict and
-  the issue checklist can never disagree; **info-level vendor quirks are FYI
-  notes and are not counted as problems**.
+  (`SuccessChip`) or `⚠ K issue(s) need attention — see "To fix" below`
+  (`WarningChip` / `CriticalChip`). It leads the report with an at-a-glance
+  answer. **Info-level vendor quirks are FYI notes and are not counted as
+  problems.**
+  **The report is the System State page's answer at length, not a second
+  opinion** (`SSN-i`, answered as option C): both derive from one
+  `detect_readiness_problems(diag, pwm_control_verified=…)` pass **with the same
+  argument**, so the banner and the page's own `N ACTION REQUIRED` pill cannot
+  disagree.
+  **⚠ Read the argument as load-bearing, not decorative.** One derivation was
+  always the design, and from DEC-357 (GUI v2.71.0) to DEC-379 (v2.76.5) it was
+  not enough: that change gave `detect_readiness_problems` a
+  `pwm_control_verified` argument and threaded it through two of its four call
+  sites — `build_system_state_vm` and `build_condition_cards` passed it,
+  `readiness_verdict` and `build_fix_guidance_html` called it bare — so both ran
+  as if PWM control had never been tested. Measured 2026-09-17 on a Gigabyte
+  AORUS MASTER / `it87`-family chip with a recorded *ineffective* verify, the
+  System State pill read `1 ACTION REQUIRED` while the Full Report it launches
+  opened with `✓ System ready` and carried an empty "To fix" block. Row `SSN-l`,
+  closed by DEC-379; the page now obtains the flag from a single accessor
+  (`SystemStatePage._pwm_verified`) so a future consumer cannot omit it.
 - **Auto-fetch** — opening the System State page fetches `/diagnostics/hardware`
   once per session (guarded), so the verdict + checklist populate without a
   manual *Refresh* click. Since DEC-229 the poll worker also prefetches it once
@@ -861,10 +878,23 @@ Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
 `404`s and the page shows an "unavailable" state.
 
 Five sections, most-actionable first (`Hardware_*` object names):
-1. **Overall readiness summary** — a compact verdict banner (Hardware ready / Needs
-   attention / Not ready) with the top next step (`rollup.top_summary`), last scan
-   time (from `scanned_age_ms`), one "Refresh hardware assessment" action
-   (`refresh_requested` → a forced daemon scan), and a read-only note.
+1. **Overall readiness summary** — a `Hardware_Pill_verdict` rollup on the
+   *Hardware Readiness Checklist* section header. It is **not** a separate banner and
+   **not** a page-wide verdict: it is visibly scoped to that checklist, which is the
+   Hardware page answering its own narrower question (is the hardware/driver stack
+   set up for fan control?) rather than the machine's overall health — see `SSN-i`.
+   Beside it: the top next step (`rollup.top_summary`), last scan time (from
+   `scanned_age_ms`), one "Refresh hardware assessment" action (`refresh_requested`
+   → a forced daemon scan), and a read-only note. `hardware_view._VERDICT` has
+   **two** words, not three — `HARDWARE READY` (daemon `overall` of `ok`/`info`) and
+   `HARDWARE NEEDS ATTENTION` (`warning`/`critical`); "Not ready" is not a state this
+   page can render. Sections 1 and 3 are one `Hardware_Card_checklist` card, not two.
+   **Both the section title and the verdict word say "Hardware" on purpose**
+   (DEC-379): they used to read *System Readiness Checklist* and a bare `READY`,
+   against the System State page's `SYSTEM READY` — two different questions a glance
+   apart in near-identical words, which is what `SSN-i` was raised about. The two
+   surfaces' verdict vocabularies must stay disjoint; a test asserts it
+   (`tests/test_readiness_report_ssn_l_g48.py`).
 2. **Recommended actions** — the actionable findings (critical → warning → info),
    each an actionable card with impact chips, a primary action button
    (`action_requested`), and a "Learn how" doc link. Actions route (in

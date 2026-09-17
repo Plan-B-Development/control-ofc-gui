@@ -411,7 +411,6 @@ def test_build_system_state_vm_counts_and_labels():
     assert healthy.issues_requiring_attention == 0
     assert healthy.issue_count_label == "SYSTEM READY"
     assert healthy.issue_count_state == "ok"
-    assert healthy.verdict_state == "ok"
 
 
 def test_only_a_hardware_damage_mechanism_drives_the_crit_state():

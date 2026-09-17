@@ -690,8 +690,11 @@ def test_verify_view_is_the_single_source_of_result_wording():
     )
     view = build_verify_result_view(result)
     assert view.chip_class == "CriticalChip"
-    assert "BIOS/EC" in view.summary
-    assert view.verdict == "FAIL"
+    # `view.text`, not `view.summary`: DEC-379 deleted the unread `summary` copy
+    # on the view (`ACK-y`). The sentence still reaches the user through
+    # `lines[0]`, which is the thing both consumers actually render, so this
+    # asserts the rendered artefact rather than an intermediate nothing read.
+    assert "BIOS/EC" in view.text
 
 
 def test_verify_view_renders_an_unrecognised_token():

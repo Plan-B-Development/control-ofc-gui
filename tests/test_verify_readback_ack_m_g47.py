@@ -21,7 +21,6 @@ from control_ofc.services.verify_view import (
     _OUTCOMES,
     PWM_EVIDENCE_INCONCLUSIVE,
     PWM_EVIDENCE_INEFFECTIVE,
-    VERDICT_WARN,
     build_verify_result_view,
     outcome_for,
     verify_sweep_chip_class,
@@ -74,8 +73,10 @@ def test_the_new_token_tells_the_user_the_opposite_thing_from_rpm_unavailable():
     )
 
     # ...and the columns that must AGREE, or "different" is being satisfied by
-    # a row that simply drifted — e.g. one painted as a hardware fault.
-    assert new.verdict == old.verdict == VERDICT_WARN
+    # a row that simply drifted — e.g. one painted as a hardware fault. The
+    # `verdict` column was a third of this trio until DEC-379 deleted it as
+    # unread (`ACK-y`); `chip_class` carries "how loud" and `evidence` carries
+    # "what it means", which is what this assertion was always about.
     assert new.chip_class == old.chip_class
     assert new.evidence == old.evidence == PWM_EVIDENCE_INCONCLUSIVE
 
@@ -155,5 +156,4 @@ def test_the_rendered_result_carries_the_daemon_details_and_one_prefix():
     assert not view.lines[0][len("Result: ") :].startswith("Result: ")
     assert details in view.text
     assert view.chip_class == outcome_for(TOKEN).chip_class
-    assert view.verdict == outcome_for(TOKEN).verdict
     assert "Next step:" in view.text

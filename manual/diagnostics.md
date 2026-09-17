@@ -126,19 +126,21 @@ This page is covered in depth on the [Hardware Troubleshooting](hardware-trouble
 
 ![Hardware page](../screenshots/auto/05_hardware.png)
 
-The **Hardware** page is where you see, understand and test your cooling hardware. It has four sections: the **System Readiness Checklist** (the daemon's go/no-go assessment), **Recommended Actions**, **Cooling Hardware** (your coolers and every PWM header), **Hardware Diagnostics** (the active tests), and the **Super-I/O Architecture** report (motherboard sensor/fan-chip detection). The readiness and Super-I/O halves come from a *single* request to the daemon's combined `GET /inventory/hardware-readiness`, which serves one shared, coalesced hardware scan — so those two sections can never disagree with each other.
+The **Hardware** page is where you see, understand and test your cooling hardware. It has five sections: the **Hardware Readiness Checklist** (the daemon's go/no-go assessment), **Recommended Actions**, **Cooling Hardware** (your coolers and every PWM header), **Hardware Diagnostics** (the active tests), and the **Super-I/O Architecture** report (motherboard sensor/fan-chip detection). The readiness and Super-I/O halves come from a *single* request to the daemon's combined `GET /inventory/hardware-readiness`, which serves one shared, coalesced hardware scan — so those two sections can never disagree with each other.
 
 Every readiness check on this page is explained in full — what it means, why it fails, and how to clear it — in the [Cooling Hardware Readiness Guide](../docs/24_Cooling_Hardware_Readiness_Guide.md); the page's own *Learn how* links point there.
 
 Everything the page *displays* is read-only. The tests in **Hardware Diagnostics** do exercise your hardware, and each is described below; all of them run inside the daemon, which keeps its hwmon lease, the pump safety floor and thermal protection in force throughout. **The GUI never writes a PWM value itself, and no action on this page can stop a pump or drive a fan below its floor.**
 
-### System Readiness Checklist
+### Hardware Readiness Checklist
 
-The **System Readiness Checklist** shows the daemon's own structured assessment of your cooling hardware — its answer to *"what is ready, what needs attention, and what should I do next?"*. It populates the first time you open the page (or via **Refresh Readiness**).
+The **Hardware Readiness Checklist** shows the daemon's own structured assessment of your cooling hardware — its answer to *"what is ready, what needs attention, and what should I do next?"*. It populates the first time you open the page (or via **Refresh Readiness**).
 
-It is similar in spirit to the **System State** page but comes from a different source: the **System State** page is the GUI's own hardware-readiness report built from `/diagnostics/hardware` (drivers, chips, BIOS interference, PWM tests), while this checklist is the *daemon's* go/no-go assessment — CPU-sensor presence, default-CPU confidence, whether PWM controls are present / read-only / not-yet-verified, monitor-only fan tachometers, quarantined sensors, and any preferred sensor that has gone missing.
+**This page and the System State page answer two different questions, and neither owns a verdict for the whole machine.** This checklist answers *"is this machine's hardware and driver stack set up for fan control?"* — the *daemon's* go/no-go assessment, from CPU-sensor presence, default-CPU confidence, whether PWM controls are present / read-only / not-yet-verified, monitor-only fan tachometers, quarantined sensors, and any preferred sensor that has gone missing. The **System State** page answers *"what on this machine needs a response right now?"* — the GUI's own reading of `/diagnostics/hardware` (drivers, chips, BIOS interference, PWM tests). A machine can be **HARDWARE READY** here and still have something on the System State page that wants your attention, and that is not a contradiction: the two are looking at different things.
 
-- **Verdict banner** — an overall *Hardware ready* / *Needs attention* / *Not ready* line, colour- and glyph-coded, always on top.
+The two verdicts deliberately do not share a word, which is why this one says *HARDWARE*. Up to v2.76.4 it read a bare **READY** against the System State page's **SYSTEM READY**, and the checklist was titled *System Readiness Checklist* — near-identical wording for two different answers, a page apart.
+
+- **Verdict pill** — **HARDWARE READY** or **HARDWARE NEEDS ATTENTION**, colour-coded, sitting at the end of this section's own heading. It is scoped to this checklist, not to the page and not to the machine.
 - **Item checklist** — one card per item, most severe first. Each shows a severity chip (**CRITICAL** / **WARN** / **OK**, icon + word + colour), a one-line summary, and — inside an expandable **Details** section — the technical detail, the recommended next step, and impact flags (*affects safety*, *blocks fan control*, *blocks monitoring*, *reboot may be required*). Warning and critical items open their detail automatically.
 - A healthy system shows *✓ All hardware-readiness checks passed.*
 

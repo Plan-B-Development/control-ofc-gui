@@ -6,7 +6,7 @@ here — the issue-card unification, the interference gauge fraction, the safety
 rows, the hardware registry — so it is unit-testable without a ``QApplication``.
 
 Reuses the confirmed-pure helpers directly (`detect_readiness_problems`,
-`advisory_rows`, `chip_rows`, `module_rows`, `readiness_verdict`,
+`advisory_rows`, `chip_rows`, `module_rows`,
 `board_identity_line`, `header_summary_line`, `severity_display`,
 `classify_reclaim_severity`, `format_driver_status`, `advisory_detail_html`,
 `dual_chip_warning_html`, `detect_module_conflicts`, `lookup_chip_guidance`) and
@@ -43,7 +43,6 @@ from control_ofc.ui.widgets.readiness_report import (
     detect_readiness_problems,
     header_summary_line,
     module_rows,
-    readiness_verdict,
 )
 from control_ofc.ui.widgets.readiness_report import (
     board_notes as board_notes_for,
@@ -372,8 +371,14 @@ class ChipRegistryRowVM:
 class SystemStateVM:
     board_line: str | None
     summary_line: str
-    verdict_text: str
-    verdict_state: str
+    # No `verdict_text`/`verdict_state` here. `SSN-i` settled that this page
+    # answers "what needs a response right now?" and the Hardware page answers
+    # "is this machine set up for fan control?"; the pair below is this page's
+    # answer and `readiness_verdict` was the other surface's vocabulary. DEC-379
+    # deleted the dead copy rather than giving it a renderer (`ACK-i`) — it was
+    # produced on every render, read by nothing, and computed WITHOUT
+    # `pwm_control_verified`, so wiring it would have painted `SSN-l`'s
+    # contradiction onto this page.
     issues_requiring_attention: int
     issue_count_label: str
     issue_count_state: str  # ok | warn | crit
@@ -1177,7 +1182,6 @@ def build_system_state_vm(
 ) -> SystemStateVM:
     problems = detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
     n = len(problems)
-    verdict_text, verdict_cls = readiness_verdict(diag)
     if n == 0:
         issue_count_label = "SYSTEM READY"
         issue_count_state = "ok"
@@ -1203,8 +1207,6 @@ def build_system_state_vm(
     return SystemStateVM(
         board_line=board_identity_line(diag),
         summary_line=header_summary_line(diag.hwmon),
-        verdict_text=verdict_text,
-        verdict_state=_STATE_BY_CSS.get(verdict_cls, "info"),
         issues_requiring_attention=n,
         issue_count_label=issue_count_label,
         issue_count_state=issue_count_state,

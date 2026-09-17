@@ -94,7 +94,7 @@ def test_verdict_and_summary_bar(qtbot):
             ],
         )
     )
-    assert page._verdict_pill.text() == "NEEDS ATTENTION"
+    assert page._verdict_pill.text() == "HARDWARE NEEDS ATTENTION"
     pills = page._summary_bar.findChildren(StatusPill)
     texts = [p.text() for p in pills]
     assert any("PASS" in t for t in texts) and any("WARN" in t for t in texts)
@@ -278,7 +278,7 @@ def test_set_theme_rerenders(qtbot):
         _hw(items=[ReadinessItem(code="no_pwm_controls", severity="warning", summary="x")])
     )
     page.set_theme(None)
-    assert page._verdict_pill.text() == "NEEDS ATTENTION"
+    assert page._verdict_pill.text() == "HARDWARE NEEDS ATTENTION"
 
 
 def test_no_objectname_leak(qtbot):

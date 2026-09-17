@@ -1,5 +1,84 @@
 # Changelog
 
+## [2.76.5] — 2026-09-17
+
+### Fixed
+
+**The Full Report no longer opens with "✓ System ready" on a machine whose own
+System State page reads "1 ACTION REQUIRED"** (`SSN-l`, DEC-379). DEC-357
+(v2.71.0) gave the problem detector a "has PWM control been tested?" argument
+and threaded it through two of its four callers. The page's pill and its
+condition cards got it; the pop-out report's opening banner and its "To fix"
+block did not, so both evaluated as though fan control had never been tested.
+
+On a board with a documented BIOS-override quirk and a *failed* PWM control
+test — measured on a Gigabyte AORUS MASTER with an `it87`-family chip — the
+page counted the promoted condition and the report you open from that page
+declared the system ready, with an empty "To fix" block. It read **healthier
+than the machine is**, which is the direction DEC-357's own fix existed to
+avoid in the other direction.
+
+The report is the System State page's answer at length, not a second opinion,
+and it now shares that page's derivation. Four things on the page need that
+flag; they now get it from one accessor rather than each spelling the lookup out
+for itself, so a future consumer cannot repeat the omission (DEC-334's *one
+flag, one gating shape*).
+
+### Changed
+
+**The Hardware page's readiness verdict now says HARDWARE out loud.** The
+*System Readiness Checklist* section is renamed **Hardware Readiness Checklist**,
+and its pill reads **HARDWARE READY** / **HARDWARE NEEDS ATTENTION** instead of a
+bare `READY` / `NEEDS ATTENTION`.
+
+This closes the question `SSN-i` was raised about. The two health surfaces answer
+two different, narrower questions — the Hardware page asks *"is this machine's
+hardware and driver stack set up for fan control?"* from the daemon's evidence-based
+assessment; the System State page asks *"what needs a response right now?"* from its
+own observation. Neither owns a verdict for the whole machine. They were saying so
+in near-identical words a page apart (`READY` against `SYSTEM READY`), with the
+hardware-owned section carrying the other page's noun in its title. A machine can be
+HARDWARE READY and still have something on System State that wants attention; that is
+not a contradiction, and the wording now makes it legible.
+
+### Removed
+
+**Three view-model fields that were produced on every render and read by
+nothing** (`ACK-i`, `ACK-y`) — deleted rather than given a renderer, because
+`SSN-i`'s answer is that no surface was waiting for them.
+
+- `SystemStateVM.verdict_text` / `verdict_state` — the System State page's
+  question is already answered, and better sourced, by `issue_count_label` /
+  `issue_count_state`. The dead pair was *also wrong*: it ran the problem
+  detector a third time per render with different arguments, so wiring it would
+  have painted the `SSN-l` contradiction onto the page itself. Removing it drops
+  that third detection pass.
+- `VerifyResultView.verdict`, `VerifyResultView.summary` and the
+  `VERDICT_PASS` / `VERDICT_WARN` / `VERDICT_FAIL` vocabulary — a per-header
+  PASS/CHECK/FAIL badge added in DEC-318 (v2.56.0) and never wired since.
+  It is a *third* granularity, narrower than either question above, and both
+  axes it encoded still have live readers (`chip_class` for how loud,
+  `evidence` for what it means about the hardware), so a future badge derives
+  from those rather than carrying a column that is assembled and discarded.
+
+No user-visible behaviour changes from the removals: nothing rendered any of
+them.
+
+### Tests
+
+`tests/test_readiness_report_ssn_l_g48.py` — nine tests, every assertion a
+**relationship** between the two consumers rather than a literal, because a
+green banner beside a `1 ACTION REQUIRED` pill is the defect and only comparing
+them can see it.
+
+The fix-out-must-fail check was run on both halves separately and **caught a
+blind test**: the draft covering the report-refresh call site flipped a recorded
+*ineffective* result to *effective* and asserted the report went quiet — and it
+passed with the call site's argument deleted, because a caller that passes
+nothing evaluates as "never tested", which is quiet too. Re-pointed at the
+opposite arm (quiet → loud, an answer the pre-fix path cannot produce) it fails
+correctly. Same trap as DEC-340, found the same way.
+
 ## [2.76.4] — 2026-09-17
 
 ### Documentation
