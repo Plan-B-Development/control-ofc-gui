@@ -1,5 +1,49 @@
 # Changelog
 
+## [2.77.0] — 2026-09-17
+
+### Added
+
+**The GPU rows on Safety & GPU Limits can now be acknowledged and dismissed,
+like everything else on the System State page** (`ACK-w`, DEC-380). A row that
+warns you about something — `Fan Control: read_only`, `Overdrive: disabled`,
+`ppfeaturemask: bit 14 NOT set`, `ppfeaturemask: not set on kernel command
+line`, `amdgpu binding: not bound`, or an AMD PCI device the amdgpu driver has
+not bound — carries the same **Acknowledge** / **Dismiss** buttons the
+conditions, the board notes, the Interference Monitor and the CPU thermal row
+have carried since v2.73.0. Only the kernel advisories did before.
+
+These are persistent configuration facts. They do not clear on their own and
+several of them may be your own deliberate choice, which is exactly the kind of
+permanent warning this page was rebuilt to stop producing. `Fan Control:
+read_only` is the most common of them: it is the ordinary state of an RX
+7000/9000 card booted without `amdgpu.ppfeaturemask`.
+
+Quietening a row **demotes it, it does not delete it** — the reading stays on
+screen and only the alarm colour drops. Rows that are not warning you
+(`Zero-RPM: available`, `Firmware min PWM`, a healthy `Overdrive: enabled`) get
+no buttons, because there is nothing to quieten.
+
+Three things it deliberately does **not** do:
+
+- It cannot make the page read healthier than the machine is. The
+  `N ACTION REQUIRED` count is still taken before any silencing.
+- Dismissing a GPU row does **not** dismiss the matching condition card above
+  it. Those cards carry the *fix* — "add `amdgpu.ppfeaturemask=0xffffffff` to
+  your kernel command line and reboot" — and hiding the instructions along with
+  the symptom would be the wrong trade. They are separate items with separate
+  buttons.
+- A silence is recorded against what the row actually said. Change the setting
+  and the row speaks again with its new reading, because that is a new
+  occurrence rather than the one you quietened. Fixing the problem, on the
+  other hand, leaves your dismissal in place — so if it comes back later in
+  exactly the same form, it stays quiet. That is the same rule the board notes
+  have always followed.
+
+Undo any of it from **Settings → Prompts & Dismissals**, as with every other
+dismissal on the page. Silences stored by earlier versions on the GPU advisories
+are unaffected — their tokens are unchanged.
+
 ## [2.76.5] — 2026-09-17
 
 ### Fixed

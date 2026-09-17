@@ -25,6 +25,8 @@ that pins each separately would have passed while it was live.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
@@ -1459,6 +1461,13 @@ def _data_driven_silence_keys():
         keys.append(f"quirk_{quirk_key(quirk)}")  # the condition promoted from it
     keys += [f"gpu_advisory_{g.warning_id}" for g in AMD_GPU_GUIDANCE_DB]
     keys += ["interference", "thermal"]  # the two fixed keys built in view code
+    # `ACK-w`: harvested from the builder rather than listed, so they cannot
+    # drift, and because one of them is the only key in the codebase that
+    # embeds wire-supplied text — a PCI BDF, hence the only key containing `:`
+    # and `.`. A literal list here would have been written from the same mental
+    # model as the keys themselves and would have missed exactly that one.
+    for _, _diag in _alarm_scenarios():
+        keys += [r.key for r in build_safety_gpu_vm(_diag).gpu_rows if r.key]
     return keys
 
 
@@ -1494,6 +1503,8 @@ def test_every_data_driven_key_survives_being_stored_as_a_silence():
         f"gpu_advisory_{an_advisory}",  # the GPU advisory row
         "interference",
         "thermal",
+        "gpu_row_amd_device_0000:03:00.0",  # the only key carrying a PCI BDF
+        "gpu_row_fan_control",
     ):
         assert expected in keys, f"the sweep lost the vocabulary {expected!r} belongs to"
 
@@ -1506,3 +1517,445 @@ def test_every_data_driven_key_survives_being_stored_as_a_silence():
             assert parse_token(occurrence_token(occ)) == occ, (
                 f"{key!r} does not survive a store/read round trip"
             )
+
+
+# ---------------------------------------------------------------------------
+# `ACK-w` — every GPU constraint row that raises an alarm can be silenced
+# ---------------------------------------------------------------------------
+
+
+def _gpu_diag(**gpu_kw) -> HardwareDiagnosticsResult:
+    """`_healthy_gigabyte` with a GPU whose constraint rows the caller picks."""
+    from control_ofc.api.models import GpuDiagnosticsInfo
+
+    diag = _healthy_gigabyte()
+    devices = gpu_kw.pop("amd_pci_devices", [])
+    module_loaded = gpu_kw.pop("amdgpu_module_loaded", True)
+    return replace(
+        diag,
+        gpu=GpuDiagnosticsInfo(**{"model_name": "RX 7900 XTX", **gpu_kw}),
+        amd_pci_devices=devices,
+        amdgpu_module_loaded=module_loaded,
+    )
+
+
+def _alarm_scenarios() -> list[tuple[str, HardwareDiagnosticsResult]]:
+    """Every shape that can paint a `warn` row, as a registry.
+
+    Two diags rather than one because the two `ppfeaturemask` branches are
+    mutually exclusive — `gpu.ppfeaturemask` being truthy is what chooses
+    between them, so no single machine can show both.
+    """
+    from control_ofc.api.models import AmdPciDeviceInfo
+
+    return [
+        (
+            "read_only, nothing on the kernel command line",
+            _gpu_diag(
+                fan_control_method="read_only",
+                overdrive_enabled=False,
+                ppfeaturemask=None,
+                amdgpu_driver_bound=False,
+                amd_pci_devices=[
+                    AmdPciDeviceInfo(pci_bdf="0000:03:00.0", driver="vfio-pci", amdgpu_bound=False)
+                ],
+            ),
+        ),
+        (
+            "ppfeaturemask set but bit 14 clear",
+            _gpu_diag(
+                fan_control_method="none",
+                overdrive_enabled=False,
+                ppfeaturemask="0xfff7ffff",
+                ppfeaturemask_bit14_set=False,
+            ),
+        ),
+    ]
+
+
+def test_every_alarm_raising_gpu_row_is_silenceable():
+    """`ACK-w`, the registry sweep — classify by default, not by opting in.
+
+    DEC-367's lesson in the shape that produced this defect: the enumeration
+    that recorded it was derived by listing the `silence=` sites, which is the
+    *silenceable* side, so it could never discover an alarm row that had no
+    `silence=` to list. It found three of six. This asserts the property from
+    the other direction — every rendered row that alarms must carry a token —
+    which is the only direction a seventh row can fail.
+    """
+    seen: set[str] = set()
+    for name, diag in _alarm_scenarios():
+        rows = build_safety_gpu_vm(diag).gpu_rows
+        alarms = [r for r in rows if r.state in ("warn", "crit")]
+        assert alarms, f"precondition: {name} painted no alarm row at all"
+        for r in alarms:
+            assert r.silence.token, f"{name}: {r.label!r} alarms with no way to silence it"
+            assert r.silence.can_acknowledge and r.silence.can_dismiss
+            seen.add(parse_token(r.silence.token).key)
+
+    assert seen == {
+        "gpu_row_fan_control",
+        "gpu_row_overdrive",
+        "gpu_row_ppfeaturemask",
+        "gpu_row_amdgpu_binding",
+        "gpu_row_amd_device_0000:03:00.0",
+    }, "the six alarm-raising construction sites, by the five keys they use"
+
+
+def test_the_builder_constructs_no_gpu_row_directly():
+    """The bypass guard: a new row must go through the silencer.
+
+    The `key` argument has no default, so a call that forgets one is a
+    `TypeError` — but that only binds a call site that uses the silencer at
+    all. This is what stops the next row being appended the old way, which is
+    exactly how all six of these came to exist.
+
+    Matched against `inspect.getsource` of the builder alone, not the module:
+    `_GpuRowSilencer` constructs rows legitimately and must not trip it. The
+    bare annotation `rows: list[GpuConstraintRowVM] = []` has no `(` after the
+    name, so it does not match either.
+    """
+    import inspect
+
+    from control_ofc.services import system_state_view
+
+    body = inspect.getsource(system_state_view.build_safety_gpu_vm)
+    assert "GpuConstraintRowVM(" not in body, (
+        "build_safety_gpu_vm builds a row directly — route it through `silencer`"
+    )
+    assert body.count("silencer.constraint(") + body.count("silencer.advisory(") == 11, (
+        "a row was added or removed; confirm it picked a key and update this count"
+    )
+
+
+def test_silencing_one_gpu_row_leaves_its_neighbours_alone():
+    """Both arms, per row identity — a silence is keyed on the item.
+
+    The right-hand side is the *other* rows rather than a literal state, so a
+    fix that silenced everything at once would fail here even though the row
+    under test looked correct.
+    """
+    _, diag = _alarm_scenarios()[0]
+    loud = build_safety_gpu_vm(diag)
+    target = next(r for r in loud.gpu_rows if r.label == "Fan Control")
+    assert target.state == "warn", "precondition: read_only must alarm to begin with"
+
+    quiet = build_safety_gpu_vm(
+        diag, silence=SilenceState(dismissed=frozenset({target.silence.token}))
+    )
+    by_label = {r.label: r for r in quiet.gpu_rows}
+    assert by_label["Fan Control"].state == "neutral"
+    assert by_label["Fan Control"].value == target.value, "demote, never delete"
+    assert by_label["Fan Control"].silence.dismissed
+    assert by_label["Overdrive"].state == "warn", "a neighbour must not be silenced with it"
+    assert by_label["ppfeaturemask"].state == "warn"
+    assert by_label["amdgpu binding"].state == "warn"
+
+
+def test_a_quiet_gpu_row_keeps_its_token_so_the_prune_cannot_eat_the_silence():
+    """The demote-order trap, asserted rather than trusted.
+
+    Neutralising `state` before building the occurrence renders identically and
+    is wrong twice: the row loses its Unacknowledge button, and
+    `_live_silence_keys` harvests keys from *rendered* tokens — so the next
+    prune would delete the dismissal the user had just taken.
+    """
+    _, diag = _alarm_scenarios()[0]
+    target = next(r for r in build_safety_gpu_vm(diag).gpu_rows if r.label == "Overdrive")
+
+    # Asserted on the LOUD render, before any silencing is in play. The level
+    # the builder publishes is observable on its own, so this fails where the
+    # order is wrong rather than at a precondition further down — which is the
+    # difference between a maintainer reading "the token carries the demoted
+    # level" and reading "the row was not quiet", a true statement that points
+    # at the harness.
+    assert target.state == "warn", "precondition: the row must alarm to begin with"
+    assert parse_token(target.silence.token).level == "warn", (
+        "the token must carry the row's REAL level, not a demoted one"
+    )
+
+    quiet = build_safety_gpu_vm(
+        diag, silence=SilenceState(dismissed=frozenset({target.silence.token}))
+    )
+    row = next(r for r in quiet.gpu_rows if r.label == "Overdrive")
+    assert row.state == "neutral", "the dismissal must actually take effect"
+    assert row.silence.token == target.silence.token, (
+        "a quiet row must still report the token that silenced it, or the next "
+        "prune deletes the dismissal the user just took"
+    )
+
+
+def test_a_gpu_row_speaks_again_when_its_reading_changes():
+    """Fingerprint-on-value: a different readout is a different occurrence.
+
+    This is also why these rows need no `crit`-withholding of Dismiss the way
+    the thermal row does. The thermal row's fingerprint is fixed empty, so a
+    dismissal taken at the top covers every future state forever; here the
+    state is a pure function of the value the fingerprint is taken from, so
+    anything that could escalate the row voids the silence by construction.
+    """
+    diag_none = _gpu_diag(fan_control_method="none")
+    token = next(
+        r for r in build_safety_gpu_vm(diag_none).gpu_rows if r.label == "Fan Control"
+    ).silence.token
+    silence = SilenceState(dismissed=frozenset({token}))
+
+    still_none = next(
+        r
+        for r in build_safety_gpu_vm(diag_none, silence=silence).gpu_rows
+        if r.label == "Fan Control"
+    )
+    assert still_none.state == "neutral", "precondition: the silence must hold on its own reading"
+
+    changed = next(
+        r
+        for r in build_safety_gpu_vm(
+            _gpu_diag(fan_control_method="read_only"), silence=silence
+        ).gpu_rows
+        if r.label == "Fan Control"
+    )
+    assert changed.state == "warn", "a different reading is a new occurrence and must speak again"
+
+
+def test_the_kernel_advisory_token_is_unchanged_byte_for_byte():
+    """DEC-359's no-migration property — the one thing this change must not move.
+
+    Asserted as a literal, not against `occurrence_token`: re-deriving it here
+    would share any defect the builder has, and the whole point is that a
+    silence stored by v2.73.0 still matches.
+    """
+    from control_ofc.api.models import KernelWarning
+
+    diag = _gpu_diag(
+        fan_control_method="pmfw_curve",
+        kernel_warnings=[KernelWarning(id="kw-1", severity="high", message="SMU regression")],
+    )
+    row = next(r for r in build_safety_gpu_vm(diag).gpu_rows if r.label.startswith("Advisory"))
+    assert row.silence.token == "gpu_advisory_kw-1@warn"
+
+
+def test_a_neutral_gpu_row_offers_nothing_to_press():
+    """The opposite arm of the rule — `Zero-RPM: available` gets no buttons."""
+    rows = build_safety_gpu_vm(_gpu_diag(fan_control_method="pmfw_curve")).gpu_rows
+    by_label = {r.label: r for r in rows}
+    assert by_label["Zero-RPM"].state == "neutral"
+    assert by_label["Zero-RPM"].silence.token == ""
+    assert by_label["Fan Control"].state == "ok", "precondition: a healthy row, not an alarm"
+    assert by_label["Fan Control"].silence.token == "", "an `ok` row has nothing to quieten"
+
+
+def test_gpu_row_silence_keys_do_not_collide_with_the_condition_cards():
+    """The user's decision (2026-09-17): these are two different items.
+
+    A shared key would mean Dismiss on a one-line readout also hiding the
+    condition card that carries the fix.
+    """
+    from control_ofc.ui.widgets.readiness_report import detect_readiness_problems
+
+    _, diag = _alarm_scenarios()[0]
+    row_keys = {
+        parse_token(r.silence.token).key
+        for r in build_safety_gpu_vm(diag).gpu_rows
+        if r.silence.token
+    }
+    condition_keys = {p["key"] for p in detect_readiness_problems(diag)}
+    assert row_keys, "precondition: the rows must carry keys at all"
+    assert condition_keys & {"gpu_readonly", "gpu_ppfeaturemask"}, (
+        "precondition: this fixture must actually raise the GPU conditions"
+    )
+    assert not (row_keys & condition_keys), "a GPU row must not share a key with a condition card"
+
+
+def test_the_gpu_row_buttons_are_named_by_key_not_by_row_index(qtbot):
+    """`ACK-w`/D — an index shifts when a row above appears or disappears."""
+    from control_ofc.ui.widgets.system_state_cards import SafetyCard
+
+    card = SafetyCard()
+    qtbot.addWidget(card)
+
+    _, with_binding_row = _alarm_scenarios()[0]
+    card.render(build_safety_gpu_vm(with_binding_row))
+    named = card.findChild(QPushButton, "SystemState_GpuRowAckBtn_gpu_row_overdrive")
+    assert named is not None, "the Acknowledge button must be addressable by the row's key"
+    assert card.findChild(QPushButton, "SystemState_GpuRowAckBtn_0") is None
+
+    # The same row, with an earlier row gone: `amdgpu binding` disappears when
+    # the driver binds, so every index below it shifts by one. The name must not.
+    fewer = replace(with_binding_row, gpu=replace(with_binding_row.gpu, amdgpu_driver_bound=True))
+    card.render(build_safety_gpu_vm(fewer))
+    assert card.findChild(QPushButton, "SystemState_GpuRowAckBtn_gpu_row_overdrive") is not None
+
+
+def test_the_settings_toggles_govern_the_new_gpu_rows_too():
+    """Settings says these buttons are governed by its two toggles — prove it.
+
+    `settings_page.py` tells the user that "Acknowledge health items" and
+    "Dismiss health items" cover the GPU rows, and `manual/settings.md` repeats
+    it. That is a claim about wiring, and the wiring is `SilenceState.allow_*`
+    reaching `_GpuRowSilencer` — which nothing else in this file exercises for
+    a constraint row. Asserted per toggle, and against the row still carrying
+    its token either way: turning the buttons off must not un-silence anything.
+    """
+    _, diag = _alarm_scenarios()[0]
+
+    def overdrive(**kw):
+        return next(
+            r
+            for r in build_safety_gpu_vm(diag, silence=SilenceState(**kw)).gpu_rows
+            if r.label == "Overdrive"
+        )
+
+    both = overdrive()
+    assert both.state == "warn", "precondition: the row must alarm to begin with"
+    assert both.silence.can_acknowledge and both.silence.can_dismiss
+
+    no_ack = overdrive(allow_acknowledge=False)
+    assert not no_ack.silence.can_acknowledge
+    assert no_ack.silence.can_dismiss, "one toggle must not disable the other"
+
+    no_dismiss = overdrive(allow_dismiss=False)
+    assert no_dismiss.silence.can_acknowledge
+    assert not no_dismiss.silence.can_dismiss
+    assert no_dismiss.silence.token == both.silence.token, (
+        "withholding the buttons must not change the row's identity"
+    )
+
+
+def test_no_gpu_constraint_row_can_paint_crit_and_state_follows_the_value():
+    """The two properties that let these rows skip the thermal row's `crit` guard.
+
+    The thermal row withholds Dismiss while it is critical because its
+    fingerprint is fixed empty, so a dismissal taken at the top rank satisfies
+    `rank <= stored` for every future state — a permanent mute. A constraint row
+    needs no such guard for two reasons, and **the reachability one is the load
+    bearing half**: no constraint row can reach `crit` at all, so the dangerous
+    case cannot arise. (The `constraint` docstring led with the fingerprint
+    argument until this test was written and mutated; that argument is real but
+    secondary, because escalation below `crit` is already broken by the rank
+    check in `is_silenced` without any help from the fingerprint.)
+
+    Both are asserted over a matrix, so a future row that paints `crit`, or
+    derives its state from a second field, fails here and forces the author to
+    decide rather than inheriting a guarantee nobody re-checked.
+
+    The purity half collects **every** row, not just the silenceable ones. The
+    first draft skipped rows with no token and therefore **passed with
+    `Overdrive`'s state re-pointed at `amdgpu_driver_bound`** — the mutation
+    turns the bad pairing `ok`, an `ok` row carries no token, and the collector
+    threw away the very observation that proved the defect.
+    """
+    import itertools
+
+    seen: dict[tuple[str, str], set[str]] = {}
+    crit_rows: list[str] = []
+    rows_seen = 0
+    for method, overdrive, mask, bit14, bound in itertools.product(
+        ("pmfw_curve", "hwmon_pwm", "read_only", "none", ""),
+        (True, False),
+        (None, "", "0xfff7ffff"),
+        (True, False),
+        (True, False),
+    ):
+        diag = _gpu_diag(
+            fan_control_method=method,
+            overdrive_enabled=overdrive,
+            ppfeaturemask=mask,
+            ppfeaturemask_bit14_set=bit14,
+            amdgpu_driver_bound=bound,
+        )
+        for r in build_safety_gpu_vm(diag).gpu_rows:
+            rows_seen += 1
+            if r.state == "crit":
+                crit_rows.append(f"{r.label}: {r.value}")
+            seen.setdefault((r.label, r.value), set()).add(r.state)
+
+    assert rows_seen > 400, "precondition: the matrix must actually build rows"
+    assert len({label for label, _ in seen}) >= 4, "precondition: several row kinds, not one"
+    assert {s for states in seen.values() for s in states} >= {"ok", "warn", "neutral"}, (
+        "precondition: the matrix must reach both the alarming and the healthy arms"
+    )
+
+    assert not crit_rows, (
+        "a constraint row reached `crit`: a dismissal taken there is stored at the top "
+        "rank and covers every future state, which is the permanent mute the thermal "
+        f"row withholds Dismiss to prevent. Decide before shipping it: {crit_rows}"
+    )
+    ambiguous = {pair: states for pair, states in seen.items() if len(states) > 1}
+    assert not ambiguous, (
+        "a row's state must depend only on the value it fingerprints, or an escalation "
+        f"can hide inside an existing silence: {ambiguous}"
+    )
+
+
+def test_a_dismissed_gpu_row_survives_the_problem_being_fixed_and_recurring():
+    """The resolve -> prune -> recur round trip (`ofc:python-gui-reviewer`, P2).
+
+    `health_ack.is_silenced` promises that a silence survives things improving,
+    and `manual/diagnostics.md` promises it in the same words. This change's
+    first draft broke that promise for the GPU rows without touching either:
+    `_live_silence_keys` read each row's key off its **token**, an `ok` row
+    carries no token, so one diagnostics fetch taken while the problem was fixed
+    dropped the key from the live set and `prune` deleted the dismissal.
+
+    The middle step is the one that matters and it is asserted directly — that
+    `prune` KEEPS the token while the row is healthy. Asserting only the final
+    state would pass on a build that never pruned at all, which is not the
+    property under test.
+    """
+    from control_ofc.services.system_state_view import build_system_state_vm
+    from control_ofc.ui.pages.system_state_page import _live_silence_keys
+
+    broken = _gpu_diag(fan_control_method="read_only", overdrive_enabled=False)
+    fixed = _gpu_diag(fan_control_method="read_only", overdrive_enabled=True)
+
+    def row(diag, **kw):
+        return next(
+            r
+            for r in build_safety_gpu_vm(diag, silence=SilenceState(**kw)).gpu_rows
+            if r.label == "Overdrive"
+        )
+
+    token = row(broken).silence.token
+    assert row(broken).state == "warn", "precondition: the row alarms before the dismissal"
+    assert row(broken, dismissed=frozenset({token})).state == "neutral", (
+        "precondition: the dismissal takes effect"
+    )
+
+    # The page prunes against an UNSILENCED probe, exactly as `_prune_silences`
+    # builds it — so this is the real predicate, not a re-derivation of it.
+    healthy_probe = build_system_state_vm(fixed)
+    assert row(fixed).state == "ok", "precondition: the problem really is fixed"
+    assert row(fixed).silence.token == "", "precondition: a healthy row carries no token"
+    kept = prune([token], _live_silence_keys(healthy_probe))
+    assert kept == [token], (
+        "the prune deleted a dismissal while the problem was merely fixed; "
+        "a silence must survive things improving"
+    )
+
+    # ... and the row is still quiet when the same problem comes back.
+    assert row(broken, dismissed=frozenset(kept)).state == "neutral"
+
+
+def test_a_gpu_row_the_hardware_can_no_longer_raise_is_still_pruned():
+    """The opposite arm — `ACK-g` must keep working, or the fix above overshoots.
+
+    `amdgpu binding` disappears from the list when the driver binds, which is a
+    genuinely different case from a row that stays visible and goes quiet: the
+    item cannot be raised by this hardware at all any more, and keeping its
+    dismissal would inflate the Settings restore counter with something that can
+    never come back.
+    """
+    from control_ofc.services.system_state_view import build_system_state_vm
+    from control_ofc.ui.pages.system_state_page import _live_silence_keys
+
+    unbound = _gpu_diag(fan_control_method="read_only", amdgpu_driver_bound=False)
+    token = next(
+        r for r in build_safety_gpu_vm(unbound).gpu_rows if r.label == "amdgpu binding"
+    ).silence.token
+    assert token, "precondition: the row must be silenceable while it is raised"
+
+    bound = _gpu_diag(fan_control_method="read_only", amdgpu_driver_bound=True)
+    assert not any(r.label == "amdgpu binding" for r in build_safety_gpu_vm(bound).gpu_rows), (
+        "precondition: the row must genuinely vanish, not merely go quiet"
+    )
+    assert prune([token], _live_silence_keys(build_system_state_vm(bound))) == []

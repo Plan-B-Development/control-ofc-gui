@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.services.health_ack import silence_key
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import BracketCard, Card, ContentSizedCard, SectionHeader
@@ -689,10 +690,17 @@ class SafetyCard(ContentSizedCard):
             label.setWordWrap(True)
             label.setStyleSheet(f"color: {_row_state_color(r.state, theme)};")
             self._gpu_rows_layout.addWidget(label)
+            # `ACK-w`: the suffix is the row's own silence key, not its index.
+            # An index shifts whenever a row above it appears or disappears —
+            # and these rows come and go with the hardware's state, which is
+            # precisely when a test or a script would be holding the old name.
+            # A row with no token renders no buttons, so the fallback is never
+            # reached in practice; it is there so the name is still unique if
+            # one ever is.
             row_actions = _silence_actions(
                 r.silence,
                 "SystemState_GpuRow",
-                str(i),
+                silence_key(r.silence.token) if r.silence.token else str(i),
                 self.note_acknowledged.emit,
                 self.note_dismissed.emit,
             )

@@ -215,7 +215,10 @@ count and relabels it *Past Interference* with the age interpolated — the
 evidence is dated, not discarded. An unknown age (older daemon, or a count
 predating the field) never stands anything down.
 
-Since DEC-359 **every** item on the page carries the same Acknowledge/Dismiss
+Since DEC-359, and on the Safety & GPU card since DEC-380, every item in the
+page's **alarm surfaces** — the condition cards, the board notes, the
+Interference Monitor, the CPU thermal row, the GPU advisories and the Safety &
+GPU constraint rows — carries the same Acknowledge/Dismiss
 lifecycle, through one layer (`services/health_ack.py`): a silence is an
 *occurrence* — `(key, fingerprint, level)` — where the fingerprint must match
 exactly and the level must not have escalated. Acknowledge is session-only,
@@ -234,6 +237,48 @@ must not get quieter by getting less true.
 > `ACK-r` came from: Acknowledge on a condition card relabelled its own button
 > and changed nothing else for three releases, while every sibling surface
 > demoted. Dismiss was the half that worked, which is what made it plausible.
+
+> **That sentence read "every item" from DEC-359 until 2026-09-17, and it was
+> not true of the Safety & GPU card for four releases (`ACK-w`, fixed by
+> DEC-380).** Only the kernel-warning advisory rows carried a silence; **six**
+> construction sites in `build_safety_gpu_vm` could paint a `warn` row with no
+> Acknowledge and no Dismiss at all — `Fan Control` on a `read_only`/`none`/empty
+> method, `Overdrive: disabled`, both `ppfeaturemask` branches, `amdgpu binding
+> not bound`, and the per-device `AMD <bdf>` rows from the WIRE-v trio. `ACK-w`,
+> the register row written to record the gap, itself named only **three**, and
+> `ACK-t` before it named the same three: both enumerations were derived by
+> listing the `silence=` sites, which is the *silenceable* side and can therefore
+> never discover an alarm row that has no `silence=` to list. The two they missed
+> are the two that do not look like alarm rows at the call site — `Fan Control`
+> takes its state from a helper with no literal `warn` in the constructor, and
+> the `AMD <bdf>` rows sit outside the `if gpu:` block further down the function.
+> The rule is now enforced in one place (`_GpuRowSilencer`) with a registry sweep
+> asserting it from the other direction, so a seventh row fails rather than
+> quietly joining them.
+>
+> **Two things on this page are deliberately outside that list, and saying
+> "every item" without naming them is how the overclaim above got written a
+> second time — in the very edit that corrected it.** (1) The **Hardware
+> Registry** table paints `warn` from `ChipRegistryRowVM.status_state` (a chip
+> whose driver is not loaded) and `mainline_state` (an out-of-tree driver, which
+> is the *ordinary* case on an `it87`/`nct6687` board) and has no `silence`
+> field at all: it is a data table, not an alarm list, and a per-cell Dismiss
+> would be meaningless. (2) The `N ACTION REQUIRED` pill is counted before any
+> silencing and is never silenceable by design, which is the limit DEC-359 set
+> and nothing since has moved.
+
+The rule on the Safety & GPU card is **`state_rank(state) >= state_rank("warn")`**:
+a row is silenceable exactly when it raises an alarm. The kernel advisories keep
+their pre-DEC-380 exception and are silenceable at every state including `info`,
+with their `gpu_advisory_{id}` tokens byte-identical to what DEC-359 wrote, so no
+stored silence is orphaned. `ok` and `neutral` rows carry none.
+
+GPU row keys (`gpu_row_*`, one per PCI device for the `AMD <bdf>` rows) are
+deliberately **not** shared with the `gpu_readonly` / `gpu_ppfeaturemask`
+condition keys, though the tokens would have been identical: Dismiss on a
+one-line readout must not also hide the condition card carrying the fix, and the
+predicates are not the same fact (`gpu_readonly` additionally requires
+`not gpu.ppfeaturemask`). A test asserts the two key sets do not intersect.
 
 `issues_requiring_attention` is computed before any silencing and
 `conditions_hidden_count` is rendered beneath the list, so the pill and the

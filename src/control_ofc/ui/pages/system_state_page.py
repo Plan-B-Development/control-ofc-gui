@@ -34,7 +34,7 @@ from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.diagnostics_service import DiagnosticsService
-from control_ofc.services.health_ack import clear_key, parse_token, prune
+from control_ofc.services.health_ack import clear_key, prune, silence_key
 from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.system_state_view import (
     SilenceState,
@@ -99,12 +99,6 @@ _GPU_RESTORE_TOOLTIP_GATED = (
 )
 
 
-def _silence_key(token: str) -> str:
-    """The bare item key inside a silence token, for un-silencing."""
-    occ = parse_token(token)
-    return occ.key if occ else token
-
-
 def _live_silence_keys(vm) -> set[str]:
     """Every key the CURRENT hardware can raise, for pruning (`ACK-g`).
 
@@ -113,10 +107,17 @@ def _live_silence_keys(vm) -> set[str]:
     DEC-115 rule, and the reason this is not a second enumeration of the
     condition set.
     """
-    keys = {_silence_key(c.silence.token) for c in vm.issue_cards if c.silence.token}
+    keys = {silence_key(c.silence.token) for c in vm.issue_cards if c.silence.token}
     keys |= {n.key for n in vm.board_notes.notes}
     keys |= {"interference", "thermal"}
-    keys |= {_silence_key(r.silence.token) for r in vm.safety_gpu.gpu_rows if r.silence.token}
+    # By ROW PRESENCE, not by token presence. A GPU row that is currently `ok`
+    # carries no token — and reading the key off the token would therefore drop
+    # it from the live set the moment the problem was fixed, so the next prune
+    # deleted a dismissal the user was entitled to keep. `Overdrive` and
+    # `Fan Control` stay on screen through that transition; `amdgpu binding` and
+    # the `AMD <bdf>` rows genuinely vanish, and pruning those is the intended,
+    # pre-existing behaviour for an item this hardware can no longer raise.
+    keys |= {r.key for r in vm.safety_gpu.gpu_rows if r.key}
     return keys
 
 
@@ -633,11 +634,12 @@ class SystemStatePage(QWidget):
         """(Un)acknowledge one item, for the session only (DEC-359).
 
         Every silenceable surface routes here — conditions, board notes, the
-        Interference Monitor, the thermal row, the GPU advisories — because a
-        silencing decision belongs to the item, not to the widget that happened
-        to show it (`ACK-h` is that rule being broken by the previous design).
+        Interference Monitor, the thermal row, the GPU advisories and the
+        Safety & GPU constraint rows (DEC-380) — because a silencing decision
+        belongs to the item, not to the widget that happened to show it
+        (`ACK-h` is that rule being broken by the previous design).
         """
-        key = _silence_key(token)
+        key = silence_key(token)
         before = len(self._session_acks)
         if acknowledged:
             self._session_acks.add(token)

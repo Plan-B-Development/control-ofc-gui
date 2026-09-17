@@ -323,17 +323,37 @@ class GpuConstraintRowVM:
     label: str
     value: str
     state: str  # ok | warn | crit | neutral
-    #: DEC-359. **Only the kernel-warning advisory rows are silenceable**, at
-    #: every state including `info` — see `build_safety_gpu_vm`. Every other row
-    #: here takes the default empty `SilenceVM`, including three that genuinely
-    #: raise an alarm (`Overdrive: disabled`, `ppfeaturemask NOT set` and
-    #: `amdgpu binding not bound`, all `warn`).
+    #: The row's stable identity, populated on **every** row including the ones
+    #: that carry no silence. `_live_silence_keys` harvests it to decide what
+    #: `prune` may delete, and that decision must be "can this hardware raise
+    #: the item at all?", never "is the item alarming right now?". Taking it
+    #: from `silence.token` instead — which was this change's first draft —
+    #: quietly made a stored dismissal depend on the row's *current* state: fix
+    #: `Overdrive: disabled`, let one diagnostics fetch land, and the prune
+    #: deleted the dismissal, so breaking it again alarmed as if it had never
+    #: been quietened. That contradicts `health_ack.is_silenced`'s rule that a
+    #: silence survives things improving, and the manual's promise in the same
+    #: words. Deliberately no default: a row without a key is a row whose
+    #: silence the next prune eats (DEC-379's shape, and the reason `key` has no
+    #: default on `_GpuRowSilencer` either).
+    key: str
+    #: `ACK-w`, GUI v2.77.0. **A row is silenceable exactly when it raises an
+    #: alarm** — `state_rank(state) >= state_rank("warn")` — plus the
+    #: kernel-warning advisories, which are silenceable at *every* state
+    #: including `info` because that is what DEC-359 shipped and their stored
+    #: tokens must not be orphaned. `ok` and `neutral` rows take the default
+    #: empty `SilenceVM`: there is nothing to quieten, and two ghost buttons
+    #: under `Zero-RPM: available` would be noise of their own.
     #:
-    #: `ACK-t`: this comment used to say the opposite — "only a row that can
-    #: raise an alarm is silenceable" — which is a rule nobody wrote and which
-    #: reads as a promise to whoever extends this list. Whether those three warn
-    #: rows *should* become silenceable is a behaviour question, deliberately
-    #: not settled here; it has its own register row.
+    #: The rule is enforced in one place (`_GpuRowSilencer`) rather than
+    #: restated at each call site, because the two previous attempts to write it
+    #: down were both wrong in the same direction. `ACK-t` first recorded the
+    #: opposite of the code ("only a row that can raise an alarm is
+    #: silenceable" — a rule nobody had written), and the correction that
+    #: replaced it said only the advisories were silenceable and named **three**
+    #: alarm rows that were not. There were six. Both enumerations were derived
+    #: by listing the `silence=` sites, which is the silenceable side and can
+    #: therefore never discover an alarm row that has no `silence=` to list.
     silence: SilenceVM = field(default_factory=SilenceVM)
 
 
@@ -879,6 +899,141 @@ def build_interference_vm(
     )
 
 
+#: Explicit, stable occurrence keys for the Safety & GPU constraint rows
+#: (`ACK-w`). Constants, never slugged from the label: a reworded label would
+#: silently orphan every silence the user has already stored, and nothing would
+#: report it. Namespaced `gpu_row_` so none of them can collide with the
+#: `gpu_readonly` / `gpu_ppfeaturemask` CONDITION keys in `readiness_report.py`
+#: — deliberately **not** shared (the user's decision, 2026-09-17). Sharing was
+#: considered and rejected on two grounds: Dismiss on a one-line readout would
+#: also hide the condition card carrying the *fix* ("add
+#: `amdgpu.ppfeaturemask=0xffffffff` and reboot"), and the predicates are not
+#: the same fact — `gpu_readonly` additionally requires `not gpu.ppfeaturemask`
+#: where this row does not, which is the DEC-325 two-sources-for-one-fact trap.
+#: `ACK-h`'s "the silencing decision belongs to the ITEM" does not reach here,
+#: because these are two different items. Merging stored silences later is also
+#: irreversible; keeping them apart is not.
+_GPU_ROW_KEY_FAN_CONTROL = "gpu_row_fan_control"
+_GPU_ROW_KEY_OVERDRIVE = "gpu_row_overdrive"
+_GPU_ROW_KEY_PPFEATUREMASK = "gpu_row_ppfeaturemask"
+_GPU_ROW_KEY_ZERO_RPM = "gpu_row_zero_rpm"
+_GPU_ROW_KEY_AMDGPU_BINDING = "gpu_row_amdgpu_binding"
+_GPU_ROW_KEY_FIRMWARE_MIN_PWM = "gpu_row_firmware_min_pwm"
+_GPU_ROW_KEY_INTEL = "gpu_row_intel"
+_GPU_ROW_KEY_NVIDIA = "gpu_row_nvidia"
+#: One key per PCI device, not one key per row-kind: these are genuinely
+#: different items, and `clear_key`/`prune` work per key, so a shared key would
+#: mean un-silencing one device un-silenced every other device too. A BDF
+#: contains neither `@` nor `#`, so the token round-trips through `parse_token`
+#: unchanged — a property of the BDF format, checked rather than assumed.
+_GPU_ROW_KEY_AMD_DEVICE = "gpu_row_amd_device_"
+
+
+@dataclass(frozen=True)
+class _GpuRowSilencer:
+    """Builds the Safety & GPU rows, silencing the ones that raise an alarm.
+
+    `ACK-w`. Every ``rows.append`` in `build_safety_gpu_vm` goes through here,
+    and both entry points take ``key`` as a keyword argument with **no
+    default** — which is the whole point of the shape. DEC-379 is the failure
+    this prevents: a parameter with a default lets a new call site opt out
+    silently, and the opt-out here is invisible, because a row without a token
+    simply renders without buttons. No exception, no log line, no failing test.
+    The registry-style sweep in the tests is the other half of the same guard
+    (DEC-367: classify by default, so adding a row fails until somebody
+    chooses).
+
+    Two entry points rather than one with flags, because the advisory rows
+    genuinely differ in all three things that matter: their occurrence (no
+    fingerprint — the ``gpu_advisory_{id}`` token must stay byte-identical to
+    what DEC-359 wrote, or every silence already stored is orphaned), their
+    predicate (silenceable at *every* state, including ``info``), and the extra
+    ``acknowledged_kernel_warnings`` term `ACK-h` folds in.
+    """
+
+    ack_index: dict[tuple[str, str], int]
+    dismiss_index: dict[tuple[str, str], int]
+    allow_acknowledge: bool
+    allow_dismiss: bool
+
+    def constraint(self, label: str, value: str, state: str, *, key: str) -> GpuConstraintRowVM:
+        """A constraint readout — silenceable exactly when it alarms.
+
+        The fingerprint is the row's **own value**, which is what keeps the two
+        ``ppfeaturemask`` branches, and ``read_only`` vs ``none``, as separate
+        occurrences under one key.
+
+        **Why no constraint row needs the thermal row's ``crit`` withholding**,
+        in the order the reasons actually carry weight — the first draft of this
+        docstring had them the other way round, and writing the test is what
+        showed it:
+
+        1. **No constraint row can reach ``crit`` at all.** The danger the
+           thermal row guards against is specifically a dismissal taken at the
+           *top* rank, which then satisfies ``rank <= stored`` for every future
+           state — a permanent mute. Unreachable here, and pinned by a test that
+           fails if a future row paints ``crit``.
+        2. Below ``crit``, escalation is already broken by ``is_silenced``'s
+           rank check without any help from the fingerprint. The value
+           fingerprint is a second, independent line — the state of every
+           silenceable row is a pure function of the value it is taken from —
+           but it is not what makes the first point safe, and saying so
+           overstated it.
+        """
+        return self._row(
+            label,
+            value,
+            state,
+            Occurrence(key=key, fingerprint=health_ack.fingerprint([value]), level=state),
+            silenceable=state_rank(state) >= state_rank("warn"),
+        )
+
+    def advisory(
+        self, label: str, value: str, state: str, *, key: str, dismissed_elsewhere: bool
+    ) -> GpuConstraintRowVM:
+        """A kernel advisory — silenceable at every state, token unchanged."""
+        return self._row(
+            label,
+            value,
+            state,
+            Occurrence(key=key, fingerprint="", level=state),
+            silenceable=True,
+            dismissed_elsewhere=dismissed_elsewhere,
+        )
+
+    def _row(
+        self,
+        label: str,
+        value: str,
+        state: str,
+        occ: Occurrence,
+        *,
+        silenceable: bool,
+        dismissed_elsewhere: bool = False,
+    ) -> GpuConstraintRowVM:
+        if not silenceable:
+            return GpuConstraintRowVM(label, value, state, occ.key)
+        rank = state_rank(state)
+        silence = SilenceVM(
+            token=health_ack.occurrence_token(occ),
+            acknowledged=health_ack.is_silenced(self.ack_index, occ, rank),
+            dismissed=dismissed_elsewhere or health_ack.is_silenced(self.dismiss_index, occ, rank),
+            can_acknowledge=self.allow_acknowledge,
+            can_dismiss=self.allow_dismiss,
+        )
+        # DEMOTE, NEVER DELETE — and demote only the RENDERED state. The
+        # occurrence above is built at the row's real level, so a quiet row
+        # keeps a token at its real rank. Neutralising `state` first would look
+        # identical on screen and be wrong twice over: the token would be
+        # withheld from the very row the user just silenced (no Unacknowledge
+        # button to undo it), and `_live_silence_keys` harvests keys from
+        # rendered tokens, so the next `prune` would delete the silence they
+        # had only just taken.
+        return GpuConstraintRowVM(
+            label, value, "neutral" if silence.quiet else state, occ.key, silence=silence
+        )
+
+
 def _fan_method_state(method: str) -> str:
     if method in ("pmfw_curve", "hwmon_pwm"):
         return "ok"
@@ -955,6 +1110,20 @@ def build_safety_gpu_vm(
     if thermal_silence.quiet:
         thermal_state = "neutral"
 
+    # `ACK-w`. Until GUI v2.77.0 only the kernel advisories below carried a
+    # token, so a `warn` row the user could do nothing about — an RDNA3+ card
+    # with no `amdgpu.ppfeaturemask`, which is the ordinary state of that
+    # hardware — had no Acknowledge and no Dismiss at all, on a page whose whole
+    # premise is that nothing appears forever. Every row goes through the
+    # silencer now, and it is the `key` argument's absence of a default that
+    # keeps a seventh row from quietly opting out again.
+    silencer = _GpuRowSilencer(
+        ack_index=ack_index,
+        dismiss_index=dismiss_index,
+        allow_acknowledge=silence.allow_acknowledge,
+        allow_dismiss=silence.allow_dismiss,
+    )
+
     rows: list[GpuConstraintRowVM] = []
     gpu_model = ""
     speed_min: int | None = None
@@ -963,33 +1132,52 @@ def build_safety_gpu_vm(
     gpu = diag.gpu
     if gpu:
         gpu_model = gpu.model_name or "AMD D-GPU"
+        # `warn` for `read_only`, `none` and `""`, via `_fan_method_state` — and
+        # no literal `warn` appears here, which is why `ACK-w` originally missed
+        # this row and called the defect three rows wide when it was six.
         rows.append(
-            GpuConstraintRowVM(
-                "Fan Control", gpu.fan_control_method, _fan_method_state(gpu.fan_control_method)
+            silencer.constraint(
+                "Fan Control",
+                gpu.fan_control_method,
+                _fan_method_state(gpu.fan_control_method),
+                key=_GPU_ROW_KEY_FAN_CONTROL,
             )
         )
         rows.append(
-            GpuConstraintRowVM(
+            silencer.constraint(
                 "Overdrive",
                 "enabled" if gpu.overdrive_enabled else "disabled",
                 "ok" if gpu.overdrive_enabled else "warn",
+                key=_GPU_ROW_KEY_OVERDRIVE,
             )
         )
         if gpu.ppfeaturemask:
             rows.append(
-                GpuConstraintRowVM(
+                silencer.constraint(
                     "ppfeaturemask",
                     f"bit 14 {'set' if gpu.ppfeaturemask_bit14_set else 'NOT set'}",
                     "ok" if gpu.ppfeaturemask_bit14_set else "warn",
+                    key=_GPU_ROW_KEY_PPFEATUREMASK,
                 )
             )
         elif gpu.fan_control_method == "read_only":
+            # One key, two occurrences: this branch and the one above fingerprint
+            # differently because they say different things, so silencing "bit 14
+            # NOT set" does not pre-silence "not set on the kernel command line".
             rows.append(
-                GpuConstraintRowVM("ppfeaturemask", "not set on kernel command line", "warn")
+                silencer.constraint(
+                    "ppfeaturemask",
+                    "not set on kernel command line",
+                    "warn",
+                    key=_GPU_ROW_KEY_PPFEATUREMASK,
+                )
             )
         rows.append(
-            GpuConstraintRowVM(
-                "Zero-RPM", "available" if gpu.zero_rpm_available else "not available", "neutral"
+            silencer.constraint(
+                "Zero-RPM",
+                "available" if gpu.zero_rpm_available else "not available",
+                "neutral",
+                key=_GPU_ROW_KEY_ZERO_RPM,
             )
         )
         # The third of the WIRE-v trio, and the only one scoped to *this* GPU.
@@ -998,10 +1186,11 @@ def build_safety_gpu_vm(
         # without a bound driver is a contradiction the user needs to see.
         if not gpu.amdgpu_driver_bound:
             rows.append(
-                GpuConstraintRowVM(
+                silencer.constraint(
                     "amdgpu binding",
                     "not bound to this GPU's PCI device — fan control will not work",
                     "warn",
+                    key=_GPU_ROW_KEY_AMDGPU_BINDING,
                 )
             )
         if gpu.fan_speed_min_pct is not None and gpu.fan_speed_max_pct is not None:
@@ -1009,7 +1198,12 @@ def build_safety_gpu_vm(
             speed_max = gpu.fan_speed_max_pct
         if gpu.fan_minimum_pwm is not None:
             rows.append(
-                GpuConstraintRowVM("Firmware min PWM", f"{gpu.fan_minimum_pwm}%", "neutral")
+                silencer.constraint(
+                    "Firmware min PWM",
+                    f"{gpu.fan_minimum_pwm}%",
+                    "neutral",
+                    key=_GPU_ROW_KEY_FIRMWARE_MIN_PWM,
+                )
             )
         for kw in gpu.kernel_warnings:
             state = severity_to_state(kw.severity)
@@ -1020,25 +1214,13 @@ def build_safety_gpu_vm(
             # `/capabilities.amd_gpu.kernel_warnings`, so the ids are one
             # vocabulary and the filter was one `in` away. A silencing decision
             # belongs to the ITEM, not to whichever widget showed it first.
-            occ = Occurrence(key=f"gpu_advisory_{kw.id}", fingerprint="", level=state)
-            rank = state_rank(state)
-            already = kw.id in silence.kernel_warnings
             rows.append(
-                GpuConstraintRowVM(
+                silencer.advisory(
                     f"Advisory ({kw.severity})",
                     kw.message,
-                    "neutral"
-                    if already
-                    or health_ack.is_silenced(ack_index, occ, rank)
-                    or health_ack.is_silenced(dismiss_index, occ, rank)
-                    else state,
-                    silence=SilenceVM(
-                        token=health_ack.occurrence_token(occ),
-                        acknowledged=health_ack.is_silenced(ack_index, occ, rank),
-                        dismissed=already or health_ack.is_silenced(dismiss_index, occ, rank),
-                        can_acknowledge=silence.allow_acknowledge,
-                        can_dismiss=silence.allow_dismiss,
-                    ),
+                    state,
+                    key=f"gpu_advisory_{kw.id}",
+                    dismissed_elsewhere=kw.id in silence.kernel_warnings,
                 )
             )
 
@@ -1060,16 +1242,24 @@ def build_safety_gpu_vm(
                 f"the amdgpu module is not loaded (driver: {driver}) "
                 "— blacklisted, missing, or passed through"
             )
-        rows.append(GpuConstraintRowVM(f"AMD {dev.pci_bdf}", detail, "warn"))
+        rows.append(
+            silencer.constraint(
+                f"AMD {dev.pci_bdf}",
+                detail,
+                "warn",
+                key=f"{_GPU_ROW_KEY_AMD_DEVICE}{dev.pci_bdf}",
+            )
+        )
 
     if diag.intel_gpu:
         ig = diag.intel_gpu
         gpu_model = gpu_model or (ig.model_name or "Intel D-GPU")
         rows.append(
-            GpuConstraintRowVM(
+            silencer.constraint(
                 f"Intel {ig.model_name or 'D-GPU'}",
                 f"{ig.fan_control_method} (firmware-managed)",
                 "neutral",
+                key=_GPU_ROW_KEY_INTEL,
             )
         )
 
@@ -1077,10 +1267,11 @@ def build_safety_gpu_vm(
         ng = diag.nvidia_gpu
         gpu_model = gpu_model or (ng.model_name or "NVIDIA D-GPU")
         rows.append(
-            GpuConstraintRowVM(
+            silencer.constraint(
                 f"NVIDIA {ng.model_name or 'D-GPU'}",
                 f"{ng.fan_control_method} (read-only)",
                 "neutral",
+                key=_GPU_ROW_KEY_NVIDIA,
             )
         )
 

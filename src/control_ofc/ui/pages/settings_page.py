@@ -1679,12 +1679,13 @@ class SettingsPage(QWidget):
         # widened these two settings from board notes to every silenceable item
         # on the System State page, and leaving them titled "board notes" meant a
         # user unticking one to stop acknowledging notes silently also lost the
-        # ability to acknowledge condition cards, the thermal row and the GPU
-        # advisories. The KEY keeps its old name (`board_notes_allow_*`) so no
+        # ability to acknowledge condition cards, the thermal row, the GPU
+        # advisories and — since DEC-380 — the Safety & GPU constraint rows.
+        # The KEY keeps its old name (`board_notes_allow_*`) so no
         # settings migration is needed — only the wording was wrong.
         self._board_note_ack_cb.setToolTip(
             "Offer an Acknowledge button on every item in the System State health "
-            "overview — conditions, board notes, interference and GPU advisories"
+            "overview — conditions, board notes, interference, the GPU rows and GPU advisories"
         )
         v.addLayout(
             self._setting_row(
@@ -1698,7 +1699,7 @@ class SettingsPage(QWidget):
         self._board_note_dismiss_cb.setObjectName("Settings_Check_boardNoteDismiss")
         self._board_note_dismiss_cb.setToolTip(
             "Offer a Dismiss button on every item in the System State health "
-            "overview — conditions, board notes, interference and GPU advisories"
+            "overview — conditions, board notes, interference, the GPU rows and GPU advisories"
         )
         v.addLayout(
             self._setting_row(
@@ -1721,13 +1722,13 @@ class SettingsPage(QWidget):
         )
         self._restore_health_btn.setToolTip(
             "Show everything you have dismissed on the System State page again — "
-            "conditions, board notes, interference and GPU advisories"
+            "conditions, board notes, interference, the GPU rows and GPU advisories"
         )
         self._restore_health_btn.clicked.connect(self._restore_health_items)
         v.addLayout(
             self._setting_row(
                 "Dismissed health items",
-                "Conditions, board notes, interference and advisories you have hidden",
+                "Conditions, board notes, interference, GPU rows and advisories you have hidden",
                 self._restore_health_btn,
             )
         )

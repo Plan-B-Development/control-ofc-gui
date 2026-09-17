@@ -218,3 +218,20 @@ def prune(stored: Iterable[str], live_keys: set[str], cap: int = SILENCE_CAP) ->
     """
     kept = [t for t in stored if (occ := parse_token(t)) is not None and occ.key in live_keys]
     return kept[-cap:] if len(kept) > cap else kept
+
+
+def silence_key(token: str) -> str:
+    """The bare item key inside a silence token.
+
+    Two consumers need it and neither owns it: the page un-silences and prunes
+    by key, and the Safety & GPU card names its Acknowledge/Dismiss buttons by
+    key so the objectName survives a row appearing or disappearing above it
+    (`ACK-w`). It lived as a private one-liner on the page until the second
+    consumer arrived, which is `CLAUDE.md`'s rule about where a rule belongs.
+
+    An unparseable token returns unchanged rather than "". It is not a key, but
+    it is stable and unique, which is all either caller needs of it — and "" is
+    neither, so every corrupt token would otherwise collide into one.
+    """
+    occ = parse_token(token)
+    return occ.key if occ else token
