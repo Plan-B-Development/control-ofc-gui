@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Documentation
+
+**`manual/openfan-controller.md` described the OpenFan reconnect backoff in
+seconds; the daemon counts poll ticks** (`OFN-aj`, GUI half — the daemon half
+lands in the same window). The troubleshooting row promised "about 1 s, up to
+30 s" unconditionally. The daemon's cap is 30 *poll intervals*, so that reading
+holds only at the default 1000 ms `polling.poll_interval_ms`; anyone who has
+lowered it gets proportionally shorter, down to 250 ms–7.5 s at the API floor.
+The row now names the cap in poll intervals and keeps the seconds figure as a
+default-interval example, matching the wording
+`docs/architecture/daemon-end-to-end.md` already carries.
+
+Nothing else in this repo asserted a figure for it. A bare-token sweep of
+`backoff` across twelve enumerated trees in both repos, every hit read, found
+six further mentions — `docs/07:334`, `docs/14:26` and `:374`,
+`docs/architecture/openfan-controller-integration.md:88` and `:325`, and
+`docs/architecture/daemon-end-to-end.md:444` — all of which say "with backoff"
+and quantify nothing, so they were read and deliberately left unchanged.
+
 ## [2.76.3] — 2026-09-17
 
 ### Fixed
