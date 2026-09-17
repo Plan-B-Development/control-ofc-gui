@@ -75,11 +75,39 @@ class TestCapabilitiesVM:
         assert vm.hwmon_banner is None
 
     def test_hwmon_present_readonly_warns(self):
+        """`OFN-ak` — the all-read-only board's banner.
+
+        Reachable only since daemon 2.49.0 (DEC-376): before it, `present` and
+        `write_support` were two copies of one daemon expression, so this branch
+        could not fire on any machine. The GUI side was correct throughout and is
+        unchanged; what this test gained is an assertion on WHICH banner, because
+        `kind == "warning"` alone is satisfied by any warning the branch above
+        might grow.
+        """
         caps = Capabilities(
             hwmon=HwmonCapability(present=True, pwm_header_count=3, write_support=False)
         )
         vm = build_capabilities_vm(caps)
         assert vm.hwmon_banner is not None and vm.hwmon_banner.kind == "warning"
+        assert "read-only" in vm.hwmon_banner.message
+
+    def test_hwmon_banner_tracks_write_support_independently_of_presence(self):
+        """Both arms, asserted as a relationship against the wire fields.
+
+        `OFN-ak`/DEC-325: the defect was two arguments that must be able to
+        disagree being derived from one source. A test that pinned each arm
+        against a literal would pass with them wired together again; this one
+        holds `present` fixed and moves only `write_support`, so it fails if the
+        banner stops consulting the field that actually varies.
+        """
+        for write_support in (True, False):
+            caps = Capabilities(
+                hwmon=HwmonCapability(present=True, pwm_header_count=3, write_support=write_support)
+            )
+            vm = build_capabilities_vm(caps)
+            assert (vm.hwmon_banner is None) == caps.hwmon.write_support, (
+                f"the read-only banner disagreed with the wire field for {write_support=}"
+            )
 
     def test_api_skew_message_when_mismatched(self):
         vm = build_capabilities_vm(Capabilities(api_version=EXPECTED_API_VERSION + 1))

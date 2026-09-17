@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+**The Dashboard's "motherboard fan headers detected but all are read-only" banner can
+actually appear now** — against **daemon >= 2.49.0**. No GUI source changed: the banner
+and its condition (`present and not write_support`) have been correct since they were
+written, but the daemon derived both capability fields from one expression, so the branch
+was structurally unreachable on every machine (`OFN-ak`, DEC-376). A board whose every
+`pwmN` is read-only now reports `write_support: false` and the banner fires. Against an
+older daemon nothing changes.
+
+### Tests
+
+The banner's test asserted only that *a* warning appeared, which any future warning on
+that branch would have satisfied; it now asserts which banner, and a second test pins the
+banner against the wire field on both arms — the defect being guarded is two values that
+must be able to disagree coming from one source (`AUD2-g`/DEC-325), so a test pinning each
+arm against a literal would pass if they were wired together again.
+
+**The `OFN-ak` register row's claim that this banner had no test was false** and is
+corrected in the row rather than deleted (DEC-364): its `grep` was for the banner's *text*,
+which appears only in `src/`, while the *branch* has been covered by
+`test_dashboard_view.py` throughout.
+
 ## [2.76.1] — 2026-09-16
 
 ### Documentation

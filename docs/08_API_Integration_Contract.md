@@ -99,6 +99,19 @@ Notable fields:
   A client that reads `present` first — which it must — sees no difference
   between the two daemons; one that does not is no longer lied to by the newer
   one. Do not derive presence from `channels != 0`: read `present`.
+- `devices.hwmon.write_support` and `features.hwmon_write_supported` mean
+  **"at least one discovered `pwmN` is writable"**, which is not the same as
+  `devices.hwmon.present`. **Changed in daemon 2.49.0 (`OFN-ak`, DEC-376):**
+  before it both were the *same expression* as `present`, so a board whose every
+  `pwmN` is read-only (permissions, a driver exposing monitoring only, a BIOS
+  holding the headers) was told the daemon could write it — and any client
+  branch of the form `present and not write_support` was structurally
+  unreachable. The GUI's "headers detected but all are read-only" banner is
+  exactly that branch and could not fire before 2.49.0. `present` is unchanged
+  and still means "headers were discovered": a read-only header is a real header
+  and must still be listed. The same predicate gates the profile engine's hwmon
+  backend, so on such a board an `hwmon:` control is also reported as
+  `backend_unavailable` (`OFN-ah`, above) — the two answers cannot disagree.
 - `devices.amd_gpu.pci_id` (legacy) and `devices.amd_gpu.pci_bdf` (canonical)
   both carry the same PCI BDF address during the transition window; GUI
   parsers accept either name (see DEC-042 and the 2026-04-22
@@ -670,7 +683,7 @@ by up to three seconds. It is display-only and the GUI does not currently render
 | `sensor_unavailable` | The curve's sensor is absent — not present on this machine, or age-filtered out as stale |
 | `mix_unresolvable` | A Mix produced no value at all (no children, none resolvable, a `subtract` missing its minuend, a cycle, or the depth backstop). A Mix with *some* inputs resolvable is **not** skipped — it runs on the survivors (DEC-272) |
 | `sync_unresolvable` | A Sync whose target is unset, is the control itself, or was not computed this tick |
-| `backend_unavailable` | **daemon >= 2.47.0 (`OFN-j`).** Every one of the control's members targets a backend this daemon does not have, so the control resolves perfectly and commands nothing. NOT a curve-resolution failure — the curve evaluated and an output was computed; the *delivery* has nowhere to go. Canonically an `openfan:` member on a machine with no OpenFanController, but not OpenFan-specific: an `hwmon:` member on a board with no writable header reports identically. Raised only when **every** member is undeliverable — a control with one live member and one dead one is still commanding fans, so it is **not** listed (the daemon logs that case once per activation instead) |
+| `backend_unavailable` | **daemon >= 2.47.0 (`OFN-j`).** Every one of the control's members targets a backend this daemon does not have, so the control resolves perfectly and commands nothing. NOT a curve-resolution failure — the curve evaluated and an output was computed; the *delivery* has nowhere to go. Canonically an `openfan:` member on a machine with no OpenFanController, but not OpenFan-specific: an `hwmon:` member on a board with no writable header reports identically **from daemon >= 2.49.0** (`OFN-ah`, DEC-376 — before that the engine took an hwmon backend from any discovered header, writable or not, so this token was unreachable for hwmon and the control published a duty nothing applied). Raised only when **every** member is undeliverable — a control with one live member and one dead one is still commanding fans, so it is **not** listed (the daemon logs that case once per activation instead) |
 
 Adding a token is additive; renaming one is breaking. A client **must** render an unrecognised token
 rather than dropping the entry — otherwise a newer daemon reintroduces exactly the silence this field
