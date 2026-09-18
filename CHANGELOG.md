@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+**The "no current CPU temperature" warning no longer says the daemon forced a
+fallback fan speed** (DEC-382). Daemons with DEC-382 hold only the fans your
+profile controls at the no-sensor safe minimum, so with no profile active nothing
+is forced at all. The warning now says the daemon holds a safe minimum wherever it
+controls the fans, which is true of every daemon version.
+
+### Documentation
+
+**`docs/08` and the manual describe DEC-382's hand-back and reach.** On stop,
+each fan header the daemon took gets back what it had rather than a fixed
+`pwm_enable=2`, and the 60 % and 40 % thermal floors reach only the fans a profile
+controls; the 100 % emergency still reaches every fan.
+
 ## [2.78.0] — 2026-09-17
 
 ### Changed

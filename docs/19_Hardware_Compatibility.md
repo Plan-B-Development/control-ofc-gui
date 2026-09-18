@@ -653,12 +653,14 @@ The daemon implements a hardware-independent thermal safety rule:
 - **Emergency:** hottest CPU temperature >= the trip point → force every OpenFan channel and writable hwmon header the machine has to 100% PWM (GPU fans excluded — PMFW firmware self-protects, DEC-130). The trip point is 105°C, raised per-machine to `min(CPU-reported ceiling + 5, 115)` where the kernel publishes the ceiling (DEC-308)
 - **Release:** hottest CPU temperature drops below 80°C → exit emergency
 - **Recovery:** apply a 60% PWM recovery floor for two cycles (the release cycle and one more), then resume active profile control
-- **Failsafe:** if no CPU sensor is reachable for 5 consecutive cycles → force 40%
+- **Failsafe:** if no CPU sensor is reachable for 5 consecutive cycles → hold the fans the active profile controls at 40% or more (DEC-382); fans no profile controls stay under their firmware curve
 
 **All three duties are FLOORS over the active profile's output, not replacements for
 it (DEC-307).** Each OpenFan channel and writable hwmon header receives
-`max(commanded, forced)`, and an output no control commands still receives the forced
-duty — that second half is what gives the emergency its reach. The ladder can therefore
+`max(commanded, forced)`; at 100% an output no control commands still receives the
+forced duty — that is what gives the emergency its reach. The 60% and 40% floors reach
+only the fans the profile controls, and every other fan the emergency took is given
+back when it ends (DEC-382). The ladder can therefore
 only ever raise a fan. Before DEC-307 the forced duty replaced the profile's output, so
 the 60% and 40% rungs could drive a fan *down* below what its curve was asking for.
 

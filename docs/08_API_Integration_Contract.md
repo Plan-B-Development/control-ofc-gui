@@ -497,9 +497,11 @@ Daemons < 2.22.0 emit no `controls` entry; a client must treat its absence as
 
 `thermal_state` (daemon ≥1.13.0, additive — `api_version` unchanged) is one of
 `"normal" | "recovery" | "emergency" | "no_sensor_fallback"`. While it is not
-`"normal"` the daemon is forcing every OpenFan channel and writable hwmon header
-**this machine has** (GPU fans excluded — DEC-130) and holding the hwmon lease as
-`thermal-safety`; the GUI has no loop to stand down (DEC-165) and simply shows a
+`"normal"` the daemon is forcing fans — in `emergency`, every OpenFan channel and
+writable hwmon header **this machine has**; in `recovery` and `no_sensor_fallback`,
+since DEC-382 only the ones the active profile controls, with every other fan the
+emergency took given back (GPU fans excluded throughout — DEC-130) — and holding the
+hwmon lease as `thermal-safety`; the GUI has no loop to stand down (DEC-165) and simply shows a
 single poll-driven thermal warning. Older daemons omit the field — the GUI
 defaults it to `"normal"`.
 
@@ -2215,8 +2217,9 @@ copy is a lie against that daemon.
 identify duty by re-issuing `stop` inside the deadman window. This is an **accepted, bounded risk**
 (2026-07-21 audit): identification requires changing any fan by design (DEC-166), the deadman
 limits an abandoned hold to one TTL, and a thermal emergency outranks the overlay — the daemon's
-thermal `force_all_with_floor` (and the no-sensor 40 % fallback) drives every OpenFan channel + writable
-hwmon header the machine has directly, spinning a stalled fan back up regardless of standing identify holds.
+thermal `force_all_with_floor` drives every OpenFan channel + writable hwmon header the machine has
+directly at 100 % (and, below it, every fan the profile controls — DEC-382), spinning a stalled fan back
+up regardless of standing identify holds.
 DEC-311 narrows this further for the case that mattered most: a header the daemon knows to be a
 pump can no longer be held at 0 by anyone. "Knows to be a pump" is a **union** — the header's own
 label/chip evidence OR the user's assignment — so `POST /config/header-role {"role": "chassis_fan"}`
@@ -2442,7 +2445,7 @@ According to the provided daemon notes:
 - the daemon engine auto-sets `pwmN_enable` to manual mode on the first write per lease
 - identical writes coalesced at daemon level (DEC-073)
 - the daemon holds the hwmon lease internally (the GUI holds none — DEC-165)
-- `pwm_enable` restored to automatic (2) on daemon shutdown
+- On daemon shutdown each header the daemon took gets back what it had before — its recorded `pwm_enable`, or its duty if it was already manual — never a hardcoded `2` (DEC-382)
 
 ### AMD GPU (PMFW)
 - 0–100% accepted, no lease required

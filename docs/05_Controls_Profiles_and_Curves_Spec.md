@@ -301,8 +301,10 @@ CPU's own design ceiling — and `/diagnostics/hardware`
 reports the value in use, so a client renders it rather than assuming 105. The 60%
 recovery floor and 40% no-sensor fallback are likewise non-editable. **All three
 are floors over the active profile's output, not replacements for it (DEC-307)**:
-each fan receives `max(commanded, forced)`, and a fan no control commands still
-receives the forced duty.
+each fan receives `max(commanded, forced)`. Only the 100% emergency also reaches
+fans no control commands; the 60% and 40% floors apply to the fans the profile
+controls, and every other fan the emergency took is given back when it ends
+(DEC-382).
 GPU fans are deliberately excluded (DEC-130): there is no GPU emergency
 threshold — AMD PMFW firmware owns GPU thermal protection independently
 of OS fan control. While any override is active the daemon reports

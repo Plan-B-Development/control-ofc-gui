@@ -333,7 +333,7 @@ padding tweak, and DEC-128/129 own that surface.
 | Daemon state persistence fails under systemd sandbox | StateDirectory + configurable state_dir + ReadWritePaths | v0.5.4 (R50) |
 | hwmon redundant sysfs writes in steady state | Per-header coalescing (pwm_enable + PWM value) | v0.5.4 (sanity check) |
 | OpenFan dual-writer when GUI + profile engine active | Profile engine defers to GUI (30s check) | v0.5.4 (sanity check) |
-| hwmon pwm_enable not restored on daemon shutdown | Shutdown handler writes pwm_enable=2 for all headers | v0.5.4 (V4 audit P0) |
+| hwmon pwm_enable not restored on daemon shutdown | Shutdown handler writes pwm_enable=2 for all headers — **superseded by DEC-382**: `2` is automatic only on it87, so each header the daemon took now gets back exactly what it had | v0.5.4 (V4 audit P0) |
 | Thermal safety override errors silently dropped | Controls-page status chip surfaces "Override blocked — thermal emergency (fans held by safety)" when the daemon refuses a `thermal_abort` override (the earlier ERROR-log mitigation was retired) | GUI v2.8.2 (audit-2026-07-03) |
 | GPU write endpoints missing from API docs | Added to CLAUDE.md, 08_API_Contract, 09_State_Model | v0.69.0 (V4 audit G2) |
 | Dead code: unused signals, client method, fixtures | Removed with full removal log | v0.69.0 (V4 audit G3) |
@@ -378,7 +378,7 @@ padding tweak, and DEC-128/129 own that surface.
 | Dashboard sensor-freshness side panel (spec) | Collapsible **Sensors** panel (DEC-184; was a Sensors/Events/Warnings inspector, DEC-182) + status strip + summary-card freshness glyphs (DEC-177/178) | GUI v2.2.0–2.3.0 |
 | Dense dashboard dominated by raw data | Progressive-disclosure IA: status strip, refined cards, styled/reorderable/collapsible fan-zone cards, readable-by-default chart with modes + annotations, collapsible Sensors panel (DEC-176–187) | GUI v2.2.0–2.3.0 |
 | Dashboard accreted five overlapping fan/status presentations | Rebuilt telemetry-first: graph primary, one card per logical control, Sensors rail; summary cards / Fan Array / Fan Zone grid / raw table / Quick Actions / Alerts / status strip all retired, four indicators re-homed to the global footer (DEC-222) | GUI v2.25.0 |
-| Daemon panic leaves hardware in manual mode | Panic hook restores GPU curves + hwmon pwm_enable=2 | V5 audit (daemon) |
+| Daemon panic leaves hardware in manual mode | Panic hook restores GPU curves + hwmon pwm_enable=2 — **superseded by DEC-382**: the hwmon half now replays the hand-back ledger | V5 audit (daemon) |
 | GPU reset_to_auto skips zero-RPM on partial failure | Always re-enable zero-RPM regardless of curve reset outcome | V5 audit (daemon) |
 | blockSignals pairs exception-unsafe (GUI) | block_signals() context manager with try/finally | V5 audit |
 | Read-only RDNA3/4 GPUs returned wrong error code | Canonical `AmdGpuInfo::can_write_legacy_pwm()` helper; both `set` and `reset` arms return `400 feature_unavailable + retryable: false` | DEC-098 (daemon v1.6.1 / GUI v1.10.1) |

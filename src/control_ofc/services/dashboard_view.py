@@ -116,9 +116,14 @@ _THERMAL_REASONS: dict[str, str] = {
         # directly above a "Hottest CPU sensor: 62.0°C" line drawn from the very
         # list it denied. Phrased to be true of both triggers without needing a
         # daemon-version gate.
-        "No current CPU temperature reading. The daemon has forced a safe fallback fan "
-        "speed because it cannot confirm the system is cool — a reading may still be "
-        "listed, but it has stopped updating."
+        # DEC-382: and "has forced a safe fallback fan speed" stopped being true
+        # of every daemon — since then the floor reaches only the fans a profile
+        # controls, so with no profile active nothing is forced. "Where it
+        # controls the fans" is true of an older daemon (it forces everything),
+        # of a newer one with a profile, and of one with none.
+        "No current CPU temperature reading, so the daemon cannot confirm the system is "
+        "cool and holds a safe minimum fan speed wherever it controls the fans — a "
+        "reading may still be listed, but it has stopped updating."
     ),
 }
 

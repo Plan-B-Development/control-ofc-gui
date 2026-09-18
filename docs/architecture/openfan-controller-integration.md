@@ -263,7 +263,7 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
   writable hwmon header it has too, because the rule is not OpenFan-specific. GPU fans
   are excluded by design (DEC-130)
 - **Hold:** Until Tctl ≤ 80°C
-- **Recovery:** 60% PWM floor for two cycles (release + 1), then resume profile control
+- **Recovery:** 60% PWM floor for two cycles (release + 1) on the fans a profile controls, then resume profile control. Every other fan the emergency took is given back at the release — an OpenFan channel to its pre-emergency duty, an hwmon header to the mode it had before the daemon took it (DEC-382)
 - **Implementation:** `ThermalSafetyRule.evaluate()` called every 1s in profile engine
 
 ### Command Safety Guards

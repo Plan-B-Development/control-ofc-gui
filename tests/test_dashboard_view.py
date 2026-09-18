@@ -172,6 +172,20 @@ def test_no_sensor_copy_does_not_claim_the_sensor_is_gone():
     )
 
 
+def test_no_sensor_copy_does_not_claim_a_fan_was_forced():
+    """DEC-382: the no-sensor floor reaches only the fans a profile controls, so
+    on a daemon with no profile active nothing is forced at all. "The daemon has
+    forced a safe fallback fan speed" was then false. The copy must scope the hold
+    to the fans the daemon controls instead — which is also true of an older
+    daemon that forces every fan, so it needs no version gate."""
+    text = safety_detail_text(
+        "no_sensor_fallback", "No CPU sensor", [62.0], 0, cpu_reading_is_stale=True
+    )
+
+    assert "forced" not in text, "the copy claims a force that may not have happened"
+    assert "wherever it controls the fans" in text, "the hold must be scoped, not universal"
+
+
 def test_a_fresh_reading_is_never_hedged_whatever_the_state():
     """The relabel keys on the reading's age, not on the state. A live emergency
     with a current reading must show it plainly."""
