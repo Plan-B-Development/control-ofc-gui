@@ -469,6 +469,22 @@ def cooling_device_reservations(
                 ),
                 title="Take this fan out of the cooling device?",
             )
+        elif membership.role == "pump" and not membership.assigned:
+            # A pump the daemon protects on evidence other than an assignment:
+            # its label, a cooler's channel 1, or — since DEC-384 — the name the
+            # active profile gives it. No role edit releases any of those, and
+            # the last follows whichever profile is active, not the one being
+            # edited, so this names the reasons and offers no remedy.
+            notes[member_id] = ReservationNote(
+                text="(Pump)",
+                tooltip=(
+                    "The daemon currently treats this header as a pump — because "
+                    "of its label or hardware, or because the active profile names "
+                    "this fan a pump or AIO. Assigning it to an unrelated curve is "
+                    "allowed, but it is usually not what you want."
+                ),
+                title="Assign the pump to this curve?",
+            )
         else:
             notes[member_id] = ReservationNote(
                 text=f"({membership.role_label} role assigned)",

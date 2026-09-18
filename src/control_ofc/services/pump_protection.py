@@ -85,12 +85,12 @@ def header_is_pump_protected(
     while the daemon still refuses to stop or under-drive it. Reading ``role``
     alone is therefore a bug in any safety or truthfulness decision.
 
-    Three terms, matching the daemon's:
+    Three terms, matching every daemon this reconstruction ever runs against:
 
     * the resolved role says ``pump``;
     * the RAW daemon label carries a pump hint. Raw, never the resolved display
-      name: a user *alias* of "Pump" on an unlabelled header is invisible to the
-      daemon, so trusting it would claim protection the daemon does not apply —
+      name: a user *alias* of "Pump" on an unlabelled header is invisible to
+      those daemons, so trusting it would claim protection they do not apply —
       the unsafe direction. The DEC-229 synthesised ``pwmN`` placeholder is
       skipped for the same reason it always is.
     * the header is a liquid-cooler channel 1, which the daemon maps to a pump —
@@ -108,7 +108,14 @@ def header_is_pump_protected(
     **Since DEC-316 this reconstruction is the FALLBACK, not the primary answer.**
     A daemon >= 2.31.0 reports ``stop_permitted`` per header, computed from the
     same union on the side that actually enforces it, and that is authoritative
-    when present. The reconstruction below still runs for older daemons and
+    when present.
+
+    **A daemon with DEC-384 has a fourth term this must NOT copy:** a member of
+    the active profile whose label names a pump. It reaches the GUI only through
+    ``stop_permitted`` — where it can change with the active profile — and no
+    daemon old enough to need this fallback has it, so mirroring it here (from the
+    GUI's own display names, say) would promise a perturbation the daemon will
+    not perform. The reconstruction below still runs for older daemons and
     whenever the field is absent — which is why it is kept rather than deleted,
     and why ``None`` must never be read as ``False``: a defaulted "stoppable"
     would offer to stop a real pump.

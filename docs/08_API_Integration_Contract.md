@@ -1039,6 +1039,16 @@ Use to discover:
     is not `false`** — read it as unknown and fall back, or an older daemon's pump becomes
     "stoppable".
 
+    **It can change when the active profile does (DEC-384).** One input of the union is a member
+    of the active profile whose label names a pump, so activating, switching or deactivating a
+    profile can flip `stop_permitted` and `effective_min_pwm_pct` for a header with no other
+    evidence. `/hwmon/headers`, `/hwmon/rescan` and `/inventory/hwmon` share one mapping, so they
+    apply the same union to whatever they publish (`/hwmon/rescan` maps a fresh discovery, the
+    other two the running controller's headers). A client that caches the list is advisory only between fetches — the daemon
+    decides at the call and reports what it did in identify's `mode`, which is the value to
+    trust. The client-side reconstruction for daemons that omit this field must **not** add the
+    profile term: no such daemon has it.
+
     **Daemons 2.31.0 – 2.34.0 did not honour that sentence, and this paragraph is what they
     diverged from (`AIO7-d`, fixed in 2.35.0 / DEC-322).** The published value was
     `!pump_protected && policy.supports_stop`, and `PwmHeaderEntry::from_descriptor` resolves
@@ -2205,7 +2215,7 @@ freeze + raw writes.
 | `mode` | When | Behaviour |
 | --- | --- | --- |
 | `"stop"` | every non-pump role | forces the fan to 0, **floor-exempt** — unchanged since DEC-166 |
-| `"pump_perturb"` | the header's resolved `role` is `"pump"` | shifts the duty ~25 points clear of `baseline_pwm_percent`, **upward wherever there is headroom**, clamped into `[30, 100]`. Never 0, never below the pump floor. |
+| `"pump_perturb"` | the header is pump-protected — the union below, **not** the wire `role` alone | shifts the duty ~25 points clear of `baseline_pwm_percent`, **upward wherever there is headroom**, clamped into `[30, 100]`. Never 0, never below the pump floor. |
 
 This supersedes DEC-166's "floor-exempt — even a pump". Keeping the decision server-side is what
 makes an older GUI safe against a newer daemon: it can only ever send `action: "stop"`, so it
@@ -2222,11 +2232,18 @@ directly at 100 % (and, below it, every fan the profile controls — DEC-382), s
 up regardless of standing identify holds.
 DEC-311 narrows this further for the case that mattered most: a header the daemon knows to be a
 pump can no longer be held at 0 by anyone. "Knows to be a pump" is a **union** — the header's own
-label/chip evidence OR the user's assignment — so `POST /config/header-role {"role": "chassis_fan"}`
-on an `AIO_PUMP` header does **not** hand back permission to stop it. A header with neither evidence
-nor an assignment is an ordinary fan and is still stopped; on a board that publishes no fan labels
-that is every header until the user assigns one, which is what makes `POST /config/header-role` part
-of setting such a machine up rather than an optional refinement.
+label/chip evidence OR the user's assignment OR (DEC-384) a member of the **active profile** bound to
+the header whose `member_label` or id label contains `pump` or `aio` — so `POST /config/header-role
+{"role": "chassis_fan"}` on an `AIO_PUMP` header does **not** hand back permission to stop it. The
+profile term is the evidence the engine's 30 % floor already acts on; before DEC-384 identify
+ignored it, so on a chip with no label files a member the profile called "Pump" was held at 30 % by
+every tick and driven to 0 by identify. It deliberately excludes the floor's other arms: a
+CPU-labelled fan and a liquid cooler's radiator channels are floored and still stopped (DEC-311).
+Because it lives in the active profile it comes and goes with it. A header with none of this evidence
+is an ordinary fan and is still stopped; on a board that publishes no fan labels that is every header
+until the user assigns one or a profile names it, and only the assignment protects it whatever
+profile is active — which is what makes `POST /config/header-role` part of setting such a machine up
+rather than an optional refinement.
 
 ### GPU fan reset
 - `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM). **AMD GPUs only** — `gpu_id` is a bare PCI BDF; a BDF that resolves to an NVIDIA/Intel GPU (read-only fans) is not among the daemon's AMD GPUs, so it returns `404 validation_error` ("GPU not found").

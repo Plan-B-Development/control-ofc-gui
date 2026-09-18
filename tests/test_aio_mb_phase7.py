@@ -219,7 +219,7 @@ class TestReservations:
     def test_bare_role_does_not_claim_a_device_that_does_not_exist(self):
         """The copy must not assert an AIO the user never created."""
         notes = cooling_device_reservations(
-            cooling_member_index([], [_header(PUMP_ID, role="pump")])
+            cooling_member_index([], [_header(PUMP_ID, role="pump", role_source="user_assigned")])
         )
         assert notes[PUMP_ID].text == "(Pump role assigned)"
         assert "Part of" not in notes[PUMP_ID].text
@@ -807,6 +807,61 @@ class TestMembershipUsesTheUnionNotTheDisplayRole:
         header = HwmonHeader(id=PUMP_ID, label="pwm5", pwm_index=5, is_writable=True)
         header.stop_permitted = False
         assert cooling_member_index([], [header], _caps())[PUMP_ID].role == "pump"
+
+
+class TestReservationCopyFollowsTheEvidence:
+    """Contract review of DEC-384: a pump the daemon protects WITHOUT an assignment.
+
+    Since DEC-384 `stop_permitted: false` also means "the active profile names
+    this fan a pump", which no role edit releases and which follows the ACTIVE
+    profile rather than the one on screen. The bare-role copy said "role
+    assigned … Clear the role in Configure AIO" for every non-device claim, so
+    for such a header it claimed an assignment nobody made and offered a remedy
+    that does nothing.
+
+    The rule, asserted against the wire fields rather than against the index's
+    own `assigned` flag (DEC-334's right-hand side): the "Configure AIO" remedy
+    appears exactly when the header's role is `pump` by the user's assignment.
+    """
+
+    # Three pump claims with three different sources of evidence, and the one
+    # ordinary header that must not be claimed at all.
+    def _headers(self) -> list[HwmonHeader]:
+        profile_named = HwmonHeader(  # no evidence of its own (DEC-384)
+            id="hwmon:it8696:isa-0a40:pwm2:pwm2", label="pwm2", pwm_index=2, is_writable=True
+        )
+        profile_named.stop_permitted = False
+        downgraded = HwmonHeader(  # DEC-312: labelled PUMP, assigned chassis_fan
+            id="hwmon:it8696:isa-0a40:pwm5:AIO_PUMP",
+            label="AIO_PUMP",
+            pwm_index=5,
+            is_writable=True,
+            role="chassis_fan",
+            role_source="user_assigned",
+        )
+        downgraded.stop_permitted = False
+        assigned = _header(PUMP_ID, role="pump", role_source="user_assigned")
+        assigned.stop_permitted = False
+        return [profile_named, downgraded, assigned]
+
+    def test_only_a_pump_assignment_is_offered_the_role_remedy(self):
+        headers = self._headers()
+        notes = cooling_device_reservations(cooling_member_index([], headers, _caps()))
+        assert set(notes) == {h.id for h in headers}, "precondition: all three are claimed"
+        for header in headers:
+            note = notes[header.id]
+            is_pump_assignment = header.role == "pump" and header.role_source == "user_assigned"
+            assert ("Configure AIO" in note.tooltip) == is_pump_assignment, (header.id, note)
+            assert ("assigned" in note.text) == is_pump_assignment, (header.id, note)
+
+    def test_the_unassigned_copy_names_the_active_profile(self):
+        """The DEC-384 reason must be discoverable from the note itself."""
+        profile_named = self._headers()[0]
+        note = cooling_device_reservations(cooling_member_index([], [profile_named], _caps()))[
+            profile_named.id
+        ]
+        assert "active profile" in note.tooltip
+        assert note.title == "Assign the pump to this curve?"
 
 
 class TestPartialAssignIsReportedHonestly:

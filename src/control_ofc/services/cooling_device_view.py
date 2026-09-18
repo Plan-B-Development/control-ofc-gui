@@ -386,6 +386,12 @@ class CoolingMembership:
     role_label: str
     device_id: str = ""
     device_name: str = ""
+    #: True when a header's claim is the user's own assignment of this role
+    #: (``role_source == "user_assigned"``). False for a device claim, and for a
+    #: pump the daemon protects on evidence no role edit releases — its label, a
+    #: liquid cooler's channel 1, or (DEC-384) the name the active profile gives
+    #: it — so copy must not call that an assignment or offer to clear one.
+    assigned: bool = False
 
     @property
     def from_device(self) -> bool:
@@ -466,6 +472,11 @@ def cooling_member_index(
             member_id=header.id,
             role=role,
             role_label=_ROLE_LABELS.get(role, _humanise_token(role)),
+            # The claimed role must BE the assigned one: a `chassis_fan`
+            # assignment on a `PUMP`-labelled header is claimed as a pump here
+            # (DEC-312) without being a pump assignment.
+            assigned=(header.role_source or "") == "user_assigned"
+            and _ROLE_DERIVED_MEMBERSHIP.get(header.role or "") == role,
         )
 
     return index

@@ -10,6 +10,17 @@ profile controls at the no-sensor safe minimum, so with no profile active nothin
 is forced at all. The warning now says the daemon holds a safe minimum wherever it
 controls the fans, which is true of every daemon version.
 
+### Fixed
+
+**The fan picker no longer says a pump "role" was assigned when nobody assigned
+one** (DEC-384). When you add a fan to a curve, a fan the daemon treats as a pump
+gets a note. That note said "(Pump role assigned)" and told you to clear the role
+in Configure AIO, even when the daemon was protecting the fan for another reason:
+its hardware label, or — with a DEC-384 daemon — the active profile calling that
+fan a pump or AIO. In those cases there was no role to clear. The note now reads
+"(Pump)" and names those reasons instead. A pump role you assigned yourself still
+gets the old note, with the way to clear it.
+
 ### Documentation
 
 **`docs/08` and the manual describe DEC-382's hand-back and reach.** On stop,
