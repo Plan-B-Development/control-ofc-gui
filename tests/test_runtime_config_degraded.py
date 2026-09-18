@@ -25,6 +25,9 @@ STARTUP = RuntimeConfigDegraded(
 RELOAD = RuntimeConfigDegraded(
     reason="unreadable", path="/etc/control-ofc/runtime.toml", detail="EACCES", phase="reload"
 )
+UPDATE = RuntimeConfigDegraded(
+    reason="malformed", path="/etc/control-ofc/runtime.toml", detail="expected `=`", phase="update"
+)
 UNKNOWN_PHASE = RuntimeConfigDegraded(
     reason="malformed", path="/etc/control-ofc/runtime.toml", phase="something_new"
 )
@@ -112,12 +115,39 @@ def test_no_message_ever_claims_pump_protection_is_intact():
     daemon sent it, so the client rule stays unconditional.
 
     Asserted over every phase, including the unknown one, because the GUI cannot
-    distinguish the histories and so may never reassure in any of them."""
+    distinguish the histories and so may never reassure in any of them. `update`
+    is deliberately NOT in this loop: only daemons that keep the more severe
+    record emit it, so it has no ambiguous history, and saying the roles were
+    kept is the truth there — see
+    `test_update_says_the_file_was_moved_and_roles_were_kept`."""
     for degraded in (STARTUP, RELOAD, UNKNOWN_PHASE):
         msg = runtime_config_degraded_message(degraded)
         assert msg is not None
         assert "unaffected" not in msg, f"{degraded.phase!r} message reassures about roles"
         assert "30%" in msg, f"{degraded.phase!r} message must name the protection at risk"
+
+
+def test_update_says_the_file_was_moved_and_roles_were_kept():
+    """`TS-r`. A setter found `runtime.toml` unreadable, kept a copy and
+    replaced it with one carrying the live header roles and cooling devices. The
+    banner must say where the old file went (the user's other settings are in it) and must
+    not tell the user the daemon is on defaults with roles gone — that is the
+    `startup` message, and here it would be a false alarm about pump protection.
+
+    Asserted against the other messages, so an `update` that fell through to the
+    unknown-phase or startup wording fails however those are worded."""
+    update = runtime_config_degraded_message(UPDATE)
+    assert update is not None
+    assert update not in {
+        runtime_config_degraded_message(STARTUP),
+        runtime_config_degraded_message(RELOAD),
+        runtime_config_degraded_message(UNKNOWN_PHASE),
+    }
+    assert "kept a copy of the unreadable file" in update
+    assert "were kept" in update
+    assert "NOT in effect" not in update
+    assert "built-in defaults" not in update
+    assert "restart control-ofc-daemon" in update
 
 
 def test_unknown_phase_warns_without_asserting_the_loss():

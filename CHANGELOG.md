@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+**The Dashboard says when the daemon had to replace its settings file** (`TS-r`,
+DEC-391, needs `control-ofc-daemon` v2.51.0 or newer). If a setting is saved
+while the daemon's `runtime.toml` cannot be read, a daemon with the fix moves the
+file aside, keeps the fan header roles and cooling devices it is running with,
+and reports it. The Dashboard banner now says exactly that — the file was moved,
+the roles were kept, and anything else that was only in the old file needs
+copying back — instead of the cautious wording it uses for a report it does not
+recognise.
+
 ## [2.79.0] — 2026-09-18
 
 ### Added

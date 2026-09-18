@@ -45,6 +45,15 @@ def runtime_config_degraded_message(degraded: RuntimeConfigDegraded | None) -> s
     only ``profile_search_dirs``, so roles survive as startup established them;
     saying otherwise would be a false alarm about pump protection.
 
+    An ``update`` record (daemon ≥ 2.51.0, `TS-r`) means a ``POST /config/*``
+    setter found the file unreadable, kept a copy of it and replaced it. That
+    daemon writes the replacement — carrying the header roles and cooling devices
+    it is running with — before publishing the record, so this is the one phase
+    that may say the roles were kept — truthfully,
+    because only a daemon that keeps the more severe record emits it, so an
+    ``update`` record also proves boot loaded cleanly. What it lost is every
+    other setting that existed only in the old file.
+
     An **unknown** phase gets the cautious wording: it names the possibility
     without asserting the loss, because over-warning erodes the banner and
     under-warning hides a real one.
@@ -78,6 +87,16 @@ def runtime_config_degraded_message(degraded: RuntimeConfigDegraded | None) -> s
             f"fan header roles, so if the file was already bad at startup, roles you "
             f"assigned by hand are still not in effect and those headers have no 30% "
             f"pump floor. {remedy}"
+        )
+    if degraded.phase == "update":
+        return (
+            f"A setting was saved while the daemon's settings file could not be "
+            f"read{cause}{where}. control-ofc-daemon kept a copy of the unreadable "
+            f"file beside it (named with .invalid- and a timestamp) and replaced it with "
+            f"a new one. The fan header roles and cooling devices it was running with "
+            f"were kept, and with them any 30% pump floor a role gives — but every other "
+            f"setting that was only in the old file is not in the new one. Copy what you "
+            f"need back from the kept copy, then restart control-ofc-daemon."
         )
     if degraded.phase == "startup":
         return (

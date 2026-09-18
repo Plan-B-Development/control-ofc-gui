@@ -640,7 +640,7 @@ it fell back to defaults (`AUD3-m`, DEC-321). Shape:
 | `reason` | `unreadable` (I/O error, or larger than the daemon's 4 MiB config read cap) or `malformed` (the bytes were read but are not valid TOML for that daemon version — canonically a **downgrade**, since each section is `deny_unknown_fields`) |
 | `path` | The file that failed to load |
 | `detail` | The underlying I/O or TOML error, verbatim — daemon prose, not a stable token |
-| `phase` | `startup` or `reload`. **These cost different things** — see below |
+| `phase` | `startup`, `reload` or (daemon ≥ 2.51.0) `update`. **These cost different things** — see below |
 
 **[SAFETY] Why this is on the wire at all.** The daemon's `RuntimeConfig::load_from` degrades
 *silently* to defaults so that a corrupt file can never stop it booting — deliberate, and unchanged.
@@ -655,6 +655,20 @@ every runtime-mutable key. A `phase: "reload"` degradation (a SIGHUP that could 
 is narrower: it re-applies defaults to the running config but commits only `profile_search_dirs`, so
 header roles keep whatever startup established.
 
+A `phase: "update"` degradation (daemon ≥ 2.51.0, `TS-r`) means a `POST /config/*` setter found the
+file unreadable, kept the original as `runtime.toml.invalid-<unix-ts>` (DEC-255) and replaced it.
+**The replacement carries the header roles and cooling devices the daemon is running with, not
+bare defaults, and is written before the setter runs** — so a setter that is then refused, or
+fails its own write, still leaves a readable file and no role is lost. The record is published only
+once that replacement is on disk; if it cannot be written, nothing on disk changes and the setter
+answers `503 persistence_failed`. Every other key that existed only in the original is gone from
+the next boot. Before 2.51.0 the setter started from defaults and published nothing, and
+because `POST /config/header-role` and the cooling-device routes rebuild their in-memory maps from
+the file they write, one role assignment over an unreadable file dropped every other assigned role
+from the engine's floor union on the next tick. A setter that finds **no** file also starts from the
+running daemon's maps (a quarantine whose write failed leaves none) but publishes nothing, since a
+missing file is first-write, not damage.
+
 Two properties a client must not get wrong:
 
 - **A missing `runtime.toml` is NOT a degradation** and is never reported. That is first boot, and
@@ -666,8 +680,10 @@ Two properties a client must not get wrong:
   once at startup, so the daemon genuinely is still
   running on defaults for those. Do not treat a successful write as clearing the condition; only a
   daemon restart does that.
-- **When both phases fail, the more severe record is kept — not the latest (`WIRE-ao`, daemon ≥
-  2.36.0).** A `startup` record therefore survives any number of later failed reloads. The two are
+- **When more than one phase fails, the more severe record is kept — not the latest (`WIRE-ao`,
+  daemon ≥ 2.36.0; `update` joined the order in 2.51.0).** The order is `startup` > `update` >
+  `reload`, so a `startup` record survives any number of later failures and an `update` record
+  survives a later failed reload. The two are
   not equally costly: a startup failure drops every `header_roles` assignment, and on a board with
   no `pwmN_label` files that assignment is the only evidence a header drives a pump, so its 30%
   floor, its stop exemption and its pump-safe identify all go with it; a reload failure drops
@@ -688,7 +704,12 @@ survived.** On daemons before 2.36.0 the record was latest-wins, so a *failed* r
 earlier startup degradation whose roles were already gone; a client that reads `reload` as "roles
 are fine" reassures the user at exactly the wrong moment. `WIRE-ao` fixed that at source in 2.36.0,
 but the rule stands unchanged: a client cannot tell which daemon it is talking to from this field,
-and the safe reading costs nothing. `detail` is logged rather than shown, being
+and the safe reading costs nothing. **`update` is the exception, and may say the roles were kept**
+(GUI ≥ 2.80.0): only daemons that keep the more severe record emit it, so an `update` record also
+proves the boot load was clean. The GUI says a copy of the unreadable file was kept and the file
+replaced, that the roles and cooling devices were kept, and that other settings only in the old
+file must be copied back from the copy. An
+unrecognised `phase` still gets the hedged wording. `detail` is logged rather than shown, being
 verbatim daemon prose that can run to several lines.
 
 `skipped_controls` (daemon ≥ 2.21.0, additive — `api_version` unchanged, omitted when empty) lists
