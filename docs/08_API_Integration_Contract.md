@@ -2433,8 +2433,10 @@ According to the provided daemon notes:
   (DEC-162; see `docs/09_State_Model_and_Control_Behaviour.md`).
 - the daemon engine coalesces duplicate writes internally — it skips the serial
   command when a channel's value matches the last commanded value (DEC-073 /
-  DEC-108). The bare OpenFan write endpoints that returned a `coalesced` field
-  were retired at 2.0.0 (DEC-165).
+  DEC-108). A command whose reply fails leaves that value unknown — the frame may
+  have reached the device — so the next command is always sent (DEC-383). The
+  bare OpenFan write endpoints that returned a `coalesced` field were retired at
+  2.0.0 (DEC-165).
 
 ### Hwmon
 - PWM 0–100 passed through — no per-header floors in the daemon

@@ -92,7 +92,9 @@ non-opening enumeration but deliberately left this path, because it runs only
 after a controller that was *already adopted* has dropped off, so there is a
 known device to re-find rather than a bus to survey. A re-opened transport is
 re-verified for identity (DEC-250/255) and the write-coalescing cache is
-invalidated before it goes live (DEC-256).
+invalidated before it goes live (DEC-256). A single channel's cache entry is also
+dropped whenever one of its commands fails, since the frame may already have reached
+the device (DEC-383).
 
 ### Assumptions About Device
 - Device responds within 500ms per line
