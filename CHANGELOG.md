@@ -59,7 +59,7 @@ no change for this: it already shows the daemon's verdict and its refusal messag
 
 **`docs/08` and the manual describe DEC-382's hand-back and reach.** On stop,
 each fan header the daemon took gets back what it had rather than a fixed
-`pwm_enable=2`, and the 60 % and 40 % thermal floors reach only the fans a profile
+`pwm_enable=2`, and the 40 % no-sensor floor reaches only the fans a profile
 controls; the 100 % emergency still reaches every fan.
 
 ## [2.78.0] — 2026-09-17

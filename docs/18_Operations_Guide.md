@@ -207,7 +207,7 @@ ls -la /dev/ttyACM0
 1. CLI: `--profile quiet` or `--profile-file /path/to/profile.json`
 2. Environment: `OPENFAN_PROFILE=quiet`
 3. Persisted state: `/var/lib/control-ofc/daemon_state.json` (from previous API activation)
-4. None → the daemon runs purely imperative (no autonomous control; nothing is evaluated until a profile is activated). The GUI never drives PWM — the daemon's profile engine is the sole writer (DEC-159 / DEC-165).
+4. None → no curve is evaluated until a profile is activated, but the daemon's thermal safety still acts on its own: an emergency takes every writable fan to 100 % and gives each one back when it ends (DEC-382). The 40 % no-sensor floor, by contrast, needs a profile's fans to act on. The GUI never drives PWM — the daemon's profile engine is the sole writer (DEC-159 / DEC-165).
 
 ### GUI activation flow
 When the user activates a profile in the GUI:

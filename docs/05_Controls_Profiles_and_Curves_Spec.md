@@ -313,6 +313,10 @@ of OS fan control. While any override is active the daemon reports
 down (DEC-165, superseding the DEC-132 GUI stand-down) and simply shows a
 poll-driven thermal-protection banner.
 
+It is a **backstop above the CPU's own throttle point, not a cooling-failure
+detector** (`TS-m`): a CPU holds itself at its ceiling by throttling, so a stopped
+pump or stalled fans produce a CPU pinned at that ceiling, not an emergency.
+
 Per-header safety floors are **not** enforced by the daemon's hwmon
 controller (`min_pwm_percent: 0` for every header). But the **role-aware
 pump/CPU floor is now daemon-enforced** (DEC-162): the daemon clamps a

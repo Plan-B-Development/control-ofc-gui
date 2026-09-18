@@ -16,6 +16,9 @@
 >   (DEC-156).
 > - Live manual override and fan identify are now **daemon APIs** (DEC-163/DEC-166),
 >   not GUI-side writes.
+> - **"Imperative" mode is not "nothing autonomous" (`TS-k`).** With no profile active
+>   the daemon evaluates no curves, but its thermal ladder still acts: the 100 %
+>   emergency reaches every writable header, and DEC-382 gives each back afterwards.
 >
 > The GPU PCI-ID table in §8 has been corrected inline (it was a factual error, not
 > merely stale). For current authoritative documentation:
