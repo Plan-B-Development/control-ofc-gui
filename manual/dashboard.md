@@ -16,6 +16,9 @@ alongside. Drag the splitter handles to trade space between them.
 Status that used to sit on a Dashboard-only strip now lives on the app-wide chrome, so
 it follows you to every page: connection, uptime and alerts on the **top ribbon**;
 operation mode, poll freshness, thermal safety and cooling readiness on the **footer**.
+If the daemon stops answering, the thermal readings on both bars disappear rather
+than freeze on the last one — with no connection there is no current state to show —
+and they come back with the first successful poll.
 
 ## Page header
 

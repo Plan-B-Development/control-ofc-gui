@@ -316,13 +316,15 @@ class MainWindow(QWidget):
         # status_updated; the footer shows the health rollup from the warning count.
         self._state.connection_changed.connect(self.status_ribbon.set_connection_state)
         # DEC-222: the footer's thermal + readiness chips are poll-driven, so they
-        # must go dark when the daemon does rather than freeze on a stale state.
+        # must go dark when the daemon does rather than freeze on a stale state —
+        # and so must the ribbon's thermal pill and the System State Safety row,
+        # which `TS-g` found freezing on the last poll's value.
         # A bound method, NOT a lambda: PySide holds bound-method receivers weakly,
         # but a self-capturing lambda is kept alive by the sender's connection list.
         # AppState outlives the window, so a lambda here would strand this window's
         # Python wrapper past C++ deletion and leave its PulsingLed registered with
         # the global animation controller.
-        self._state.connection_changed.connect(self._on_connection_for_footer)
+        self._state.connection_changed.connect(self._on_connection_for_live_indicators)
         # DEC-282 — the split. These two surfaces answer different questions, so they
         # take different counts:
         #   ribbon badge = "is there anything I have not looked at?" → unacknowledged,
@@ -528,9 +530,19 @@ class MainWindow(QWidget):
         # dialog closed was invisible app-wide for up to a couple of hours.
         self.footer.set_validation_session(status.validation_session)
 
-    def _on_connection_for_footer(self, state: ConnectionState) -> None:
-        """Dim the footer's poll-driven chips while the daemon is unreachable."""
-        self.footer.set_live(state != ConnectionState.DISCONNECTED)
+    def _on_connection_for_live_indicators(self, state: ConnectionState) -> None:
+        """Take the poll-driven thermal indicators down while the daemon is unreachable.
+
+        The footer's chips (DEC-222), the ribbon's thermal pill and the System
+        State Safety row (`TS-g`) all show a state that only a successful poll
+        refreshes, so each would otherwise hold its last value and present it as
+        current. One slot for all three, so a fourth cannot be wired to the
+        disconnect and forgotten on the reconnect, or the reverse.
+        """
+        live = state != ConnectionState.DISCONNECTED
+        self.footer.set_live(live)
+        self.status_ribbon.set_live(live)
+        self.system_state_page.set_live(live)
 
     def _open_recording_session(self) -> None:
         """The footer's recording chip was clicked (`P8-bb`).

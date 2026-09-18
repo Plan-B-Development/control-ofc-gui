@@ -37,6 +37,7 @@ from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.health_ack import clear_key, prune, silence_key
 from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.system_state_view import (
+    THERMAL_STATE_NO_CONNECTION,
     SilenceState,
     build_system_state_vm,
     build_verify_headers,
@@ -202,7 +203,9 @@ class SystemStatePage(QWidget):
         self._pruned_for = None  # payload identity the silences were last pruned against
         #: Live `DaemonStatus.thermal_state`, pushed at 1 Hz — see
         #: :meth:`set_thermal_state`. ``""`` until the first poll arrives, which
-        #: is what makes the Safety card fall back to the fetched snapshot.
+        #: is what makes the Safety card fall back to the fetched snapshot, and
+        #: ``THERMAL_STATE_NO_CONNECTION`` while the daemon is unreachable
+        #: (:meth:`set_live`, `TS-g`), which falls back to neither.
         self._live_thermal_state = ""
         #: Acknowledgements, SESSION-ONLY (DEC-359, the user's "one rule
         #: everywhere"). Deliberately not persisted: an acknowledgement means
@@ -682,6 +685,25 @@ class SystemStatePage(QWidget):
         if state == self._live_thermal_state:
             return
         self._live_thermal_state = state
+        self._rerender_last_diagnostics()
+
+    @Slot(bool)
+    def set_live(self, live: bool) -> None:
+        """Stop reporting the last thermal state as current while disconnected (`TS-g`).
+
+        :meth:`set_thermal_state` is driven only by a successful poll, so after a
+        disconnect the Safety row kept its last value — "Normal" over a daemon
+        nobody could reach. Clearing it is not the answer: ``""`` falls back to
+        the ``/diagnostics/hardware`` snapshot, the other stale copy. So the
+        disconnect edge swaps in ``THERMAL_STATE_NO_CONNECTION``, which the view
+        model renders as an unknown state with no silence to offer. The connect
+        edge does nothing: the poll that reconnects also calls
+        :meth:`set_thermal_state`, which replaces the marker within the same
+        cycle. The same shape as ``StatusFooter.set_live`` and the ribbon's.
+        """
+        if live or self._live_thermal_state == THERMAL_STATE_NO_CONNECTION:
+            return
+        self._live_thermal_state = THERMAL_STATE_NO_CONNECTION
         self._rerender_last_diagnostics()
 
     def _prune_silences(self, diag) -> None:

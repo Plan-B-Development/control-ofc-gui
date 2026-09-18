@@ -83,6 +83,15 @@ A lightweight, always-visible status region should expose
 - warning count
 - demo mode badge when relevant
 
+**Poll-driven state never outlives the connection (DEC-222, DEC-389).** A thermal
+state, a readiness rollup or a recording chip is refreshed only by a successful
+poll, so after a disconnect its last value is not current — and on an
+always-visible bar it follows the user everywhere. The footer hides its chips, the
+ribbon hides its thermal pill, and the System State Safety row reads **Unknown —
+disconnected**; each comes back with the next successful poll, never with the value
+it had before. One slot in `main_window` feeds all three, so a new poll-driven
+indicator belongs in it.
+
 ## Visual hierarchy
 Prioritise:
 1. current profile and control mode

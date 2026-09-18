@@ -65,6 +65,15 @@ _STATE_BY_CSS: dict[str, str] = {
     "SuccessChip": "ok",
 }
 
+#: What :func:`build_safety_gpu_vm` receives as ``live_thermal_state`` while the
+#: daemon is unreachable (`TS-g`). GUI-only, and deliberately not a wire token:
+#: the daemon's are bare snake_case words, so angle brackets cannot collide with
+#: one — which is also why it is absent from ``_THERMAL_STATE`` below. It is NOT
+#: the empty string, which means "no poll yet" and falls back to the
+#: `/diagnostics/hardware` snapshot — after a disconnect exactly the stale value
+#: this exists to stop presenting as current.
+THERMAL_STATE_NO_CONNECTION = "<no connection>"
+
 # Daemon `thermal_state` → pill state.
 #
 # DEC-257: this had drifted badly. It carried "warning"/"throttling"/"critical" —
@@ -1056,6 +1065,8 @@ def build_safety_gpu_vm(
     ``/diagnostics/hardware`` is fetched once per page visit, so its thermal
     state is a snapshot that can be hours old, and this row was rendering it as
     if it were current. ``None`` (no poll yet) falls back to the snapshot.
+    :data:`THERMAL_STATE_NO_CONNECTION` (the daemon is unreachable) renders
+    neither: there is no current state, and both copies are stale (`TS-g`).
 
     The *threshold* stays on the snapshot deliberately — it is configuration,
     not state — and is interpolated from what the daemon reported. Never compare
@@ -1109,6 +1120,13 @@ def build_safety_gpu_vm(
     )
     if thermal_silence.quiet:
         thermal_state = "neutral"
+    if live_thermal_state == THERMAL_STATE_NO_CONNECTION:
+        # `TS-g`: say that the state is unknown and why, in no alarm colour, and
+        # offer no silence — there is nothing current to acknowledge, and a
+        # dismissal taken here would be stored against a state nobody saw.
+        thermal_text = "Unknown — disconnected"
+        thermal_state = "neutral"
+        thermal_silence = SilenceVM()
 
     # `ACK-w`. Until GUI v2.77.0 only the kernel advisories below carried a
     # token, so a `warn` row the user could do nothing about — an RDNA3+ card

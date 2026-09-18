@@ -26,6 +26,14 @@ controls the fans, which is true of every daemon version.
 
 ### Fixed
 
+**A disconnected daemon no longer leaves "Thermal OK" on screen** (`TS-g`, DEC-389).
+The thermal pill in the top ribbon and the CPU thermal row on System State are
+updated only when the app hears from the daemon, so after a disconnect both kept
+showing the last state as if it were current — "Thermal OK" over a daemon nothing
+could reach. The ribbon now hides its pill while disconnected, as the footer already
+did, and the System State row reads **Unknown — disconnected**. Both come back with
+the first successful poll.
+
 **The fan picker no longer says a pump "role" was assigned when nobody assigned
 one** (DEC-384). When you add a fan to a curve, a fan the daemon treats as a pump
 gets a note. That note said "(Pump role assigned)" and told you to clear the role

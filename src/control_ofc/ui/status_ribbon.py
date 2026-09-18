@@ -120,6 +120,21 @@ class StatusRibbon(QWidget):
         set_chip_class(self._daemon_label, CONNECTION_CHIP.get(state, ""))
         self._daemon_led.set_color_role(_CONNECTION_LED.get(state, "neutral"))
 
+    def set_live(self, live: bool) -> None:
+        """Hide the thermal pill while the daemon is unreachable (`TS-g`).
+
+        ``StatusFooter.set_live``'s reasoning, for the other always-visible bar:
+        with no connection there is no current thermal state, and the ribbon is on
+        every page — so a frozen "Thermal OK" over a daemon nobody can reach
+        presents a stale reading as fact. Only the disconnect edge acts. The pill
+        comes back through :meth:`set_thermal_state` on the next successful poll,
+        which is also what reconnects, so there is nothing for ``True`` to
+        restore — and re-showing the last pill there would re-assert the very
+        value this hides.
+        """
+        if not live:
+            self._thermal_pill.hide()
+
     def set_thermal_state(self, thermal_state: str | None) -> None:
         entry = THERMAL_STATES.get(thermal_state or "")
         if entry is None:
