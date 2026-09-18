@@ -705,7 +705,7 @@ earlier startup degradation whose roles were already gone; a client that reads `
 are fine" reassures the user at exactly the wrong moment. `WIRE-ao` fixed that at source in 2.36.0,
 but the rule stands unchanged: a client cannot tell which daemon it is talking to from this field,
 and the safe reading costs nothing. **`update` is the exception, and may say the roles were kept**
-(GUI ≥ 2.80.0): only daemons that keep the more severe record emit it, so an `update` record also
+(GUI ≥ 2.79.1): only daemons that keep the more severe record emit it, so an `update` record also
 proves the boot load was clean. The GUI says a copy of the unreadable file was kept and the file
 replaced, that the roles and cooling devices were kept, and that other settings only in the old
 file must be copied back from the copy. An
