@@ -298,12 +298,13 @@ hwmon header the machine has is driven to 100% (see `daemon/src/safety.rs`, DEC-
 This is non-editable and fires regardless of profile content. **The trip point
 is per-machine (DEC-308)** — at least 105°C, raised to `min(ceiling + 5 °C, 115 °C)` where the kernel publishes the
 CPU's own design ceiling — and `/diagnostics/hardware`
-reports the value in use, so a client renders it rather than assuming 105. The 60%
-recovery floor and 40% no-sensor fallback are likewise non-editable. **All three
-are floors over the active profile's output, not replacements for it (DEC-307)**:
-each fan receives `max(commanded, forced)`. Only the 100% emergency also reaches
-fans no control commands; the 60% and 40% floors apply to the fans the profile
-controls, and every other fan the emergency took is given back when it ends
+reports the value in use, so a client renders it rather than assuming 105. The 40%
+no-sensor fallback is likewise non-editable (the 60% recovery rung was removed in
+DEC-386: release hands control straight back). **Both are floors over the active
+profile's output, not replacements for it (DEC-307)**: each fan receives
+`max(commanded, forced)`. Only the 100% emergency also reaches fans no control
+commands; the 40% floor applies to the fans the profile controls, and every other fan
+the emergency took is given back when it ends
 (DEC-382).
 GPU fans are deliberately excluded (DEC-130): there is no GPU emergency
 threshold — AMD PMFW firmware owns GPU thermal protection independently

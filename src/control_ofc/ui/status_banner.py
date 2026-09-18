@@ -35,7 +35,8 @@ MODE_LABELS: dict[OperationMode, str] = {
 }
 
 # DaemonStatus.thermal_state -> (label, chip class). The daemon reports
-# "normal" | "recovery" | "emergency" | "no_sensor_fallback" (DEC-132/165);
+# "normal" | "recovery" | "emergency" | "no_sensor_fallback" (DEC-132/165) —
+# "recovery" only from daemons before DEC-386, which removed the rung;
 # anything else falls back to a neutral info chip rather than being hidden.
 THERMAL_STATES: dict[str, tuple[str, str]] = {
     "normal": ("Thermal OK", "SuccessChip"),

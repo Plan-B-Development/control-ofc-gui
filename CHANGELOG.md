@@ -23,6 +23,12 @@ gets the old note, with the way to clear it.
 
 ### Documentation
 
+**`docs/08` and the manual describe DEC-386's thermal ladder.** A daemon with
+DEC-386 holds an emergency at 100 % until the CPU is measured cool again — even if
+its sensor disappears — and then hands the fans straight back to your profile, with
+no 60 % step. It never reports `"recovery"`; the app still shows that state for
+older daemons, so nothing changes in the app itself.
+
 **`docs/08` describes DEC-385's stale-temperature refusals.** With a daemon that
 has DEC-385, Test PWM Control, PWM characterisation and OpenFan calibration refuse
 to run — and a sweep in progress stops — when no temperature reading is fresh, and

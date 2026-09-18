@@ -252,7 +252,7 @@ The `age_ms` field in `/status` subsystem entries and `/sensors`/`/fans` respons
 ### Thermal Safety (safety.rs)
 - **Implemented and tested** with 8 unit tests
 - Evaluates CPU Tctl from cache each engine cycle
-- State machine: Normal → Emergency (trip point, ≥105°C) → Hold (>80°C) → Recovery (≤80°C, 60% floor for 2 cycles) → Normal
+- State machine: Normal → Emergency (trip point, ≥105°C) → Hold (until a fresh reading ≤80°C; stale or absent readings hold it) → Normal. No recovery rung since DEC-386
 
 ---
 
@@ -376,7 +376,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Condition | Detection | Response | User impact | Gaps |
 |-----------|-----------|----------|-------------|------|
 | CPU Tctl ≥ trip point (≥105°C, per-machine — DEC-308) | Profile engine polls cache | Force every OpenFan channel + writable hwmon header the machine has to 100% (auto-lease via force_take, R43) | Fans max until 80°C | GPU fans excluded by design — PMFW self-protects (DEC-130) |
-| CPU Tctl ≤ 80°C (after emergency) | Safety rule evaluate() | Release + 60% recovery for 2 cycles (release + 1) on the fans a profile controls; every other fan the emergency took is given back (DEC-382) | Profile fans hold at least 60% for two cycles, then the profile resumes; other fans return to what they were doing before | None |
+| Fresh CPU Tctl ≤ 80°C (after emergency) | Safety rule evaluate() | Release straight back to the profile (DEC-386); every other fan the emergency took is given back (DEC-382) | The profile resumes at once; other fans return to what they were doing before | None |
 | Serial device not found | No enumerated candidate answers the identity handshake | One boot attempt, then a detached 60 s / 180 s search (DEC-361) that re-probes only when the candidate set changes; after that, `POST /fans/openfan/rescan` | Daemon starts and serves normally without OpenFan; adopts with no restart if the device appears | ~~Auto-reconnect at runtime not implemented~~ — **shipped in R43**: after 5 consecutive errors the poll loop enters reconnect mode (`auto_detect_port`, retried on a doubling backoff **capped at 30 poll intervals** — so 1s–30s at the default 1s `polling.poll_interval_ms`, and proportionally shorter if you have lowered it) |
 | Serial timeout (no response) | Per-read serialport timeout (500ms) | Returns `SerialError::Timeout` | Write skipped for this cycle | No automatic retry of failed commands |
 | Debug line flooding | MAX_DEBUG_LINES=50 + wall-clock deadline | Returns `SerialError::Protocol` | Write fails, logged | Cannot recover without restart |
@@ -417,7 +417,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Lease-based hwmon exclusivity | 60s TTL, take/release/renew | Prevents GUI↔daemon write conflicts |
 | parking_lot instead of std::sync | All mutexes/rwlocks non-poisoning | V2 audit P0-6 fix — prevents daemon crash cascade |
 | Stable device IDs (not hwmonN) | PCI/platform path extraction | Survives reboots — `hwmon:k10temp:0000:03:00.0:Tctl` |
-| Thermal safety not user-configurable | Trip point derived from the CPU's own ceiling (≥105°C), 80°C release, 60% recovery floor — none settable via API or GUI | Safety thresholds must not be user-adjustable |
+| Thermal safety not user-configurable | Trip point derived from the CPU's own ceiling (≥105°C), 80°C release, 40% no-sensor floor — none settable via API or GUI | Safety thresholds must not be user-adjustable |
 | Atomic state persistence | tmp file + `rename()` | POSIX atomicity guarantee |
 | Profile precedence: CLI > env > persisted > none | `resolve_initial_profile()` | Explicit priority documented in main.rs |
 | hwmon write coalescing | Per-header `last_commanded_pct` + `manual_mode_set` | 0 sysfs ops in steady state (was 4/sec/header) |

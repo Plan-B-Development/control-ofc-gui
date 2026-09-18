@@ -496,11 +496,13 @@ Daemons < 2.22.0 emit no `controls` entry; a client must treat its absence as
 "unknown", never as healthy — the same rule as `engine`.
 
 `thermal_state` (daemon ≥1.13.0, additive — `api_version` unchanged) is one of
-`"normal" | "recovery" | "emergency" | "no_sensor_fallback"`. While it is not
-`"normal"` the daemon is forcing fans — in `emergency`, every OpenFan channel and
-writable hwmon header **this machine has**; in `recovery` and `no_sensor_fallback`,
-since DEC-382 only the ones the active profile controls, with every other fan the
-emergency took given back (GPU fans excluded throughout — DEC-130) — and holding the
+`"normal" | "emergency" | "no_sensor_fallback"`, and `"recovery"` from daemons before
+DEC-386 — **a client must still render `"recovery"`**, which older daemons send for the
+two ticks of their 60 % recovery rung. While it is not `"normal"` the daemon is forcing
+fans — in `emergency`, every OpenFan channel and writable hwmon header **this machine
+has**; in `no_sensor_fallback` (and an older daemon's `recovery`), since DEC-382 only the
+ones the active profile controls, with every other fan the emergency took given back
+(GPU fans excluded throughout — DEC-130) — and holding the
 hwmon lease as `thermal-safety`; the GUI has no loop to stand down (DEC-165) and simply shows a
 single poll-driven thermal warning. Older daemons omit the field — the GUI
 defaults it to `"normal"`.
@@ -547,17 +549,24 @@ Two things worth knowing about the shape of it:
   debounce** (~10 s at defaults), not the budget alone.
 
 `"no_sensor_fallback"` therefore means what it always meant — the daemon is
-forcing `NO_SENSOR_SAFE_PCT` — but a stale reading only reaches it when the last
-known temperature was **cool**. Three cases divert first (DEC-269), on the
-principle that losing sight of a sensor must never *lower* cooling:
+forcing `NO_SENSOR_SAFE_PCT` — but only with nothing latched, and a stale reading
+only reaches it when the last known temperature was **cool**. The rest divert, on
+the principle that losing sight of a sensor must never *lower* cooling (DEC-269;
+since DEC-386 one exhaustive decision table in `profile_engine::safety_tick`):
 
-| last known reading | daemon response | `thermal_state` |
+| CPU reading | daemon response | `thermal_state` |
 | --- | --- | --- |
-| stale, emergency latched | holds the emergency's own 100 % | `emergency` |
-| stale, mid-recovery | holds the 60 % recovery floor | `recovery` |
-| stale, at/above the 80 °C release temp | no force — fan curves keep running on it | `normal` |
-| stale and cool | `NO_SENSOR_SAFE_PCT` after the debounce | `no_sensor_fallback` |
-| genuinely **absent** mid-emergency | 40 % immediately (DEC-190, unchanged) | `no_sensor_fallback` |
+| stale **or absent**, emergency latched | holds the emergency's own 100 % until a *fresh* reading at or below 80 °C | `emergency` |
+| stale, at/above the 80 °C release temp, nothing latched | no force — fan curves keep running on it | `normal` |
+| stale and cool, or absent, nothing latched | `NO_SENSOR_SAFE_PCT` after the debounce | `no_sensor_fallback` |
+
+**Two rows changed in DEC-386.** A latched emergency whose sensor vanishes entirely
+now holds 100 % — DEC-190 dropped it to 40 %, on the reasoning that a vanished sensor
+cannot confirm a live emergency; the latch is itself that confirmation, and it stands
+until a fresh reading says otherwise. And the 60 % recovery rung is gone: a fresh
+reading at or below release hands control straight back to the profile. Under the
+no-sensor floor, a control **skipped** that tick (its sensor gone) keeps its fans at
+their last duty rather than taking the bare floor (`TS-p`).
 
 **`cpu_sensor_found`** on `/diagnostics/hardware` changed meaning with the same
 release: it used to answer *"is a CpuTemp sensor present?"* and now answers *"is
@@ -1976,7 +1985,7 @@ deleted as dead code in daemon v2.5.0.
 ### OpenFan calibrate
 - `POST /fans/openfan/{ch}/calibrate` — PWM-to-RPM calibration sweep
 
-The calibration endpoint runs a long-running sweep (steps × hold_seconds) that sets PWM from 0→100%, reads RPM at each step, and returns a mapping. Safety: aborts on thermal limit (85°C), and restores pre-calibration PWM on every exit path — completion, thermal abort, or a failed PWM write mid-sweep (DEC-134) — **except while thermal safety is itself forcing a duty** (DEC-295). The 85°C abort is a *temperature* test, but the thermal emergency **latches** at its trip point (105 °C or higher — per-machine since DEC-308) and releases only at ≤80°C, so between 80 and 85°C it would otherwise pass while the engine is still forcing every fan to 100%. In that state the endpoint refuses to start or continue with **`409 validation_error`, `retryable: true`** — the same shape as the single-flight refusal below, because this is a transient state of the daemon rather than a malformed request, and it clears by itself. It is deliberately **not** `thermal_abort`, which means "too hot to calibrate": this fires on a machine that may be perfectly cool, since the emergency latches at its trip point and releases only at ≤80 °C. **Two consequences a client must handle.** The `no_sensor_fallback` state (no CPU temperature sensor at all, DEC-190) forces indefinitely, so on such a machine calibration is refused permanently — the message names the state so it is diagnosable. And a sweep already under way skips its restore: the channel is left at the forced duty, and is **not** restored automatically once the force clears, because an idle daemon with no active profile commands nothing. Re-running calibration or activating a profile restores normal control. **Since DEC-385 (`TS-q`) it also refuses — and a sweep in progress aborts at its next step — when every temperature reading is older than the diagnostic freshness budget**, with the same `409 validation_error`, `retryable: true` (the message names the freshest reading's age): the 85 °C test and the forcing test both read values with no age term, so a poll wedged on a hot reading passes both while the ladder, which does see the age, cannot fire — and the sweep would drive the channel from 0 % on frozen numbers. For the sweep's duration the daemon pauses its profile-engine write phase — the same single-flight pause used by hardware verify — so an active profile cannot overwrite each step's test PWM and corrupt the readback (DEC-191, daemon ≥ 2.2.2). A hardware verify already in progress is therefore rejected with `409` (and an in-progress calibration likewise blocks a verify).
+The calibration endpoint runs a long-running sweep (steps × hold_seconds) that sets PWM from 0→100%, reads RPM at each step, and returns a mapping. Safety: aborts on thermal limit (85°C), and restores pre-calibration PWM on every exit path — completion, thermal abort, or a failed PWM write mid-sweep (DEC-134) — **except while thermal safety is itself forcing a duty** (DEC-295). The 85°C abort is a *temperature* test, but the thermal emergency **latches** at its trip point (105 °C or higher — per-machine since DEC-308) and releases only at ≤80°C, so between 80 and 85°C it would otherwise pass while the engine is still forcing every fan to 100%. In that state the endpoint refuses to start or continue with **`409 validation_error`, `retryable: true`** — the same shape as the single-flight refusal below, because this is a transient state of the daemon rather than a malformed request, and it clears by itself. It is deliberately **not** `thermal_abort`, which means "too hot to calibrate": this fires on a machine that may be perfectly cool, since the emergency latches at its trip point and releases only at ≤80 °C. **Two consequences a client must handle.** The `no_sensor_fallback` state (no CPU temperature sensor at all, DEC-132) forces indefinitely, so on such a machine calibration is refused permanently — the message names the state so it is diagnosable. And a sweep already under way skips its restore: the channel is left at the forced duty, and is **not** restored automatically once the force clears, because an idle daemon with no active profile commands nothing. Re-running calibration or activating a profile restores normal control. **Since DEC-385 (`TS-q`) it also refuses — and a sweep in progress aborts at its next step — when every temperature reading is older than the diagnostic freshness budget**, with the same `409 validation_error`, `retryable: true` (the message names the freshest reading's age): the 85 °C test and the forcing test both read values with no age term, so a poll wedged on a hot reading passes both while the ladder, which does see the age, cannot fire — and the sweep would drive the channel from 0 % on frozen numbers. For the sweep's duration the daemon pauses its profile-engine write phase — the same single-flight pause used by hardware verify — so an active profile cannot overwrite each step's test PWM and corrupt the readback (DEC-191, daemon ≥ 2.2.2). A hardware verify already in progress is therefore rejected with `409` (and an in-progress calibration likewise blocks a verify).
 
 ### Hwmon PWM verify
 - `POST /hwmon/{header_id}/verify` — empty body (no `lease_id` as of 2.0.0 — DEC-165). Returns `409 thermal_abort` when any sensor exceeds the 85 °C verify limit, because a verify drives the header **away** from its commanded duty and must not do so while the system is hot (DEC-201, daemon ≥ 2.6.0). **Corrected in DEC-297:** this previously said a verify "pauses the engine (incl. the thermal force)". It does not, and never did — `force_all_with_floor` runs before the engine's verify gate, so a thermal emergency always outranks a verify. Also returns **`409 validation_error`, `retryable: true`** while the thermal ladder is actively forcing a duty (DEC-297): the 85 °C test is a *temperature* check, but the emergency latches at its trip point (105 °C or higher) and releases only at ≤80 °C, so the band 80-85 °C would otherwise pass it while every fan is still being forced. Same shape and reasoning as the calibrate refusal above; the message names the forcing state. The GUI shows this as a soft "let it cool, then retry" notice. **Since DEC-385 it also returns `409 validation_error`, `retryable: true` when every temperature reading is too old to trust** — the refusal `GET /diagnostics/preflight` now publishes as `blocked` for `pwm_verify`; the message ends "Retry once sensor polling recovers". Also returns `409 validation_error` if a hardware verify or calibration is already in progress (single-flight — the verify shares the calibration pause). That refusal is **bounded**: the slot carries a deadman, so it frees itself once the window elapses even if the holder never released it, and a client that retries will eventually succeed (DEC-296). Before that fix the deadman freed only the engine pause and not the slot, so a single leaked holder made this endpoint — and `/gpu/{id}/fan/verify` and `/fans/openfan/{ch}/calibrate` — return `409` for the rest of the daemon's process lifetime.
