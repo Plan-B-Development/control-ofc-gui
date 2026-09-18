@@ -210,6 +210,11 @@ GUI treats every flag as false / old behaviour (AIP-180):
   fields) need no flag: each is optional on the wire, so absence already means "this daemon did
   not say" and a client falls back rather than believing a defaulted zero.
 
+- `exit_floor` (bool, DEC-388) — the daemon applies an exit floor on a clean stop, accepts
+  `POST /config/exit-floor` and reports `shutdown.exit_floor_pct` on `GET /config`. Absent →
+  `false`. **Gate the Settings control on this, and treat the key's absence the same way**:
+  an older daemon `404`s the write and leaves its OpenFan channels at their last duty on
+  stop, whatever a control shows.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
@@ -430,8 +435,10 @@ which supervision does not cover, and the only signal at all on older daemons.
 Since DEC-387 a **hung** engine is restarted too, when the daemon runs under its
 systemd unit. The unit is `Type=notify` with `WatchdogSec=15`, and the daemon pings
 the watchdog from each *completed* tick and nowhere else — so an engine that is alive
-but no longer completing ticks (a deadlock, an await that never resolves) is killed
-and restarted 15 s after its last completed tick, and a client sees the same dropped
+but no longer completing ticks (a deadlock, an await that never resolves) is stopped
+15 s after its last completed tick — gracefully: since DEC-388 systemd sends SIGTERM, so
+the normal shutdown and its exit floor run, and SIGKILL follows after 10 s only if they
+cannot — and then restarted, and a client sees the same dropped
 socket and reconnect as for a DEC-266 death. A device write that is slow or wedged
 does **not** stop the pings: the loop keeps ticking past it (DEC-289), and that case
 is still reported only through the write-stall ladder below. What changes for a
@@ -654,8 +661,9 @@ Two properties a client must not get wrong:
   defaults are the correct answer — treating it as damage would put a permanent warning on every
   fresh install, and a warning that is always on is one nobody reads when it matters.
 - **The field is sticky for the daemon's lifetime.** A later successful `POST /config/*` repairs the
-  *file*, and `header_roles` / `cooling_devices` are re-committed live by their setters — but nearly
-  every other runtime-mutable key is consumed once at startup, so the daemon genuinely is still
+  *file*, and `header_roles` / `cooling_devices` (and, since DEC-388, the exit floor) are
+  re-committed live by their setters — but nearly every other runtime-mutable key is consumed
+  once at startup, so the daemon genuinely is still
   running on defaults for those. Do not treat a successful write as clearing the condition; only a
   daemon restart does that.
 - **When both phases fail, the more severe record is kept — not the latest (`WIRE-ao`, daemon ≥
@@ -2685,6 +2693,11 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
   displayed 0 s. Older daemons answer `404`; the GUI stands the card down for the
   session rather than showing invented values (the DEC-200 precedent).
 
+  Two keys apply **live**, so they report `requires_restart: false` and a `running_value`
+  read from the running daemon rather than from its startup config:
+  `profiles.search_dirs`, and `shutdown.exit_floor_pct` (DEC-388) — the value in force at
+  the moment of a stop is the one used, and a `SIGHUP` re-applies both from the files.
+
   `ipc.socket_path` and `state.state_dir` are reported with `mutable: false` **by
   design** — a bad socket path permanently locks out every client, and moving the
   state dir orphans `runtime.toml` and the profile store.
@@ -2736,6 +2749,16 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
   - **Peer-uid confined (daemon ≥ 2.9.0, DEC-205):** a non-root client may only `add` directories that exist and canonicalize to a path within its **own home directory** (resolved from the socket peer's `SO_PEERCRED` uid); root / CLI callers are exempt. An out-of-home dir, a nonexistent/unreadable dir, or a caller whose uid/home cannot be resolved is `400 validation_error`. Older daemons (< 2.9.0) accept any absolute dir. `remove` is confined the same way but by a predicate that does **not** require the directory to still exist: it accepts the path's raw form, falling back to its canonical form when that resolves. Both legs are needed. Raw, because a stale entry worth pruning is very often one that is already gone, so requiring existence would refuse exactly the entries this operation exists to clean up. Canonical, because the add path validates the *canonical* form but persists the *raw* string — so without it a directory added through a symlink (or under a `systemd-homed` layout where `pw_dir` and `$HOME` spell the home differently) is storable and permanently unremovable. A home that cannot confine anything — `/`, or `/nonexistent` — is treated as unresolvable and fails closed, in both predicates.
   - A persistence failure is `503 persistence_failed`; the daemon persists first and leaves in-memory state untouched on failure.
   - The GUI surfaces the daemon's message verbatim: the Settings ▸ profiles-directory picker prefixes it with `Failed to update daemon:`, and the Daemon Configuration card's search-dir editor reports it in its result line.
+- `POST /config/exit-floor` — `{"exit_floor_pct": 0..100}` (DEC-388; capability
+  `control.exit_floor`). The lowest speed a clean stop leaves a fan the daemon cannot hand
+  back to firmware at: each OpenFan channel it drove, and each hwmon header with no
+  `pwmN_enable`, is left at `max(its last duty, this)` — or at 100 % where the daemon lost
+  track of that duty — and a fan it never drove is not touched; `0` turns it off. **Applies
+  live**: persisted to `runtime.toml` first, then put in force, so a failed persist
+  (`503 persistence_failed`) changes nothing. The full range is accepted — the floor can
+  only raise a speed. The reply is the shared setter shape; out-of-range, wrong-typed and
+  missing values are `400 validation_error`. A crash cannot apply it: `ExecStopPost` has no
+  way to reach the OpenFan controller.
 - `POST /config/startup-delay` — `{"delay_secs": 0..30}`; persisted to `runtime.toml`, takes effect on next restart. Daemon ≥ 2.23.0 answers with the **shared DEC-243 setter shape** (`{"updated", "key", "value", "note"}`) as well as the original `delay_secs`, so one client-side parser covers every `POST /config/*`; older daemons send `delay_secs` and `note` only, which parses fine because the caller supplies the key and reads only `note`.
   - **The GUI no longer pushes this on Settings → Save or Settings → Import (DEC-285).** It is an ordinary row on the Daemon Configuration card, written only by its own control and only when the value actually changed. The old best-effort push bypassed the no-op-write guard, so pressing Save once wrote the key into `runtime.toml`, flipped its `source` to `runtime`, and permanently shadowed the operator's `daemon.toml` with a value nobody had chosen. `AppSettings.daemon_startup_delay_secs` was deleted with it (settings schema v4), so an imported/shared config can no longer carry one machine's daemon setting onto another's.
 - `POST /config/preferred-cpu-sensor` / `POST /config/preferred-mb-sensor` — persist the user's preferred CPU / motherboard temperature sensor by stable id (body `{"sensor_id": string | null}`; `null` clears the preference). The id is validated against the live sensor set — an unknown id (or a missing key) is `400 validation_error`; a persistence failure is `503 persistence_failed`. Advisory only (thermal safety still keys off `kind`) — reflected in `/inventory/hwmon` `default_cpu` (`source: "user"`) + `preferences` and the readiness `selected_cpu_sensor_missing` item. Daemon ≥ 2.6.0 (DEC-200); older daemons answer `404` and the GUI hides the feature for the session. The GUI offers these from the Overview page's sensor-table context menu and the Settings page.

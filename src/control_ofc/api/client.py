@@ -393,6 +393,17 @@ class DaemonClient:
             self._post("/config/serial-timeout", json={"timeout_ms": timeout_ms})
         )
 
+    def set_exit_floor(self, exit_floor_pct: int) -> ConfigWriteResult:
+        """POST /config/exit-floor — 0..100 % (DEC-388). Applies at once.
+
+        The lowest speed a clean stop leaves a fan the daemon cannot hand back
+        to firmware at; 0 leaves them as they are. Gate on
+        ``capabilities.control.exit_floor`` — an older daemon 404s this.
+        """
+        return parse_config_write(
+            self._post("/config/exit-floor", json={"exit_floor_pct": exit_floor_pct})
+        )
+
     def set_allow_port_probe(self, enabled: bool) -> ConfigWriteResult:
         """POST /config/allow-port-probe — the DEC-203 opt-in.
 

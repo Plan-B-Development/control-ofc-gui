@@ -193,9 +193,18 @@ wired. Two keys moved under that rule:
   not merely untidy: pressing Save once wrote the key into `runtime.toml` and
   permanently shadowed the operator's `daemon.toml` with a value nobody chose.
 - **`profiles.search_dirs`** had no surface at all. It gets a real list editor
-  (Add / Remove) rather than a single-value row, and it is the one key that
-  applies **live**, so the card renders the daemon's `running_value` rather than
-  its on-disk `value`.
+  (Add / Remove) rather than a single-value row, and it applies **live**, so the
+  card renders the daemon's `running_value` rather than its on-disk `value`.
+
+**Extended by DEC-388.** `shutdown.exit_floor_pct` — the **Exit minimum** row, a
+0-100 % spin box — is the second key that applies live. It is the only row on the
+card **gated on a capability** (`control.exit_floor`): the other rows treat a key the
+daemon does not report as "predates reporting it" and stay editable, but for this
+one absence means "this daemon cannot", so the row is disabled with the
+requires-daemon message rather than offering a write an older daemon would 404.
+Unlike the search dirs it shows the on-disk `value`, as the restart-bound rows do;
+the two differ only after a hand-edit the daemon has not reloaded, and the card does
+not yet say so (`TS-aq`).
 
 Still **not** editable, and not merely for want of daemon support:
 

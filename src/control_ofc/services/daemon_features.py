@@ -70,6 +70,9 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # to cite `DELETE /config/profile-dirs`, a route that has never existed
         # (`WIRE-ad`); the version floor was right, the surface named was not.
         "profile_search_dir_removal": "2.23.0",
+        # DEC-388, control.exit_floor. The version is the release that ships the
+        # 2026-09-18 thermal-safety batch; `/ofc:release` confirms it.
+        "exit_floor": "2.50.0",
     }
 )
 
@@ -109,6 +112,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         # the id after what the user *gets* (pump protection).
         "pump_protection": "header_roles",
         "profile_search_dir_removal": "profile_search_dir_remove",
+        "exit_floor": "exit_floor",
     }
 )
 
@@ -130,6 +134,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "pump_protection": "pump protection",
         "daemon_config_report": "reporting its own configuration",
         "profile_search_dir_removal": "removing a profile search directory",
+        "exit_floor": "setting an exit minimum",
     }
 )
 

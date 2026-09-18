@@ -2355,6 +2355,9 @@ class TestAccessibleNames:
             "ui/pages/settings_page.py:_poll_interval_spin",
             "ui/pages/settings_page.py:_serial_port_edit",
             "ui/pages/settings_page.py:_serial_timeout_spin",
+            # DEC-388's Exit minimum row. Announces "Exit minimum" — measured through
+            # the accessibility interface, the same way the runtime sweep reads it.
+            "ui/pages/settings_page.py:_exit_floor_spin",
         }
 
         def bound_name(node):

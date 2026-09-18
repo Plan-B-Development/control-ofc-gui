@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+**Settings ▸ Daemon Configuration has an Exit minimum** (DEC-388, needs
+`control-ofc-daemon` v2.50.0 or newer). When the daemon stops, a fan it cannot
+hand back to automatic control — every OpenFan Controller channel, and any
+motherboard header with no automatic mode — used to stay at whatever speed the
+daemon last set, with nothing controlling it afterwards. A daemon with DEC-388
+leaves each of those fans at its last speed or the exit minimum, whichever is
+higher, and a fan whose speed it had lost track of at 100 %. The default is 50 %;
+0 turns it off. The change applies at once, with no restart.
+
+Only a clean stop can do this — a crash cannot. On an older daemon the row is
+disabled and says which version it needs.
+
 ### Changed
 
 **The "no current CPU temperature" warning no longer says the daemon forced a

@@ -36,7 +36,8 @@ column therefore reads N/A throughout. Live manual override and fan identify are
 |---------|--------|-------|
 | systemd service file | IMPLEMENTED | `packaging/control-ofc-daemon.service` with hardening |
 | Auto-restart on crash | IMPLEMENTED | `Restart=on-failure`, exponential backoff 3 s → 60 s with no start limit (DEC-387) |
-| Restart on a hung engine | IMPLEMENTED | `Type=notify` + `WatchdogSec=15`: the daemon pings from each completed engine tick, so a loop that stops ticking is killed, handed back by `ExecStopPost`, and restarted (DEC-387) |
+| Restart on a hung engine | IMPLEMENTED | `Type=notify` + `WatchdogSec=15`: the daemon pings from each completed engine tick, so a loop that stops ticking is stopped — gracefully, with SIGTERM (DEC-388), SIGKILL after 10 s — handed back by `ExecStopPost`, and restarted (DEC-387) |
+| OpenFan fans left low after the daemon stops | IMPLEMENTED | On a clean stop each OpenFan channel (and hwmon header with no mode switch) is left at max(last duty, the exit minimum, default 50 %); unknown → 100 %. A crash cannot apply it (DEC-388) |
 | Socket permissions | IMPLEMENTED | chmod 0666 after bind (R38) |
 | Boot autostart | IMPLEMENTED | `multi-user.target` |
 

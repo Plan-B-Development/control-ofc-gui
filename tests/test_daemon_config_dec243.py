@@ -72,9 +72,12 @@ def _default_config(**overrides):
         ),
         _key("ipc.socket_path", "/run/control-ofc/control-ofc.sock"),
         _key("state.state_dir", "/var/lib/control-ofc"),
+        # DEC-388: the second key that applies live. Placed BEFORE the search dirs,
+        # which must stay last — see the note below.
+        _key("shutdown.exit_floor_pct", 50, running_value=50, mutable=True),
         # Appended last on purpose: several tests below replace a key by index,
         # so anything inserted ahead of them would silently retarget those edits.
-        # `requires_restart` is False — this is the one key that applies live.
+        # `requires_restart` is False — one of the two keys that apply live.
         _key(
             "profiles.search_dirs",
             ["/etc/control-ofc/profiles", "/home/u/.config/control-ofc/profiles"],
@@ -135,6 +138,17 @@ class _ConfigClient:
         self.writes.append(("detection.enable_nvidia_telemetry", enabled))
         return parse_config_write(
             {"updated": True, "key": "detection.enable_nvidia_telemetry", "value": enabled}
+        )
+
+    def set_exit_floor(self, pct):
+        self.writes.append(("shutdown.exit_floor_pct", pct))
+        return parse_config_write(
+            {
+                "updated": True,
+                "key": "shutdown.exit_floor_pct",
+                "value": pct,
+                "note": "In force now; applies at the daemon's next stop",
+            }
         )
 
     def set_startup_delay(self, delay_secs):

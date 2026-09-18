@@ -243,6 +243,11 @@ class TestDaemonConfigRoutes:
         client.set_serial_timeout(750)
         client._post.assert_called_once_with("/config/serial-timeout", json={"timeout_ms": 750})
 
+    def test_set_exit_floor_payload(self):
+        client = self._client()
+        client.set_exit_floor(60)
+        client._post.assert_called_once_with("/config/exit-floor", json={"exit_floor_pct": 60})
+
     def test_set_allow_port_probe_payload(self):
         client = self._client()
         client.set_allow_port_probe(True)

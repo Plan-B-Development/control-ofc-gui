@@ -53,10 +53,11 @@ Settings that belong to the daemon rather than to this application. Every value 
 | **Serial timeout** | 50-1000 ms | Read timeout for the OpenFan device. Also annotated when no controller is detected |
 | **Super-I/O port probe** | on/off | Opt-in active chip detection. The switch is only half the requirement — it also needs a root systemd drop-in, and the row says so |
 | **NVIDIA telemetry** | on/off | Opt-in read-only NVML. Same drop-in caveat |
+| **Exit minimum** | 0-100 % | When the daemon stops, it leaves each OpenFan fan — and any motherboard header with no automatic mode to go back to — at its last speed or this, whichever is higher, so a fan the daemon was running slowly does not stay slow with nothing controlling it. A fan whose speed the daemon had lost track of goes to 100 %; 0 turns this off. **Applies immediately**, like the profile search directories. Needs `control-ofc-daemon` v2.50.0 or newer; on an older daemon the row is disabled and says so |
 
 ### Profile search directories
 
-The list of directories the daemon looks in for profile files. Unlike everything else on this card, changes here apply **immediately** — no restart.
+The list of directories the daemon looks in for profile files. Like the exit minimum, and unlike everything else on this card, changes here apply **immediately** — no restart.
 
 - **Add…** registers another directory with the daemon.
 - **Remove** stops the daemon looking in the selected one.

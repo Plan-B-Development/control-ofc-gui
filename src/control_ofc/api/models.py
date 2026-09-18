@@ -284,6 +284,12 @@ class ControlCapability:
     #: body distinguishes the two, which is why offering the option ungated
     #: would put a promise on screen that a whole range of daemons will not keep.
     validation_auto_stop: bool = False
+    #: DEC-388: the daemon applies an exit floor on a clean stop, accepts
+    #: ``POST /config/exit-floor`` and reports ``shutdown.exit_floor_pct`` on
+    #: ``GET /config``. Gate the Settings control on this: an older daemon 404s
+    #: the POST and leaves its OpenFan channels at their last duty whatever the
+    #: control says.
+    exit_floor: bool = False
     # `WIRE-k` (daemon >= 2.36.0): five features that shipped BEFORE this block
     # had keys for them. Until the daemon grew these flags the GUI detected them
     # by comparing the daemon's version string — which says when a feature first

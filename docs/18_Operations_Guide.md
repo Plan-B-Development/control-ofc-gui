@@ -98,12 +98,13 @@ persisted change is not yet in effect (`restart_pending`). The GUI's
 | `serial.timeout_ms` | `POST /config/serial-timeout` | 50–1000 via the API (bounds emergency write latency) |
 | `detection.allow_port_probe` | `POST /config/allow-port-probe` | **Also needs the drop-in** |
 | `detection.enable_nvidia_telemetry` | `POST /config/nvidia-telemetry` | **Also needs the drop-in** |
+| `shutdown.exit_floor_pct` | `POST /config/exit-floor` | 0–100 (DEC-388): the lowest speed a clean stop leaves an OpenFan fan, or a header with no mode switch, at. **Applies immediately**; also re-applied on SIGHUP. `0` turns it off |
 | `ipc.socket_path` | **No — read-only** | A bad value locks every client out of the daemon |
 | `state.state_dir` | **No — read-only** | Moving it orphans `runtime.toml` and the profile store |
 
-**Everything except the profile search dirs takes effect only on restart.** The
-search dirs apply immediately (both via their API and on SIGHUP), which is why
-`GET /config` reports them with `requires_restart: false`; every other key is
+**Everything except the profile search dirs and the exit floor takes effect only
+on restart.** Those two apply immediately (both via their API and on SIGHUP), which
+is why `GET /config` reports them with `requires_restart: false`; every other key is
 consumed once at startup:
 ```bash
 sudo systemctl restart control-ofc-daemon

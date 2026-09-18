@@ -1,5 +1,5 @@
 {
-  "description": "The declared GET /config key surface (DEC-243, extended by DEC-285). Every key the daemon reports, with the mutability it reports it under. THIS FILE IS THE SINGLE DECLARATION AND BOTH REPOS READ IT (P8-cb, GUI v2.67.1 / daemon v2.43.8): daemon/tests/ipc_integration.rs::get_config_key_set_and_mutability_are_pinned reads this list and fails if the handler disagrees with it, and tests/test_daemon_config_coverage.py fails if a mutable key has no Settings control. Until P8-cb the Rust test carried its own literal copy of these nine keys and nothing compared the two, so a key added in one and forgotten in the other left that list stale with both suites green -- the sentence above was written before it was true. It is a shared oracle in the parity_vectors.json shape: one byte-identical copy per repo (tests/fixtures here, daemon/tests/fixtures there), compared by test_fixture_copies_are_byte_identical when both repos are checked out as siblings and by .github/workflows/parity.yml in single-repo CI. Adding a daemon config key means updating this fixture (both copies) plus docs/08 section Config management.",
+  "description": "The declared GET /config key surface (DEC-243, extended by DEC-285). Every key the daemon reports, with the mutability it reports it under. THIS FILE IS THE SINGLE DECLARATION AND BOTH REPOS READ IT (P8-cb, GUI v2.67.1 / daemon v2.43.8): daemon/tests/ipc_integration.rs::get_config_key_set_and_mutability_are_pinned reads this list and fails if the handler disagrees with it, and tests/test_daemon_config_coverage.py fails if a mutable key has no Settings control. Until P8-cb the Rust test carried its own literal copy of these nine keys and nothing compared the two, so a key added in one and forgotten in the other left that list stale with both suites green -- the sentence above was written before it was true. It is a shared oracle in the parity_vectors.json shape: one byte-identical copy per repo (tests/fixtures here, daemon/tests/fixtures there), compared by test_fixture_copies_are_byte_identical when both repos are checked out as siblings and by .github/workflows/parity.yml in single-repo CI. Adding a daemon config key means updating this fixture (both copies) plus docs/08 section Config management. shutdown.exit_floor_pct (DEC-388) is the second key that applies live, after profiles.search_dirs.",
   "min_daemon_version": "2.16.0",
   "keys": [
     { "key": "profiles.search_dirs", "mutable": true },
@@ -9,6 +9,7 @@
     { "key": "serial.timeout_ms", "mutable": true },
     { "key": "detection.allow_port_probe", "mutable": true },
     { "key": "detection.enable_nvidia_telemetry", "mutable": true },
+    { "key": "shutdown.exit_floor_pct", "mutable": true },
     { "key": "ipc.socket_path", "mutable": false },
     { "key": "state.state_dir", "mutable": false }
   ]

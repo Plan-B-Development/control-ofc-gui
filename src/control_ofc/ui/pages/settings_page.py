@@ -147,6 +147,7 @@ DAEMON_CONFIG_WIDGETS: dict[str, str] = {
     "serial.timeout_ms": "Settings_Spin_serialTimeout",
     "detection.allow_port_probe": "Settings_Check_allowPortProbe",
     "detection.enable_nvidia_telemetry": "Settings_Check_nvidiaTelemetry",
+    "shutdown.exit_floor_pct": "Settings_Spin_exitFloor",
 }
 
 # Keys the daemon reports as ``mutable: false`` **by design** (DEC-243): a bad
@@ -924,6 +925,13 @@ class SettingsPage(QWidget):
         ("serial.timeout_ms", "Serial timeout", "Read timeout for the OpenFan device"),
         ("detection.allow_port_probe", "Super-I/O port probe", "Opt-in active chip detection"),
         ("detection.enable_nvidia_telemetry", "NVIDIA telemetry", "Opt-in read-only NVML"),
+        (
+            "shutdown.exit_floor_pct",
+            "Exit minimum",
+            "When the daemon stops, OpenFan fans — and any header the board cannot take "
+            "back — keep their last speed, raised to at least this. Applies at once; "
+            "0 leaves them as they are",
+        ),
     )
 
     #: Sentence appended to a row's sublabel while the daemon reports no OpenFan
@@ -954,8 +962,9 @@ class SettingsPage(QWidget):
         )
 
         self._daemon_cfg_note = QLabel(
-            "Settings owned by the daemon. Changes are written to its runtime "
-            "configuration and take effect when the daemon restarts."
+            "Settings owned by the daemon, written to its runtime configuration. "
+            "Most take effect when the daemon restarts; the exit minimum and the "
+            "profile search directories apply at once."
         )
         self._daemon_cfg_note.setWordWrap(True)
         self._daemon_cfg_note.setProperty("class", "CardMeta")
@@ -1018,6 +1027,25 @@ class SettingsPage(QWidget):
             )
         )
 
+        # DEC-388: the lowest speed a clean stop leaves a fan the daemon cannot
+        # hand back to firmware at. The full 0-100 range — every value is safe,
+        # since the floor can only raise a speed — and applied live by the daemon.
+        self._exit_floor_spin = QSpinBox()
+        self._exit_floor_spin.setObjectName("Settings_Spin_exitFloor")
+        self._exit_floor_spin.setRange(0, 100)
+        self._exit_floor_spin.setSingleStep(5)
+        self._exit_floor_spin.setSuffix(" %")
+        self._exit_floor_spin.setToolTip(
+            "Lowest speed the daemon leaves OpenFan fans at when it stops (applies at once)"
+        )
+        self._exit_floor_spin.editingFinished.connect(
+            lambda: self._write_daemon_key(
+                "shutdown.exit_floor_pct",
+                self._exit_floor_spin.value(),
+                lambda c: c.set_exit_floor(self._exit_floor_spin.value()),
+            )
+        )
+
         self._port_probe_toggle = ToggleSwitch()
         self._port_probe_toggle.setObjectName("Settings_Check_allowPortProbe")
         self._port_probe_toggle.toggled.connect(
@@ -1044,6 +1072,7 @@ class SettingsPage(QWidget):
             "serial.timeout_ms": self._serial_timeout_spin,
             "detection.allow_port_probe": self._port_probe_toggle,
             "detection.enable_nvidia_telemetry": self._nvidia_toggle,
+            "shutdown.exit_floor_pct": self._exit_floor_spin,
         }
         self._daemon_key_widgets: dict[str, QWidget] = dict(controls)
         #: Each editor's tooltip as authored, so `_apply_daemon_key_mutability`
@@ -1195,6 +1224,7 @@ class SettingsPage(QWidget):
             self._serial_timeout_spin,
             self._port_probe_toggle,
             self._nvidia_toggle,
+            self._exit_floor_spin,
             self._search_dirs_list,
             self._add_search_dir_btn,
             self._remove_search_dir_btn,
@@ -1273,6 +1303,9 @@ class SettingsPage(QWidget):
             nvidia = cfg.get("detection.enable_nvidia_telemetry")
             if nvidia is not None:
                 self._nvidia_toggle.setChecked(bool(nvidia.value))
+            exit_floor = cfg.get("shutdown.exit_floor_pct")
+            if exit_floor is not None and isinstance(exit_floor.value, int):
+                self._show_spin_value(self._exit_floor_spin, exit_floor.value)
 
             self._render_search_dirs(cfg.get("profiles.search_dirs"))
 
@@ -1294,6 +1327,7 @@ class SettingsPage(QWidget):
                 label,
                 extra=self._search_dir_divergence(cfg) if key == "profiles.search_dirs" else "",
             )
+        self._apply_exit_floor_support(cfg)
 
         if cfg.restart_pending:
             # Name the keys rather than showing a bare count: a count alone reads
@@ -1313,6 +1347,29 @@ class SettingsPage(QWidget):
             f"Socket: {self._daemon_value(cfg, 'ipc.socket_path')} · "
             f"State directory: {self._daemon_value(cfg, 'state.state_dir')}"
         )
+
+    def _apply_exit_floor_support(self, cfg) -> None:
+        """Stand the exit-minimum control down on a daemon that cannot honour it.
+
+        Gated on the daemon's own ``control.exit_floor`` (DEC-388), never probed:
+        an older daemon 404s the write and leaves its OpenFan fans at their last
+        speed on stop, so an editable control there would promise something that
+        does not happen. Unlike the other rows, absence of the key does NOT leave
+        the control enabled — for this key absence means "this daemon cannot",
+        not "this daemon predates reporting it". Runs after the row notes, which
+        would otherwise hide the explanation this writes.
+        """
+        caps = self._state.capabilities if self._state else None
+        if (
+            daemon_supports("exit_floor", caps) is True
+            and cfg.get("shutdown.exit_floor_pct") is not None
+        ):
+            return
+        self._exit_floor_spin.setEnabled(False)
+        note = self._daemon_row_notes.get("shutdown.exit_floor_pct")
+        if note is not None:
+            note.setText(unsupported_feature_message("exit_floor"))
+            note.setVisible(True)
 
     @staticmethod
     def _show_spin_value(spin: QSpinBox, value: int) -> None:
