@@ -23,6 +23,12 @@ gets the old note, with the way to clear it.
 
 ### Documentation
 
+**`docs/08` describes DEC-385's stale-temperature refusals.** With a daemon that
+has DEC-385, Test PWM Control, PWM characterisation and OpenFan calibration refuse
+to run — and a sweep in progress stops — when no temperature reading is fresh, and
+the safety preflight reports that as blocking where it used to warn. The app needs
+no change for this: it already shows the daemon's verdict and its refusal message.
+
 **`docs/08` and the manual describe DEC-382's hand-back and reach.** On stop,
 each fan header the daemon took gets back what it had rather than a fixed
 `pwm_enable=2`, and the 60 % and 40 % thermal floors reach only the fans a profile

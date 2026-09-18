@@ -37,6 +37,10 @@ def _is_soft_safety_refusal(err: object) -> bool:
       so the band between is hot enough to be forcing and cool enough to pass the
       limit check. Since DEC-308 the trip point is per-machine (derived from the
       CPU's own reported ceiling, floored at 105), which only widens that band.
+    - ``validation_error`` with ``retryable`` — since DEC-385, every temperature
+      reading is too old to trust, so neither check above can be evaluated. Not
+      "too hot": the machine may be cool and the daemon cannot tell; its message
+      says to retry once sensor polling recovers.
 
     Keyed on ``retryable`` rather than on the message text, which is daemon prose
     and not part of the contract. Shared by both verify workers so the two cannot
