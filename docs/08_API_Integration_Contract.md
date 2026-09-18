@@ -427,6 +427,18 @@ stayed green and `/status` kept answering 200 — this field was the only client
 visible sign. It remains the signal for a **degraded** engine (slow ticks),
 which supervision does not cover, and the only signal at all on older daemons.
 
+Since DEC-387 a **hung** engine is restarted too, when the daemon runs under its
+systemd unit. The unit is `Type=notify` with `WatchdogSec=15`, and the daemon pings
+the watchdog from each *completed* tick and nowhere else — so an engine that is alive
+but no longer completing ticks (a deadlock, an await that never resolves) is killed
+and restarted 15 s after its last completed tick, and a client sees the same dropped
+socket and reconnect as for a DEC-266 death. A device write that is slow or wedged
+does **not** stop the pings: the loop keeps ticking past it (DEC-289), and that case
+is still reported only through the write-stall ladder below. What changes for a
+client: `engine` still passes through `warn` and `crit` ("not ticking") while the
+gap is under 15 s, but the mid-tick "stuck" state past 30× the period is now
+reachable only when the daemon runs outside systemd. There is no wire change.
+
 **A slow tick is not a stopped engine, and the daemon distinguishes them
 (DEC-259).** The engine stamps both the start and the completion of every tick,
 so `engine` reports one of two situations:

@@ -35,7 +35,8 @@ column therefore reads N/A throughout. Live manual override and fan identify are
 | Feature | Status | Notes |
 |---------|--------|-------|
 | systemd service file | IMPLEMENTED | `packaging/control-ofc-daemon.service` with hardening |
-| Auto-restart on crash | IMPLEMENTED | `Restart=on-failure`, 3s delay |
+| Auto-restart on crash | IMPLEMENTED | `Restart=on-failure`, exponential backoff 3 s → 60 s with no start limit (DEC-387) |
+| Restart on a hung engine | IMPLEMENTED | `Type=notify` + `WatchdogSec=15`: the daemon pings from each completed engine tick, so a loop that stops ticking is killed, handed back by `ExecStopPost`, and restarted (DEC-387) |
 | Socket permissions | IMPLEMENTED | chmod 0666 after bind (R38) |
 | Boot autostart | IMPLEMENTED | `multi-user.target` |
 
