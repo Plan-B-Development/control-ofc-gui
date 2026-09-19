@@ -355,31 +355,38 @@ latched the thermal emergency, and never released (release requires <= 80 C). Ev
 fan sat at 100% on a cold machine until the daemon restarted. The daemon now
 classifies the same chip+vendor+label as `mb`, so the channel never reaches the
 ladder. The same change also promotes the sources the kernel docs tell you to
-prefer: on `nct6775`, `nct6776`, `nct6683`, `nct6686` and `nct6687`, a label
-containing `AMD TSI`, `TSI`, `PECI` or `CPU` classifies as `cpu`
-(`hwmon/discovery.rs:242`). Before it they fell through to a generic fallback
-that recognised neither `PECI` nor `TSI`.
+prefer. On every chip in `NUVOTON_PECI_TSI_CHIPS` (`hwmon/discovery.rs:201`), a
+label containing `AMD TSI`, `TSI`, `PECI` or `CPU` classifies as `cpu`
+(`discovery.rs:263`). That list is the eleven nct6775-family chips plus
+`nct6683`, `nct6686` and `nct6687`. Before DEC-294, these labels fell through to a
+generic fallback that recognised neither `PECI` nor `TSI`. Until DEC-397 (`DOC-w`),
+the promotion named only five chips. On the other nine nct6775-family chips, an ASUS
+board therefore had its `CPUTIN` demoted and its `PECI`/`TSI` left as `mb`, so the
+Nuvoton chip gave the thermal ladder no CPU input at all.
 
-**Those are two different chip lists, and they are different on purpose — do not
-unify them.** The bogus-CPUTIN gate above covers *eleven* chips **and** requires
-an ASUS board vendor **and** an exact `cputin` label
-(`is_known_bogus_cpu_sensor`, `discovery.rs:192`). The `PECI`/`TSI` promotion
-covers *five* chips and is not vendor-gated at all. They overlap only on
-`nct6775` and `nct6776`, and the bogus gate runs first (`discovery.rs:226`
-before `:242`), so on an ASUS board `CPUTIN` is demoted before the promotion arm
-is reached. Widening the vendor-gated list to match the other one would demote a
-real CPU sensor on every non-ASUS board carrying the same chip — the opposite
-fault, and the worse one.
+**Those are two different chip lists, and they are different on purpose. Do not
+unify them.** The bogus-CPUTIN gate above requires all three: one of the eleven
+chips, an ASUS board vendor, and an exact `cputin` label
+(`is_known_bogus_cpu_sensor`, `discovery.rs:213`). The `PECI`/`TSI` promotion
+covers fourteen chips and is not vendor-gated at all. `PECI`/`TSI` is a CPU source
+on any board that wires it; only the claim that `CPUTIN` is disconnected is
+ASUS-specific. The bogus gate runs first (`discovery.rs:247`, before `:263`), so on
+an ASUS board `CPUTIN` is demoted before the promotion arm is reached. Widening the
+vendor-gated rule to every board would demote a real CPU sensor on every non-ASUS
+board carrying the same chip. That is the opposite fault, and the worse one. The
+daemon now pins one relationship between the lists: every chip that can have
+`CPUTIN` demoted must be able to promote `PECI`/`TSI`
+(`every_chip_that_can_demote_cputin_can_promote_peci_and_tsi`).
 
-Note one consequence of the lists differing in the *other* direction. The GUI's
-own interpretation layer (`knowledge/sensor_knowledge.py`) routes all eleven
-nct6775-family chips to `_classify_nct6775`, and `nct6683`/`nct6686`/`nct6687`
-to `_classify_nct6683`; both promote `TSI`/`PECI` to a CPU source (`amd_tsi` /
-`cpu_peci`, `medium_high`). The daemon's arm names five chips. So for the other
-nine family members — `nct6779`, `nct6791`, `nct6792`, `nct6793`, `nct6795`,
-`nct6796`, `nct6797`, `nct6798`, `nct6799` — the nct6775-family table earlier in
-this document reports `cpu_peci`/`amd_tsi` while the daemon's wire `kind` for
-the same channel is `mb`. Tracked as `DOC-w`.
+The daemon's wire `kind` and the GUI's own interpretation layer
+(`knowledge/sensor_knowledge.py`) now agree on these channels. The GUI routes the
+eleven nct6775-family chips to `_classify_nct6775`, and `nct6683`/`nct6686`/`nct6687`
+to `_classify_nct6683`, and both promote `TSI`/`PECI` to a CPU source (`amd_tsi` /
+`cpu_peci`, `medium_high`). That covers the `PECI Agent N Calibration` channels on
+`nct6792` and later, which the kernel accepts as a CPU temperature source. Like any
+Super-I/O CPU proxy, they can read low. The daemon's plausibility filter rejects a
+proxy pinned near 0 °C beside a warm board, and it logs once when a proxy is the
+only CPU sensor.
 
 Reference: https://docs.kernel.org/hwmon/nct6775.html
 
