@@ -50,6 +50,16 @@ If the Controls page has unsaved edits when you select a different profile, the 
 
 **Creating and deleting** profiles are available in two places: **New** and **Delete** sit directly beneath the sidebar's profile dropdown, and the full set — **New Profile**, **Rename Profile**, **Duplicate Profile**, **Delete Profile** — lives under the Controls page header's **⋮** menu. Both routes do the same thing. Deleting a profile names it in the confirmation prompt and cannot be undone; deleting the currently active profile deactivates it on the daemon first, after which **no** profile is active until you apply one.
 
+**On some Dell computers a profile must control all of the fans or none.** The BIOS on
+many Dell machines has one switch for its fan control, shared by every fan. Controlling
+one fan turns the BIOS off for all of them, and releasing it turns the BIOS back on for
+all of them. So a profile that controls only some of these fans would leave the others
+with nothing controlling them, or hand a fan it still controls back to the BIOS. The
+GUI will not save such a profile. Save, Rename, Duplicate and Apply all refuse it, and a
+note at the top of the Controls page names the fans to add to a fan role or to remove.
+A profile saved before this rule existed, or imported, shows the same note until you fix
+it. Dell machines that give each fan its own switch are not affected.
+
 The daemon is the store of record for profiles; the GUI keeps a local draft cache so you can author and edit while disconnected. A profile saved while the daemon is unreachable is held as a **draft**; there is no background auto-sync — open it and **Save** again once the daemon reconnects to publish it. Activation (from the sidebar) is disabled while disconnected — you cannot make a profile active until the daemon can receive it.
 
 ## Fan Roles (Assign Roles)

@@ -73,6 +73,7 @@ from control_ofc.services.profile_service import (
     mix_candidate_curves,
     sync_candidate_controls,
 )
+from control_ofc.services.shared_fan_switch import SharedSwitchRuleError
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.qt_util import repolish, set_chip_class, style_splitter
@@ -391,6 +392,18 @@ class ControlsPage(QWidget):
         # ─── Header: title + edited-profile + manage · Set up / Revert / Save ───
         main_layout.addLayout(self._build_header())
 
+        # DEC-403 (`TS-bb`): a profile that controls only some of a Dell machine's
+        # fans behind its one BIOS switch cannot be saved or activated. Shown for
+        # the profile on screen, whether an edit just broke the rule or the
+        # profile was saved before the rule existed, or imported.
+        self._shared_switch_banner = QLabel("")
+        self._shared_switch_banner.setObjectName("Controls_Banner_sharedFanSwitch")
+        self._shared_switch_banner.setWordWrap(True)
+        self._shared_switch_banner.setTextFormat(Qt.TextFormat.PlainText)
+        self._shared_switch_banner.setProperty("class", "WarningChip")
+        self._shared_switch_banner.setVisible(False)
+        main_layout.addWidget(self._shared_switch_banner)
+
         # ─── 3-pane layout (DEC-214): Assign Roles | Link Logic | Curve Editor ─
         # Outer horizontal splitter [pane1, curves_section]; the inner horizontal
         # splitter (curves_section) holds [Link Logic, Curve Editor]; net width
@@ -619,6 +632,8 @@ class ControlsPage(QWidget):
             # rename made on any surface must repaint them rather than leave the
             # cached member_label showing until the page is rebuilt.
             self._state.fan_alias_changed.connect(self._on_fan_alias_changed)
+            # DEC-403: which fans share a Dell BIOS switch comes from the headers.
+            self._state.headers_updated.connect(self._refresh_shared_switch_banner)
 
     def set_demo_controller(self, demo_controller: DemoController | None) -> None:
         """Inject the demo-mode mini-evaluator (DEC-165).
@@ -823,6 +838,7 @@ class ControlsPage(QWidget):
         """
         for card in self._control_cards.values():
             card.refresh_member_names()
+        self._refresh_shared_switch_banner()  # it names the fans
 
     def confirm_discard_unsaved(self) -> bool:
         """Ask whether to discard in-progress edits before switching profiles.
@@ -889,15 +905,28 @@ class ControlsPage(QWidget):
             return
         name, ok = QInputDialog.getText(self, "Rename Profile", "New name:", text=profile.name)
         if ok and name.strip() and name.strip() != profile.name:
+            old_name = profile.name
             profile.name = name.strip()
-            self._profile_service.save_profile(profile)
+            try:
+                self._profile_service.save_profile(profile)
+            except SharedSwitchRuleError:
+                # DEC-403: nothing was written, so neither is the new name.
+                profile.name = old_name
+                self._show_shared_switch_refusal("Not renamed")
+                return
             self._refresh_all()
 
     def _on_duplicate_profile(self) -> None:
         profile = self._get_current_profile()
         if not profile:
             return
-        new_profile = self._profile_service.duplicate_profile(profile.id, f"{profile.name} (copy)")
+        try:
+            new_profile = self._profile_service.duplicate_profile(
+                profile.id, f"{profile.name} (copy)"
+            )
+        except SharedSwitchRuleError:
+            self._show_shared_switch_refusal("Not duplicated")  # DEC-403
+            return
         if new_profile:
             self.select_profile(new_profile.id)
 
@@ -961,7 +990,13 @@ class ControlsPage(QWidget):
         profile = self._get_current_profile()
         if not profile:
             return
-        self._profile_service.save_profile(profile)
+        try:
+            self._profile_service.save_profile(profile)
+        except SharedSwitchRuleError:
+            # DEC-403: refused before anything was written; the edits stay
+            # unsaved and the banner names the fans to add or remove.
+            self._show_shared_switch_refusal("Not saved")
+            return
         self._set_unsaved(False)
         if self._profile_service.daemon_backed and not self._profile_service.is_published(
             profile.id
@@ -1086,6 +1121,7 @@ class ControlsPage(QWidget):
     def _refresh_all(self) -> None:
         profile = self._get_current_profile()
         self._update_edited_profile_label(profile)  # DEC-233
+        self._refresh_shared_switch_banner()  # DEC-403
         # `CTRL-a`: refresh against an EMPTY profile rather than returning early.
         # The early return left the previous profile's cards on screen after the
         # last profile was deleted — grids never cleared, empty states never
@@ -2066,6 +2102,28 @@ class ControlsPage(QWidget):
             set_chip_class(self._unsaved_label, "WarningChip")
         # DEC-233: Revert is meaningful only while there are edits to discard.
         self._revert_btn.setEnabled(unsaved)
+        # DEC-403: every edit comes through here, so the banner follows the edit.
+        self._refresh_shared_switch_banner()
+
+    def _refresh_shared_switch_banner(self, *_args) -> None:
+        """Show the DEC-403 rule's message for the profile on screen, or hide it.
+
+        The message is the one a save would raise, from the same service call.
+        """
+        profile = self._get_current_profile()
+        error = self._profile_service.shared_switch_error(profile) if profile else None
+        self._shared_switch_banner.setText(
+            f"{error.message} Until then this profile cannot be saved or activated."
+            if error
+            else ""
+        )
+        self._shared_switch_banner.setVisible(error is not None)
+
+    def _show_shared_switch_refusal(self, what: str) -> None:
+        """A save path refused by DEC-403's rule: say so, and show why."""
+        self._unsaved_label.setText(f"{what} — see the Dell fan note")
+        set_chip_class(self._unsaved_label, "WarningChip")
+        self._refresh_shared_switch_banner()
 
     def update_control_outputs(
         self,

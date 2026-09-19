@@ -163,6 +163,8 @@ CONTROLS_OBJECTNAMES = frozenset(
         "Controls_Act_configureAio",
         "Controls_Act_dedicateGpu",
         "Controls_Act_fanWizard",
+        # DEC-403: the Dell shared-fan-switch note under the header.
+        "Controls_Banner_sharedFanSwitch",
         "Controls_Btn_addCurve",
         "Controls_Btn_closeEditor",
         "Controls_Btn_manageProfiles",

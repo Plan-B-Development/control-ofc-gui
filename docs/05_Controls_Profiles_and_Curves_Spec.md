@@ -50,6 +50,16 @@ Therefore `Controls` is the top-level navigation label, with profile management 
 - It must be obvious when the user is editing a profile that is not currently active
 - Unsaved edits must be visually obvious
 - Switching active profile with unsaved changes must trigger a clear choice
+- On a Dell whose `dell_smm` driver has one BIOS switch for every fan, a profile must
+  control all of those fans or none (DEC-403, `TS-bb`). The switch is shared: taking the
+  first fan turns the BIOS off for all of them, and giving it back turns it on for all of
+  them. `ProfileService.save_profile` refuses a profile that names some but not all of
+  them, before anything is written, and activation saves first, so it refuses too. The
+  shared kind is recognised from `/hwmon/headers` alone: its `pwm1` has an enable file
+  and some other writable fan has none. A per-fan `dell_smm` machine is unaffected. A
+  profile saved earlier, or imported, is flagged on the Controls page until it is fixed.
+  The tray and the daemon's boot activation do not pass through this rule; they start
+  only what was saved.
 
 ## Default built-in profiles
 Provide initial starter profiles:
@@ -438,6 +448,10 @@ When the user clicks Activate, the GUI:
 2. Calls `POST /profile/activate` on the daemon with the profile file path
 3. Only updates local state (AppState, combo) after daemon confirms success
 4. Shows error feedback on failure without falsely marking the profile active
+
+Step 1 can refuse (DEC-403): a profile that breaks the Dell shared-switch rule above is
+not saved, the daemon is never asked, and the sidebar or the Dashboard shows the rule's
+message in the main window's banner.
 
 When a user tries to create an unsafe curve:
 - clamp or validate before save

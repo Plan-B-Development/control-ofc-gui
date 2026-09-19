@@ -30,6 +30,7 @@ from control_ofc.services.id_migration import apply_realias_moves, find_realias_
 from control_ofc.services.profile_import_service import should_offer_import
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.series_selection import SeriesSelectionModel
+from control_ofc.services.shared_fan_switch import SharedSwitchRuleError
 from control_ofc.services.system_state_view import gui_meets_daemon_floor
 from control_ofc.ui.components.footer import StatusFooter
 from control_ofc.ui.pages.controls_page import ControlsPage
@@ -103,6 +104,9 @@ class MainWindow(QWidget):
         self._state = state or AppState()
         self._history = history or HistoryStore()
         self._profile_service = profile_service or ProfileService()
+        # DEC-403: the save rule reads this window's hardware view. Here, where
+        # both exist, so every window — a test's included — gets the rule.
+        self._profile_service.attach_state(self._state)
         self._settings_service = settings_service or AppSettingsService()
         self._client = client
         self._demo_mode = demo_mode
@@ -417,6 +421,8 @@ class MainWindow(QWidget):
         self.dashboard_page.open_readiness.connect(self._open_readiness)
         # DEC-222: a fan card's Edit opens Controls and focuses that control.
         self.dashboard_page.open_control.connect(self._open_control)
+        # DEC-403: the dashboard has no banner of its own for a refused activation.
+        self.dashboard_page.activation_refused.connect(self.error_banner.show_warning)
         # DEC-207/DEC-216: the Cooling Hardware Readiness "set preferred sensor"
         # deep-link is owned by the Hardware page (the Diagnostics duplicate was
         # retired with the page).
@@ -723,6 +729,9 @@ class MainWindow(QWidget):
         if not profile_id:
             return
         res = self._profile_service.activate(profile_id, client=self._client)
+        if res.refused_by_rule and res.error:
+            # DEC-403: the GUI's own save rule refused it; say which fans to fix.
+            self.error_banner.show_warning(res.error)
         # DEC-214: bridge activation into AppState (the Controls page's removed
         # _on_activate used to do this) so the status banner / dashboard reflect
         # the newly-active profile.
@@ -1329,7 +1338,14 @@ class MainWindow(QWidget):
                 affected.append(profile)
 
         for profile in affected:
-            self._profile_service.save_profile(profile)
+            try:
+                self._profile_service.save_profile(profile)
+            except SharedSwitchRuleError as exc:
+                # DEC-403: a profile saved before the rule. The sweep does not
+                # decide which fans it should control — the Controls page flags it.
+                log.warning(
+                    "Profile %s not re-saved after sanitization: %s", profile.id, exc.message
+                )
         if total_dropped:
             log.info(
                 "DEC-102 runtime sanitization: dropped %d member(s) across %d profile(s)",

@@ -89,6 +89,9 @@ class DashboardPage(QWidget):
     # and focuses that control. Can still carry "" for a hand-edited profile whose
     # control id is empty, which lands the user on Controls unfocused.
     open_control = Signal(str)
+    # DEC-403: a switch the GUI's own save rule refused, with the message naming
+    # the fans to fix. The page has no banner, so the main window shows it.
+    activation_refused = Signal(str)
 
     # Stack indices
     _IDX_DISCONNECTED = 0
@@ -1175,6 +1178,8 @@ class DashboardPage(QWidget):
         res = self._profile_service.activate(profile_id, client=self._client)
         if not res.activated:
             log.warning("Profile activation failed for %s: %s", profile_id, res.error)
+            if res.refused_by_rule and res.error:
+                self.activation_refused.emit(res.error)
             self._revert_profile_combo(prev_active_id)
             self._apply_btn.setText("Failed")
             self._apply_btn.setEnabled(False)

@@ -35,10 +35,16 @@ from control_ofc.knowledge.sensor_knowledge import (
     is_liquid_cooler_chip,
 )
 from control_ofc.paths import atomic_write, load_json_capped, profiles_dir
+from control_ofc.services.shared_fan_switch import (
+    SharedSwitchRuleError,
+    describe_shared_switch_violations,
+    shared_switch_violations,
+)
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
     from control_ofc.api.models import HwmonHeader
+    from control_ofc.services.app_state import AppState
 
 log = logging.getLogger(__name__)
 
@@ -1679,6 +1685,10 @@ class ProfileActivateOutcome:
     activated: bool
     error: str | None = None
     local_only: bool = False
+    # DEC-403: refused by the GUI's own save rule (a Dell machine's shared fan
+    # switch), before the daemon was asked. ``error`` then names the fans to add
+    # or remove, and the caller shows it.
+    refused_by_rule: bool = False
 
 
 class ProfileService(QObject):
@@ -1723,6 +1733,32 @@ class ProfileService(QObject):
         # daemon was unreachable — the GUI is working against the offline
         # mirror. Cleared on the next successful daemon load.
         self._offline: bool = False
+        # DEC-403: the hardware the save rule checks against, attached by the
+        # main window. None until then, and the rule has nothing to check.
+        self._state: AppState | None = None
+
+    def attach_state(self, state: AppState) -> None:
+        """Give the save rule its view of the hardware (DEC-403, `TS-bb`).
+
+        The ONE way the rule learns about headers and fan names: every save reads
+        ``state.hwmon_headers`` and ``state.fan_display_name`` at that moment,
+        so there is no second copy to go stale. Called once by the main window.
+        """
+        self._state = state
+
+    def shared_switch_error(self, profile: Profile) -> SharedSwitchRuleError | None:
+        """The error saving ``profile`` would raise under DEC-403, or ``None``.
+
+        Public so the Controls page can flag a profile saved before the rule, or
+        imported, with the same message a save would give.
+        """
+        if self._state is None:
+            return None
+        violations = shared_switch_violations(profile, self._state.hwmon_headers)
+        if not violations:
+            return None
+        message = describe_shared_switch_violations(violations, self._state.fan_display_name)
+        return SharedSwitchRuleError(violations, message)
 
     @property
     def profiles(self) -> list[Profile]:
@@ -1939,6 +1975,11 @@ class ProfileService(QObject):
     def save_profile(self, profile: Profile) -> None:
         """Persist a profile: always to the local cache, then to the daemon.
 
+        [SAFETY]-adjacent, DEC-403: raises :class:`SharedSwitchRuleError`,
+        writing nothing anywhere, when the profile controls some but not all of
+        the fans behind a Dell machine's shared BIOS switch. Every caller handles
+        it; activation saves first, so it refuses the same profile.
+
         With a daemon client, the local write is the offline mirror/draft and
         the profile is uploaded (replace if it already exists in the store,
         else create). If the daemon is unreachable the edit is kept as a local
@@ -1946,6 +1987,9 @@ class ProfileService(QObject):
         only when the user saves again — there is no background auto-sync
         (migration Decision 3). With no client this is a pure local write.
         """
+        rule_error = self.shared_switch_error(profile)
+        if rule_error is not None:
+            raise rule_error
         self._write_local(profile)
         if self._client is not None:
             try:
@@ -2042,8 +2086,12 @@ class ProfileService(QObject):
         if profile is None:
             return ProfileActivateOutcome(activated=False, error="Profile not found")
 
-        # Save first so the daemon reads the latest version.
-        self.save_profile(profile)
+        # Save first so the daemon reads the latest version. A profile the save
+        # rule refuses is refused here too, before the daemon is asked (DEC-403).
+        try:
+            self.save_profile(profile)
+        except SharedSwitchRuleError as exc:
+            return ProfileActivateOutcome(activated=False, error=exc.message, refused_by_rule=True)
 
         if client is None:
             # Local-only branch (demo mode): no daemon to confirm with.
@@ -2079,6 +2127,11 @@ class ProfileService(QObject):
         data["id"] = str(uuid.uuid4())[:8]
         data["name"] = new_name
         new_profile = Profile.from_dict(data)
+        # DEC-403: refuse before the copy joins the list, so a refused duplicate
+        # leaves nothing behind.
+        rule_error = self.shared_switch_error(new_profile)
+        if rule_error is not None:
+            raise rule_error
         self._profiles[new_profile.id] = new_profile
         self.save_profile(new_profile)
         return new_profile

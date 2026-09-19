@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+**On a Dell whose BIOS has one fan switch for every fan, a profile must control
+all of those fans or none** (`TS-bb`, DEC-403). Many Dell computers have a single
+switch for the BIOS's fan control, shared by every fan. Controlling one fan turns
+the BIOS off for all of them, and releasing it turns the BIOS back on for all of
+them. A profile that controls only some of the fans therefore left the others with
+nothing controlling them, sometimes stopped, or handed a fan it still controlled
+back to the BIOS, which then ran it on its own and ignored the profile's minimum
+speeds. The GUI now refuses to save such a profile. Save, Rename, Duplicate and
+Apply (from the sidebar or the Dashboard) all refuse it, and a note at the top of
+the Controls page names the fans to add or remove. A profile saved earlier, or
+imported, shows the same note until it is fixed. Only Dell machines with the shared
+switch are affected; those that give each fan its own switch are not. The system
+tray and the daemon start only profiles that were already saved, so they are covered
+for every profile saved from now on.
+
 ## [2.79.1] — 2026-09-19
 
 ### Changed
