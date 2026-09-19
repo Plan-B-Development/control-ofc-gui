@@ -445,6 +445,12 @@ is still reported only through the write-stall ladder below. What changes for a
 client: `engine` still passes through `warn` and `crit` ("not ticking") while the
 gap is under 15 s, but the mid-tick "stuck" state past 30× the period is now
 reachable only when the daemon runs outside systemd. There is no wire change.
+Around a system sleep the window is wider (DEC-396): the daemon package's
+`system-sleep` hook has the daemon widen its watchdog to 120 s before a suspend or
+hibernate and restore 15 s after resume, because device suspend and resume count
+against the watchdog while the daemon is frozen. It narrows again by itself 120 s
+after the widen if the resume call never comes. There is no wire change here
+either.
 
 **A slow tick is not a stopped engine, and the daemon distinguishes them
 (DEC-259).** The engine stamps both the start and the completion of every tick,
