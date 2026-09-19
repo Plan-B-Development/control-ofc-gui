@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.80.0] — 2026-09-19
+
 ### Changed
 
 **On a Dell whose BIOS has one fan switch for every fan, a profile must control
