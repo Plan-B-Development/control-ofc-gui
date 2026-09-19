@@ -2239,7 +2239,12 @@ renewing GUI holds indefinitely.
 so an override taken against the previous profile cannot bleed onto a same-id control in the new one.
 The GUI is poll-only and already drops its Manual cards when `/poll` no longer reports the override;
 no client action is required. Fan-identify holds (below) are per physical fan and are **not** cleared
-by an activation.
+by an activation — with one exception (DEC-394, daemons after 2.51.0): an identify **stop** on a header
+the newly-activated profile names a pump (a member whose label names one) is released, because its
+`0` was chosen before the profile existed to protect it. It is the activation twin of the release a
+`pump` assignment performs (`POST /config/header-role`, below). A `pump_perturb` hold is kept — it
+already sits at or above the floor. The fan's `/poll` `fan_identify` entry disappears; a client that
+later sends `restore` gets the idempotent `200`.
 
 **Deactivating a profile also clears all active control-overrides (DEC-218, daemon ≥ 2.12.0),**
 symmetric with activation: with no profile active there is no curve to revert to, so the standing
