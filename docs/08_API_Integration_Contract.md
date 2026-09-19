@@ -805,10 +805,11 @@ whenever the engine did not evaluate it, which covers: no profile active; the co
 `skipped_controls[]`; and — importantly — the **whole duration of a thermal event**. During a thermal
 event no single control-wide number is true: since DEC-307 (daemon ≥ 2.26.0) the forced duty is a
 **floor** over the profile's own output rather than a replacement for it, so a control's OpenFan and
-hwmon members sit at `max(commanded, forced)` while its GPU members sit at whatever they last held —
-GPU fans are excluded from the force by design (DEC-130). Publishing the curve figure would
-understate the first set and publishing the floored figure would overstate the second, so the daemon
-publishes neither. Before DEC-307 the reason was simpler and is recorded here because the wording
+hwmon members sit at `max(commanded, forced)` while its GPU members sit at their own curve's value —
+GPU fans are excluded from the force by design (DEC-130), and since DEC-399 they keep following their
+curve through it (older daemons wrote no GPU fan on a forced tick, so each held whatever it last had).
+Publishing the curve figure would understate the first set and publishing the floored figure would
+overstate the second, so the daemon publishes neither. Before DEC-307 the reason was simpler and is recorded here because the wording
 outlived it: the force *replaced* every control's output, so there was no control-wide output at
 all. Render absence as "unknown" (the reference GUI's
 `"—"`), never as `0`.
