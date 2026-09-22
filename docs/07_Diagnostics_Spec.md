@@ -743,6 +743,14 @@ top-to-bottom:
   and plateaus. **Nothing this adds can report a failure**: hysteresis, plateaus, tach
   variability and an out-of-learned-range response are all observations, and the last is
   worded with the benign explanations listed beside it.
+
+  Since **DEC-405** (daemon ≥ 2.52.0) the figures behind those rows are honest about a
+  slow tach: settling is judged on register *updates* and never before the first one, RPM
+  stability is computed over the **settled tail** only, "measurement resolution" is the
+  register's own cadence rather than the 500 ms sampler, and monotonicity is judged per leg.
+  A point that never settled shows **"Not settled"** — an absence of steady-state evidence,
+  neutral, never a warning. The default settle is 12 s, so a default sweep takes about
+  twice as long as before; a validation session's per-diagnostic estimates say so.
   progress + result, and — DEC-120 — **Test GPU Fan Control** with its own
   result label, shown only when a writable AMD GPU is present and the daemon
   supports the verify route, ≥ 1.11.0). Beside the GPU verify button sits

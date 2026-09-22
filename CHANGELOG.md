@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Changed
+
+**A validation session's PWM test row says what the test found** (DEC-405, daemon
+2.52.0). With daemon 2.52.0 or later, each PWM control test in a session shows its
+result in the same words as the Hardware page. It also shows the fan speed before
+and after, the duty tested and read back, and a warning if the fan could not be
+put back where it was. Sessions recorded by older daemons look the same as before,
+because those daemons never stored these details.
+
+**The session dialog's time estimates match daemon 2.52.0** (DEC-405). The daemon
+now holds each sweep point for 12 s instead of 6 s. It also lets the fans settle
+between discovery cycles. The estimates are now about 1½ minutes for a response
+sweep, 4 minutes for the behaviour sweep, and 1 minute for control-path discovery.
+Against an older daemon they are roughly twice as long as the runs actually take.
+
 ## [2.80.0] — 2026-09-19
 
 ### Changed

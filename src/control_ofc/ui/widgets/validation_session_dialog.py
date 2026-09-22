@@ -90,19 +90,30 @@ POLL_INTERVAL_MS = 1000
 #: They were previously written unqualified ("~10 s", "~2-3 min"), which reads as
 #: how long the whole run takes, and that is the misreading `P8-az` is about: the
 #: session outlives every one of them. The figures are also corrected here from
-#: the daemon's actual constants rather than estimated:
+#: the daemon's actual constants rather than estimated. Since daemon 2.52.0
+#: (DEC-405) the default settle is 12 s, not verify's 6 s — settling now counts
+#: tach-register updates, and a 2 s register needs the longer hold:
 #:
 #:   verify     ~10 s
-#:   basic      8 points x CHARACTERIZATION_DEFAULT_SETTLE_S 6 s        = ~50 s
-#:   behaviour  15 steps x 6 s + 3 x STABILITY_DEFAULT_S 20 s           = ~2.5 min
-#:   discovery  DISCOVERY_DEFAULT_CYCLES 2 x 2 windows x 6 s            = ~25 s
+#:   basic      8 points x CHARACTERIZATION_DEFAULT_SETTLE_S 12 s       = ~1½ min
+#:   behaviour  15 steps x 12 s + 3 x STABILITY_DEFAULT_S 20 s          = ~4 min
+#:   discovery  DISCOVERY_DEFAULT_CYCLES 2 x 2 windows x 12 s
+#:              + up to one DISCOVERY_SETTLE_WAIT_MAX 15 s settle-wait per
+#:                cycle whose baseline write moved the duty — one in a run
+#:                that starts at the baseline, two when the header was found
+#:                below the discovery floor                              = ~1 min
+#:              (worst case ~1¼ min)
+#:
+#: Against a daemon before 2.52.0 (6 s settle, no settle-wait) the three sweep
+#: figures are roughly double the real run; the labels follow the daemon they
+#: ship with.
 #:
 #: Every previous label over-estimated, which is the wrong direction: it trains
 #: the user to expect a long wait and then to read the session's own open-ended
 #: recording as "still working".
 _DIAGNOSTIC_CHOICES = (
     ("pwm_verify", "PWM control test (~10 s per member)"),
-    ("pwm_characterization", "PWM response characterisation (~50 s per member)"),
+    ("pwm_characterization", "PWM response characterisation (~1½ min per member)"),
     # DEC-334. Filtered out against a daemon without the capability, like every
     # other entry — an unknown token on the wire fails the WHOLE session, so the
     # gate is at the checkbox rather than at submit.
@@ -112,9 +123,9 @@ _DIAGNOSTIC_CHOICES = (
     # swept twice. That is why both may be ticked without a warning here.
     (
         "pwm_behaviour_characterization",
-        "PWM behaviour characterisation — adds hysteresis and stability (~2½ min per member)",
+        "PWM behaviour characterisation — adds hysteresis and stability (~4 min per member)",
     ),
-    ("control_path_discovery", "Control-path discovery (~25 s per member)"),
+    ("control_path_discovery", "Control-path discovery (~1 min per member)"),
 )
 
 #: What actually ends a session, stated where the user starts one (`P8-az`).
@@ -1303,7 +1314,7 @@ class ValidationSessionDialog(ModalDialog):
             )
         elif view.recording and requested:
             # Something was requested and nothing has landed yet. Saying so is
-            # the difference between "working" and "wedged" for up to 2½ min.
+            # the difference between "working" and "wedged" for up to 4 min.
             caption = (
                 "Running the requested diagnostics — none has finished yet. "
                 "The first result appears here when it does."

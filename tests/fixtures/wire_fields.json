@@ -573,7 +573,8 @@
         "perturbed_rpm",
         "delta_rpm",
         "noise_floor_rpm",
-        "responded"
+        "responded",
+        "noise_floor_from_cycle_1"
       ],
       "must_be_read": [
         "tach_id",
@@ -584,6 +585,9 @@
       "inert": {
         "delta_rpm": "only a key in the provenance table, which describes the field rather than reading it; was declared must_be_read on that evidence until AU-d tightened the read definition",
         "noise_floor_rpm": "only a key in the provenance table, which describes the field rather than reading it (AU-d)"
+      },
+      "unmodelled": {
+        "noise_floor_from_cycle_1": "DEC-405 (daemon >= 2.52.0). No GUI slot yet: DEC-404 Stage 4 (the PWM Test Report, register PTR-o) is the first reader; enrol it as must_be_read there."
       },
       "note": "DEC-333. `responded` is the per-cycle verdict the candidate table is built from; the three RPM terms are what the user checks it against."
     },
@@ -598,7 +602,9 @@
         "baseline_pct",
         "perturbed_pct",
         "direction",
-        "observations"
+        "observations",
+        "baseline_settled",
+        "settle_wait_ms"
       ],
       "must_be_read": [
         "baseline_pct",
@@ -608,6 +614,10 @@
       ],
       "inert": {
         "cycle": "only reached by models.py's own from_dict keyword, which is a parse site and not a read"
+      },
+      "unmodelled": {
+        "baseline_settled": "DEC-405 (daemon >= 2.52.0). No GUI slot yet: DEC-404 Stage 4 (the PWM Test Report, register PTR-o) is the first reader; enrol it as must_be_read there.",
+        "settle_wait_ms": "DEC-405 (daemon >= 2.52.0). No GUI slot yet: DEC-404 Stage 4 (the PWM Test Report, register PTR-o) is the first reader; enrol it as must_be_read there."
       },
       "note": "DEC-333. One perturbation cycle. `direction` matters because a down-perturbation inverts what a positive delta means."
     },
@@ -748,8 +758,10 @@
       ],
       "inert": {
         "readback_raw": "only a key in the provenance table, which describes the field rather than reading it (AU-d)",
-        "rpm_before": "only a key in the provenance table, which describes the field rather than reading it (AU-d)",
         "step_index": "parsed and never read; adjudicated in register row P8-bz"
+      },
+      "not_assertable": {
+        "rpm_before": "Shared with another declared struct (VerifyEvidence, whose rpm_before services/validation_view.py reads), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. CharPoint's own is still unread (was inert: only a key in the provenance table)."
       },
       "note": "DEC-313/334. The two verdicts are deliberately independent and docs/08 forbids collapsing them into one pass/fail; both are pinned so neither can quietly stop being read. `step_index` is parsed and NOT read \u2014 the GUI orders by list position; recorded in P8-bz."
     },
@@ -791,7 +803,9 @@
         "typical_settling_ms",
         "outside_learned_range",
         "learned_range_note",
-        "interpretation_states"
+        "interpretation_states",
+        "monotonic_falling",
+        "monotonic_rising"
       ],
       "must_be_read": [
         "command_acceptance",
@@ -829,6 +843,10 @@
         "hysteresis_worst_delta_rpm": "parsed and never read; adjudicated in register row P8-bz",
         "learned_range_note": "parsed and never read; adjudicated in register row P8-bz"
       },
+      "unmodelled": {
+        "monotonic_falling": "DEC-405 (daemon >= 2.52.0). No GUI slot yet: DEC-404 Stage 4 (the PWM Test Report, register PTR-o) is the first reader; enrol it as must_be_read there.",
+        "monotonic_rising": "DEC-405 (daemon >= 2.52.0). No GUI slot yet: DEC-404 Stage 4 (the PWM Test Report, register PTR-o) is the first reader; enrol it as must_be_read there."
+      },
       "note": "DEC-313/334. The three top verdicts must stay independent (docs/08). `typical_response_ms`/`typical_settling_ms` are pinned because G29 made them the ONLY producer of those timings \u2014 the client recomputation is now just the pre-2.40.0 fallback, so if these stopped being read the dialog would silently show nothing. Three fields are parsed and NOT read: `hysteresis_worst_duty_pct`, `hysteresis_worst_delta_rpm` and `learned_range_note` \u2014 recorded in P8-bz."
     },
     {
@@ -850,7 +868,9 @@
         "cv_pct",
         "verdict",
         "sample_interval_ms",
-        "dwell_ms"
+        "dwell_ms",
+        "window_start_ms",
+        "update_interval_ms"
       ],
       "must_be_read": [
         "samples",
@@ -868,6 +888,10 @@
         "outliers": "only a key in the provenance table; CharSummary.total_outliers is the figure the UI actually renders (AU-d)",
         "median_rpm": "parsed and never read; adjudicated in register row P8-bz",
         "dwell_ms": "parsed and never read; adjudicated in register row P8-bz"
+      },
+      "unmodelled": {
+        "window_start_ms": "DEC-405 (daemon >= 2.52.0). No GUI slot yet: DEC-404 Stage 4 (the PWM Test Report, register PTR-o) is the first reader; enrol it as must_be_read there.",
+        "update_interval_ms": "DEC-405 (daemon >= 2.52.0). No GUI slot yet: DEC-404 Stage 4 (the PWM Test Report, register PTR-o) is the first reader; enrol it as must_be_read there."
       },
       "note": "DEC-334 \u00a75. `usable` against `samples` is the absence-is-not-zero pair: a step that sampled nothing must not read as a clean tach. `median_rpm` and `dwell_ms` are parsed and NOT read \u2014 recorded in P8-bz."
     },
@@ -976,6 +1000,41 @@
         "override_observed": "parsed and never read; adjudicated in register row P8-bz"
       },
       "note": "DEC-335 \u00a79.1. `interpretation` is the daemon's own reading of the fingerprint and the GUI must render it rather than re-deriving one. `override_observed` is parsed and NOT read \u2014 the GUI infers from `override_duration_ms`; recorded in P8-bz."
+    },
+    {
+      "daemon": "VerifyEvidence",
+      "gui": "ValidationVerifyEvidence",
+      "endpoints": [
+        "GET /validation/session .evidence[].verify",
+        "GET /validation/sessions/{session_id} .evidence[].verify"
+      ],
+      "fields": [
+        "header_id",
+        "write_ok",
+        "readback_pct",
+        "requested_pct",
+        "rpm_before",
+        "rpm_after",
+        "detail",
+        "result",
+        "restore_failed"
+      ],
+      "must_be_read": [
+        "rpm_before",
+        "result",
+        "restore_failed"
+      ],
+      "inert": {
+        "write_ok": "parsed and never read: the evidence row's daemon-mapped `outcome` carries the same fact, and is what the GUI renders (DEC-405)"
+      },
+      "not_assertable": {
+        "header_id": "Shared with another declared struct (PreflightReport, ControlPathRun, ControlPathRecord), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made.",
+        "detail": "Shared with another declared struct (PreflightCheck, ControlPathRun), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made.",
+        "readback_pct": "Shared with another declared struct (CharPoint, whose own reads satisfy the name), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. services/validation_view.py::verify_evidence_detail does read it; tests/test_aio_mb_phase5.py::test_session_verify_evidence_is_worded_by_the_one_verify_vocabulary pins that read at the call site.",
+        "requested_pct": "Shared with another declared struct (CharPoint, whose own reads satisfy the name), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. services/validation_view.py::verify_evidence_detail does read it; tests/test_aio_mb_phase5.py::test_session_verify_evidence_is_worded_by_the_one_verify_vocabulary pins that read at the call site.",
+        "rpm_after": "Shared with another declared struct (CharPoint, whose own reads satisfy the name), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. services/validation_view.py::verify_evidence_detail does read it; tests/test_aio_mb_phase5.py::test_session_verify_evidence_is_worded_by_the_one_verify_vocabulary pins that read at the call site."
+      },
+      "note": "DEC-405 (`PTR-e`). Until daemon 2.52.0 the three readings were always null (read from the wrong JSON paths) and `result` was never stored; `services/validation_view.py::verify_evidence_detail` renders the token through `verify_view.outcome_for`. Only `result`, `restore_failed` and `rpm_before` are claimed read here: the other readings share their names with `CharPoint` (whose `rpm_before` alone is unread), so the name check cannot prove them for this struct."
     }
   ]
 }

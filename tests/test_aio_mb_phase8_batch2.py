@@ -288,6 +288,20 @@ class TestViewModel:
             p.rpm_after = None
         assert build_characterization_view(run, header_label="Pump").curve.has_data is False
 
+    def test_a_not_settled_verdict_reads_as_not_settled_and_is_never_a_warning(self):
+        """DEC-405 (daemon >= 2.52.0): a hold that never settled has no steady
+        state to judge — worded as such, neutral in tone, not "Unstable".
+
+        Rendered through the unknown-token fallback (273-i) rather than a table
+        entry, because the fallback already says exactly this; the test pins the
+        realised row, so an entry added later must keep it true."""
+        run = _bidi_run()
+        assert run.summary is not None
+        run.summary.stability_verdict = "not_settled"
+        rows = {r.label: r for r in build_characterization_view(run, header_label="P").summary_rows}
+        assert rows["RPM stability"].value == "Not settled"
+        assert rows["RPM stability"].state == "neutral"
+
     def test_the_summary_block_reports_range_hysteresis_stability_and_timing(self):
         view = build_characterization_view(_bidi_run(), header_label="Pump")
         labels = {row.label: row.value for row in view.summary_rows}

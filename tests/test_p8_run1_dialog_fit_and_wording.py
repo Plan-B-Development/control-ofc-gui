@@ -284,7 +284,7 @@ class TestEvidenceRendersAsDiagnosticsFinish:
         assert dlg._evidence_table.rowCount() > first
 
     def test_a_running_session_with_no_result_yet_says_so(self, qtbot):
-        """Otherwise the first 2½ minutes are indistinguishable from a stall."""
+        """Otherwise the first 4 minutes are indistinguishable from a stall."""
         dlg = ValidationSessionDialog("aio0", "AIO Cooling System", members=[])
         qtbot.addWidget(dlg)
         dlg.apply_session(_session(evidence=[], state=VALIDATION_STATE_RECORDING))

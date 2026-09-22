@@ -276,6 +276,76 @@ def test_verify_evidence_parses():
     assert s.evidence[0].verify.rpm_after == 2000
 
 
+def _verify_payload(**verify) -> dict:
+    return _session_payload(
+        evidence=[
+            {
+                "kind": "pwm_verify",
+                "member_id": PUMP,
+                "started_unix_ms": 1000,
+                "outcome": "observed",
+                "detail": None,
+                "verify": {"header_id": PUMP, "write_ok": True, **verify},
+            }
+        ]
+    )
+
+
+def test_verify_evidence_carries_the_result_token_and_restore_flag():
+    """DEC-405 (daemon >= 2.52.0): the token and the restore flag are parsed."""
+    s = parse_validation_session(_verify_payload(result="no_rpm_effect", restore_failed=True))
+    v = s.evidence[0].verify
+    assert v is not None
+    assert v.result == "no_rpm_effect"
+    assert v.restore_failed is True
+    # An older daemon sends neither: absent, never a guessed value.
+    old = parse_validation_session(_verify_payload()).evidence[0].verify
+    assert old is not None
+    assert (old.result, old.restore_failed) == (None, False)
+
+
+def test_session_verify_evidence_is_worded_by_the_one_verify_vocabulary():
+    """DEC-405 (`PTR-e`): a session's verify row says what verify found, in the
+    same words the Hardware page uses — asserted against ``outcome_for``, the
+    vocabulary itself, not a copied literal (DEC-324 rule 1)."""
+    from control_ofc.services.verify_view import outcome_for
+
+    s = parse_validation_session(
+        _verify_payload(
+            result="no_rpm_effect",
+            requested_pct=80,
+            readback_pct=80,
+            rpm_before=1200,
+            rpm_after=1210,
+            restore_failed=True,
+        )
+    )
+    row = vview.build_evidence_row(s.evidence[0])
+    assert outcome_for("no_rpm_effect").summary in row.detail
+    assert "1200 RPM → 1210 RPM" in row.detail
+    assert "tested at 80%, read back 80%" in row.detail
+    assert "left at the test duty" in row.detail
+    # The opposite arm: a different token gives a different sentence, so the
+    # row is not a constant.
+    eff = parse_validation_session(_verify_payload(result="effective"))
+    assert outcome_for("effective").summary in vview.build_evidence_row(eff.evidence[0]).detail
+    assert "left at the test duty" not in vview.build_evidence_row(eff.evidence[0]).detail
+
+
+def test_an_unrecognised_verify_token_renders_verbatim():
+    s = parse_validation_session(_verify_payload(result="brand_new_token"))
+    assert "brand_new_token" in vview.build_evidence_row(s.evidence[0]).detail
+
+
+def test_verify_evidence_from_an_older_daemon_keeps_its_detail_unchanged():
+    """Before 2.52.0 the daemon stored no token, and its readings were always
+    null (`PTR-e`) — so nothing may be synthesised from them."""
+    payload = _verify_payload()
+    payload["evidence"][0]["detail"] = "thermal refusal"
+    s = parse_validation_session(payload)
+    assert vview.build_evidence_row(s.evidence[0]).detail == "thermal refusal"
+
+
 # ---------------------------------------------------------------------------
 # The readback/commanded split
 # ---------------------------------------------------------------------------

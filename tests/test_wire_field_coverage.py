@@ -445,12 +445,41 @@ def test_not_assertable_names_are_really_ambiguous(struct: dict) -> None:
     declared = struct.get("not_assertable", {})
     if not declared:
         pytest.skip("nothing declared not_assertable")
-    abusable = sorted(set(declared) - TOO_COMMON)
+    abusable = sorted(set(declared) - TOO_COMMON - _shared_names())
     assert not abusable, (
         f"{struct['daemon']}: {abusable} are distinctive enough to assert a read "
-        f"site for. 'not_assertable' is only for names in TOO_COMMON; declare "
-        f"these 'must_be_read' or 'inert' instead."
+        f"site for. 'not_assertable' is only for names in TOO_COMMON, or names "
+        f"that two declared structs share; declare these 'must_be_read' or "
+        f"'inert' instead."
     )
+
+
+def _shared_names() -> set[str]:
+    """Field names that two or more DECLARED wire structs carry (DEC-405).
+
+    A name-based read check cannot tell ``VerifyEvidence.rpm_before`` from
+    ``CharPoint.rpm_before``: a read of either satisfies — or, for an ``inert``
+    claim, falsifies — both. Such a name may be ``not_assertable`` on a struct
+    whose own read cannot be proved. Derived from the fixture, never listed by
+    hand, so the bucket stays exactly as wide as the ambiguity is real: a name
+    that stops being shared stops qualifying and the test says so.
+    """
+    counts: dict[str, int] = {}
+    for s in _declared():
+        for name in set(s["fields"]):
+            counts[name] = counts.get(name, 0) + 1
+    return {name for name, n in counts.items() if n >= 2}
+
+
+def test_the_shared_name_rule_is_derived_and_really_shared() -> None:
+    """The shared-name exemption is live: every name it admits appears in two
+    declared structs, and the one that motivated it is among them."""
+    shared = _shared_names()
+    assert "rpm_before" in shared, "precondition: CharPoint and VerifyEvidence share it"
+    owners = {name: [s["daemon"] for s in _declared() if name in s["fields"]] for name in shared}
+    assert all(len(v) >= 2 for v in owners.values())
+    # And a distinctive single-struct name is NOT admitted.
+    assert "noise_floor_from_cycle_1" not in shared
 
 
 @pytest.mark.parametrize("struct", _declared(), ids=lambda s: s["daemon"])

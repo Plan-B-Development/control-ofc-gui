@@ -3472,6 +3472,13 @@ class ValidationVerifyEvidence:
     rpm_before: int | None = None
     rpm_after: int | None = None
     detail: str | None = None
+    #: DEC-405 (daemon >= 2.52.0): verify's own ``result`` token. ``None`` from
+    #: an older daemon, which never stored it — and whose three readings above
+    #: were always ``None`` too (`PTR-e`), so absence is not evidence of anything.
+    result: str | None = None
+    #: DEC-405: the verify's restore write failed; the header was left at the
+    #: test duty.
+    restore_failed: bool = False
 
 
 @dataclass

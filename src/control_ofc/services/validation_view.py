@@ -55,7 +55,9 @@ from ..api.models import (
     ValidationEvidence,
     ValidationFinding,
     ValidationSession,
+    ValidationVerifyEvidence,
 )
+from .verify_view import outcome_for
 
 #: Shown wherever a value is genuinely unknown. Never substitute 0 or "None".
 UNKNOWN_TEXT = "—"
@@ -301,12 +303,36 @@ def build_finding_row(
     )
 
 
+def verify_evidence_detail(v: ValidationVerifyEvidence, fallback: str) -> str:
+    """What a session's verify actually found, in words (DEC-405, `PTR-e`).
+
+    The ``result`` token is rendered through the one verify vocabulary
+    (``verify_view.outcome_for``), so a session and the Hardware page cannot
+    word the same result two ways; an unrecognised token renders verbatim
+    (273-i). Readings are shown only where the daemon supplied them — a daemon
+    before 2.52.0 supplied none, and its detail stays exactly what it was.
+    """
+    if v.result is None:
+        return fallback
+    parts = [outcome_for(v.result).summary]
+    if v.rpm_before is not None or v.rpm_after is not None:
+        parts.append(f"{_fmt_rpm(v.rpm_before)} → {_fmt_rpm(v.rpm_after)}")
+    if v.requested_pct is not None or v.readback_pct is not None:
+        parts.append(f"tested at {_fmt_pct(v.requested_pct)}, read back {_fmt_pct(v.readback_pct)}")
+    if v.restore_failed:
+        parts.append("the restore write failed, so the header was left at the test duty")
+    return "; ".join(parts)
+
+
 def build_evidence_row(
     ev: ValidationEvidence,
     *,
     display_name: Callable[[str], str] | None = None,
 ) -> EvidenceRow:
     label = display_name(ev.member_id) if display_name else ev.member_id
+    detail = ev.detail or ""
+    if ev.verify is not None:
+        detail = verify_evidence_detail(ev.verify, detail)
     return EvidenceRow(
         kind=ev.kind,
         label=evidence_label(ev.kind),
@@ -314,7 +340,7 @@ def build_evidence_row(
         outcome=ev.outcome,
         outcome_label=result_label(ev.outcome),
         tone=result_tone(ev.outcome),
-        detail=ev.detail or "",
+        detail=detail,
         run_id=ev.run_id or "",
     )
 

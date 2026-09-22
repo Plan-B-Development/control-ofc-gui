@@ -124,7 +124,11 @@ Two things worth knowing about how it words results:
 
 - **Timings are reported at the resolution they were measured at.** The daemon reads the
   tachometer twice a second, so it says "~1.5 s", never "1,483 ms". A more precise-looking
-  number would be invented.
+  number would be invented. Many motherboard chips update the reading only every couple of
+  seconds, and since daemon 2.52.0 the resolution shown is that update rate. Settling time
+  and RPM stability are measured on those updates, after the fan has settled. A step that is
+  still changing when its time runs out shows **Not settled**. That means there is no
+  steady reading to report yet, not that something is wrong.
 - **Reported RPM is what the motherboard says, not necessarily what the pump is doing.**
   Where a validated cooler definition supplies a correction, both figures are shown with the
   source of the correction. No cooler ships with one yet, so today you will always see the
