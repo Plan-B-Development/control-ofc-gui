@@ -4,6 +4,12 @@
 
 ## [2.82.0] — 2026-09-22
 
+This release also carries **2.81.0**, which was never published on its own —
+its changes (DEC-408: the PWM Test Report, and a card when a fan's duty stops
+holding) are listed under
+[2.81.0](https://github.com/Plan-B-Development/control-ofc-gui/blob/v2.82.0/CHANGELOG.md#2810--2026-09-22)
+below.
+
 ### Added
 
 **PWM Test Report: saved reports, exports and comparing two runs** (DEC-404,

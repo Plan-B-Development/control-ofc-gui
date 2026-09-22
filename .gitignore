@@ -77,3 +77,8 @@ gui-redesign/
 # Workflow/efficiency audit reports produced by this repo's own analysis passes.
 # Same rationale as AUDIT_*.md above — internal-only, never shipped in a release tarball.
 *Audit.md
+
+# Local working area for future development — never tracked. Anchored to the repo root
+# for the same reason as the probe patterns above: an unanchored `working/` would also
+# swallow any directory of that name deeper in the tree.
+/working/
