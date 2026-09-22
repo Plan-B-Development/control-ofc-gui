@@ -124,8 +124,19 @@ class PwmReportController(QObject):
     def runner(self) -> ReportRunner | None:
         return self._runner
 
+    @property
+    def directory(self) -> Path | None:
+        """The reports folder this controller saves to (``None`` = the default)."""
+        return self._directory
+
     def is_running(self) -> bool:
         return self._runner is not None and not self._runner.finished
+
+    def running_report_id(self) -> str:
+        """The id of the report a run is writing right now, else ``""``."""
+        if not self.is_running() or self._runner is None:
+            return ""
+        return str(self._runner.doc.get("report_id") or "")
 
     def document(self) -> dict | None:
         return self._runner.doc if self._runner is not None else None

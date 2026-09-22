@@ -375,3 +375,101 @@ def runner_for(
 ) -> ReportRunner:
     doc = new_doc(channels, facts=facts)
     return ReportRunner(doc, build_plan(selection), probe_consent=consent)
+
+
+# ── Stage 5: a finished report with every kind of evidence ──────────────────
+
+
+def _step(cid: str, test: str, result: dict | None, *, status: str = d.STEP_COMPLETE) -> dict:
+    return {
+        "step_id": f"{test}:{cid}",
+        "channel_id": cid,
+        "test": test,
+        "diagnostic": test,
+        "status": status,
+        "reason": "",
+        "started_at": "2026-09-22T00:00:05Z" if status != d.STEP_NOT_TESTED else None,
+        "ended_at": "2026-09-22T00:05:00Z",
+        "request": {"bidirectional": True} if test == "sweep" else {},
+        "preflight": None,
+        "preflight_note": "",
+        "start_response": None,
+        "result": result,
+        "run_state": "complete",
+        "restore_outcome": "restored",
+        "error": None,
+    }
+
+
+def trace_block(fan_ids: list[str], samples: int, *, cpu_ids: tuple[str, ...] = ("cpu0",)) -> dict:
+    return {
+        "interval_ms": 1000,
+        "source": "the app's own 1 Hz poll",
+        "max_samples": 10800,
+        "samples": samples,
+        "truncated": False,
+        "truncated_at_ms": None,
+        "t_ms": [i * 1000 for i in range(samples)],
+        "thermal_state": ["normal"] * samples,
+        "fans": {
+            fid: {
+                "rpm": [900 + (i % 7) for i in range(samples)],
+                "pwm_readback_pct": [40] * samples,
+                "pwm_commanded_pct": [40] * samples,
+                "pwm_enable_mode": [1] * samples,
+            }
+            for fid in fan_ids
+        },
+        "temps_c": {sid: [45.0 + (i % 3) for i in range(samples)] for sid in cpu_ids},
+    }
+
+
+def complete_doc(
+    *,
+    report_id: str = "20260922T000000Z-abcdef",
+    started_at: str = "2026-09-22T00:00:00Z",
+    channels: list[dict] | None = None,
+    sweep: dict | None = None,
+    probe: dict | None = None,
+    cpu_temp: float = 45.0,
+    thermal_state: str = "normal",
+    samples: int = 30,
+) -> dict:
+    """A finished report: verify + sweep on CPU, the probe on SYS, a trace, and a
+    baseline snapshot that carries a CPU temperature sensor."""
+    chans = channels or [
+        channel(CPU, in_profile=True),
+        channel(SYS),
+        channel(OPENFAN, source="openfan"),
+    ]
+    doc = d.new_document(
+        report_id=report_id,
+        created_at=started_at,
+        gui_facts={"gui_version": "2.82.0", "kernel": "6.18.2", "python": "3.14", "qt": "6.11"},
+        channels=chans,
+        user_facts={"cooler": {"model": "NL-LC1-36"}, "headers": {}},
+        plan={"selections": {CPU: ["sweep", "verify"], SYS: ["probe"]}, "unavailable": {}},
+    )
+    baseline = bundle(fans=[fan(CPU), fan(SYS)], headers=[header(CPU), header(SYS)])
+    baseline["sensors"]["body"] = {
+        "sensors": [
+            {"id": "cpu0", "kind": "cpu_temp", "label": "Tctl", "value_c": cpu_temp},
+            {"id": "nvme0", "kind": "disk_temp", "label": "NVMe", "value_c": 60.0},
+        ]
+    }
+    doc["snapshots"] = {"baseline": baseline, "final": baseline}
+    doc["environment"] = d.extract_environment(baseline, doc["environment"]["gui"])
+    doc["configuration"] = d.extract_configuration(baseline)
+    doc["configuration"]["thermal_state"] = thermal_state
+    doc["steps"] = [
+        _step(CPU, "verify", verify_body()),
+        _step(CPU, "sweep", sweep if sweep is not None else sweep_run()),
+        _step(SYS, "probe", probe if probe is not None else probe_run()),
+    ]
+    doc["trace"] = trace_block([CPU, SYS], samples)
+    doc["state"] = d.STATE_COMPLETE
+    doc["finished_at"] = "2026-09-22T00:10:00Z"
+    from control_ofc.services.pwm_report.findings import derive_findings
+
+    doc["findings"], doc["actions"] = derive_findings(doc)
+    return doc

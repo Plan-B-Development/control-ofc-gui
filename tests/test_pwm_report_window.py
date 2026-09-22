@@ -38,6 +38,7 @@ from control_ofc.services.pwm_report.runner import (
 )
 from control_ofc.ui.pages.pwm_report_controller import PwmReportController
 from control_ofc.ui.widgets.pwm_report_window import (
+    PAGE_HISTORY,
     PAGE_REPORT,
     PAGE_REVIEW,
     PAGE_RUN,
@@ -200,6 +201,9 @@ def rig(qtbot, tmp_path, settings_service, monkeypatch):
     )
     window = PwmReportWindow(controller, state, settings_service)
     qtbot.addWidget(window)
+    # S5-1: the window opens on the Reports page; a new report starts from there.
+    assert window.current_page() == PAGE_HISTORY
+    _btn(window, "PwmReport_Btn_new").click()
     yield window, controller, state, daemon, clock, settings_service
     controller.shutdown()
 
@@ -255,6 +259,7 @@ def test_the_probe_offer_follows_the_wire_field(qtbot, tmp_path, settings_servic
         controller = PwmReportController(state, "/tmp/fake.sock", directory=tmp_path / "r")
         window = PwmReportWindow(controller, state, settings_service)
         qtbot.addWidget(window)
+        _btn(window, "PwmReport_Btn_new").click()
         box = _box(window, "probe", SYS)
         assert box.isEnabled() is state.capabilities.control.stall_probe
         if not flag:

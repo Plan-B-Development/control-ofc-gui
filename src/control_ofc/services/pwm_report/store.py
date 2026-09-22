@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from control_ofc.paths import atomic_write, load_json_capped, reports_dir
@@ -57,6 +58,16 @@ def save_report(doc: dict, directory: Path | None = None) -> Path:
     return path
 
 
+def _read(path: Path) -> dict:
+    """Read and schema-check one report file. A document nested too deeply for
+    the JSON parser is a malformed file (``ValueError``), not a crash."""
+    try:
+        raw = load_json_capped(path, max_bytes=REPORT_MAX_BYTES)
+    except RecursionError as exc:
+        raise ValueError("nested too deeply to be a report") from exc
+    return d.validate_document(raw)
+
+
 def load_report(path: Path) -> tuple[dict, bool]:
     """Load, validate and (if it was cut off) repair a report.
 
@@ -65,7 +76,7 @@ def load_report(path: Path) -> tuple[dict, bool]:
     :class:`~control_ofc.services.pwm_report.document.ReportSchemaError` (a
     ``ValueError``) for one that is not a report this build can read.
     """
-    doc = d.validate_document(load_json_capped(path, max_bytes=REPORT_MAX_BYTES))
+    doc = _read(path)
     if doc.get("state") != d.STATE_IN_PROGRESS:
         return doc, False
     mark_cut_off(doc)
@@ -144,3 +155,104 @@ def recover_cut_off_reports(directory: Path | None = None) -> list[Path]:
         except (OSError, ValueError) as exc:
             log.warning("Could not save repaired PWM test report %s: %s", path, exc)
     return repaired
+
+
+# ── History (DEC-404 Stage 5) ─────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class HistoryEntry:
+    """One row of the history list. ``error`` is set for a file in the reports
+    folder that could not be read — it is listed, not hidden, so the user can
+    see it and delete it."""
+
+    path: Path
+    report_id: str
+    started_at: str
+    machine: str
+    tests: str
+    state: str
+    error: str = ""
+
+
+def tests_summary(doc: dict) -> str:
+    """ "3 of 4 tests completed on 2 headers", or "Read-only snapshot"."""
+    steps = [s for s in doc.get("steps") or [] if isinstance(s, dict)]
+    if not steps:
+        return "Read-only snapshot"
+    done = sum(1 for s in steps if s.get("status") == d.STEP_COMPLETE)
+    headers = len({s.get("channel_id") for s in steps})
+    return f"{done} of {len(steps)} test(s) completed on {headers} header(s)"
+
+
+def history_entry(path: Path, doc: dict) -> HistoryEntry:
+    return HistoryEntry(
+        path=path,
+        report_id=str(doc.get("report_id") or ""),
+        started_at=str(doc.get("started_at") or ""),
+        machine=d.machine_summary(doc),
+        tests=tests_summary(doc),
+        state=str(doc.get("state") or ""),
+    )
+
+
+#: ``path → ((st_ino, st_mtime_ns, st_size), entry)`` for files already listed
+#: this session. Reports are never pruned automatically (D-b) and the Reports
+#: page is where the window opens, so re-parsing every file on every visit would
+#: grow without bound; an unchanged file costs one ``stat`` instead.
+_LIST_CACHE: dict[Path, tuple[tuple[int, int, int], HistoryEntry]] = {}
+
+
+def list_reports(directory: Path | None = None) -> list[HistoryEntry]:
+    """Every saved report, newest first. Never raises.
+
+    Each new or changed file is read in full under :data:`REPORT_MAX_BYTES` and
+    checked with :func:`~control_ofc.services.pwm_report.document.validate_document`
+    — the list shows only what the renderer could open; an unchanged one comes
+    from :data:`_LIST_CACHE`. A report still ``in_progress`` is listed as such
+    (it is the run in flight, or one recovery could not repair); nothing here
+    rewrites a file.
+    """
+    folder = directory or reports_dir()
+    try:
+        paths = sorted(folder.glob(f"{_FILE_PREFIX}*.json"))
+    except OSError:
+        return []
+    entries: list[HistoryEntry] = []
+    for path in paths:
+        try:
+            st = path.stat()
+            key = (st.st_ino, st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = None
+        cached = _LIST_CACHE.get(path)
+        if key is not None and cached is not None and cached[0] == key:
+            entries.append(cached[1])
+            continue
+        try:
+            entry = history_entry(path, _read(path))
+        except (OSError, ValueError) as exc:
+            entry = HistoryEntry(path, path.stem, "", "", "", "", error=str(exc) or "unreadable")
+        if key is not None:
+            _LIST_CACHE[path] = (key, entry)
+        entries.append(entry)
+    entries.sort(key=lambda e: (e.started_at, e.report_id), reverse=True)
+    return entries
+
+
+def delete_report(path: Path, directory: Path | None = None) -> None:
+    """Delete one saved report (D-b: only ever on the user's request).
+
+    Refuses anything that is not a report file directly inside the reports
+    folder, so a path handed in from elsewhere can never delete another file.
+    """
+    folder = (directory or reports_dir()).resolve()
+    # The parent is resolved, the name is not: a symlink inside the folder is
+    # removed as a link, and never followed to whatever it points at.
+    if (
+        path.parent.resolve() != folder
+        or not path.name.startswith(_FILE_PREFIX)
+        or path.suffix != ".json"
+    ):
+        raise ValueError(f"not a saved report: {path}")
+    path.unlink()

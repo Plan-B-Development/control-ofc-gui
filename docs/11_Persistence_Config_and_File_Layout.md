@@ -92,12 +92,17 @@ live in the XDG **data** tier, not config or cache:
 - **Written with `atomic_write` after every step** of a run, so a crash loses at most the step
   in flight; a file left `"state": "in_progress"` is repaired to `interrupted` (findings
   re-derived) the next time the report window opens.
-- **Never deleted automatically** (D-b). Stage 5 adds a history list with Delete.
+- **Never deleted automatically** (D-b). The Reports page (DEC-409) lists them and deletes one
+  only on request, after a confirmation, and only a `pwm-report-*.json` directly inside this
+  folder (a symlink there is removed as a link, never followed).
 - **Reopened with the report's own 16 MiB cap** (`store.REPORT_MAX_BYTES`), not the shared 4 MiB
   import cap (`paths.MAX_IMPORT_BYTES`): the 1 Hz trace of every fan and sensor measured ~1.5 MB
   an hour on a 19-fan / 24-sensor machine and is capped at three hours. The read stays bounded,
   so a crafted file still cannot exhaust memory. `NaN`/`Infinity` are refused at save and load.
-- **Export JSON…** writes a byte-identical copy to a user-chosen path.
+- **Export** (DEC-409) writes JSON (byte-identical), Markdown or HTML to a user-chosen file, or
+  up to three CSV files to a user-chosen folder, each with `atomic_write` (file mode 0600).
+- **Open a report file…** reads a report from anywhere with the same limit and schema check and
+  **never writes it into this folder**.
 
 ### "Your setup" facts (DEC-404 decision 7)
 

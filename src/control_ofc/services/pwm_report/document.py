@@ -259,6 +259,15 @@ def extract_configuration(snapshot: object) -> dict:
     }
 
 
+def machine_summary(doc: Mapping) -> str:
+    """ "Vendor Board" from the report's own environment, for lists and headings."""
+    env = doc.get("environment")
+    board = env.get("board") if isinstance(env, Mapping) else None
+    board = board if isinstance(board, Mapping) else {}
+    name = " ".join(str(v) for v in (board.get("vendor"), board.get("name")) if v)
+    return name or "unknown board"
+
+
 # ── Loading ───────────────────────────────────────────────────────────────────
 
 
@@ -266,11 +275,57 @@ class ReportSchemaError(ValueError):
     """A file that is not a PWM Test Report this build can read."""
 
 
+#: Upper bounds on a report's lists (DEC-409). A real report is far inside them
+#: — a channel per fan the daemon reports, at most four tests per header — but a
+#: file from elsewhere is untrusted, and every renderer and export walks these
+#: lists, so their length must be bounded before anything reads them.
+MAX_CHANNELS = 1024
+MAX_STEPS = 4 * MAX_CHANNELS
+MAX_FINDINGS = 64 * MAX_CHANNELS
+
+
+def _validate_trace(trace: object) -> None:
+    """The trace's shape: at most ``trace.MAX_SAMPLES`` samples, and every
+    series exactly as long as ``t_ms`` — which the recorder guarantees, and which
+    makes an export's size proportional to the file rather than to samples x
+    series."""
+    from control_ofc.services.pwm_report.trace import FAN_SERIES, MAX_SAMPLES
+
+    if trace is None:
+        return
+    if not isinstance(trace, dict):
+        raise ReportSchemaError("'trace' is malformed")
+    t_ms = trace.get("t_ms")
+    if not isinstance(t_ms, list) or len(t_ms) > MAX_SAMPLES:
+        raise ReportSchemaError("'trace.t_ms' is missing, malformed or too long")
+    n = len(t_ms)
+    thermal = trace.get("thermal_state")
+    if not isinstance(thermal, list) or len(thermal) != n:
+        raise ReportSchemaError("'trace.thermal_state' does not match 't_ms'")
+    fans, temps = trace.get("fans"), trace.get("temps_c")
+    if not isinstance(fans, dict) or not isinstance(temps, dict):
+        raise ReportSchemaError("'trace' fans or temperatures are malformed")
+    if len(fans) > MAX_CHANNELS or len(temps) > MAX_CHANNELS:
+        raise ReportSchemaError("'trace' lists more channels than a report can hold")
+    for series in fans.values():
+        if not isinstance(series, dict):
+            raise ReportSchemaError("'trace.fans' holds an entry that is not an object")
+        for name in FAN_SERIES:
+            if name in series and (not isinstance(series[name], list) or len(series[name]) != n):
+                raise ReportSchemaError(f"'trace.fans' series '{name}' does not match 't_ms'")
+    for values in temps.values():
+        if not isinstance(values, list) or len(values) != n:
+            raise ReportSchemaError("'trace.temps_c' holds a series that does not match 't_ms'")
+
+
 def validate_document(doc: object) -> dict:
     """Check the shape of a loaded report. Raises :class:`ReportSchemaError`.
 
     Deliberately shallow: it guards what the renderer dereferences, not every
-    leaf. The evidence inside is the daemon's own and is rendered as data.
+    leaf. The evidence inside is the daemon's own and is rendered as data. What
+    it does bound is size (DEC-409): the lists every renderer walks, and the
+    trace an export expands into rows, so a file from elsewhere cannot turn a
+    16 MiB read into an unbounded amount of work.
     """
     if not isinstance(doc, dict):
         raise ReportSchemaError("not a JSON object")
@@ -297,6 +352,19 @@ def validate_document(doc: object) -> dict:
         if not isinstance(doc.get(key), kind):
             raise ReportSchemaError(f"'{key}' is missing or malformed")
     for key in ("channels", "steps", "findings"):
-        if not isinstance(doc.get(key), list):
+        items = doc.get(key)
+        if not isinstance(items, list):
             raise ReportSchemaError(f"'{key}' is missing or malformed")
+        # Every renderer reads these entries with `.get`; a file from elsewhere
+        # (DEC-409) must not reach them holding anything but objects.
+        if not all(isinstance(item, dict) for item in items):
+            raise ReportSchemaError(f"'{key}' holds an entry that is not an object")
+    for key, limit in (
+        ("channels", MAX_CHANNELS),
+        ("steps", MAX_STEPS),
+        ("findings", MAX_FINDINGS),
+    ):
+        if len(doc[key]) > limit:
+            raise ReportSchemaError(f"'{key}' has more entries than a report can hold")
+    _validate_trace(doc.get("trace"))
     return doc

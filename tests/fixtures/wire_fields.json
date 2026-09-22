@@ -874,6 +874,7 @@
         "samples",
         "usable",
         "mean_rpm",
+        "median_rpm",
         "min_rpm",
         "max_rpm",
         "stddev_rpm",
@@ -885,10 +886,9 @@
       ],
       "inert": {
         "dropouts": "only a key in the provenance table; CharSummary.total_dropouts is the figure the UI actually renders (AU-d)",
-        "outliers": "only a key in the provenance table; CharSummary.total_outliers is the figure the UI actually renders (AU-d)",
-        "median_rpm": "parsed and never read; adjudicated in register row P8-bz"
+        "outliers": "only a key in the provenance table; CharSummary.total_outliers is the figure the UI actually renders (AU-d)"
       },
-      "note": "DEC-334 \u00a75. `usable` against `samples` is the absence-is-not-zero pair: a step that sampled nothing must not read as a clean tach. `median_rpm` and `dwell_ms` are parsed and NOT read \u2014 recorded in P8-bz.",
+      "note": "DEC-334 \u00a75. `usable` against `samples` is the absence-is-not-zero pair: a step that sampled nothing must not read as a clean tach. `median_rpm` is read by the PWM Test Report's comparison as each sweep point's settled value (DEC-409); `dwell_ms` is parsed and NOT read \u2014 recorded in P8-bz.",
       "not_assertable": {
         "dwell_ms": "Shared with StallProbeRun (DEC-404 Stage 4), whose dwell_ms the PWM Test Report reads for the probe's timing facts, so a name-based check cannot tell whose read it sees (DEC-405's shared-name rule); no read claim is made. PointStability's own copy is still parsed and never read (register row P8-bz)."
       }

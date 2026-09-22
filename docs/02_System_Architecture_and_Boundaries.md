@@ -222,8 +222,15 @@ control_ofc/
       exposure.py              #   the lowest duty the profile can command, derived in
                                #   the daemon's tuning order
       trace.py                 #   1 Hz column-wise trace from the app's poll, 3 h cap
-      store.py                 #   save/load (own 16 MiB cap), crash repair
+      store.py                 #   save/load (own 16 MiB cap), crash repair, history
+                               #   list + guarded delete (DEC-409)
       view.py                  #   the in-app report VM
+      compare.py               #   two reports compared: id pairing, renames never
+                               #   matched, five categories, no verdict (DEC-409)
+      export_markdown.py       #   Markdown export (report + comparison), escaped
+      export_html.py           #   self-contained HTML export, token-coloured, no script
+      export_csv.py            #   sweep / probe / trace CSV tables
+      svg_chart.py             #   inline SVG charts for the HTML export
       setup_facts.py           #   "Your setup" vocabulary + settings coercion
   knowledge/                   # pure (stdlib-only) hardware-knowledge modules — no Qt/services deps (moved out of ui/ in v2.8.0)
     sensor_knowledge.py        # sensor classification + board-override database
@@ -327,9 +334,13 @@ control_ofc/
       pwm_header_card.py       # One PWM header, thin renderer — DEC-318
       validation_session_dialog.py  # Validation AND lifecycle sessions — DEC-318;
                                #   one dialog, one engine, a `kind` discriminator
-      pwm_report_window.py     # The PWM Test Report window — DEC-408. Scope → Your setup →
-                               #   Review & consent → Run → Report; non-modal, single
-                               #   instance, hidden (not destroyed) on close
+      pwm_report_window.py     # The PWM Test Report window — DEC-408/409. Reports →
+                               #   Scope → Your setup → Review & consent → Run → Report,
+                               #   plus Compare; non-modal, single instance, hidden (not
+                               #   destroyed) on close
+      pwm_report_history.py    # Its Reports page — DEC-409
+      pwm_report_compare.py    # Its comparison page — DEC-409
+      pwm_report_export.py     # Export menus + file/folder dialogs — DEC-409
       flow_layout.py          # Qt FlowLayout — responsive card wrapping
       draggable_flow.py       # DraggableFlowContainer — drag-to-reorder
       reorderable_flow.py     # ReorderableFlow — shared drag/reorder base (DEC-187)

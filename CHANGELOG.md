@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+## [2.82.0] — 2026-09-22
+
+### Added
+
+**PWM Test Report: saved reports, exports and comparing two runs** (DEC-404,
+DEC-409).
+
+- **Reports list.** The PWM Test Report window now opens on a list of every report
+  this computer has saved, newest first, showing when each ran, the board, how many
+  tests completed and how it ended. From there you can open a report, export it,
+  delete it (it asks first; nothing is ever deleted automatically), start a new
+  one, or compare two. A file in the reports folder that cannot be read is listed
+  as "Unreadable" so you can see it and delete it.
+- **Open a report file…** shows a report from somewhere else, such as another
+  machine or a copy someone sent you. It is shown and can be compared, but it is
+  never copied into your reports folder. A file that is damaged, too large, or was
+  not written by Control-OFC is refused with a message.
+- **Export** is now a menu with four formats:
+  - **JSON**: the full record, as before.
+  - **Markdown**, written for a GitHub issue. A long report says to attach the file
+    rather than paste it.
+  - **HTML**: one self-contained file with charts. Each sweep and stall probe is
+    drawn to scale. Each tested header gets a chart of its RPM and duty over the
+    whole run, and one more shows the hottest CPU temperature with any time the
+    daemon's thermal protection was active shaded. The page follows your system's
+    light or dark setting, loads nothing from the internet, runs no scripts, and
+    keeps the daemon's raw answers in a collapsed section at the end.
+  - **CSV**: you pick a folder and it writes up to three files: the sweep points,
+    the stall-probe steps, and the once-a-second trace of every fan and sensor. A
+    value the daemon did not report is an empty cell, never 0.
+- **Compare** puts two reports side by side, earlier first. Channels are matched
+  only by their stable id. A header whose label changed is listed as "possibly
+  renamed" but never matched, so no measurement is attributed to the wrong header.
+  Each difference is grouped as hardware and wiring, environment, configuration,
+  measured response, or not comparable. A test counts as not comparable when its
+  settings differ, when it ran or finished in only one report, or when the thermal
+  state at the start differed. Measured differences are shown as numbers beside the
+  spread each run recorded. Nothing is labelled significant, and there is no overall
+  verdict. The starting CPU temperature of each run is shown with the difference,
+  but it is never used to rule a result out. A comparison can be exported as
+  Markdown or HTML.
+
+### Changed
+
+- A report opened from the list or from a file no longer offers **Re-apply
+  profile**. That button acts on the machine as it is now, while a reopened report
+  describes it as it was then. The report says so and suggests running a new one.
+  The report that has just finished in the window still offers it.
+
 ## [2.81.0] — 2026-09-22
 
 ### Added

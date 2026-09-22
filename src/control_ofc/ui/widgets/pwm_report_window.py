@@ -1,5 +1,5 @@
-"""The PWM Test Report window (DEC-404): Scope → Your setup → Review & consent →
-Run → Report.
+"""The PWM Test Report window (DEC-404): Reports → Scope → Your setup → Review &
+consent → Run → Report, plus the comparison page.
 
 A thin renderer. What may be tested, what is pre-selected, what a run records
 and what the report may claim are all decided in the Qt-free
@@ -11,6 +11,12 @@ Non-modal and single-instance (DEC-404 decision 10). Closing it **hides** it:
 the window keeps its pages, and reopening shows the run in progress or the last
 report. Closing it mid-run asks first, then cancels the run — the controller
 sees the cancel through and saves the report.
+
+Stage 5 (S5-1): the window opens on the **Reports** page — the history list —
+unless a run is in progress or has just finished. A report opened from the list
+or from a file is shown **without** "Re-apply profile" (S5-7): that button acts
+on the machine now, and a reopened report's evidence is from then. Exports go
+through one Export drop-down menu (S5-9).
 
 Consent (S4-2): Start stays disabled until the general consent is ticked
 whenever any selected test writes to a header, and until each selected stall
@@ -29,7 +35,6 @@ from PySide6.QtCore import Qt, qVersion
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -48,18 +53,17 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.models import ConnectionState, OperationMode
 from control_ofc.constants import APP_VERSION
-from control_ofc.paths import atomic_write, export_default_dir
 from control_ofc.services.diagnostic_estimates import duration_words
 from control_ofc.services.pwm_report import catalog as cat
 from control_ofc.services.pwm_report import document as d
 from control_ofc.services.pwm_report import setup_facts as sf
+from control_ofc.services.pwm_report.compare import compare_reports
 from control_ofc.services.pwm_report.runner import (
     HANDBACK_WAIT_S,
     REASON_WINDOW_CLOSED,
     build_plan,
     start_refusals,
 )
-from control_ofc.services.pwm_report.store import serialise
 from control_ofc.services.pwm_report.view import (
     PROBE_COLUMNS,
     FindingRow,
@@ -75,6 +79,15 @@ from control_ofc.ui.components.cards import SectionHeader
 from control_ofc.ui.components.dialog import ModalDialog
 from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
+from control_ofc.ui.widgets.pwm_report_compare import PwmReportComparePage
+from control_ofc.ui.widgets.pwm_report_export import (
+    COMPARISON_FORMATS,
+    REPORT_FORMATS,
+    attach_export_menu,
+    export_comparison,
+    export_report,
+)
+from control_ofc.ui.widgets.pwm_report_history import PwmReportHistoryPage
 from control_ofc.ui.widgets.pwm_response_chart import PwmResponseChart
 
 if TYPE_CHECKING:
@@ -82,7 +95,19 @@ if TYPE_CHECKING:
     from control_ofc.services.app_state import AppState
     from control_ofc.ui.pages.pwm_report_controller import PwmReportController
 
-PAGE_SCOPE, PAGE_SETUP, PAGE_REVIEW, PAGE_RUN, PAGE_REPORT = range(5)
+PAGE_SCOPE, PAGE_SETUP, PAGE_REVIEW, PAGE_RUN, PAGE_REPORT, PAGE_HISTORY, PAGE_COMPARE = range(7)
+
+#: How the report on the Report page got there (S5-7). Only a ``live`` one — the
+#: run that just finished in this window — may offer "Re-apply profile".
+CONTEXT_LIVE = "live"
+CONTEXT_SAVED = "saved"
+CONTEXT_FILE = "file"
+
+REOPENED_REAPPLY_NOTE = (
+    "When this report ran, a header had not been put back as it was found, and the "
+    "report offered to re-apply the profile. That was the state then — run a new "
+    "report to check the machine now."
+)
 
 _SCOPE_FIXED_COLS = ("Channel", "Role", "Writable", "Fan detected", "In profile")
 
@@ -145,6 +170,8 @@ class PwmReportWindow(ModalDialog):
         self._probe_consents: dict[str, QCheckBox] = {}
         self._setup_widgets: dict[str, tuple[QComboBox, QComboBox, QComboBox, QLineEdit]] = {}
         self._report_doc: dict | None = None
+        self._report_context = CONTEXT_LIVE
+        self._report_path = None
         self._evidence_filled = False
         self._reapply_btn: QPushButton | None = None
         self._reapply_msg: QLabel | None = None
@@ -157,6 +184,15 @@ class PwmReportWindow(ModalDialog):
         self._stack.addWidget(self._build_review_page())
         self._stack.addWidget(self._build_run_page())
         self._stack.addWidget(self._build_report_page())
+        self._history = PwmReportHistoryPage(
+            directory=controller.directory, running_report_id=controller.running_report_id
+        )
+        self._history.open_requested.connect(self._open_report)
+        self._history.compare_requested.connect(self._show_comparison)
+        self._history.export_requested.connect(self._export_other)
+        self._stack.addWidget(self._history)
+        self._compare_page = PwmReportComparePage()
+        self._stack.addWidget(self._compare_page)
 
         self._back_btn = self.add_footer_button("Back", object_name="PwmReport_Btn_back")
         self._next_btn = self.add_footer_button("Next", "primary", object_name="PwmReport_Btn_next")
@@ -166,8 +202,21 @@ class PwmReportWindow(ModalDialog):
         self._cancel_btn = self.add_footer_button(
             "Cancel run", "danger", object_name="PwmReport_Btn_cancel"
         )
-        self._export_btn = self.add_footer_button(
-            "Export JSON…", object_name="PwmReport_Btn_export"
+        self._export_btn = self.add_footer_button("Export", object_name="PwmReport_Btn_export")
+        attach_export_menu(
+            self._export_btn, REPORT_FORMATS, self._export_current, "PwmReport_Action_export"
+        )
+        self._export_cmp_btn = self.add_footer_button(
+            "Export comparison", object_name="PwmReport_Btn_exportCompare"
+        )
+        attach_export_menu(
+            self._export_cmp_btn,
+            COMPARISON_FORMATS,
+            self._export_comparison,
+            "PwmReport_Action_exportCompare",
+        )
+        self._history_btn = self.add_footer_button(
+            "All reports", object_name="PwmReport_Btn_history"
         )
         self._new_btn = self.add_footer_button("New report", object_name="PwmReport_Btn_new")
         self._close_btn = self.add_footer_button(
@@ -177,7 +226,7 @@ class PwmReportWindow(ModalDialog):
         self._next_btn.clicked.connect(self._go_next)
         self._start_btn.clicked.connect(self._start_run)
         self._cancel_btn.clicked.connect(self._cancel_run)
-        self._export_btn.clicked.connect(self._export_json)
+        self._history_btn.clicked.connect(self.show_history)
         self._new_btn.clicked.connect(self._new_report)
         self._close_btn.clicked.connect(self.close)
 
@@ -197,7 +246,7 @@ class PwmReportWindow(ModalDialog):
         elif controller.document() is not None:
             self._on_run_finished(controller.document())
         else:
-            self._new_report()
+            self.show_history()
 
     # ── Page: Scope ─────────────────────────────────────────────────────────
 
@@ -678,8 +727,10 @@ class PwmReportWindow(ModalDialog):
         self._report_layout.setSpacing(10)
         return page
 
-    def _render_report(self, doc: dict) -> None:
+    def _render_report(self, doc: dict, *, context: str = CONTEXT_LIVE, path=None) -> None:
         self._report_doc = doc
+        self._report_context = context
+        self._report_path = path
         self._evidence_filled = False
         # The previous report's widgets are being deleted below; a late
         # "re-apply done" must not reach through a stale reference to them.
@@ -703,9 +754,15 @@ class PwmReportWindow(ModalDialog):
             layout.addWidget(_plain(line, f"PwmReport_Label_summary_{i}"))
         if vm.trace_note:
             layout.addWidget(_plain(vm.trace_note, "PwmReport_Label_traceNote", meta=True))
-        path = self._controller.last_path
-        if path is not None:
-            layout.addWidget(_plain(f"Saved to {path}", "PwmReport_Label_savedPath", meta=True))
+        if context == CONTEXT_LIVE:
+            saved = self._controller.last_path
+            where = f"Saved to {saved}" if saved is not None else ""
+        elif context == CONTEXT_SAVED:
+            where = f"Saved report, opened from {path}"
+        else:
+            where = f"Opened from {path} — shown only; it is not saved on this computer."
+        if where:
+            layout.addWidget(_plain(where, "PwmReport_Label_savedPath", meta=True))
 
         self._add_findings(layout, "Needs attention", "attention", vm.attention, expanded=True)
         self._add_findings(layout, "Observations", "observations", vm.observations, expanded=True)
@@ -775,7 +832,11 @@ class PwmReportWindow(ModalDialog):
             section.add_widget(
                 self._finding_widget(row, f"PwmReport_Finding_restoration_{row.finding_id}")
             )
-        if vm.can_reapply:
+        if vm.can_reapply and self._report_context != CONTEXT_LIVE:
+            section.add_widget(
+                _plain(REOPENED_REAPPLY_NOTE, "PwmReport_Label_reapplyReopened", meta=True)
+            )
+        elif vm.can_reapply:
             self._reapply_btn = make_button(
                 "Re-apply profile",
                 "primary",
@@ -874,7 +935,11 @@ class PwmReportWindow(ModalDialog):
         self._start_btn.setVisible(index == PAGE_REVIEW)
         self._cancel_btn.setVisible(index == PAGE_RUN and running)
         self._export_btn.setVisible(index == PAGE_REPORT)
-        self._new_btn.setVisible(index == PAGE_REPORT and not running)
+        self._export_cmp_btn.setVisible(index == PAGE_COMPARE)
+        self._history_btn.setVisible(
+            index in (PAGE_SCOPE, PAGE_REPORT, PAGE_COMPARE) and not running
+        )
+        self._new_btn.setVisible(index in (PAGE_REPORT, PAGE_HISTORY) and not running)
         if index == PAGE_REVIEW:
             self._refresh_start()
 
@@ -976,30 +1041,72 @@ class PwmReportWindow(ModalDialog):
 
     def _on_run_finished(self, doc: object) -> None:
         if isinstance(doc, dict):
-            self._render_report(doc)
+            self._render_report(doc, context=CONTEXT_LIVE)
             self._show_page(PAGE_REPORT)
+
+    # ── History and comparison (Stage 5) ────────────────────────────────────
+
+    @property
+    def history_page(self) -> PwmReportHistoryPage:
+        return self._history
+
+    @property
+    def compare_page(self) -> PwmReportComparePage:
+        return self._compare_page
+
+    def show_history(self) -> None:
+        if self._controller.is_running():
+            return
+        self._history.refresh()
+        self._show_page(PAGE_HISTORY)
+
+    def _open_report(self, doc: object, path: object, imported: bool) -> None:
+        if not isinstance(doc, dict) or self._controller.is_running():
+            return
+        try:
+            self._render_report(doc, context=CONTEXT_FILE if imported else CONTEXT_SAVED, path=path)
+        except Exception as e:  # a file from elsewhere is untrusted beyond its schema
+            self._report_doc = None
+            self._damaged(path, e)
+            return
+        self._show_page(PAGE_REPORT)
+
+    def _show_comparison(self, first: object, second: object) -> None:
+        if not (isinstance(first, dict) and isinstance(second, dict)):
+            return
+        try:
+            self._compare_page.show_comparison(compare_reports(first, second))
+        except Exception as e:  # as above: either side may be a file from elsewhere
+            self._damaged(None, e)
+            return
+        self._show_page(PAGE_COMPARE)
+
+    def _damaged(self, path: object, error: Exception) -> None:
+        where = f"{path}: " if path else ""
+        QMessageBox.warning(
+            self,
+            "Cannot show the report",
+            f"{where}the report file is damaged or was not written by Control-OFC "
+            f"({type(error).__name__}).",
+        )
+        self.show_history()
 
     def _on_save_failed(self, message: str) -> None:
         self._run_status.setText(f"The report could not be saved: {message}")
 
     # ── Export and re-apply ─────────────────────────────────────────────────
 
-    def _export_json(self) -> None:
-        doc = self._report_doc
-        if doc is None:
-            return
-        default = export_default_dir() / f"pwm-report-{doc.get('report_id')}.json"
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export PWM Test Report", str(default), "JSON (*.json)"
-        )
-        if not path:
-            return
-        from pathlib import Path
+    def _export_current(self, fmt: str) -> None:
+        if self._report_doc is not None:
+            export_report(self, self._report_doc, fmt)
 
-        try:
-            atomic_write(Path(path), serialise(doc))
-        except (OSError, ValueError) as e:
-            QMessageBox.warning(self, "Export failed", f"Could not write the report: {e}")
+    def _export_other(self, doc: object, fmt: str, _imported: bool) -> None:
+        if isinstance(doc, dict):
+            export_report(self, doc, fmt)
+
+    def _export_comparison(self, fmt: str) -> None:
+        if self._compare_page.comparison is not None:
+            export_comparison(self, self._compare_page.comparison, fmt)
 
     def reapply_profile_id(self) -> str:
         """The profile to re-apply: the one active at the end of the run, else at

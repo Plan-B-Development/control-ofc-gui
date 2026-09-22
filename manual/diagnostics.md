@@ -209,7 +209,18 @@ Both recorders open the same dialog. It shows elapsed time, per-member telemetry
 4. **Run.** Each test with its status, the fan under test live, the thermal state and time remaining. **Cancel run** stops the current test (the daemon puts the header back) and lists the rest as not tested. If the daemon's thermal protection becomes active, the run stops by itself. Closing the window asks first; quitting Control-OFC saves what was done so far.
 5. **Report.** There is **no overall pass or fail**. You get what needs attention, observations, whether every header went back to how it was found (with **Re-apply profile** if one did not), a section per fan with charts and every reading, what was *not* tested and why — including things no report can test, like suspend/resume — and the environment: GUI, daemon, kernel and driver versions, and your board and BIOS. Every finding says what it is based on (measured, worked out, reported by the device, or something you told it) and the range it covers: a sweep from 20 % proves nothing about 10 %, and the report says so, especially when your profile can drive a fan lower than any test saw it turning.
 
-Reports are saved as you go to `~/.local/share/control-ofc/reports/` and are never deleted automatically. **Export JSON…** saves a copy wherever you like — useful to attach to a bug report.
+Reports are saved as you go to `~/.local/share/control-ofc/reports/` and are never deleted automatically.
+
+**Your reports** (v2.82.0). The window opens on a list of every report this computer has saved, newest first. Select one to **Open** or **Export** it, select two to **Compare** them, or **Delete…** ones you no longer want (it asks first). **New report** starts a new run. **Open a report file…** shows a report from somewhere else — another machine, or a copy someone sent you — without copying it into your reports folder. A report you reopen shows what the machine was like *then*, so it does not offer **Re-apply profile**; run a new report to check the machine now.
+
+**Export** offers four formats:
+
+- **JSON** — the complete record.
+- **Markdown** — for a GitHub issue. If it is long, attach the file rather than pasting it.
+- **HTML** — one file with charts: each sweep and stall probe, and for each tested fan its RPM and duty over the whole run, with the hottest CPU temperature on its own chart. It follows your system's light or dark setting, needs no internet connection and runs no scripts.
+- **CSV** — choose a folder; you get up to three spreadsheets (sweep points, stall-probe steps, and the once-a-second trace of every fan and sensor). A reading the daemon did not report is left empty, never 0.
+
+**Compare** puts two reports side by side, earlier first. Fans are matched only by their exact header id; a header whose label changed between runs is listed as *possibly renamed* and not compared, so a reading is never pinned to the wrong fan. Differences are grouped into hardware and wiring, environment (versions, kernel, BIOS), configuration, measured response, and *not comparable* — a test that ran with different settings, ran or finished in only one report, or started in a different thermal state. Measured differences are shown as numbers next to how much each run's own readings varied; nothing is labelled significant and there is no overall verdict. Each run's starting CPU temperature is shown too, but it is up to you to judge. A comparison can be exported as Markdown or HTML.
 
 The report will not start in demo mode, while the daemon's thermal protection is active, or while another test or a validation session is running.
 

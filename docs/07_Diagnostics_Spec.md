@@ -1104,7 +1104,7 @@ recording is still saved, and auto-records are retained separately so they canno
 sessions made by hand.
 
 
-## PWM Test Report (DEC-404, DEC-408 — GUI 2.81.0)
+## PWM Test Report (DEC-404, DEC-408 — GUI 2.81.0; DEC-409 — GUI 2.82.0)
 
 A whole-machine assessment the user starts from **Hardware ▸ PWM Test Report…**, in its own
 non-modal, single-instance window. It answers "what can Control-OFC actually observe and verify
@@ -1121,6 +1121,12 @@ run outlives its window.
 
 ### Pages
 
+0. **Reports** (GUI 2.82.0, DEC-409) — where the window opens unless a run is in progress or has
+   just finished. Saved reports newest first (started, board, tests completed, state, where it
+   came from), with **Open**, **Export**, **Delete…** (after a confirmation; D-b), **Compare**
+   (exactly two), **Open a report file…** and **New report**. An unreadable file in the reports
+   folder is listed as *Unreadable* (the reason in the tooltip) so it can be deleted. The report
+   a run is writing is listed *In progress* and cannot be opened, exported, compared or deleted.
 1. **Scope.** One row per channel the daemon reports (hwmon headers, OpenFan channels, GPU fans)
    in stable-id order, with a checkbox per test. Pre-selected: the **PWM control test** and **tach
    pairing** on writable headers whose fan reads RPM > 0. Never pre-selected: the **full sweep**
@@ -1144,7 +1150,12 @@ run outlives its window.
    profile** when a failure is one the profile fixes), a section per channel (facts, the test
    matrix, findings, a PWM→RPM chart for a sweep and for the probe, the probe's points table),
    *Not tested*, environment, configuration, the provenance legend and the evidence (the daemon's
-   raw answers, filled on expand). **Export JSON…** saves a copy.
+   raw answers, filled on expand). **Export** is a menu: JSON, Markdown, HTML, CSV (§ Exports).
+   **Re-apply profile is offered only for the report that has just finished in the window**
+   (S5-7): a report reopened from the list or a file shows a note instead, because the button acts
+   on the machine now and the report's evidence is from then.
+6. **Compare** (DEC-409) — two reports, earlier first (§ Comparison); exportable as Markdown or
+   HTML.
 
 ### What a run does
 
@@ -1200,6 +1211,79 @@ JSON, schema version 1, saved after every step and never deleted automatically. 
 **own 16 MiB limit** — the shared 4 MiB import cap cannot hold a three-hour trace (a measured
 4.1 MB on a 19-fan / 24-sensor machine). A file left `in_progress` by a crash is repaired to
 `interrupted` the next time the report is opened, with its findings re-derived.
+
+### Opening a report from elsewhere
+
+**Open a report file…** loads a report through the same 16 MiB limit and schema check, repairs an
+`in_progress` one in memory only, and shows it read-only. It is **never copied into the reports
+folder** (S5-6): it sits in the list for the rest of the session, marked as a file, can be opened,
+exported and compared, and cannot be deleted from here. A file picked from the reports folder
+itself opens as the saved report it is.
+
+Such a file is untrusted, so the schema check also **bounds the work** it can cause: at most 1,024
+channels, 4,096 steps and 65,536 findings, a trace of at most three hours, and every trace series
+exactly as long as its timestamps (which the recorder guarantees). An export's size is therefore
+proportional to the file, never to samples x series. A file nested too deeply to parse is refused
+like any malformed one, and a failure while rendering or exporting one is shown as a message. The
+Reports list parses each saved file once per session and reuses the result while its inode,
+modification time and size are unchanged.
+
+### Exports (DEC-409)
+
+All four are generated from the same view models the window renders (`view.build_report_view`,
+`compare.compare_reports`), so an export never says something the window does not.
+
+- **JSON** — the document, byte-identical to the saved file.
+- **Markdown** (`export_markdown.py`) — summary, attention, observations, restoration, a channel
+  table, not tested, environment, configuration and the legend. Every dynamic string has every
+  ASCII punctuation character backslash-escaped and its line breaks folded, so no label, alias or
+  note can become a link, an image, raw HTML, a heading or an extra table column. No length cap
+  (S5-11): the first lines say to attach a long file rather than paste it (an issue body holds
+  65,536 characters).
+- **HTML** (`export_html.py`, `svg_chart.py`) — one self-contained file: inline CSS and SVG, no
+  script, no external asset, no web font, and a `Content-Security-Policy` of `default-src
+  'none'`. Every dynamic string is HTML-escaped (DEC-106). Colours are CSS variables filled from
+  the theme tokens — the default dark theme, and the bundled light preset under
+  `prefers-color-scheme: light`. Charts are drawn to scale: each sweep (falling and rising legs
+  never joined), each probe (down from 20 %, then back up), and (S5-3) one trace chart per
+  **tested** header (RPM, and readback on a right-hand % axis) plus one of the **hottest
+  `cpu_temp` sensor at each second**, with any sample whose reported `thermal_state` is not
+  `normal` shaded. A gap stays a gap. A series over 2,000 points keeps the first, lowest,
+  highest and last point of every pixel column, and the page says it did. The evidence (S5-4)
+  follows in a closed `<details>`.
+- **CSV** (`export_csv.py`) — a folder, and one file per table that has rows (S5-2):
+  `…-sweep.csv` (one row per walked point; columns derived from `CharPoint`, nested `stability.*`
+  and `estimated_physical_rpm.*` flattened), `…-probe.csv` (one row per held duty, from
+  `ProbePoint`) and `…-trace.csv` (one row per second, one column per `<stable id> <quantity>`).
+  RFC 4180 with CRLF. `None` is an empty cell, never 0. A text cell starting `=`, `+`, `-`, `@`,
+  tab or CR is prefixed with `'` so a spreadsheet does not run it; numbers are never touched. The
+  confirmation names the files written and any table that had no rows.
+
+### Comparison (DEC-409)
+
+`services/pwm_report/compare.py`, a Qt-free view model. Two reports are ordered by `started_at`;
+every difference is *later minus earlier*.
+
+- **Channels pair by stable id only.** An id in one report only is listed on its side. A
+  *possible rename* — same `hwmon:chip:device:pwmN`, different label — is listed as an inference
+  and **never paired**, so no measurement is attributed to a header it may not be.
+- **Five categories, each difference in exactly one:** hardware and wiring (sensor chips, the
+  user's cooler and per-header facts), environment (GUI/daemon/API, both kernels, board, BIOS,
+  Python/Qt, loaded modules), configuration (profile id, name and content hash, trip and release
+  points as reported, cooling devices, each paired header's role, role source, floor, stop
+  permission, writability and cooling device), measured response, and not comparable. Values
+  that match are counted, not listed.
+- **A test is compared only like for like.** It is *not comparable*, with the reason, when it ran
+  in one report only, did not complete in either, was asked for or echoed different parameters
+  (the request, plus the sweep's points/settle/bidirectional/dwell, pairing's delta/cycles/window,
+  verify's test duty), or when the thermal state at the start differed.
+- **Response rows:** verify result and RPM at the test duty; pairing relationship, confidence and
+  strongest tach; the sweep's summary figures and every duty present in both walks, each point's
+  settled median (else its last reading) **beside each run's own spread** (min–max, CV, samples);
+  the probe's outcome, stall and restart duties, baseline RPM and tach refresh.
+- **Start conditions are shown, never judged** (S5-5): the thermal state and the hottest CPU
+  temperature at the start, both values and the difference. No threshold makes a warmer start
+  "not comparable", nothing is called significant, and there is no verdict.
 
 ### While a run is active
 
