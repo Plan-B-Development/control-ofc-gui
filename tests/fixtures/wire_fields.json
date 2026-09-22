@@ -60,7 +60,9 @@
         "pwm_enable_mode",
         "fan_alarm",
         "pwm_readback_pct",
-        "pwm_commanded_pct"
+        "pwm_commanded_pct",
+        "duty_corrections",
+        "duty_not_holding"
       ],
       "must_be_read": [
         "rpm",
@@ -76,6 +78,10 @@
       "not_assertable": {
         "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
         "source": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "unmodelled": {
+        "duty_corrections": "DEC-406 (daemon >= 2.53.0, capability control.duty_reconciliation). No GUI slot yet: DEC-404 Stage 4 (PTR-o) reads it for the System State drift notice and the report's per-run delta; enrol it as must_be_read there.",
+        "duty_not_holding": "DEC-406 (daemon >= 2.53.0). No GUI slot yet: DEC-404 Stage 4 (PTR-o) is the first reader; enrol it as must_be_read there."
       }
     },
     {

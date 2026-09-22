@@ -423,7 +423,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Thermal safety not user-configurable | Trip point derived from the CPU's own ceiling (≥105°C), 80°C release, 40% no-sensor floor — none settable via API or GUI | Safety thresholds must not be user-adjustable |
 | Atomic state persistence | tmp file + `rename()` | POSIX atomicity guarantee |
 | Profile precedence: CLI > env > persisted > none | `resolve_initial_profile()` | Explicit priority documented in main.rs |
-| hwmon write coalescing | Per-header `last_commanded_pct` + `manual_mode_set` | 0 sysfs ops in steady state (was 4/sec/header) |
+| hwmon write coalescing | Per-header `last_commanded_pct` + `manual_mode_set` | No sysfs *writes* in steady state (was 4 ops/sec/header). Reads remain: the `pwm_enable` watchdog, `fanN_input`, and since DEC-406 one `pwmN` readback per coalesced engine tick, which rewrites a duty that moved since the last write |
 | Profile engine GUI deferral | Skips OpenFan/GPU writes when GUI active (30s) | Prevents dual-writer contention across all backends |
 | Shutdown hwmon hand-back | Each header the daemon took gets back what it had — its recorded `pwm_enable`, or its duty if it was already manual — with `fancontrol`'s full-speed fallback (DEC-382) | Whatever drove the fan before the daemon took it resumes after a stop or crash; headers the daemon never took are never written |
 | Thermal safety error logging | Failed override writes logged at ERROR level | Operator visibility during thermal emergency |
