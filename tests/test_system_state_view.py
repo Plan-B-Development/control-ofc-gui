@@ -20,6 +20,7 @@ from control_ofc.api.models import (
     KernelModuleInfo,
     ThermalSafetyInfo,
 )
+from control_ofc.services.duty_drift import NO_DRIFT
 from control_ofc.services.system_state_view import (
     build_condition_cards,
     build_interference_vm,
@@ -179,10 +180,12 @@ def test_condition_cards_carry_conditions_only_not_advisories():
     vacuously on a board that matched none (presence before absence).
     """
     diag = _diag_gigabyte_it8696()
-    cards = build_condition_cards(diag).cards
+    cards = build_condition_cards(diag, duty_drift=NO_DRIFT).cards
     assert len(advisory_rows(diag)) >= 1, "fixture must match at least one advisory"
-    assert len(cards) == len(detect_readiness_problems(diag))
-    assert [c.key for c in cards] == [p["key"] for p in detect_readiness_problems(diag)] or True
+    assert len(cards) == len(detect_readiness_problems(diag, duty_drift=NO_DRIFT))
+    assert [c.key for c in cards] == [
+        p["key"] for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)
+    ] or True
     # Every advisory still reachable — as a note, not as a condition.
     note_titles = {n.quirk.summary for n in board_notes(diag)}
     assert note_titles >= {q.summary for q in advisory_rows(diag)}
@@ -192,13 +195,15 @@ def test_condition_cards_carry_conditions_only_not_advisories():
 def test_issue_cards_are_severity_sorted_descending():
     ranks = [
         severity_display(c.severity).rank
-        for c in build_condition_cards(_diag_acpi_and_revert()).cards
+        for c in build_condition_cards(_diag_acpi_and_revert(), duty_drift=NO_DRIFT).cards
     ]
     assert ranks == sorted(ranks, reverse=True)
 
 
 def test_issue_card_carries_detail_for_acpi():
-    cards = {c.key: c for c in build_condition_cards(_diag_acpi_and_revert()).cards}
+    cards = {
+        c.key: c for c in build_condition_cards(_diag_acpi_and_revert(), duty_drift=NO_DRIFT).cards
+    }
     assert "acpi" in cards
     assert cards["acpi"].detail and "conflicts with it87" in cards["acpi"].detail
     assert cards["acpi"].doc_url  # doc-link button present
@@ -401,13 +406,13 @@ def test_registry_chip_tooltip_from_guidance():
 def test_build_system_state_vm_counts_and_labels():
     # This fixture has no chips_detected, so it trips acpi + bios_revert +
     # no_chips = 3 warn-level problems.
-    vm = build_system_state_vm(_diag_acpi_and_revert())
+    vm = build_system_state_vm(_diag_acpi_and_revert(), duty_drift=NO_DRIFT)
     assert vm.issues_requiring_attention == 3
     assert vm.issue_count_label == "3 ACTION REQUIRED"
     assert vm.issue_count_state == "warn"
     assert vm.summary_line.startswith("1 PWM header")
 
-    healthy = build_system_state_vm(_healthy_diag())
+    healthy = build_system_state_vm(_healthy_diag(), duty_drift=NO_DRIFT)
     assert healthy.issues_requiring_attention == 0
     assert healthy.issue_count_label == "SYSTEM READY"
     assert healthy.issue_count_state == "ok"
@@ -423,7 +428,7 @@ def test_only_a_hardware_damage_mechanism_drives_the_crit_state():
     still is. Delete the demotion and the first arm fails; delete the crit branch
     and the second does.
     """
-    reclaimed = build_system_state_vm(_diag_with_revert("pwm1", 25))
+    reclaimed = build_system_state_vm(_diag_with_revert("pwm1", 25), duty_drift=NO_DRIFT)
     assert reclaimed.issues_requiring_attention >= 1, "the reclaim must still be a condition"
     assert reclaimed.issue_count_state == "warn"
 
@@ -440,7 +445,8 @@ def test_only_a_hardware_damage_mechanism_drives_the_crit_state():
                     remediation="blacklist one",
                 )
             ]
-        )
+        ),
+        duty_drift=NO_DRIFT,
     )
     assert collision.issue_count_state == "crit"
 

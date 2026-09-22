@@ -83,6 +83,7 @@ from control_ofc.ui.pages.diagnostics_workers import (
     _ValidationWorker,
     _VerifyWorker,
 )
+from control_ofc.ui.pages.pwm_report_controller import RUN_ACTIVE_REASON, PwmReportController
 from control_ofc.ui.readiness_merge import ACTION_NONE
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
@@ -91,6 +92,7 @@ from control_ofc.ui.widgets.cooling_device_card import CoolingDeviceCard
 from control_ofc.ui.widgets.flow_layout import FlowLayout
 from control_ofc.ui.widgets.pwm_characterization_dialog import PwmCharacterizationDialog
 from control_ofc.ui.widgets.pwm_header_card import PwmHeaderCard
+from control_ofc.ui.widgets.pwm_report_window import PwmReportWindow
 from control_ofc.ui.widgets.validation_session_dialog import ValidationSessionDialog
 
 if TYPE_CHECKING:
@@ -102,6 +104,7 @@ if TYPE_CHECKING:
         HwmonVerifyResult,
         SuperIoReport,
     )
+    from control_ofc.services.app_settings_service import AppSettingsService
     from control_ofc.services.app_state import AppState
 
 log = logging.getLogger(__name__)
@@ -144,6 +147,10 @@ class HardwarePage(QWidget):
     #: (§2: "do not duplicate profile configuration logic inside the Hardware
     #: page"; §21: reuse the existing AIO configuration workflow).
     open_controls = Signal()
+    #: DEC-404: a PWM Test Report run started (True) or ended (False). MainWindow
+    #: routes it to the System State page, whose hwmon diagnostics share the
+    #: daemon's one slot (S4-13).
+    pwm_report_active_changed = Signal(bool)
 
     # Main-thread → worker-thread requests (queued).
     _readiness_request = Signal()
@@ -173,10 +180,20 @@ class HardwarePage(QWidget):
         client: DaemonClient | None = None,
         profile_service: ProfileService | None = None,
         parent: QWidget | None = None,
+        *,
+        settings_service: AppSettingsService | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("Hardware_Root")
         self._state = state
+        # DEC-404 decision 7: the PWM Test Report remembers "Your setup" facts
+        # here. The shared service, never a second instance (DEC-357's rule).
+        self._settings_service = settings_service
+        # DEC-404 decision 10: one report window, one controller. The controller
+        # lives on this page so a run outlives its window (pwm_report_controller).
+        self._report_controller: PwmReportController | None = None
+        self._report_window: PwmReportWindow | None = None
+        self._report_active = False
         self._diag = diagnostics_service or DiagnosticsService(state)
         self._client = client
         # Read-only, and deliberately NOT defaulted to a fresh `ProfileService()`:
@@ -475,6 +492,17 @@ class HardwarePage(QWidget):
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
+        # DEC-404: the whole-machine assessment, first because it is the one to
+        # start with; the per-header tests below each card remain for a single
+        # header's deeper look.
+        self._report_btn = make_button(
+            "PWM Test Report…",
+            "primary",
+            object_name="Hardware_Btn_pwmReport",
+            accessible_name="Open the PWM Test Report",
+        )
+        self._report_btn.clicked.connect(self._open_pwm_report)
+        actions.addWidget(self._report_btn)
         self._lifecycle_btn = make_button(
             "Startup / Lifecycle Recording",
             "secondary",
@@ -686,6 +714,8 @@ class HardwarePage(QWidget):
                 card.test_requested.connect(self._run_pwm_verify)
                 card.characterize_requested.connect(self._open_characterization)
                 card.discover_requested.connect(self._open_control_path_discovery)
+                # A header that appears mid-run stands down like the others.
+                card.set_diagnostics_blocked(RUN_ACTIVE_REASON if self._report_active else "")
                 self._header_cards[view.header_id] = card
                 self._header_flow.insertWidget(index, card)
             else:
@@ -731,10 +761,13 @@ class HardwarePage(QWidget):
         # `daemon_supports` is tri-state and "did not say" must not enable.
         supported = daemon_supports("validation_sessions", caps) is True
         has_device = bool(self._device_cards)
-        enabled = supported and has_device
+        enabled = supported and has_device and not self._report_active
         for button in (self._validation_btn, self._lifecycle_btn):
             button.setEnabled(enabled)
-            if not supported:
+            if self._report_active:
+                # S4-9 (4): a session shares the report's diagnostic slot.
+                button.setToolTip(RUN_ACTIVE_REASON)
+            elif not supported:
                 button.setToolTip(unsupported_feature_message("validation_sessions"))
             elif not has_device:
                 button.setToolTip(
@@ -752,7 +785,9 @@ class HardwarePage(QWidget):
         # read as unsupported here, hence the explicit `is True`.
         thermal_ok = daemon_supports("thermal_observation", caps) is True
         self._thermal_btn.setEnabled(enabled and thermal_ok)
-        if not thermal_ok:
+        if self._report_active:
+            self._thermal_btn.setToolTip(RUN_ACTIVE_REASON)
+        elif not thermal_ok:
             self._thermal_btn.setToolTip(unsupported_feature_message("thermal_observation"))
         else:
             self._thermal_btn.setToolTip(self._validation_btn.toolTip())
@@ -1846,7 +1881,61 @@ class HardwarePage(QWidget):
                 thread.terminate()
                 thread.wait(1000)
 
+    # ── DEC-404: the PWM Test Report ─────────────────────────────────
+
+    def _profile_member_ids(self) -> frozenset[str]:
+        profile = self._profile_service.active_profile if self._profile_service else None
+        if profile is None:
+            return frozenset()
+        return frozenset(m.member_id for c in profile.controls for m in c.members)
+
+    def _open_pwm_report(self) -> None:
+        """Open the report window, or raise the one already open (decision 10).
+
+        The `_open_validation` shape: a second window over one controller would
+        give the user two Cancel buttons for one run.
+        """
+        window = self._report_window
+        if window is not None:
+            window.show()
+            window.raise_()
+            window.activateWindow()
+            return
+        socket_path = self._client.socket_path if self._client else ""
+        if not socket_path:
+            self._show_diag_message("Cannot open the PWM Test Report: no daemon connection.")
+            return
+        if self._report_controller is None:
+            self._report_controller = PwmReportController(self._state, socket_path, self)
+            self._report_controller.run_active_changed.connect(self._on_report_active)
+        window = PwmReportWindow(
+            self._report_controller,
+            self._state,
+            self._settings_service,
+            profile_member_ids=self._profile_member_ids,
+            parent=self,
+        )
+        self._report_window = window
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _on_report_active(self, active: bool) -> None:
+        """Stand this page's diagnostics down while a run holds the slot."""
+        self._report_active = active
+        reason = RUN_ACTIVE_REASON if active else ""
+        for card in self._header_cards.values():
+            card.set_diagnostics_blocked(reason)
+        self._sync_diagnostic_enablement()
+        self.pwm_report_active_changed.emit(active)
+
     def cleanup(self) -> None:
+        # DEC-404: a report run first — it cancels its diagnostic and saves the
+        # report `interrupted` while its worker can still be joined cleanly.
+        if self._report_controller is not None:
+            self._report_controller.shutdown()
+        if self._report_window is not None:
+            self._report_window.hide()
         # Every worker tears down the same way, and in the same order: close the
         # client BEFORE joining (see `_teardown_worker`). The Phase 6 workers
         # block on hardware exactly as the readiness one does — a validation
@@ -1880,6 +1969,8 @@ class HardwarePage(QWidget):
             self._char_dialog.set_theme(tokens)
         if self._validation_dialog is not None:
             self._validation_dialog.set_theme(tokens)
+        if self._report_window is not None:
+            self._report_window.set_theme(tokens)
 
 
 # ── Module helpers ───────────────────────────────────────────────────

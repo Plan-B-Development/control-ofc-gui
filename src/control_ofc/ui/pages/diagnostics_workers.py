@@ -783,3 +783,179 @@ class _ValidationWorker(_SocketWorker):
             self.action_ok.emit("External measurement recorded.")
 
         self._run(call, "Recording a measurement")
+
+
+class _PwmReportWorker(_SocketWorker):
+    """Runs the PWM Test Report's daemon calls off the UI thread (DEC-404).
+
+    **One slot, one call at a time, every answer verbatim.** The runner
+    (``services/pwm_report/runner.py``) decides what to ask for; this worker only
+    asks. Its client carries a response observer, so the report keeps the body
+    the daemon actually sent — error bodies included — rather than the parsed
+    model, which would drop any field this GUI does not model yet (S4-9 (8)).
+
+    Every call is short except ``verify`` (~6 s, synchronous daemon-side): the
+    three long diagnostics return ``202`` and are polled, exactly like the
+    characterisation and discovery workers, so a GUI that dies mid-run strands
+    nothing — the daemon restores its own header when its diagnostic ends.
+
+    Errors are translated once, here, into a ``CallOutcome``: ``unavailable``
+    for "the daemon did not answer" (a timeout included — a verify that timed
+    out client-side may still have completed), ``error`` for "the daemon
+    answered no". The runner, not this worker, decides what each means.
+    """
+
+    call_done = Signal(int, object)  # req_id, CallOutcome
+
+    def __init__(self, socket_path: str) -> None:
+        super().__init__(socket_path)
+        self._last_body: tuple[int, object] | None = None
+
+    def _ensure_client(self) -> DaemonClient:
+        from control_ofc.api.client import DaemonClient as _DaemonClient
+
+        if self._client is None:
+            self._client = _DaemonClient(
+                socket_path=self._socket_path, response_observer=self._observe
+            )
+        return self._client
+
+    def _observe(self, method: str, path: str, status: int, body: object) -> None:
+        self._last_body = (status, body)
+
+    @Slot(int, str, object)
+    def do_call(self, req_id: int, kind: str, payload: object) -> None:
+        self.call_done.emit(req_id, self._execute(kind, payload))
+
+    # ── dispatch ─────────────────────────────────────────────────────────────
+
+    def _execute(self, kind: str, payload: object):
+        from control_ofc.services.pwm_report.runner import CallOutcome
+
+        args = payload if isinstance(payload, dict) else {}
+        header_id = str(args.get("header_id") or "")
+        extra = args.get("args") if isinstance(args.get("args"), dict) else {}
+        if kind == "snapshot":
+            return self._snapshot()
+        calls = {
+            "preflight": lambda c: c.diagnostic_preflight(header_id, str(extra.get("diagnostic"))),
+            "verify": lambda c: c.verify_hwmon_pwm(header_id),
+            "start_pairing": lambda c: c.start_control_path_discovery(header_id),
+            "start_sweep": lambda c: c.start_characterization(
+                header_id,
+                points_pct=list(extra.get("points_pct") or []) or None,
+                bidirectional=extra.get("bidirectional"),
+                stability_seconds=extra.get("stability_seconds"),
+            ),
+            # The acknowledgement travels only when the runner put it in the
+            # call, which it does only for a header the user confirmed (S4-2).
+            "start_probe": lambda c: c.start_stall_probe(
+                header_id, acknowledge_below_floor=extra.get("acknowledge_below_floor") is True
+            ),
+            "reapply_profile": lambda c: c.activate_profile(
+                profile_id=str(extra.get("profile_id"))
+            ),
+        }
+        slot = str(extra.get("slot") or "")
+        if kind == "poll":
+            calls["poll"] = {
+                "characterization": lambda c: c.characterization_status(),
+                "control_path": lambda c: c.control_path_status(),
+                "stall_probe": lambda c: c.stall_probe_status(),
+            }.get(slot)
+        elif kind == "cancel":
+            calls["cancel"] = {
+                "characterization": lambda c: c.cancel_characterization(),
+                "control_path": lambda c: c.cancel_control_path_discovery(),
+                "stall_probe": lambda c: c.cancel_stall_probe(),
+            }.get(slot)
+        fn = calls.get(kind)
+        if fn is None:
+            return CallOutcome(ok=False, category="error", error_message=f"unknown call {kind!r}")
+        return self._guarded(fn)
+
+    def _guarded(self, fn):
+        """Run one client call and describe what came back, verbatim."""
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+        from control_ofc.services.pwm_report.runner import CallOutcome
+
+        self._last_body = None
+        try:
+            fn(self._ensure_client())
+        except DaemonTimeout as e:
+            return CallOutcome(ok=False, category="unavailable", error_message=e.message)
+        except DaemonUnavailable as e:
+            return CallOutcome(ok=False, category="unavailable", error_message=e.message)
+        except DaemonError as e:
+            status, body = self._last_body or (e.status, None)
+            return CallOutcome(
+                ok=False,
+                status=status,
+                body=body,
+                error_code=e.code,
+                error_message=e.message,
+                retryable=e.retryable,
+                category="error",
+                details=e.details,
+            )
+        except (ConnectionError, OSError) as e:
+            log.warning("PWM report worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            return CallOutcome(ok=False, category="unavailable", error_message=str(e))
+        except (TypeError, ValueError, KeyError, AttributeError) as e:
+            # The typed parser choked on a 2xx body. The raw body is what the
+            # report keeps anyway, so hand it on rather than losing the answer.
+            log.warning("PWM report: could not parse a daemon reply (%s); keeping it raw", e)
+        if self._last_body is None:
+            return CallOutcome(ok=False, category="unavailable", error_message="no answer")
+        status, body = self._last_body
+        # A 404 the client maps to "nothing yet" (status GETs) is still a 404.
+        return CallOutcome(
+            ok=status < 400, status=status, body=body, category="" if status < 400 else "error"
+        )
+
+    def _snapshot(self):
+        """Every read-only surface the report needs, each answer verbatim.
+
+        Recorded per endpoint with its status: a 404 from a route an older
+        daemon lacks is evidence of that, not a failure of the snapshot. Only
+        a daemon that cannot be reached at all fails the whole snapshot.
+        """
+        from control_ofc.services.pwm_report.document import utc_now_iso
+        from control_ofc.services.pwm_report.runner import CallOutcome
+
+        reads = [
+            ("capabilities", lambda c: c.capabilities()),
+            ("status", lambda c: c.status()),
+            ("fans", lambda c: c.fans()),
+            ("sensors", lambda c: c.sensors()),
+            ("headers", lambda c: c.hwmon_headers()),
+            ("hardware", lambda c: c.hardware_diagnostics()),
+            ("profile_active", lambda c: c.active_profile()),
+            ("cooling_devices", lambda c: c.get_cooling_devices()),
+            ("control_paths", lambda c: c.control_path_status()),
+        ]
+        bundle: dict[str, dict] = {}
+        for name, fn in reads:
+            outcome = self._guarded(fn)
+            if name == "capabilities" and outcome.category == "unavailable":
+                return outcome  # nothing answered: the snapshot never happened
+            bundle[name] = _snapshot_entry(outcome, utc_now_iso())
+        active = bundle["profile_active"].get("body")
+        profile_id = active.get("profile_id") if isinstance(active, dict) else None
+        if isinstance(active, dict) and active.get("active") and profile_id:
+            outcome = self._guarded(lambda c: c.get_profile(str(profile_id)))
+            bundle["profile"] = _snapshot_entry(outcome, utc_now_iso())
+        return CallOutcome(ok=True, status=200, body=bundle)
+
+
+def _snapshot_entry(outcome, fetched_at: str) -> dict:
+    return {
+        "status": outcome.status,
+        "body": outcome.body,
+        "error": outcome.error_message or None,
+        "fetched_at": fetched_at,
+    }

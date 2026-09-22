@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
 
@@ -38,6 +40,7 @@ from control_ofc.api.models import (
     ProfileSearchDirsResult,
     SensorHistory,
     SensorReading,
+    StallProbeRun,
     SuperIoReport,
     ValidationSession,
     ValidationSessionIndexEntry,
@@ -69,6 +72,7 @@ from control_ofc.api.models import (
     parse_profile_search_dirs,
     parse_sensor_history,
     parse_sensors,
+    parse_stall_probe_run,
     parse_status,
     parse_superio_report,
     parse_validation_session,
@@ -83,6 +87,9 @@ from control_ofc.constants import (
 
 BASE_URL = "http://localhost"
 
+#: ``(method, path, http_status, body)`` — see :meth:`DaemonClient._observe`.
+ResponseObserver = Callable[[str, str, int, Any], None]
+
 
 class DaemonClient:
     """Synchronous client that talks to control-ofc-daemon over a Unix socket.
@@ -95,10 +102,21 @@ class DaemonClient:
         client.close()
     """
 
-    def __init__(self, socket_path: str = DEFAULT_SOCKET_PATH, timeout: float = API_TIMEOUT_S):
+    #: Class-level default so a client built without ``__init__`` (several tests
+    #: stub the transport that way) still reads as "no observer".
+    _response_observer: ResponseObserver | None = None
+
+    def __init__(
+        self,
+        socket_path: str = DEFAULT_SOCKET_PATH,
+        timeout: float = API_TIMEOUT_S,
+        *,
+        response_observer: ResponseObserver | None = None,
+    ):
         transport = httpx.HTTPTransport(uds=socket_path)
         self._client = httpx.Client(transport=transport, base_url=BASE_URL, timeout=timeout)
         self._socket_path = socket_path
+        self._response_observer = response_observer
 
     @property
     def socket_path(self) -> str:
@@ -161,7 +179,32 @@ class DaemonClient:
             raise DaemonUnavailable(message=str(e), endpoint=path, method=method) from e
         except httpx.RequestError as e:
             raise DaemonUnavailable(message=str(e), endpoint=path, method=method) from e
+        if self._response_observer is not None:
+            self._observe(method, path, resp)
         return self._handle(resp, method, path)
+
+    def _observe(self, method: str, path: str, resp: httpx.Response) -> None:
+        """Hand the observer the body exactly as the daemon sent it.
+
+        The PWM Test Report keeps every daemon response verbatim as evidence
+        (DEC-404), and the typed methods return parsed models, which drop any
+        field this GUI does not model yet. The observer sees the body BEFORE
+        parsing, error bodies included — a ``409`` or a blocked preflight is
+        evidence too.
+
+        An observer fault must never fail the request it is watching, so it is
+        contained here; a non-JSON body is reported as ``None``.
+        """
+        try:
+            body: Any = resp.json()
+        except ValueError:
+            body = None
+        observer = self._response_observer
+        if observer is None:
+            return
+        # Never fail the request being watched — see the docstring.
+        with contextlib.suppress(Exception):
+            observer(method, path, resp.status_code, body)
 
     def _get(
         self,
@@ -917,6 +960,52 @@ class DaemonClient:
         rather than low.
         """
         return parse_control_path_run(self._delete("/diagnostics/control-path"))
+
+    # ── DEC-407: the stall/restart probe below 20 % ──────────────────────
+
+    def start_stall_probe(self, header_id: str, *, acknowledge_below_floor: bool) -> StallProbeRun:
+        """POST /hwmon/{header_id}/stall-probe — start the below-20 % probe.
+
+        Returns the ``202`` snapshot; the run proceeds daemon-side and is read
+        back with :meth:`stall_probe_status`. Gate on
+        ``capabilities.control.stall_probe``.
+
+        **There are no tunables, and that is the safety design, not an
+        omission.** Every duty, step, dwell and budget is derived by the daemon
+        from the header's own measurements, and the daemon rejects unknown
+        fields. The one field is the explicit acknowledgement: the daemon refuses
+        the request (400) unless it is ``true``. Callers pass it only after the
+        user's own per-header confirmation (DEC-404 S4-2) — it is keyword-only
+        and has no default so no call site can send it by accident.
+        """
+        return parse_stall_probe_run(
+            self._post(
+                f"/hwmon/{header_id}/stall-probe",
+                json={"acknowledge_below_floor": bool(acknowledge_below_floor)},
+            )
+        )
+
+    def stall_probe_status(self) -> StallProbeRun | None:
+        """GET /diagnostics/stall-probe — the current or most recent run.
+
+        ``None`` when no probe has run since the daemon started (``404``): the
+        result is kept in memory only. Every other failure raises.
+        """
+        try:
+            return parse_stall_probe_run(self._get("/diagnostics/stall-probe"))
+        except DaemonError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def cancel_stall_probe(self) -> StallProbeRun:
+        """DELETE /diagnostics/stall-probe — stop the running probe.
+
+        Honoured within about half a second, and always followed by the 100 %
+        recovery kick and then the restore (except while the daemon is shutting
+        down). ``409`` when no probe is running.
+        """
+        return parse_stall_probe_run(self._delete("/diagnostics/stall-probe"))
 
     def active_profile(self) -> ActiveProfileInfo | None:
         """GET /profile/active — query the daemon's currently active profile."""

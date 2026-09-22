@@ -15,6 +15,8 @@ The GUI persists its **UI-owned** state:
 - last-used page/state
 - demo mode defaults
 - a **local profile draft cache** (see below) — curve definitions live inside each profile
+- **saved PWM Test Reports** (DEC-404/408) — see "PWM Test Reports" below
+- the report's **"Your setup" facts**, inside `app_settings.json` (see below)
 
 ## Daemon-owned state
 As of 2.0.0 the daemon is the **store of record for profiles** (DEC-160). The GUI does **not** own:
@@ -75,6 +77,41 @@ keyed by control/curve id → `[width, height]`; pruned of ids absent from
 every known profile whenever a size is saved — DEC-129).
 
 Use platform-aware path helpers rather than hardcoding these paths.
+
+### PWM Test Reports (DEC-404, DEC-408)
+
+Saved reports are user **data** — a record of a measurement that cannot be re-taken — so they
+live in the XDG **data** tier, not config or cache:
+
+```text
+~/.local/share/control-ofc/          # paths.data_dir()  ($XDG_DATA_HOME/control-ofc)
+  reports/                           # paths.reports_dir(), created 0700 on first save
+    pwm-report-<UTC>-<id>.json       # one report, compact JSON, file mode 0600
+```
+
+- **Written with `atomic_write` after every step** of a run, so a crash loses at most the step
+  in flight; a file left `"state": "in_progress"` is repaired to `interrupted` (findings
+  re-derived) the next time the report window opens.
+- **Never deleted automatically** (D-b). Stage 5 adds a history list with Delete.
+- **Reopened with the report's own 16 MiB cap** (`store.REPORT_MAX_BYTES`), not the shared 4 MiB
+  import cap (`paths.MAX_IMPORT_BYTES`): the 1 Hz trace of every fan and sensor measured ~1.5 MB
+  an hour on a 19-fan / 24-sensor machine and is capped at three hours. The read stays bounded,
+  so a crafted file still cannot exhaust memory. `NaN`/`Infinity` are refused at save and load.
+- **Export JSON…** writes a byte-identical copy to a user-chosen path.
+
+### "Your setup" facts (DEC-404 decision 7)
+
+Two keys in `app_settings.json`, both **machine-specific** (in `MACHINE_SPECIFIC_KEYS`, so a
+settings export never carries them and an import never applies them) and **demo-sealed** (a demo
+session never writes them — demo's synthetic ids collide with real hardware):
+
+- `hardware_notes` — per stable header id: `{connected, fans_behind, bios_mode, notes}`, the
+  first and third from fixed vocabularies (`services/pwm_report/setup_facts.py`), `fans_behind`
+  blank or 1–8, `notes` ≤ 500 characters, at most 64 headers. A blank entry is not stored.
+- `cooler_notes` — `{model, pump_switch}`, free text, ≤ 120 characters each.
+
+Both are USER_METADATA in a report: recorded as what the user said, never promoted to a
+measurement, and "not supplied" when blank.
 
 ## Recommended V1 format
 Use JSON for V1 unless TOML is already strongly preferred by the project owner.

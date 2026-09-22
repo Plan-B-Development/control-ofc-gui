@@ -562,6 +562,16 @@ class InterferenceCard(ContentSizedCard):
         self._interference_explain.setProperty("class", "CardMeta")
         self._interference_explain.setWordWrap(True)
         v.addWidget(self._interference_explain)
+        # DEC-404 S4-3: the daemon's duty corrections (DEC-406) — a reading, so
+        # plain meta text and no alarm state. Fan names come from the daemon or
+        # a user alias, hence PlainText (DEC-106).
+        self._corrections_label = QLabel("")
+        self._corrections_label.setObjectName("SystemState_Label_dutyCorrections")
+        self._corrections_label.setProperty("class", "CardMeta")
+        self._corrections_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._corrections_label.setWordWrap(True)
+        self._corrections_label.setVisible(False)
+        v.addWidget(self._corrections_label)
         self._actions_layout = QVBoxLayout()
         self._actions_layout.setContentsMargins(0, 0, 0, 0)
         v.addLayout(self._actions_layout)
@@ -584,6 +594,8 @@ class InterferenceCard(ContentSizedCard):
         self._header_id_label.setText(vm.header_id or "")
         self._header_id_label.setVisible(bool(vm.header_id))
         self._interference_explain.setText(vm.explanation)
+        self._corrections_label.setText(vm.corrections_line)
+        self._corrections_label.setVisible(bool(vm.corrections_line))
         # Demote-not-delete: the gauge, the count and the header keep rendering
         # exactly as they did; `severity_state` is what the VM neutralises. The
         # reading stays true and only the alarm stops (DEC-359).

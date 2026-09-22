@@ -23,6 +23,7 @@ from control_ofc.api.models import (
     HwmonDiagnostics,
     ThermalSafetyInfo,
 )
+from control_ofc.services.duty_drift import NO_DRIFT
 from control_ofc.ui.widgets.readiness_report import detect_readiness_problems
 
 _KERNEL_ARG = "amdgpu.ppfeaturemask=0xffffffff"
@@ -49,7 +50,7 @@ def _diag(
 
 
 def _problems_by_key(diag: HardwareDiagnosticsResult) -> dict[str, dict]:
-    return {p["key"]: p for p in detect_readiness_problems(diag)}
+    return {p["key"]: p for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)}
 
 
 class TestRdnaKernelParameterFix:
@@ -63,7 +64,12 @@ class TestRdnaKernelParameterFix:
 
     def test_no_gpu_problem_when_already_writable(self) -> None:
         # Pre-RDNA3 / properly-configured card: don't badger the user.
-        keys = {p["key"] for p in detect_readiness_problems(_diag(fan_control_method="hwmon_pwm"))}
+        keys = {
+            p["key"]
+            for p in detect_readiness_problems(
+                _diag(fan_control_method="hwmon_pwm"), duty_drift=NO_DRIFT
+            )
+        }
         assert "gpu_readonly" not in keys
         assert "gpu_ppfeaturemask" not in keys
 
@@ -87,7 +93,8 @@ class TestRdnaKernelParameterFix:
                     fan_control_method="pmfw_curve",
                     ppfeaturemask="0xffffffff",
                     bit14_set=True,
-                )
+                ),
+                duty_drift=NO_DRIFT,
             )
         }
         assert "gpu_ppfeaturemask" not in keys

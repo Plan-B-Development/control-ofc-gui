@@ -2,7 +2,69 @@
 
 ## [Unreleased]
 
+## [2.81.0] — 2026-09-22
+
+### Added
+
+**PWM Test Report** (DEC-404, DEC-408). A new window, opened from **Hardware ▸ PWM
+Test Report…**, checks your cooling setup and writes a report of what it actually
+observed. It reads the state of every fan, header and sensor before and after, and
+records all of them once a second while it runs. On each motherboard header you
+choose which tests to run:
+
+- **PWM control test** and **tach pairing**, ticked by default on writable headers
+  that have a fan turning;
+- **Full PWM sweep**, from 100 % down to 20 % and back, never below a pump's
+  floor;
+- **Stall/restart probe** (needs `control-ofc-daemon` 2.54.0 or newer), which finds
+  where a chassis or radiator fan stops below 20 % and where it starts again. It is
+  never offered on a pump or CPU fan, and it needs its own "I'll stay at the
+  machine" confirmation before it can start.
+
+The daemon performs and undoes every test, as it does on the Hardware page. OpenFan
+channels and GPU fans are reported read-only. With a daemon older than 2.52.0 the
+sweep and tach pairing are not offered, because their settling and noise figures
+were wrong before that version. The report refuses to start in demo mode, while
+the daemon's thermal protection is active, or while another diagnostic or a
+validation session is running. If thermal protection becomes active mid-run, the
+run stops and the remaining tests are listed as not tested.
+
+The report has no overall pass or fail. Each finding says what was measured and
+over which range, where it came from (measured, derived, reported by the device, or
+something you told it), and whether it needs attention. It lists everything that
+was not tested, with the reason, including what a report cannot test at all. It
+checks that every header went back to how it was found, and offers **Re-apply
+profile** if one did not. It also warns when your profile can drive a fan lower
+than any test showed it turning.
+
+An optional **Your setup** step asks what software cannot see: how many fans share
+a header (a splitter means the RPM describes one of them), what is connected, the
+BIOS header mode, and the cooler's model and pump switch position. These answers
+are remembered for this machine and never included in a settings export.
+
+Reports are saved automatically to `~/.local/share/control-ofc/reports/` after
+every test, so a crash loses at most the test in progress, and none is ever deleted
+automatically. **Export JSON…** saves a copy anywhere. Markdown, HTML and CSV
+exports, a history list and comparing reports come in a later release.
+
 ### Changed
+
+**System State tells you when a fan's duty will not stay put** (DEC-408, needs
+`control-ofc-daemon` 2.53.0 or newer). The daemon corrects a fan whose duty
+something else has changed. If three corrections in a row do not hold, it stops
+correcting and a condition card appears for that fan. The card counts toward
+"ACTION REQUIRED" and appears in the pop-out Full Report too. Dismissing it covers
+that episode only: if the fan stops holding again later, the card returns.
+Corrections that did hold appear as a count in the Interference Monitor, not as an
+alert.
+
+**Diagnostics stand down while a PWM Test Report runs** (DEC-408). A run uses the
+daemon's one diagnostic slot, so the Hardware page's per-header tests and its
+session buttons, and System State's Test PWM Control, Verify All Writable and
+Characterise, are disabled until it finishes. Each button says why.
+
+**The support bundle names the GUI version** (DEC-404). It already named the
+daemon's.
 
 **A validation session's PWM test row says what the test found** (DEC-405, daemon
 2.52.0). With daemon 2.52.0 or later, each PWM control test in a session shows its

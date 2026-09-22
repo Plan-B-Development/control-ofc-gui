@@ -224,11 +224,22 @@ GUI treats every flag as false / old behaviour (AIP-180):
   that inferred correction would be claiming a protection that daemon does not give.
   A client can still *detect* drift on any daemon by comparing `pwm_readback_pct` with
   `pwm_commanded_pct`.
+  **GUI use (DEC-408, GUI ≥ 2.81.0):** registered in `daemon_features` as
+  `duty_reconciliation`. The System State page raises a condition card per header while
+  `duty_not_holding` is `true` (one per episode, fingerprinted by `duty_corrections` at the
+  give-up) and shows a header's `duty_corrections` as a reading in the Interference
+  Monitor; the PWM Test Report reads the corrections **delta** across its run as evidence
+  of a second writer. It still runs the readback-against-command check itself on every
+  daemon, which is how it detects drift where the flag is absent.
 - `stall_probe` (bool, DEC-407, daemon ≥ 2.54.0) — the daemon exposes
   `POST /hwmon/{id}/stall-probe` plus the `GET`/`DELETE /diagnostics/stall-probe` pair and the
   `pwm_stall_probe` preflight: the opt-in stall/restart probe, the **only** diagnostic that
   writes below 20 %. Absent → `false`. **Gate on this rather than probing**: an older daemon
   `404`s the routes and answers the preflight token with `400 validation_error`.
+  **GUI use (DEC-408, GUI ≥ 2.81.0):** registered in `daemon_features` as `stall_probe`; the
+  PWM Test Report offers the probe only where `daemon_supports("stall_probe", caps) is True`,
+  and sends `acknowledge_below_floor: true` only for a header the user confirmed on its
+  consent page — a gate enforced in the window and again in the report's runner.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
@@ -368,9 +379,6 @@ remain on the daemon surface but are unused (or only curl-exercised) by the GUI:
 - `POST /fans/openfan/{channel}/calibrate` — long-running PWM-to-RPM
   calibration sweep. The Fan Wizard provides a guided identify alternative;
   full calibration as a built-in UI flow is deferred.
-- `POST /hwmon/{header_id}/stall-probe` + `GET`/`DELETE /diagnostics/stall-probe`
-  (DEC-407, daemon ≥ 2.54.0) — no GUI caller yet; the PWM Test Report's probe step
-  (DEC-404 Stage 4) is the first. Contract under "Write endpoints" below.
 
 (There is no `target_rpm` HTTP route: closed-loop RPM targeting exists **only**
 as an internal serial method — `SerialController::set_target_rpm` /
@@ -1225,6 +1233,16 @@ through unparsed), and per `kernel_modules[]` entry `version`, `srcversion` and
 **loaded** module, so an unloaded one is `null` throughout; `out_of_tree: false`
 means the module's taint was read and carries no `O`, while `null` means it could
 not be read — never a guessed in-tree. Render every one as plain text.
+**GUI use (DEC-408, GUI ≥ 2.81.0):** the PWM Test Report records all five in its
+environment section (beside the GUI's own `uname`, since the two are separate processes),
+and the wire oracle now pins `HardwareDiagnosticsResponse`, `BoardInfo` and
+`KernelModuleInfo` in both repos (`PTR-r`).
+
+**The PWM Test Report's gate on this surface (DEC-408).** DEC-405 corrected what a sweep's
+`settled_ms`/`stability` and discovery's noise floor *mean* without adding a capability flag,
+so the report withholds its sweep and tach pairing from a daemon whose `daemon_version` is
+below **2.52.0** — the one version comparison in the GUI's capability registry
+(`settled_diagnostic_evidence`); every other offer is flag-gated.
 
 **`hwmon.enable_revert_last_seen_ms` dates the reclaim counts (DEC-360, daemon
 ≥ 2.46.0).** `hwmon.enable_revert_counts` is cumulative **for the life of the
@@ -1446,6 +1464,12 @@ and the GUI parser defaults safely:
 The configured cooling-device topology — a named assembly binding a pump header, radiator fan
 headers, auxiliary members and a temperature source. Capability-gated on
 `control.cooling_devices`. Read-only; the write side is `POST /config/cooling-device`.
+
+**One read is deliberately ungated: the PWM Test Report's snapshot (DEC-408).** It fetches this
+route (and `GET /diagnostics/control-path`) on any daemon and records the answer *with its
+status*, so an older daemon's `404` is kept as evidence of what that daemon lacked. Nothing is
+decided from the status — no feature is offered or withheld on it — which is what separates
+recording a route from probing one.
 
 **Topology is metadata and the daemon's profile engine never reads it.** It does not replace
 `LogicalControl` / `ControlMember`, does not participate in curve evaluation, and gates no write.
@@ -2125,6 +2149,12 @@ The calibration endpoint runs a long-running sweep (steps × hold_seconds) that 
   **The walk.** 20 % until the tach settles on register updates (≤ 12 s): this measures the tach refresh — the driver's `update_interval` preferred — and proves a fan. If the tach reads 0 there, nothing below 20 % is written: a fan that was spinning before the probe stalls at 20 % or above (`stalled_at_or_above_20`, then the kick), and one that read 0 — or could not be read — before is `no_fan_detected` (the kick too, when the earlier reading was unreadable). Then 18 → 0 % in 2-point steps until the fan reads 0 rpm across two refreshes (a **stall**; stopping only at 0 % is a stall too), then stall+2 → 20 % inclusive until it reads > 0 across two refreshes (a **restart**). Each step is held `max(6 s, 3 × refresh)` and ends early once confirmed. The time below 20 % is budgeted per header from its refresh (the worst-case walk, hard cap 180 s); a refresh too slow to fit (above ~2.85 s) or unmeasurable is refused during the baseline. **Every abort and every cancel ends with a 100 % recovery kick**, held (≤ 15 s) until the fan is seen spinning, then the normal restore — **except while shutting down**, when the exit path owns the header and a write after its hand-back would re-take it. Under a thermal force, or after the run was superseded, the kick is still attempted: it can lower no floor, and where the ladder or the successor holds the lease it simply fails. **Any unreadable probe sample ends the run** as `tach_unreadable` — a stall or restart nobody measured is never reported — and so does a read that does not return within 2 s, after which the header is not read again and the kick is held unobserved.
 - `GET /diagnostics/stall-probe` — the current or most recent run, **in memory only** (a restart forgets it). **While `state` is `running`, `outcome`, `abort_reason` and `detail` stay `null`** — including during the recovery kick, which is held after the run's ending is known. `original_pct` is `null` in the POST's `202` snapshot (the task reads it off the request path) and published once read: `{run_id, header_id, state, outcome, abort_reason, detail, stall_duty_pct, restart_duty_pct, hysteresis_pct, lowest_commanded_pct, time_below_floor_ms, baseline_rpm, baseline_settled, refresh_ms, refresh_source, dwell_ms, confirm_ms, budget_ms, start_cpu_temp_c, max_cpu_temp_c, rise_limit_c, restart_failed_at_full, points[], original_pct, restore_failed, restore_outcome, completed_unix_ms, provenance}`. `404 not_found` when no probe has run. `state` uses characterisation's vocabulary (`running` | `complete` | `cancelled` | `aborted` | `failed`). `outcome` is `null` while running, then `stall_and_restart_found` | `no_stall_down_to_0` | `did_not_restart_below_20` (the kick followed) | `stalled_at_or_above_20` (`stall_duty_pct` null — only "20 % or higher" is known; the kick followed) | `no_fan_detected` | `aborted` | `cancelled`. `abort_reason` (set only for `aborted`) is `thermal_limit` | `thermal_force` | `stale_temperature` | `thermal_rise` (the hottest fresh CPU reading rose more than `rise_limit_c`, 5 °C, over `start_cpu_temp_c` — a spiky CPU sensor can do this at idle; re-run while idle) | `no_cpu_temperature` | `eligibility_lost` | `budget_exceeded` | `reclaimed` | `write_failed` (`state: failed`) | `refresh_unknown` | `refresh_too_slow` | `tach_unreadable` (an unreadable sample, or a read that never returned) | `shutting_down` | `superseded`. Each point is `{phase, step_index, commanded_pct, command_accepted, readback_pct, pwm_enable, rpm_before, rpm_after, held_ms, confirmed_at_ms, samples, zero_samples, observation}` with `phase` in `baseline` | `descent` | `ascent` | `kick` and `observation` in `spinning` | `stalled` | `restarted` | `stopped` | `no_fan` | `unreadable` | `interrupted` | `unconfirmed` (the hold ended unconfirmed with a last reading that contradicts the plain verdict). `restart_failed_at_full: true` means the fan still read 0 rpm at the end of the whole kick — it may be physically stuck — and the header was restored regardless; a kick that could not read the tach claims nothing. `restore_failed` / `restore_outcome` mean exactly what they mean on a characterisation run. **All tokens are opaque; render an unrecognised one** (273-i). `time_below_floor_ms` runs from the first sub-20 % write to the probe's last write, not to the restore. `refresh_source` is `driver_update_interval` | `observed`. `provenance` is the `§9` sidecar (COMMANDED / OBSERVED / DERIVED).
 - `DELETE /diagnostics/stall-probe` — asks a running probe to stop; `202` with the snapshot, `409 validation_error` when none is running. **Honoured on the next sample (≤ 500 ms)**, unlike a characterisation settle, and followed by the recovery kick and the restore. A `DELETE` that arrives during the kick is accepted and does not shorten it — the kick is the recovery.
+- **GUI use (DEC-408, GUI ≥ 2.81.0).** The PWM Test Report is the first caller. It asks
+  `GET /diagnostics/preflight?diagnostic=pwm_stall_probe` first and records a `blocked` verdict
+  as *not tested* with the daemon's rows; it polls the `GET` at 1 Hz and keeps the terminal run
+  verbatim; it cancels with the `DELETE` (and, when the application quits mid-probe, sends the
+  `DELETE` synchronously on the way out). The report models `StallProbeRun`/`ProbePoint`, and
+  both are now in the wire oracle with daemon pin arms (`PTR-u`).
 
 Probes whether a `pwmN` write actually moves the fan, to detect BIOS/EC
 interference. The daemon writes a test PWM, sleeps

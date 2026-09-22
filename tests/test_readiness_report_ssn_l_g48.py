@@ -28,6 +28,7 @@ import pytest
 from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication
 
+from control_ofc.services.duty_drift import NO_DRIFT
 from control_ofc.services.system_state_view import _STATE_BY_CSS, build_system_state_vm
 from control_ofc.ui.widgets.readiness_report import (
     build_fix_guidance_html,
@@ -65,8 +66,10 @@ def test_the_fixture_still_diverges_across_the_flag():
     points a maintainer at the harness instead of at the missing argument
     (DEC-348).
     """
-    assert detect_readiness_problems(_diag(), pwm_control_verified=True) == []
-    promoted = detect_readiness_problems(_diag(), pwm_control_verified=_DISCRIMINATING)
+    assert detect_readiness_problems(_diag(), pwm_control_verified=True, duty_drift=NO_DRIFT) == []
+    promoted = detect_readiness_problems(
+        _diag(), pwm_control_verified=_DISCRIMINATING, duty_drift=NO_DRIFT
+    )
     assert promoted, "fixture no longer matches a promotable quirk"
 
 
@@ -80,8 +83,8 @@ def test_the_report_banner_and_the_page_pill_never_disagree(verified):
     re-derivation of the other's arithmetic.
     """
     diag = _diag()
-    _text, css = readiness_verdict(diag, pwm_control_verified=verified)
-    vm = build_system_state_vm(diag, pwm_control_verified=verified)
+    _text, css = readiness_verdict(diag, pwm_control_verified=verified, duty_drift=NO_DRIFT)
+    vm = build_system_state_vm(diag, pwm_control_verified=verified, duty_drift=NO_DRIFT)
     assert _STATE_BY_CSS[css] == vm.issue_count_state, (
         f"verify={verified}: report banner {css} vs page pill {vm.issue_count_state}"
     )
@@ -96,15 +99,22 @@ def test_the_to_fix_block_appears_exactly_when_the_pill_is_counting():
     constant.
     """
     diag = _diag()
-    quiet = build_fix_guidance_html(diag, pwm_control_verified=True)
-    loud = build_fix_guidance_html(diag, pwm_control_verified=_DISCRIMINATING)
+    quiet = build_fix_guidance_html(diag, pwm_control_verified=True, duty_drift=NO_DRIFT)
+    loud = build_fix_guidance_html(diag, pwm_control_verified=_DISCRIMINATING, duty_drift=NO_DRIFT)
 
     assert quiet is None
     assert loud is not None
-    assert build_system_state_vm(diag, pwm_control_verified=True).issues_requiring_attention == 0
-    vm = build_system_state_vm(diag, pwm_control_verified=_DISCRIMINATING)
+    assert (
+        build_system_state_vm(
+            diag, pwm_control_verified=True, duty_drift=NO_DRIFT
+        ).issues_requiring_attention
+        == 0
+    )
+    vm = build_system_state_vm(diag, pwm_control_verified=_DISCRIMINATING, duty_drift=NO_DRIFT)
     assert vm.issues_requiring_attention > 0
-    for problem in detect_readiness_problems(diag, pwm_control_verified=_DISCRIMINATING):
+    for problem in detect_readiness_problems(
+        diag, pwm_control_verified=_DISCRIMINATING, duty_drift=NO_DRIFT
+    ):
         assert problem["label"] in loud, f"{problem['key']} is counted but not in 'To fix'"
 
 
@@ -117,10 +127,12 @@ def test_the_report_html_never_opens_healthier_than_the_page():
     artefact).
     """
     diag = _diag()
-    healthy_text = readiness_verdict(diag, pwm_control_verified=True)[0]
-    assert healthy_text in build_readiness_report_html(diag, pwm_control_verified=True)
+    healthy_text = readiness_verdict(diag, pwm_control_verified=True, duty_drift=NO_DRIFT)[0]
+    assert healthy_text in build_readiness_report_html(
+        diag, pwm_control_verified=True, duty_drift=NO_DRIFT
+    )
     assert healthy_text not in build_readiness_report_html(
-        diag, pwm_control_verified=_DISCRIMINATING
+        diag, pwm_control_verified=_DISCRIMINATING, duty_drift=NO_DRIFT
     )
 
 
@@ -161,8 +173,10 @@ def test_open_full_report_passes_the_recorded_verify_outcome(qtbot):
     assert page._pwm_verified() is _DISCRIMINATING  # DEC-356: bind and use
 
     diag = _diag()
-    expected = build_readiness_report_html(diag, pwm_control_verified=_DISCRIMINATING)
-    stale = build_readiness_report_html(diag, pwm_control_verified=None)
+    expected = build_readiness_report_html(
+        diag, pwm_control_verified=_DISCRIMINATING, duty_drift=NO_DRIFT
+    )
+    stale = build_readiness_report_html(diag, pwm_control_verified=None, duty_drift=NO_DRIFT)
     assert expected != stale, "the two derivations must differ, or this asserts nothing"
 
     page._open_readiness_report()
@@ -171,7 +185,7 @@ def test_open_full_report_passes_the_recorded_verify_outcome(qtbot):
     # `QTextBrowser` re-serialises the markup, so the HTML in equals nothing
     # comparable coming out, while the text the user reads survives intact.
     shown = page._report_dialog._browser.toPlainText()
-    assert readiness_verdict(diag, pwm_control_verified=True)[0] not in shown
+    assert readiness_verdict(diag, pwm_control_verified=True, duty_drift=NO_DRIFT)[0] not in shown
     assert "To fix" in shown
     _flush(page)
 
@@ -205,7 +219,9 @@ def test_a_render_refreshes_an_open_report_with_the_same_flag(qtbot):
     assert page._pwm_verified() is _DISCRIMINATING
     page._render(_diag())
     shown = page._report_dialog._browser.toPlainText()
-    assert readiness_verdict(_diag(), pwm_control_verified=True)[0] not in shown
+    assert (
+        readiness_verdict(_diag(), pwm_control_verified=True, duty_drift=NO_DRIFT)[0] not in shown
+    )
     assert "To fix" in shown
     _flush(page)
 
@@ -226,7 +242,7 @@ def test_the_two_health_surfaces_do_not_share_a_verdict_word():
     hardware_words = {word for word, _state in _VERDICT.values()}
     diag = _diag()
     system_state_words = {
-        build_system_state_vm(diag, pwm_control_verified=v).issue_count_label
+        build_system_state_vm(diag, pwm_control_verified=v, duty_drift=NO_DRIFT).issue_count_label
         for v in (None, True, _DISCRIMINATING)
     }
     assert system_state_words, "fixture must produce both a healthy and a loud label"

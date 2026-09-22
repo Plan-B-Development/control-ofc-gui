@@ -34,8 +34,10 @@ from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.diagnostics_service import DiagnosticsService
+from control_ofc.services.duty_drift import NO_DRIFT, DutyDriftState, duty_drift_state
 from control_ofc.services.health_ack import clear_key, prune, silence_key
 from control_ofc.services.pump_protection import header_is_pump_protected
+from control_ofc.services.pwm_report.runner import RUN_ACTIVE_REASON
 from control_ofc.services.system_state_view import (
     THERMAL_STATE_NO_CONNECTION,
     SilenceState,
@@ -184,6 +186,12 @@ class SystemStatePage(QWidget):
 
         # Action state.
         self._verify_active_header: str | None = None
+        #: DEC-404 S4-13: a PWM Test Report run holds the daemon's one diagnostic
+        #: slot. While it does, the three hwmon tests here stand down — a verify
+        #: pressed in the run's hand-back gap would write to a header between the
+        #: report's measurements. Set by `set_pwm_report_active` (MainWindow
+        #: routes it from the Hardware page, which owns the run).
+        self._pwm_report_active = False
         self._verify_all_queue: list[str] = []
         self._verify_all_results: list[tuple[str, str]] = []
         self._verify_all_total = 0
@@ -216,12 +224,16 @@ class SystemStatePage(QWidget):
         self._session_acks: set[str] = set()
         self._rescan_in_flight = False  # DEC-216: guards the footer Rescan action
         self._last_rendered_diag: HardwareDiagnosticsResult | None = None
+        #: DEC-404 S4-12: the daemon's duty-drift report from the LIVE poll,
+        #: read through `_duty_drift()` by every builder on this page.
+        self._duty_drift_state: DutyDriftState = NO_DRIFT
 
         self._build_ui()
 
         if state is not None:
             # Re-gate the GPU restore button when the active profile changes.
             state.active_profile_changed.connect(self._update_gpu_restore_gate)
+            state.fans_updated.connect(self._on_fans_for_drift)
 
     # ── UI construction ──────────────────────────────────────────────
 
@@ -609,6 +621,7 @@ class SystemStatePage(QWidget):
         settings = self._settings_svc.settings
         vm = build_system_state_vm(
             diag,
+            duty_drift=self._duty_drift(),
             pwm_control_verified=self._pwm_verified(),
             live_thermal_state=self._live_thermal_state,
             silence=SilenceState(
@@ -629,7 +642,9 @@ class SystemStatePage(QWidget):
         self._open_report_btn.setEnabled(True)
         if self._report_dialog is not None and self._report_dialog.isVisible():
             self._report_dialog.set_html(
-                build_readiness_report_html(diag, pwm_control_verified=self._pwm_verified())
+                build_readiness_report_html(
+                    diag, pwm_control_verified=self._pwm_verified(), duty_drift=self._duty_drift()
+                )
             )
 
     @Slot(str, bool)
@@ -704,6 +719,9 @@ class SystemStatePage(QWidget):
         if live or self._live_thermal_state == THERMAL_STATE_NO_CONNECTION:
             return
         self._live_thermal_state = THERMAL_STATE_NO_CONNECTION
+        # A drift card is live poll state too: with no daemon to ask, "this header
+        # is not holding" is no longer a current fact (S4-12).
+        self._duty_drift_state = NO_DRIFT
         self._rerender_last_diagnostics()
 
     def _prune_silences(self, diag) -> None:
@@ -737,6 +755,7 @@ class SystemStatePage(QWidget):
             return
         probe = build_system_state_vm(
             diag,
+            duty_drift=self._duty_drift(),
             pwm_control_verified=self._pwm_verified(),
             live_thermal_state=self._live_thermal_state,
         )
@@ -792,7 +811,36 @@ class SystemStatePage(QWidget):
         leave the button disabled forever after an ordinary single verify,
         because `_verify_in_flight` would still be true.
         """
-        self._verify_btn.setEnabled(not self._verify_in_flight() and self._verify_combo.count() > 0)
+        self._verify_btn.setEnabled(
+            not self._verify_in_flight()
+            and self._verify_combo.count() > 0
+            and not self._pwm_report_active
+        )
+        self._verify_btn.setToolTip(RUN_ACTIVE_REASON if self._pwm_report_active else "")
+
+    def _sync_verify_all_enabled(self) -> None:
+        """The one gating shape for *Verify All Writable* (DEC-404 S4-13).
+
+        `_finish_verify_all` used to re-enable it with a bare ``setEnabled(True)``
+        — the `ACK-z` shape this file already retired for the single-verify
+        button — which would have re-enabled it in the middle of a report run.
+        """
+        self._verify_all_btn.setEnabled(not self._verify_all_total and not self._pwm_report_active)
+        self._verify_all_btn.setToolTip(RUN_ACTIVE_REASON if self._pwm_report_active else "")
+
+    @Slot(bool)
+    def set_pwm_report_active(self, active: bool) -> None:
+        """Stand the hwmon diagnostics down while a PWM Test Report runs (S4-13).
+
+        The GPU fan buttons are deliberately untouched: the report never tests a
+        GPU fan and GPU verify does not share the hwmon slot.
+        """
+        if active == self._pwm_report_active:
+            return
+        self._pwm_report_active = active
+        self._sync_verify_button_enabled()
+        self._sync_verify_all_enabled()
+        self._update_characterize_availability()
 
     def _populate_verify_combo(self) -> None:
         """Rebuild the header dropdown, preserving the user's pick.
@@ -837,7 +885,8 @@ class SystemStatePage(QWidget):
     def _update_characterize_availability(self) -> None:
         show = self._supports_characterization() and self._verify_combo.count() > 0
         self._characterize_btn.setVisible(show)
-        self._characterize_btn.setEnabled(show)
+        self._characterize_btn.setEnabled(show and not self._pwm_report_active)
+        self._characterize_btn.setToolTip(RUN_ACTIVE_REASON if self._pwm_report_active else "")
 
     # ── Worker lifecycle (ported) ────────────────────────────────────
 
@@ -1231,7 +1280,7 @@ class SystemStatePage(QWidget):
         self._verify_all_total = 0
         self._verify_all_pending = None
         self._sync_verify_button_enabled()
-        self._verify_all_btn.setEnabled(True)
+        self._sync_verify_all_enabled()
         self._verify_all_btn.setText("Verify All Writable")
 
     def _step_pwm_verify_all(self) -> None:
@@ -1454,11 +1503,40 @@ class SystemStatePage(QWidget):
         """
         return _verified_tristate(self._settings_svc.settings.last_pwm_verify_effective)
 
+    def _duty_drift(self) -> DutyDriftState:
+        """The live duty-drift state, for every derivation on this page (S4-12).
+
+        The `_pwm_verified` shape, for the same reason: the page's pill, its
+        cards, the silence prune and the pop-out's verdict and "To fix" must all
+        see the same conditions. The builders take it as a required keyword, and
+        this accessor is the only way to obtain it.
+        """
+        return self._duty_drift_state
+
+    @Slot(list)
+    def _on_fans_for_drift(self, fans: list) -> None:
+        """Take the 1 Hz fan list; re-render only when the drift state changes.
+
+        A steady state costs one comparison per poll, like `set_thermal_state`.
+        A header entering `duty_not_holding` raises its card within a second; one
+        leaving it drops the card, and a fresh give-up — a new episode, with a
+        higher correction count — is a new occurrence that a dismissal of the
+        last one cannot hide.
+        """
+        name_of = self._state.fan_display_name if self._state is not None else str
+        state = duty_drift_state(fans, name_of)
+        if state == self._duty_drift_state:
+            return
+        self._duty_drift_state = state
+        self._rerender_last_diagnostics()
+
     def _open_readiness_report(self) -> None:
         diag = self._diag.last_hw_diagnostics
         if diag is None:
             return
-        html = build_readiness_report_html(diag, pwm_control_verified=self._pwm_verified())
+        html = build_readiness_report_html(
+            diag, pwm_control_verified=self._pwm_verified(), duty_drift=self._duty_drift()
+        )
         if self._report_dialog is None:
             self._report_dialog = ReadinessReportDialog(html, self)
         else:

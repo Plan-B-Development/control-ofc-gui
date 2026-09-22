@@ -64,6 +64,11 @@ class PwmHeaderCard(ContentSizedCard):
         # value widgets to update in place while it is unchanged.
         self._live_state: _GridState | None = None
         self._detail_key: tuple | None = None
+        #: DEC-404 S4-9 (4): a PWM Test Report run holds the daemon's one
+        #: diagnostic slot, so this card's three tests stand down while it runs.
+        #: Non-empty = blocked, and the text is the reason shown on each button.
+        self._blocked_reason = ""
+        self._view: HeaderInspectorView | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -163,6 +168,31 @@ class PwmHeaderCard(ContentSizedCard):
     def header_id(self) -> str:
         return self._header_id
 
+    def set_diagnostics_blocked(self, reason: str) -> None:
+        """Stand the three tests down while a PWM Test Report runs (S4-9 (4)).
+
+        ``""`` releases them. The ONE gating shape for these buttons is
+        :meth:`_apply_enablement` — the view's capability AND this — so a poll
+        re-rendering the card cannot re-enable a button mid-run.
+        """
+        if reason == self._blocked_reason:
+            return
+        self._blocked_reason = reason
+        self._apply_enablement()
+
+    def _apply_enablement(self) -> None:
+        view = self._view
+        if view is None:
+            return
+        blocked = self._blocked_reason
+        for button, allowed, why in (
+            (self._test_btn, view.can_test, view.test_disabled_reason),
+            (self._char_btn, view.can_characterize, view.characterize_disabled_reason),
+            (self._discover_btn, view.can_discover, view.discover_disabled_reason),
+        ):
+            button.setEnabled(allowed and not blocked)
+            button.setToolTip(blocked if (allowed and blocked) else why)
+
     def set_view(self, view: HeaderInspectorView) -> None:
         """Re-render from a fresh view-model. **Called on every 1 Hz poll tick.**
 
@@ -197,12 +227,8 @@ class PwmHeaderCard(ContentSizedCard):
         # reason is indistinguishable from a broken one. Set BEFORE the
         # details-unchanged early return below, because enablement tracks live
         # capability while the details block does not.
-        self._test_btn.setEnabled(view.can_test)
-        self._test_btn.setToolTip(view.test_disabled_reason)
-        self._char_btn.setEnabled(view.can_characterize)
-        self._char_btn.setToolTip(view.characterize_disabled_reason)
-        self._discover_btn.setEnabled(view.can_discover)
-        self._discover_btn.setToolTip(view.discover_disabled_reason)
+        self._view = view
+        self._apply_enablement()
 
         relationship = _relationship_text(view)
         self._relationship_lbl.setText(relationship)

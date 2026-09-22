@@ -29,6 +29,7 @@ from control_ofc.services.daemon_features import (
     requires_daemon,
     unsupported_feature_message,
 )
+from control_ofc.services.duty_drift import NO_DRIFT
 from control_ofc.services.pump_protection import (
     daemon_protects_pumps,
     pump_identify_warning,
@@ -135,7 +136,9 @@ class TestDualChipAlertTruthfulness:
         two still appear on one screen, so they still must not disagree.
         """
         diag = _master_diag()
-        cards = build_condition_cards(diag).cards + list(build_board_notes(diag).notes)
+        cards = build_condition_cards(diag, duty_drift=NO_DRIFT).cards + list(
+            build_board_notes(diag).notes
+        )
         keys = {c.key for c in cards}
         assert "dual_chip" in keys, "precondition: the dual-chip condition must render"
         assert any(k.startswith("gb-it8696") for k in keys), (
@@ -187,7 +190,9 @@ class TestDualChipAlertTruthfulness:
                     )
 
     def test_readiness_fix_line_points_at_the_discriminator(self):
-        problems = {p["key"]: p for p in detect_readiness_problems(_master_diag())}
+        problems = {
+            p["key"]: p for p in detect_readiness_problems(_master_diag(), duty_drift=NO_DRIFT)
+        }
         assert "dual_chip" in problems
         fix = problems["dual_chip"]["fix"].lower()
         assert "dmesg" in fix, "the one-line fix must tell the user how to tell the cases apart"

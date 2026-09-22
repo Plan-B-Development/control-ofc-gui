@@ -26,6 +26,7 @@ from control_ofc.api.models import (
     KernelModuleInfo,
     ThermalSafetyInfo,
 )
+from control_ofc.services.duty_drift import NO_DRIFT
 from control_ofc.ui.hwmon_guidance import (
     dual_chip_warning_html,
     lookup_chip_guidance,
@@ -108,7 +109,7 @@ class TestRemediationOrdering:
             thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
             expected_chips=["it8696", "it87952"],
         )
-        problems = {p["key"]: p for p in detect_readiness_problems(diag)}
+        problems = {p["key"]: p for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)}
         assert "dual_chip" in problems
         fix = problems["dual_chip"]["fix"].lower()
         # `UDOC-h`: this used to assert the ORDER of two remedies ("update
@@ -145,7 +146,7 @@ class TestRemediationOrdering:
                 )
             ],
         )
-        problems = {p["key"]: p for p in detect_readiness_problems(diag)}
+        problems = {p["key"]: p for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)}
         assert "acpi" in problems
         fix = problems["acpi"]["fix"]
         assert fix.find("it87-dkms-git") != -1

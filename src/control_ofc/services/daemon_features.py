@@ -73,6 +73,21 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # DEC-388, control.exit_floor. The version is the release that ships the
         # 2026-09-18 thermal-safety batch; `/ofc:release` confirms it.
         "exit_floor": "2.50.0",
+        # DEC-406, control.duty_reconciliation. The engine rewrites an hwmon duty
+        # something else moved, and publishes `duty_corrections` /
+        # `duty_not_holding` on every hwmon fan entry.
+        "duty_reconciliation": "2.53.0",
+        # DEC-407, control.stall_probe. The opt-in below-20 % stall/restart probe.
+        "stall_probe": "2.54.0",
+        # DEC-405. NO capability flag, and deliberately absent from
+        # `DAEMON_FEATURE_CAPABILITY_FLAGS` below: DEC-405 corrected what
+        # `settled_ms`, point `stability` and discovery's noise floor MEAN
+        # (`PTR-a`/`b`/`c`) and added only optional fields, so a daemon
+        # advertises nothing a client could gate on. Before this version those
+        # figures are known to be wrong, so the PWM Test Report offers its sweep
+        # and tach-pairing tests only from here (DEC-404 S4-5) — the one gate in
+        # this registry that is a version comparison by necessity.
+        "settled_diagnostic_evidence": "2.52.0",
     }
 )
 
@@ -113,6 +128,8 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "pump_protection": "header_roles",
         "profile_search_dir_removal": "profile_search_dir_remove",
         "exit_floor": "exit_floor",
+        "duty_reconciliation": "duty_reconciliation",
+        "stall_probe": "stall_probe",
     }
 )
 
@@ -135,6 +152,9 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "daemon_config_report": "reporting its own configuration",
         "profile_search_dir_removal": "removing a profile search directory",
         "exit_floor": "setting an exit minimum",
+        "duty_reconciliation": "correcting a fan duty something else changed",
+        "stall_probe": "the stall/restart probe below 20 %",
+        "settled_diagnostic_evidence": "settling-aware sweep and tach-pairing results",
     }
 )
 
@@ -233,3 +253,50 @@ def daemon_supports(feature_id: str, capabilities: object | None) -> bool | None
     # like an older daemon, rather than as a denial.
     value = getattr(control, flag, None)
     return value if isinstance(value, bool) else None
+
+
+def version_tuple(version: str) -> tuple[int, int, int]:
+    """Parse a version string to a 3-tuple, tolerating ``1.11.0-rc1`` / ``1.11``.
+
+    An unparseable or empty version yields ``(0, 0, 0)`` — i.e. sorts *below*
+    every real version, so a comparison against it fails safe.
+
+    Lives here (moved from ``system_state_view`` by DEC-404 Stage 4) because
+    this module is import-free, and the Qt-free PWM Test Report needs the one
+    version gate in this registry that has no flag
+    (``settled_diagnostic_evidence``). ``system_state_view`` re-exports it.
+    """
+    core = version.strip().split("-", 1)[0].split("+", 1)[0]
+    nums: list[int] = []
+    for part in core.split(".")[:3]:
+        try:
+            nums.append(int(part))
+        except ValueError:
+            break
+    while len(nums) < 3:
+        nums.append(0)
+    return (nums[0], nums[1], nums[2])
+
+
+def daemon_version_at_least(version: str, minimum: tuple[int, int, int]) -> bool:
+    """Best-effort semantic ``>=`` for a ``daemon_version`` string (DEC-120).
+
+    Tolerates ``1.11.0-rc1`` / ``1.11`` and compares an unparseable/empty version
+    as *below* ``minimum``, so a gate built on it fails closed.
+    """
+    return version_tuple(version) >= minimum
+
+
+def daemon_meets_minimum(feature_id: str, capabilities: object | None) -> bool:
+    """Whether the connected daemon's VERSION reaches *feature_id*'s minimum.
+
+    **For the ids with no capability flag only** — never a substitute for
+    :func:`daemon_supports` where a flag exists (DEC-334: one flag, one gating
+    shape; ``WIRE-k``: a version says when a feature *appeared*, a flag says
+    whether this build *serves* it). Its one caller today is the PWM Test
+    Report's ``settled_diagnostic_evidence`` gate (DEC-404 S4-5), a semantic
+    correction that no flag could advertise. Raises ``KeyError`` for an unknown
+    id, like :func:`minimum_version`, so a typo is loud.
+    """
+    version = str(getattr(capabilities, "daemon_version", "") or "")
+    return daemon_version_at_least(version, version_tuple(minimum_version(feature_id)))

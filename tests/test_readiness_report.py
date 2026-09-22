@@ -17,6 +17,7 @@ from control_ofc.api.models import (
     ModuleCollisionInfo,
     ThermalSafetyInfo,
 )
+from control_ofc.services.duty_drift import NO_DRIFT
 from control_ofc.ui.hwmon_guidance import (
     VendorQuirk,
     severity_display,
@@ -62,14 +63,15 @@ def _healthy(**ov) -> HardwareDiagnosticsResult:
 
 class TestVerdict:
     def test_healthy_is_success(self):
-        text, cls = readiness_verdict(_healthy())
+        text, cls = readiness_verdict(_healthy(), duty_drift=NO_DRIFT)
         assert cls == "SuccessChip"
         assert "System ready" in text
         assert "5" in text
 
     def test_all_readonly_is_problem(self):
         text, cls = readiness_verdict(
-            _healthy(hwmon=HwmonDiagnostics(total_headers=3, writable_headers=0))
+            _healthy(hwmon=HwmonDiagnostics(total_headers=3, writable_headers=0)),
+            duty_drift=NO_DRIFT,
         )
         assert cls in ("WarningChip", "CriticalChip")
         assert "attention" in text
@@ -86,9 +88,9 @@ class TestVerdict:
                 writable_headers=0,
             )
         )
-        problems = detect_readiness_problems(diag)
+        problems = detect_readiness_problems(diag, duty_drift=NO_DRIFT)
         assert len(problems) == 1
-        text, _ = readiness_verdict(diag)
+        text, _ = readiness_verdict(diag, duty_drift=NO_DRIFT)
         assert "1 issue needs attention" in text
 
     def test_heavy_revert_is_action_required_not_critical(self):
@@ -109,7 +111,7 @@ class TestVerdict:
                 enable_revert_counts={"pwm1": 25},
             )
         )
-        text, cls = readiness_verdict(reclaimed)
+        text, cls = readiness_verdict(reclaimed, duty_drift=NO_DRIFT)
         assert "attention" in text, "it is still a condition, just not a critical one"
         assert cls == "WarningChip"
 
@@ -124,7 +126,7 @@ class TestVerdict:
                 )
             ]
         )
-        assert readiness_verdict(collided)[1] == "CriticalChip"
+        assert readiness_verdict(collided, duty_drift=NO_DRIFT)[1] == "CriticalChip"
 
 
 class TestDetectProblems:
@@ -141,7 +143,7 @@ class TestDetectProblems:
                 writable_headers=5,
             ),
         )
-        keys = {p["key"] for p in detect_readiness_problems(diag)}
+        keys = {p["key"] for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)}
         assert "vendor_quirk" not in keys
 
     def test_acpi_detected(self):
@@ -150,7 +152,7 @@ class TestDetectProblems:
                 AcpiConflictInfo(io_range="0x290", claimed_by="ACPI", conflicts_with_driver="it87")
             ]
         )
-        keys = {p["key"] for p in detect_readiness_problems(diag)}
+        keys = {p["key"] for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)}
         assert "acpi" in keys
 
     def test_module_collision_is_critical(self):
@@ -165,7 +167,7 @@ class TestDetectProblems:
                 )
             ]
         )
-        problems = detect_readiness_problems(diag)
+        problems = detect_readiness_problems(diag, duty_drift=NO_DRIFT)
         coll = [p for p in problems if p["key"] == "module_collision"]
         assert coll and coll[0]["severity"] == "critical"
 
@@ -179,17 +181,17 @@ class TestDetectProblems:
                 ppfeaturemask_bit14_set=False,
             )
         )
-        keys = {p["key"] for p in detect_readiness_problems(diag)}
+        keys = {p["key"] for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)}
         assert "gpu_ppfeaturemask" in keys
 
 
 class TestFixGuidance:
     def test_none_when_healthy(self):
-        assert build_fix_guidance_html(_healthy()) is None
+        assert build_fix_guidance_html(_healthy(), duty_drift=NO_DRIFT) is None
 
     def test_has_disclaimer_and_link_when_problem(self):
         diag = _healthy(hwmon=HwmonDiagnostics(total_headers=3, writable_headers=0))
-        html = build_fix_guidance_html(diag)
+        html = build_fix_guidance_html(diag, duty_drift=NO_DRIFT)
         assert html is not None
         assert "To fix" in html
         assert "at your own risk" in html  # disclaimer
@@ -208,7 +210,7 @@ class TestReport:
                 writable_headers=0,
             )
         )
-        html = build_readiness_report_html(diag)
+        html = build_readiness_report_html(diag, duty_drift=NO_DRIFT)
         assert "Summary" in html
         assert "Detected hardware" in html
         assert "To fix" in html
@@ -229,7 +231,7 @@ class TestReport:
                 writable_headers=1,
             )
         )
-        html = build_readiness_report_html(diag)
+        html = build_readiness_report_html(diag, duty_drift=NO_DRIFT)
         assert "<script>evil</script>" not in html
         assert "&lt;script&gt;" in html
 
@@ -247,14 +249,14 @@ class TestReport:
                 writable_headers=5,
             ),
         )
-        html = build_readiness_report_html(diag)
+        html = build_readiness_report_html(diag, duty_drift=NO_DRIFT)
         assert "Advisories" in html
         assert "HIGH" in html
         assert "SmartFan" in html
 
     def test_no_advisories_section_when_none(self):
         # A board with no matching quirk shows no Advisories heading.
-        html = build_readiness_report_html(_healthy())
+        html = build_readiness_report_html(_healthy(), duty_drift=NO_DRIFT)
         assert "Advisories" not in html
 
 
@@ -339,7 +341,7 @@ class TestSharedFormatters:
             ),
             kernel_modules=[KernelModuleInfo(name="nct6775", loaded=True, in_mainline=True)],
         )
-        html = build_readiness_report_html(diag)
+        html = build_readiness_report_html(diag, duty_drift=NO_DRIFT)
         assert ">Status<" in html  # chip table regained its Status column
         assert html.count(">Mainline<") == 2  # one Mainline header per table
 
@@ -501,7 +503,7 @@ class TestUnknownSeverityRendersConsistently:
             details=["Renders as INFO in the advisory panel."],
         )
         monkeypatch.setattr(readiness_report, "lookup_vendor_quirks", lambda *a, **k: [quirk])
-        problems = detect_readiness_problems(_healthy())
+        problems = detect_readiness_problems(_healthy(), duty_drift=NO_DRIFT)
         assert "vendor_quirk" not in {p["key"] for p in problems}, (
             "an advisory the panel paints as INFO was rolled up as a problem — "
             "the two surfaces disagree about the same quirk"

@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.services.duty_drift import DutyDriftState, drift_problems
 from control_ofc.ui.hwmon_guidance import (
     REMEDIATION_DISCLAIMER,
     VendorQuirk,
@@ -527,6 +528,7 @@ def detect_readiness_problems(
     diag: HardwareDiagnosticsResult,
     *,
     pwm_control_verified: bool | None = None,
+    duty_drift: DutyDriftState,
 ) -> list[dict]:
     """Return the conditions requiring the user's attention, in display order.
 
@@ -537,6 +539,14 @@ def detect_readiness_problems(
     ``pwm_control_verified`` defaults to ``None`` ("never tested"), under which
     nothing is promoted — so every existing caller keeps the pre-DEC-357
     contract of "conditions derived from `diag` alone".
+
+    ``duty_drift`` (DEC-404 S4-12) adds one condition per header the daemon has
+    stopped correcting, from the LIVE poll rather than from `diag`. It is a
+    required keyword with no default on purpose: every consumer of this list —
+    the page's pill, its cards, the pop-out's verdict and "To fix" — must see the
+    same conditions, and a default is how DEC-379's missed caller stayed silent.
+    A drift condition carries an extra ``subject`` (a fan's name — daemon- or
+    user-supplied, so escaped by every consumer) and its own ``fingerprint``.
     """
     problems = _base_conditions(diag)
     notes = board_notes(
@@ -545,6 +555,9 @@ def detect_readiness_problems(
         pwm_control_verified=pwm_control_verified,
     )
     problems.extend(promoted_conditions(notes))
+    problems.extend(
+        drift_problems(duty_drift, doc_url=_HW_COMPAT_URL, doc_title="Hardware Compatibility Guide")
+    )
     return problems
 
 
@@ -613,6 +626,7 @@ def readiness_verdict(
     diag: HardwareDiagnosticsResult,
     *,
     pwm_control_verified: bool | None = None,
+    duty_drift: DutyDriftState,
 ) -> tuple[str, str]:
     """Return ``(verdict_text, css_class)`` for the readiness banner.
 
@@ -626,7 +640,9 @@ def readiness_verdict(
     that page's answer at length, not a second opinion (`SSN-i`).
     """
     hw = diag.hwmon
-    problems = detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
+    problems = detect_readiness_problems(
+        diag, pwm_control_verified=pwm_control_verified, duty_drift=duty_drift
+    )
     ts = diag.thermal_safety
     thermal = f"thermal safety {ts.state}" if ts and ts.state else "thermal safety unknown"
     if not problems:
@@ -651,6 +667,7 @@ def build_fix_guidance_html(
     diag: HardwareDiagnosticsResult,
     *,
     pwm_control_verified: bool | None = None,
+    duty_drift: DutyDriftState,
 ) -> str | None:
     """Return the "To fix" block (rich text), or ``None`` when nothing is wrong.
 
@@ -661,13 +678,19 @@ def build_fix_guidance_html(
     :func:`readiness_verdict` (`SSN-l`): without it this block was empty on
     exactly the machines whose promoted board note is the thing to fix.
     """
-    problems = detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
+    problems = detect_readiness_problems(
+        diag, pwm_control_verified=pwm_control_verified, duty_drift=duty_drift
+    )
     if not problems:
         return None
     parts = ["<b>To fix:</b>"]
     for p in problems:
+        # `subject` is the one field that is not GUI-authored (a fan's name), so
+        # it is the one field escaped here (DEC-106).
+        subject = f" ({escape(p['subject'])})" if p.get("subject") else ""
         parts.append(
-            f"&nbsp;&nbsp;• <b>{p['label']}</b> — {p['fix']} {_link(p['doc_url'], p['doc_title'])}"
+            f"&nbsp;&nbsp;• <b>{p['label']}</b>{subject} — {p['fix']} "
+            f"{_link(p['doc_url'], p['doc_title'])}"
         )
     parts.append(f"<br><i>⚠ {REMEDIATION_DISCLAIMER}</i>")
     return "<br>".join(parts)
@@ -807,6 +830,7 @@ def build_readiness_report_html(
     diag: HardwareDiagnosticsResult,
     *,
     pwm_control_verified: bool | None = None,
+    duty_drift: DutyDriftState,
 ) -> str:
     """Build the full, self-contained HTML report for the pop-out window.
 
@@ -818,7 +842,9 @@ def build_readiness_report_html(
     """
     t = active_theme()
     hw = diag.hwmon
-    verdict_text, verdict_cls = readiness_verdict(diag, pwm_control_verified=pwm_control_verified)
+    verdict_text, verdict_cls = readiness_verdict(
+        diag, pwm_control_verified=pwm_control_verified, duty_drift=duty_drift
+    )
     sev_color = severity_hex(verdict_cls, t)
 
     def h(title: str) -> str:
@@ -903,7 +929,9 @@ def build_readiness_report_html(
         )
 
     # To fix
-    fix = build_fix_guidance_html(diag, pwm_control_verified=pwm_control_verified)
+    fix = build_fix_guidance_html(
+        diag, pwm_control_verified=pwm_control_verified, duty_drift=duty_drift
+    )
     if fix:
         out.append(h("To fix"))
         out.append(f'<div style="color:{t.status_warn}">{fix}</div>')

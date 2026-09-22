@@ -89,6 +89,26 @@ def cache_dir() -> Path:
     return _xdg("XDG_CACHE_HOME", str(Path.home() / ".cache")) / _APP
 
 
+def data_dir() -> Path:
+    """``$XDG_DATA_HOME/control-ofc`` — user data the app creates and keeps.
+
+    Distinct from :func:`config_dir` (preferences) and :func:`cache_dir`
+    (regenerable): a saved PWM Test Report is a record of a measurement that
+    cannot be re-taken, so it belongs in the data tier (XDG Base Directory
+    Specification).
+    """
+    return _xdg("XDG_DATA_HOME", str(Path.home() / ".local" / "share")) / _APP
+
+
+def reports_dir() -> Path:
+    """Where saved PWM Test Reports live (DEC-404): ``<data_dir>/reports``.
+
+    Created lazily by the writer (``atomic_write`` makes the parent ``0o700``),
+    so nothing here touches the disk. Never cleaned automatically (D-b).
+    """
+    return data_dir() / "reports"
+
+
 def profiles_dir() -> Path:
     return _overrides.get("profiles", config_dir() / "profiles")
 

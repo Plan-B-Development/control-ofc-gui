@@ -255,6 +255,10 @@ class MainWindow(QWidget):
             # The Cooling Hardware card derives the pump strategy from the active
             # profile's curve shape, and only ProfileService holds a Profile.
             profile_service=self._profile_service,
+            # DEC-404 decision 7: the PWM Test Report remembers "Your setup"
+            # facts. The shared service — a second instance would write the same
+            # file from a second in-memory copy (DEC-357).
+            settings_service=self._settings_service,
         )
         # DEC-215: Theme is now its own page (split from the Settings tabs). Owns
         # the theme_changed signal + the theme editor; Settings keeps the rest.
@@ -432,6 +436,11 @@ class MainWindow(QWidget):
         # A cooling-device card's "Edit Configuration" — the AIO configuration
         # workflow lives on Controls and is reused, never duplicated (§21).
         self.hardware_page.open_controls.connect(self._open_controls_page)
+        # DEC-404 S4-13: a PWM Test Report run holds the daemon's one diagnostic
+        # slot, so System State's hwmon tests stand down while it runs.
+        self.hardware_page.pwm_report_active_changed.connect(
+            self.system_state_page.set_pwm_report_active
+        )
 
         # Populate dashboard profile selector
         self.dashboard_page.populate_profiles()

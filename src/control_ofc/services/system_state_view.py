@@ -27,6 +27,14 @@ from typing import NamedTuple
 
 from control_ofc.api.models import HardwareDiagnosticsResult, HwmonHeader
 from control_ofc.services import health_ack
+
+# Moved to the import-free registry so the Qt-free PWM Test Report can reach
+# them (DEC-404 Stage 4); re-exported here for this module's existing callers.
+from control_ofc.services.daemon_features import (  # noqa: F401
+    daemon_version_at_least,
+    version_tuple,
+)
+from control_ofc.services.duty_drift import DutyDriftState, corrections_line, is_drift_key
 from control_ofc.services.health_ack import Occurrence
 from control_ofc.ui.hwmon_guidance import (
     advisory_detail_html,
@@ -95,34 +103,6 @@ _THERMAL_STATE: dict[str, str] = {
 def severity_to_state(severity: str) -> str:
     """Map a problem/advisory severity string to the pill/border state."""
     return _STATE_BY_CSS.get(severity_display(severity).css_class, "info")
-
-
-def daemon_version_at_least(version: str, minimum: tuple[int, int, int]) -> bool:
-    """Best-effort semantic ``>=`` for a ``daemon_version`` string (DEC-120).
-
-    Copy of ``diagnostics_page._daemon_version_at_least`` — documented duplication
-    (the old page is untouched this stage). Tolerates ``1.11.0-rc1`` / ``1.11`` and
-    compares an unparseable/empty version as *below* ``minimum``.
-    """
-    return version_tuple(version) >= minimum
-
-
-def version_tuple(version: str) -> tuple[int, int, int]:
-    """Parse a version string to a 3-tuple, tolerating ``1.11.0-rc1`` / ``1.11``.
-
-    An unparseable or empty version yields ``(0, 0, 0)`` — i.e. sorts *below*
-    every real version, so a comparison against it fails safe.
-    """
-    core = version.strip().split("-", 1)[0].split("+", 1)[0]
-    nums: list[int] = []
-    for part in core.split(".")[:3]:
-        try:
-            nums.append(int(part))
-        except ValueError:
-            break
-    while len(nums) < 3:
-        nums.append(0)
-    return (nums[0], nums[1], nums[2])
 
 
 def gui_meets_daemon_floor(app_version: str, min_supported_gui: str) -> bool:
@@ -325,6 +305,10 @@ class InterferenceVM:
     explanation: str
     #: DEC-359 — demote-not-delete; see `build_interference_vm`.
     silence: SilenceVM = field(default_factory=SilenceVM)
+    #: DEC-404 S4-3: the daemon's duty corrections (DEC-406) as a READING —
+    #: "" when there were none or the daemon does not report them. Never an
+    #: alarm: a correction that held is the daemon doing its job.
+    corrections_line: str = ""
 
 
 @dataclass(frozen=True)
@@ -508,6 +492,20 @@ def _issue_card_from_problem(diag: HardwareDiagnosticsResult, problem: dict) -> 
             firmware_fan_count=firmware.fan_count if firmware else None,
             reachable_fan_count=diag.hwmon.total_headers if firmware else None,
         )
+    elif is_drift_key(key):
+        # The only daemon/user-supplied text on a drift card is the fan's name
+        # and id, so they are the only things escaped — and they are here, in
+        # the rich-text detail box, rather than in the plain title.
+        count = problem.get("corrections")
+        detail = (
+            f"<b>{escape(str(problem.get('subject') or ''))}</b> "
+            f"({escape(str(problem.get('header_id') or ''))})"
+            + (
+                f"<br>Corrected {int(count)} time(s) since the daemon started."
+                if isinstance(count, int)
+                else ""
+            )
+        )
     else:
         detail = None
     sd = severity_display(problem["severity"])
@@ -530,6 +528,7 @@ def build_condition_cards(
     *,
     pwm_control_verified: bool | None = None,
     silence: SilenceState | None = None,
+    duty_drift: DutyDriftState,
 ) -> ConditionCards:
     """The severity-sorted cards for conditions requiring the user's attention.
 
@@ -545,7 +544,9 @@ def build_condition_cards(
 
     cards: list[IssueCardVM] = []
     hidden = 0
-    for problem in detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified):
+    for problem in detect_readiness_problems(
+        diag, pwm_control_verified=pwm_control_verified, duty_drift=duty_drift
+    ):
         occ = condition_occurrence(diag, problem)
         rank = state_rank(occ.level)
         if health_ack.is_silenced(dismiss_index, occ, rank):
@@ -695,9 +696,16 @@ def condition_fingerprint(diag: HardwareDiagnosticsResult, key: str) -> str:
 def condition_occurrence(diag: HardwareDiagnosticsResult, problem: dict) -> Occurrence:
     """The occurrence identity for one condition dict."""
     key = problem["key"]
+    # A live condition (DEC-404's duty drift) carries its own episode identity;
+    # every condition derived from `diag` is fingerprinted from `diag`.
+    fingerprint = (
+        str(problem["fingerprint"])
+        if "fingerprint" in problem
+        else condition_fingerprint(diag, key)
+    )
     return Occurrence(
         key=key,
-        fingerprint=condition_fingerprint(diag, key),
+        fingerprint=fingerprint,
         level=severity_to_state(problem["severity"]),
     )
 
@@ -1388,8 +1396,11 @@ def build_system_state_vm(
     allow_dismiss: bool = True,
     live_thermal_state: str | None = None,
     silence: SilenceState | None = None,
+    duty_drift: DutyDriftState,
 ) -> SystemStateVM:
-    problems = detect_readiness_problems(diag, pwm_control_verified=pwm_control_verified)
+    problems = detect_readiness_problems(
+        diag, pwm_control_verified=pwm_control_verified, duty_drift=duty_drift
+    )
     n = len(problems)
     if n == 0:
         issue_count_label = "SYSTEM READY"
@@ -1411,8 +1422,21 @@ def build_system_state_vm(
     # this change removes. `conditions_hidden_count` is what reconciles the two
     # for the reader — without it the pill and the list simply disagree.
     issue_cards, conditions_hidden = build_condition_cards(
-        diag, pwm_control_verified=pwm_control_verified, silence=silence
+        diag, pwm_control_verified=pwm_control_verified, silence=silence, duty_drift=duty_drift
     )
+    interference = build_interference_vm(diag, silence=silence)
+    line = corrections_line(duty_drift)
+    if line:
+        # A correction IS interference, by another writer — so the monitor must
+        # not headline "No Interference Detected" above it. Its alarm state is
+        # untouched (S4-3: a count, not an alert).
+        interference = replace(
+            interference,
+            corrections_line=line,
+            title=interference.title
+            if interference.has_contention
+            else "No BIOS/EC Reclaim Detected",
+        )
     return SystemStateVM(
         board_line=board_identity_line(diag),
         summary_line=header_summary_line(diag.hwmon),
@@ -1429,7 +1453,7 @@ def build_system_state_vm(
             allow_acknowledge=silence.allow_acknowledge if silence else allow_acknowledge,
             allow_dismiss=silence.allow_dismiss if silence else allow_dismiss,
         ),
-        interference=build_interference_vm(diag, silence=silence),
+        interference=interference,
         safety_gpu=build_safety_gpu_vm(
             diag, live_thermal_state=live_thermal_state, silence=silence
         ),

@@ -10,6 +10,10 @@ from pathlib import Path
 
 from control_ofc.colors import is_valid_color
 from control_ofc.paths import app_settings_path, atomic_write, load_json_capped
+from control_ofc.services.pwm_report.setup_facts import (
+    coerce_cooler_notes,
+    coerce_hardware_notes,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +58,12 @@ MACHINE_SPECIFIC_KEYS = frozenset(
         "logs_level_filters",
         "logs_search_text",
         "logs_source_filter",
+        # DEC-404 decision 7: the PWM Test Report's "Your setup" facts. They
+        # describe ONE machine's physical wiring, keyed by its stable header ids —
+        # imported onto another machine they would scope that machine's RPM
+        # claims to a splitter it does not have.
+        "hardware_notes",
+        "cooler_notes",
     }
 )
 
@@ -97,6 +107,11 @@ _DEMO_SEALED_KEYS = frozenset(
         "sensor_class_overrides",
         "controls_card_sizes",
         "chart_series_seeded",
+        # DEC-404: keyed by hardware ids that demo's synthetic ids collide with.
+        # The report refuses to run in demo mode (D-a), so nothing should write
+        # these there; sealing them makes that a guarantee rather than a hope.
+        "hardware_notes",
+        "cooler_notes",
     }
 )
 
@@ -394,6 +409,14 @@ class AppSettings:
     # local), so excluded from portable export.
     sensor_class_overrides: dict[str, str] = field(default_factory=dict)
 
+    # DEC-404 decision 7 (S4-6): what the user told the PWM Test Report about
+    # their wiring, per stable header id — {"connected", "fans_behind",
+    # "bios_mode", "notes"} — and about the cooler as a whole — {"model",
+    # "pump_switch"}. USER_METADATA, never an observation. Machine-specific and
+    # demo-sealed (see the two key sets above).
+    hardware_notes: dict[str, dict[str, object]] = field(default_factory=dict)
+    cooler_notes: dict[str, str] = field(default_factory=dict)
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -495,6 +518,8 @@ class AppSettings:
             ],
             logs_search_text=_as_str(data.get("logs_search_text"), "", maxlen=200),
             logs_source_filter=_as_str(data.get("logs_source_filter"), "", maxlen=64),
+            hardware_notes=coerce_hardware_notes(data.get("hardware_notes")),
+            cooler_notes=coerce_cooler_notes(data.get("cooler_notes")),
         )
 
     def portable_dict(self) -> dict:

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from control_ofc.constants import EXPECTED_API_VERSION
+from control_ofc.constants import APP_VERSION, EXPECTED_API_VERSION
 from control_ofc.services.alerts import transition_to_fields, transition_to_log
 from control_ofc.services.app_state import AppState
 
@@ -633,6 +633,9 @@ class DiagnosticsService(QObject):
         bundle: dict = {
             "timestamp": time.time(),
             "system": {
+                # DEC-404 D-d: the bundle named the daemon's version and never the
+                # GUI's own, so a triager could not tell which client produced it.
+                "gui_version": APP_VERSION,
                 "platform": platform.platform(),
                 "python": sys.version,
                 "arch": platform.machine(),

@@ -205,6 +205,26 @@ control_ofc/
                                #   header's reported stop_permitted /
                                #   effective_min_pwm_pct and reconstructs only when
                                #   an older daemon says nothing. One rule, one place.
+    diagnostic_estimates.py    # "about how long" for each daemon diagnostic, from
+                               #   mirrored daemon timing constants — ONE copy for the
+                               #   session dialog and the PWM Test Report (DEC-408)
+    duty_drift.py              # DEC-406's duty_not_holding / duty_corrections as the
+                               #   System State drift card + Interference Monitor line.
+                               #   Every readiness builder takes its state as a REQUIRED
+                               #   keyword, so the pill and the pop-out cannot disagree
+    pwm_report/                # The PWM Test Report (DEC-404/408). All Qt-free.
+      catalog.py               #   tests, per-channel availability + reasons, defaults
+      runner.py                #   the run: a pure, clock-free state machine over the
+                               #   daemon's diagnostics; records every answer verbatim
+      document.py              #   the report document (schema v1) + snapshot readers
+      findings.py              #   the evidence rules — scoped claims, no global verdict
+      final_state.py           #   restoration, measured against the baseline
+      exposure.py              #   the lowest duty the profile can command, derived in
+                               #   the daemon's tuning order
+      trace.py                 #   1 Hz column-wise trace from the app's poll, 3 h cap
+      store.py                 #   save/load (own 16 MiB cap), crash repair
+      view.py                  #   the in-app report VM
+      setup_facts.py           #   "Your setup" vocabulary + settings coercion
   knowledge/                   # pure (stdlib-only) hardware-knowledge modules — no Qt/services deps (moved out of ui/ in v2.8.0)
     sensor_knowledge.py        # sensor classification + board-override database
     hwmon_label_resolver.py    # libsensors / hwmon fan-header label resolution
@@ -261,7 +281,11 @@ control_ofc/
       hardware_page.py         # Hardware page — /inventory/readiness checklist + Super-I/O + Probe Ports (DEC-212)
       theme_page.py            # Theme page — theme editor + presets + typography + app-wide apply (DEC-215)
       diagnostics_readiness.py # PWM-reclaim severity helpers (Diagnostics page retired — DEC-216); now feed System State
-      diagnostics_workers.py   # background QThread workers (verify / rescan / GPU reset) — now feed System State + Hardware
+      diagnostics_workers.py   # background QThread workers (verify / rescan / GPU reset) — now feed System State + Hardware;
+                               #   _PwmReportWorker makes the report's calls and keeps each body verbatim
+      pwm_report_controller.py # Drives one PWM Test Report run (DEC-408): runner + worker thread +
+                               #   1 s tick + trace + checkpoints. Owned by the Hardware page so a
+                               #   run outlives its window; stands down the other diagnostics
     widgets/
       control_card.py          # fan role card (theme-derived size, user-resizable — DEC-128/129)
       curve_card.py            # curve card (theme-derived size, user-resizable — DEC-128/129)
@@ -303,6 +327,9 @@ control_ofc/
       pwm_header_card.py       # One PWM header, thin renderer — DEC-318
       validation_session_dialog.py  # Validation AND lifecycle sessions — DEC-318;
                                #   one dialog, one engine, a `kind` discriminator
+      pwm_report_window.py     # The PWM Test Report window — DEC-408. Scope → Your setup →
+                               #   Review & consent → Run → Report; non-modal, single
+                               #   instance, hidden (not destroyed) on close
       flow_layout.py          # Qt FlowLayout — responsive card wrapping
       draggable_flow.py       # DraggableFlowContainer — drag-to-reorder
       reorderable_flow.py     # ReorderableFlow — shared drag/reorder base (DEC-187)

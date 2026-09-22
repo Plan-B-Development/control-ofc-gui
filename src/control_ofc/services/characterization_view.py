@@ -492,6 +492,13 @@ def _build_curve(run: CharacterizationRun) -> ResponseCurve:
     )
 
 
+def build_response_curve(run: CharacterizationRun) -> ResponseCurve:
+    """Public entry to :func:`_build_curve` — the PWM Test Report plots the same
+    sweep the characterisation dialog does, and must split its legs by the same
+    rule rather than by a copy of it (DEC-276)."""
+    return _build_curve(run)
+
+
 def _build_summary_rows(run: CharacterizationRun) -> list[SummaryRow]:
     """§8.2's compact block, in the spec's order."""
     summary = run.summary

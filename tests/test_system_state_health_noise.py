@@ -30,6 +30,7 @@ from control_ofc.api.models import (
     ThermalSafetyInfo,
 )
 from control_ofc.services.app_settings_service import AppSettings
+from control_ofc.services.duty_drift import NO_DRIFT
 from control_ofc.services.system_state_view import (
     build_board_notes,
     build_condition_cards,
@@ -126,11 +127,11 @@ def test_a_matched_quirk_alone_raises_no_condition_but_is_still_shown():
     assert any(is_high_severity(n.quirk.severity) for n in notes), (
         "and at least one must be a tier that used to escalate"
     )
-    assert detect_readiness_problems(diag) == []
+    assert detect_readiness_problems(diag, duty_drift=NO_DRIFT) == []
 
 
 def test_the_pill_reads_ready_on_a_healthy_board_carrying_a_high_quirk():
-    vm = build_system_state_vm(_healthy_gigabyte())
+    vm = build_system_state_vm(_healthy_gigabyte(), duty_drift=NO_DRIFT)
     assert vm.issue_count_state == "ok"
     assert vm.issue_count_label == "SYSTEM READY"
     assert vm.issue_cards == []
@@ -149,12 +150,12 @@ def test_crit_state_requires_a_hardware_damage_mechanism():
         _msi_nct6798(),
         _msi_nct6798(module_collisions=[_COLLISION]),
     ):
-        vm = build_system_state_vm(diag)
+        vm = build_system_state_vm(diag, duty_drift=NO_DRIFT)
         any_critical = any(c.severity == "critical" for c in vm.issue_cards)
         assert (vm.issue_count_state == "crit") is any_critical
     # …and the arm that proves the predicate can fire at all.
     assert build_system_state_vm(
-        _msi_nct6798(module_collisions=[_COLLISION])
+        _msi_nct6798(module_collisions=[_COLLISION]), duty_drift=NO_DRIFT
     ).issue_count_state == ("crit")
 
 
@@ -210,7 +211,7 @@ def test_an_observed_note_with_an_owning_condition_does_not_mint_a_second_card()
     "review the quirk notes above" while sorting itself above them.
     """
     diag = _msi_nct6798(module_collisions=[_COLLISION])
-    keys = [p["key"] for p in detect_readiness_problems(diag)]
+    keys = [p["key"] for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)]
     assert "module_collision" in keys
     assert not [k for k in keys if k.startswith("quirk_")]
     assert len(keys) == len(set(keys))
@@ -249,8 +250,8 @@ def test_a_failed_test_promotes_a_quirk_no_other_condition_owns():
     promotion actually running from it never having been wired (DEC-340).
     """
     diag = _healthy_gigabyte()
-    assert detect_readiness_problems(diag, pwm_control_verified=True) == []
-    promoted = detect_readiness_problems(diag, pwm_control_verified=False)
+    assert detect_readiness_problems(diag, pwm_control_verified=True, duty_drift=NO_DRIFT) == []
+    promoted = detect_readiness_problems(diag, pwm_control_verified=False, duty_drift=NO_DRIFT)
     assert [p["key"] for p in promoted] == [f"quirk_{quirk_key(q)}" for q in _high_quirks(diag)]
     assert all(p["severity"] == "warn" for p in promoted), (
         "losing fan control is ACTION REQUIRED, never CRITICAL (Q1)"
@@ -285,7 +286,9 @@ def test_a_reference_only_note_never_promotes():
         assert all(n.evidence == EVIDENCE_REFERENCE for n in notes)
         assert not [
             p
-            for p in detect_readiness_problems(diag, pwm_control_verified=verified)
+            for p in detect_readiness_problems(
+                diag, pwm_control_verified=verified, duty_drift=NO_DRIFT
+            )
             if p["key"].startswith("quirk_")
         ]
 
@@ -413,7 +416,7 @@ def test_every_trigger_names_a_condition_key_that_can_actually_be_emitted():
             expected_chips=["it8696", "it87952"],
         ),
     ):
-        emitted |= {p["key"] for p in detect_readiness_problems(diag)}
+        emitted |= {p["key"] for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)}
     declared = {q.trigger for q in VENDOR_QUIRKS_DB if q.trigger}
     assert declared <= emitted, f"unreachable trigger(s): {declared - emitted}"
 
@@ -481,7 +484,7 @@ def test_the_new_settings_fields_round_trip_and_stay_machine_specific():
 def test_condition_cards_and_notes_are_disjoint():
     """The merge DEC-211 introduced is gone, asserted on a board with both."""
     diag = _msi_nct6798(module_collisions=[_COLLISION])
-    cards = build_condition_cards(diag).cards
+    cards = build_condition_cards(diag, duty_drift=NO_DRIFT).cards
     notes = build_board_notes(diag)
     assert cards and notes.notes
     assert not ({c.title for c in cards} & {n.title for n in notes.notes})

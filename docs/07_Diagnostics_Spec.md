@@ -1102,3 +1102,117 @@ capture the startup window without an operator present, because a hand-started s
 reach it. It never blocks anyone: starting a session takes over immediately, the partial
 recording is still saved, and auto-records are retained separately so they cannot displace
 sessions made by hand.
+
+
+## PWM Test Report (DEC-404, DEC-408 — GUI 2.81.0)
+
+A whole-machine assessment the user starts from **Hardware ▸ PWM Test Report…**, in its own
+non-modal, single-instance window. It answers "what can Control-OFC actually observe and verify
+about this cooling setup?", and its value is a report that never overstates the evidence: there
+is **no global verdict**, and "not tested", "unavailable" and "inconclusive" are ordinary
+answers, not failures.
+
+**The GUI orchestrates; the daemon performs.** The report is a sequence of the daemon's own
+diagnostics — `POST /hwmon/{id}/verify`, `/discover-control-path`, `/characterize` and
+`/stall-probe` — one at a time, each preceded by `GET /diagnostics/preflight`. Every write, guard
+and restore stays the daemon's. The runner (`services/pwm_report/runner.py`) is a pure state
+machine; its Qt controller (`ui/pages/pwm_report_controller.py`) belongs to the Hardware page, so a
+run outlives its window.
+
+### Pages
+
+1. **Scope.** One row per channel the daemon reports (hwmon headers, OpenFan channels, GPU fans)
+   in stable-id order, with a checkbox per test. Pre-selected: the **PWM control test** and **tach
+   pairing** on writable headers whose fan reads RPM > 0. Never pre-selected: the **full sweep**
+   and the **stall probe**. A test that cannot be offered is disabled with its reason as the
+   tooltip — read-only header, OpenFan/GPU (reported read-only), a daemon without the capability
+   (`daemon_supports(...) is True`), a daemon below **2.52.0** for the sweep and pairing (their
+   settling and noise figures were wrong before DEC-405), and the probe's envelope: never a
+   pump-protected header, never `cpu_fan`, only `chassis_fan`/`radiator_fan`, and only with a tach.
+2. **Your setup** (optional). The cooler's model and pump-switch position, and per header what is
+   connected, how many fans share it (> 1 = splitter or hub), the BIOS header mode and notes.
+   Remembered per stable header id (`hardware_notes`, `cooler_notes`) as USER_METADATA; blank is
+   recorded as *not supplied*.
+3. **Review & consent.** The plan in plain words per header and test, the safety paragraph, a
+   general consent checkbox when any selected test writes, and — for each selected probe — its
+   own "I'll stay at the machine" confirmation. Start stays disabled until all are ticked and no
+   start refusal applies (demo mode, disconnected, thermal protection active, another diagnostic
+   running, a validation session recording).
+4. **Run.** The step list with its statuses, the header under test's live command, readback and
+   RPM, the thermal state, elapsed time and an estimate of what is left, and **Cancel run**.
+5. **Report.** State, summary, *Needs attention*, *Observations*, *Restoration* (with **Re-apply
+   profile** when a failure is one the profile fixes), a section per channel (facts, the test
+   matrix, findings, a PWM→RPM chart for a sweep and for the probe, the probe's points table),
+   *Not tested*, environment, configuration, the provenance legend and the evidence (the daemon's
+   raw answers, filled on expand). **Export JSON…** saves a copy.
+
+### What a run does
+
+- **Baseline snapshot**, read-only: `/capabilities`, `/status`, `/fans`, `/sensors`,
+  `/hwmon/headers`, `/diagnostics/hardware`, `/profile/active` and the active profile's document,
+  `/inventory/cooling-devices` and `/diagnostics/control-path` — each answer kept verbatim with
+  its status (a 404 from an older daemon is recorded, not dropped).
+- **Per header, in stable-id order: verify → pairing → sweep → probe.** A `blocked` preflight is
+  *not tested* with the daemon's rows kept; a refusal (409 busy, a thermal or retryable refusal,
+  an ineligible header) is *not tested* with the daemon's words — never a hardware verdict. The
+  sweep asks for 20, 30 … 100 %, both directions, a 20 s stability dwell, and **no settle**: the
+  daemon picks it and floors a pump's walk; the report records what the run echoed. After each
+  test the runner waits 3 s (one engine tick + two polls) for DEC-382's hand-back.
+- **Run-level stops:** thermal protection leaving `normal` cancels the running test and ends the
+  run `aborted`; losing the daemon ends it `interrupted`; Cancel (or closing the window, after a
+  confirmation) sends `DELETE` and marks the rest *cancelled by you*; quitting the application
+  cancels synchronously and saves the report `interrupted`.
+- **Final snapshot** and the restoration checks (below).
+- **The trace:** every fan (RPM, readback, command, mode) and every temperature, once a second
+  from the app's own poll, stored column-wise; it stops at three hours and says so.
+
+### Evidence rules
+
+- **Scoped claims.** A verify finding names its one test duty; a sweep finding its tested range;
+  a declared splitter scopes every RPM claim to the one tach-reporting fan; a pump-protected
+  header is "below 30 % not tested, by design"; an empty header is "no fan detected (inferred)",
+  its stall flag explained as not a stall (`PTR-k`); a device override is an observation; a
+  firmware-controlled header is a state.
+- **Provenance** on every finding: measured, commanded, derived, user-supplied, device-reported,
+  unverified. The daemon's `unknown` reads **"Inconclusive"** in the report only.
+- **Always listed, never implied:** daemon stop/start and firmware fallback, the `pwmN_enable`
+  mode matrix, suspend/resume, a pump below 30 %, coolant temperature, OpenFan/GPU active tests,
+  closed-loop thermal response (use a Thermal Observation session), and the nine properties
+  motherboard hwmon cannot establish (`provenance.UNVERIFIABLE`).
+- **Exposure** (derived): the lowest duty the active profile can command on each tested member,
+  in the daemon's tuning order (offset → floor → stop-snap; a pump's hard floor is never snapped),
+  against the lowest duty a sweep saw turning or the probe's stall/restart duties. A Mix or Sync
+  curve is reported as unbounded.
+
+### Restoration (measured, not assumed)
+
+For every header a test touched: `pwm_enable_mode` against the baseline. For every profile
+member: readback against command within the daemon's 2-point tolerance (the read-only D3 check,
+any daemon). For every test: its `restore_outcome`. Then no override the run did not start with,
+the active profile by id and content hash, the thermal state, and — on daemon 2.53.0+ — any
+`duty_corrections` during the run (evidence of a second writer) and any header left
+`duty_not_holding`. A missing final snapshot is *unverified*, never *passed*.
+
+### The report file
+
+`~/.local/share/control-ofc/reports/pwm-report-<UTC>-<id>.json` (`paths.reports_dir()`), compact
+JSON, schema version 1, saved after every step and never deleted automatically. Reopened with its
+**own 16 MiB limit** — the shared 4 MiB import cap cannot hold a three-hour trace (a measured
+4.1 MB on a 19-fan / 24-sensor machine). A file left `in_progress` by a crash is repaired to
+`interrupted` the next time the report is opened, with its findings re-derived.
+
+### While a run is active
+
+It holds the daemon's one diagnostic slot, so the Hardware page's per-header Test / Characterise
+/ Discover buttons and its session buttons, and System State's Test PWM Control, Verify All
+Writable and Characterise, are disabled with the reason. The GPU fan buttons stay enabled.
+
+### The duty-drift card on System State (DEC-408, daemon ≥ 2.53.0)
+
+A header the daemon has stopped correcting (`duty_not_holding`, DEC-406) raises a condition card —
+one per header, one per episode (fingerprinted by the correction count at the give-up, so a
+dismissal cannot hide the next episode). It counts toward "N ACTION REQUIRED" and appears in the
+pop-out Full Report, because it enters `detect_readiness_problems` like every other condition.
+Corrections that held are a line in the Interference Monitor — a reading, never an alarm — and
+the monitor's headline then says "No BIOS/EC Reclaim Detected" rather than "No Interference
+Detected". A disconnect clears the card: with no daemon to ask it is no longer a current fact.

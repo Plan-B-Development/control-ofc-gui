@@ -70,6 +70,9 @@ SYSTEM_STATE_OBJECTNAMES = frozenset(
         "SystemState_Combo_verifyHeader",
         "SystemState_Gauge_reverts",
         "SystemState_Label_contentionTitle",
+        # DEC-404 S4-3: the Interference Monitor's duty-corrections reading
+        # (DEC-406) — a deliberate addition.
+        "SystemState_Label_dutyCorrections",
         "SystemState_Label_gpuModel",
         "SystemState_Label_headerId",
         "SystemState_Label_interferenceExplain",

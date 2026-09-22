@@ -39,6 +39,7 @@ from control_ofc.api.models import (
     KernelModuleInfo,
     ThermalSafetyInfo,
 )
+from control_ofc.services.duty_drift import NO_DRIFT
 from control_ofc.services.health_ack import (
     SILENCE_CAP,
     Occurrence,
@@ -373,7 +374,9 @@ def test_a_tachless_sweep_does_not_mint_a_condition_card(qtbot):
     assert svc.settings.last_pwm_verify_effective == PWM_EVIDENCE_EFFECTIVE
     assert not [
         p
-        for p in build_system_state_vm(_healthy_gigabyte(), pwm_control_verified=True).issue_cards
+        for p in build_system_state_vm(
+            _healthy_gigabyte(), pwm_control_verified=True, duty_drift=NO_DRIFT
+        ).issue_cards
         if p.key.startswith("quirk_")
     ]
 
@@ -392,8 +395,8 @@ def test_a_dismissed_note_does_not_change_the_action_required_count():
     note = _bios_revert_note(diag)
     dismissed = {note_ack_key(note.key, note.evidence)}
 
-    loud = build_system_state_vm(diag)
-    quiet = build_system_state_vm(diag, dismissed_notes=dismissed)
+    loud = build_system_state_vm(diag, duty_drift=NO_DRIFT)
+    quiet = build_system_state_vm(diag, dismissed_notes=dismissed, duty_drift=NO_DRIFT)
     assert quiet.board_notes.hidden_count == 1, "precondition: something really was hidden"
     assert quiet.issues_requiring_attention == loud.issues_requiring_attention
     assert quiet.issue_count_label == loud.issue_count_label
@@ -692,7 +695,7 @@ def _msi_collision():
 
 
 def _condition(diag, key):
-    return next(c for c in build_condition_cards(diag).cards if c.key == key)
+    return next(c for c in build_condition_cards(diag, duty_drift=NO_DRIFT).cards if c.key == key)
 
 
 def test_a_condition_can_be_dismissed_and_the_pill_still_counts_it():
@@ -706,9 +709,9 @@ def test_a_condition_can_be_dismissed_and_the_pill_still_counts_it():
     card = _condition(diag, "module_collision")
     assert card.silence.token, "precondition: the condition must be silenceable"
 
-    loud = build_system_state_vm(diag)
+    loud = build_system_state_vm(diag, duty_drift=NO_DRIFT)
     quiet = build_system_state_vm(
-        diag, silence=SilenceState(dismissed=frozenset({card.silence.token}))
+        diag, silence=SilenceState(dismissed=frozenset({card.silence.token})), duty_drift=NO_DRIFT
     )
     assert "module_collision" not in {c.key for c in quiet.issue_cards}
     assert quiet.conditions_hidden_count == 1
@@ -754,10 +757,12 @@ def test_a_changed_condition_speaks_again():
     )
 
     silenced = SilenceState(dismissed=frozenset({token}))
-    assert "acpi" not in {c.key for c in build_condition_cards(one, silence=silenced).cards}
-    assert "acpi" in {c.key for c in build_condition_cards(two, silence=silenced).cards}, (
-        "a condition whose evidence changed must speak again"
-    )
+    assert "acpi" not in {
+        c.key for c in build_condition_cards(one, silence=silenced, duty_drift=NO_DRIFT).cards
+    }
+    assert "acpi" in {
+        c.key for c in build_condition_cards(two, silence=silenced, duty_drift=NO_DRIFT).cards
+    }, "a condition whose evidence changed must speak again"
 
 
 def test_a_reclaim_count_rising_does_not_break_its_own_dismissal():
@@ -784,7 +789,11 @@ def test_a_reclaim_count_rising_does_not_break_its_own_dismissal():
 
     token = _condition(_with(1), "bios_revert").silence.token
     silenced = SilenceState(dismissed=frozenset({token}))
-    keys = lambda d: {c.key for c in build_condition_cards(d, silence=silenced).cards}  # noqa: E731
+
+    def keys(d):
+        return {
+            c.key for c in build_condition_cards(d, silence=silenced, duty_drift=NO_DRIFT).cards
+        }
 
     assert "bios_revert" not in keys(_with(2)), "one more reclaim un-silenced the dismissal"
     assert "bios_revert" not in keys(_with(9))
@@ -914,10 +923,16 @@ def test_the_collision_fingerprint_reads_the_fields_that_exist():
     token = _condition(_with("nct6775", "nct6687"), "module_collision").silence.token
     silenced = SilenceState(dismissed=frozenset({token}))
     assert "module_collision" not in {
-        c.key for c in build_condition_cards(_with("nct6775", "nct6687"), silence=silenced).cards
+        c.key
+        for c in build_condition_cards(
+            _with("nct6775", "nct6687"), silence=silenced, duty_drift=NO_DRIFT
+        ).cards
     }
     assert "module_collision" in {
-        c.key for c in build_condition_cards(_with("it87", "it87_dkms"), silence=silenced).cards
+        c.key
+        for c in build_condition_cards(
+            _with("it87", "it87_dkms"), silence=silenced, duty_drift=NO_DRIFT
+        ).cards
     }, "a dismissal on one module pair silenced a different pair"
 
 
@@ -1069,7 +1084,9 @@ def test_an_unrecognised_stored_level_does_not_silence_anything():
     )
     assert state_rank("observed") > state_rank("crit"), "precondition: it really does outrank crit"
 
-    silenced = build_condition_cards(diag, silence=SilenceState(dismissed=frozenset({hostile})))
+    silenced = build_condition_cards(
+        diag, silence=SilenceState(dismissed=frozenset({hostile})), duty_drift=NO_DRIFT
+    )
     assert "module_collision" in {c.key for c in silenced.cards}, (
         "an unrecognised stored level silenced a critical condition"
     )
@@ -1101,22 +1118,24 @@ def test_a_module_conflict_dismissal_survives_an_unrelated_module_loading():
 
     pair = ["nct6775", "nct6687"]
     before = _with(pair)
-    assert "module_conflict" in {c.key for c in build_condition_cards(before).cards}, (
-        "precondition: the fixture must actually raise the conflict"
-    )
+    assert "module_conflict" in {
+        c.key for c in build_condition_cards(before, duty_drift=NO_DRIFT).cards
+    }, "precondition: the fixture must actually raise the conflict"
     token = _condition(before, "module_conflict").silence.token
     silenced = SilenceState(dismissed=frozenset({token}))
 
     after = _with([*pair, "asus_wmi_sensors"])  # an unrelated sensor driver loads
     assert "module_conflict" not in {
-        c.key for c in build_condition_cards(after, silence=silenced).cards
+        c.key for c in build_condition_cards(after, silence=silenced, duty_drift=NO_DRIFT).cards
     }, "an unrelated module loading resurrected the dismissal"
 
     # The arm that discriminates: a DIFFERENT conflicting pair must still speak.
     other = _with(["it87", "it87_dkms"])
-    if "module_conflict" in {c.key for c in build_condition_cards(other).cards}:
+    if "module_conflict" in {
+        c.key for c in build_condition_cards(other, duty_drift=NO_DRIFT).cards
+    }:
         assert "module_conflict" in {
-            c.key for c in build_condition_cards(other, silence=silenced).cards
+            c.key for c in build_condition_cards(other, silence=silenced, duty_drift=NO_DRIFT).cards
         }, "a dismissal on one pair silenced a different pair"
 
 
@@ -1179,7 +1198,9 @@ def test_a_recent_reclaim_is_still_a_condition():
     """The arm that discriminates. Without it, "historic" is indistinguishable
     from having deleted the condition outright."""
     recent = _reclaim_diag(age_ms=60_000)  # a minute ago
-    assert "bios_revert" in {c.key for c in build_condition_cards(recent).cards}
+    assert "bios_revert" in {
+        c.key for c in build_condition_cards(recent, duty_drift=NO_DRIFT).cards
+    }
     assert build_interference_vm(recent).severity_state != "neutral"
 
 
@@ -1191,7 +1212,9 @@ def test_a_reclaim_nothing_has_repeated_stands_down():
     BIOS, refetch, and it is gone", which was false for this entry.
     """
     old = _reclaim_diag(age_ms=RECLAIM_HISTORIC_AFTER_MS + 1)
-    assert "bios_revert" not in {c.key for c in build_condition_cards(old).cards}
+    assert "bios_revert" not in {
+        c.key for c in build_condition_cards(old, duty_drift=NO_DRIFT).cards
+    }
 
     # Dated, not discarded: the monitor keeps the count and says what it is.
     vm = build_interference_vm(old)
@@ -1206,7 +1229,9 @@ def test_an_unknown_reclaim_age_does_not_suppress_the_condition():
     evidence of age, and the safe direction for a warning is to keep it."""
     undated = _reclaim_diag(age_ms=None)
     assert undated.hwmon.enable_revert_last_seen_ms == {}
-    assert "bios_revert" in {c.key for c in build_condition_cards(undated).cards}
+    assert "bios_revert" in {
+        c.key for c in build_condition_cards(undated, duty_drift=NO_DRIFT).cards
+    }
     assert build_interference_vm(undated).severity_state != "neutral"
 
 
@@ -1226,7 +1251,7 @@ def test_one_active_header_keeps_the_condition_up_for_all_of_them():
         thermal_safety=ThermalSafetyInfo(state="normal", cpu_sensor_found=True),
         cpu_vendor="AMD",
     )
-    assert "bios_revert" in {c.key for c in build_condition_cards(diag).cards}
+    assert "bios_revert" in {c.key for c in build_condition_cards(diag, duty_drift=NO_DRIFT).cards}
 
 
 def test_the_historic_wording_interpolates_the_reported_age():
@@ -1289,6 +1314,7 @@ def test_a_dismissal_expires_when_the_reclaim_episode_ends(qtbot):
         for c in build_condition_cards(
             _reclaim_diag(age_ms=30_000),
             silence=SilenceState(dismissed=frozenset(svc.settings.dismissed_health_items)),
+            duty_drift=NO_DRIFT,
         ).cards
     }
 
@@ -1318,7 +1344,9 @@ def test_acknowledging_a_condition_demotes_it_in_the_view_model():
     quiet = next(
         c
         for c in build_condition_cards(
-            diag, silence=SilenceState(acknowledged=frozenset({loud.silence.token}))
+            diag,
+            silence=SilenceState(acknowledged=frozenset({loud.silence.token})),
+            duty_drift=NO_DRIFT,
         ).cards
         if c.key == "module_collision"
     )
@@ -1758,7 +1786,7 @@ def test_gpu_row_silence_keys_do_not_collide_with_the_condition_cards():
         for r in build_safety_gpu_vm(diag).gpu_rows
         if r.silence.token
     }
-    condition_keys = {p["key"] for p in detect_readiness_problems(diag)}
+    condition_keys = {p["key"] for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)}
     assert row_keys, "precondition: the rows must carry keys at all"
     assert condition_keys & {"gpu_readonly", "gpu_ppfeaturemask"}, (
         "precondition: this fixture must actually raise the GPU conditions"
@@ -1923,7 +1951,7 @@ def test_a_dismissed_gpu_row_survives_the_problem_being_fixed_and_recurring():
 
     # The page prunes against an UNSILENCED probe, exactly as `_prune_silences`
     # builds it — so this is the real predicate, not a re-derivation of it.
-    healthy_probe = build_system_state_vm(fixed)
+    healthy_probe = build_system_state_vm(fixed, duty_drift=NO_DRIFT)
     assert row(fixed).state == "ok", "precondition: the problem really is fixed"
     assert row(fixed).silence.token == "", "precondition: a healthy row carries no token"
     kept = prune([token], _live_silence_keys(healthy_probe))
@@ -1958,4 +1986,6 @@ def test_a_gpu_row_the_hardware_can_no_longer_raise_is_still_pruned():
     assert not any(r.label == "amdgpu binding" for r in build_safety_gpu_vm(bound).gpu_rows), (
         "precondition: the row must genuinely vanish, not merely go quiet"
     )
-    assert prune([token], _live_silence_keys(build_system_state_vm(bound))) == []
+    assert (
+        prune([token], _live_silence_keys(build_system_state_vm(bound, duty_drift=NO_DRIFT))) == []
+    )

@@ -290,6 +290,20 @@ class ControlCapability:
     #: the POST and leaves its OpenFan channels at their last duty whatever the
     #: control says.
     exit_floor: bool = False
+    #: DEC-406 (daemon >= 2.53.0): the engine reads back an hwmon write it would
+    #: coalesce and rewrites a duty that moved, giving up after three
+    #: corrections that do not hold. Every hwmon ``/fans``/``/poll`` entry then
+    #: carries ``duty_corrections`` and ``duty_not_holding``.
+    #:
+    #: Gates what the PWM Test Report and the System State page may SAY about
+    #: drift: on an older daemon a moved duty simply stands, and the absence of
+    #: the two fields is "this daemon does not reconcile", never "no drift".
+    duty_reconciliation: bool = False
+    #: DEC-407 (daemon >= 2.54.0): ``POST /hwmon/{id}/stall-probe`` plus the
+    #: GET/DELETE ``/diagnostics/stall-probe`` pair and the ``pwm_stall_probe``
+    #: preflight token. Gate on this rather than probing: an older daemon 404s
+    #: the POST from the route fallback, the same status an unknown header gets.
+    stall_probe: bool = False
     # `WIRE-k` (daemon >= 2.36.0): five features that shipped BEFORE this block
     # had keys for them. Until the daemon grew these flags the GUI detected them
     # by comparing the daemon's version string — which says when a feature first
@@ -824,6 +838,16 @@ class FanReading:
     # pre-takeover mode forever — and the field's diagnostic value is answering
     # "is something else controlling this header *now*?". `None` = not known.
     pwm_enable_mode: int | None = None
+    # DEC-406 (daemon >= 2.53.0, capability `control.duty_reconciliation`): how
+    # many times since the daemon started it rewrote this header's duty because
+    # something else had moved it. `None` means THIS DAEMON DOES NOT SAY — an
+    # older daemon, or a non-hwmon fan — never 0. A rise during a PWM Test
+    # Report run is evidence of a second writer.
+    duty_corrections: int | None = None
+    # DEC-406: True once three corrections in a row did not hold and the daemon
+    # stopped rewriting this header. Cleared when a readback agrees again or the
+    # command changes. `None` = not reported (older daemon / non-hwmon).
+    duty_not_holding: bool | None = None
 
     @property
     def freshness(self) -> Freshness:
@@ -1314,6 +1338,16 @@ class KernelModuleInfo:
     name: str = ""
     loaded: bool = False
     in_mainline: bool = False
+    # DEC-405 (daemon >= 2.52.0). `/sys/module/<name>/version` — present only for
+    # a loaded module built with MODULE_VERSION, so `None` is common and means
+    # "not published", never "unknown version".
+    version: str | None = None
+    # DEC-405. The module source checksum: tells two builds of one version apart
+    # (a DKMS rebuild, a kernel update). `None` when not loaded or not published.
+    srcversion: str | None = None
+    # DEC-405. The kernel's `O` taint on the loaded module (built outside the
+    # kernel tree). `None` when not loaded or unreadable — never a guessed False.
+    out_of_tree: bool | None = None
 
 
 @dataclass
@@ -1352,6 +1386,10 @@ class BoardInfo:
     vendor: str = ""
     name: str = ""
     bios_version: str = ""
+    # DEC-405 (daemon >= 2.52.0). DMI `bios_date` as the firmware reports it
+    # (commonly MM/DD/YYYY), passed through unparsed. `None` when absent — unlike
+    # the three fields above, which predate the rule and read "".
+    bios_date: str | None = None
 
 
 @dataclass
@@ -1495,6 +1533,11 @@ class HardwareDiagnosticsResult:
     kernel_modules: list[KernelModuleInfo] = field(default_factory=list)
     acpi_conflicts: list[AcpiConflictInfo] = field(default_factory=list)
     board: BoardInfo = field(default_factory=BoardInfo)
+    # DEC-405 (daemon >= 2.52.0): the running kernel's release as the DAEMON read
+    # it (`/proc/sys/kernel/osrelease`) — the fact that separates a kernel update
+    # from a hardware change when two PWM Test Reports differ. `None` when
+    # unreadable or from an older daemon.
+    kernel_release: str | None = None
     # DEC-101: chip names this DMI board is expected to expose, sourced
     # from the daemon's curated dual-chip board table. Empty when the
     # board is unknown or the daemon predates DEC-101 (the field is
@@ -2431,6 +2474,9 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
             for c in data.get("acpi_conflicts", [])
         ],
         board=board,
+        kernel_release=(
+            data.get("kernel_release") if isinstance(data.get("kernel_release"), str) else None
+        ),
         expected_chips=expected_chips,
         board_firmware_counts=_parse_board_firmware_counts(data.get("board_firmware_counts")),
         kernel_detected_chips=kernel_detected_chips,
@@ -2651,6 +2697,17 @@ class PointStability:
     #: resolution the data does not have, so render timings against this.
     sample_interval_ms: int = 0
     dwell_ms: int = 0
+    #: DEC-405 (daemon >= 2.52.0): where the statistics window opens, measured
+    #: from the write — the settle point, so the figures describe the settled
+    #: tail rather than the transient (`PTR-a`). ``0`` on a point that never
+    #: settled (its statistics then span the whole hold and ``verdict`` says
+    #: ``not_settled``). ``None`` from an older daemon, whose window always
+    #: opened at the write.
+    window_start_ms: int | None = None
+    #: DEC-405: the tach register's own update interval these readings came
+    #: from — the driver's ``update_interval`` where published, otherwise the
+    #: median observed gap. ``None`` when neither is known.
+    update_interval_ms: int | None = None
 
 
 @dataclass
@@ -2752,6 +2809,12 @@ class CharSummary:
     min_rpm: int | None = None
     max_rpm: int | None = None
     monotonic: bool | None = None
+    #: DEC-405 (daemon >= 2.52.0, `PTR-d`): a bidirectional run judges each leg
+    #: separately, each ordered by duty; ``monotonic`` is then false if any
+    #: judged leg is. ``None`` for a leg that was not judged, and from an older
+    #: daemon (which judged the whole walk in walk order).
+    monotonic_falling: bool | None = None
+    monotonic_rising: bool | None = None
     dead_zone_upper_pct: int | None = None
     clamp_pct: int | None = None
     possible_device_override: bool = False
@@ -2934,6 +2997,20 @@ DIAGNOSTIC_CONTROL_PATH = "control_path_discovery"
 #: enabled. Requesting both in one session runs only this one — the daemon treats
 #: it as a strict superset and supersedes the basic sweep.
 DIAGNOSTIC_BEHAVIOUR = "pwm_behaviour_characterization"
+#: DEC-407 (daemon >= 2.54.0, capability ``control.stall_probe``). The preflight
+#: token for the below-20 % stall/restart probe; its eligibility row is
+#: ``stall_probe_eligible``.
+DIAGNOSTIC_STALL_PROBE = "pwm_stall_probe"
+
+#: Stall-probe outcomes (DEC-407). Stable tokens; the client owns the wording
+#: and renders an unrecognised one rather than dropping it (273-i).
+STALL_PROBE_STALL_AND_RESTART = "stall_and_restart_found"
+STALL_PROBE_NO_STALL_DOWN_TO_0 = "no_stall_down_to_0"
+STALL_PROBE_DID_NOT_RESTART = "did_not_restart_below_20"
+STALL_PROBE_NO_FAN = "no_fan_detected"
+STALL_PROBE_STALLED_AT_OR_ABOVE_20 = "stalled_at_or_above_20"
+STALL_PROBE_ABORTED = "aborted"
+STALL_PROBE_CANCELLED = "cancelled"
 
 #: Relationship outcomes from control-path discovery.
 CONTROL_PATH_CONFIRMED = "confirmed"
@@ -3013,6 +3090,10 @@ class TachObservation:
     delta_rpm: int | None = None
     noise_floor_rpm: int = 0
     responded: bool = False
+    #: DEC-405 (daemon >= 2.52.0, `PTR-c`): this cycle's baseline never settled
+    #: within its bounded wait, so its noise floor was taken from cycle 1's
+    #: unperturbed baseline instead. ``None`` from an older daemon.
+    noise_floor_from_cycle_1: bool | None = None
 
 
 @dataclass
@@ -3024,6 +3105,13 @@ class DiscoveryCycle:
     perturbed_pct: int = 0
     direction: str = ""
     observations: list[TachObservation] = field(default_factory=list)
+    #: DEC-405 (daemon >= 2.52.0): whether every channel that could move had
+    #: settled before this cycle's baseline window opened. ``None`` when no wait
+    #: ran (the baseline write did not move the duty) and from an older daemon.
+    baseline_settled: bool | None = None
+    #: DEC-405: how long this cycle waited for that settle; ``0`` when no wait
+    #: ran. ``None`` from an older daemon, which never waited.
+    settle_wait_ms: int | None = None
 
 
 @dataclass
@@ -3136,6 +3224,107 @@ class ControlPathStatus:
         return None
 
 
+@dataclass
+class ProbePoint:
+    """One held duty of a stall/restart probe (DEC-407).
+
+    ``phase`` (``baseline`` | ``descent`` | ``ascent`` | ``kick``) and
+    ``observation`` (``spinning`` | ``stalled`` | ``restarted`` | ``stopped`` |
+    ``no_fan`` | ``unreadable`` | ``interrupted`` | ``unconfirmed``) are opaque
+    tokens: render an unrecognised one rather than dropping the point (273-i).
+    """
+
+    phase: str = ""
+    step_index: int = 0
+    commanded_pct: int = 0
+    #: ``False`` when the write itself failed.
+    command_accepted: bool = False
+    readback_pct: int | None = None
+    pwm_enable: int | None = None
+    #: The tach just before the write, and the last reading of the hold.
+    rpm_before: int | None = None
+    rpm_after: int | None = None
+    held_ms: int = 0
+    #: When, from the write, the stall or restart was confirmed; ``None`` when
+    #: it was not — never "instantly".
+    confirmed_at_ms: int | None = None
+    samples: int = 0
+    zero_samples: int = 0
+    observation: str = ""
+
+
+@dataclass
+class StallProbeRun:
+    """A stall/restart probe run — the ``202`` body of
+    ``POST /hwmon/{id}/stall-probe`` and of ``GET``/``DELETE
+    /diagnostics/stall-probe`` (DEC-407, daemon >= 2.54.0).
+
+    ``state`` shares the characterisation vocabulary (``running`` |
+    ``complete`` | ``cancelled`` | ``aborted`` | ``failed``); ``outcome`` is
+    ``None`` while running, then one of the ``STALL_PROBE_*`` tokens.
+    Every duty, dwell and budget below is derived **by the daemon** from the
+    header's own refresh — there are no request tunables to echo, so these
+    published values are what makes a run reproducible.
+    """
+
+    run_id: str = ""
+    header_id: str = ""
+    state: str = ""
+    outcome: str | None = None
+    #: Set when ``outcome`` is ``aborted``: an abort token or a thermal token.
+    abort_reason: str | None = None
+    detail: str | None = None
+    #: The highest duty at which the fan was confirmed stopped on the way down
+    #: (``0`` is a stall too), and the lowest at which it was confirmed spinning
+    #: again on the way back up (at most 20).
+    stall_duty_pct: int | None = None
+    restart_duty_pct: int | None = None
+    hysteresis_pct: int | None = None
+    lowest_commanded_pct: int | None = None
+    time_below_floor_ms: int = 0
+    baseline_rpm: int | None = None
+    baseline_settled: bool | None = None
+    #: The tach refresh the timing was derived from, and where it came from
+    #: (``driver_update_interval`` | ``observed``).
+    refresh_ms: int | None = None
+    refresh_source: str | None = None
+    dwell_ms: int | None = None
+    confirm_ms: int | None = None
+    budget_ms: int | None = None
+    start_cpu_temp_c: float | None = None
+    max_cpu_temp_c: float | None = None
+    rise_limit_c: float = 0.0
+    #: The recovery kick held 100 % for its whole window and the fan still read
+    #: 0 rpm — the fan may be physically stuck. The header is restored anyway.
+    restart_failed_at_full: bool = False
+    points: list[ProbePoint] = field(default_factory=list)
+    original_pct: int | None = None
+    restore_failed: bool = False
+    #: DEC-315 vocabulary, shared with characterisation and discovery.
+    restore_outcome: str = ""
+    completed_unix_ms: int | None = None
+    provenance: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def is_running(self) -> bool:
+        return self.state == "running"
+
+
+def parse_stall_probe_run(data: dict) -> StallProbeRun:
+    """Parse a stall-probe run, tolerating unknown tokens and new fields."""
+    run = StallProbeRun(**_filter_fields(StallProbeRun, data))
+    run.points = [
+        ProbePoint(**_filter_fields(ProbePoint, p))
+        for p in (data.get("points") or [])
+        if isinstance(p, dict)
+    ]
+    raw_prov = data.get("provenance")
+    run.provenance = (
+        {str(k): str(v) for k, v in raw_prov.items()} if isinstance(raw_prov, dict) else {}
+    )
+    return run
+
+
 def parse_preflight_report(data: dict) -> PreflightReport:
     """Parse a preflight report, tolerating unknown check ids and states."""
     raw = data.get("checks") or []
@@ -3168,6 +3357,8 @@ def parse_control_path_run(data: dict) -> ControlPathRun:
             for o in (c.get("observations") or [])
             if isinstance(o, dict)
         ]
+        raw_settled = c.get("baseline_settled")
+        raw_wait = c.get("settle_wait_ms")
         cycles.append(
             DiscoveryCycle(
                 cycle=int(c.get("cycle") or 0),
@@ -3175,6 +3366,12 @@ def parse_control_path_run(data: dict) -> ControlPathRun:
                 perturbed_pct=int(c.get("perturbed_pct") or 0),
                 direction=str(c.get("direction", "")),
                 observations=obs,
+                baseline_settled=raw_settled if isinstance(raw_settled, bool) else None,
+                settle_wait_ms=(
+                    raw_wait
+                    if isinstance(raw_wait, int) and not isinstance(raw_wait, bool)
+                    else None
+                ),
             )
         )
     raw_summary = data.get("summary")
