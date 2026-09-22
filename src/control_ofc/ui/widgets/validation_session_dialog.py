@@ -53,6 +53,13 @@ from control_ofc.api.models import (
     VALIDATION_KIND_VALIDATION,
     ValidationSession,
 )
+from control_ofc.services.diagnostic_estimates import (
+    CHARACTERIZATION_DEFAULT_POINT_COUNT,
+    VERIFY_SECONDS,
+    characterization_seconds,
+    discovery_seconds,
+    duration_text,
+)
 from control_ofc.services.thermal_view import (
     ISOLATION_TEMPLATES,
     build_live_summary,
@@ -104,6 +111,11 @@ POLL_INTERVAL_MS = 1000
 #:                below the discovery floor                              = ~1 min
 #:              (worst case ~1¼ min)
 #:
+#: Since DEC-404 Stage 4 the arithmetic lives in ONE place,
+#: ``services/diagnostic_estimates.py``, which the PWM Test Report labels its
+#: tests from too — a second copy would drift the next time the daemon moved a
+#: constant, which is what DEC-405's 6 s → 12 s settle did to these labels.
+#:
 #: Against a daemon before 2.52.0 (6 s settle, no settle-wait) the three sweep
 #: figures are roughly double the real run; the labels follow the daemon they
 #: ship with.
@@ -111,9 +123,22 @@ POLL_INTERVAL_MS = 1000
 #: Every previous label over-estimated, which is the wrong direction: it trains
 #: the user to expect a long wait and then to read the session's own open-ended
 #: recording as "still working".
+_BASIC_SWEEP_TEXT = duration_text(
+    characterization_seconds(
+        CHARACTERIZATION_DEFAULT_POINT_COUNT, bidirectional=False, stability=False
+    )
+)
+_BEHAVIOUR_SWEEP_TEXT = duration_text(
+    characterization_seconds(
+        CHARACTERIZATION_DEFAULT_POINT_COUNT, bidirectional=True, stability=True
+    )
+)
 _DIAGNOSTIC_CHOICES = (
-    ("pwm_verify", "PWM control test (~10 s per member)"),
-    ("pwm_characterization", "PWM response characterisation (~1½ min per member)"),
+    ("pwm_verify", f"PWM control test ({duration_text(VERIFY_SECONDS)} per member)"),
+    (
+        "pwm_characterization",
+        f"PWM response characterisation ({_BASIC_SWEEP_TEXT} per member)",
+    ),
     # DEC-334. Filtered out against a daemon without the capability, like every
     # other entry — an unknown token on the wire fails the WHOLE session, so the
     # gate is at the checkbox rather than at submit.
@@ -123,9 +148,13 @@ _DIAGNOSTIC_CHOICES = (
     # swept twice. That is why both may be ticked without a warning here.
     (
         "pwm_behaviour_characterization",
-        "PWM behaviour characterisation — adds hysteresis and stability (~4 min per member)",
+        "PWM behaviour characterisation — adds hysteresis and stability "
+        f"({_BEHAVIOUR_SWEEP_TEXT} per member)",
     ),
-    ("control_path_discovery", "Control-path discovery (~1 min per member)"),
+    (
+        "control_path_discovery",
+        f"Control-path discovery ({duration_text(discovery_seconds())} per member)",
+    ),
 )
 
 #: What actually ends a session, stated where the user starts one (`P8-az`).
