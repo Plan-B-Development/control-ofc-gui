@@ -222,6 +222,18 @@ class FindingRow:
     member_label: str
     evidence_label: str
 
+    @property
+    def check_text(self) -> str:
+        """The Check column: the finding, and whose it is when it is per member.
+
+        Since daemon 2.55.0 every run-derived finding is reported once per member
+        (DEC-411, `PTR-n`), and the daemon's ``detail`` does not name the member,
+        so two "PWM response characterization" rows — one Pass, one Fail — would
+        otherwise be indistinguishable. A session-level finding carries no member
+        and reads as before.
+        """
+        return f"{self.label} — {self.member_label}" if self.member_label else self.label
+
 
 @dataclass(frozen=True)
 class EvidenceRow:

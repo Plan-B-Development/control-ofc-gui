@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..api.models import CharacterizationRun, HwmonHeader
+from .run_step_view import step_timing
 
 # The brief's mandated pre-run wording. Generic on purpose: the validation
 # cooler's startup override runs ~50 s, but the duration is a property of the
@@ -114,6 +115,16 @@ def _fmt_pwm_enable(mode: int | None) -> str:
 def _humanise_token(token: str) -> str:
     """Render a token this build does not recognise, rather than dropping it."""
     return token.replace("_", " ").strip().capitalize() or "Unknown"
+
+
+def _step_phase_words(phase: str, duty_pct: int) -> str:
+    """What a sweep step's ``current_step.phase`` means, in words. An
+    unrecognised phase is rendered, never dropped (273-i)."""
+    if phase == "settle":
+        return f"holding {duty_pct}% for the reading to settle"
+    if phase == "dwell":
+        return f"holding {duty_pct}% a while longer to measure stability"
+    return f"{_humanise_token(phase).lower()} at {duty_pct}%"
 
 
 #: What to tell the user for each `restore_outcome`, keyed by the daemon's token.
@@ -627,7 +638,8 @@ def _build_detail_rows(run: CharacterizationRun) -> list[SummaryRow]:
     rows.append(
         SummaryRow(
             "Settling criterion",
-            "within a fixed band of the rolling median for several consecutive samples",
+            "several consecutive tach updates within a fixed band of their median, "
+            "and not all still moving the same way",
         )
     )
     return rows
@@ -679,6 +691,7 @@ def build_characterization_view(
     run: CharacterizationRun | None,
     *,
     header_label: str,
+    now_ms: int | None = None,
 ) -> CharacterizationView:
     """Render-ready state for the dialog. ``None`` means nothing has started."""
     if run is None:
@@ -702,13 +715,24 @@ def build_characterization_view(
         # only `settle_seconds` there understated the silence roughly fourfold,
         # which is what makes a healthy run indistinguishable from a wedged one.
         dwell = run.stability_seconds if run.bidirectional else 0
-        status_text = f"Measuring… holding {run.settle_seconds}s per step."
-        if dwell:
-            status_text += (
-                f" Some steps are held a further {dwell}s to measure stability, "
-                f"so a reading can be up to {run.settle_seconds + dwell}s apart — "
-                "a pause that long is normal, not a stall."
+        step = run.current_step
+        if step is not None:
+            # Daemon >= 2.55.0 says which hold is in progress (`P8-bg`), so the
+            # silence between points is explained by what is happening now,
+            # not by a worst case.
+            status_text = (
+                f"Measuring… step {step.index + 1} of {total}: "
+                f"{_step_phase_words(step.phase, step.duty_pct)} "
+                f"({step_timing(step, now_ms)})."
             )
+        else:
+            status_text = f"Measuring… holding {run.settle_seconds}s per step."
+            if dwell:
+                status_text += (
+                    f" Some steps are held a further {dwell}s to measure stability, "
+                    f"so a reading can be up to {run.settle_seconds + dwell}s apart — "
+                    "a pause that long is normal, not a stall."
+                )
     else:
         status_text = _TERMINAL_STATUS.get(run.state, _humanise_token(run.state))
         if run.detail:

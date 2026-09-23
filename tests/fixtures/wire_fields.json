@@ -314,8 +314,8 @@
         "preferences"
       ],
       "inert": {
-        "pwm_controls": "nothing calls DaemonClient.inventory_hwmon(), so the whole response is parsed and unread; only parse_hwmon_inventory's own pwm_controls= keyword mentions it (AU-g)",
-        "monitor_only_fans": "nothing calls DaemonClient.inventory_hwmon(), so the whole response is parsed and unread (AU-g)"
+        "pwm_controls": "parsed and never read: the endpoint's two callers (the Overview sensor-detail dialog and the Settings preferred-sensor picker) read temp_sensors, default_cpu and preferences only; parse_hwmon_inventory's own pwm_controls= keyword is the one mention (AU-k, correcting AU-g's refuted 'no caller')",
+        "monitor_only_fans": "parsed and never read: the endpoint's two callers read temp_sensors, default_cpu and preferences only; surfacing these fans is WIRE-m's GUI half (AU-k, correcting AU-g's refuted 'no caller')"
       }
     },
     {
@@ -414,10 +414,12 @@
       "fields": [
         "pwm_percent_min",
         "pwm_percent_max",
-        "openfan_stop_timeout_s"
+        "openfan_stop_timeout_s",
+        "diagnostic_max_temp_c"
       ],
       "must_be_read": [
-        "openfan_stop_timeout_s"
+        "openfan_stop_timeout_s",
+        "diagnostic_max_temp_c"
       ],
       "unmodelled": {
         "pwm_percent_min": "Inert: the daemon clamps authoritatively (DEC-163) and ships 0 on every build. The P3 capability cleanup deleted the GUI mirror for exactly this reason and set the bar for re-adding at 'find a consumer first'; this field still has none.",
@@ -516,7 +518,8 @@
         "restore_failed",
         "restore_outcome",
         "detail",
-        "completed_unix_ms"
+        "completed_unix_ms",
+        "current_step"
       ],
       "must_be_read": [
         "run_id",
@@ -534,12 +537,38 @@
         "restore_failed",
         "restore_outcome",
         "detail",
-        "completed_unix_ms"
+        "completed_unix_ms",
+        "current_step"
       ],
       "not_assertable": {
         "state": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
       },
       "note": "DEC-333. `run_id` is the poll fence \u2014 a snapshot for another run must not be rendered as this one. `restore_failed`/`restore_outcome` are the honesty pair: the dialog must never claim a header was restored when it was not. `state` is read but too common to pin here."
+    },
+    {
+      "daemon": "RunStep",
+      "gui": "RunStep",
+      "endpoints": [
+        "GET /diagnostics/control-path .current_step",
+        "GET /diagnostics/characterization .current_step"
+      ],
+      "fields": [
+        "phase",
+        "index",
+        "duty_pct",
+        "started_unix_ms",
+        "max_ms"
+      ],
+      "must_be_read": [
+        "phase",
+        "duty_pct",
+        "started_unix_ms",
+        "max_ms"
+      ],
+      "not_assertable": {
+        "index": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous). Read by both progress views, and pinned there by their own tests."
+      },
+      "note": "P8-bg (daemon >= 2.55.0). What a running diagnostic is holding right now, so a client can say so between results. `phase` is an opaque token and must be rendered when unrecognised (273-i)."
     },
     {
       "daemon": "TachChannel",

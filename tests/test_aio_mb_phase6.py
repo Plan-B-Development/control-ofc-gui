@@ -1723,6 +1723,36 @@ class TestValidationDialogRendering:
         assert dialog._member_table.isVisibleTo(dialog) is True
         assert dialog._findings_table.isVisibleTo(dialog) is True
 
+    def test_a_per_member_finding_names_its_member_in_the_check_column(self, qtbot):
+        """DEC-411 (`PTR-n`): run-derived findings are reported once per member,
+        and the daemon's `detail` does not name the member — so two rows for one
+        finding id must say whose each is, or a Pass and a Fail are
+        indistinguishable. Asserted against the dialog's own names for its
+        members, and with a session-level finding that must read as before."""
+        pump, fan = _pump_header(), _fan_header()
+        dialog = ValidationSessionDialog(
+            "aio0", "AIO", members=[(pump.id, "AIO_PUMP"), (fan.id, "CPU_FAN")]
+        )
+        qtbot.addWidget(dialog)
+        findings = [
+            ValidationFinding(id="pwm_response_characterization", state="pass", member_id=pump.id),
+            ValidationFinding(id="pwm_response_characterization", state="fail", member_id=fan.id),
+            ValidationFinding(id="thermal_safety", state="not_observed"),
+        ]
+        dialog.apply_session(_session(findings=findings))
+        table = dialog._findings_table
+        assert table.rowCount() == len(findings)
+        view = build_validation_session_view(
+            _session(findings=findings), display_name=dialog._member_name
+        )
+        cells = [table.item(r, 0).text() for r in range(table.rowCount())]
+        assert cells == [row.check_text for row in view.findings]
+        # The two per-member rows differ, each by its member's dialog name.
+        assert cells[0] != cells[1]
+        assert "AIO_PUMP" in cells[0] and "CPU_FAN" in cells[1]
+        # A finding with no member keeps its plain label.
+        assert cells[2] == view.findings[2].label
+
     def test_tables_with_nothing_in_them_stay_hidden(self, qtbot):
         """The other half of `setVisible(bool(...))`, so the assertion above
         cannot be satisfied by a table that is simply always visible."""

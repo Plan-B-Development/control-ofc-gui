@@ -509,17 +509,10 @@ class PwmReportWindow(ModalDialog):
         self._review_layout = QVBoxLayout(self._review_host)
         self._review_layout.setContentsMargins(0, 0, 0, 0)
         v.addWidget(self._review_host)
-        v.addWidget(
-            _plain(
-                "The daemon performs every test and puts every header back when a test "
-                "ends — even if Control-OFC is closed. A pump-protected header is never "
-                "driven below 30 %. A test stops, and the run with it, if the daemon's "
-                "thermal protection becomes active, if a temperature passes 85 °C or if "
-                "temperature readings go stale; the tests after it are listed as not "
-                "tested. You can cancel at any time.",
-                "PwmReport_Label_safety",
-            )
-        )
+        # Text set by `_populate_review`, from the capabilities the daemon has
+        # published by then (`PTA-i`).
+        self._safety_label = _plain(cat.consent_safety_text(None), "PwmReport_Label_safety")
+        v.addWidget(self._safety_label)
         self._consent_box = QCheckBox("I understand these tests change fan speeds while they run.")
         self._consent_box.setObjectName("PwmReport_Check_consent")
         self._consent_box.toggled.connect(self._refresh_start)
@@ -548,6 +541,8 @@ class PwmReportWindow(ModalDialog):
         return lines
 
     def _populate_review(self) -> None:
+        caps = self._state.capabilities if self._state is not None else None
+        self._safety_label.setText(cat.consent_safety_text(caps))
         _clear(self._review_layout)
         lines = self.consent_lines()
         if not lines:

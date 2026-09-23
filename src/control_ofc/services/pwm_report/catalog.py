@@ -331,3 +331,29 @@ def estimate_seconds(selection: Mapping[str, Iterable[str]]) -> tuple[int, int]:
             typical += SPECS[t].typical_s
             worst += SPECS[t].worst_s
     return typical, worst
+
+
+def consent_safety_text(capabilities: object | None) -> str:
+    """The review page's safety paragraph — what the user consents to.
+
+    `PTA-i`: the temperature at which a test stops is the DAEMON's
+    ``diagnostic_max_temp_c`` (``/capabilities`` ``limits``, daemon >= 2.55.0),
+    interpolated rather than restated: the daemon aborts on it, nothing in the
+    GUI enforces it, so a literal here promises whatever the constant was when
+    the sentence was written. An older daemon does not publish it, and the text
+    then names the rule without a figure — never a guessed one.
+    """
+    limits = getattr(capabilities, "limits", None)
+    limit_c = getattr(limits, "diagnostic_max_temp_c", None)
+    if isinstance(limit_c, (int, float)) and not isinstance(limit_c, bool):
+        hot = f"if a temperature passes {limit_c:g} °C"
+    else:
+        hot = "if a temperature passes the daemon's diagnostic limit"
+    return (
+        "The daemon performs every test and puts every header back when a test "
+        "ends — even if Control-OFC is closed. A pump-protected header is never "
+        "driven below 30 %. A test stops, and the run with it, if the daemon's "
+        f"thermal protection becomes active, {hot} or if "
+        "temperature readings go stale; the tests after it are listed as not "
+        "tested. You can cancel at any time."
+    )

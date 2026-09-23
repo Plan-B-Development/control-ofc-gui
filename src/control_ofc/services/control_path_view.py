@@ -34,6 +34,7 @@ from control_ofc.api.models import (
     ControlPathRecord,
     ControlPathRun,
 )
+from control_ofc.services.run_step_view import step_timing
 
 UNKNOWN_TEXT = "—"
 
@@ -104,6 +105,18 @@ _RESTORE_NOTES: dict[str, str] = {
 
 def humanise_token(token: str) -> str:
     return token.replace("_", " ").strip().capitalize() if token else UNKNOWN_TEXT
+
+
+def _step_phase_words(phase: str, duty_pct: int) -> str:
+    """What a discovery run's ``current_step.phase`` means, in words. An
+    unrecognised phase is rendered, never dropped (273-i)."""
+    if phase == "settle_wait":
+        return f"waiting for the fans to settle at {duty_pct}%"
+    if phase == "baseline":
+        return f"measuring the baseline at {duty_pct}%"
+    if phase == "perturbed":
+        return f"measuring the response at {duty_pct}%"
+    return f"{humanise_token(phase).lower()} at {duty_pct}%"
 
 
 def relationship_label(token: str) -> str:
@@ -218,6 +231,7 @@ def build_control_path_view(
     run: ControlPathRun | None,
     *,
     header_label: str,
+    now_ms: int | None = None,
 ) -> ControlPathView:
     """Render a discovery run. ``None`` is the pre-start state."""
     if run is None:
@@ -241,7 +255,17 @@ def build_control_path_view(
             f"({run.direction or 'up'}, {run.window_seconds}s per step)"
         )
 
-    if run.is_running:
+    if run.is_running and run.current_step is not None:
+        # Daemon >= 2.55.0 says which window is in progress (`P8-bg`). A cycle
+        # is published only after both of its windows, so without this the
+        # dialog showed one intermediate update in a whole default run.
+        step = run.current_step
+        view.status_text = (
+            f"Measuring… cycle {step.index} of {total or '?'}: "
+            f"{_step_phase_words(step.phase, step.duty_pct)} "
+            f"({step_timing(step, now_ms)})."
+        )
+    elif run.is_running:
         view.status_text = f"Measuring… holding each duty for {run.window_seconds}s."
     elif run.state == "complete":
         view.status_text = "Finished."

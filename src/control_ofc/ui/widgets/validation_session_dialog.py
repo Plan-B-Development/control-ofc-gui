@@ -1192,6 +1192,12 @@ class ValidationSessionDialog(ModalDialog):
         theirs = session.metadata.cooling_device_id if session.metadata else ""
         return (not theirs or theirs == self._device_id) and session.kind == self._kind
 
+    def _member_name(self, member_id: str) -> str:
+        """The name this dialog was given for a member, else its id — so a
+        per-member finding (DEC-411) and its evidence row name the member the
+        same way."""
+        return next((label for mid, label in self._members if mid == member_id), member_id)
+
     def apply_session(self, session: ValidationSession | None) -> None:
         """Render a session (or its absence) from the daemon.
 
@@ -1230,7 +1236,7 @@ class ValidationSessionDialog(ModalDialog):
             self._evidence_caption.setVisible(False)
             self._apply_enablement()
             return
-        view = build_validation_session_view(session)
+        view = build_validation_session_view(session, display_name=self._member_name)
         self._sync_end_condition()
         self._render(view)
         self._render_thermal(session)
@@ -1302,7 +1308,9 @@ class ValidationSessionDialog(ModalDialog):
 
         self._findings_table.setRowCount(len(view.findings))
         for row, finding in enumerate(view.findings):
-            for col, text in enumerate((finding.label, finding.state_label, finding.detail or "")):
+            for col, text in enumerate(
+                (finding.check_text, finding.state_label, finding.detail or "")
+            ):
                 item = QTableWidgetItem(text)
                 self._findings_table.setItem(row, col, item)
         self._findings_table.setVisible(bool(view.findings))

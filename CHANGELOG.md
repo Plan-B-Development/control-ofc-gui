@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Changed
+
+**The characterisation and control-path dialogs say what a running test is doing right now**
+(`P8-bg`, DEC-411). Both tests show a new result only when a hold finishes, which can take up to
+26 s, so a healthy run could look the same as a stuck one. With control-ofc-daemon 2.55.0 or later
+the status line names the step or cycle, the fan speed being held, and how long it has been held
+so far, for example *"step 3 of 5: holding 100% for the reading to settle (4s of up to 6s)"*. Older
+daemons still get the previous explanation of how long a pause can last.
+
+**The PWM Test Report's consent page takes its temperature limit from the daemon** (`PTA-i`,
+DEC-411). The page says a test stops if a temperature passes a limit. That limit is enforced by the
+daemon, and the page used to state it as a fixed 85 °C. It now shows the figure the daemon
+publishes (control-ofc-daemon 2.55.0 or later). An older daemon doesn't publish it, so the page
+names the daemon's limit without a number rather than guessing one.
+
+The characterisation result's **Settling criterion** row now says that readings still moving the
+same way don't count as settled, which matches the daemon's rule from 2.55.0.
+
+**A validation session's findings say which member each one is about** (DEC-411). From
+control-ofc-daemon 2.55.0 a session that tests several members reports each finding once per
+member, so the same check can appear twice, once as a pass and once as a fail. The findings table
+now adds the member's name to the check. The evidence table's **Member** column shows the same
+names instead of raw header ids.
+
 ## [2.82.1] — 2026-09-23
 
 ### Fixed

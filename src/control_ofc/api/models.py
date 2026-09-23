@@ -366,6 +366,12 @@ class Limits:
     # `tests/fixtures/wire_fields.json` so the coverage test records the
     # exemption rather than silently missing them.
     openfan_stop_timeout_s: int = 0
+    #: `PTA-i` (daemon >= 2.55.0): the temperature above which any sensor makes
+    #: a diagnostic refuse or stop. The PWM Test Report's consent page
+    #: interpolates it rather than restating the daemon constant. ``None``
+    #: means "this daemon did not say" — the text is then worded without a
+    #: figure, never with a guessed one.
+    diagnostic_max_temp_c: float | None = None
 
 
 @dataclass
@@ -1999,6 +2005,17 @@ def _coalesce_pci_bdf(raw: dict) -> dict:
     return result
 
 
+def _parse_limits(raw: object) -> Limits:
+    """``/capabilities`` ``limits``. A temperature that is not a number is "did
+    not say" (``None``), never a figure the consent text would then promise."""
+    limits = Limits(**_filter_fields(Limits, raw if isinstance(raw, dict) else {}))
+    temp = limits.diagnostic_max_temp_c
+    limits.diagnostic_max_temp_c = (
+        float(temp) if isinstance(temp, (int, float)) and not isinstance(temp, bool) else None
+    )
+    return limits
+
+
 def parse_capabilities(data: dict) -> Capabilities:
     # `or {}`, not just a `{}` default: `data.get(k, {})` returns None for an
     # explicit JSON `null`, and every `_filter_fields` call below would then
@@ -2051,7 +2068,7 @@ def parse_capabilities(data: dict) -> Capabilities:
             **_filter_fields(UnsupportedCapability, devices.get("aio_usb", {}))
         ),
         features=FeatureFlags(**_filter_fields(FeatureFlags, features)),
-        limits=Limits(**_filter_fields(Limits, data.get("limits") or {})),
+        limits=_parse_limits(data.get("limits")),
         # DEC-160: top-level ``control`` block; absent on pre-1.19 daemons →
         # all-default (profile_storage=False), which disables the import offer.
         control=ControlCapability(**_filter_fields(ControlCapability, data.get("control") or {})),
@@ -2863,6 +2880,42 @@ class CharSummary:
 
 
 @dataclass
+class RunStep:
+    """What a running diagnostic is holding right now (`P8-bg`, daemon >= 2.55.0).
+
+    Shared by :class:`CharacterizationRun` and :class:`ControlPathRun`. Both
+    publish a result only when a hold ends, so this is the one signal that a run
+    is alive between results. ``phase`` is an opaque token — ``settle`` /
+    ``dwell`` for a sweep, ``settle_wait`` / ``baseline`` / ``perturbed`` for
+    discovery — and an unrecognised one is rendered, never dropped (273-i).
+    ``index`` is the sweep's 0-based ``step_index`` or discovery's 1-based cycle.
+    """
+
+    phase: str = ""
+    index: int = 0
+    duty_pct: int = 0
+    started_unix_ms: int = 0
+    max_ms: int = 0
+
+
+def parse_run_step(raw: object) -> RunStep | None:
+    """``current_step``, or ``None`` when the daemon sent none (terminal, not yet
+    started, or a daemon that predates it)."""
+    if not isinstance(raw, dict):
+        return None
+    step = RunStep(**_filter_fields(RunStep, raw))
+    step.phase = str(step.phase)
+    for name in ("index", "duty_pct", "started_unix_ms", "max_ms"):
+        value = getattr(step, name)
+        setattr(
+            step,
+            name,
+            value if isinstance(value, int) and not isinstance(value, bool) else 0,
+        )
+    return step
+
+
+@dataclass
 class CharacterizationRun:
     """A characterisation run — the body of ``GET /diagnostics/characterization``
     and of the ``202`` from ``POST /hwmon/{id}/characterize``.
@@ -2904,6 +2957,9 @@ class CharacterizationRun:
     #: the export needs no per-field wrapping. Empty from an older daemon, in
     #: which case :mod:`control_ofc.services.provenance`'s static table applies.
     provenance: dict[str, str] = field(default_factory=dict)
+    #: `P8-bg`: the phase being held right now; ``None`` when not running or
+    #: from a daemon before 2.55.0.
+    current_step: RunStep | None = None
 
     @property
     def is_running(self) -> bool:
@@ -2970,6 +3026,7 @@ def parse_characterization_run(data: dict) -> CharacterizationRun:
         stability_seconds=int(data.get("stability_seconds") or 0),
         completed_unix_ms=data.get("completed_unix_ms"),
         provenance=provenance,
+        current_step=parse_run_step(data.get("current_step")),
     )
 
 
@@ -3171,6 +3228,9 @@ class ControlPathRun:
     restore_outcome: str = ""
     detail: str | None = None
     completed_unix_ms: int | None = None
+    #: `P8-bg`: the window being held right now; ``None`` when not running or
+    #: from a daemon before 2.55.0.
+    current_step: RunStep | None = None
 
     @property
     def is_running(self) -> bool:
@@ -3410,6 +3470,7 @@ def parse_control_path_run(data: dict) -> ControlPathRun:
         restore_outcome=str(data.get("restore_outcome", "")),
         detail=data.get("detail"),
         completed_unix_ms=data.get("completed_unix_ms"),
+        current_step=parse_run_step(data.get("current_step")),
     )
 
 
