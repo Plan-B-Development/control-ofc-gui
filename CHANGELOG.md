@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [2.83.0] — 2026-09-23
+
+This release also carries **2.82.1**, which was never published on its own —
+its change (DEC-410: no other diagnostic can start in the middle of a PWM Test
+Report run) is listed under
+[2.82.1](https://github.com/Plan-B-Development/control-ofc-gui/blob/v2.83.0/CHANGELOG.md#2821--2026-09-23)
+below.
+
 ### Changed
 
 **The characterisation and control-path dialogs say what a running test is doing right now**
