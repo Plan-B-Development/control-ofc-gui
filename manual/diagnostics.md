@@ -222,7 +222,7 @@ Reports are saved as you go to `~/.local/share/control-ofc/reports/` and are nev
 
 **Compare** puts two reports side by side, earlier first. Fans are matched only by their exact header id; a header whose label changed between runs is listed as *possibly renamed* and not compared, so a reading is never pinned to the wrong fan. Differences are grouped into hardware and wiring, environment (versions, kernel, BIOS), configuration, measured response, and *not comparable* — a test that ran with different settings, ran or finished in only one report, or started in a different thermal state. Measured differences are shown as numbers next to how much each run's own readings varied; nothing is labelled significant and there is no overall verdict. Each run's starting CPU temperature is shown too, but it is up to you to judge. A comparison can be exported as Markdown or HTML.
 
-The report will not start in demo mode, while the daemon's thermal protection is active, or while another test or a validation session is running.
+The report will not start in demo mode, while the daemon's thermal protection is active, or while another test or a validation session is running — including a **Verify All Writable** run on System State, which must finish first. A validation session window you opened before the report started stays open, but its **Start** is refused until the report finishes.
 
 ### Super-I/O Architecture
 

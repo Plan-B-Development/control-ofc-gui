@@ -1143,7 +1143,11 @@ run outlives its window.
    general consent checkbox when any selected test writes, and — for each selected probe — its
    own "I'll stay at the machine" confirmation. Start stays disabled until all are ticked and no
    start refusal applies (demo mode, disconnected, thermal protection active, another diagnostic
-   running, a validation session recording).
+   running, a validation session recording, a PWM verify or *Verify All Writable* sweep started on
+   System State still running). The last one is the GUI's own record, not the poll's
+   `verify_active`: that reads false in the gap between two of a sweep's verifies, so the sweep's
+   remaining headers would otherwise be written during the run (`PTA-d`, DEC-410). The refusals
+   are re-read when Start is pressed, so one that arose since the last poll is shown then.
 4. **Run.** The step list with its statuses, the header under test's live command, readback and
    RPM, the thermal state, elapsed time and an estimate of what is left, and **Cancel run**.
 5. **Report.** State, summary, *Needs attention*, *Observations*, *Restoration* (with **Re-apply
@@ -1288,8 +1292,16 @@ every difference is *later minus earlier*.
 ### While a run is active
 
 It holds the daemon's one diagnostic slot, so the Hardware page's per-header Test / Characterise
-/ Discover buttons and its session buttons, and System State's Test PWM Control, Verify All
-Writable and Characterise, are disabled with the reason. The GPU fan buttons stay enabled.
+/ Discover buttons, its session buttons and each cooling-device card's *Characterise Pump* and
+*Start Validation*, and System State's Test PWM Control, Verify All Writable and Characterise, are
+disabled with the reason. The GPU fan buttons stay enabled, as do a device card's *View Headers*,
+*Edit Configuration* and *Forget Device*, which run nothing.
+
+The buttons are one gate; the methods behind them are the other (`PTA-b`, DEC-410). The daemon has
+no notion of a report run and its slot is **free between two steps** (the 3 s hand-back wait), so
+any diagnostic that reaches it then is accepted. Opening characterisation or a session window is
+refused mid-run, and a session window opened *before* the run — it is modeless, so it stays open
+— has its Start refused with the reason in its status line, for every session kind.
 
 ### The duty-drift card on System State (DEC-408, daemon ≥ 2.53.0)
 

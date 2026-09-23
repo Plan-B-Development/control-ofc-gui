@@ -22,6 +22,8 @@ from PySide6.QtWidgets import QCheckBox, QLabel, QMessageBox, QPushButton
 
 from control_ofc.api.models import (
     ConnectionState,
+    CoolingDevice,
+    CoolingDeviceInventory,
     DaemonStatus,
     OperationMode,
     parse_capabilities,
@@ -415,13 +417,15 @@ def test_quitting_mid_run_saves_an_interrupted_report(qtbot, rig, monkeypatch):
 # ── The Hardware page ───────────────────────────────────────────────────────
 
 
-def _hardware_page(qtbot, tmp_path, monkeypatch, settings_service):
+def _hardware_page(qtbot, tmp_path, monkeypatch, settings_service, *, devices=()):
     from control_ofc.services.diagnostics_service import DiagnosticsService
     from control_ofc.ui.pages.hardware_page import HardwarePage
     from tests.conftest import FakeDaemonClient
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    state = _state()
+    state = _state(cooling_devices=True, validation_sessions=True)
+    if devices:
+        state.set_cooling_devices(CoolingDeviceInventory(cooling_devices=list(devices)))
     page = HardwarePage(
         state=state,
         diagnostics_service=DiagnosticsService(state),
@@ -508,6 +512,211 @@ def test_a_sweep_finishing_mid_run_does_not_re_enable_verify_all(qtbot):
     assert not button.isEnabled()
     page.set_pwm_report_active(False)
     assert button.isEnabled()
+
+
+def _aio(device_id: str = "aio0") -> CoolingDevice:
+    return CoolingDevice(
+        id=device_id, name="AIO", kind="aio_liquid", pump_member=CPU, radiator_members=[SYS]
+    )
+
+
+def _device_buttons(page, device_id: str = "aio0") -> dict[str, QPushButton]:
+    card = page._device_cards[device_id]
+    return {
+        name: card.findChild(QPushButton, f"CoolingDeviceCard_Btn_{name}_{device_id}")
+        for name in ("charPump", "validate", "viewHeaders", "edit", "forget")
+    }
+
+
+def test_a_run_stands_down_the_cooling_device_cards_diagnostics(
+    qtbot, tmp_path, monkeypatch, settings_service
+):
+    """`PTA-b`: *Characterise Pump* and *Start Validation* share the report's slot."""
+    page, state = _hardware_page(qtbot, tmp_path, monkeypatch, settings_service, devices=[_aio()])
+    page.findChild(QPushButton, "Hardware_Btn_pwmReport").click()
+    buttons = _device_buttons(page)
+    assert all(b is not None and b.isEnabled() for b in buttons.values()), "precondition"
+    page._report_controller.run_active_changed.emit(True)
+    for name in ("charPump", "validate"):
+        assert not buttons[name].isEnabled(), name
+        assert buttons[name].toolTip() == RUN_ACTIVE_REASON, name
+    # The actions that run nothing stay live.
+    assert all(buttons[n].isEnabled() for n in ("viewHeaders", "edit", "forget"))
+    # A poll re-rendering the card must not re-enable it mid-run...
+    state.set_fans(parse_fans({"fans": [fan(CPU, rpm=950), fan(SYS)]}))
+    assert not buttons["charPump"].isEnabled() and not buttons["validate"].isEnabled()
+    # ...and a device configured mid-run stands down from its first render.
+    state.set_cooling_devices(CoolingDeviceInventory(cooling_devices=[_aio(), _aio("aio1")]))
+    late = _device_buttons(page, "aio1")
+    assert not late["charPump"].isEnabled() and not late["validate"].isEnabled()
+    page._report_controller.run_active_changed.emit(False)
+    assert buttons["charPump"].isEnabled() and buttons["validate"].isEnabled()
+    assert buttons["charPump"].toolTip() == ""
+    page.cleanup()
+
+
+def test_a_run_refuses_every_entry_point_the_device_card_reaches(
+    qtbot, tmp_path, monkeypatch, settings_service
+):
+    """`PTA-b`: the buttons are one gate; the methods they call are the other."""
+    from unittest.mock import MagicMock
+
+    from control_ofc.ui.pages import hardware_page as hw
+
+    page, _state_unused = _hardware_page(
+        qtbot, tmp_path, monkeypatch, settings_service, devices=[_aio()]
+    )
+    opened: list[str] = []
+    monkeypatch.setattr(
+        hw, "PwmCharacterizationDialog", lambda hid, *a, **k: opened.append(hid) or MagicMock()
+    )
+    monkeypatch.setattr(page, "_ensure_char_worker", lambda: True)
+    monkeypatch.setattr(page, "_ensure_validation_worker", lambda: True)
+    # Precondition: outside a run, the same calls really do open a dialog.
+    page._open_characterization(CPU)
+    assert opened == [CPU], "precondition: characterisation opens outside a run"
+    opened.clear()
+    page._open_validation(kind="validation", device_id="aio0")
+    dialog = page._validation_dialog
+    assert dialog is not None, "precondition: a session window opens outside a run"
+    dialog.reject()  # through `finished`, the teardown production uses
+    assert page._validation_dialog is None, "precondition: the window is gone again"
+    page.findChild(QPushButton, "Hardware_Btn_pwmReport").click()
+    page._report_controller.run_active_changed.emit(True)
+    page._open_characterization(CPU)
+    page._open_validation(kind="validation", device_id="aio0")
+    assert opened == [], "no characterisation dialog mid-run"
+    assert page._validation_dialog is None, "no session dialog mid-run"
+    page.cleanup()
+
+
+def test_a_session_window_opened_before_the_run_cannot_start_during_it(
+    qtbot, tmp_path, monkeypatch, settings_service
+):
+    """`PTA-b`: the session dialog is modeless, so it outlives the stand-down."""
+    page, _state_unused = _hardware_page(
+        qtbot, tmp_path, monkeypatch, settings_service, devices=[_aio()]
+    )
+    monkeypatch.setattr(page, "_ensure_validation_worker", lambda: True)
+    starts: list[tuple] = []
+    page._validation_start_request.connect(lambda *args: starts.append(args))
+    _device_buttons(page)["validate"].click()
+    dialog = page._validation_dialog
+    assert dialog is not None, "precondition: the card opened a session window"
+    start = dialog.findChild(QPushButton, "Validation_Btn_start")
+    assert start.isEnabled(), "precondition"
+    page.findChild(QPushButton, "Hardware_Btn_pwmReport").click()
+    page._report_controller.run_active_changed.emit(True)
+    start.click()
+    assert starts == [], "a session start reached the daemon mid-run"
+    assert dialog.findChild(QLabel, "Validation_Label_status").text() == RUN_ACTIVE_REASON
+    assert start.isEnabled(), "a refused start re-arms, as every refused start does"
+    page._report_controller.run_active_changed.emit(False)
+    start.click()
+    assert len(starts) == 1, "after the run the same click starts a session"
+    dialog.close()
+    page.cleanup()
+
+
+def _main_window(qtbot, tmp_path, monkeypatch, settings_service, profile_service):
+    from control_ofc.ui.main_window import MainWindow
+    from tests.conftest import FakeDaemonClient
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    state = _state()
+    win = MainWindow(
+        state=state,
+        profile_service=profile_service,
+        settings_service=settings_service,
+        client=FakeDaemonClient(),
+        demo_mode=False,
+    )
+    qtbot.addWidget(win)
+    # MainWindow's startup marks the state disconnected until its first poll;
+    # replay what that poll would have delivered.
+    polled = _state()
+    state.set_connection(polled.connection)
+    state.set_mode(polled.mode)
+    state.set_capabilities(polled.capabilities)
+    state.set_hwmon_headers(list(polled.hwmon_headers))
+    state.set_fans(list(polled.fans))
+    state.set_status(polled.daemon_status)
+    return win, state
+
+
+def test_main_window_stands_system_state_down_for_a_run(
+    qtbot, tmp_path, monkeypatch, settings_service, profile_service
+):
+    """`PTA-c`: through MainWindow's real wiring, never a direct
+    `set_pwm_report_active` — the connection is the thing that can go missing."""
+    win, _state_unused = _main_window(
+        qtbot, tmp_path, monkeypatch, settings_service, profile_service
+    )
+    try:
+        verify_all = win.system_state_page.findChild(QPushButton, "SystemState_Btn_verifyAll")
+        assert verify_all.isEnabled(), "precondition"
+        win.hardware_page.findChild(QPushButton, "Hardware_Btn_pwmReport").click()
+        win.hardware_page._report_controller.run_active_changed.emit(True)
+        assert not verify_all.isEnabled()
+        assert verify_all.toolTip() == RUN_ACTIVE_REASON
+        win.hardware_page._report_controller.run_active_changed.emit(False)
+        assert verify_all.isEnabled()
+    finally:
+        win.hardware_page.cleanup()
+        win.system_state_page.cleanup()
+
+
+SWEEP_REFUSAL = "System State page is still running"
+
+
+def test_a_system_state_sweep_refuses_the_reports_start(
+    qtbot, tmp_path, monkeypatch, settings_service, profile_service
+):
+    """`PTA-d`: the poll's `verify_active` reads false between two of a sweep's
+    verifies, so the report must ask System State itself — through MainWindow."""
+    win, state = _main_window(qtbot, tmp_path, monkeypatch, settings_service, profile_service)
+    system_state = win.system_state_page
+    try:
+        # No worker, so the sweep's first verify request reaches nothing and the
+        # sweep stays in flight for as long as the test needs.
+        monkeypatch.setattr(system_state, "_ensure_verify_worker", lambda: True)
+        win.hardware_page.findChild(QPushButton, "Hardware_Btn_pwmReport").click()
+        window = win.hardware_page._report_window
+        started: list[tuple] = []
+        monkeypatch.setattr(
+            win.hardware_page._report_controller,
+            "start",
+            lambda *args: started.append(args) or False,
+        )
+        _btn(window, "PwmReport_Btn_next").click()
+        _btn(window, "PwmReport_Btn_next").click()
+        window.findChild(QCheckBox, "PwmReport_Check_consent").click()
+        start = _btn(window, "PwmReport_Btn_start")
+        assert start.isEnabled(), "precondition: nothing is running yet"
+
+        # The sweep starts AFTER the window last refreshed, with the poll saying
+        # nothing is running — the gap the row is about.
+        system_state.findChild(QPushButton, "SystemState_Btn_verifyAll").click()
+        assert system_state.pwm_verify_running(), "precondition: the sweep is running"
+        assert start.isEnabled(), "precondition: no poll has refreshed the window"
+        start.click()
+        assert started == [], "the report started over a running sweep"
+        refusals = window.findChild(QLabel, "PwmReport_Label_reviewRefusals")
+        assert SWEEP_REFUSAL in refusals.text(), "Start did nothing without saying why"
+        # And the next poll keeps it refused, with `verify_active` false.
+        state.set_status(DaemonStatus(thermal_state="normal", verify_active=False))
+        assert not start.isEnabled()
+
+        # Answer each verify the way the absent worker would, until the sweep ends.
+        while (pending := system_state._verify_all_pending) is not None:
+            system_state._on_verify_error("error", "not under test", pending)
+        assert not system_state.pwm_verify_running(), "precondition: the sweep has ended"
+        state.set_status(DaemonStatus(thermal_state="normal"))
+        assert start.isEnabled(), "the refusal clears when the sweep does"
+        assert SWEEP_REFUSAL not in refusals.text()
+    finally:
+        win.hardware_page.cleanup()
+        system_state.cleanup()
 
 
 @pytest.mark.parametrize("condition", ["disconnected", "thermal", "diagnostic", "session"])

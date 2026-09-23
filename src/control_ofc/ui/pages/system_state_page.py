@@ -794,6 +794,14 @@ class SystemStatePage(QWidget):
         """Is a single verify or a full sweep currently running?"""
         return bool(self._verify_all_total) or self._verify_active_header is not None
 
+    def pwm_verify_running(self) -> bool:
+        """The PWM Test Report's view of :meth:`_verify_in_flight` (`PTA-d`).
+
+        MainWindow hands this to the Hardware page, so the report refuses to
+        start while a verify or sweep started here is still running.
+        """
+        return self._verify_in_flight()
+
     def _sync_verify_button_enabled(self) -> None:
         """The ONE gating shape for *Test PWM Control* (row `ACK-z`).
 

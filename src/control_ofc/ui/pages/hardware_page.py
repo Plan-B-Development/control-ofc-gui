@@ -194,6 +194,9 @@ class HardwarePage(QWidget):
         self._report_controller: PwmReportController | None = None
         self._report_window: PwmReportWindow | None = None
         self._report_active = False
+        #: `PTA-d`: whether a verify started on System State is still running.
+        #: MainWindow sets it; standalone (tests, no System State) nothing is.
+        self._local_verify_query: Callable[[], bool] = lambda: False
         self._diag = diagnostics_service or DiagnosticsService(state)
         self._client = client
         # Read-only, and deliberately NOT defaulted to a fresh `ProfileService()`:
@@ -694,6 +697,8 @@ class HardwarePage(QWidget):
                 )
                 card.edit_requested.connect(lambda _id: self.open_controls.emit())
                 card.forget_requested.connect(self._forget_device)
+                # A device that appears mid-run stands down like the others (`PTA-b`).
+                card.set_diagnostics_blocked(RUN_ACTIVE_REASON if self._report_active else "")
                 self._device_cards[view.device_id] = card
                 self._device_layout.insertWidget(index, card)
             else:
@@ -1301,6 +1306,11 @@ class HardwarePage(QWidget):
     def _open_characterization(self, header_id: str) -> None:
         if not header_id or not self._state:
             return
+        if self._report_active:
+            # `PTA-b`: the buttons are stood down, but this is the one entry
+            # point every one of them reaches — so the rule lives here too.
+            self._show_diag_message(RUN_ACTIVE_REASON)
+            return
         header = next((h for h in self._state.hwmon_headers if h.id == header_id), None)
         if header is None:
             return
@@ -1497,6 +1507,11 @@ class HardwarePage(QWidget):
         boolean discriminator into a lie by construction, so it takes the wire
         token now and the callers name what they want.
         """
+        if self._report_active:
+            # `PTA-b`: every session kind, a passive recording included — the
+            # same rule the three toolbar buttons follow.
+            self._show_diag_message(RUN_ACTIVE_REASON)
+            return
         # REENTRANCY (`P8-bi`). `exec()` used to make this structurally
         # impossible: one blocking call, one dialog. `show()` does not, and all
         # four entry points (`_lifecycle_btn`, `_thermal_btn`, `_validation_btn`
@@ -1629,6 +1644,13 @@ class HardwarePage(QWidget):
         metadata: dict,
         auto_stop: bool,
     ) -> None:
+        if self._report_active:
+            # `PTA-b`: a session window opened before the run stays open (it is
+            # modeless) and its Start stays live. Refused here, in the dialog's
+            # own status line — `apply_error` also re-arms its Start.
+            if self._validation_dialog is not None:
+                self._validation_dialog.apply_error("unavailable", RUN_ACTIVE_REASON)
+            return
         self._validation_start_request.emit(
             device_id, kind, diagnostics, sweep, metadata, auto_stop
         )
@@ -1913,6 +1935,7 @@ class HardwarePage(QWidget):
             self._state,
             self._settings_service,
             profile_member_ids=self._profile_member_ids,
+            local_verify_running=lambda: self._local_verify_query(),
             parent=self,
         )
         self._report_window = window
@@ -1920,12 +1943,18 @@ class HardwarePage(QWidget):
         window.raise_()
         window.activateWindow()
 
+    def set_local_verify_query(self, query: Callable[[], bool]) -> None:
+        """Tell the report whether System State has a verify running (`PTA-d`)."""
+        self._local_verify_query = query
+
     def _on_report_active(self, active: bool) -> None:
         """Stand this page's diagnostics down while a run holds the slot."""
         self._report_active = active
         reason = RUN_ACTIVE_REASON if active else ""
         for card in self._header_cards.values():
             card.set_diagnostics_blocked(reason)
+        for device_card in self._device_cards.values():
+            device_card.set_diagnostics_blocked(reason)
         self._sync_diagnostic_enablement()
         self.pwm_report_active_changed.emit(active)
 

@@ -170,6 +170,7 @@ def start_refusals(
     thermal_state: str,
     diagnostic_running: bool,
     session_recording: bool,
+    local_verify_running: bool,
     demo_mode: bool,
 ) -> list[str]:
     """Why a run must not start now (DEC-404 § Runner step 1). Empty = go.
@@ -194,6 +195,15 @@ def start_refusals(
         reasons.append(
             "A validation session is recording. It shares the daemon's diagnostic slot — "
             "stop it first."
+        )
+    if local_verify_running:
+        # `PTA-d`: a System State verify, or a Verify All sweep, that this GUI
+        # started. `diagnostic_running` sees it only through the poll's
+        # `verify_active`, which reads false in the gap between two of a sweep's
+        # verifies — so the sweep's remaining headers would be written during the
+        # run. This input is the GUI's own record of it, and has no such gap.
+        reasons.append(
+            "A PWM verify started on the System State page is still running; wait for it to finish."
         )
     return reasons
 

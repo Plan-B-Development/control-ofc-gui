@@ -52,6 +52,9 @@ class CoolingDeviceCard(ContentSizedCard):
         super().__init__(parent)
         self._device_id = view.device_id
         self._pump_member = view.pump.member_id if view.pump else ""
+        #: Non-empty while a PWM Test Report run holds the daemon's diagnostic
+        #: slot (`PTA-b`); see :meth:`set_diagnostics_blocked`.
+        self._blocked_reason = ""
         slug = _slug(view.device_id)
         self.setObjectName(f"CoolingDeviceCard_{slug}")
 
@@ -142,6 +145,32 @@ class CoolingDeviceCard(ContentSizedCard):
     def device_id(self) -> str:
         return self._device_id
 
+    def set_diagnostics_blocked(self, reason: str) -> None:
+        """Stand the two diagnostics down while a PWM Test Report runs (`PTA-b`).
+
+        *Characterise Pump* and *Start Validation* share the report's diagnostic
+        slot; the other actions run nothing and stay live. ``""`` releases them.
+        The header card's shape: the ONE gating rule is :meth:`_apply_enablement`,
+        so a re-render from :meth:`set_view` cannot re-enable a button mid-run.
+        """
+        if reason == self._blocked_reason:
+            return
+        self._blocked_reason = reason
+        self._apply_enablement()
+
+    def _apply_enablement(self) -> None:
+        blocked = self._blocked_reason
+        for button, allowed, why in (
+            (
+                self._btn_charPump,
+                bool(self._pump_member),
+                "This device has no pump member assigned.",
+            ),
+            (self._btn_validate, True, ""),
+        ):
+            button.setEnabled(allowed and not blocked)
+            button.setToolTip(blocked if (allowed and blocked) else ("" if allowed else why))
+
     def _emitter(self, signal_name: str):
         def emit() -> None:
             # The pump action carries the MEMBER id, because that is what the
@@ -216,10 +245,7 @@ class CoolingDeviceCard(ContentSizedCard):
                 val.setToolTip(view.coolant_note)
             self._facts.addWidget(val, idx, 1)
 
-        self._btn_charPump.setEnabled(bool(self._pump_member))
-        self._btn_charPump.setToolTip(
-            "" if self._pump_member else "This device has no pump member assigned."
-        )
+        self._apply_enablement()
 
     def _member_widget(self, row: CoolingMemberRow) -> QWidget:
         host = QWidget(self._members_host)

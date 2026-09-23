@@ -156,6 +156,7 @@ class PwmReportWindow(ModalDialog):
         settings_service: AppSettingsService | None,
         *,
         profile_member_ids: Callable[[], frozenset[str]] = frozenset,
+        local_verify_running: Callable[[], bool] = lambda: False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__("PWM Test Report", parent, modal=False)
@@ -165,6 +166,10 @@ class PwmReportWindow(ModalDialog):
         self._state = state
         self._settings = settings_service
         self._profile_member_ids = profile_member_ids
+        #: `PTA-d`: whether a verify this GUI started on System State is still
+        #: running. Asked at every refusal check, never cached, so the Start
+        #: click itself reads the live answer.
+        self._local_verify_running = local_verify_running
         self._channels: list[cat.Channel] = []
         self._checks: dict[tuple[str, str], QCheckBox] = {}
         self._probe_consents: dict[str, QCheckBox] = {}
@@ -582,6 +587,7 @@ class PwmReportWindow(ModalDialog):
             thermal_state=status.thermal_state if status is not None else "normal",
             diagnostic_running=bool(status.verify_active) if status is not None else False,
             session_recording=bool(session is not None and session.is_recording),
+            local_verify_running=bool(self._local_verify_running()),
             demo_mode=state is not None and state.mode == OperationMode.DEMO,
         )
 
@@ -972,6 +978,9 @@ class PwmReportWindow(ModalDialog):
 
     def _start_run(self) -> None:
         if not self.can_start():
+            # The refusals shown were last refreshed on a poll; one that arose
+            # since (a System State verify, `PTA-d`) must say why Start did nothing.
+            self._refresh_refusals()
             return
         selection = self.selection()
         consent = frozenset(cid for cid, box in self._probe_consents.items() if box.isChecked())

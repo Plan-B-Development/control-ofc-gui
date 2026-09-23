@@ -441,6 +441,10 @@ class MainWindow(QWidget):
         self.hardware_page.pwm_report_active_changed.connect(
             self.system_state_page.set_pwm_report_active
         )
+        # `PTA-d`: and the other direction. A Verify All sweep already running
+        # there must refuse the report's Start, because the poll's
+        # `verify_active` reads false between two of its verifies.
+        self.hardware_page.set_local_verify_query(self.system_state_page.pwm_verify_running)
 
         # Populate dashboard profile selector
         self.dashboard_page.populate_profiles()

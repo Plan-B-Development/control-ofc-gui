@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [2.82.1] — 2026-09-23
+
+### Fixed
+
+**No other diagnostic can start in the middle of a PWM Test Report run** (DEC-410). The report
+holds the daemon's one diagnostic slot, but that slot is free for a few seconds between two of the
+report's tests. Three things could still start a diagnostic in that gap, and write to a header in
+the middle of the report's measurements. The report then recorded its next test as *not tested*.
+
+- A cooling-device card's **Characterise Pump** and **Start Validation** now stand down for the run,
+  like every other test on the Hardware page. **View Headers**, **Edit Configuration** and **Forget
+  Device** stay available, because they run nothing.
+- A validation session window opened before the report started stays open, but its **Start** is
+  refused until the report finishes, with the reason in the window's status line.
+- The report will not start while a **Test PWM Control** or **Verify All Writable** run from System
+  State is still going. Before, the report noticed a Verify All run only while one of its
+  per-header tests was executing, so it could start in the gap between two of them. If you press
+  Start in that moment, the window now says why it did nothing.
+
 ## [2.82.0] — 2026-09-22
 
 This release also carries **2.81.0**, which was never published on its own —
