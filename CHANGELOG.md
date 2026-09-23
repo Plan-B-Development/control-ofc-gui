@@ -26,6 +26,21 @@ member, so the same check can appear twice, once as a pass and once as a fail. T
 now adds the member's name to the check. The evidence table's **Member** column shows the same
 names instead of raw header ids.
 
+**The Exit minimum setting shows the value the daemon will use** (`TS-aq`, DEC-412). The row used
+to show what the config files contained. After a hand-edit the daemon hadn't reloaded yet, that
+wasn't the minimum the next stop would use, and nothing said so. It now shows the value in force.
+When the files say something different, the row gives their value and tells you to run
+`sudo systemctl reload control-ofc-daemon`. Moving focus away from the row without changing it no
+longer writes anything in that case either.
+
+**A control the daemon can't drive says so more accurately** (`OFN-al`, DEC-412). With
+control-ofc-daemon 2.55.0 or later, a control whose fans are all on headers the daemon can't write to
+(read-only headers, or headers this board doesn't have) is marked **Not controlled**. It used to
+look controlled while nothing was changing its fans. Its tooltip now says *"none of its fans can be
+controlled by this daemon. Their speed is up to the hardware, not this daemon."* The old text said
+*"…on hardware this daemon can reach"* and that the fans *"hold their last speed until it
+resolves"*. Neither is true for a read-only header, which its firmware drives.
+
 ## [2.82.1] — 2026-09-23
 
 ### Fixed

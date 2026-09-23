@@ -1303,30 +1303,36 @@ class SettingsPage(QWidget):
             nvidia = cfg.get("detection.enable_nvidia_telemetry")
             if nvidia is not None:
                 self._nvidia_toggle.setChecked(bool(nvidia.value))
-            exit_floor = cfg.get("shutdown.exit_floor_pct")
-            if exit_floor is not None and isinstance(exit_floor.value, int):
-                self._show_spin_value(self._exit_floor_spin, exit_floor.value)
+            exit_floor = self._exit_floor_in_force(cfg.get("shutdown.exit_floor_pct"))
+            if exit_floor is not None:
+                self._show_spin_value(self._exit_floor_spin, exit_floor)
 
             self._render_search_dirs(cfg.get("profiles.search_dirs"))
 
             # Snapshot what the daemon reported for the editable keys, so the
-            # write guard can tell a real edit from a focus-out.
+            # write guard can tell a real edit from a focus-out. The exit
+            # minimum's is the value the row SHOWS — the one in force — or a
+            # focus-out on a diverged row would compare against a number that is
+            # not on screen and write the displayed one back (`TS-aq`).
             self._daemon_cfg_rendered = {
                 key: entry.value
                 for key, _title, _sub in self._DAEMON_ROWS
                 if (entry := cfg.get(key)) is not None
             }
+            if exit_floor is not None:
+                self._daemon_cfg_rendered["shutdown.exit_floor_pct"] = exit_floor
         finally:
             self._populating_daemon_cfg = False
 
         self._apply_daemon_key_mutability(cfg)
 
+        divergence = {
+            "profiles.search_dirs": self._search_dir_divergence,
+            "shutdown.exit_floor_pct": self._exit_floor_divergence,
+        }
         for key, label in self._daemon_row_notes.items():
-            self._render_daemon_row_note(
-                cfg.get(key),
-                label,
-                extra=self._search_dir_divergence(cfg) if key == "profiles.search_dirs" else "",
-            )
+            note = divergence.get(key)
+            self._render_daemon_row_note(cfg.get(key), label, extra=note(cfg) if note else "")
         self._apply_exit_floor_support(cfg)
 
         if cfg.restart_pending:
@@ -1470,6 +1476,47 @@ class SettingsPage(QWidget):
         return (
             f"the configuration files also list {', '.join(str(d) for d in missing)} — "
             f"restart the daemon to apply that"
+        )
+
+    # ── Exit minimum (DEC-388, `TS-aq`) ───────────────────────────────
+
+    @staticmethod
+    def _exit_floor_in_force(entry) -> int | None:
+        """The exit minimum the next stop will use: ``running_value``.
+
+        This key applies live, like the search dirs, so the running value IS the
+        answer to "what will a stop leave my fans at?" — the daemon reports it
+        from the value in force, not from the files. ``value`` (the files) is the
+        fallback for a daemon that does not report the running one.
+        """
+        if entry is None:
+            return None
+        for candidate in (entry.running_value, entry.value):
+            if isinstance(candidate, int) and not isinstance(candidate, bool):
+                return candidate
+        return None
+
+    @staticmethod
+    def _exit_floor_divergence(cfg) -> str:
+        """Report a configuration-file exit minimum the daemon is not using.
+
+        Same shape as ``_search_dir_divergence``, for the same reason: the key
+        applies live, so the daemon reports ``requires_restart: false`` and never
+        raises ``restart_pending`` for it — yet a hand-edited ``daemon.toml`` or
+        ``runtime.toml`` that no reload has picked up leaves the files and the
+        process disagreeing, with the row showing the one in force.
+        """
+        entry = cfg.get("shutdown.exit_floor_pct")
+        if entry is None:
+            return ""
+        on_disk, running = entry.value, entry.running_value
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in (on_disk, running)):
+            return ""
+        if on_disk == running:
+            return ""
+        return (
+            f"the configuration files say {on_disk} % — reload the daemon to apply "
+            f"that (sudo systemctl reload control-ofc-daemon)"
         )
 
     def _daemon_supports_dir_removal(self) -> bool:

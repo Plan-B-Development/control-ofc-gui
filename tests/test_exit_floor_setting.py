@@ -101,3 +101,52 @@ class TestUnsupportedDaemon:
         )
         assert not page._exit_floor_spin.isEnabled(), "precondition"
         assert page._poll_interval_spin.isEnabled()
+
+
+def _diverged(on_disk: int, running: int):
+    """The files say one exit minimum and the daemon is running another — a
+    hand-edit no reload has picked up (`TS-aq`)."""
+    cfg = _default_config()
+    at = next(i for i, k in enumerate(cfg.keys) if k.key == "shutdown.exit_floor_pct")
+    cfg.keys[at] = _key("shutdown.exit_floor_pct", on_disk, running_value=running, mutable=True)
+    return cfg
+
+
+class TestValueInForce:
+    """`TS-aq`: the row shows the exit minimum the next stop will USE.
+
+    The key applies live, so the daemon never raises ``restart_pending`` for it,
+    and the row used to show the files' value while a stop used the running one,
+    with nothing to say they differed.
+    """
+
+    def test_the_row_shows_the_running_value_and_says_the_files_differ(
+        self, qapp, app_state, settings_service
+    ):
+        cfg = _diverged(on_disk=40, running=70)
+        page, _client = _page(app_state, settings_service, exit_floor=True, config=cfg)
+
+        entry = cfg.get("shutdown.exit_floor_pct")
+        assert entry.value != entry.running_value, "precondition: the two disagree"
+        assert page._exit_floor_spin.value() == entry.running_value
+        note = page._daemon_row_notes["shutdown.exit_floor_pct"]
+        assert note.isVisibleTo(page)
+        assert f"{entry.value} %" in note.text()
+        assert "reload" in note.text()
+
+    def test_a_focus_out_on_a_diverged_row_writes_nothing(self, qapp, app_state, settings_service):
+        """The write guard compares against the value ON SCREEN. Snapshotting the
+        files' value instead would make a bare focus-out write the running value
+        over the files — a write nobody chose."""
+        page, client = _page(app_state, settings_service, exit_floor=True, config=_diverged(40, 70))
+        page._exit_floor_spin.editingFinished.emit()
+        assert not [w for w in client.writes if w[0] == "shutdown.exit_floor_pct"]
+
+    def test_an_agreeing_row_says_nothing_about_the_files(self, qapp, app_state, settings_service):
+        """The opposite arm: a note that always appears would pass the first test."""
+        page, _client = _page(
+            app_state, settings_service, exit_floor=True, config=_diverged(70, 70)
+        )
+        assert page._exit_floor_spin.value() == 70
+        note = page._daemon_row_notes["shutdown.exit_floor_pct"]
+        assert "configuration files say" not in note.text()

@@ -202,9 +202,13 @@ card **gated on a capability** (`control.exit_floor`): the other rows treat a ke
 daemon does not report as "predates reporting it" and stay editable, but for this
 one absence means "this daemon cannot", so the row is disabled with the
 requires-daemon message rather than offering a write an older daemon would 404.
-Unlike the search dirs it shows the on-disk `value`, as the restart-bound rows do;
-the two differ only after a hand-edit the daemon has not reloaded, and the card does
-not yet say so (`TS-aq`).
+Like the search dirs it shows the daemon's `running_value` — the minimum the next
+stop will use — falling back to `value` on a daemon that does not report it, and the
+write guard compares against that same shown value (DEC-412, `TS-aq`). The two differ
+only after a hand-edit of `daemon.toml`/`runtime.toml` the daemon has not reloaded; the
+row's note then gives the files' value and advises `systemctl reload`. (Before daemon
+2.55.0 a SIGHUP reload racing `POST /config/exit-floor` could also leave them apart; the
+reload now takes the setters' lock.)
 
 Still **not** editable, and not merely for want of daemon support:
 

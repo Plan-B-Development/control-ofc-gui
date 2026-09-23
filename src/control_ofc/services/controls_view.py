@@ -141,7 +141,10 @@ _SKIP_REASONS: dict[str, str] = {
     "sensor_unavailable": "its sensor is unavailable",
     "mix_unresolvable": "none of its combined inputs could be read",
     "sync_unresolvable": "the control it mirrors is not running",
-    "backend_unavailable": "none of its fans are on hardware this daemon can reach",
+    # Since daemon 2.55.0 (`OFN-al`) this also covers fans on headers the daemon
+    # can see but cannot write (read-only, or not on this board at all), so it
+    # must not say "reach": a read-only header is reachable.
+    "backend_unavailable": "none of its fans can be controlled by this daemon",
 }
 
 
@@ -198,10 +201,20 @@ def skipped_control_feedback(
             chip,
             f"The daemon is not commanding {subject}. They hold their last speed.{since}",
         )
+    # Every other cause is a control the daemon WAS driving and has stopped
+    # driving, so its fans hold what they were last told until it clears. A
+    # `backend_unavailable` control's fans were never this daemon's to hold: a
+    # read-only header runs on its firmware, and nothing here will "resolve" it
+    # (DEC-412). Saying they hold their last speed would be false for exactly
+    # the case the widened token now covers.
+    tail = (
+        "Their speed is up to the hardware, not this daemon."
+        if reason == "backend_unavailable"
+        else "They hold their last speed until it resolves."
+    )
     return (
         chip,
-        f"The daemon is not commanding {subject} — {detail}. "
-        f"They hold their last speed until it resolves.{since}",
+        f"The daemon is not commanding {subject} — {detail}. {tail}{since}",
     )
 
 

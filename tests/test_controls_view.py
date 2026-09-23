@@ -261,6 +261,33 @@ def test_skipped_control_feedback_names_the_cause_when_known():
     assert "hold their last speed" in tooltip
 
 
+def test_backend_unavailable_names_control_not_reachability():
+    """`OFN-al`: from daemon 2.55.0 `backend_unavailable` also lists a control
+    bound only to read-only headers — hardware the daemon CAN reach and cannot
+    write. The old wording ("hardware this daemon can reach") was false there."""
+    from control_ofc.services.controls_view import skipped_control_feedback
+
+    _, tooltip = skipped_control_feedback("backend_unavailable")
+    assert "can be controlled by this daemon" in tooltip
+    assert "reach" not in tooltip
+
+
+def test_backend_unavailable_does_not_claim_the_fans_hold_their_speed():
+    """DEC-412: every other cause is a control the daemon WAS driving, so its
+    fans hold their last speed until it clears. A `backend_unavailable`
+    control's fans were never this daemon's to hold — a read-only header runs on
+    its firmware — so that closing sentence was false for exactly the case the
+    widened token now covers. The opposite arm is the other reasons, which must
+    keep it."""
+    from control_ofc.services.controls_view import skipped_control_feedback
+
+    _, tooltip = skipped_control_feedback("backend_unavailable")
+    assert "hold their last speed" not in tooltip
+    assert "up to the hardware" in tooltip
+    _, other = skipped_control_feedback("sensor_unavailable")
+    assert "hold their last speed until it resolves" in other
+
+
 def test_a_malformed_reason_does_not_crash_the_poll_path():
     """`_filter_fields` does no type coercion, so a non-conforming daemon can put
     any JSON value in `reason` — and it then keys a dict. `{"reason": []}` raised
