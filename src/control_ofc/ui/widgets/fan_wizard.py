@@ -61,6 +61,8 @@ from control_ofc.services.cooling_device_view import (
     CoolingMembership,
     cooling_member_index,
     find_cooling_device,
+    membership_row_label,
+    membership_row_tooltip,
     merge_cooling_device_payload,
 )
 from control_ofc.services.daemon_features import daemon_supports
@@ -613,13 +615,16 @@ class CoolingDevicePage(QWizardPage):
         for fan_id, member in sorted(membership.items()):
             name = self._wizard._state.fan_display_name(fan_id) or fan_id
             where = f" — {member.device_name}" if member.from_device else ""
-            cb = QCheckBox(f"{name} · {member.role_label}{where}")
+            # `TS-ah`: an assigned pump and a detected one are told apart.
+            role_text = membership_row_label(member)
+            cb = QCheckBox(f"{name} · {role_text}{where}")
             cb.setObjectName(f"Wizard_Chk_exclude_{_slug(fan_id)}")
+            cb.setToolTip(membership_row_tooltip(member))
             # Default excluded; a choice the user already made on this page wins
             # over the default when the page is revisited.
             cb.setChecked(previous.get(fan_id, True))
             self._members_layout.addWidget(cb)
-            reason = f"Part of {member.device_name}" if member.from_device else member.role_label
+            reason = f"Part of {member.device_name}" if member.from_device else role_text
             self._exclude_rows[fan_id] = (cb, f"Excluded — {reason}")
 
         self._populate_nomination(membership)

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
@@ -1989,3 +1990,60 @@ def test_a_gpu_row_the_hardware_can_no_longer_raise_is_still_pruned():
     assert (
         prune([token], _live_silence_keys(build_system_state_vm(bound, duty_drift=NO_DRIFT))) == []
     )
+
+
+def test_two_addressless_amd_devices_keep_separate_identities():
+    """`ACK-ad`: two unbound AMD devices that both arrive with an empty
+    `pci_bdf` used to collapse onto `gpu_row_amd_device_` — one key, one
+    objectName, and one Unacknowledge clearing both. The fallback is the PCI
+    device id (the user's choice), never a loop index (DEC-380)."""
+    from control_ofc.api.models import AmdPciDeviceInfo
+
+    diag = _gpu_diag(
+        fan_control_method="read_only",
+        amd_pci_devices=[
+            AmdPciDeviceInfo(pci_bdf="", pci_device_id=0x744C, driver="vfio-pci"),
+            AmdPciDeviceInfo(pci_bdf="", pci_device_id=0x73BF, driver=None),
+        ],
+    )
+    rows = [r for r in build_safety_gpu_vm(diag).gpu_rows if r.label.startswith("AMD (")]
+    assert len(rows) == 2, "precondition: both address-less devices render a row"
+    keys = [parse_token(r.silence.token).key for r in rows]
+    assert keys == ["gpu_row_amd_device_dev744c", "gpu_row_amd_device_dev73bf"]
+    assert [r.label for r in rows] == ["AMD (device 0x744c)", "AMD (device 0x73bf)"]
+
+    # Silence both, then un-acknowledge the first: the second stays silenced.
+    stored = [r.silence.token for r in rows]
+    remaining = clear_key(stored, keys[0])
+    assert remaining == [rows[1].silence.token]
+
+
+def test_an_addressed_amd_device_keeps_its_bdf_key():
+    """The opposite branch: the fallback must not replace a real address."""
+    from control_ofc.api.models import AmdPciDeviceInfo
+
+    diag = _gpu_diag(
+        fan_control_method="read_only",
+        amd_pci_devices=[
+            AmdPciDeviceInfo(pci_bdf="0000:03:00.0", pci_device_id=0x744C, driver="vfio-pci")
+        ],
+    )
+    row = next(r for r in build_safety_gpu_vm(diag).gpu_rows if r.label.startswith("AMD "))
+    assert row.label == "AMD 0000:03:00.0"
+    assert parse_token(row.silence.token).key == "gpu_row_amd_device_0000:03:00.0"
+
+
+@pytest.mark.parametrize("bad_id", [None, "744c", [1]])
+def test_a_malformed_amd_device_id_renders_rather_than_raising(bad_id):
+    """Review finding (P3, fixed in DEC-416): `pci_device_id` is not a coerced
+    wire key, so a malformed value reached `:04x` and raised — where the pre-fix
+    code rendered `AMD None`. The row must still render, keyed off the value."""
+    from control_ofc.api.models import AmdPciDeviceInfo
+
+    diag = _gpu_diag(
+        fan_control_method="read_only",
+        amd_pci_devices=[AmdPciDeviceInfo(pci_bdf=None, pci_device_id=bad_id, driver="vfio-pci")],
+    )
+    rows = [r for r in build_safety_gpu_vm(diag).gpu_rows if r.label.startswith("AMD (")]
+    assert [r.label for r in rows] == [f"AMD (device {bad_id})"]
+    assert parse_token(rows[0].silence.token).key == f"gpu_row_amd_device_dev{bad_id}"

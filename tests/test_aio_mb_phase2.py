@@ -1160,3 +1160,91 @@ class TestSeedCalibrationFollowsTheChosenSensor:
         assert min(p.output_pct for p in pump.points) >= 30.0, (
             "every seeded pump point stays at or above the DEC-095 floor"
         )
+
+
+# ---------------------------------------------------------------------------
+# TS-v: the device's `coolant_sensor` and the seeded calibration agree
+# ---------------------------------------------------------------------------
+
+
+class TestCoolantTopologyFollowsTheChosenSensor:
+    """`TS-v`, at the call site and with the REAL dialog.
+
+    `TestSeedCalibrationFollowsTheChosenSensor` fakes `get_result`, so it cannot
+    see what the dialog stores as the device's `coolant_sensor`. Here only
+    `exec()` is replaced — it picks a sensor in the real combo and accepts — so
+    both halves come from production code: the topology the dialog builds, and
+    the calibration the page seeds. They must describe the same sensor.
+    """
+
+    CPU_ID = "cpu:pkg"
+    IN_ID = "d5next:in"
+    OUT_ID = "d5next:out"
+
+    def _run(self, qtbot, monkeypatch, app_state, profile_service, *, chosen):
+        from control_ofc.ui.pages.controls_page import ControlsPage
+        from control_ofc.ui.widgets.aio_config_dialog import AioConfigDialog
+
+        app_state.set_sensors(
+            [
+                _sensor(self.CPU_ID, "cpu_temp", "Package id 0"),
+                _sensor(self.IN_ID, "coolant_temp", "Coolant in", chip="d5next"),
+                _sensor(self.OUT_ID, "coolant_temp", "Coolant out", chip="d5next"),
+            ]
+        )
+        app_state.set_hwmon_headers(
+            [
+                _mb_header(5, role="pump", role_source="user_assigned"),
+                _mb_header(1, role="radiator_fan"),
+            ]
+        )
+        page = ControlsPage(state=app_state, profile_service=profile_service)
+        qtbot.addWidget(page)
+
+        def _exec(dlg):
+            combo = dlg._sensor_combo
+            combo.setCurrentIndex(combo.findData(chosen))
+            return 1
+
+        monkeypatch.setattr(AioConfigDialog, "exec", _exec)
+        saved: list = []
+        monkeypatch.setattr(page, "_save_cooling_device", saved.append)
+
+        page._on_configure_aio()
+
+        assert len(saved) == 1, "precondition: the flow reached the topology save"
+        profile = page._get_current_profile()
+        radiator = next(c for c in profile.curves if c.name == "AIO Radiator")
+        assert radiator.sensor_id == chosen, "precondition: the curve binds the chosen sensor"
+        return saved[0], radiator
+
+    @pytest.mark.parametrize("chosen", [CPU_ID, IN_ID, OUT_ID])
+    def test_topology_and_calibration_describe_the_same_sensor(
+        self, qtbot, monkeypatch, app_state, profile_service, chosen
+    ):
+        spec, radiator = self._run(qtbot, monkeypatch, app_state, profile_service, chosen=chosen)
+        coolant_calibrated = radiator.interpolate(55.0) == 100.0
+        assert (spec["coolant_sensor"] is not None) == coolant_calibrated
+
+    def test_a_cpu_binding_on_a_coolant_machine_claims_no_coolant(
+        self, qtbot, monkeypatch, app_state, profile_service
+    ):
+        """The defect: this machine HAS coolant sensors, the user chose CPU."""
+        spec, _ = self._run(qtbot, monkeypatch, app_state, profile_service, chosen=self.CPU_ID)
+        assert spec["preferred_sensor"] == self.CPU_ID
+        assert spec["coolant_sensor"] is None
+
+    def test_a_second_coolant_sensor_is_coolant_for_both(
+        self, qtbot, monkeypatch, app_state, profile_service
+    ):
+        """Detection picks the FIRST coolant sensor (coolant-in). Choosing the
+        other one is still a coolant binding — the sensor's own class decides,
+        so the old `== det.coolant_sensor_id` comparison would have given the
+        CPU calibration here."""
+        spec, radiator = self._run(
+            qtbot, monkeypatch, app_state, profile_service, chosen=self.OUT_ID
+        )
+        det = detect_aio_setup(app_state.hwmon_headers, app_state.sensors, {})
+        assert det.coolant_sensor_id == self.IN_ID, "precondition: detection chose coolant-in"
+        assert spec["coolant_sensor"] == self.OUT_ID
+        assert radiator.interpolate(55.0) == 100.0

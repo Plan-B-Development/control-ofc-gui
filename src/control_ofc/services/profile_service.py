@@ -31,8 +31,8 @@ from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.constants import DEFAULT_CURVE_POINTS
 from control_ofc.knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from control_ofc.knowledge.sensor_knowledge import (
-    classify_sensor_with_overrides,
     is_liquid_cooler_chip,
+    sensor_is_coolant,
 )
 from control_ofc.paths import atomic_write, load_json_capped, profiles_dir
 from control_ofc.services.shared_fan_switch import (
@@ -1258,17 +1258,7 @@ def detect_aio_setup(
     ]
     radiator_members = [aio_member_for_header(h, "Radiator") for h in rad_headers]
 
-    coolant_sensor_id = None
-    for s in sensors:
-        cls = classify_sensor_with_overrides(
-            s.id,
-            chip_name=getattr(s, "chip_name", ""),
-            label=getattr(s, "label", ""),
-            overrides=overrides,
-        )
-        if cls.source_class in ("coolant", "coolant_in", "coolant_out"):
-            coolant_sensor_id = s.id
-            break
+    coolant_sensor_id = next((s.id for s in sensors if sensor_is_coolant(s, overrides)), None)
 
     # A motherboard AIO exposes no coolant sensor — the cooler is not a USB device
     # and publishes no telemetry — so the curves bind to CPU package temperature
@@ -1690,6 +1680,22 @@ class ProfileActivateOutcome:
     # or remove, and the caller shows it.
     refused_by_rule: bool = False
 
+    def failure_message(self, profile_name: str) -> str | None:
+        """The banner text for a failed activation, or ``None`` if it succeeded.
+
+        `CTRL-k`: the ONE wording for every failure, shared by the sidebar and
+        the Dashboard. DEC-403's refusal is shown verbatim — it already names
+        the fans to add or remove — and every other reason (a daemon rejection,
+        a transport error) is prefixed with the profile it was about, since
+        several of them do not say.
+        """
+        if self.activated:
+            return None
+        reason = self.error or "unknown error"
+        if self.refused_by_rule:
+            return reason
+        return f"Could not activate “{profile_name}”: {reason}"
+
 
 class ProfileService(QObject):
     """Manages profile loading, saving, and selection.
@@ -2109,6 +2115,11 @@ class ProfileService(QObject):
 
         # Local state is updated only after the daemon confirms.
         self.set_active(profile_id)
+        # `TS-ae`: the new profile can change which headers the daemon protects
+        # as pumps (DEC-384) — even a re-apply of this same profile, which the
+        # poll's active id cannot show — so ask for fresh headers now.
+        if self._state is not None:
+            self._state.request_hwmon_headers_refresh()
         return ProfileActivateOutcome(activated=True)
 
     def create_profile(self, name: str) -> Profile:

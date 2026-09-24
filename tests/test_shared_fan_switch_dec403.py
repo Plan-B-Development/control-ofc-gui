@@ -230,7 +230,7 @@ class TestMainWindowWiring:
         )
 
     def test_the_dashboard_refusal_reaches_the_window_banner(self, window):
-        window.dashboard_page.activation_refused.emit("the rule message")
+        window.dashboard_page.activation_failed.emit("the rule message")
         assert window.error_banner._message_label.text() == "the rule message"
 
 
@@ -239,7 +239,7 @@ class TestDashboardRefusal:
         page = window.dashboard_page
         profile = _profile(GPU)
         profile_service._profiles[profile.id] = profile
-        with qtbot.waitSignal(page.activation_refused, timeout=1000) as blocker:
+        with qtbot.waitSignal(page.activation_failed, timeout=1000) as blocker:
             page._activate_profile_by_id(profile.id)
         assert blocker.args == [profile_service.shared_switch_error(profile).message]
 

@@ -1268,12 +1268,26 @@ def build_safety_gpu_vm(
                 f"the amdgpu module is not loaded (driver: {driver}) "
                 "— blacklisted, missing, or passed through"
             )
+        # `ACK-ad`: an empty `pci_bdf` (a malformed payload — the daemon
+        # enumerates these BY address) would give every such device one key and
+        # objectName. Fall back to the PCI device id: stable and non-positional,
+        # never an index (DEC-380). Two identical cards that BOTH lack an address
+        # still share one — the accepted residual. The id is not a coerced wire
+        # key (277-h), so it is formatted as hex only when it really is an int: a
+        # malformed one is shown as it came rather than raising.
+        dev_id = dev.pci_device_id
+        if dev.pci_bdf:
+            label, suffix = f"AMD {dev.pci_bdf}", dev.pci_bdf
+        elif isinstance(dev_id, int):
+            label, suffix = f"AMD (device 0x{dev_id:04x})", f"dev{dev_id:04x}"
+        else:
+            label, suffix = f"AMD (device {dev_id})", f"dev{dev_id}"
         rows.append(
             silencer.constraint(
-                f"AMD {dev.pci_bdf}",
+                label,
                 detail,
                 "warn",
-                key=f"{_GPU_ROW_KEY_AMD_DEVICE}{dev.pci_bdf}",
+                key=f"{_GPU_ROW_KEY_AMD_DEVICE}{suffix}",
             )
         )
 

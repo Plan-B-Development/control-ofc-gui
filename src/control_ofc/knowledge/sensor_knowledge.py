@@ -272,6 +272,30 @@ def classify_sensor_with_overrides(
     return classify_sensor(chip_name, label, temp_type, board_vendor)
 
 
+#: Every ``source_class`` that is a coolant reading (any side of the loop).
+COOLANT_SOURCE_CLASSES = frozenset({"coolant", "coolant_in", "coolant_out"})
+
+
+def sensor_is_coolant(sensor, overrides: dict[str, str] | None = None) -> bool:
+    """Whether ``sensor`` itself is a coolant reading (DEC-325's rule, `TS-v`).
+
+    The ONE answer to "is this sensor coolant?" for the AIO flow: the dialog's
+    stored ``coolant_sensor`` and the seeded curves' calibration both come from
+    it, so they cannot disagree. It classifies the sensor it is given — never
+    whether the machine merely *has* a coolant sensor, which is the fact that
+    once labelled a CPU-bound device as coolant telemetry.
+    """
+    if sensor is None:
+        return False
+    cls = classify_sensor_with_overrides(
+        sensor.id,
+        chip_name=getattr(sensor, "chip_name", ""),
+        label=getattr(sensor, "label", ""),
+        overrides=overrides,
+    )
+    return cls.source_class in COOLANT_SOURCE_CLASSES
+
+
 def _classify_k10temp(label: str, lower_label: str) -> SensorClassification:
     if lower_label == "tdie":
         return SensorClassification(

@@ -877,3 +877,128 @@ class TestSessionStatsResetOnReconnect:
         with patch.object(state, "reset_session_stats", wraps=state.reset_session_stats) as spy:
             svc._on_connected()
         spy.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TS-ae: headers re-read when the active profile moves, or on request
+# ---------------------------------------------------------------------------
+
+
+def _status(active_id: str | None, *, has: bool | None = True) -> DaemonStatus:
+    return DaemonStatus(overall_status="ok", active_profile_id=active_id, has_active_profile=has)
+
+
+def _set_poll_status(client: MagicMock, status: DaemonStatus) -> None:
+    client.poll.return_value = (status, [], [])
+
+
+class TestHeadersFollowTheActiveProfile:
+    """`TS-ae`: since DEC-384 a header's `stop_permitted` follows the active
+    profile, so the 300 s header refresh let pre-call wording lag a switch.
+
+    Every test runs with the capabilities interval shrunk to never, so the one
+    extra `hwmon_headers()` call counted is the re-read under test — cycle 0's
+    caps fetch is the baseline of one.
+    """
+
+    def _worker(self, status: DaemonStatus) -> tuple[_PollWorker, MagicMock]:
+        client = _make_mock_client()
+        _set_poll_status(client, status)
+        worker = _make_worker(client)
+        worker._caps_interval = 1000
+        return worker, client
+
+    def test_a_profile_switch_re_reads_the_headers(self, qtbot):
+        worker, client = self._worker(_status("quiet"))
+        emitted = _collect_signal(worker.headers_ready)
+        worker.poll()
+        worker.poll()
+        assert client.hwmon_headers.call_count == 1  # precondition: caps cycle only
+        _set_poll_status(client, _status("gaming"))
+        worker.poll()
+        assert client.hwmon_headers.call_count == 2
+        assert len(emitted) == 2, "the re-read must reach AppState, not just be made"
+
+    def test_a_deactivation_re_reads_the_headers(self, qtbot):
+        worker, client = self._worker(_status("quiet"))
+        worker.poll()
+        _set_poll_status(client, _status(None, has=False))
+        worker.poll()
+        assert client.hwmon_headers.call_count == 2
+
+    def test_an_unchanged_profile_does_not_re_read(self, qtbot):
+        worker, client = self._worker(_status("quiet"))
+        for _ in range(5):
+            worker.poll()
+        assert client.hwmon_headers.call_count == 1
+
+    def test_the_first_poll_is_not_a_change(self, qtbot):
+        """The caps cycle already read the headers; a `None` baseline must not
+        count as a switch and double the startup read."""
+        worker, client = self._worker(_status("quiet"))
+        worker.poll()
+        assert client.hwmon_headers.call_count == 1
+
+    def test_a_requested_re_read_runs_on_the_next_cycle(self, qtbot):
+        """The same-id re-apply the poll cannot see: the GUI asks instead."""
+        worker, client = self._worker(_status("quiet"))
+        worker.poll()
+        worker.poll()
+        worker.request_headers_refresh()
+        worker.poll()
+        assert client.hwmon_headers.call_count == 2
+        worker.poll()
+        assert client.hwmon_headers.call_count == 2, "a request is consumed once"
+
+    def test_a_failed_re_read_neither_disconnects_nor_retries(self, qtbot):
+        worker, client = self._worker(_status("quiet"))
+        worker.poll()
+        disconnected = _collect_signal(worker.disconnected)
+        connected = _collect_signal(worker.connected)
+        client.hwmon_headers.side_effect = _DAEMON_ERROR
+        _set_poll_status(client, _status("gaming"))
+        worker.poll()
+        assert client.hwmon_headers.call_count == 2  # precondition: it was tried
+        assert disconnected == [] and len(connected) == 1
+        worker.poll()
+        assert client.hwmon_headers.call_count == 2, "no once-a-second retry"
+
+
+class TestHeadersRefreshWiring:
+    """The call sites, not the worker: `AppState` → worker, and a confirmed
+    activation → `AppState`."""
+
+    def test_an_app_state_request_reaches_the_worker(self, qtbot, tmp_path):
+        state = AppState()
+        svc = PollingService(state, str(tmp_path / "nonexistent.sock"))
+        try:
+            assert svc._worker._headers_refresh_pending is False  # precondition
+            state.request_hwmon_headers_refresh()
+            qtbot.waitUntil(lambda: svc._worker._headers_refresh_pending, timeout=2000)
+        finally:
+            svc.shutdown()
+
+    def test_a_confirmed_activation_requests_a_re_read(self, qtbot, profile_service):
+        state = AppState()
+        profile_service.attach_state(state)
+        profile = profile_service.create_profile("Quiet")
+        client = MagicMock()
+        client.activate_profile.return_value = MagicMock(activated=True)
+        with qtbot.waitSignal(state.hwmon_headers_refresh_requested, timeout=1000):
+            assert profile_service.activate(profile.id, client=client).activated
+
+    @pytest.mark.parametrize("daemon_says", ["rejected", "error", "no_client"])
+    def test_an_unconfirmed_activation_requests_nothing(self, qtbot, profile_service, daemon_says):
+        state = AppState()
+        profile_service.attach_state(state)
+        profile = profile_service.create_profile("Quiet")
+        client = MagicMock()
+        if daemon_says == "rejected":
+            client.activate_profile.return_value = MagicMock(activated=False)
+        elif daemon_says == "error":
+            client.activate_profile.side_effect = _DAEMON_ERROR
+        else:
+            client = None
+        requested = _collect_signal(state.hwmon_headers_refresh_requested)
+        profile_service.activate(profile.id, client=client)
+        assert requested == []

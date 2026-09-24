@@ -533,17 +533,20 @@ class TestAioDialogTopology:
         dlg.findChild(QLineEdit, "AioConfig_Edit_deviceName").setText("   ")
         assert dlg.get_result()["cooling_device"]["name"] == DEFAULT_COOLING_DEVICE_NAME
 
-    def test_coolant_sensor_claimed_only_when_the_machine_has_one(self, qtbot):
-        """A CPU-package fallback must not be recorded as coolant telemetry the
-        machine does not have — that would make the topology lie."""
-        assert (
-            _dialog(qtbot, has_coolant=False).get_result()["cooling_device"]["coolant_sensor"]
-            is None
-        )
-        assert (
-            _dialog(qtbot, has_coolant=True).get_result()["cooling_device"]["coolant_sensor"]
-            == "s1"
-        )
+    def test_coolant_sensor_follows_the_chosen_rows_own_class(self, qtbot):
+        """`TS-v`: the device claims coolant telemetry only when the CHOSEN sensor
+        is itself coolant — never because the machine merely has a coolant
+        sensor. `has_coolant=True` is passed on both dialogs so the machine-level
+        fact is held constant and only the row's own flag varies."""
+        choices = [
+            {"id": "cpu", "label": "Package id 0", "preferred": True, "coolant": False},
+            {"id": "liq", "label": "Coolant", "preferred": True, "coolant": True},
+        ]
+        on_cpu = _dialog(qtbot, has_coolant=True, sensor_choices=choices, default_sensor_id="cpu")
+        on_liq = _dialog(qtbot, has_coolant=True, sensor_choices=choices, default_sensor_id="liq")
+        assert on_cpu.get_result()["radiator_sensor_id"] == "cpu"  # precondition
+        assert on_cpu.get_result()["cooling_device"]["coolant_sensor"] is None
+        assert on_liq.get_result()["cooling_device"]["coolant_sensor"] == "liq"
 
     def test_existing_result_keys_are_unchanged(self, qtbot):
         """The topology is additive — the Phase 2/3 contract this dialog already

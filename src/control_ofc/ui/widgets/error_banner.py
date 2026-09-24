@@ -70,3 +70,17 @@ class ErrorBanner(QWidget):
         self._auto_dismiss_timer.stop()
         self.setVisible(False)
         self.dismissed.emit()
+
+    def hide_if_showing(self, message: str) -> bool:
+        """Hide the banner only while it still shows ``message``; True if it did.
+
+        For a message that a later event makes stale — a failed activation that
+        a later Apply succeeded at. Anything shown since (a disconnect, another
+        warning) replaced the text, so it is left alone. ``isHidden`` reads the
+        banner's own flag, which is what "showing" means here even while the
+        window itself is not on screen.
+        """
+        if self.isHidden() or self._message_label.text() != message:
+            return False
+        self.hide_banner()
+        return True

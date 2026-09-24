@@ -44,9 +44,12 @@ from control_ofc.services.controls_view import (
 from control_ofc.services.cooling_device_view import (
     COOLING_DEVICE_KIND_AIO,
     DEFAULT_COOLING_DEVICE_NAME,
+    DETECTED_PUMP_TOOLTIP,
     CoolingMembership,
     cooling_member_index,
     find_cooling_device,
+    membership_row_label,
+    membership_row_tooltip,
     merge_cooling_device_payload,
 )
 from control_ofc.ui.widgets.fan_wizard import (
@@ -1000,3 +1003,99 @@ class TestApplyButtonIsWired:
         page = wiz._cooling_page
         page._apply_btn.click()
         assert "nothing was changed" in page._status.text()
+
+
+# ---------------------------------------------------------------------------
+# TS-ah / TS-ai: membership wording keyed on `assigned`
+# ---------------------------------------------------------------------------
+
+LABEL_PUMP_ID = "hwmon:it8696:isa-0a40:pwm2:AIO_PUMP"
+KRAKEN_RAD_ID = "hwmon:kraken2023:usb-1:pwm2:pwm2"
+
+
+def _labelled_pump() -> HwmonHeader:
+    """A pump the daemon protects on its LABEL — nothing assigned."""
+    h = _header(LABEL_PUMP_ID, role="pump", role_source="label")
+    h.label = "AIO_PUMP"
+    h.stop_permitted = False
+    return h
+
+
+def _assigned_pump() -> HwmonHeader:
+    h = _header(PUMP_ID, role="pump", role_source="user_assigned")
+    h.stop_permitted = False
+    return h
+
+
+class TestWizardRowsTellAssignedFromDetected:
+    """`TS-ah`: an assigned pump and a labelled one used to read identically
+    ("Pump"), so the user could not see why a header was pre-ticked."""
+
+    def test_the_helper_names_how_each_pump_was_claimed(self):
+        index = cooling_member_index([], [_assigned_pump(), _labelled_pump()], _caps())
+        assert membership_row_label(index[PUMP_ID]) == "Pump (you assigned)"
+        assert membership_row_label(index[LABEL_PUMP_ID]) == "Pump (detected)"
+        assert membership_row_tooltip(index[PUMP_ID]) == ""
+        assert membership_row_tooltip(index[LABEL_PUMP_ID]) == DETECTED_PUMP_TOOLTIP
+
+    def test_device_and_radiator_rows_keep_their_role_label(self):
+        index = cooling_member_index(
+            [_device()], [_header(RAD_HWMON_ID, role="radiator_fan")], _caps()
+        )
+        for member_id in (PUMP_ID, RAD_OPENFAN_ID, RAD_HWMON_ID):
+            member = index[member_id]
+            assert membership_row_label(member) == member.role_label, member_id
+            assert membership_row_tooltip(member) == "", member_id
+
+    def test_the_wizard_renders_the_helpers_answer(self, qtbot, wizard_state):
+        """The call site: the checkbox, its tooltip and the discovery reason all
+        carry the helper's text — asserted against the helper, not a literal."""
+        wizard_state.hwmon_headers = [_assigned_pump(), _labelled_pump()]
+        wizard_state.cooling_devices = CoolingDeviceInventory(cooling_devices=[])
+        wiz = FanConfigWizard(wizard_state)
+        qtbot.addWidget(wiz)
+        wiz.setStartId(PAGE_COOLING)
+        wiz.restart()
+        index = wiz.cooling_membership()
+        assert set(index) == {PUMP_ID, LABEL_PUMP_ID}  # precondition
+        reasons = wiz.excluded_reasons()
+        for member_id, member in index.items():
+            cb, _ = wiz._cooling_page._exclude_rows[member_id]
+            label = membership_row_label(member)
+            assert cb.text().endswith(f" · {label}"), cb.text()
+            assert cb.toolTip() == membership_row_tooltip(member)
+            assert reasons[member_id] == f"Excluded — {label}"
+        # The opposite branches, so a stuck helper cannot pass the loop above.
+        assert reasons[PUMP_ID] != reasons[LABEL_PUMP_ID]
+        assert wiz._cooling_page._exclude_rows[LABEL_PUMP_ID][0].toolTip()
+
+
+class TestRadiatorReservationOffersNoFalseRemedy:
+    """`TS-ai`: no GUI route clears a `radiator_fan` role, so neither radiator
+    note may send the user to Configure AIO — and an inferred one must not say
+    it was assigned."""
+
+    def _notes(self):
+        inferred = _header(KRAKEN_RAD_ID, role="radiator_fan", role_source="chip_mapping")
+        assigned = _header(RAD_HWMON_ID, role="radiator_fan", role_source="user_assigned")
+        index = cooling_member_index([], [inferred, assigned], _caps())
+        assert index[KRAKEN_RAD_ID].role == "radiator"  # precondition
+        assert not index[KRAKEN_RAD_ID].assigned and index[RAD_HWMON_ID].assigned
+        return cooling_device_reservations(index)
+
+    def test_an_inferred_radiator_is_not_called_assigned(self):
+        note = self._notes()[KRAKEN_RAD_ID]
+        assert note.text == "(Radiator fan)"
+        assert "assigned" not in note.text and "You assigned" not in note.tooltip
+        assert "hardware" in note.tooltip
+
+    def test_an_assigned_radiator_says_where_it_was_assigned(self):
+        note = self._notes()[RAD_HWMON_ID]
+        assert note.text == "(Radiator fan role assigned)"
+        assert "Fan Wizard" in note.tooltip
+
+    def test_neither_radiator_note_names_a_remedy_that_does_not_exist(self):
+        for note in self._notes().values():
+            assert "Configure AIO" not in note.tooltip
+            assert "Clear" not in note.tooltip
+            assert note.title == "Assign the radiator fan to this curve?"

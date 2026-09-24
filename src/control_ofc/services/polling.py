@@ -85,6 +85,22 @@ class _PollWorker(QObject):
         # no-op instead. Single-threaded worker, so a plain bool needs no lock —
         # same reasoning as `_in_flight` above.
         self._shutting_down = False
+        # `TS-ae`: since DEC-384 `stop_permitted` and `effective_min_pwm_pct`
+        # follow the active profile, so headers read up to 300 s ago can promise
+        # the wrong thing about a pump. The worker re-reads them when the poll
+        # shows the active profile changed, or when the GUI asks after its own
+        # activation. `None` = no poll observed yet (the caps cycle reads them).
+        # Single-threaded worker, so neither needs a lock.
+        self._last_profile_key: tuple[bool | None, str | None] | None = None
+        self._headers_refresh_pending = False
+
+    def request_headers_refresh(self) -> None:
+        """Re-read ``/hwmon/headers`` on the next cycle (`TS-ae`).
+
+        Reached through a queued connection from ``AppState``, so it runs on
+        this worker's thread and only ever sets the flag the poll consumes.
+        """
+        self._headers_refresh_pending = True
 
     def _ensure_client(self) -> DaemonClient:
         # DEC-256: never resurrect the client after shutdown. This is the half
@@ -136,6 +152,8 @@ class _PollWorker(QObject):
                 caps = client.capabilities()
                 self.capabilities_ready.emit(caps)
                 self.headers_ready.emit(client.hwmon_headers())
+                # A pending `TS-ae` re-read is satisfied by this one.
+                self._headers_refresh_pending = False
                 # Cooling-device topology (AIO-MB Phase 6). Capability-gated:
                 # a pre-2.31 daemon 404s the route, and an unguarded call would
                 # log a spurious error every five minutes on every older setup.
@@ -205,6 +223,7 @@ class _PollWorker(QObject):
             self.status_ready.emit(status)
             self.sensors_ready.emit(sensors)
             self.fans_ready.emit(fans)
+            self._refresh_headers_if_due(client, status)
 
             # Pre-fill history from daemon on first successful poll
             if self._poll_count == 0 and self._history and sensors:
@@ -237,6 +256,36 @@ class _PollWorker(QObject):
             self.disconnected.emit()
             # Drop client so it reconnects next attempt
             self._close_client()
+
+    def _refresh_headers_if_due(self, client: DaemonClient, status: DaemonStatus) -> None:
+        """Re-read the headers when the active profile moved, or on request (`TS-ae`).
+
+        The profile is read from the poll's own ``(has_active_profile,
+        active_profile_id)``, so a switch or deactivation made anywhere — the
+        tray, the CLI, another GUI — is seen within a second. A re-apply of the
+        SAME profile leaves that pair unchanged, which is why the GUI's own
+        activation also requests a re-read (``request_headers_refresh``).
+
+        Best-effort: a failed re-read is logged and not retried, so it cannot
+        fake a disconnect or log once a second; the capabilities-interval
+        refresh stays the backstop.
+        """
+        key = (status.has_active_profile, status.active_profile_id)
+        if self._last_profile_key is not None and key != self._last_profile_key:
+            self._headers_refresh_pending = True
+        self._last_profile_key = key
+        if not self._headers_refresh_pending:
+            return
+        self._headers_refresh_pending = False
+        try:
+            self.headers_ready.emit(client.hwmon_headers())
+        except (DaemonError, ConnectionError, OSError, KeyError, ValueError, TypeError) as e:
+            log.warning(
+                "Could not re-read hwmon headers after a profile change "
+                "(the %d s refresh will): %s",
+                CAPABILITIES_REFRESH_INTERVAL_S,
+                e,
+            )
 
     def _prefill_history(self, client: DaemonClient, sensors: list) -> None:
         """Fetch daemon-side history for each sensor and pre-fill the local store."""
@@ -326,6 +375,11 @@ class PollingService(QObject):
         self._worker.sensors_ready.connect(state.set_sensors)
         self._worker.fans_ready.connect(state.set_fans)
         self._worker.headers_ready.connect(state.set_hwmon_headers)
+        # `TS-ae`: queued, like the timer below — the flag lives on the worker's
+        # thread and is only ever touched there.
+        state.hwmon_headers_refresh_requested.connect(
+            self._worker.request_headers_refresh, Qt.ConnectionType.QueuedConnection
+        )
         self._worker.cooling_devices_ready.connect(state.set_cooling_devices)
         self._worker.active_profile_ready.connect(self._on_active_profile)
         self._worker.hw_diagnostics_ready.connect(self._on_hw_diagnostics)

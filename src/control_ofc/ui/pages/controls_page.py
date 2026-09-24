@@ -1398,9 +1398,13 @@ class ControlsPage(QWidget):
             # an ordinary CPU package temperature under load. That is exactly the
             # failure `TestSeedCurveCalibration` exists to prevent, arriving
             # through the one input it never checked.
-            sensor_is_coolant=(
-                det.coolant_sensor_id is not None
-                and res["radiator_sensor_id"] == det.coolant_sensor_id
+            #
+            # `TS-v`: read from the SAME row flag the dialog stored the device's
+            # `coolant_sensor` from, so the calibration and the topology cannot
+            # disagree — and it is the chosen sensor's own class, so a second
+            # coolant sensor (e.g. coolant-out) gets the coolant calibration too.
+            sensor_is_coolant=any(
+                c.get("coolant") and c["id"] == res["radiator_sensor_id"] for c in sensor_choices
             ),
         )
         if not created:

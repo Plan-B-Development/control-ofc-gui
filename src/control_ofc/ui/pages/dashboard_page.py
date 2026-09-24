@@ -89,9 +89,13 @@ class DashboardPage(QWidget):
     # and focuses that control. Can still carry "" for a hand-edited profile whose
     # control id is empty, which lands the user on Controls unfocused.
     open_control = Signal(str)
-    # DEC-403: a switch the GUI's own save rule refused, with the message naming
-    # the fans to fix. The page has no banner, so the main window shows it.
-    activation_refused = Signal(str)
+    # `CTRL-k`: every failed switch, with its reason — DEC-403's rule refusal
+    # (which names the fans to fix) and a daemon or transport failure alike. The
+    # page has no banner, so the main window shows it.
+    activation_failed = Signal(str)
+    # A daemon-confirmed (or demo-local) success, so the main window can take
+    # down a failure banner this or an earlier Apply left up.
+    activation_succeeded = Signal()
 
     # Stack indices
     _IDX_DISCONNECTED = 0
@@ -1165,7 +1169,9 @@ class DashboardPage(QWidget):
         Delegates the save → daemon-confirm → set-active flow to the shared
         ProfileService.activate(). On failure it reverts the combo to the
         previously-active profile (bug fix — the combo used to stay on the failed
-        pick) and surfaces the real reason to the log (previously lost)."""
+        pick), logs the real reason, and hands it to the main window's banner
+        through ``activation_failed`` (`CTRL-k` — every failure, not only
+        DEC-403's refusal)."""
         import logging
 
         log = logging.getLogger(__name__)
@@ -1178,14 +1184,15 @@ class DashboardPage(QWidget):
         res = self._profile_service.activate(profile_id, client=self._client)
         if not res.activated:
             log.warning("Profile activation failed for %s: %s", profile_id, res.error)
-            if res.refused_by_rule and res.error:
-                self.activation_refused.emit(res.error)
+            target = self._profile_service.get_profile(profile_id)
+            self.activation_failed.emit(res.failure_message(target.name if target else profile_id))
             self._revert_profile_combo(prev_active_id)
             self._apply_btn.setText("Failed")
             self._apply_btn.setEnabled(False)
             self._reset_apply_timer.start()
             return
 
+        self.activation_succeeded.emit()
         # Mirror the new active into AppState so the whole UI reflects it.
         target = self._profile_service.get_profile(profile_id)
         if self._state and target:

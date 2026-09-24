@@ -102,7 +102,7 @@ class AioConfigDialog(QDialog):
         pump_label: str | None,
         monitor_only: bool,
         fan_candidates: list[dict],  # [{id, source, label, preselect}]
-        sensor_choices: list[dict],  # [{id, label, preferred}]
+        sensor_choices: list[dict],  # [{id, label, preferred, coolant}]
         default_sensor_id: str | None = None,
         default_pump_pct: int = AIO_PUMP_DEFAULT_PCT,
         default_pump_strategy: str = AIO_PUMP_DEFAULT_STRATEGY,
@@ -126,10 +126,11 @@ class AioConfigDialog(QDialog):
         # behaves exactly as it did before this change.
         self._pump_candidates = list(pump_candidates or [])
         self._has_detected_pump = bool(pump_label) and not monitor_only
-        # Kept for `get_result`: whether the chosen sensor is genuinely a
-        # coolant reading decides whether the saved topology may claim
-        # coolant telemetry at all.
-        self._has_coolant = has_coolant
+        # `TS-v`: the sensors whose own class is coolant. `get_result` claims
+        # coolant telemetry only for one of these — never merely because the
+        # machine HAS a coolant sensor, which labelled a device bound to CPU
+        # package as coolant.
+        self._coolant_ids = {c["id"] for c in sensor_choices if c.get("coolant")}
 
         layout = QVBoxLayout(self)
 
@@ -438,15 +439,16 @@ class AioConfigDialog(QDialog):
             # collected every part of this and discarded it — the topology was
             # reconstructible from the created controls only by re-inferring it
             # from labels. `coolant_sensor` is set only when the chosen sensor
-            # really is a coolant reading, so a CPU-package fallback is not
-            # mislabelled as coolant telemetry the machine does not have.
+            # is itself a coolant reading (`TS-v`), so a CPU-package binding is
+            # never recorded as coolant telemetry — even on a machine that has a
+            # coolant sensor the user chose not to use.
             "cooling_device": {
                 "name": self._name_edit.text().strip() or DEFAULT_COOLING_DEVICE_NAME,
                 "kind": COOLING_DEVICE_KIND_AIO,
                 "pump_member": pump_id or None,
                 "radiator_members": [m.get("id", "") for m in radiator_members if m.get("id")],
                 "preferred_sensor": sensor_id or None,
-                "coolant_sensor": sensor_id if self._has_coolant and sensor_id else None,
+                "coolant_sensor": sensor_id if sensor_id in self._coolant_ids else None,
             },
         }
 

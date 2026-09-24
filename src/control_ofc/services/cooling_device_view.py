@@ -482,6 +482,36 @@ def cooling_member_index(
     return index
 
 
+#: `TS-ah`: why a pump nobody assigned is listed. The daemon's union has three
+#: terms a client can name, and it does not say which one applies, so the copy
+#: names all three rather than guessing.
+DETECTED_PUMP_TOOLTIP = (
+    "The daemon protects this header as a pump because of its label, because it "
+    "is a liquid cooler's pump channel, or because the active profile names it a pump."
+)
+
+
+def membership_row_label(membership: CoolingMembership) -> str:
+    """The role text for one Fan Wizard cooling-step row (`TS-ah`).
+
+    A pump claimed by a header rather than a device says whether the user
+    assigned it or the daemon detected it; an assigned pump and a labelled one
+    used to read identically, so the user could not see why a header was listed.
+    Device claims and radiator rows keep their role label.
+    """
+    if membership.from_device or membership.role != "pump":
+        return membership.role_label
+    how = "you assigned" if membership.assigned else "detected"
+    return f"{membership.role_label} ({how})"
+
+
+def membership_row_tooltip(membership: CoolingMembership) -> str:
+    """The tooltip for that row: the detected pump's reasons, else nothing."""
+    if membership.from_device or membership.role != "pump" or membership.assigned:
+        return ""
+    return DETECTED_PUMP_TOOLTIP
+
+
 def merge_cooling_device_payload(
     existing: CoolingDevice | None,
     *,

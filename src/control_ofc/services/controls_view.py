@@ -13,7 +13,10 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from control_ofc.knowledge.sensor_knowledge import classify_sensor_with_overrides
+from control_ofc.knowledge.sensor_knowledge import (
+    classify_sensor_with_overrides,
+    sensor_is_coolant,
+)
 from control_ofc.services.cooling_device_view import CoolingMembership
 from control_ofc.services.profile_service import (
     AIO_PUMP_TAG,
@@ -498,6 +501,32 @@ def cooling_device_reservations(
                 ),
                 title="Assign the pump to this curve?",
             )
+        elif membership.role == "radiator":
+            # `TS-ai`: no GUI route clears a `radiator_fan` role — Configure AIO
+            # and the wizard clear only a user-assigned PUMP — so neither shape
+            # offers a remedy, as the pump branch above does not. Keyed on
+            # `assigned`: a liquid cooler's non-pump channel is `radiator_fan` by
+            # chip mapping with nothing assigned, and must not be told it was.
+            if membership.assigned:
+                text = f"({membership.role_label} role assigned)"
+                why = (
+                    f"You assigned this header the {membership.role_label.lower()} "
+                    "role in the Fan Wizard"
+                )
+            else:
+                text = f"({membership.role_label})"
+                why = (
+                    "The daemon treats this header as a liquid cooler's "
+                    f"{membership.role_label.lower()} because of its hardware"
+                )
+            notes[member_id] = ReservationNote(
+                text=text,
+                tooltip=(
+                    f"{why}. Assigning it to an unrelated curve is allowed, but it "
+                    "is usually not what you want."
+                ),
+                title=f"Assign the {membership.role_label.lower()} to this curve?",
+            )
         else:
             notes[member_id] = ReservationNote(
                 text=f"({membership.role_label} role assigned)",
@@ -607,22 +636,17 @@ def build_pump_role_candidates(headers, *, display_name) -> list[dict]:
 
 def build_sensor_choices(sensors, overrides: dict) -> list[dict]:
     """AIO wizard sensor rows, flagging coolant + CPU sensors as ``preferred``
-    (the recommended bindings for a radiator curve, DEC-157)."""
+    (the recommended bindings for a radiator curve, DEC-157).
+
+    ``coolant`` is the row's own :func:`sensor_is_coolant` answer, which is what
+    the dialog stores as the device's ``coolant_sensor`` (`TS-v`); the page seeds
+    the curves' calibration from the same predicate.
+    """
     choices: list[dict] = []
     for s in sensors:
-        cls = classify_sensor_with_overrides(
-            s.id, chip_name=s.chip_name, label=s.label, overrides=overrides
-        )
-        preferred = (
-            cls.source_class
-            in (
-                "coolant",
-                "coolant_in",
-                "coolant_out",
-            )
-            or s.kind == "cpu_temp"
-        )
-        choices.append({"id": s.id, "label": s.label, "preferred": preferred})
+        coolant = sensor_is_coolant(s, overrides)
+        preferred = coolant or s.kind == "cpu_temp"
+        choices.append({"id": s.id, "label": s.label, "preferred": preferred, "coolant": coolant})
     return choices
 
 

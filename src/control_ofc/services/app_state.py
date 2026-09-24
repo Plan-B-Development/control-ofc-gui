@@ -80,6 +80,11 @@ class AppState(QObject):
     sensors_updated = Signal(list)  # list[SensorReading]
     fans_updated = Signal(list)  # list[FanReading]
     headers_updated = Signal(list)  # list[HwmonHeader]
+    # `TS-ae`: ask the poll worker to re-read `/hwmon/headers` on its next cycle.
+    # Raised after the GUI's own daemon-confirmed activation, which can change
+    # `stop_permitted` without changing the active id (DEC-384: re-applying one
+    # profile after editing which member it names a pump).
+    hwmon_headers_refresh_requested = Signal()
     cooling_devices_updated = Signal(object)  # CoolingDeviceInventory
     active_profile_changed = Signal(str)  # profile name
     active_profile_id_changed = Signal(str)  # active profile id
@@ -247,6 +252,14 @@ class AppState(QObject):
     def set_hwmon_headers(self, headers: list[HwmonHeader]) -> None:
         self.hwmon_headers = headers
         self.headers_updated.emit(headers)
+
+    def request_hwmon_headers_refresh(self) -> None:
+        """Ask the live poll worker for a fresh ``/hwmon/headers`` (`TS-ae`).
+
+        A request, not a fetch: nothing listens in demo mode, and in live mode
+        the worker reads the headers on its own thread, off the UI loop.
+        """
+        self.hwmon_headers_refresh_requested.emit()
 
     def set_cooling_devices(self, inventory: CoolingDeviceInventory) -> None:
         self.cooling_devices = inventory

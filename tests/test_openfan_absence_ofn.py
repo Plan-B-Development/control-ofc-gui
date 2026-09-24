@@ -457,3 +457,31 @@ def test_settings_openfan_rows_are_annotated_when_capabilities_already_landed(
         assert _ABSENT_NOTE in page._row_sublabels[key].text().lower(), (
             f"settings row {key!r} ignored capabilities that landed before construction"
         )
+
+
+def test_daemon_health_an_emptied_list_reads_all_ok_not_absent(qtbot):
+    """`OFN-ap`: when the filter removes the ONLY line — a healthy openfan on a
+    machine with none — the card must not show "—", the placeholder for "no
+    `/status` at all". Driven through the page, like the tests above.
+
+    Unreachable on every current daemon (hwmon and engine are always reported),
+    so the status here is hand-built with openfan alone.
+    """
+    from control_ofc.services.overview_view import build_daemon_health_vm
+
+    state = _state(False)
+    page = OverviewPage(state=state)
+    qtbot.addWidget(page)
+    state.set_capabilities(_caps(False))
+    only_openfan = DaemonStatus(
+        overall_status="ok",
+        subsystems=[
+            SubsystemStatus(name="openfan", status="ok", reason="no OpenFanController connected")
+        ],
+    )
+    state.set_status(only_openfan)
+    assert page._subsystems_label.text() == "Subsystems: all ok"
+    # The two other empty cases keep "—": no status, and a status with none.
+    assert build_daemon_health_vm(_caps(False), None).subsystems_text == "Subsystems: —"
+    none_reported = DaemonStatus(overall_status="ok", subsystems=[])
+    assert build_daemon_health_vm(_caps(False), none_reported).subsystems_text == "Subsystems: —"

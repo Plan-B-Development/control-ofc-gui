@@ -167,6 +167,9 @@ class MainWindow(QWidget):
         # --- Status banner + error banner ---
         self.status_banner = StatusBanner()
         self.error_banner = ErrorBanner()
+        # `CTRL-k`: the failed-activation text on the banner, if one is up, so a
+        # later successful Apply hides that and nothing else.
+        self._activation_failure_text: str | None = None
         # Persistent, non-dismissible upgrade-required banner (control gate,
         # DEC-165) — distinct from the transient/dismissible error_banner.
         self._gate_banner = QLabel()
@@ -425,8 +428,10 @@ class MainWindow(QWidget):
         self.dashboard_page.open_readiness.connect(self._open_readiness)
         # DEC-222: a fan card's Edit opens Controls and focuses that control.
         self.dashboard_page.open_control.connect(self._open_control)
-        # DEC-403: the dashboard has no banner of its own for a refused activation.
-        self.dashboard_page.activation_refused.connect(self.error_banner.show_warning)
+        # DEC-403 / `CTRL-k`: the dashboard has no banner of its own for a failed
+        # activation, whatever the reason — and a later success takes it down.
+        self.dashboard_page.activation_failed.connect(self._show_activation_failure)
+        self.dashboard_page.activation_succeeded.connect(self._clear_activation_failure)
         # DEC-207/DEC-216: the Cooling Hardware Readiness "set preferred sensor"
         # deep-link is owned by the Hardware page (the Diagnostics duplicate was
         # retired with the page).
@@ -742,9 +747,15 @@ class MainWindow(QWidget):
         if not profile_id:
             return
         res = self._profile_service.activate(profile_id, client=self._client)
-        if res.refused_by_rule and res.error:
-            # DEC-403: the GUI's own save rule refused it; say which fans to fix.
-            self.error_banner.show_warning(res.error)
+        if not res.activated:
+            # `CTRL-k`: say why, for every failure — DEC-403's rule refusal names
+            # the fans to fix, and a daemon or transport failure names the profile.
+            target = self._profile_service.get_profile(profile_id)
+            self._show_activation_failure(
+                res.failure_message(target.name if target else profile_id)
+            )
+        else:
+            self._clear_activation_failure()
         # DEC-214: bridge activation into AppState (the Controls page's removed
         # _on_activate used to do this) so the status banner / dashboard reflect
         # the newly-active profile.
@@ -758,6 +769,24 @@ class MainWindow(QWidget):
         # forcing it would drag the user out of the profile they were browsing,
         # which is a thing selection no longer implies. `CTRL-c`.
         self._populate_sidebar_profiles()
+
+    def _show_activation_failure(self, message: str) -> None:
+        """Show a failed activation's reason (`CTRL-k`), remembering the text so
+        a later success can take down exactly this banner and nothing else."""
+        self._activation_failure_text = message
+        self.error_banner.show_warning(message)
+
+    def _clear_activation_failure(self) -> None:
+        """A later Apply succeeded: hide the failure banner if it is still up.
+
+        Keyed on the success itself, never on ``active_changed`` — re-applying
+        the SAME profile after fixing it changes no id, and is the retry this
+        exists for. Only the remembered text is hidden, so a disconnect or any
+        other warning shown since stays.
+        """
+        if self._activation_failure_text is not None:
+            self.error_banner.hide_if_showing(self._activation_failure_text)
+            self._activation_failure_text = None
 
     def _on_theme_changed(self, tokens) -> None:
         from control_ofc.ui.theme import apply_theme

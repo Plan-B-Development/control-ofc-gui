@@ -33,6 +33,46 @@ report before the result arrived, it used to appear under that report instead.
 **The empty Reports page keeps its text together** (`PTA-g`, DEC-415). With no reports saved, the
 heading, the description and "No reports yet" were spread down the whole window.
 
+**A failed profile activation says why** (`CTRL-k`, DEC-416). If the daemon rejected a profile,
+or could not be reached, pressing **Apply** in the sidebar or on the Dashboard only put the choice
+back, or showed "Failed", and the reason went to the log. The window banner now says
+`Could not activate "<profile>": <reason>`. The Dell shared-fan-switch message is unchanged. When
+a later **Apply** succeeds, the banner goes away, including when you apply the same profile again
+after fixing it.
+
+**Configure AIO records coolant only for a coolant sensor** (`TS-v`, DEC-416). On a machine with a
+coolant sensor, a cooler you bound to CPU temperature was saved as reporting its coolant temperature
+from the CPU. It is now saved as coolant only when the sensor you chose is a coolant sensor. If
+your loop has two coolant sensors (in and out) and you choose the second, the new curves now get
+the coolant starting points instead of the CPU ones.
+
+**Pump wording catches up with a profile change straight away** (`TS-ae`, DEC-416). Which headers
+the daemon protects as pumps can depend on the active profile. The GUI re-read that only every five
+minutes, so the Fan Wizard and the test dialogs could describe a header by the previous profile. It
+is now re-read within a second of a profile being applied, switched or deactivated, including
+applying the same profile again after editing it.
+
+**The Fan Wizard says why a pump is listed** (`TS-ah`, DEC-416). On the cooling step, a pump you
+named reads **Pump (you assigned)**, and one the daemon found on its own reads **Pump (detected)**.
+Hover over a detected pump to see the three reasons: its label, a liquid cooler's pump channel, or
+the active profile calling it a pump. The next page's "Excluded" note uses the same words.
+
+**Radiator fan notes in the fan picker no longer offer a fix that does not exist** (`TS-ai`,
+DEC-416). A liquid cooler's radiator fan was marked "(Radiator fan role assigned)" even though
+nobody had assigned it, and every radiator note said to clear the role in Configure AIO, which
+cannot clear a radiator role. A detected radiator fan now reads **(Radiator fan)**, one you
+assigned in the Fan Wizard reads **(Radiator fan role assigned)**, and neither offers a fix.
+
+**Two AMD graphics devices with no PCI address get their own rows** (`ACK-ad`, DEC-416). If the
+daemon ever reports an unbound AMD device without its address, System State now names the row by
+device id, for example **AMD (device 0x744c)**. Two such devices no longer share one row identity,
+so acknowledging one no longer acknowledges both. Current daemons always report the address.
+
+**The Overview health card never reads as empty when everything is healthy** (`OFN-ap`, DEC-416).
+If every subsystem line were hidden, the card would show "Subsystems: —", as if nothing had loaded.
+It now reads **Subsystems: all ok**. Current daemons always report subsystems that stay visible, so
+you should not see this.
+
 ### Changed
 
 **The Reports list opens faster** (`PTR-x`, DEC-415). Opening the list for the first time in a

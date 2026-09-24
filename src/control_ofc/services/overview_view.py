@@ -418,9 +418,16 @@ def build_daemon_health_vm(
         age = f" (age {s.age_ms}ms)" if s.age_ms is not None else ""
         reason = f" — {s.reason}" if s.reason else ""
         subsystem_lines.append(f"{s.name}: {s.status}{age}{reason}")
-    subsystems_text = (
-        "Subsystems:\n" + "\n".join(subsystem_lines) if subsystem_lines else "Subsystems: —"
-    )
+    # `OFN-ap`: "—" means "nothing to show". Only a HEALTHY line is ever
+    # filtered, so a list the filter emptied is an all-healthy report and must
+    # not read like one that never arrived. Unreachable on every current daemon
+    # (hwmon and engine are always reported); this keeps it true if one stops.
+    if subsystem_lines:
+        subsystems_text = "Subsystems:\n" + "\n".join(subsystem_lines)
+    elif status.subsystems:
+        subsystems_text = "Subsystems: all ok"
+    else:
+        subsystems_text = "Subsystems: —"
     ov_lines = [f"{o.control_id} {o.pwm_percent}% ({o.expires_in_secs}s)" for o in status.overrides]
     id_lines = [
         f"{i.fan_id} {i.describe_hold()} ({i.expires_in_secs}s)" for i in status.fan_identify

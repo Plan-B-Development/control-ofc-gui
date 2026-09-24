@@ -1137,7 +1137,8 @@ Use to discover:
     profile can flip `stop_permitted` and `effective_min_pwm_pct` for a header with no other
     evidence. `/hwmon/headers`, `/hwmon/rescan` and `/inventory/hwmon` share one mapping, so they
     apply the same union to whatever they publish (`/hwmon/rescan` maps a fresh discovery, the
-    other two the running controller's headers). A client that caches the list is advisory only between fetches — the daemon
+    other two the running controller's headers). A client that caches the list is advisory only between fetches — the GUI
+    re-reads it within one poll of an activation, switch or deactivation (`TS-ae`, DEC-416) — the daemon
     decides at the call and reports what it did in identify's `mode`, which is the value to
     trust. The client-side reconstruction for daemons that omit this field must **not** add the
     profile term: no such daemon has it.
@@ -2681,7 +2682,11 @@ The GUI must reflect these constraints honestly.
 
 ### Ongoing cadence
 - **Primary data (sensors/fans/status):** 1 Hz via `GET /poll` (combined batch endpoint)
-- **Capabilities/headers:** startup + on reconnect only
+- **Capabilities/headers:** startup, on reconnect, and every `CAPABILITIES_REFRESH_INTERVAL_S`
+  (300 s, DEC-146). `/hwmon/headers` is also re-read within one poll of the active profile
+  changing on `/poll` (`has_active_profile` / `active_profile_id`) and after the GUI's own
+  daemon-confirmed activation, which covers a re-apply of the same profile (`TS-ae`, DEC-416) —
+  since DEC-384 `stop_permitted` and `effective_min_pwm_pct` follow the active profile.
 
 The `PollingService` owns the full read path (`/poll`, history). The GUI is poll-only and detects
 transitions by poll-diff. (SSE was never consumed — DEC-164 deferred it past 2.0.0, and the `/events`
