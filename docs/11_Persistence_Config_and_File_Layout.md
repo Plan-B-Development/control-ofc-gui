@@ -103,6 +103,11 @@ live in the XDG **data** tier, not config or cache:
   up to three CSV files to a user-chosen folder, each with `atomic_write` (file mode 0600).
 - **Open a report file…** reads a report from anywhere with the same limit and schema check and
   **never writes it into this folder**.
+- **The Reports list reads each file only as far as its `trace`** (DEC-415). It reads under the same
+  16 MiB cap, parses the top-level keys in order, and checks them with `validate_head`. Anything
+  unexpected falls back to the full read, so key order is not a contract. A broken trace or broken
+  findings are therefore found at Open, not at listing, and `store.record_unreadable` then marks the
+  row. Rows are cached per file on `(inode, mtime, size)`.
 
 ### "Your setup" facts (DEC-404 decision 7)
 

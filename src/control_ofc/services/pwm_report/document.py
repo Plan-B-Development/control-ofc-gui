@@ -327,6 +327,27 @@ def validate_document(doc: object) -> dict:
     trace an export expands into rows, so a file from elsewhere cannot turn a
     16 MiB read into an unbounded amount of work.
     """
+    doc = validate_head(doc)
+    findings = doc.get("findings")
+    if not isinstance(findings, list):
+        raise ReportSchemaError("'findings' is missing or malformed")
+    if not all(isinstance(item, dict) for item in findings):
+        raise ReportSchemaError("'findings' holds an entry that is not an object")
+    if len(findings) > MAX_FINDINGS:
+        raise ReportSchemaError("'findings' has more entries than a report can hold")
+    _validate_trace(doc.get("trace"))
+    return doc
+
+
+def validate_head(doc: object) -> dict:
+    """:func:`validate_document` without ``findings`` and ``trace`` (`PTR-x`).
+
+    Everything the Reports list reads is checked here. The two keys left out
+    are the ones :func:`new_document` writes after ``steps``, and ``trace``
+    is the one that grows with the length of a run. The store's list reads a
+    report only up to ``trace``, so it can check no more than this. The full
+    check runs when the report is opened.
+    """
     if not isinstance(doc, dict):
         raise ReportSchemaError("not a JSON object")
     if doc.get("kind") != DOCUMENT_KIND:
@@ -351,7 +372,7 @@ def validate_document(doc: object) -> dict:
     ):
         if not isinstance(doc.get(key), kind):
             raise ReportSchemaError(f"'{key}' is missing or malformed")
-    for key in ("channels", "steps", "findings"):
+    for key, limit in (("channels", MAX_CHANNELS), ("steps", MAX_STEPS)):
         items = doc.get(key)
         if not isinstance(items, list):
             raise ReportSchemaError(f"'{key}' is missing or malformed")
@@ -359,12 +380,6 @@ def validate_document(doc: object) -> dict:
         # (DEC-409) must not reach them holding anything but objects.
         if not all(isinstance(item, dict) for item in items):
             raise ReportSchemaError(f"'{key}' holds an entry that is not an object")
-    for key, limit in (
-        ("channels", MAX_CHANNELS),
-        ("steps", MAX_STEPS),
-        ("findings", MAX_FINDINGS),
-    ):
-        if len(doc[key]) > limit:
+        if len(items) > limit:
             raise ReportSchemaError(f"'{key}' has more entries than a report can hold")
-    _validate_trace(doc.get("trace"))
     return doc

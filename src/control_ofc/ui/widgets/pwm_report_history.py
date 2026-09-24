@@ -121,7 +121,12 @@ class PwmReportHistoryPage(QWidget):
         self._empty = _plain(
             "No reports yet. Start one with “New report”.", "PwmReport_Label_historyEmpty"
         )
-        v.addWidget(self._empty)
+        # `PTA-g`: the table is hidden when there are no rows. It is the page's
+        # only stretch, so with it gone the word-wrapped labels would share the
+        # surplus height and float apart. The empty label takes the table's
+        # place, and its stretch, with its text kept at the top.
+        self._empty.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        v.addWidget(self._empty, 1)
         self._hint = _plain("", "PwmReport_Label_historyHint", meta=True)
         v.addWidget(self._hint)
 
@@ -239,6 +244,9 @@ class PwmReportHistoryPage(QWidget):
         try:
             doc, _repaired = store.load_report(row.entry.path)
         except Exception as e:  # repair re-derives findings over the file's content
+            # The list checked only this file's head (`PTR-x`); the full read
+            # found what that could not, so the row must now say so.
+            store.record_unreadable(row.entry.path, e)
             QMessageBox.warning(self, "Cannot open the report", f"{row.entry.path}: {e}")
             self.refresh()
             return None

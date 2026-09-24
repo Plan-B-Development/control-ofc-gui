@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,6 +67,74 @@ def _read(path: Path) -> dict:
     except RecursionError as exc:
         raise ValueError("nested too deeply to be a report") from exc
     return d.validate_document(raw)
+
+
+#: The first top-level key :func:`_read_head` does not parse. The trace is
+#: most of a long report (measured: ~38 ms of a 4 MB, three-hour report's
+#: 39 ms full read) and nothing in the Reports list reads it.
+_HEAD_STOP_KEY = "trace"
+
+_JSON_WS = re.compile(r"[ \t\n\r]*")
+
+
+def _reject_constant(name: str) -> object:
+    raise ValueError(f"non-finite number {name}")
+
+
+_HEAD_DECODER = json.JSONDecoder(parse_constant=_reject_constant)
+
+
+def _parse_head(text: str) -> dict:
+    """The top-level keys of a JSON object, in file order, up to
+    :data:`_HEAD_STOP_KEY`. Each value is parsed in full, so this is real JSON
+    parsing, not a text search; anything it does not expect raises
+    ``ValueError``."""
+    ws = _JSON_WS.match
+    idx = ws(text, 0).end()
+    if text[idx : idx + 1] != "{":
+        raise ValueError("not a JSON object")
+    idx = ws(text, idx + 1).end()
+    head: dict = {}
+    if text[idx : idx + 1] == "}":
+        return head
+    while True:
+        key, idx = _HEAD_DECODER.raw_decode(text, idx)
+        if not isinstance(key, str):
+            raise ValueError("object key is not a string")
+        if key == _HEAD_STOP_KEY:
+            return head
+        idx = ws(text, idx).end()
+        if text[idx : idx + 1] != ":":
+            raise ValueError("expected ':'")
+        value, idx = _HEAD_DECODER.raw_decode(text, ws(text, idx + 1).end())
+        head[key] = value
+        idx = ws(text, idx).end()
+        sep = text[idx : idx + 1]
+        if sep == "}":
+            return head
+        if sep != ",":
+            raise ValueError("expected ',' or '}'")
+        idx = ws(text, idx + 1).end()
+
+
+def _read_head(path: Path) -> dict:
+    """What the Reports list needs from one file, checked by
+    :func:`~control_ofc.services.pwm_report.document.validate_head` (`PTR-x`).
+
+    Reads the file under the same :data:`REPORT_MAX_BYTES` bound as
+    :func:`_read` and parses it only as far as the trace. If that head does
+    not parse or does not check out, the full :func:`_read` runs instead. So a
+    file written in some other key order still lists correctly, and a file
+    that really is broken reports the same error the full read gives.
+    """
+    with path.open("rb") as f:
+        raw = f.read(REPORT_MAX_BYTES + 1)
+    if len(raw) > REPORT_MAX_BYTES:
+        raise ValueError(f"import file exceeds {REPORT_MAX_BYTES} bytes: {path}")
+    try:
+        return d.validate_head(_parse_head(raw.decode("utf-8")))
+    except (ValueError, RecursionError):
+        return _read(path)
 
 
 def load_report(path: Path) -> tuple[dict, bool]:
@@ -206,10 +275,12 @@ _LIST_CACHE: dict[Path, tuple[tuple[int, int, int], HistoryEntry]] = {}
 def list_reports(directory: Path | None = None) -> list[HistoryEntry]:
     """Every saved report, newest first. Never raises.
 
-    Each new or changed file is read in full under :data:`REPORT_MAX_BYTES` and
-    checked with :func:`~control_ofc.services.pwm_report.document.validate_document`
-    — the list shows only what the renderer could open; an unchanged one comes
-    from :data:`_LIST_CACHE`. A report still ``in_progress`` is listed as such
+    Each new or changed file is read by :func:`_read_head`: everything the
+    list shows is parsed and checked, and the trace is not (`PTR-x`). An
+    unchanged file comes from :data:`_LIST_CACHE`. A file whose trace or
+    findings are broken is therefore listed as readable until someone opens
+    it. The full check then fails, and :func:`record_unreadable` marks the row.
+    A report still ``in_progress`` is listed as such
     (it is the run in flight, or one recovery could not repair); nothing here
     rewrites a file.
     """
@@ -230,14 +301,34 @@ def list_reports(directory: Path | None = None) -> list[HistoryEntry]:
             entries.append(cached[1])
             continue
         try:
-            entry = history_entry(path, _read(path))
+            entry = history_entry(path, _read_head(path))
         except (OSError, ValueError) as exc:
-            entry = HistoryEntry(path, path.stem, "", "", "", "", error=str(exc) or "unreadable")
+            entry = _unreadable_entry(path, exc)
         if key is not None:
             _LIST_CACHE[path] = (key, entry)
         entries.append(entry)
     entries.sort(key=lambda e: (e.started_at, e.report_id), reverse=True)
     return entries
+
+
+def _unreadable_entry(path: Path, exc: BaseException) -> HistoryEntry:
+    return HistoryEntry(path, path.stem, "", "", "", "", error=str(exc) or "unreadable")
+
+
+def record_unreadable(path: Path, exc: BaseException) -> None:
+    """List *path* as unreadable from now on, because opening it failed.
+
+    The list checks only a report's head (`PTR-x`), so a file can list as
+    readable and then fail the full check when it is opened. Without this, its
+    cached row would stay readable. The row is keyed on the file's current
+    ``stat`` like any other, so a file rewritten afterwards is read again.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        _LIST_CACHE.pop(path, None)
+        return
+    _LIST_CACHE[path] = ((st.st_ino, st.st_mtime_ns, st.st_size), _unreadable_entry(path, exc))
 
 
 def delete_report(path: Path, directory: Path | None = None) -> None:

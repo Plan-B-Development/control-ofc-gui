@@ -829,3 +829,72 @@ def test_the_driver_status_tooltip_does_not_grow_on_re_render(qtbot, restore_app
     assert table.item(row, 3).toolTip() == first, (
         "the tooltip grew across re-renders — it is being composed from itself"
     )
+
+
+# ── `ACK-ab` / `ACK-ac`: every hwmon test button greys while a verify runs ────
+
+
+def _verify_buttons_page(qtbot):
+    """Two writable headers and a daemon that serves characterisation, so all
+    three buttons start visible and enabled — every assertion below is made
+    against a button that could otherwise have been pressed."""
+    from control_ofc.api.models import parse_capabilities
+
+    state = _state()
+    state.set_capabilities(
+        parse_capabilities(
+            {
+                "daemon_version": "2.55.0",
+                "api_version": 1,
+                "control": {"pwm_characterization": True},
+            }
+        )
+    )
+    state.set_hwmon_headers(
+        [HwmonHeader(id="pwm1", is_writable=True), HwmonHeader(id="pwm2", is_writable=True)]
+    )
+    page, _ = _page(qtbot, state=state, client=object())
+    page._ensure_verify_worker = lambda: True  # type: ignore[method-assign]  # no real thread
+    page._populate_verify_combo()
+    buttons = {
+        name: page.findChild(QPushButton, f"SystemState_Btn_{name}")
+        for name in ("verifyPwm", "verifyAll", "characterize")
+    }
+    for name, button in buttons.items():
+        # `isHidden`, not `isVisibleTo`: the buttons sit in a collapsed section,
+        # and the characterise button's own `setVisible` is what is under test.
+        assert not button.isHidden() and button.isEnabled(), f"precondition: {name} is live"
+    return page, buttons
+
+
+@pytest.mark.parametrize("answer", ["ok", "error"])
+def test_a_single_verify_greys_verify_all_and_characterize_until_it_answers(qtbot, answer):
+    page, buttons = _verify_buttons_page(qtbot)
+    buttons["verifyPwm"].click()
+    header_id = page._verify_active_header
+    assert header_id == "pwm1", "precondition: the verify really started"
+    assert not buttons["verifyAll"].isEnabled(), "a sweep could start over the verify"
+    assert not buttons["characterize"].isEnabled(), "characterise offered while the slot is held"
+    assert not buttons["characterize"].isHidden(), "greyed, never hidden, mid-verify"
+    # `ACK-z`'s trap, the opposite branch: each handler clears its state before
+    # the gate reads it, or every button stays dead after an ordinary verify.
+    if answer == "ok":
+        page._on_verify_ok(HwmonVerifyResult(header_id=header_id, result="effective"), header_id)
+    else:
+        page._on_verify_error("error", "not under test", header_id)
+    for name, button in buttons.items():
+        assert button.isEnabled(), f"{name} stayed disabled after the verify answered"
+
+
+def test_a_sweep_greys_characterize_until_the_sweep_ends(qtbot):
+    page, buttons = _verify_buttons_page(qtbot)
+    buttons["verifyAll"].click()
+    assert page._verify_all_total == 2, "precondition: the sweep really started"
+    assert not buttons["characterize"].isEnabled()
+    page._on_verify_ok(HwmonVerifyResult(header_id="pwm1", result="effective"), "pwm1")
+    assert not buttons["characterize"].isEnabled(), "re-enabled between two of the sweep's verifies"
+    assert not buttons["verifyAll"].isEnabled()
+    page._on_verify_ok(HwmonVerifyResult(header_id="pwm2", result="effective"), "pwm2")
+    assert page._verify_all_total == 0, "precondition: the sweep has ended"
+    for name, button in buttons.items():
+        assert button.isEnabled(), f"{name} stayed disabled after the sweep"

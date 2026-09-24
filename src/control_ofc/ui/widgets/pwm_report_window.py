@@ -27,7 +27,7 @@ header's probe carries the daemon's ``acknowledge_below_floor``.
 from __future__ import annotations
 
 import platform
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 from PySide6 import __version__ as pyside_version
@@ -156,7 +156,7 @@ class PwmReportWindow(ModalDialog):
         settings_service: AppSettingsService | None,
         *,
         profile_member_ids: Callable[[], frozenset[str]] = frozenset,
-        local_verify_running: Callable[[], bool] = lambda: False,
+        local_verify_pages: Callable[[], Sequence[str]] = tuple,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__("PWM Test Report", parent, modal=False)
@@ -166,10 +166,10 @@ class PwmReportWindow(ModalDialog):
         self._state = state
         self._settings = settings_service
         self._profile_member_ids = profile_member_ids
-        #: `PTA-d`: whether a verify this GUI started on System State is still
-        #: running. Asked at every refusal check, never cached, so the Start
-        #: click itself reads the live answer.
-        self._local_verify_running = local_verify_running
+        #: `PTA-d`/`PTA-l`: the pages (System State, Hardware) where a verify this
+        #: GUI started is still running. Asked at every refusal check, never
+        #: cached, so the Start click itself reads the live answer.
+        self._local_verify_pages = local_verify_pages
         self._channels: list[cat.Channel] = []
         self._checks: dict[tuple[str, str], QCheckBox] = {}
         self._probe_consents: dict[str, QCheckBox] = {}
@@ -180,6 +180,9 @@ class PwmReportWindow(ModalDialog):
         self._evidence_filled = False
         self._reapply_btn: QPushButton | None = None
         self._reapply_msg: QLabel | None = None
+        #: `PTA-f`: the report a re-apply was requested from. Its answer belongs
+        #: under that report only, never under whichever one is open when it lands.
+        self._reapply_report_id: str | None = None
 
         self._stack = QStackedWidget(self)
         self._stack.setObjectName("PwmReport_Stack")
@@ -582,7 +585,7 @@ class PwmReportWindow(ModalDialog):
             thermal_state=status.thermal_state if status is not None else "normal",
             diagnostic_running=bool(status.verify_active) if status is not None else False,
             session_recording=bool(session is not None and session.is_recording),
-            local_verify_running=bool(self._local_verify_running()),
+            local_verify_pages=tuple(self._local_verify_pages()),
             demo_mode=state is not None and state.mode == OperationMode.DEMO,
         )
 
@@ -710,7 +713,11 @@ class PwmReportWindow(ModalDialog):
             return
         cid = step.get("channel_id")
         fan = next((f for f in self._state.fans if f.id == cid), None)
-        parts = [str(self._state.fan_display_name(cid))]
+        # The report's own name for the channel, as on every other page of the
+        # report (`PTA-h`): on a two-chip board this is the page where the
+        # header is being written, so `pwm2` alone would not say which chip.
+        name = next((c.name for c in self._channels if c.channel_id == cid), None)
+        parts = [str(name if name is not None else self._state.fan_display_name(cid))]
         if fan is not None:
             if fan.pwm_commanded_pct is not None:
                 parts.append(f"commanded {fan.pwm_commanded_pct} %")
@@ -1137,14 +1144,21 @@ class PwmReportWindow(ModalDialog):
         if answer == QMessageBox.StandardButton.Yes and self._controller.reapply_profile(
             profile_id
         ):
+            self._reapply_report_id = self._current_report_id()
             if self._reapply_btn is not None:
                 self._reapply_btn.setEnabled(False)
             if self._reapply_msg is not None:
                 self._reapply_msg.setText("Re-applying the profile…")
                 self._reapply_msg.setVisible(True)
 
+    def _current_report_id(self) -> str:
+        return str((self._report_doc or {}).get("report_id") or "")
+
     def _on_reapply_done(self, ok: bool, message: str) -> None:
-        if self._reapply_msg is None:
+        requested_for, self._reapply_report_id = self._reapply_report_id, None
+        # `PTA-f`: a different report is open now. Its Restoration section has
+        # nothing to do with this answer, so the answer is dropped.
+        if self._reapply_msg is None or requested_for != self._current_report_id():
             return
         self._reapply_msg.setText(message)
         self._reapply_msg.setVisible(True)

@@ -17,7 +17,7 @@ import json
 import threading
 
 import pytest
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Signal, Slot
 from PySide6.QtWidgets import QCheckBox, QLabel, QMessageBox, QPushButton
 
 from control_ofc.api.models import (
@@ -52,6 +52,7 @@ from tests.pwm_report_fixtures import (
     CPU,
     SYS,
     bundle,
+    complete_doc,
     fan,
     header,
     probe_run,
@@ -774,3 +775,174 @@ def test_a_header_left_changed_offers_reapply_and_it_activates_the_profile(qtbot
     assert payload["args"] == {"profile_id": "quiet"}
     message = window.findChild(QLabel, "PwmReport_Label_reapply")
     qtbot.waitUntil(lambda: "re-applied" in message.text(), timeout=2000)
+
+
+# ── `PTA-l`: the Hardware page's own verify joins the start gate ─────────────
+
+
+def _header_test_buttons(page) -> list[QPushButton]:
+    return [
+        b
+        for card in page._header_cards.values()
+        for b in card.findChildren(QPushButton)
+        if "Btn_test_" in b.objectName()
+    ]
+
+
+def test_a_hardware_page_verify_refuses_the_reports_start_and_names_the_page(
+    qtbot, tmp_path, monkeypatch, settings_service
+):
+    """Driven through the header card's real *Test* click. Two are queued, so
+    the first answer must not clear the record while the second is pending —
+    the reason the in-flight record is a count."""
+    from control_ofc.api.models import HwmonVerifyResult
+
+    page, _state_unused = _hardware_page(qtbot, tmp_path, monkeypatch, settings_service)
+    try:
+        # No worker, so each verify request reaches nothing and stays in flight
+        # until the test answers it the way the worker would.
+        monkeypatch.setattr(page, "_ensure_verify_worker", lambda: True)
+        page.findChild(QPushButton, "Hardware_Btn_pwmReport").click()
+        window = page._report_window
+        assert window is not None and window.refusals() == [], "precondition: nothing runs"
+        test_btn = _header_test_buttons(page)[0]
+        test_btn.click()
+        test_btn.click()
+        (reason,) = window.refusals()
+        assert "on the Hardware page is still running" in reason
+        assert "System State" not in reason, "the reason names the page the verify came from"
+        page._on_verify_error("error", "not under test", CPU)
+        assert window.refusals(), "the second verify is still in flight"
+        page._on_verify_ok(HwmonVerifyResult(header_id=CPU, result="effective"), CPU)
+        assert window.refusals() == [], "the refusal clears when both have answered"
+        # Both pages at once name both.
+        page.set_local_verify_query(lambda: True)
+        test_btn.click()
+        (reason,) = window.refusals()
+        assert "System State and Hardware pages" in reason
+    finally:
+        page.cleanup()
+
+
+# ── `PTA-e`: demo mode reaches the saved reports ─────────────────────────────
+
+
+def _demo_hardware_page(qtbot, tmp_path, monkeypatch, settings_service, *, demo: bool):
+    from control_ofc.services.diagnostics_service import DiagnosticsService
+    from control_ofc.ui.pages.hardware_page import HardwarePage
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    state = _state()
+    state.set_mode(OperationMode.DEMO if demo else OperationMode.AUTOMATIC)
+    # main.py hands MainWindow no client in demo mode.
+    page = HardwarePage(
+        state=state,
+        diagnostics_service=DiagnosticsService(state),
+        client=None,
+        settings_service=settings_service,
+    )
+    qtbot.addWidget(page)
+    return page
+
+
+def test_demo_mode_opens_the_report_on_its_saved_reports_and_refuses_start(
+    qtbot, tmp_path, monkeypatch, settings_service
+):
+    from control_ofc.services.pwm_report import store
+
+    page = _demo_hardware_page(qtbot, tmp_path, monkeypatch, settings_service, demo=True)
+    try:
+        store.save_report(complete_doc(report_id="saved-earlier"))  # the default folder
+        page.findChild(QPushButton, "Hardware_Btn_pwmReport").click()
+        window = page._report_window
+        assert window is not None and window.isVisible(), "demo mode opened no window"
+        assert window.current_page() == PAGE_HISTORY
+        assert [r.entry.report_id for r in window.history_page.rows()] == ["saved-earlier"]
+        reasons = window.refusals()
+        assert any("Demo mode" in r for r in reasons), "the window's own demo refusal holds"
+        assert not window.can_start()
+    finally:
+        page.cleanup()
+
+
+def test_without_demo_mode_a_missing_connection_still_opens_nothing(
+    qtbot, tmp_path, monkeypatch, settings_service
+):
+    """The opposite branch: the demo exception must not open a window for a
+    real session that has lost its client."""
+    page = _demo_hardware_page(qtbot, tmp_path, monkeypatch, settings_service, demo=False)
+    try:
+        page.findChild(QPushButton, "Hardware_Btn_pwmReport").click()
+        assert page._report_window is None
+    finally:
+        page.cleanup()
+
+
+# ── `PTA-f`: a late re-apply answer stays with its own report ────────────────
+
+
+def test_a_late_reapply_answer_is_not_shown_under_another_report(qtbot, rig, monkeypatch, tmp_path):
+    from control_ofc.services.pwm_report import store
+
+    window, controller, _s, daemon, clock, _settings = rig
+    store.save_report(
+        complete_doc(report_id="older", started_at="2026-09-01T00:00:00Z"), tmp_path / "reports"
+    )
+    daemon.final_fans = [fan(CPU, mode=2), fan(SYS)]  # CPU left in firmware mode
+    _clear(window)
+    _box(window, "verify", CPU).click()
+    _btn(window, "PwmReport_Btn_next").click()
+    _btn(window, "PwmReport_Btn_next").click()
+    window.findChild(QCheckBox, "PwmReport_Check_consent").click()
+    _btn(window, "PwmReport_Btn_start").click()
+    _run_to_end(qtbot, controller, clock)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    _btn(window, "PwmReport_Btn_reapply").click()
+    # Nothing has spun the event loop yet, so the answer has not landed: the
+    # user reaches another report first, as `PTA-f` describes.
+    with qtbot.waitSignal(controller.reapply_done, timeout=2000) as blocker:
+        _btn(window, "PwmReport_Btn_history").click()
+        history = window.history_page
+        ids = [r.entry.report_id for r in history.rows()]
+        history.select_rows([ids.index("older")])
+        history.open_btn.click()
+        assert window.current_page() == PAGE_REPORT
+        assert window.findChild(QLabel, "PwmReport_Label_reapply") is not None
+    assert blocker.args[0] is True, "precondition: the re-apply really succeeded"
+    shown = [lbl.text() for lbl in window.findChildren(QLabel) if "re-applied" in lbl.text()]
+    assert shown == [], "the answer appeared under a report that did not ask for it"
+
+
+def test_the_run_pages_live_line_uses_the_reports_own_name(qtbot, rig):
+    """Reviewer P3 on `PTA-h`: the live line is on the page where the header is
+    being written, so it must use the report's disambiguated name — not the
+    app-wide one, which on a two-chip board is `SYS_FAN1` for both chips."""
+    window, controller, state, daemon, _clock, _settings = rig
+    twin = "hwmon:it87952:it87.2656:pwm2:SYS_FAN1"  # same label, second chip
+    raw = header(twin)
+    raw["chip_name"], raw["device_id"] = "it87952", "it87.2656"
+    state.set_hwmon_headers(
+        parse_hwmon_headers(
+            {"headers": [header(CPU, role="cpu_fan"), header(SYS, role="radiator_fan"), raw]}
+        )
+    )
+    state.set_fans(parse_fans({"fans": [fan(CPU), fan(SYS), fan(twin)]}))
+    _btn(window, "PwmReport_Btn_history").click()
+    _btn(window, "PwmReport_Btn_new").click()  # the scope is rebuilt from the new headers
+    # The old scope's checkboxes are only scheduled for deletion; delete them now,
+    # or `_box` can find a stale one with the same objectName.
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    report_name = next(c.name for c in window._channels if c.channel_id == SYS)
+    assert report_name != state.fan_display_name(SYS), "precondition: the two names differ"
+    daemon.polls_until_done = 10_000  # stays running until the test ends
+    _clear(window)
+    _box(window, "sweep", SYS).click()
+    _btn(window, "PwmReport_Btn_next").click()
+    _btn(window, "PwmReport_Btn_next").click()
+    window.findChild(QCheckBox, "PwmReport_Check_consent").click()
+    _btn(window, "PwmReport_Btn_start").click()
+    qtbot.waitUntil(lambda: "start_sweep" in daemon.kinds(), timeout=2000)
+    assert controller.runner.current_step["channel_id"] == SYS, "precondition: SYS is under test"
+    state.set_fans(parse_fans({"fans": [fan(CPU), fan(SYS, rpm=950), fan(twin)]}))  # a poll
+    live = window.findChild(QLabel, "PwmReport_Label_runLive")
+    assert report_name in live.text(), f"the live line says {live.text()!r}"

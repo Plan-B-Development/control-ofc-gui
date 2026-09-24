@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### Fixed
+
+**System State's PWM buttons grey out while a PWM test is running** (`ACK-ab`, `ACK-ac`, DEC-415).
+During a single **Test PWM Control**, the **Verify All Writable** and **Characterise PWM Response**
+buttons stayed live. **Characterise** also stayed live for a whole **Verify All Writable** run.
+The daemon runs one of these tests at a time, so it refused a characterisation pressed then, and a
+**Verify All** started then queued one test more than you asked for. Both buttons now grey out
+until the test finishes. They stay visible while greyed.
+
+**The PWM Test Report opens in demo mode** (`PTA-e`, DEC-415). The button used to say there was no
+daemon connection, which left your saved reports out of reach. In demo mode the window now opens on
+your saved reports. You can open, compare and export them, and open a report file. A new report
+still cannot start in demo mode, and the window says why.
+
+**The PWM Test Report tells apart fans with the same name** (`PTA-h`, DEC-415). On a board with two
+fan chips, an unnamed header on each chip can have the same name, such as `pwm2`. The report's
+pages, including the one where you choose what to test, now add the chip, as in `pwm2 (it8696)`. If
+that is still not enough, the device is added too. Only names that clash change, and only in the
+report.
+
+**The PWM Test Report won't start while a Hardware-page test is running** (`PTA-l`, DEC-415). A
+**Test** pressed on a Hardware page header card less than a second before **Start** used to cost the
+report its first test. **Start** is now refused until the test finishes, as it already was for a
+test started on System State. The message names the page the test was started on.
+
+**Re-apply profile's result stays with its own report** (`PTA-f`, DEC-415). If you opened another
+report before the result arrived, it used to appear under that report instead.
+
+**The empty Reports page keeps its text together** (`PTA-g`, DEC-415). With no reports saved, the
+heading, the description and "No reports yet" were spread down the whole window.
+
+### Changed
+
+**The Reports list opens faster** (`PTR-x`, DEC-415). Opening the list for the first time in a
+session used to read every saved report in full, about 40 ms for each long report. It now reads
+only the parts the list shows, about 1 ms each. As a result, a report whose recorded trace is
+damaged is listed as normal until you open it. Opening it then shows the error, and the list marks
+it **Unreadable** from then on.
+
 ## [2.83.0] — 2026-09-23
 
 This release also carries **2.82.1**, which was never published on its own —

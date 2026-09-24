@@ -56,6 +56,7 @@ from control_ofc.api.models import (
     VALIDATION_KIND_THERMAL,
     VALIDATION_KIND_VALIDATION,
     ControlPathRecord,
+    OperationMode,
 )
 from control_ofc.services.cooling_device_view import build_cooling_device_views
 from control_ofc.services.daemon_features import daemon_supports, unsupported_feature_message
@@ -70,6 +71,7 @@ from control_ofc.services.hardware_view import (
 from control_ofc.services.header_inspector_view import build_header_inspector_views
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.pump_protection import header_is_pump_protected
+from control_ofc.services.pwm_report.runner import VERIFY_PAGE_HARDWARE, VERIFY_PAGE_SYSTEM_STATE
 from control_ofc.services.verify_view import build_verify_result_view
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
@@ -197,6 +199,12 @@ class HardwarePage(QWidget):
         #: `PTA-d`: whether a verify started on System State is still running.
         #: MainWindow sets it; standalone (tests, no System State) nothing is.
         self._local_verify_query: Callable[[], bool] = lambda: False
+        #: `PTA-l`: this page's own verifies that have not answered yet. A
+        #: count, not a flag: the header cards' *Test* stays live during a
+        #: verify, so a second one can be queued behind the first, and the
+        #: first answer must not clear the record while the second is pending.
+        #: Every request produces exactly one `verify_ok` or `verify_error`.
+        self._verifies_in_flight = 0
         self._diag = diagnostics_service or DiagnosticsService(state)
         self._client = client
         # Read-only, and deliberately NOT defaulted to a fresh `ProfileService()`:
@@ -1281,14 +1289,16 @@ class HardwarePage(QWidget):
             self._show_diag_message("Cannot test: no daemon connection.")
             return
         self._show_diag_message("Testing PWM control… (about 10 seconds)")
+        self._verifies_in_flight += 1
         self._verify_request.emit(header_id)
 
     # `requested_header_id` is the header the worker was asked about (row
-    # `ACK-n`). This page runs one verify at a time and has no sweep to
-    # attribute a result to, so it does not read it — the argument is here
+    # `ACK-n`). This page has no sweep to attribute a result to (each result
+    # only counts down `_verifies_in_flight`), so it does not read it — the argument is here
     # because the signal carries it, and the System State page's sweep does.
     @Slot(object, str)
     def _on_verify_ok(self, result: HwmonVerifyResult, requested_header_id: str) -> None:
+        self._verifies_in_flight = max(0, self._verifies_in_flight - 1)
         header = None
         if self._state:
             header = next((h for h in self._state.hwmon_headers if h.id == result.header_id), None)
@@ -1299,6 +1309,7 @@ class HardwarePage(QWidget):
 
     @Slot(str, str, str)
     def _on_verify_error(self, category: str, message: str, requested_header_id: str) -> None:
+        self._verifies_in_flight = max(0, self._verifies_in_flight - 1)
         # A soft safety refusal is protection working, not a failure — show the
         # daemon's own message rather than prefixing it as an error.
         self._show_diag_message(message if category == "unavailable" else f"Test failed: {message}")
@@ -1924,7 +1935,12 @@ class HardwarePage(QWidget):
             window.activateWindow()
             return
         socket_path = self._client.socket_path if self._client else ""
-        if not socket_path:
+        # `PTA-e`: demo mode has no client (main.py), but saved reports, import,
+        # compare and export need no daemon. So the window opens without a
+        # socket. The controller then cannot reach a worker, and the window's own
+        # demo refusal is what blocks Start.
+        demo = self._state is not None and self._state.mode == OperationMode.DEMO
+        if not socket_path and not demo:
             self._show_diag_message("Cannot open the PWM Test Report: no daemon connection.")
             return
         if self._report_controller is None:
@@ -1935,7 +1951,7 @@ class HardwarePage(QWidget):
             self._state,
             self._settings_service,
             profile_member_ids=self._profile_member_ids,
-            local_verify_running=lambda: self._local_verify_query(),
+            local_verify_pages=self._local_verify_pages,
             parent=self,
         )
         self._report_window = window
@@ -1946,6 +1962,21 @@ class HardwarePage(QWidget):
     def set_local_verify_query(self, query: Callable[[], bool]) -> None:
         """Tell the report whether System State has a verify running (`PTA-d`)."""
         self._local_verify_query = query
+
+    def _local_verify_pages(self) -> tuple[str, ...]:
+        """The pages with a verify this GUI started still running (`PTA-l`).
+
+        System State's comes from MainWindow's query, and this page's from its
+        own count. The poll's `verify_active` sees neither in the gap between a
+        click and the next poll. The report asks this at every refusal check,
+        so the Start click reads the live answer.
+        """
+        pages: list[str] = []
+        if self._local_verify_query():
+            pages.append(VERIFY_PAGE_SYSTEM_STATE)
+        if self._verifies_in_flight:
+            pages.append(VERIFY_PAGE_HARDWARE)
+        return tuple(pages)
 
     def _on_report_active(self, active: bool) -> None:
         """Stand this page's diagnostics down while a run holds the slot."""
@@ -1979,6 +2010,7 @@ class HardwarePage(QWidget):
             self._teardown_worker(worker, thread, label)
         self._readiness_worker = self._readiness_thread = None
         self._verify_worker = self._verify_thread = None
+        self._verifies_in_flight = 0  # the torn-down worker answers nothing more
         self._char_worker = self._char_thread = None
         self._discover_worker = self._discover_thread = None
         self._validation_worker = self._validation_thread = None

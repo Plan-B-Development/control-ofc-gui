@@ -443,3 +443,161 @@ def test_the_view_builds_sections_and_the_test_matrix():
     assert not hasattr(vm, "verdict"), "no global verdict"
     ev = json.loads(evidence_text(doc))
     assert ev["steps"][0]["result"]["run_id"] == "char-1"
+
+
+# ── `PTR-x`: the Reports list reads a report only as far as its trace ─────────
+
+
+def _long_report(**kw) -> dict:
+    """A report whose trace is most of the file, as a real long run's is."""
+    from tests.pwm_report_fixtures import complete_doc
+
+    return complete_doc(samples=2000, **kw)
+
+
+def _full_entry(path):
+    from control_ofc.services.pwm_report import store
+
+    return store.history_entry(path, store._read(path))
+
+
+def test_the_list_never_parses_a_reports_trace(tmp_path, monkeypatch):
+    """The regression `PTR-x` is about: the first listing used to run the full
+    validated read of every file. The row must still say what the full read
+    would, so the entry is compared with one built from that read."""
+    from control_ofc.services.pwm_report import store
+
+    path = save_report(_long_report(), tmp_path)
+    expected = _full_entry(path)
+    assert expected.tests and expected.machine, "precondition: the fields the list shows"
+    full_reads: list[object] = []
+    real = store._read
+    monkeypatch.setattr(store, "_read", lambda p: full_reads.append(p) or real(p))
+    (entry,) = store.list_reports(tmp_path)
+    assert full_reads == [], "the list ran the full read, trace and all"
+    assert entry == expected
+
+
+def test_a_file_in_another_key_order_falls_back_to_the_full_read(tmp_path, monkeypatch):
+    """The head stops at the trace. A file whose steps come after it is not
+    wrong, just ordered differently, and must still list as what it is."""
+    from control_ofc.services.pwm_report import store
+
+    doc = _long_report()
+    reordered = {"trace": doc["trace"], **{k: v for k, v in doc.items() if k != "trace"}}
+    path = report_path(doc["report_id"], tmp_path)
+    path.write_text(json.dumps(reordered, separators=(",", ":")))
+    full_reads: list[object] = []
+    real = store._read
+    monkeypatch.setattr(store, "_read", lambda p: full_reads.append(p) or real(p))
+    (entry,) = store.list_reports(tmp_path)
+    assert full_reads == [path], "the head check failed and the full read ran"
+    assert not entry.error and entry.tests == store.tests_summary(doc)
+
+
+def test_the_head_parse_reads_whitespace_it_did_not_write(tmp_path, monkeypatch):
+    """A pretty-printed file is still JSON; the head parse must not fall back on it."""
+    from control_ofc.services.pwm_report import store
+
+    doc = _long_report()
+    path = report_path(doc["report_id"], tmp_path)
+    path.write_text(json.dumps(doc, indent=2))
+    monkeypatch.setattr(store, "_read", lambda p: pytest.fail("fell back to the full read"))
+    (entry,) = store.list_reports(tmp_path)
+    assert not entry.error and entry.report_id == doc["report_id"]
+
+
+def test_a_non_finite_number_in_the_head_lists_the_file_unreadable(tmp_path):
+    """`load_json_capped` rejects NaN; the head parse must too, or the list
+    would call readable a file the renderer refuses to open."""
+    from control_ofc.services.pwm_report import store
+
+    doc = _long_report()
+    doc["user_facts"]["cooler"] = float("nan")  # a head key, before the trace
+    path = report_path(doc["report_id"], tmp_path)
+    path.write_text(json.dumps(doc, separators=(",", ":")))
+    assert "NaN" in path.read_text(), "precondition: the literal is in the file"
+    (entry,) = store.list_reports(tmp_path)
+    assert entry.error
+
+
+def test_an_oversized_file_is_listed_unreadable_without_being_parsed(tmp_path):
+    from control_ofc.services.pwm_report import store
+
+    path = tmp_path / "pwm-report-huge.json"
+    path.write_bytes(b" " * (REPORT_MAX_BYTES + 1))
+    (entry,) = store.list_reports(tmp_path)
+    assert "exceeds" in entry.error
+
+
+def test_a_broken_trace_is_marked_unreadable_once_opening_finds_it(tmp_path):
+    """What the head parse gives up, and how it is taken back. The list cannot
+    see a broken trace; the full read can, and `record_unreadable` makes the
+    cached row say so — until the file changes, when it is read again."""
+    from control_ofc.services.pwm_report import store
+
+    doc = _long_report()
+    good_trace = doc["trace"]
+    doc["trace"] = {"t_ms": "not a list"}
+    path = save_report(doc, tmp_path)
+    (entry,) = store.list_reports(tmp_path)
+    assert not entry.error, "precondition: the head alone checks out"
+    with pytest.raises(ValueError) as exc:
+        load_report(path)
+    store.record_unreadable(path, exc.value)
+    (entry,) = store.list_reports(tmp_path)
+    assert entry.error == str(exc.value)
+    doc["trace"] = good_trace
+    save_report(doc, tmp_path)
+    (entry,) = store.list_reports(tmp_path)
+    assert not entry.error, "a rewritten file is read again"
+
+
+# ── `PTA-h`: header names that collide within the report ─────────────────────
+
+
+def _two_chip_channels(*, second_chip: str = "it87952", second_device: str = "it87.2656", fans=()):
+    from control_ofc.api.models import parse_fans, parse_hwmon_headers
+    from control_ofc.services.pwm_report.catalog import build_channels
+    from tests.pwm_report_fixtures import header
+
+    raw = []
+    for chip, device in (("it8696", "it87.2624"), (second_chip, second_device)):
+        for n in (1, 2):
+            h = header(f"hwmon:{chip}:{device}:pwm{n}:pwm{n}")
+            h["chip_name"], h["device_id"] = chip, device
+            raw.append(h)
+    raw.append(header(CPU))  # labelled CPU_FAN: its name collides with nothing
+    headers = parse_hwmon_headers({"headers": raw})
+    return build_channels(
+        headers,
+        parse_fans({"fans": list(fans)}),
+        None,
+        name_of=lambda cid: cid.rsplit(":", 1)[-1],
+    )
+
+
+def test_colliding_header_names_are_told_apart_by_chip():
+    channels = _two_chip_channels()
+    names = {c.channel_id: c.name for c in channels}
+    assert names["hwmon:it8696:it87.2624:pwm2:pwm2"] == "pwm2 (it8696)"
+    assert names["hwmon:it87952:it87.2656:pwm2:pwm2"] == "pwm2 (it87952)"
+    assert names[CPU] == "CPU_FAN", "a name that collides with nothing is left alone"
+    assert len(set(names.values())) == len(names)
+
+
+def test_two_devices_of_one_chip_are_told_apart_by_device_id():
+    channels = _two_chip_channels(second_chip="it8696", second_device="it87.2656")
+    names = {c.channel_id: c.name for c in channels}
+    assert names["hwmon:it8696:it87.2624:pwm1:pwm1"] == "pwm1 (it8696 · it87.2624)"
+    assert names["hwmon:it8696:it87.2656:pwm1:pwm1"] == "pwm1 (it8696 · it87.2656)"
+    assert len(set(names.values())) == len(names)
+
+
+def test_a_non_header_channel_keeps_its_name_in_a_collision():
+    """Only a header has a chip to name; an OpenFan channel is left as it is."""
+    from tests.pwm_report_fixtures import fan
+
+    channels = _two_chip_channels(fans=[fan("openfan:ch01", source="openfan")])
+    names = {c.channel_id: c.name for c in channels}
+    assert names["openfan:ch01"] == "ch01"

@@ -24,8 +24,9 @@ The rules, from DEC-404:
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 from control_ofc.api.models import (
@@ -238,7 +239,43 @@ def build_channels(
                     in_profile=cid in profile_member_ids,
                 )
             )
-    return out
+    return _disambiguate_names(out, by_header)
+
+
+def _disambiguate_names(
+    channels: list[Channel], by_header: Mapping[str, HwmonHeader]
+) -> list[Channel]:
+    """Make header names that collide in this list distinct (`PTA-h`).
+
+    On a two-chip board each chip contributes its own ``pwm1`` to ``pwm3``, and an
+    unaliased header falls back to that raw name (DEC-229). So the scope,
+    setup and review pages would list ``pwm2`` twice, including on the page
+    where the user decides what gets written. A colliding header gets its chip
+    appended, ``pwm2 (it8696)``, and its daemon device id as well if the chip
+    alone does not separate it. Names that do not collide are left as they
+    are, and so is every non-header channel. This is the report's own
+    wording: the app-wide name the rest of the GUI shows is not changed.
+    """
+    counts = Counter(c.name for c in channels)
+    suffixes: dict[str, str] = {}
+    for c in channels:
+        header = by_header.get(c.channel_id)
+        if counts[c.name] > 1 and c.is_hwmon and header is not None and header.chip_name:
+            suffixes[c.channel_id] = header.chip_name
+    counts = Counter((c.name, suffixes.get(c.channel_id)) for c in channels)
+    for c in channels:
+        suffix = suffixes.get(c.channel_id)
+        device = by_header[c.channel_id].device_id if suffix is not None else ""
+        if suffix is not None and counts[(c.name, suffix)] > 1 and device:
+            suffixes[c.channel_id] = f"{suffix} · {device}"
+    renamed = {
+        cid: f"{c.name} ({suffixes[cid]})" for c in channels if (cid := c.channel_id) in suffixes
+    }
+    if not renamed:
+        return channels
+    return [
+        replace(c, name=renamed[c.channel_id]) if c.channel_id in renamed else c for c in channels
+    ]
 
 
 def settled_evidence_supported(capabilities: object | None) -> bool:

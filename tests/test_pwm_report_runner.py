@@ -91,7 +91,11 @@ def test_plan_orders_headers_by_stable_id_and_tests_by_the_fixed_order():
         ({"thermal_state": "emergency"}, "thermal protection"),
         ({"diagnostic_running": True}, "Another diagnostic"),
         ({"session_recording": True}, "validation session"),
-        ({"local_verify_running": True}, "System State page"),
+        ({"local_verify_pages": ("System State",)}, "on the System State page is"),
+        # `PTA-l`: the Hardware page's own Test feeds the same refusal, and the
+        # reason names the page the verify was started on.
+        ({"local_verify_pages": ("Hardware",)}, "on the Hardware page is"),
+        ({"local_verify_pages": ("System State", "Hardware")}, "System State and Hardware pages"),
     ],
 )
 def test_each_start_refusal_names_its_state(kwargs, needle):
@@ -100,7 +104,7 @@ def test_each_start_refusal_names_its_state(kwargs, needle):
         "thermal_state": "normal",
         "diagnostic_running": False,
         "session_recording": False,
-        "local_verify_running": False,
+        "local_verify_pages": (),
         "demo_mode": False,
     }
     assert start_refusals(**base) == []

@@ -32,7 +32,7 @@ Run-level rules (DEC-404 § Runner):
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
@@ -55,6 +55,10 @@ from control_ofc.services.pwm_report.catalog import (
 HANDBACK_WAIT_S = 3.0
 #: The daemon's run slots are read back at the app's own 1 Hz cadence.
 POLL_INTERVAL_S = 1.0
+#: The pages that can start a PWM verify this GUI tracks (`PTA-d`, `PTA-l`), as
+#: :func:`start_refusals` names them.
+VERIFY_PAGE_SYSTEM_STATE = "System State"
+VERIFY_PAGE_HARDWARE = "Hardware"
 #: Consecutive failed polls before the daemon is treated as lost. Five seconds
 #: rides out a slow reply; a daemon restart takes longer and is caught by the
 #: connection state first.
@@ -170,7 +174,7 @@ def start_refusals(
     thermal_state: str,
     diagnostic_running: bool,
     session_recording: bool,
-    local_verify_running: bool,
+    local_verify_pages: Sequence[str],
     demo_mode: bool,
 ) -> list[str]:
     """Why a run must not start now (DEC-404 § Runner step 1). Empty = go.
@@ -196,15 +200,26 @@ def start_refusals(
             "A validation session is recording. It shares the daemon's diagnostic slot — "
             "stop it first."
         )
-    if local_verify_running:
+    if local_verify_pages:
         # `PTA-d`: a System State verify, or a Verify All sweep, that this GUI
         # started. `diagnostic_running` sees it only through the poll's
         # `verify_active`, which reads false in the gap between two of a sweep's
         # verifies — so the sweep's remaining headers would be written during the
         # run. This input is the GUI's own record of it, and has no such gap.
-        reasons.append(
-            "A PWM verify started on the System State page is still running; wait for it to finish."
-        )
+        # `PTA-l` added the Hardware page's own *Test*, and the reason names
+        # whichever page the verify was started on.
+        pages = list(dict.fromkeys(local_verify_pages))
+        if len(pages) == 1:
+            reasons.append(
+                f"A PWM verify started on the {pages[0]} page is still running; wait for it "
+                "to finish."
+            )
+        else:
+            names = ", ".join(pages[:-1]) + f" and {pages[-1]}"
+            reasons.append(
+                f"PWM verifies started on the {names} pages are still running; wait for them "
+                "to finish."
+            )
     return reasons
 
 

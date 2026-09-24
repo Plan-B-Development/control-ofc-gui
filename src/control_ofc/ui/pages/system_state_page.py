@@ -832,9 +832,27 @@ class SystemStatePage(QWidget):
         `_finish_verify_all` used to re-enable it with a bare ``setEnabled(True)``
         — the `ACK-z` shape this file already retired for the single-verify
         button — which would have re-enabled it in the middle of a report run.
+
+        `ACK-ab`: it reads `_verify_in_flight`, not just the sweep's own total,
+        so a single verify greys it too. Otherwise a sweep started over it would
+        queue one hardware probe more than the user asked for. `ACK-z`'s trap
+        applies here too: every caller clears `_verify_active_header` first.
         """
-        self._verify_all_btn.setEnabled(not self._verify_all_total and not self._pwm_report_active)
+        self._verify_all_btn.setEnabled(
+            not self._verify_in_flight() and not self._pwm_report_active
+        )
         self._verify_all_btn.setToolTip(RUN_ACTIVE_REASON if self._pwm_report_active else "")
+
+    def _sync_verify_buttons(self) -> None:
+        """All three hwmon test buttons from the page's current state.
+
+        Called wherever that state changes: a result, the end of a sweep, and a
+        report run starting or ending. So a verify greys every button, not just
+        the one it was started from (`ACK-ab`, `ACK-ac`).
+        """
+        self._sync_verify_button_enabled()
+        self._sync_verify_all_enabled()
+        self._update_characterize_availability()
 
     @Slot(bool)
     def set_pwm_report_active(self, active: bool) -> None:
@@ -846,9 +864,7 @@ class SystemStatePage(QWidget):
         if active == self._pwm_report_active:
             return
         self._pwm_report_active = active
-        self._sync_verify_button_enabled()
-        self._sync_verify_all_enabled()
-        self._update_characterize_availability()
+        self._sync_verify_buttons()
 
     def _populate_verify_combo(self) -> None:
         """Rebuild the header dropdown, preserving the user's pick.
@@ -891,9 +907,19 @@ class SystemStatePage(QWidget):
         return daemon_supports("pwm_characterization", caps) is True
 
     def _update_characterize_availability(self) -> None:
+        """Visibility follows support; enablement also follows what is running.
+
+        `ACK-ac`: characterisation claims the daemon's one diagnostic slot, the
+        same as verify, and the daemon refuses it (`409`) while a verify holds
+        that slot. So it greys while a verify or sweep started here is in
+        flight. It stays visible, because a button that vanishes mid-sweep is
+        worse than one that greys.
+        """
         show = self._supports_characterization() and self._verify_combo.count() > 0
         self._characterize_btn.setVisible(show)
-        self._characterize_btn.setEnabled(show and not self._pwm_report_active)
+        self._characterize_btn.setEnabled(
+            show and not self._verify_in_flight() and not self._pwm_report_active
+        )
         self._characterize_btn.setToolTip(RUN_ACTIVE_REASON if self._pwm_report_active else "")
 
     # ── Worker lifecycle (ported) ────────────────────────────────────
@@ -1179,6 +1205,8 @@ class SystemStatePage(QWidget):
             self._verify_result_label.setVisible(True)
             return
         self._verify_active_header = header_id
+        self._sync_verify_all_enabled()  # `ACK-ab`: after the header is recorded
+        self._update_characterize_availability()  # `ACK-ac`
         self._verify_request.emit(header_id)
 
     @Slot(object, str)
@@ -1211,7 +1239,7 @@ class SystemStatePage(QWidget):
         # still true here until this field is cleared.
         self._verify_active_header = None
         self._verify_btn.setText("Test PWM Control")
-        self._sync_verify_button_enabled()
+        self._sync_verify_buttons()
         if self._verify_all_total > 0 and header_id == self._verify_all_pending:
             self._verify_all_pending = None
             self._verify_all_results.append((header_id, result.result))
@@ -1233,7 +1261,7 @@ class SystemStatePage(QWidget):
         self._verify_result_label.setVisible(True)
         self._verify_active_header = None  # before the gate reads it — see `_on_verify_ok`
         self._verify_btn.setText("Test PWM Control")
-        self._sync_verify_button_enabled()
+        self._sync_verify_buttons()
         if self._verify_all_total > 0 and header_id == self._verify_all_pending:
             self._verify_all_pending = None
             self._verify_all_results.append((header_id, f"error:{category}"))
@@ -1277,8 +1305,9 @@ class SystemStatePage(QWidget):
         self._verify_all_results = []
         self._verify_all_pending = None
         self._verify_all_total = len(writable)
-        self._verify_btn.setEnabled(False)
-        self._verify_all_btn.setEnabled(False)
+        # The predicates, not bare `setEnabled(False)`: with the total set, all
+        # three read "in flight" and grey (one gating shape per button, `ACK-z`).
+        self._sync_verify_buttons()
         self._verify_all_btn.setText("Testing...")
         set_chip_class(self._verify_all_progress_label, "CardMeta")
         self._verify_all_progress_label.setVisible(True)
@@ -1287,8 +1316,7 @@ class SystemStatePage(QWidget):
     def _finish_verify_all(self) -> None:
         self._verify_all_total = 0
         self._verify_all_pending = None
-        self._sync_verify_button_enabled()
-        self._sync_verify_all_enabled()
+        self._sync_verify_buttons()
         self._verify_all_btn.setText("Verify All Writable")
 
     def _step_pwm_verify_all(self) -> None:

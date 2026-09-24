@@ -415,3 +415,63 @@ def test_an_export_that_cannot_be_built_says_so(hist, monkeypatch):
     _action(window, "PwmReport_Action_export_html").trigger()
     assert seen and seen[-1][0] == "warning" and "crafted" in seen[-1][1]
     assert not (tmp / "out.html").exists()
+
+
+# ── `PTA-g`: the empty landing page keeps its text together ──────────────────
+
+
+def test_the_empty_reports_page_keeps_its_text_at_the_top(qtbot, tmp_path, restore_app_theme):
+    """Realised geometry, themed, at the window's own size. With no rows the
+    table (the page's only stretch) is hidden; the surplus height must go to
+    the empty label, whose text sits at its top — never be shared out between
+    the header and the description, which then drift apart down the window."""
+    from PySide6.QtCore import Qt
+
+    from control_ofc.ui.components.cards import SectionHeader
+    from control_ofc.ui.theme import apply_theme, default_dark_theme
+
+    apply_theme(default_dark_theme())
+    page = PwmReportHistoryPage(directory=tmp_path / "empty")
+    qtbot.addWidget(page)
+    page.resize(1200, 860)
+    page.show()
+    qtbot.waitExposed(page)
+    empty = page.findChild(QLabel, "PwmReport_Label_historyEmpty")
+    intro = page.findChild(QLabel, "PwmReport_Label_historyIntro")
+    header = page.findChild(SectionHeader, "PwmReport_Header_history")
+    assert page.rows() == [] and empty.isVisible(), "precondition: the empty state"
+    natural = sum(w.sizeHint().height() for w in (header, intro, empty))
+    assert page.height() > natural + 200, "precondition: there is surplus to hand out"
+
+    def natural_height(w) -> int:
+        return w.heightForWidth(w.width()) if w.hasHeightForWidth() else w.sizeHint().height()
+
+    for w in (header, intro):
+        assert w.height() <= natural_height(w), f"{w.objectName()} took the surplus"
+    assert empty.height() > natural_height(empty), "the empty label holds the surplus"
+    assert empty.alignment() & Qt.AlignmentFlag.AlignTop, "and draws its text at the top"
+    # Adjacent, not spread: the gap below the description is the layout's own spacing.
+    assert empty.geometry().top() - intro.geometry().bottom() - 1 == page.layout().spacing()
+
+
+# ── `PTR-x`: a row the head check passed is corrected when opening fails ─────
+
+
+def test_opening_a_report_with_a_broken_trace_marks_its_row_unreadable(hist, monkeypatch):
+    window, folder, _ = hist
+    doc = complete_doc(report_id="broken", started_at="2026-09-10T00:00:00Z")
+    doc["trace"] = {"t_ms": "not a list"}
+    store.save_report(doc, folder)
+    page = window.history_page
+    page.refresh()
+    ids = [r.entry.report_id for r in page.rows()]
+    assert not page.rows()[ids.index("broken")].entry.error, "precondition: listed readable"
+    warned: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    page.select_rows([ids.index("broken")])
+    page.open_btn.click()
+    assert warned, "opening it said nothing"
+    row = next(r for r in page.rows() if r.entry.path == store.report_path("broken", folder))
+    assert row.entry.error, "the row still claims a report that cannot be opened is readable"
+    table = page.findChild(QTableWidget, "PwmReport_Table_history")
+    assert table.item(page.rows().index(row), 3).text() == "Unreadable"

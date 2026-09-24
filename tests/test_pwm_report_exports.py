@@ -533,8 +533,8 @@ def test_history_lists_a_file_nested_too_deeply_as_unreadable(tmp_path):
 def test_history_reuses_an_unchanged_file_and_rereads_a_changed_one(tmp_path, monkeypatch):
     path = _save(complete_doc(report_id="once"), tmp_path)
     reads: list[object] = []
-    real = store._read
-    monkeypatch.setattr(store, "_read", lambda p: reads.append(p) or real(p))
+    real = store._read_head  # what the list reads a file with (`PTR-x`)
+    monkeypatch.setattr(store, "_read_head", lambda p: reads.append(p) or real(p))
     store.list_reports(tmp_path)
     store.list_reports(tmp_path)
     assert reads == [path], "an unchanged file is parsed once"
