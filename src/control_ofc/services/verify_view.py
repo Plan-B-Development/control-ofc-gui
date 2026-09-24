@@ -139,6 +139,21 @@ _OUTCOMES: dict[str, VerifyOutcome] = {
         "CardMeta",
         PWM_EVIDENCE_INCONCLUSIVE,
     ),
+    # `TS-aw` / DEC-418. The header gained pump protection while the test held
+    # it (a profile naming it a pump was activated, or it was assigned the
+    # pump role), so the daemon stopped the test and floored its restore.
+    # Nothing was measured, so it is `inconclusive` and neutral like the two
+    # rows above: it is not a finding about the board. It makes no claim about
+    # the restore (DEC-418 review `C1`): the daemon can report this token with
+    # `restore_failed`, and no hwmon verify surface renders that (`TS-bk`). The
+    # daemon's `details`, rendered beside it, states the floor rule it applied.
+    "pump_protected_mid_run": VerifyOutcome(
+        "The header became pump-protected during the test, so the daemon stopped "
+        "it before it measured anything",
+        "stopped: pump",
+        "CardMeta",
+        PWM_EVIDENCE_INCONCLUSIVE,
+    ),
 }
 
 
@@ -269,7 +284,10 @@ def build_verify_result_view(
         lines.append(result.details)
 
     init, final = result.initial_state, result.final_state
-    if init.rpm is not None and final.rpm is not None:
+    # A verify stopped for a mid-run pump never completed its settle, so its
+    # before/after RPM is not a measurement (DEC-418 review `C2`).
+    stopped_early = result.result == "pump_protected_mid_run"
+    if init.rpm is not None and final.rpm is not None and not stopped_early:
         lines.append(f"RPM: {init.rpm} → {final.rpm}")
 
     chip_name = header.chip_name if header else ""

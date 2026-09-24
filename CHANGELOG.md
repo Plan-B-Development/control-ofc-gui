@@ -4,6 +4,15 @@
 
 ### Fixed
 
+**A PWM test stopped because the fan became a pump says so** (`TS-aw`, DEC-418; daemon ≥ 2.56.0).
+If you activate a profile that names a header a pump, or assign it the pump role, while a Test PWM
+Control is running on it, the daemon now stops the test, and any restore it writes is no lower than
+the pump floor. The Hardware page and System State show this as "The header became pump-protected
+during the test, so the daemon stopped it before it measured anything", with a neutral chip and
+advice to run the test again, and leave out the before-and-after RPM line of the cut-short test. It does not count as a failed test, and it does
+not change whether your fans read as verified. The PWM Test Report files it as unavailable. Older
+GUIs show the daemon's result name with a note that this version does not recognise it.
+
 **System State's PWM buttons grey out while a PWM test is running** (`ACK-ab`, `ACK-ac`, DEC-415).
 During a single **Test PWM Control**, the **Verify All Writable** and **Characterise PWM Response**
 buttons stayed live. **Characterise** also stayed live for a whole **Verify All Writable** run.

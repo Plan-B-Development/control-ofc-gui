@@ -1917,7 +1917,8 @@ def verification_guidance(
 
     *result* is one of the daemon's verify outcomes: "effective",
     "pwm_enable_reverted", "pwm_value_clamped", "no_rpm_effect",
-    "rpm_unavailable", or — daemon >= 2.48.0 — "pwm_readback_unavailable".
+    "rpm_unavailable", or — daemon >= 2.48.0 — "pwm_readback_unavailable", or
+    — DEC-418 — "pump_protected_mid_run".
 
     Returns ``None`` for any token this function has no advice for, including
     an unrecognised one. That is the right default and not an oversight: the
@@ -2009,6 +2010,17 @@ def verification_guidance(
             "transient — re-run the test. If it repeats, check `dmesg` for the "
             "sensor chip's driver; a chip that was removed or unbound mid-test "
             "produces exactly this result."
+        )
+
+    # `TS-aw` / DEC-418. Not a fault: pump evidence arrived mid-test, so the
+    # daemon stopped a test it had planned for an ordinary fan. Re-running is
+    # the whole next step — the next verify is planned for a pump.
+    if result == "pump_protected_mid_run":
+        return (
+            "The header became pump-protected while the test was running (a profile "
+            "naming it a pump was activated, or it was assigned the pump role), so the "
+            "test stopped before it measured anything. Re-run it: the verify now uses "
+            "pump-safe duties."
         )
 
     return None

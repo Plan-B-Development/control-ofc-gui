@@ -1082,8 +1082,10 @@ a safe write-capability test:
 5. Reports one of: `effective`, `pwm_enable_reverted`, `pwm_value_clamped`,
    `no_rpm_effect`, `rpm_unavailable`, or — daemon ≥ 2.48.0 —
    `pwm_readback_unavailable` (the post-write readback produced nothing, so
-   nothing about the write was established; re-run). See `docs/08` for how the
-   last two differ.
+   nothing about the write was established; re-run), or — daemon ≥ 2.56.0 —
+   `pump_protected_mid_run` (the header became pump-protected during the test,
+   so it stopped and restored no lower than the pump floor; re-run). See
+   `docs/08` for how these differ.
 
 This test determines the actual write capability regardless of what the
 driver claims.

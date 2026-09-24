@@ -312,9 +312,19 @@ def _verify(
     before = _int(_m(r.get("initial_state")).get("rpm"))
     after = _int(_m(r.get("final_state")).get("rpm"))
     readback = _int(_m(r.get("final_state")).get("pwm_percent"))
-    scope = _join(
-        f"one test duty ({_pct(test_pct)}), held for {r.get('wait_seconds', '?')} s", splitter
-    )
+    if token == "pump_protected_mid_run":
+        # DEC-418 review `C2`: the duty is the one PLANNED, and the window never
+        # completed — a stop before the test write wrote nothing at all.
+        scope = _join(
+            f"a planned test duty of {_pct(test_pct)}, stopped before its "
+            f"{r.get('wait_seconds', '?')} s window completed",
+            splitter,
+        )
+    else:
+        scope = _join(
+            f"one test duty ({_pct(test_pct)}), held for {r.get('wait_seconds', '?')} s",
+            splitter,
+        )
     rpm = f"{before if before is not None else '—'} → {after if after is not None else '—'} rpm"
     table = {
         "effective": (
@@ -349,6 +359,14 @@ def _verify(
         ),
         "pwm_readback_unavailable": (
             f"{name}: the duty could not be read back, so whether the write held is unconfirmed.",
+            VALIDATION_RESULT_UNAVAILABLE,
+            SEVERITY_INFO,
+        ),
+        # `TS-aw` / DEC-418: the daemon files this `unavailable` too. No claim
+        # about the restore (review `C1`): the daemon may report it failed.
+        "pump_protected_mid_run": (
+            f"{name}: the header became pump-protected during the test, so the daemon "
+            "stopped it before it measured anything.",
             VALIDATION_RESULT_UNAVAILABLE,
             SEVERITY_INFO,
         ),

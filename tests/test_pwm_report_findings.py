@@ -144,6 +144,7 @@ def test_every_finding_carries_the_full_shape():
         ("no_rpm_effect", "observed", SEVERITY_OBSERVATION),
         ("rpm_unavailable", "unavailable", SEVERITY_INFO),
         ("pwm_readback_unavailable", "unavailable", SEVERITY_INFO),
+        ("pump_protected_mid_run", "unavailable", SEVERITY_INFO),
         ("a_token_from_a_newer_daemon", "unknown", SEVERITY_INFO),
     ],
 )
@@ -151,9 +152,28 @@ def test_verify_tokens_map_to_scoped_findings(token, result, severity):
     findings, _ = derive_findings(_doc([_step("s1", CPU, TEST_VERIFY, verify_body(token))]))
     (f,) = _rules(findings)["verify.result"]
     assert (f["result"], f["severity"]) == (result, severity)
-    assert "one test duty (60 %)" in f["scope"], "a verify claim names the one duty it tested"
+    # A verify stopped for a mid-run pump names the duty it PLANNED (DEC-418 `C2`).
+    duty = (
+        "a planned test duty of 60 %"
+        if token == "pump_protected_mid_run"
+        else "one test duty (60 %)"
+    )
+    assert duty in f["scope"], "a verify claim names the one duty it tested"
     if token == "a_token_from_a_newer_daemon":
         assert token in f["statement"], "an unrecognised token is rendered, never dropped"
+
+
+def test_a_verify_stopped_for_a_pump_does_not_claim_its_duty_was_held():
+    """DEC-418 review `C2`: the duty is the one planned and the window never
+    completed, so the scope must not say it was held. The opposite arm is the
+    parametrised test above, which pins "held" wording for every other token."""
+    findings, _ = derive_findings(
+        _doc([_step("s1", CPU, TEST_VERIFY, verify_body("pump_protected_mid_run"))])
+    )
+    (f,) = _rules(findings)["verify.result"]
+    assert "held for" not in f["scope"]
+    assert "planned test duty of 60 %" in f["scope"]
+    assert "restor" not in f["statement"].lower()
 
 
 # ── Splitter scoping (user facts) ───────────────────────────────────────────
